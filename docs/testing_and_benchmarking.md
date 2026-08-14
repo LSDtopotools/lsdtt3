@@ -524,6 +524,51 @@ This is by design — the imposed gradient is what makes flats routable — but 
 means the bit-exact `min_slope = 0` fill is not a usable input to lsdtt3's own
 flow routing. `fill_min_slope` is load-bearing, not cosmetic.
 
+#### That message used to kill the process (fixed 2026-08-14)
+
+Until 2026-08-14 the `throw` above sat inside the `#pragma omp parallel for` that
+builds the receiver graph. **An exception that leaves an OpenMP structured block
+calls `std::terminate`**, so the error could not be caught by anyone: a correctly
+written `try`/`catch` around the routing call never ran, and the process died
+with a bare libstdc++ message. Under several threads it was worse — multiple
+threads threw at once and the output interleaved into garbage:
+
+```
+terminate called recursively
+terminate called after throwing an instance of '  what():  lsdtt_flowinfo: could not assign a receiver at row 0, col 2. ...
+std::runtime_error'
+```
+
+This affected **every CLI**, not one tool. Any DEM with an unresolved sink or
+flat — a diverged hillslope solve, a closed outlet boundary, a bad
+`fill_min_slope` — aborted rather than reporting.
+
+The fix records the failing cell inside the region and throws once the region has
+closed. Two properties worth knowing:
+
+- **It is catchable now.** The same failure that used to abort now surfaces as a
+  normal exception, so callers can add context. `lsdtt-synthetic-networks`
+  reports `FATAL: landscape equilibration failed: lsdtt_flowinfo: could not
+  assign a receiver at row 0, col 2 ...` and exits 1.
+- **It is deterministic.** The cell reported is the lexicographically first
+  (row, then col) failing cell, not whichever thread arrived first. Verified
+  identical at 1, 2, 4 and 8 threads; before the fix the same run reported rows
+  47, 25, 37 and 16 on different threads of one execution.
+
+A tree-wide scan found this was the **only** `throw` reachable from inside an
+OpenMP region. `lsdtt_cosmo_raster_cpu.cpp` has parallel regions that call
+`reset_scaling()`, which can throw, but every call site is guarded by
+`if (!is_cronus_emulator(...))` so it never does for the schemes that reach it —
+a latent risk if that guard is ever weakened, not a live defect.
+
+> Writing the scan is easy to get wrong. The first version reported the tree
+> clean, including the file with the known defect still in it, because it closed
+> each region at the first line that did not increase brace depth — and the
+> `#pragma` sits inside `#ifdef _OPENMP`, so the `#endif` closed it immediately.
+> **Validate a checker against a known positive before trusting a clean result.**
+> Matching the bare word `throw` also hits comments; every remaining hit in the
+> corrected scan was a comment containing "throws".
+
 ---
 
 ## 6. Performance
@@ -2946,6 +2991,99 @@ temperature**, so the OCN DEM has no interior local minimum. That is necessary
 but nowhere near sufficient for fidelity — a pixel can be higher than its OCN
 receiver while a *different* neighbour is lower still, which is exactly the
 failure the D8 round trip catches and monotonicity does not.
+
+### 8b.1b The energy is length-weighted by default (2026-08-14)
+
+`lsdtt-synthetic-networks` minimises
+
+```
+E = sum_i A_i^gamma * L_i
+```
+
+where `L_i` is the length of the link from node i to its receiver: `cell_size`
+for a cardinal step, `cell_size*sqrt(2)` for a diagonal one. **This is the
+default.** `energy_length_weighted: false` drops `L_i` and reproduces OCNet
+(Carraro et al. 2020) bit-for-bit.
+
+#### Why the length term belongs there
+
+The energy expenditure of a channel link is `E_i ~ L_i Q_i S_i` — Strong & Mudd
+(2022, *PNAS*, "Explaining the climate sensitivity of junction geometry in
+global river networks", eq. 4), who note the problem is "length minimization
+where the junction link lengths are weighted according to `A_i^gamma`". Goren &
+Shelef (2024, *Earth Surf. Dynam.* 12, 1347–1369,
+doi:10.5194/esurf-12-1347-2024, eq. 5) use the same form with `l_i` explicit,
+and observe that with uniform `l_i` the energy reduces to a function of the
+number of nodes.
+
+On a **4-connected** lattice every `L_i` is equal, so it factors out and the
+literature abbreviates it to `sum(A^gamma)`. On the **8-connected** lattice used
+here it does not factor out: a diagonal link spans 1.414 cell widths for the
+same energy, so lateral movement is free.
+
+#### What that cost, measured
+
+400x200 strip at 30 m draining north and south, periodic sides, gamma 0.5,
+temperature_scale 0, fixed `n_iter`. Flow directions from
+`lsdtt-channel-extraction`, **area-weighted over channels > 2 km²** — i.e.
+where the water actually goes:
+
+| variant | diagonal | pure N/S |
+|---|---:|---:|
+| unweighted (OCNet parity) | **0.937** | 0.062 |
+| length-weighted, BFS seed | 0.827 | 0.151 |
+| length-weighted + Dijkstra seed (default) | **0.056** | **0.944** |
+
+The main channels ran diagonally in 94% of the flow, on a strip whose only base
+levels are north and south. Weight by area or the effect hides: the *count* of
+diagonal links only moves 0.45 -> 0.22, because headwater links point in every
+direction in any network. `unit_synthetic_networks` case L pins the
+area-weighted statistic (0.937 -> 0.029 on its own smaller fixture).
+
+#### The seed tree mattered more than the energy term
+
+Length weighting alone moved the area-weighted diagonal fraction 0.937 -> 0.827
+only. The rest came from the **initial spanning forest**. An unweighted
+breadth-first search over eight neighbours is the **Chebyshev** metric, in which
+a diagonal and a cardinal step are the same distance — the wrong metric for a
+length-weighted energy, and it hands the annealer a network whose shortest paths
+are already diagonal. Single-flip annealing at low temperature is greedy enough
+not to undo it. Seeding instead with **Dijkstra on Euclidean link length** took
+the fraction to 0.056, and also reached a *lower* final energy
+(8.27e6 vs 8.62e6) and higher round-trip fidelity (0.843 vs 0.805). Both fixes
+are selected together by `energy_length_weighted`.
+
+#### Consequences to know about
+
+- **Round-trip fidelity is LOWER under the default**, 0.837 vs 0.916 on the
+  48x48 reference fixture, and the pinned floor moved from 0.90 to 0.82. This is
+  not a regression: the default drives the graph toward straight cardinal trunks
+  while the chi surface is still re-routed by D8 steepest descent, which favours
+  diagonals, so the two disagree more. The round-trip gap is a property of the
+  discretisation either way (see 8b.1).
+- **The snap cycle converges sooner** — the 32x32 equilibration fixture reaches
+  a period-1 fixed point at cycle 5 instead of 10, because the length-weighted
+  network starts closer to self-consistent.
+- **The A3 annealing check was weakened to its two-point form.** Under the
+  length-weighted energy `E(0) < E(0.1) < E(1)` no longer holds
+  (357686 / 361794 / 361234); the endpoints are still ordered and that is what
+  is pinned. The test's own note anticipated this weakening.
+- **Networks become quite regular.** The corrected strip is close to a comb of
+  parallel N-S trunks. Whether that is under-branched for a real mountain belt
+  is open, and is the next thing to look at rather than a settled result.
+
+#### Both energies are pinned
+
+`rigorous_synthetic_networks_oracle` now sets `energy_length_weighted: false`
+and its frozen values are **unchanged** across this work — same drainage
+checksum 3275, same CSV sha256. That unchanged hash is the evidence that parity
+mode is bit-for-bit OCNet rather than merely close.
+`rigorous_synthetic_networks_oracle_lengthweighted` pins the new default
+(checksum 3905). `unit_synthetic_networks` case E3 additionally asserts that
+parity mode reports the unweighted sum and that the two forms are
+distinguishable, so the flag cannot silently become a no-op.
+
+---
 
 ### 8b.2 Regression artefacts for the OCN — oracle, band, pin, and no sentinel
 

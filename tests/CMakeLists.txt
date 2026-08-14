@@ -119,6 +119,46 @@ set_tests_properties(smoke_synthetic_networks_polygon_area PROPERTIES
     LABELS "smoke;cli;synthetic_networks"
     FIXTURES_REQUIRED synthetic_networks_fixture)
 
+# B5: OCN -> equilibrate in one invocation. Asserts the stage actually ran and
+# produced its two extra artefacts, not merely that the CLI exited 0 -- an
+# equilibration that silently no-ops would still write the OCN DEM and pass a
+# file-existence check.
+#
+# The cycle number is pinned deliberately. MEASURED 2026-08-14: this fixture
+# reaches a period-1 fixed point at cycle 10 (first seen at cycle 9), with
+# max_cycles set to 20 so there is headroom to notice it taking LONGER rather
+# than the run simply hitting the cap. An earlier draft used max_cycles 8 and
+# did not converge at all (max|dz| still 47.7 m), which is why the cap matters:
+# a 32x32 OCN at 1000 m relief needs about ten cycles, not a handful.
+add_lsdtt_cli_smoke_test(
+    smoke_synthetic_networks_equilibrate
+    lsdtt-synthetic-networks
+    synthetic_networks_equilibrate.param.in
+    ocneq_ocn_equilibrated_dem.tif
+    --expect ocneq_ocn_dem.tif
+    --expect ocneq_ocn_snap_convergence.csv
+    --expect-raster-size ocneq_ocn_equilibrated_dem.tif:32x32
+    --expect-valid-percent-100 ocneq_ocn_equilibrated_dem.tif
+    --stdout-contains "Equilibrating (max 20 cycles, convergence checking on)"
+    --stdout-contains "Converged at cycle 5: flow graph is a fixed point"
+    --stdout-contains "Equilibrated DEM vs the ORIGINAL OCN graph"
+)
+
+# Closing the south edge on a single-south OCN leaves no path to base level. The
+# router would catch this on its own (since 2026-08-14 it reports unresolvable
+# cells as a normal exception rather than terminating), but only as "could not
+# assign a receiver at row R, col C" -- which does not tell the user that the
+# cause is a parameter they set. Pinned so the up-front, parameter-naming check
+# is not quietly dropped in favour of the generic message.
+add_lsdtt_cli_smoke_test(
+    failure_synthetic_networks_closed_outlet
+    lsdtt-synthetic-networks
+    synthetic_networks_closed_outlet.param.in
+    ocnclosed_ocn_dem.tif
+    --expect-failure
+    --stderr-contains "FATAL: boundary_conditions 'nnnn' closes the south edge"
+)
+
 # An unknown domain_type is DOCUMENTED to warn and fall back to the rectangle.
 # Pinning it makes a future decision to reject it a deliberate one.
 add_lsdtt_cli_smoke_test(
@@ -131,12 +171,44 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "Warning: unknown domain_type 'banana' - using rectangle."
 )
 
+# ORACLE for the DEFAULT (length-weighted) energy, measured 2026-08-14.
+#
+# E = sum(A^gamma * L) is the default from 2026-08-14 (Strong & Mudd 2022 PNAS
+# eq. 4; Goren & Shelef 2024 ESurf 12:1347 eq. 5). It changes the networks
+# substantially -- drainage checksum 3275 -> 3905, final energy 2384 -> 295472
+# (the units change, since energy now carries a length) -- so it needs its own
+# oracle. The OCNet-parity oracle below is unchanged and still pins the old
+# numbers exactly, which is what guarantees the parity switch really is parity.
+add_lsdtt_cli_smoke_test(
+    rigorous_synthetic_networks_oracle_lengthweighted
+    lsdtt-synthetic-networks
+    synthetic_networks_lengthweighted.param.in
+    ocnlw_ocn_drainage_cells.tif
+    --expect ocnlw_ocn_summary.csv
+    --expect-raster-checksum ocnlw_ocn_drainage_cells.tif:3905
+    --expect-sha256 ocnlw_ocn_summary.csv:9adc345d2046991532144521c61ec19adf7bac09cb7d2a9dfe5bcbb0df43e168
+)
+
 # ORACLE (refactor tripwire), measured 2026-08-13 with GDAL from the repo
 # toolchain on the same param file as smoke_synthetic_networks_rect. The
 # drainage-area field is integer-valued and exactly representable in float32, so
 # its GDAL checksum is a complete fingerprint of the whole tree; the summary CSV
 # prints energies at 6 significant figures, robust to last-bit drift. Both are
 # re-freezable by a deliberate act, NOT numerics sentinels.
+#
+# THIS ORACLE NOW PINS OCNet PARITY, not the default. Its param file sets
+# energy_length_weighted: false. Its values are UNCHANGED across the 2026-08-14
+# switch to a length-weighted default -- same checksum 3275, same sha256 -- which
+# is the evidence that the parity mode is genuinely bit-for-bit OCNet and not
+# merely "close". If this test ever moves, parity has been broken.
+#
+# RE-FROZEN 2026-08-14, a deliberate act with a stated reason: B5 appended six
+# equilibration columns to the summary CSV (equilibrated, eq_cycles_run,
+# eq_converged, eq_limit_cycle_period, eq_divide_step_p90_m, eq_ocn_agreement).
+# ONLY the CSV hash moved -- the drainage-area raster checksum is unchanged at
+# 3275, which is the evidence that the generation path itself was not touched.
+# With run_equilibration defaulting to false the new columns read
+# "0,0,0,0,-1,-1", so the default output is unchanged in substance.
 add_lsdtt_cli_smoke_test(
     rigorous_synthetic_networks_oracle
     lsdtt-synthetic-networks
@@ -144,7 +216,7 @@ add_lsdtt_cli_smoke_test(
     ocnsmoke_ocn_drainage_cells.tif
     --expect ocnsmoke_ocn_summary.csv
     --expect-raster-checksum ocnsmoke_ocn_drainage_cells.tif:3275
-    --expect-sha256 ocnsmoke_ocn_summary.csv:8b356826390366b3e894a3679dd974bfb358ea129bfb9e758fdaf165c5e68e48
+    --expect-sha256 ocnsmoke_ocn_summary.csv:0f9d15a74aef81fc89b2087ddd01bc2be66633bb0ce175b4513f92cd9e03c5fc
     --expect-file-contains "ocnsmoke_ocn_summary.csv:32,32,100,0.5,20000,1,0,0,7,3118.46,2384.26,0.87"
 )
 
@@ -589,6 +661,59 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_lem_roering_implicit_strip PROPERTIES
     LABELS "smoke;cli;hillslope"
     FIXTURES_REQUIRED lem_strip_fixture)
+
+# run_hillslope_on_loaded_dem: solve hillslopes WITHOUT re-snapping the fluvial
+# field, so a transient (a step-change knickpoint) survives.
+#
+# The band is the point of the test, not decoration. On tiny_dem.asc (a 5x5
+# planar ramp, 72-100 m) the mode must return elevations in that range with the
+# channel cell untouched. The defect this guards against is real and was caught
+# here: enforce_baselevel() pins every boundary pixel to baselevel_elevation,
+# which is right for a synthetic LEM run but OVERWRITES a loaded DEM. Before the
+# guard this run came back at 0.02-0.04 m everywhere -- the whole surface
+# relaxed to a zeroed rim. A min band of 71-73 m fails instantly in that state.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_hillslope_on_loaded_dem
+    lsdtt-lem
+    lem_hillslope_on_loaded_dem.param.in
+    tinyhsonly_hillslope_on_loaded_dem.tif
+    --expect-raster-size tinyhsonly_hillslope_on_loaded_dem.tif:5x5
+    --expect-raster-stat tinyhsonly_hillslope_on_loaded_dem.tif:min:71.0:73.0
+    --expect-raster-stat tinyhsonly_hillslope_on_loaded_dem.tif:max:85.0:101.0
+    --stdout-contains "Hillslope solve on the loaded DEM (fluvial field untouched)"
+    --stdout-contains "converged: yes"
+)
+set_tests_properties(smoke_lem_hillslope_on_loaded_dem PROPERTIES
+    LABELS "smoke;cli;hillslope")
+
+# critical_slope takes a different path: imposed by upslope integration, not
+# iterated, so it reports relief and step count rather than iterations.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_hillslope_on_loaded_dem_critical_slope
+    lsdtt-lem
+    lem_hillslope_on_loaded_dem_cs.param.in
+    tinyhscs_hillslope_on_loaded_dem.tif
+    --expect-raster-size tinyhscs_hillslope_on_loaded_dem.tif:5x5
+    --expect-raster-stat tinyhscs_hillslope_on_loaded_dem.tif:min:71.0:73.0
+    --stdout-contains "critical_slope (imposed by upslope integration, not iterated)"
+    --stdout-contains "max relief above channel"
+)
+set_tests_properties(smoke_lem_hillslope_on_loaded_dem_critical_slope PROPERTIES
+    LABELS "smoke;cli;hillslope")
+
+# The mode selects WHICH surface the solve runs on; it does not switch the solve
+# on. Asking for one without the other is a configuration error, not a silent
+# no-op.
+add_lsdtt_cli_smoke_test(
+    failure_lem_hillslope_on_loaded_dem_no_solve
+    lsdtt-lem
+    lem_hillslope_on_loaded_dem_no_solve.param.in
+    tinyhsbad_hillslope_on_loaded_dem.tif
+    --expect-failure
+    --stderr-contains "run_hillslope_on_loaded_dem requires run_hillslope_steady_state: true"
+)
+set_tests_properties(failure_lem_hillslope_on_loaded_dem_no_solve PROPERTIES
+    LABELS "failure;cli;hillslope")
 
 add_lsdtt_cli_smoke_test(
     smoke_lem_equilibration_cycle

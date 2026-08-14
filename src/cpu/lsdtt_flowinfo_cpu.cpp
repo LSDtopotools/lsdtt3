@@ -1016,6 +1016,21 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
     const double cardinal_length = meta_.cell_size;
     const double diagonal_length = meta_.cell_size * k_sqrt_2;
 
+    // Unresolvable-cell reporting.
+    //
+    // This CANNOT throw from inside the parallel region below. An exception that
+    // leaves an OpenMP structured block calls std::terminate, so a caller's
+    // try/catch never runs and the process dies with a bare libstdc++ message --
+    // which is what used to happen here for any DEM with an unresolved sink.
+    // The failure is recorded instead and thrown once the region has closed.
+    //
+    // The recorded cell is the lexicographically FIRST (row, then col) failing
+    // cell, not whichever thread happened to get there first, so the message is
+    // reproducible across thread counts and schedules.
+    bool failed    = false;
+    int  fail_row  = 0;
+    int  fail_col  = 0;
+
     int nthreads = options.n_threads;
 #ifdef _OPENMP
     if (nthreads == 0) nthreads = omp_get_max_threads();
@@ -1123,14 +1138,37 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
                 }
                 else
                 {
-                    throw std::runtime_error(
-                        "lsdtt_flowinfo: could not assign a receiver at row " +
-                        std::to_string(row) + ", col " + std::to_string(col) +
-                        ". The DEM likely contains an unresolved sink or flat."
-                    );
+                    // Record and carry on; the throw happens after the region.
+                    // The cell is left well-formed (as an outlet) purely so the
+                    // arrays are never partially undefined -- the value is not
+                    // observable, because the constructor throws below.
+                    receiver_(row, col)     = outlet_receiver;
+                    receiver_dir_(row, col) = no_direction;
+
+#ifdef _OPENMP
+                    #pragma omp critical (lsdtt_flowinfo_receiver_failure)
+#endif
+                    {
+                        if (!failed || row < fail_row ||
+                            (row == fail_row && col < fail_col))
+                        {
+                            failed   = true;
+                            fail_row = row;
+                            fail_col = col;
+                        }
+                    }
                 }
             }
         }
+    }
+
+    if (failed)
+    {
+        throw std::runtime_error(
+            "lsdtt_flowinfo: could not assign a receiver at row " +
+            std::to_string(fail_row) + ", col " + std::to_string(fail_col) +
+            ". The DEM likely contains an unresolved sink or flat."
+        );
     }
 }
 

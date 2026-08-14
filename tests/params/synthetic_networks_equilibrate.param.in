@@ -1,0 +1,34 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ocneq
+
+n_rows: 32
+n_cols: 32
+cell_size: 100.0
+
+domain_type: rectangle
+outlet_mode: single
+
+energy_exponent_gamma: 0.5
+n_iter: 20000
+temperature_scale: 0.0
+random_seed: 7
+
+steady_state_mode: relief
+target_relief: 1000.0
+
+# B5: OCN -> equilibrate in one invocation. Fluvial only; the hillslope path
+# needs a channel threshold small enough that channels exist on a 32x32 grid,
+# and that belongs in its own fixture rather than here.
+run_equilibration: true
+steady_state_n_cycles: 20
+steady_state_check_convergence: true
+steady_state_convergence_patience: 2
+divide_merge_search_steps: 5
+
+write_dem_raster: true
+write_drainage_area_raster: true
+write_equilibrated_dem_raster: true
+write_snap_convergence_csv: true
+verify_routing: true
+write_output_format: gtiff

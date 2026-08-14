@@ -36,6 +36,13 @@ Two mutually exclusive modes are available. Select one by setting `run_steady_st
 | 5 | Solve hillslope steady state (optional, requires `run_hillslope_steady_state`) |
 | 6 | Write `_hillslope_steady_state_elevation` raster and optional hillshade PNG |
 
+Stage 3 has two implementations. The default is the legacy snapping loop, which
+runs exactly `steady_state_n_cycles` cycles. Setting
+`use_landscape_equilibration_cycle: true` selects the equilibration cycle
+instead, which adds per-cycle divide diagnostics, convergence-based early
+stopping, and the option to re-solve the hillslopes on every cycle so the divide
+is tested under re-routing. See *Landscape equilibration cycle* below.
+
 ### Time-stepping mode (`run_steady_state: false`, default)
 
 | Stage | Description |
@@ -179,7 +186,60 @@ These only apply when `hillslope_model: roering_implicit`.
 | `steady_state_mode` | string | `K` | `K`: erodibility is specified by the user. `relief`: target relief is specified and K is back-calculated. |
 | `target_relief` | float | `1000` | Target maximum relief (m) for relief-mode. The highest point will be `baselevel_elevation + target_relief`. |
 | `baselevel_elevation` | float | `0` | Elevation (m) assigned to outlet nodes in the steady-state solution. |
-| `steady_state_n_cycles` | int | `1` | Number of snapping cycles. Each cycle recomputes flow routing from the previous cycle's elevations, allowing drainage divides to migrate. Iterating 5–20 cycles smooths sharp elevation breaks across divides. |
+| `steady_state_n_cycles` | int | `1` | Number of snapping cycles. Each cycle recomputes flow routing from the previous cycle's elevations, allowing drainage divides to migrate. Iterating 5–20 cycles smooths sharp elevation breaks across divides. **When `steady_state_check_convergence: true` this becomes a *maximum*, not a fixed count** — the run may stop earlier. |
+
+---
+
+## Landscape equilibration cycle
+
+An alternative implementation of the snapping loop, enabled with
+`use_landscape_equilibration_cycle: true` (requires `run_steady_state: true`).
+It adds per-cycle divide diagnostics, convergence-based early stopping, and the
+option to solve hillslopes on every cycle rather than only the last.
+
+A single-pass snap leaves a sharp elevation break along drainage divides, because
+each side is built by integrating up from its own channel with nothing forcing
+the two to meet. Cycling re-routes and re-snaps so the divide can migrate; the
+diagnostics below are how you tell whether it actually settled.
+
+> **D-infinity is refused, not silently downgraded.** The equilibration cycle
+> routes D8 only. Setting both `enable_dinf_fluvial_erosion: true` and
+> `use_landscape_equilibration_cycle: true` is a **fatal error** naming both
+> parameters, rather than a quiet fall back to D8 — silently routing D8 when
+> D-infinity was requested is the one failure here that could mislead a science
+> result.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `use_landscape_equilibration_cycle` | bool | `false` | Route analytical steady state through the equilibration-cycle module. `false` keeps the legacy steady-state behaviour unchanged. |
+| `divide_merge_search_steps` | int | `5` | Downstream search depth for the divide diagnostics. Two adjacent pixels are a divide pair when their flow paths do not meet within this many receiver steps. Must be `> 0`. |
+| `divide_use_d8_diagonals` | bool | `true` | Include diagonal neighbours when enumerating divide pairs (D8 adjacency). Affects the diagnostics and convergence checks only, not the routing. |
+| `divide_gradient_target` | float | `0` | Reporting-only acceptance target. When `> 0`, the final cycle reports whether the median divide gradient is at or below this value. **It does not change stopping.** |
+
+### Convergence and early stopping
+
+Off by default: with `steady_state_check_convergence: false` the run always
+executes `steady_state_n_cycles` cycles.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `steady_state_check_convergence` | bool | `false` | Enable convergence-based early stopping. |
+| `steady_state_tolerance_dz_over_relief` | float | `1e-3` | Convergence tolerance on max\|Δz\|/relief between cycles. Used when `steady_state_tolerance_dz_m` is `0`. |
+| `steady_state_tolerance_dz_m` | float | `0` | Absolute tolerance on max\|Δz\| (m) between cycles. When `> 0` this **overrides** `steady_state_tolerance_dz_over_relief`. |
+| `steady_state_tolerance_receiver_fraction` | float | `1e-3` | Convergence tolerance on the fraction of pixels changing receiver each cycle. Set `<= 0` to disable this criterion. |
+| `steady_state_convergence_patience` | int | `2` | Consecutive converged cycles required before stopping. Cycle 1 is never eligible, since there is no previous cycle to compare against. |
+
+A cycle counts as converged only when the elevation criterion **and** the
+receiver-fraction criterion both hold; a criterion whose tolerance is disabled
+(`<= 0`) is treated as satisfied. The count must be *consecutive* — any cycle
+that fails resets the streak to zero.
+
+The two criteria are not redundant: a landscape can stop moving vertically while
+divides are still migrating, so max\|Δz\| alone can look converged while the flow
+graph is still changing. That is the failure the receiver-fraction criterion
+exists to catch. Disabling both leaves nothing but patience, which is why cycle 1
+is excluded — it has no predecessor, `frac_receiver_changed` is forced to `0.0`,
+and a patience-1 run would otherwise declare convergence having compared nothing.
 
 ---
 
@@ -192,6 +252,24 @@ These only apply when `hillslope_model: roering_implicit`.
 | `hillslope_ss_tolerance` | float | `1e-4` | Convergence criterion: max|Δz| over hillslope pixels per iteration. |
 | `hillslope_ss_max_iterations` | int | `10000` | Maximum iterations for the hillslope steady-state solver. |
 | `hillslope_sor_omega` | float | `0` | SOR relaxation factor ω (used by `linear` and `roering` solvers). `0` = auto-estimate from grid size (capped at 1.95). Reduce toward 1.3 if the nonlinear solver diverges. |
+
+### Inside the equilibration cycle
+
+These apply only when `use_landscape_equilibration_cycle` and
+`run_hillslope_steady_state` are both true.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `hillslope_every_cycle` | bool | `true` | Solve the hillslopes on every cycle, not just the last one. Costs one extra solve per cycle, but it is the only way to show the divide is stable **under re-routing** — with `false` the hillslopes are solved once on the delivered surface, so a divide that would move if the hillslopes were re-solved never gets the chance to. |
+| `channel_hysteresis_factor` | float | `0.5` | Hysteresis on the channel (Dirichlet) set between cycles. A pixel already flagged as channel stays channel until its drainage area falls below `channel_hysteresis_factor × incision_threshold_area`. Stops the Dirichlet set flickering from cycle to cycle. `1.0` disables the hysteresis. |
+
+> **If the nonlinear solver diverges, set `hillslope_sor_omega` manually.** With
+> `hillslope_ss_model: roering` the auto-omega estimate has been observed to
+> diverge at every diffusivity and tolerance tried — running to the iteration cap
+> with a residual of order hundreds of metres, and producing correspondingly
+> meaningless divide diagnostics. `hillslope_sor_omega: 1.3` converges. The
+> auto-estimate is tuned for the linear solver; it is not a safe default for the
+> nonlinear one.
 
 ---
 
@@ -233,6 +311,37 @@ These only apply when `hillslope_model: roering_implicit`.
 | `<write_fname>_hillslope_steady_state_elevation.tif` | Combined fluvial + hillslope steady-state elevation (when `run_hillslope_steady_state: true`). |
 | `<write_fname>_hillslope_steady_state_stats.csv` | Hillslope solver diagnostics. Written when `write_elevation_stats_csv: true`. |
 | `<write_fname>_hillslope_steady_state_hillshade.png` | Hillshade PNG of combined surface (when `write_hillshade_png: true`). |
+
+### Equilibration-cycle outputs
+
+Both require `run_steady_state` and `use_landscape_equilibration_cycle` to be true.
+
+| Parameter | Type | Default | Output file |
+|---|---|---|---|
+| `write_snap_convergence_csv` | bool | `true` | `<write_fname>_snap_convergence.csv` — one row per cycle. This is the file to read when a run does not converge. |
+| `write_divide_step_raster` | bool | `false` | `<write_fname>_divide_step.<ext>` (extension from `write_output_format`) — the per-pixel elevation contrast across divide pairs on the final DEM, for locating *where* a residual divide step sits rather than just its distribution. |
+
+`_snap_convergence.csv` columns, grouped:
+
+| Group | Columns |
+|---|---|
+| identity / cost | `cycle`, `seconds` |
+| elevation change | `max_abs_dz_m`, `mean_abs_dz_m`, `rms_dz_m`, `max_dz_over_relief` |
+| routing change | `n_receiver_changed`, `frac_receiver_changed`, `n_receiver_changed_hillslope`, `frac_receiver_changed_hillslope`, `n_hillslope_compared` |
+| cross-divide drainage | `n_cross_divide`, `frac_cross_divide` |
+| divide step | `divide_n_divide_pairs`, `divide_step_median_m`, `divide_step_p90_m`, `divide_step_max_m`, `K_used`, `computed_relief` |
+| divide gradient target | `divide_gradient_median`, `divide_gradient_p90`, `divide_gradient_target_used`, `divide_gradient_target_margin`, `divide_gradient_target_met` |
+| limit cycle | `receiver_hash`, `limit_cycle_detected`, `limit_cycle_period`, `limit_cycle_first` |
+
+The limit-cycle columns matter because **a snapping run need not converge to a
+fixed point at all** — it can settle into a repeating orbit of flow graphs.
+`receiver_hash` identifies the flow graph each cycle; a repeat means the
+iteration has closed an orbit, and `limit_cycle_period` is its length
+(`1` = a genuine fixed point). Critical-slope hillslopes are the case to watch:
+they can wander indefinitely without ever closing an orbit, in which case
+nothing is detected and the run simply stops at `steady_state_n_cycles`. An
+elliptic hillslope solve (`linear` or `roering`) reaches a period-1 fixed point
+instead, which is the practical reason to prefer one.
 
 ### Time-stepping outputs
 
@@ -293,6 +402,49 @@ hillslope_ss_tolerance:       0.0001
 
 write_hillshade_png:          true
 ```
+
+### Equilibrated steady state with divide diagnostics
+
+Cycles until the divides stop moving rather than for a fixed count, solving the
+hillslopes every cycle so the divide position is tested under re-routing.
+`steady_state_n_cycles` is the cap, not the target.
+
+```
+read_path:  /data/dems/
+read_fname: initial_dem
+write_path: /data/output/
+write_fname: run03
+
+run_steady_state:                          true
+use_landscape_equilibration_cycle:         true
+steady_state_n_cycles:                     40
+
+erodibility:                               0.0005
+uplift_rate:                               0.0001
+incision_threshold_area:                   1000000
+
+steady_state_check_convergence:            true
+steady_state_tolerance_dz_over_relief:     0.001
+steady_state_tolerance_receiver_fraction:  0.001
+steady_state_convergence_patience:         3
+
+run_hillslope_steady_state:                true
+hillslope_ss_model:                        roering
+hillslope_diffusivity:                     0.005
+critical_hillslope_slope:                  0.8
+hillslope_sor_omega:                       1.3
+hillslope_every_cycle:                     true
+
+divide_merge_search_steps:                 5
+divide_gradient_target:                    0.5
+
+write_snap_convergence_csv:                true
+write_divide_step_raster:                  true
+```
+
+Note `hillslope_sor_omega: 1.3` rather than the `0` auto-estimate — see the
+warning under *Hillslope steady-state*. Leave `enable_dinf_fluvial_erosion` off:
+combining it with the equilibration cycle is a fatal error, not a fallback.
 
 ### Time-stepping LEM with Cidre hillslope transport
 

@@ -14,7 +14,16 @@
 // (OCN) construction: a spanning tree of D8 flow directions over a rectangular
 // lattice is evolved by simulated-annealing edge flips that minimise the energy
 //
-//     E = sum_i  A_i^gamma          (A_i = drainage area at pixel i)
+//     E = sum_i  A_i^gamma * L_i    (A_i = drainage area, L_i = link length)
+//
+// L_i is the length of the link from i to its receiver: cell_size for a cardinal
+// step, cell_size*sqrt(2) for a diagonal one. This is the DEFAULT and it is the
+// physically correct form -- link energy expenditure is E_i ~ L_i Q_i S_i
+// (Strong & Mudd 2022 PNAS eq. 4; Goren & Shelef 2024 ESurf 12:1347 eq. 5).
+// Setting energy_length_weighted = false drops L_i and reproduces OCNet exactly.
+// Do not drop it casually: on an 8-connected lattice it is what stops the
+// annealer buying free lateral movement, and without it the networks come out
+// almost isotropic (see the option's documentation for the measurement).
 //
 // A candidate reconnection is accepted with the Metropolis rule
 //     accept iff  E_new <= E_prev  OR  rand() < exp(-(E_new - E_prev)/T),
@@ -67,7 +76,15 @@ namespace lsdtt {
 //                  land pixel) - the whole domain drains through one network.
 //   all_coast    : every coastal land pixel (land touching sea or the grid edge)
 //                  is a base level - an island draining to its whole coastline.
-enum class ocn_outlet_mode { single_south, all_coast };
+// single_south : one outlet on the south edge; the whole domain is one network.
+// all_coast    : every coastal land pixel is a base level.
+// north_south  : every land pixel on the north AND south edges is a base level,
+//                and nothing else is. Paired with periodic_columns this is the
+//                classic ridge-and-valley strip -- drainage leaves through two
+//                opposed boundaries and the main divide is free to sit anywhere
+//                between them, which is what makes divide position a meaningful
+//                measurement rather than an artefact of a single outlet.
+enum class ocn_outlet_mode { single_south, all_coast, north_south };
 
 struct lsdtt_ocn_options
 {
@@ -80,6 +97,39 @@ struct lsdtt_ocn_options
     // from the network and written as nodata.
     std::vector<std::uint8_t> domain_mask;
     ocn_outlet_mode           outlet_mode = ocn_outlet_mode::single_south;
+
+    // Wrap the lattice in the column direction, so column 0 and column n_cols-1
+    // are D8 neighbours. Must match the 'p' flags in the boundary_conditions
+    // used to route the resulting DEM: a network annealed with wrapping and then
+    // routed without it (or the reverse) is not the network that was generated.
+    bool periodic_columns = false;
+
+    // Weight each node's energy contribution by the LENGTH of its downstream
+    // link:  E = sum_i A_i^gamma * L_i   instead of   E = sum_i A_i^gamma.
+    //
+    // This is the physically correct discretisation and it is the DEFAULT.
+    // The energy expenditure of a link is E_i ~ L_i Q_i S_i (Strong & Mudd
+    // 2022, PNAS, eq. 4; Goren & Shelef 2024, Earth Surf. Dynam. 12, 1347-1369,
+    // eq. 5), which reduces to A_i^gamma * L_i under the usual hydraulic
+    // geometry scalings. On a 4-connected lattice every L_i is equal, so it
+    // factors out and the literature writes it as sum(A^gamma) -- but on the
+    // 8-connected lattice used here a diagonal link is sqrt(2) longer than a
+    // cardinal one, and dropping L_i under-charges it by that factor.
+    //
+    // The consequence of dropping it is not subtle. Lateral movement becomes
+    // free, so the annealer spends it aggregating sideways and the network
+    // comes out almost isotropic: measured on a 400x200 strip draining north
+    // and south, 45.2% of links were diagonal (50% is random) and 26.8% ran
+    // pure east-west, parallel to the divide and making no progress toward any
+    // outlet. Goren & Shelef make the same point from the other side: with
+    // uniform l_i the energy reduces to a function of the number of nodes.
+    //
+    // Set false to reproduce OCNet (Carraro et al. 2020), which sums A^gamma
+    // unweighted over an 8-neighbour stencil. That is a defensible choice if
+    // the object of study is the flow GRAPH rather than a geometric network,
+    // and it is what the regression oracle pins -- but it is not the right
+    // default for a tool whose output is a DEM.
+    bool energy_length_weighted = true;
 
     // Optional georeference override. When use_supplied_meta is true the output
     // rasters use supplied_meta verbatim (its n_rows/n_cols/cell_size must match
@@ -157,6 +207,22 @@ public:
     { return f >= 0 && f < n_ && land_[static_cast<std::size_t>(f)] != 0; }
 
 private:
+    // Column index after applying the lateral boundary. Returns -1 for a column
+    // that is genuinely off-grid, so callers can keep a single rejection test:
+    // with periodic_columns the index wraps and is never -1, without it the
+    // out-of-range columns are rejected exactly as before.
+    [[nodiscard]] double link_length_(std::int64_t node, std::int64_t recv) const;
+
+    [[nodiscard]] int wrap_col(int c) const noexcept
+    {
+        if (c >= 0 && c < ncols_) return c;
+        if (!opts_.periodic_columns) return -1;
+        // ncols_ >= 2 is enforced in the constructor, and neighbour offsets are
+        // +/-1, so a single add/subtract is sufficient here.
+        if (c < 0)       return c + ncols_;
+        return c - ncols_;
+    }
+
     lsdtt_ocn_options opts_;
     int          nrows_ = 0;
     int          ncols_ = 0;

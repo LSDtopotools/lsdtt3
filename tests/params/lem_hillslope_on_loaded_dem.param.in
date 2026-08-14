@@ -1,0 +1,25 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+
+write_path: __WRITE_PATH__
+write_fname: tinyhsonly
+write_output_format: gtiff
+
+# Solve hillslopes on the loaded surface WITHOUT re-snapping the fluvial field.
+# The channels keep the elevations they arrived with, which is the whole point:
+# a transient fluvial field (a step-change knickpoint) must survive the
+# hillslope solve.
+run_hillslope_on_loaded_dem: true
+run_hillslope_steady_state: true
+hillslope_ss_model: roering
+incision_threshold_area: 3
+hillslope_diffusivity: 1.0
+critical_hillslope_slope: 0.8
+uplift_rate: 0.0001
+hillslope_ss_tolerance: 0.001
+hillslope_ss_max_iterations: 5000
+# Roering needs heavy under-relaxation, even here: omega 0.8 and 0.5 both fail
+# to converge on this 5x5 in 20000 iterations; 0.3 converges in 91.
+hillslope_sor_omega: 0.3
+boundary_conditions: oooo

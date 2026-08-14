@@ -46,6 +46,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_synthetic_network_cpu.hpp"
 #include "../src/cpu/lsdtt_synthetic_domain_cpu.hpp"
+#include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -128,7 +129,11 @@ int main(int argc, char* argv[])
         "auto: islands use all_coast, the rectangle uses single. single: one "
         "outlet (whole domain drains through one network; most sensitive to "
         "boundary shape). all_coast: every coastal land pixel is a base level "
-        "(an island draining to its whole coastline).",
+        "(an island draining to its whole coastline). north_south: every land "
+        "pixel on the north and south edges, and nothing else -- the classic "
+        "ridge-and-valley strip, and the mode to use with periodic sides "
+        "(boundary_conditions: opop), where the main divide is free to sit "
+        "anywhere between the two boundaries.",
         "Domain (rectangle vs irregular island)", "param", ""};
 
     float_default_map["island_fill_fraction"] = 0.7f;
@@ -171,6 +176,25 @@ int main(int argc, char* argv[])
         "Domain (rectangle vs irregular island)", "param", ""};
 
     // --- Energy / branching ---
+    bool_default_map["energy_length_weighted"] = true;
+    help_map["energy_length_weighted"] = {"bool","true",
+        "Weight each link's energy by its length: E = sum(A^gamma * L).",
+        "This is the physically correct form and the default. Link energy "
+        "expenditure is E_i ~ L_i Q_i S_i (Strong and Mudd 2022 PNAS eq. 4; "
+        "Goren and Shelef 2024 Earth Surf. Dynam. 12:1347-1369 eq. 5), which "
+        "reduces to A^gamma * L. On a 4-connected lattice L factors out, which "
+        "is why the literature writes sum(A^gamma) -- but on the 8-connected "
+        "lattice used here a diagonal link is sqrt(2) longer and dropping L "
+        "under-charges it, so the annealer buys free lateral movement and the "
+        "main channels come out running diagonally. It also selects a "
+        "length-aware (Dijkstra) seed tree instead of the Chebyshev "
+        "breadth-first one. Measured on a 400x200 strip draining north-south, "
+        "area-weighted over channels >2 km2: diagonal flow falls from 0.937 to "
+        "0.056 and north-south rises from 0.062 to 0.944. Set false to "
+        "reproduce OCNet (Carraro et al. 2020) bit-for-bit; that is defensible "
+        "if you want the flow GRAPH rather than a geometric network.",
+        "Energy and branching", "param", ""};
+
     float_default_map["energy_exponent_gamma"] = 0.5f;
     help_map["energy_exponent_gamma"] = {"float","0.5",
         "Energy exponent gamma in E = sum(A^gamma) (OCNet expEnergy).",
@@ -288,6 +312,194 @@ int main(int argc, char* argv[])
         "Fixing the seed makes a run reproducible.",
         "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
 
+    // -------------------------------------------------------------------------
+    // Equilibration (optional second stage)
+    //
+    // The OCN chi DEM does NOT exactly carry the OCN graph under independent D8
+    // routing -- fidelity plateaus near 0.935 and never reaches 1 at any
+    // temperature or anneal length (see the header note in
+    // lsdtt_synthetic_network_cpu.hpp). Equilibration is therefore not polish:
+    // it is what makes the delivered landscape self-consistent, by re-routing
+    // and re-snapping until the flow graph stops changing.
+    //
+    // Parameter names are taken VERBATIM from lsdtt-lem so the two CLIs stay
+    // learnable; anything you know there works here.
+    // -------------------------------------------------------------------------
+    const char* k_eq_group = "Equilibration (optional, run_equilibration)";
+
+    bool_default_map["run_equilibration"] = false;
+    help_map["run_equilibration"] = {"bool","false",
+        "Equilibrate the generated DEM in the same invocation (OCN -> equilibrate).",
+        "Runs the landscape equilibration cycle on the synthetic DEM: pit-fill, "
+        "re-route, re-snap, repeat. Without it the DEM is delivered exactly as "
+        "the OCN synthesis produced it, and its D8 graph will differ from the "
+        "OCN graph on roughly 6-9 percent of interior pixels.",
+        k_eq_group, "switch", ""};
+
+    int_default_map["steady_state_n_cycles"] = 10;
+    help_map["steady_state_n_cycles"] = {"int","10",
+        "Number of equilibration cycles (a MAXIMUM when convergence checking is on).",
+        "Each cycle recomputes the flow graph from the previous cycle's "
+        "elevations, letting divides migrate one pixel per cycle.",
+        k_eq_group, "param", "run_equilibration"};
+
+    bool_default_map["steady_state_check_convergence"] = false;
+    help_map["steady_state_check_convergence"] = {"bool","false",
+        "Stop early once the landscape stops changing.",
+        "Default false runs exactly steady_state_n_cycles cycles.",
+        k_eq_group, "param", "run_equilibration"};
+
+    float_default_map["steady_state_tolerance_dz_over_relief"] = 1e-3f;
+    help_map["steady_state_tolerance_dz_over_relief"] = {"float","1e-3",
+        "Convergence tolerance on max|dz|/relief between cycles.",
+        "Used when steady_state_tolerance_dz_m is 0.",
+        k_eq_group, "param", "steady_state_check_convergence"};
+
+    float_default_map["steady_state_tolerance_dz_m"] = 0.0f;
+    help_map["steady_state_tolerance_dz_m"] = {"float","0",
+        "Absolute convergence tolerance on max|dz| (m) between cycles.",
+        "If > 0 this overrides steady_state_tolerance_dz_over_relief.",
+        k_eq_group, "param", "steady_state_check_convergence"};
+
+    float_default_map["steady_state_tolerance_receiver_fraction"] = 1e-3f;
+    help_map["steady_state_tolerance_receiver_fraction"] = {"float","1e-3",
+        "Convergence tolerance on the fraction of pixels changing receiver.",
+        "Set <= 0 to disable. A landscape can stop moving vertically while "
+        "divides are still migrating, which is what this criterion catches.",
+        k_eq_group, "param", "steady_state_check_convergence"};
+
+    int_default_map["steady_state_convergence_patience"] = 2;
+    help_map["steady_state_convergence_patience"] = {"int","2",
+        "Consecutive converged cycles required before stopping.",
+        "Cycle 1 is never eligible: it has no predecessor to compare against.",
+        k_eq_group, "param", "steady_state_check_convergence"};
+
+    int_default_map["divide_merge_search_steps"] = 5;
+    help_map["divide_merge_search_steps"] = {"int","5",
+        "Downstream search depth for the divide diagnostics. Must be > 0.",
+        "Two adjacent pixels are a divide pair when their flow paths do not "
+        "meet within this many receiver steps.",
+        k_eq_group, "param", "run_equilibration"};
+
+    bool_default_map["divide_use_d8_diagonals"] = true;
+    help_map["divide_use_d8_diagonals"] = {"bool","true",
+        "Include diagonal neighbours when enumerating divide pairs.",
+        "Affects diagnostics and convergence checks only, not the routing.",
+        k_eq_group, "param", "run_equilibration"};
+
+    float_default_map["divide_gradient_target"] = 0.0f;
+    help_map["divide_gradient_target"] = {"float","0",
+        "Reporting-only divide-gradient acceptance target.",
+        "When > 0 the final cycle reports whether the median divide gradient is "
+        "at or below this value. It does not change stopping.",
+        k_eq_group, "param", "run_equilibration"};
+
+    bool_default_map["divide_area_by_dx"] = true;
+    help_map["divide_area_by_dx"] = {"bool","true",
+        "Divide drainage area by cell size in the chi integrand.",
+        "Match this to how the OCN elevations were synthesised.",
+        k_eq_group, "param", "run_equilibration"};
+
+    string_default_map["boundary_conditions"] = "oooo";
+    help_map["boundary_conditions"] = {"string","oooo",
+        "Boundary conditions (north/east/south/west): o=open, n=no-flux, "
+        "p=periodic, b=forced outlet.",
+        "Used for equilibration routing AND, for the 'p' flags, for the "
+        "annealing lattice itself: 'p' on east/west makes column 0 and column "
+        "n_cols-1 D8 neighbours during generation, so the generated network and "
+        "the routed DEM see the same lattice. East and west must match. Pair "
+        "'opop' with outlet_mode: north_south for a ridge-and-valley strip.",
+        k_eq_group, "param", ""};
+
+    float_default_map["fill_min_slope"] = 1e-4f;
+    help_map["fill_min_slope"] = {"float","1e-4",
+        "Minimum slope imposed by the pit-fill between cycles.",
+        "",
+        k_eq_group, "param", "run_equilibration"};
+
+    int_default_map["n_threads"] = 0;
+    help_map["n_threads"] = {"int","0",
+        "Number of threads (0 = all available).",
+        "",
+        k_eq_group, "param", ""};
+
+    // --- Hillslopes inside the equilibration cycle ---
+    const char* k_hs_group = "Hillslopes inside the equilibration cycle";
+
+    bool_default_map["run_hillslope_steady_state"] = false;
+    help_map["run_hillslope_steady_state"] = {"bool","false",
+        "Solve hillslope steady state inside the equilibration cycle.",
+        "Requires run_equilibration: true and incision_threshold_area > 0; "
+        "channel pixels become the Dirichlet set that pins the solve.",
+        k_hs_group, "param", "run_equilibration"};
+
+    string_default_map["hillslope_ss_model"] = "roering";
+    help_map["hillslope_ss_model"] = {"string","roering",
+        "Hillslope solver: linear, roering, cidre, or critical_slope.",
+        "linear/roering are elliptic solves that FIND the divide position and "
+        "reach a fixed point. critical_slope IMPOSES a gradient by upslope "
+        "integration and may never settle -- it delivers a far larger divide "
+        "step. Prefer an elliptic model unless you specifically want the "
+        "critical-slope construction.",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    float_default_map["incision_threshold_area"] = 0.0f;
+    help_map["incision_threshold_area"] = {"float","0",
+        "Drainage area threshold (m^2) separating channels from hillslopes.",
+        "Required (> 0) when run_hillslope_steady_state is true.",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    float_default_map["hillslope_diffusivity"] = 0.005f;
+    help_map["hillslope_diffusivity"] = {"float","0.005",
+        "Hillslope diffusivity D (m^2/yr).",
+        "",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    float_default_map["critical_hillslope_slope"] = 0.8f;
+    help_map["critical_hillslope_slope"] = {"float","0.8",
+        "Critical hillslope gradient Sc (dimensionless).",
+        "",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    bool_default_map["enable_nonlinear_hillslopes"] = true;
+    help_map["enable_nonlinear_hillslopes"] = {"bool","true",
+        "Use the nonlinear transport law.",
+        "",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    float_default_map["hillslope_ss_tolerance"] = 1e-4f;
+    help_map["hillslope_ss_tolerance"] = {"float","1e-4",
+        "Convergence criterion for the hillslope solve: max|delta_z|.",
+        "",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    int_default_map["hillslope_ss_max_iterations"] = 10000;
+    help_map["hillslope_ss_max_iterations"] = {"int","10000",
+        "Maximum iterations for the hillslope solver.",
+        "",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    float_default_map["hillslope_sor_omega"] = 0.0f;
+    help_map["hillslope_sor_omega"] = {"float","0",
+        "SOR relaxation factor omega (0 = auto-estimate).",
+        "The auto-estimate is tuned for the linear solver and has been observed "
+        "to DIVERGE with hillslope_ss_model: roering. Set 1.3 if that happens.",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    bool_default_map["hillslope_every_cycle"] = true;
+    help_map["hillslope_every_cycle"] = {"bool","true",
+        "Solve the hillslopes on every cycle, not just the last.",
+        "Costs one extra solve per cycle, but it is the only way to show the "
+        "divide is stable under re-routing.",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
+    float_default_map["channel_hysteresis_factor"] = 0.5f;
+    help_map["channel_hysteresis_factor"] = {"float","0.5",
+        "Hysteresis on the channel (Dirichlet) set between cycles.",
+        "A channel pixel stays a channel until its area falls below this "
+        "factor times incision_threshold_area. 1.0 disables the hysteresis.",
+        k_hs_group, "param", "run_hillslope_steady_state"};
+
     // --- Outputs ---
     bool_default_map["write_dem_raster"] = true;
     help_map["write_dem_raster"] = {"bool","true",
@@ -307,6 +519,21 @@ int main(int argc, char* argv[])
         "Fidelity = fraction of interior pixels whose D8 receiver equals the OCN "
         "receiver. ~1 for relaxed (low-T) networks; lower for random (high-T).",
         "Outputs", "param", ""};
+
+    bool_default_map["write_equilibrated_dem_raster"] = true;
+    help_map["write_equilibrated_dem_raster"] = {"bool","true",
+        "Write the equilibrated DEM (when run_equilibration is true).",
+        "Output file: <write_fname>_ocn_equilibrated_dem.tif. The un-equilibrated "
+        "DEM is still written separately as <write_fname>_ocn_dem.tif, so the "
+        "before/after pair is always available.",
+        "Outputs", "switch", ""};
+
+    bool_default_map["write_snap_convergence_csv"] = true;
+    help_map["write_snap_convergence_csv"] = {"bool","true",
+        "Write per-cycle equilibration diagnostics (when run_equilibration is true).",
+        "Output file: <write_fname>_ocn_snap_convergence.csv. Read this when a "
+        "run does not converge.",
+        "Outputs", "switch", ""};
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
@@ -403,6 +630,7 @@ int main(int argc, char* argv[])
     opts.n_rows    = ifs["n_rows"];
     opts.n_cols    = ifs["n_cols"];
     opts.cell_size = ff["cell_size"];
+    opts.energy_length_weighted = bf["energy_length_weighted"];
     opts.gamma     = ff["energy_exponent_gamma"];
     opts.n_iter    = (ifs["n_iter"] > 0)
                          ? static_cast<long long>(ifs["n_iter"]) : -1;
@@ -531,9 +759,35 @@ int main(int argc, char* argv[])
         opts.outlet_mode = lsdtt::ocn_outlet_mode::all_coast;
     else if (omode == "single")
         opts.outlet_mode = lsdtt::ocn_outlet_mode::single_south;
+    else if (omode == "north_south")
+        opts.outlet_mode = lsdtt::ocn_outlet_mode::north_south;
     else  // auto
         opts.outlet_mode = is_island ? lsdtt::ocn_outlet_mode::all_coast
                                      : lsdtt::ocn_outlet_mode::single_south;
+
+    // Lateral periodicity is taken from boundary_conditions rather than given
+    // its own switch, so the lattice the network is annealed on and the grid it
+    // is later routed on cannot disagree. A network annealed with a seam and
+    // then routed without one is not the network that was generated.
+    {
+        const std::string bc = sf["boundary_conditions"];
+        const char e = (bc.size() > 1) ? bc[1] : 'o';
+        const char w = (bc.size() > 3) ? bc[3] : 'o';
+        const bool e_p = (e == 'p' || e == 'P');
+        const bool w_p = (w == 'p' || w == 'P');
+
+        if (e_p != w_p)
+        {
+            std::cerr << "FATAL: boundary_conditions '" << bc
+                      << "': east and west periodic flags must match.\n";
+            return 1;
+        }
+        opts.periodic_columns = e_p;
+
+        if (opts.periodic_columns)
+            std::cout << "Lattice is periodic in the column direction "
+                         "(boundary_conditions '" << bc << "').\n";
+    }
 
     if (is_island)
     {
@@ -586,14 +840,14 @@ int main(int argc, char* argv[])
     // Round-trip verification: route the synthetic DEM through D8 and compare
     // receivers to the OCN graph over interior pixels.
     // -------------------------------------------------------------------------
-    double fidelity = -1.0;
-    if (bf["verify_routing"])
+    // Factored out so the identical test can be applied to the equilibrated DEM
+    // below. `label` is only used in the reported line.
+    auto measure_ocn_agreement =
+        [&](const lsdtt::lsdtt_raster_cpu& dem, const char* label) -> double
     {
+        double frac = -1.0;
         try
         {
-            lsdtt::lsdtt_raster_result elev_copy = elev;  // routing consumes it
-            lsdtt::lsdtt_raster_cpu dem(std::move(elev_copy));
-
             lsdtt::lsdtt_flowinfo_options fi_opts;
             auto flow = lsdtt::make_flow_base(
                 dem.get_data_array(), dem.get_mask_array(),
@@ -622,16 +876,260 @@ int main(int argc, char* argv[])
             }
 
             if (interior > 0)
-                fidelity = static_cast<double>(matches) /
-                           static_cast<double>(interior);
+                frac = static_cast<double>(matches) /
+                       static_cast<double>(interior);
 
-            std::cout << "D8 round-trip fidelity (interior): "
-                      << fidelity << "  (" << matches << "/" << interior << ")\n";
+            std::cout << label << ": " << frac
+                      << "  (" << matches << "/" << interior << ")\n";
         }
         catch (const std::exception& e)
         {
             std::cerr << "Warning: routing verification failed: "
                       << e.what() << "\n";
+        }
+        return frac;
+    };
+
+    double fidelity = -1.0;
+    if (bf["verify_routing"])
+    {
+        lsdtt::lsdtt_raster_result elev_copy = elev;   // routing consumes it
+        lsdtt::lsdtt_raster_cpu dem(std::move(elev_copy));
+        fidelity = measure_ocn_agreement(
+            dem, "D8 round-trip fidelity (interior)");
+    }
+
+    // -------------------------------------------------------------------------
+    // Equilibration (optional): OCN -> equilibrate in one invocation.
+    //
+    // The un-equilibrated DEM has already been written above, so the before/after
+    // pair is always on disk regardless of what happens here.
+    // -------------------------------------------------------------------------
+    bool   eq_ran            = false;
+    bool   eq_converged      = false;
+    int    eq_cycles_run     = 0;
+    int    eq_limit_period   = 0;
+    double eq_divide_step_p90 = -1.0;
+    double eq_ocn_agreement  = -1.0;
+
+    if (bf["run_equilibration"])
+    {
+        const int   n_cycles = ifs["steady_state_n_cycles"];
+        const bool  check    = bf["steady_state_check_convergence"];
+        const int   patience = ifs["steady_state_convergence_patience"];
+        const float tol_dz_m = ff["steady_state_tolerance_dz_m"];
+        const float tol_dz_rel = ff["steady_state_tolerance_dz_over_relief"];
+        const float tol_recv = ff["steady_state_tolerance_receiver_fraction"];
+        const float div_target = ff["divide_gradient_target"];
+        const int   merge_steps = ifs["divide_merge_search_steps"];
+
+        // Validate before doing any work, with the same messages lsdtt-lem uses.
+        if (n_cycles < 1)
+        {
+            std::cerr << "FATAL: invalid steady_state_n_cycles=" << n_cycles
+                      << "; must be >= 1.\n";
+            return 1;
+        }
+        if (merge_steps < 1)
+        {
+            std::cerr << "FATAL: invalid divide_merge_search_steps=" << merge_steps
+                      << "; must be > 0.\n";
+            return 1;
+        }
+        if (check && patience < 1)
+        {
+            std::cerr << "FATAL: invalid steady_state_convergence_patience="
+                      << patience
+                      << "; must be >= 1 when steady_state_check_convergence=true.\n";
+            return 1;
+        }
+        if (tol_dz_m < 0.0f)
+        {
+            std::cerr << "FATAL: invalid steady_state_tolerance_dz_m=" << tol_dz_m
+                      << "; must be >= 0.\n";
+            return 1;
+        }
+        if (tol_dz_rel < 0.0f)
+        {
+            std::cerr << "FATAL: invalid steady_state_tolerance_dz_over_relief="
+                      << tol_dz_rel << "; must be >= 0.\n";
+            return 1;
+        }
+        if (tol_recv < 0.0f || tol_recv > 1.0f)
+        {
+            std::cerr << "FATAL: invalid steady_state_tolerance_receiver_fraction="
+                      << tol_recv << "; must be in [0, 1].\n";
+            return 1;
+        }
+        if (div_target < 0.0f)
+        {
+            std::cerr << "FATAL: invalid divide_gradient_target=" << div_target
+                      << "; must be >= 0.\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_equilibration_options eq_opts;
+
+        // The fluvial snap must use the SAME parameters the OCN elevations were
+        // synthesised from, or the first cycle re-snaps to a different surface
+        // and the comparison against the OCN graph is meaningless.
+        eq_opts.fluvial.U                   = ff["uplift_rate"];
+        eq_opts.fluvial.K                   = ff["erodibility"];
+        eq_opts.fluvial.m                   = ff["m_exponent"];
+        eq_opts.fluvial.n                   = ff["n_exponent"];
+        eq_opts.fluvial.relief_mode         = (sf["steady_state_mode"] != "K");
+        eq_opts.fluvial.target_relief       = ff["target_relief"];
+        eq_opts.fluvial.baselevel_elevation = ff["baselevel_elevation"];
+        eq_opts.fluvial.divide_area_by_dx   = bf["divide_area_by_dx"];
+        eq_opts.fluvial.n_threads           = ifs["n_threads"];
+
+        eq_opts.use_dinf            = false;   // the cycle is D8-only
+        eq_opts.max_cycles          = n_cycles;
+        eq_opts.boundary_conditions = sf["boundary_conditions"];
+        eq_opts.fill_min_slope      = ff["fill_min_slope"];
+        eq_opts.n_threads           = ifs["n_threads"];
+
+        eq_opts.convergence.check_convergence          = check;
+        eq_opts.convergence.tolerance_dz_over_relief   = tol_dz_rel;
+        eq_opts.convergence.tolerance_dz_m             = tol_dz_m;
+        eq_opts.convergence.tolerance_receiver_fraction = tol_recv;
+        eq_opts.convergence.divide_gradient_target     = div_target;
+        eq_opts.convergence.patience_cycles            = patience;
+        eq_opts.convergence.divide_opts.divide_merge_search_steps = merge_steps;
+        eq_opts.convergence.divide_opts.use_d8_diagonals =
+            bf["divide_use_d8_diagonals"];
+
+        eq_opts.run_hillslope          = bf["run_hillslope_steady_state"];
+        eq_opts.hillslope_model        = sf["hillslope_ss_model"];
+        eq_opts.hillslope_every_cycle  = bf["hillslope_every_cycle"];
+        eq_opts.channel_threshold_area = ff["incision_threshold_area"];
+        eq_opts.channel_hysteresis_factor = ff["channel_hysteresis_factor"];
+        eq_opts.hillslope.D              = ff["hillslope_diffusivity"];
+        eq_opts.hillslope.U              = ff["uplift_rate"];
+        eq_opts.hillslope.Sc             = ff["critical_hillslope_slope"];
+        eq_opts.hillslope.tolerance      = ff["hillslope_ss_tolerance"];
+        eq_opts.hillslope.max_iterations = ifs["hillslope_ss_max_iterations"];
+        eq_opts.hillslope.sor_omega      = ff["hillslope_sor_omega"];
+        eq_opts.hillslope.nonlinear      = bf["enable_nonlinear_hillslopes"];
+
+        if (eq_opts.run_hillslope && eq_opts.channel_threshold_area <= 0.0)
+        {
+            std::cerr
+                << "FATAL: run_hillslope_steady_state: true requires "
+                   "incision_threshold_area > 0; the channel pixels are the "
+                   "Dirichlet set that pins the hillslope solve.\n";
+            return 1;
+        }
+
+        // Refuse a boundary setting that closes the edge the OCN drains through.
+        //
+        // The router now reports unresolvable cells as a catchable exception, so
+        // this is no longer about avoiding a crash. It is checked here because
+        // the router can only say "could not assign a receiver at row 47, col
+        // 24", which does not tell the user that the CAUSE is a parameter they
+        // set. Closing the outlet edge is an easy mistake -- 'nnnn' is the right
+        // choice for a hillslope run and copies across naturally -- so it is
+        // worth naming the parameter and the fix before any work is done.
+        {
+            const std::string& bc = eq_opts.boundary_conditions;
+            const char south = (bc.size() > 2) ? bc[2] : 'o';
+            const bool south_closed = (south == 'n' || south == 'N' ||
+                                       south == 'p' || south == 'P');
+
+            if (opts.outlet_mode == lsdtt::ocn_outlet_mode::single_south &&
+                south_closed)
+            {
+                std::cerr
+                    << "FATAL: boundary_conditions '" << bc << "' closes the "
+                       "south edge, but this OCN drains through a single south "
+                       "outlet, so no pixel can reach base level and flow "
+                       "routing cannot resolve.\n"
+                       "       Use an open south edge (e.g. 'nnon' keeps the "
+                       "other three closed), or generate an island domain with "
+                       "outlet_mode: all_coast.\n";
+                return 1;
+            }
+        }
+
+        std::cout << "\nEquilibrating (max " << n_cycles << " cycles"
+                  << (check ? ", convergence checking on" : "") << ")...\n";
+        if (eq_opts.run_hillslope)
+        {
+            std::cout << "  Hillslope      : " << eq_opts.hillslope_model
+                      << " (" << (eq_opts.hillslope_every_cycle
+                                    ? "every cycle" : "final cycle only")
+                      << ", D=" << eq_opts.hillslope.D
+                      << ", channel A>=" << eq_opts.channel_threshold_area
+                      << ")\n";
+        }
+
+        lsdtt::lsdtt_equilibration_result eq_result;
+        try
+        {
+            lsdtt::lsdtt_raster_result elev_copy = elev;
+            lsdtt::lsdtt_raster_cpu    eq_dem(std::move(elev_copy));
+            eq_result = lsdtt::equilibrate_landscape(eq_dem, eq_opts);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: landscape equilibration failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        eq_ran          = true;
+        eq_converged    = eq_result.converged;
+        eq_cycles_run   = static_cast<int>(eq_result.cycles.size());
+        eq_limit_period = eq_result.limit_cycle_period;
+        if (!eq_result.cycles.empty())
+            eq_divide_step_p90 = eq_result.cycles.back().divide.step_p90_m;
+
+        std::cout << "  " << eq_result.stop_reason << "\n";
+
+        if (bf["write_equilibrated_dem_raster"])
+        {
+            const std::string o =
+                pp.make_output_path("_ocn_equilibrated_dem.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(eq_result.elevation.get_data(),
+                              eq_result.elevation.get_meta(), o, out_fmt);
+        }
+
+        if (bf["write_snap_convergence_csv"])
+        {
+            const std::string csv =
+                pp.make_output_path("_ocn_snap_convergence", ".csv");
+            std::cout << "Writing snap convergence CSV: " << csv << "\n";
+
+            const std::vector<std::string> headers =
+                lsdtt::lsdtt_snap_cycle_record::csv_headers();
+
+            std::vector<std::vector<std::string>> rows;
+            rows.reserve(eq_result.cycles.size());
+            for (const auto& rec : eq_result.cycles)
+                rows.push_back(rec.csv_row());
+
+            try { loader.write_csv(csv, headers, rows); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: snap convergence CSV write failed: "
+                          << e.what() << "\n";
+            }
+        }
+
+        // How far the equilibrated surface has moved AWAY from the OCN graph.
+        //
+        // Read this as drift, NOT as an improved fidelity. Equilibration makes
+        // the DEM self-consistent with its OWN routing; it does not pull the
+        // surface back towards the OCN receivers, and divides migrate while it
+        // works. A large drop here means the equilibrated landscape is no longer
+        // the network that was generated, which is exactly the risk a branching
+        // study has to watch.
+        if (bf["verify_routing"])
+        {
+            eq_ocn_agreement = measure_ocn_agreement(
+                eq_result.elevation,
+                "Equilibrated DEM vs the ORIGINAL OCN graph (drift, not fidelity)");
         }
     }
 
@@ -646,14 +1144,19 @@ int main(int argc, char* argv[])
         {
             out << "n_rows,n_cols,cell_size,gamma,n_iter,cooling_rate,"
                    "temperature_scale,initial_no_cooling_fraction,seed,"
-                   "initial_energy,final_energy,routing_fidelity\n";
+                   "initial_energy,final_energy,routing_fidelity,"
+                   "equilibrated,eq_cycles_run,eq_converged,eq_limit_cycle_period,"
+                   "eq_divide_step_p90_m,eq_ocn_agreement\n";
             out << opts.n_rows << "," << opts.n_cols << "," << opts.cell_size
                 << "," << opts.gamma << ","
                 << (opts.n_iter > 0 ? opts.n_iter : 40LL * opts.n_rows * opts.n_cols)
                 << "," << opts.cooling_rate << "," << opts.temperature_scale
                 << "," << opts.initial_no_cooling_fraction << "," << opts.seed
                 << "," << engine->initial_energy() << ","
-                << engine->final_energy() << "," << fidelity << "\n";
+                << engine->final_energy() << "," << fidelity << ","
+                << (eq_ran ? 1 : 0) << "," << eq_cycles_run << ","
+                << (eq_converged ? 1 : 0) << "," << eq_limit_period << ","
+                << eq_divide_step_p90 << "," << eq_ocn_agreement << "\n";
             std::cout << "Writing: " << csv << "\n";
         }
     }

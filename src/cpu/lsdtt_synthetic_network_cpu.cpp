@@ -13,6 +13,9 @@
 #include <algorithm>
 #include <cmath>
 #include <queue>
+#include <limits>
+#include <utility>
+#include <functional>
 #include <stdexcept>
 
 #include "lsdtt_steady_state_cpu.hpp"
@@ -105,7 +108,9 @@ void lsdtt_synthetic_network_cpu::setup_domain_and_outlets_()
 
     auto land_at = [&](int r, int c) -> bool
     {
-        if (r < 0 || r >= nrows_ || c < 0 || c >= ncols_) return false;
+        if (r < 0 || r >= nrows_) return false;
+        c = wrap_col(c);
+        if (c < 0) return false;
         return land_[static_cast<std::size_t>(r) * ncols_ + c] != 0;
     };
 
@@ -129,6 +134,29 @@ void lsdtt_synthetic_network_cpu::setup_domain_and_outlets_()
                 }
             }
         }
+    }
+    else if (opts_.outlet_mode == ocn_outlet_mode::north_south)
+    {
+        // Every land pixel on the north and south edges, and nothing else. With
+        // periodic_columns this gives a strip that drains through two opposed
+        // boundaries, so the main divide is free to sit anywhere between them.
+        for (int c = 0; c < ncols_; ++c)
+        {
+            for (int r : {0, nrows_ - 1})
+            {
+                if (!land_at(r, c)) continue;
+                const std::int64_t f =
+                    static_cast<std::int64_t>(r) * ncols_ + c;
+                if (is_outlet_[static_cast<std::size_t>(f)]) continue;  // nrows_ == 1
+                is_outlet_[static_cast<std::size_t>(f)] = 1;
+                outlets_.push_back(f);
+            }
+        }
+
+        if (outlets_.empty())
+            throw std::runtime_error(
+                "lsdtt_synthetic_network_cpu: outlet_mode 'north_south' found no "
+                "land pixels on the north or south edges");
     }
     else // single_south: southmost land pixel near the target column
     {
@@ -177,23 +205,84 @@ void lsdtt_synthetic_network_cpu::init_forest_()
         q.push(o);
     }
 
-    while (!q.empty())
+    if (opts_.energy_length_weighted)
     {
-        const std::int64_t f = q.front();
-        q.pop();
-        const int r = static_cast<int>(f / ncols_);
-        const int c = static_cast<int>(f % ncols_);
-        for (int k = 0; k < 8; ++k)
+        // Dijkstra on EUCLIDEAN link length.
+        //
+        // An unweighted BFS over eight neighbours is the CHEBYSHEV metric, in
+        // which a diagonal step and a cardinal step are the same distance. That
+        // is the wrong metric for a length-weighted energy: it seeds a network
+        // whose shortest paths are already diagonal, and single-flip annealing
+        // at low temperature is greedy enough not to undo it. Seeding on the
+        // metric the energy actually uses removes that head start.
+        //
+        // Ties are broken by flat index so the seed is deterministic and
+        // independent of the queue's internal ordering.
+        const double kInf = std::numeric_limits<double>::infinity();
+        std::vector<double> dist(static_cast<std::size_t>(n_), kInf);
+
+        using Entry = std::pair<double, std::int64_t>;   // (distance, node)
+        std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> pq;
+
+        for (const std::int64_t o : outlets_)
         {
-            const int nr = r + k_dr[k];
-            const int nc = c + k_dc[k];
-            if (nr < 0 || nr >= nrows_ || nc < 0 || nc >= ncols_) continue;
-            const std::int64_t nf = static_cast<std::int64_t>(nr) * ncols_ + nc;
-            if (!land_[static_cast<std::size_t>(nf)] ||
-                visited[static_cast<std::size_t>(nf)]) continue;
-            visited[static_cast<std::size_t>(nf)] = 1;
-            receiver_[static_cast<std::size_t>(nf)] = f;
-            q.push(nf);
+            dist[static_cast<std::size_t>(o)] = 0.0;
+            pq.emplace(0.0, o);
+        }
+
+        while (!pq.empty())
+        {
+            const auto [d, f] = pq.top();
+            pq.pop();
+            if (d > dist[static_cast<std::size_t>(f)]) continue;   // stale
+            visited[static_cast<std::size_t>(f)] = 1;
+
+            const int r = static_cast<int>(f / ncols_);
+            const int c = static_cast<int>(f % ncols_);
+            for (int k = 0; k < 8; ++k)
+            {
+                const int nr = r + k_dr[k];
+                const int nc = wrap_col(c + k_dc[k]);
+                if (nr < 0 || nr >= nrows_ || nc < 0) continue;
+                const std::int64_t nf = static_cast<std::int64_t>(nr) * ncols_ + nc;
+                if (!land_[static_cast<std::size_t>(nf)]) continue;
+
+                const double nd = d + link_length_(nf, f);
+                const std::size_t ni = static_cast<std::size_t>(nf);
+                if (nd < dist[ni] - 1e-12)
+                {
+                    dist[ni] = nd;
+                    receiver_[ni] = f;
+                    pq.emplace(nd, nf);
+                }
+            }
+        }
+
+        for (std::int64_t f = 0; f < n_; ++f)
+            if (land_[static_cast<std::size_t>(f)] &&
+                dist[static_cast<std::size_t>(f)] < kInf)
+                visited[static_cast<std::size_t>(f)] = 1;
+    }
+    else
+    {
+        while (!q.empty())
+        {
+            const std::int64_t f = q.front();
+            q.pop();
+            const int r = static_cast<int>(f / ncols_);
+            const int c = static_cast<int>(f % ncols_);
+            for (int k = 0; k < 8; ++k)
+            {
+                const int nr = r + k_dr[k];
+                const int nc = wrap_col(c + k_dc[k]);
+                if (nr < 0 || nr >= nrows_ || nc < 0) continue;
+                const std::int64_t nf = static_cast<std::int64_t>(nr) * ncols_ + nc;
+                if (!land_[static_cast<std::size_t>(nf)] ||
+                    visited[static_cast<std::size_t>(nf)]) continue;
+                visited[static_cast<std::size_t>(nf)] = 1;
+                receiver_[static_cast<std::size_t>(nf)] = f;
+                q.push(nf);
+            }
         }
     }
 
@@ -257,20 +346,54 @@ double lsdtt_synthetic_network_cpu::total_energy_() const
 {
     const double g = opts_.gamma;
     double e = 0.0;
-    for (std::int64_t f = 0; f < n_; ++f)
-        if (land_[static_cast<std::size_t>(f)])
-            e += std::pow(area_[static_cast<std::size_t>(f)], g);
+
+    // E = sum A^gamma * L   (default, physically correct on an 8-connected
+    // lattice) or E = sum A^gamma (OCNet parity). See energy_length_weighted.
+    if (opts_.energy_length_weighted)
+    {
+        for (std::int64_t f = 0; f < n_; ++f)
+            if (land_[static_cast<std::size_t>(f)])
+                e += std::pow(area_[static_cast<std::size_t>(f)], g)
+                   * receiver_length_(f);
+    }
+    else
+    {
+        for (std::int64_t f = 0; f < n_; ++f)
+            if (land_[static_cast<std::size_t>(f)])
+                e += std::pow(area_[static_cast<std::size_t>(f)], g);
+    }
     return e;
 }
 
 // -----------------------------------------------------------------------------
 double lsdtt_synthetic_network_cpu::receiver_length_(std::int64_t node) const
 {
-    const std::int64_t r = receiver_[static_cast<std::size_t>(node)];
+    return link_length_(node, receiver_[static_cast<std::size_t>(node)]);
+}
+
+// -----------------------------------------------------------------------------
+// Length of the link from `node` to `recv`, taken from the indices alone so it
+// can be evaluated for a CANDIDATE receiver that has not been committed.
+//
+// An outlet drains to itself (dr = dc = 0), which is not diagonal, so it is
+// given the cardinal cell size. An outlet has no downstream link, so the value
+// is a convention rather than a measurement -- it only matters because the
+// energy sum runs over every land node, and it is the same convention on both
+// sides of any comparison.
+double lsdtt_synthetic_network_cpu::link_length_(std::int64_t node,
+                                                 std::int64_t recv) const
+{
     const int dr = std::abs(static_cast<int>(node / ncols_) -
-                            static_cast<int>(r / ncols_));
-    const int dc = std::abs(static_cast<int>(node % ncols_) -
-                            static_cast<int>(r % ncols_));
+                            static_cast<int>(recv / ncols_));
+    int dc = std::abs(static_cast<int>(node % ncols_) -
+                      static_cast<int>(recv % ncols_));
+
+    // A step that wraps the periodic seam is one column apart, not ncols-1.
+    // Without this a wrapped DIAGONAL step reads as dr+dc = 1+(ncols-1), fails
+    // the diagonal test, and is given the cardinal length -- an under-estimate
+    // of sqrt(2) on exactly the steps that cross the seam.
+    if (opts_.periodic_columns && dc > ncols_ - dc) dc = ncols_ - dc;
+
     const bool diag = (dr + dc == 2);
     return diag ? opts_.cell_size * std::sqrt(2.0) : opts_.cell_size;
 }
@@ -327,12 +450,38 @@ double lsdtt_synthetic_network_cpu::delta_energy_(
     }
 
     double dE = 0.0;
+
+    if (!opts_.energy_length_weighted)
+    {
+        for (const std::int64_t nidx : losers_)
+            dE += std::pow(area_[static_cast<std::size_t>(nidx)] - sub, g)
+                - std::pow(area_[static_cast<std::size_t>(nidx)], g);
+        for (const std::int64_t nidx : gainers_)
+            dE += std::pow(area_[static_cast<std::size_t>(nidx)] + sub, g)
+                - std::pow(area_[static_cast<std::size_t>(nidx)], g);
+        return dE;
+    }
+
+    // Length-weighted: E = sum A^gamma * L.
+    //
+    // Losers and gainers keep their own receivers, so their L is unchanged and
+    // only their area moves -- the area delta is simply scaled by their L.
     for (const std::int64_t nidx : losers_)
-        dE += std::pow(area_[static_cast<std::size_t>(nidx)] - sub, g)
-            - std::pow(area_[static_cast<std::size_t>(nidx)], g);
+        dE += (std::pow(area_[static_cast<std::size_t>(nidx)] - sub, g)
+             - std::pow(area_[static_cast<std::size_t>(nidx)], g))
+            * receiver_length_(nidx);
     for (const std::int64_t nidx : gainers_)
-        dE += std::pow(area_[static_cast<std::size_t>(nidx)] + sub, g)
-            - std::pow(area_[static_cast<std::size_t>(nidx)], g);
+        dE += (std::pow(area_[static_cast<std::size_t>(nidx)] + sub, g)
+             - std::pow(area_[static_cast<std::size_t>(nidx)], g))
+            * receiver_length_(nidx);
+
+    // The moved node itself: its AREA is unchanged but its LINK LENGTH changes,
+    // because that is exactly what the flip does. This single term is the whole
+    // diagonal penalty -- without it a diagonal link costs the same as a
+    // cardinal one and lateral movement is free.
+    const double L_old = link_length_(node, old_r);
+    const double L_new = link_length_(node, cand_receiver);
+    dE += std::pow(sub, g) * (L_new - L_old);
 
     return dE;
 }
@@ -382,8 +531,8 @@ void lsdtt_synthetic_network_cpu::run()
 
         const int dir = pick_dir(rng_);
         const int nr = static_cast<int>(node / ncols_) + k_dr[dir];
-        const int nc = static_cast<int>(node % ncols_) + k_dc[dir];
-        if (nr < 0 || nr >= nrows_ || nc < 0 || nc >= ncols_) continue;
+        const int nc = wrap_col(static_cast<int>(node % ncols_) + k_dc[dir]);
+        if (nr < 0 || nr >= nrows_ || nc < 0) continue;
 
         const std::int64_t cand = static_cast<std::int64_t>(nr) * ncols_ + nc;
         if (!land_[static_cast<std::size_t>(cand)]) continue;

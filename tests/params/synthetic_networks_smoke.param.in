@@ -21,3 +21,4 @@ write_dem_raster: true
 write_drainage_area_raster: true
 verify_routing: true
 write_output_format: gtiff
+energy_length_weighted: false

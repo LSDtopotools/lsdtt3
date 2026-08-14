@@ -1,0 +1,24 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ocnlw
+
+n_rows: 32
+n_cols: 32
+cell_size: 100.0
+
+domain_type: rectangle
+outlet_mode: single
+
+energy_exponent_gamma: 0.5
+n_iter: 20000
+temperature_scale: 0.0
+random_seed: 7
+
+steady_state_mode: relief
+target_relief: 1000.0
+
+write_dem_raster: true
+write_drainage_area_raster: true
+verify_routing: true
+write_output_format: gtiff
+energy_length_weighted: true

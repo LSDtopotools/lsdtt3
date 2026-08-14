@@ -51,6 +51,7 @@
 #include "../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
+#include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
 static const std::string k_version  = "0.1.0";
@@ -754,6 +755,19 @@ int main(int argc, char* argv[])
         "Analytical steady-state", "param", "steady_state_check_convergence"};
 
     // --- Hillslope steady-state ---
+    bool_default_map["run_hillslope_on_loaded_dem"] = false;
+    help_map["run_hillslope_on_loaded_dem"] = {"bool","false",
+        "Solve hillslopes on the loaded DEM without re-snapping the fluvial field.",
+        "Requires read_initial_dem: true, run_hillslope_steady_state: true and "
+        "incision_threshold_area > 0. Channels (A >= threshold) keep the "
+        "elevations they arrived with and act as Dirichlet boundaries; only "
+        "hillslope pixels are solved. Use this when the fluvial field is a "
+        "TRANSIENT that must be preserved -- a step-change landscape carries a "
+        "migrating knickpoint, and run_steady_state would snap the channels to "
+        "a single ksn and erase it. Exits after writing "
+        "<write_fname>_hillslope_on_loaded_dem.",
+        "Hillslope steady-state", "switch", ""};
+
     bool_default_map["run_hillslope_steady_state"] = false;
     help_map["run_hillslope_steady_state"] = {"bool","false",
         "Solve for hillslope steady-state elevations after fluvial steady-state.",
@@ -776,10 +790,13 @@ int main(int argc, char* argv[])
 
     string_default_map["hillslope_ss_model"] = "roering";
     help_map["hillslope_ss_model"] = {"string","roering",
-        "Hillslope steady-state solver: linear, roering, or cidre.",
+        "Hillslope steady-state solver: linear, roering, cidre, or critical_slope.",
         "linear: Red-Black SOR solving D*grad^2z = -U (standard Laplacian diffusion). "
         "roering: Red-Black SOR solving D*grad*[gradz/(1-(|gradz|/Sc)^2)] = -U (nonlinear). "
         "Both SOR solvers converge in O(N) iterations with auto-tuned omega. "
+        "critical_slope: imposes Sc by upslope integration from the channels -- not an "
+        "elliptic solve, so it never finds a divide position, it inherits one; "
+        "only available with run_hillslope_on_loaded_dem. "
         "cidre: pseudo-transient Cidre (Carretier 2016) iterated until steady state. "
         "Rebuilds the D-inf flow graph each iteration (Picard update of routing "
         "directions). The nonlinear flag for cidre is taken from enable_nonlinear_hillslopes. "
@@ -1234,7 +1251,18 @@ int main(int argc, char* argv[])
         }
     };
 
-    enforce_baselevel(); // Clear off any white/red/fractal noise immediately
+    // Pin the boundary to base level. This is right for a synthetic LEM run,
+    // where the boundary IS the base level and the interior is noise to be
+    // cleared -- but it OVERWRITES real elevations on a loaded DEM.
+    //
+    // run_hillslope_on_loaded_dem exists to leave the loaded surface alone
+    // apart from its hillslopes, so pinning the boundary there would silently
+    // destroy the very data the mode is meant to preserve. Measured on a
+    // step-change DEM before this guard: boundary mean 796.8 m -> 200.7 m and
+    // interior max 1571 m -> 265 m, because the solve then relaxed the whole
+    // surface toward a zeroed rim.
+    if (!bf["run_hillslope_on_loaded_dem"])
+        enforce_baselevel(); // Clear off any white/red/fractal noise immediately
 
     // Lambda to write the hillslope Dirichlet channel mask of a surface, so a
     // fluvial run can freeze its network for a later hillslopes-only run, and so an
@@ -1387,6 +1415,228 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
             return 1;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Hillslope-only mode (optional - exits after writing output)
+    //
+    // Solve hillslopes on the LOADED surface, holding channels fixed as
+    // Dirichlet boundaries, WITHOUT re-snapping the fluvial field.
+    //
+    // This exists because the fluvial field is sometimes the thing you must not
+    // touch. A step-change landscape carries a migrating knickpoint: it is a
+    // transient, not a steady state, and running run_steady_state over it snaps
+    // the channels to a single ksn and erases the very feature under study. The
+    // one-shot hillslope step below cannot be used on its own because it reads
+    // the steady-state result. Here the channels keep whatever elevations they
+    // arrived with, and only hillslope pixels are solved.
+    // -------------------------------------------------------------------------
+    if (bf["run_hillslope_on_loaded_dem"])
+    {
+        if (!bf["run_hillslope_steady_state"])
+        {
+            std::cerr << "FATAL: run_hillslope_on_loaded_dem requires "
+                         "run_hillslope_steady_state: true -- it selects which "
+                         "surface the hillslope solve runs on, it does not "
+                         "switch the solve on.\n";
+            return 1;
+        }
+
+        const float thresh = ff["incision_threshold_area"];
+        if (thresh <= 0.0f)
+        {
+            std::cerr << "FATAL: run_hillslope_on_loaded_dem requires "
+                         "incision_threshold_area > 0; the channel pixels are "
+                         "the Dirichlet set that pins the solve.\n";
+            return 1;
+        }
+
+        std::cout << "\n--- Hillslope solve on the loaded DEM "
+                     "(fluvial field untouched) ---\n";
+
+        lsdtt::lsdtt_flowinfo_options hs_fi_opts;
+        hs_fi_opts.boundary_conditions = sf["boundary_conditions"];
+        hs_fi_opts.build_s_vector      = false;
+        hs_fi_opts.n_threads           = ifs["n_threads"];
+
+        std::vector<double> hs_area;
+        try
+        {
+            lsdtt::lsdtt_flowinfo flow(dem.get_data_array(), dem.get_mask_array(),
+                                       dem.get_meta(), hs_fi_opts);
+            hs_area = flow.accumulate();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: flow routing failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        const lsdtt::lsdtt_raster_meta& hm = dem.get_meta();
+        const float   dxh = static_cast<float>(hm.cell_size);
+        const int64_t nh  = static_cast<int64_t>(hm.n_rows) * hm.n_cols;
+        const std::vector<uint8_t>& hmask = dem.get_mask();
+
+        std::vector<uint8_t> is_channel(static_cast<size_t>(nh), 0);
+        int64_t n_chan = 0;
+        for (int64_t flat = 0; flat < nh; ++flat)
+        {
+            if (!hmask[static_cast<size_t>(flat)]) continue;
+            double A = hs_area[static_cast<size_t>(flat)];
+            if (bf["divide_area_by_dx"]) A /= static_cast<double>(dxh);
+            if (A >= static_cast<double>(thresh))
+            {
+                is_channel[static_cast<size_t>(flat)] = 1;
+                ++n_chan;
+            }
+        }
+
+        std::cout << "  Channel pixels (A >= " << thresh << "): " << n_chan
+                  << "  Hillslope pixels: " << (nh - n_chan) << "\n";
+
+        if (n_chan == 0)
+        {
+            std::cerr << "FATAL: no channel pixels at incision_threshold_area="
+                      << thresh << "; the hillslope solve would have no "
+                         "Dirichlet set. Lower the threshold.\n";
+            return 1;
+        }
+
+        const std::string hs_solver = sf["hillslope_ss_model"];
+
+        // critical_slope is not an elliptic solve: it imposes S_c by upslope
+        // integration from the channels, so there is no iteration, tolerance or
+        // omega. It is handled separately and exits early.
+        if (hs_solver == "critical_slope" || hs_solver == "critical-slope")
+        {
+            std::cout << "  Solver         : critical_slope (imposed by upslope "
+                         "integration, not iterated)\n"
+                      << "  Sc=" << ff["critical_hillslope_slope"] << "\n";
+
+            lsdtt::lsdtt_critical_slope_options cs_opts;
+            cs_opts.mode                = lsdtt::critical_slope_mode::fixed_gradient;
+            cs_opts.S_c                 = static_cast<double>(ff["critical_hillslope_slope"]);
+            cs_opts.is_channel_override = is_channel;
+
+            lsdtt::lsdtt_critical_slope_result cs_result;
+            try
+            {
+                lsdtt::lsdtt_flowinfo cs_flow(
+                    dem.get_data_array(), dem.get_mask_array(),
+                    dem.get_meta(), hs_fi_opts);
+                cs_result = lsdtt::impose_critical_slope_hillslopes(
+                    cs_flow, dem, cs_opts);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: critical-slope hillslopes failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            std::cout << "  Hillslope pixels: " << cs_result.n_hillslope_pixels
+                      << "  max relief above channel: "
+                      << cs_result.max_hillslope_relief_m << " m"
+                      << "  max steps: " << cs_result.max_hillslope_steps << "\n";
+
+            const std::string cs_path =
+                pp.make_output_path("_hillslope_on_loaded_dem", fmt_ext(out_fmt));
+            std::cout << "Writing: " << cs_path << "\n";
+            try { safe_write(cs_result.elevation, cs_path); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: writing hillslope elevation failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+
+            pp.print_help(help_map, pp.get_write_fname() + "_README",
+                          k_version, k_citation);
+            pp.print_parameters();
+            std::cout << "\nlsdtt-lem: done.\n";
+            return 0;
+        }
+
+        lsdtt::lsdtt_hillslope_steady_state_options hs_opts;
+        hs_opts.D                   = ff["hillslope_diffusivity"];
+        hs_opts.U                   = ff["uplift_rate"];
+        hs_opts.Sc                  = ff["critical_hillslope_slope"];
+        hs_opts.boundary_conditions = sf["boundary_conditions"];
+        hs_opts.tolerance           = ff["hillslope_ss_tolerance"];
+        hs_opts.max_iterations      = ifs["hillslope_ss_max_iterations"];
+        hs_opts.sor_omega           = ff["hillslope_sor_omega"];
+        hs_opts.n_threads           = ifs["n_threads"];
+
+        if (hs_solver == "roering")      hs_opts.nonlinear = true;
+        else if (hs_solver == "linear")  hs_opts.nonlinear = false;
+        else                             hs_opts.nonlinear = bf["enable_nonlinear_hillslopes"];
+
+        std::cout << "  Solver         : " << hs_solver
+                  << " (" << (hs_opts.nonlinear ? "nonlinear" : "linear") << ")\n"
+                  << "  D=" << hs_opts.D << "  U=" << hs_opts.U;
+        if (hs_opts.nonlinear) std::cout << "  Sc=" << hs_opts.Sc;
+        std::cout << "  omega=" << hs_opts.sor_omega
+                  << "  tol=" << hs_opts.tolerance
+                  << "  max_iter=" << hs_opts.max_iterations << "\n";
+
+        lsdtt::lsdtt_hillslope_steady_state_result hs_result;
+        try
+        {
+            if (hs_solver == "cidre")
+                hs_result = lsdtt::compute_cidre_hillslope_steady_state(
+                    dem, is_channel, hs_opts);
+            else
+                hs_result = lsdtt::compute_hillslope_steady_state(
+                    dem, is_channel, hs_opts);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: hillslope solve failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "  Iterations: " << hs_result.n_iterations
+                  << "  max|Deltaz|: " << hs_result.final_residual
+                  << "  converged: " << (hs_result.converged ? "yes" : "NO") << "\n";
+        if (!hs_result.converged)
+            std::cerr << "Warning: hillslope solver did not converge within "
+                      << hs_opts.max_iterations << " iterations. Try a SMALLER "
+                         "sor_omega -- the nonlinear solver needs "
+                         "under-relaxation (0.8 or below) on steep grids.\n";
+
+        const std::string hs_path =
+            pp.make_output_path("_hillslope_on_loaded_dem", fmt_ext(out_fmt));
+        std::cout << "Writing: " << hs_path << "\n";
+        try { safe_write(hs_result.elevation, hs_path); }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing hillslope elevation failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+
+        if (bf["write_hillshade_png"])
+        {
+            const std::string png =
+                pp.make_output_path("_hillslope_on_loaded_dem_hillshade", ".png");
+            std::cout << "Writing: " << png << "\n";
+            try {
+                write_hillshade_png(loader, hs_result.elevation, png,
+                    static_cast<double>(ff["hillshade_azimuth"]),
+                    static_cast<double>(ff["hillshade_altitude"]),
+                    static_cast<double>(ff["hillshade_z_factor"]));
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: hillshade PNG failed: " << e.what() << "\n";
+            }
+        }
+
+        pp.print_help(help_map, pp.get_write_fname() + "_README",
+                      k_version, k_citation);
+        pp.print_parameters();
+        std::cout << "\nlsdtt-lem: done.\n";
+        return 0;
     }
 
     // -------------------------------------------------------------------------
