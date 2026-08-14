@@ -29,6 +29,7 @@
 #include "lsdtt_steady_state_cpu.hpp"
 #include "lsdtt_synthetic_domain_cpu.hpp"
 #include "lsdtt_synthetic_network_cpu.hpp"
+#include "lsdtt_strahler_tokunaga_analysis_cpu.hpp"
 
 namespace
 {
@@ -94,6 +95,161 @@ std::vector<std::uint8_t> build_island_mask(int n_rows, int n_cols)
 // were silently ignored, so each is paired against a non-periodic control on the
 // identical lattice and seed.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// B  Drainage-area exceedance scaling, P(A > a) ~ a^-beta.
+//
+// This is a VALIDATION test, not just a coverage test. beta has a published
+// value for Optimal Channel Networks -- ~0.45, against ~0.43 +/- 0.02 for real
+// river networks (Rodriguez-Iturbe et al. 1992 WRR 28:1095; Rigon et al. 1996
+// WRR 32:3367). So measuring it on a generated OCN checks that the generator
+// still produces networks in the right class, which is worth having in its own
+// right after the 2026-08-14 switch to a length-weighted energy.
+//
+// The band asserted is deliberately wider than the published spread: this is a
+// modest grid with about two decades of area, and the point is to catch a
+// generator that has left the family, not to re-measure the literature.
+// ---------------------------------------------------------------------------
+void run_area_scaling_checks(const std::string& case_name)
+{
+    // 96x96 was too small: the fitted range came out at r^2 = 0.83 and beta at
+    // 0.57, because a few thousand cells do not give a stable scaling regime.
+    // 200x200 is the smallest grid on which the fit is well conditioned here.
+    const int nr = 200, nc = 200;
+
+    auto build = [&](double cell_size)
+    {
+        lsdtt::lsdtt_ocn_options o;
+        o.n_rows = nr; o.n_cols = nc; o.cell_size = cell_size;
+        o.gamma = 0.5; o.seed = 17; o.temperature_scale = 0.0;
+        o.n_iter = 40LL * nr * nc;
+        o.outlet_mode = lsdtt::ocn_outlet_mode::single_south;
+        return o;
+    };
+
+    lsdtt::lsdtt_synthetic_network_cpu eng(build(30.0));
+    eng.run();
+
+    const auto& areas_cells = eng.areas();
+    std::vector<double>       a(areas_cells.begin(), areas_cells.end());
+    std::vector<std::uint8_t> m(a.size(), 1u);
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!eng.is_land(static_cast<std::int64_t>(i))) m[i] = 0u;
+
+    const lsdtt::lsdtt_area_scaling_result res =
+        lsdtt::compute_area_scaling(a, m, 0.0);
+
+    std::cout << "      [B] beta(MLE)=" << res.beta << " +/- " << res.beta_stderr << "  beta(OLS)=" << res.beta_ols
+              << "  r2=" << res.r_squared
+              << "  a_min=" << res.a_min << "  decades=" << res.n_decades
+              << "  n_used=" << res.n_used << "/" << res.n_total
+              << "  KS=" << res.ks_distance << "\n";
+
+    check_case(case_name, "B1 beta is finite", std::isfinite(res.beta),
+               "beta=" + std::to_string(res.beta));
+
+    // B2: does the LENGTH-WEIGHTED default sit where the OCNet-parity network
+    // does? This is the comparison that isolates our energy change from every
+    // other difference between this measurement and the literature's, since
+    // both networks are the same grid, seed, gamma and schedule.
+    {
+        lsdtt::lsdtt_ocn_options par = build(30.0);
+        par.energy_length_weighted = false;
+        lsdtt::lsdtt_synthetic_network_cpu eng_par(par);
+        eng_par.run();
+
+        const auto& ap_cells = eng_par.areas();
+        std::vector<double>       ap(ap_cells.begin(), ap_cells.end());
+        std::vector<std::uint8_t> mp(ap.size(), 1u);
+        for (std::size_t i = 0; i < ap.size(); ++i)
+            if (!eng_par.is_land(static_cast<std::int64_t>(i))) mp[i] = 0u;
+
+        const lsdtt::lsdtt_area_scaling_result res_par =
+            lsdtt::compute_area_scaling(ap, mp, 0.0);
+
+        std::cout << "      [B] beta OCNet-parity=" << res_par.beta
+                  << "  length-weighted=" << res.beta << "\n";
+
+        check_case(case_name, "B2 beta is finite for the OCNet-parity network",
+                   std::isfinite(res_par.beta),
+                   "beta=" + std::to_string(res_par.beta));
+
+        // Both are asserted against a BROAD band. lsdtt3 measures beta ~0.55-0.60
+        // where the literature reports ~0.43-0.45; that gap is recorded as an
+        // open question in docs/testing_and_benchmarking.md rather than tuned
+        // away here. What this test guards is that the generator stays in the
+        // family it is in now, and in particular that beta does not drift
+        // silently -- so the band is wide but the value is printed every run.
+        check_case(case_name,
+                   "B2 beta is in the broad plausible band 0.3-0.8 for both energies",
+                   res.beta > 0.3 && res.beta < 0.8 &&
+                       res_par.beta > 0.3 && res_par.beta < 0.8,
+                   "length-weighted=" + std::to_string(res.beta) +
+                       " parity=" + std::to_string(res_par.beta));
+
+        // The two estimators must agree closely. They are independent routes to
+        // the same exponent (MLE on the cells, least squares on the exceedance
+        // curve), so a wide gap means the fitted range is not a power law and
+        // the number should not be read as one.
+        check_case(case_name,
+                   "B2 the MLE and least-squares exponents agree within 0.1",
+                   std::isfinite(res.beta_ols) &&
+                       std::abs(res.beta - res.beta_ols) < 0.1,
+                   "mle=" + std::to_string(res.beta) +
+                       " ols=" + std::to_string(res.beta_ols) +
+                       " r2=" + std::to_string(res.r_squared));
+    }
+
+    // -- B3: the fitting range is reported, not hidden -----------------------
+    // A collapsed range must be visible. This asserts the diagnostics are
+    // populated and self-consistent, so a future change that quietly fits two
+    // points cannot pass by returning a plausible beta.
+    check_case(case_name, "B3 the fitted range is reported and non-degenerate",
+               res.n_used >= 20 && res.n_used <= res.n_total &&
+                   std::isfinite(res.a_min) && res.a_min > 0.0 &&
+                   res.a_max >= res.a_min && res.n_decades > 0.5,
+               "n_used=" + std::to_string(res.n_used) +
+                   " n_total=" + std::to_string(res.n_total) +
+                   " decades=" + std::to_string(res.n_decades));
+
+    // -- B4: beta is dimensionless -------------------------------------------
+    // Areas in cells versus areas in m^2 differ by a constant factor, which
+    // shifts a_min but cannot change the exponent. A beta that moves here is
+    // reading the units, not the network.
+    {
+        std::vector<double> a_m2(a.size());
+        for (std::size_t i = 0; i < a.size(); ++i) a_m2[i] = a[i] * 900.0;
+
+        const lsdtt::lsdtt_area_scaling_result res_m2 =
+            lsdtt::compute_area_scaling(a_m2, m, 0.0);
+
+        check_case(case_name, "B4 beta is invariant to the area units",
+                   std::isfinite(res_m2.beta) &&
+                       std::abs(res_m2.beta - res.beta) < 1e-6,
+                   "cells=" + std::to_string(res.beta) +
+                       " m2=" + std::to_string(res_m2.beta));
+
+        check_case(case_name, "B4 a_min tracks the units (x900)",
+                   std::abs(res_m2.a_min - res.a_min * 900.0) < 1e-6,
+                   "a_min cells=" + std::to_string(res.a_min) +
+                       " m2=" + std::to_string(res_m2.a_min));
+    }
+
+    // -- B5: too little data is refused, not fitted --------------------------
+    {
+        std::vector<double>       tiny_a(10, 1.0);
+        std::vector<std::uint8_t> tiny_m(10, 1u);
+        for (std::size_t i = 0; i < tiny_a.size(); ++i)
+            tiny_a[i] = static_cast<double>(i + 1);
+
+        const lsdtt::lsdtt_area_scaling_result tiny =
+            lsdtt::compute_area_scaling(tiny_a, tiny_m, 0.0);
+
+        check_case(case_name, "B5 too few cells returns NaN rather than a number",
+                   !std::isfinite(tiny.beta) && tiny.n_used == 0,
+                   "beta=" + std::to_string(tiny.beta));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // L The length-weighted energy, and what it is for.
 //
@@ -2178,6 +2334,8 @@ int main(int argc, char** argv)
                            deterministic_opts);
 
     run_routing_fidelity_checks("E D8 round-trip fidelity 48x48 gamma=0.5 seed=42");
+
+    run_area_scaling_checks("B drainage-area exceedance scaling");
 
     run_length_weighted_planform_checks(
         "L length-weighted energy and network planform");

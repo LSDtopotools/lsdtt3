@@ -1804,4 +1804,286 @@ void write_junction_area_ratio_decades(
 }
 
 
+// =============================================================================
+// Drainage-area exceedance scaling
+// =============================================================================
+
+namespace
+{
+
+// Least-squares fit of y = c + m x. Returns false if degenerate.
+bool ols_fit(const std::vector<double>& x, const std::vector<double>& y,
+             double& slope, double& slope_stderr, double& r_squared)
+{
+    const std::size_t n = x.size();
+    if (n < 3) return false;
+
+    double sx = 0.0, sy = 0.0;
+    for (std::size_t i = 0; i < n; ++i) { sx += x[i]; sy += y[i]; }
+    const double mx = sx / static_cast<double>(n);
+    const double my = sy / static_cast<double>(n);
+
+    double sxx = 0.0, sxy = 0.0, syy = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const double dx = x[i] - mx;
+        const double dy = y[i] - my;
+        sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+    }
+    if (!(sxx > 0.0)) return false;
+
+    slope = sxy / sxx;
+    const double intercept = my - slope * mx;
+
+    double sse = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const double resid = y[i] - (intercept + slope * x[i]);
+        sse += resid * resid;
+    }
+
+    r_squared = (syy > 0.0) ? (1.0 - sse / syy) : std::numeric_limits<double>::quiet_NaN();
+
+    const double dof = static_cast<double>(n) - 2.0;
+    slope_stderr = (dof > 0.0) ? std::sqrt((sse / dof) / sxx)
+                               : std::numeric_limits<double>::quiet_NaN();
+    return true;
+}
+
+} // namespace
+
+lsdtt_area_scaling_result compute_area_scaling(
+    const std::vector<double>&       areas,
+    const std::vector<std::uint8_t>& mask,
+    double                           min_area,
+    double                           upper_exclude_decades,
+    double                           min_fit_decades)
+{
+    lsdtt_area_scaling_result r;
+
+    if (areas.size() != mask.size())
+    {
+        throw std::invalid_argument(
+            "compute_area_scaling: areas and mask must be the same length");
+    }
+
+    // Collect valid, positive areas above any caller-imposed floor.
+    std::vector<double> a;
+    a.reserve(areas.size());
+    for (std::size_t i = 0; i < areas.size(); ++i)
+    {
+        if (mask[i] == 0) continue;
+        const double v = areas[i];
+        if (!std::isfinite(v) || v <= 0.0) continue;
+        if (min_area > 0.0 && v < min_area) continue;
+        a.push_back(v);
+    }
+
+    r.n_total = a.size();
+    if (a.size() < 20) return r;      // nothing meaningful to fit
+
+    std::sort(a.begin(), a.end());
+    r.a_max = a.back();
+
+    // Exceedance curve over DISTINCT areas. P(A >= a_k) = (n - first_index)/n,
+    // using the first occurrence so ties share one exceedance value.
+    const double n_d = static_cast<double>(a.size());
+    std::vector<double> ua, up;
+    ua.reserve(a.size());
+    up.reserve(a.size());
+    for (std::size_t i = 0; i < a.size(); )
+    {
+        const double v = a[i];
+        std::size_t j = i;
+        while (j < a.size() && a[j] == v) ++j;
+        ua.push_back(v);
+        up.push_back(static_cast<double>(a.size() - i) / n_d);
+        i = j;
+    }
+    r.a = ua;
+    r.p_exceed = up;
+
+    // ---- exclude the finite-size rollover at the TOP first -------------------
+    // Everything within upper_exclude_decades of the largest basin is discarded
+    // before a_min is chosen. Without this the fit lands on the rollover, whose
+    // slope is pinned near 1 by the endpoints and has nothing to do with the
+    // network. The full curve is still returned in r.a / r.p_exceed, and
+    // in_fitted_range in the curve CSV marks what was actually used.
+    std::size_t hi = ua.size();          // one past the last usable index
+    if (upper_exclude_decades > 0.0)
+    {
+        const double a_cut = r.a_max / std::pow(10.0, upper_exclude_decades);
+        while (hi > 0 && ua[hi - 1] > a_cut) --hi;
+    }
+    if (hi < 12) return r;               // nothing left to fit
+
+    // ---- cutoff selection ---------------------------------------------------
+    // Try each distinct area as a candidate a_min, fit the tail above it, and
+    // keep the cutoff whose fitted law is closest to the empirical tail in KS
+    // distance (Clauset et al. 2009). Candidates that leave too little data, or
+    // too little dynamic range, cannot be judged and are skipped.
+    double best_ks = std::numeric_limits<double>::infinity();
+    std::size_t best_k = 0;
+    bool found = false;
+
+    for (std::size_t k = 0; k + 10 < hi; ++k)
+    {
+        const double amin = ua[k];
+        if (!(amin > 0.0)) continue;
+        // Enforce the minimum fitted range HERE, in the candidate loop, so a
+        // short-and-tidy segment is never even a candidate. Without this the
+        // search reliably prefers them.
+        if (std::log10(ua[hi - 1] / amin) < min_fit_decades) break;
+
+        std::vector<double> lx, ly;
+        lx.reserve(hi - k);
+        ly.reserve(hi - k);
+        for (std::size_t i = k; i < hi; ++i)
+        {
+            lx.push_back(std::log10(ua[i]));
+            ly.push_back(std::log10(up[i]));
+        }
+
+        // MLE for the exponent over [a_min, a_max], not least squares on the
+        // log-log curve. Clauset, Shalizi & Newman (2009) show the regression
+        // estimator is biased and its r^2 uninformative -- and it showed here:
+        // OLS gave beta anywhere in 0.29-0.68 depending on the fitting window,
+        // a spread larger than the difference from the literature value.
+        //
+        // For p(x) ~ x^-alpha above x_min the MLE is
+        //     alpha = 1 + n / sum(ln(x_i / x_min))
+        // and the exceedance exponent is beta = alpha - 1, so beta is simply
+        //     beta = n / sum(ln(x_i / x_min))
+        // taken over the cells inside the fitted range.
+        double slope = 0.0, se = 0.0, r2 = 0.0;
+        if (!ols_fit(lx, ly, slope, se, r2)) continue;
+
+        // KS distance between empirical and fitted exceedance on the tail,
+        // both normalised to 1 at a_min so they are comparable as distributions.
+        const double p_at_min = up[k];
+        double ks = 0.0;
+        for (std::size_t i = k; i < hi; ++i)
+        {
+            const double emp = up[i] / p_at_min;
+            const double fit = std::pow(ua[i] / amin, slope);   // slope is negative
+            ks = std::max(ks, std::abs(emp - fit));
+        }
+
+        if (ks < best_ks)
+        {
+            best_ks = ks;
+            best_k  = k;
+            found   = true;
+        }
+    }
+
+    if (!found) return r;
+
+    // ---- final fit at the chosen cutoff -------------------------------------
+    std::vector<double> lx, ly;
+    for (std::size_t i = best_k; i < hi; ++i)
+    {
+        lx.push_back(std::log10(ua[i]));
+        ly.push_back(std::log10(up[i]));
+    }
+
+    double slope = 0.0, se = 0.0, r2 = 0.0;
+    if (!ols_fit(lx, ly, slope, se, r2)) return r;
+
+    // r_squared is retained as a SHAPE diagnostic of the exceedance curve --
+    // low r^2 means the curve is not straight in log-log over the fitted range,
+    // which is worth knowing -- but the exponent itself comes from the MLE.
+    r.r_squared    = r2;
+    r.beta_ols     = -slope;
+
+    const double a_lo = ua[best_k];
+    const double a_hi = ua[hi - 1];
+
+    double sum_log = 0.0;
+    std::size_t n_mle = 0;
+    for (double v : a)
+    {
+        if (v < a_lo || v > a_hi) continue;
+        sum_log += std::log(v / a_lo);
+        ++n_mle;
+    }
+
+    if (n_mle < 20 || !(sum_log > 0.0)) return r;
+
+    r.beta = static_cast<double>(n_mle) / sum_log;
+    // Standard error of the MLE exponent, Clauset et al. eq. 3.2 form.
+    r.beta_stderr = r.beta / std::sqrt(static_cast<double>(n_mle));
+    r.a_min       = ua[best_k];
+    r.ks_distance = best_ks;
+
+    // a_max is now the top of the FITTED range, not the largest basin, so that
+    // n_decades describes what was fitted rather than what was available.
+    const double a_max_all = r.a_max;
+    r.a_max     = ua[hi - 1];
+    r.n_decades = std::log10(r.a_max / r.a_min);
+
+    std::size_t n_used = 0;
+    for (double v : a) if (v >= r.a_min && v <= r.a_max) ++n_used;
+    r.n_used = n_used;
+    (void)a_max_all;
+
+    return r;
+}
+
+void write_area_scaling_summary(
+    const lsdtt_area_scaling_result& result,
+    const std::string&               out_path
+)
+{
+    lsdtt_data_loader loader;
+
+    std::vector<std::string> headers =
+    {
+        "beta", "beta_stderr", "beta_ols", "r_squared",
+        "a_min", "a_max", "n_decades",
+        "n_used", "n_total", "ks_distance"
+    };
+
+    std::vector<std::vector<std::string>> rows = {{
+        precise_string(result.beta),
+        precise_string(result.beta_stderr),
+        precise_string(result.beta_ols),
+        precise_string(result.r_squared),
+        precise_string(result.a_min),
+        precise_string(result.a_max),
+        precise_string(result.n_decades),
+        std::to_string(result.n_used),
+        std::to_string(result.n_total),
+        precise_string(result.ks_distance)
+    }};
+
+    loader.write_csv(out_path, headers, rows);
+}
+
+void write_area_scaling_curve(
+    const lsdtt_area_scaling_result& result,
+    const std::string&               out_path
+)
+{
+    lsdtt_data_loader loader;
+
+    std::vector<std::string> headers = { "area", "p_exceed", "in_fitted_range" };
+
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(result.a.size());
+    for (std::size_t i = 0; i < result.a.size(); ++i)
+    {
+        const bool in_fit =
+            std::isfinite(result.a_min) && std::isfinite(result.a_max) &&
+            result.a[i] >= result.a_min && result.a[i] <= result.a_max;
+        rows.push_back({
+            precise_string(result.a[i]),
+            precise_string(result.p_exceed[i]),
+            in_fit ? "1" : "0"
+        });
+    }
+
+    loader.write_csv(out_path, headers, rows);
+}
+
 } // namespace lsdtt

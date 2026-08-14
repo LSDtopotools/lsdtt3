@@ -573,5 +573,121 @@ void write_junction_area_ratio_decades(
     const std::string&                      out_path
 );
 
+// -----------------------------------------------------------------------------
+// Drainage-area exceedance scaling: P(A > a) ~ a^-beta
+//
+// The standard characterisation of how drainage area is PARTITIONED across a
+// network, and the natural complement to the junction area ratios above: those
+// describe how area splits at a single confluence, this describes the resulting
+// distribution over the whole network.
+//
+// Reference values: beta ~ 0.43 +/- 0.02 for real river networks and ~0.45 for
+// Optimal Channel Networks (Rodriguez-Iturbe et al. 1992, WRR 28:1095; Rigon et
+// al. 1996, WRR 32:3367; Rodriguez-Iturbe & Rinaldo 1997, Fractal River
+// Basins). Because OCNs have a published expected value, beta measured on a
+// generated OCN doubles as a check that the generator still produces networks
+// in the right class -- which is why unit_synthetic_networks asserts it.
+//
+// THE FIT MUST BE TWO-SIDED, AND THIS IS THE EASY THING TO GET WRONG
+//   The power law holds only over an intermediate range, and BOTH ends must be
+//   excluded -- which is the opposite of the usual heavy-tail recipe.
+//
+//   At the large-a end sits the finite-size rollover: no basin can exceed the
+//   domain. Worse, for a complete single basin the endpoints PIN the full-range
+//   slope at about -1 whatever the network, because N(>=a_min_possible) = N and
+//   N(>=A_max) = 1. Measured on a 400x200 OCN: full-range slope -0.986, while
+//   half-decade local slopes in the scaling regime give beta = 0.31-0.53. A
+//   Clauset-style tail fit therefore measures the rollover, not the scaling, and
+//   returns a confidently wrong number (0.76 on that same network).
+//
+//   At the small-a end the distribution describes hillslope pixels and pixel
+//   discreteness rather than a network.
+//
+//   So: exclude `upper_exclude_decades` from the top, then select a_min over
+//   what remains by minimising the Kolmogorov-Smirnov distance between the
+//   empirical and fitted curves (Clauset, Shalizi & Newman 2009, SIAM Review
+//   51:661). a_min, a_max, n_used and n_decades are all reported so a collapsed
+//   fitting range is visible rather than hidden inside a single number.
+//
+//   `min_fit_decades` exists because KS selection alone FAVOURS SHORT RANGES: a
+//   short segment of any smooth curve looks like a power law, so the search
+//   happily returns r^2 = 0.999 over half a decade. Measured on a 400x200 OCN
+//   without the guard, the chosen range collapsed to 0.53-1.10 decades and beta
+//   swung 0.29-0.52 with it. Requiring at least 1.5 decades stabilises it: the
+//   diamond-square control then gives beta = 0.50-0.53 whatever the top
+//   exclusion, and the OCN 0.37-0.48. If the constraint cannot be met the result
+//   is NaN -- refusing to answer is correct when there is not enough range.
+//
+//   Expect real uncertainty even so. On a 96x96 grid the usable range is about
+//   two decades, so beta is a check that the generator is in the right family,
+//   not a precise measurement.
+// -----------------------------------------------------------------------------
+struct lsdtt_area_scaling_result
+{
+    // MLE exponent (Clauset et al. 2009). This is the value to use.
+    double beta        = std::numeric_limits<double>::quiet_NaN();
+    double beta_stderr = std::numeric_limits<double>::quiet_NaN();
+
+    // Least-squares exponent from the log-log exceedance curve, and its r^2.
+    // Kept as DIAGNOSTICS, not as the answer: the regression estimator is
+    // biased (Clauset et al. 2009 sec. 3.1), and measured here it swung over
+    // 0.29-0.68 with the fitting window while the MLE did not. A low r_squared
+    // is still worth reading -- it says the curve is not straight in log-log
+    // over the fitted range -- and a large beta_ols/beta gap says the same.
+    double beta_ols    = std::numeric_limits<double>::quiet_NaN();
+    double r_squared   = std::numeric_limits<double>::quiet_NaN();
+
+    // Lower cutoff of the fitted range, in the units of the supplied areas, and
+    // how much data survived it. n_decades is log10(a_max / a_min): below about
+    // 1.5 the exponent should not be trusted, and on small grids it often is.
+    double       a_min     = std::numeric_limits<double>::quiet_NaN();
+    double       a_max     = std::numeric_limits<double>::quiet_NaN();
+    std::size_t  n_used    = 0;
+    std::size_t  n_total   = 0;
+    double       n_decades = std::numeric_limits<double>::quiet_NaN();
+
+    // KS distance between the empirical tail above a_min and the fitted law.
+    double ks_distance = std::numeric_limits<double>::quiet_NaN();
+
+    // The curve itself, ascending in area, for plotting: p_exceed[i] is the
+    // fraction of valid cells with area >= a[i]. Covers the FULL range, not just
+    // the fitted part, so a reader can see where the fit was taken.
+    std::vector<double> a;
+    std::vector<double> p_exceed;
+};
+
+// -----------------------------------------------------------------------------
+// compute_area_scaling
+//
+// Fits P(A > a) ~ a^-beta by least squares on log10 P against log10 a, over the
+// tail above an automatically selected a_min.
+//
+// `areas` is any per-cell drainage-area field (pixel counts or m^2 -- beta is
+// dimensionless, so the units only shift a_min). Cells with mask == 0, or with
+// area <= 0, are excluded.
+//
+// `min_area` optionally forces a lower bound before cutoff selection; pass the
+// channel threshold to restrict the fit to the channel network. 0 disables it.
+// -----------------------------------------------------------------------------
+lsdtt_area_scaling_result compute_area_scaling(
+    const std::vector<double>&        areas,
+    const std::vector<std::uint8_t>&  mask,
+    double                            min_area = 0.0,
+    double                            upper_exclude_decades = 1.0,
+    double                            min_fit_decades       = 1.5
+);
+
+// Single-row summary CSV (beta and the fitting-range diagnostics).
+void write_area_scaling_summary(
+    const lsdtt_area_scaling_result& result,
+    const std::string&               out_path
+);
+
+// The exceedance curve, one row per distinct area (ascending).
+void write_area_scaling_curve(
+    const lsdtt_area_scaling_result& result,
+    const std::string&               out_path
+);
+
 
 } // namespace lsdtt

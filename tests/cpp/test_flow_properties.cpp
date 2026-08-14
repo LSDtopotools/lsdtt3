@@ -302,6 +302,140 @@ double seconds_since(std::chrono::steady_clock::time_point t0)
 
 
 // =============================================================================
+// NC -- sample_at_nearest_channel (plan item A0)
+//
+// The value of a raster AT the nearest downstream channel pixel. Distinct from
+// get_distance_to_channel_raster, which is the distance TO it -- the two are
+// easy to confuse and only one of them answers the Goren & Shelef (2024)
+// paired-flow-path question.
+//
+// The fixture is built so the answer is arithmetic rather than "whatever the
+// code returned": a ramp falling due south with a single channel row, so every
+// pixel's nearest downstream channel is the cell directly below it in that row,
+// and the expected sampled value is known by construction.
+// =============================================================================
+void test_sample_at_nearest_channel()
+{
+    const int nr = 12, nc = 9;
+    const double cell = 10.0;
+    const lsdtt::lsdtt_raster_meta meta = make_meta(nr, nc, cell);
+
+    // Falls due south, so every cell drains straight down its own column.
+    std::vector<float>   z(static_cast<std::size_t>(nr) * nc);
+    std::vector<uint8_t> m(z.size(), 1);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+            z[static_cast<std::size_t>(r) * nc + c] =
+                static_cast<float>(100.0 - 2.0 * r);
+
+    const lsdtt::lsdtt_raster_cpu dem(std::move(z), std::move(m), meta);
+
+    lsdtt::lsdtt_flowinfo_options fi;
+    fi.boundary_conditions = "oooo";
+    lsdtt::lsdtt_flowinfo flow(dem.get_data_array(), dem.get_mask_array(),
+                               dem.get_meta(), fi);
+
+    // One channel row across the middle.
+    const int channel_row = 7;
+    std::vector<uint8_t> chan(static_cast<std::size_t>(nr) * nc, 0u);
+    for (int c = 0; c < nc; ++c)
+        chan[static_cast<std::size_t>(channel_row) * nc + c] = 1u;
+
+    // A values raster whose value encodes its own row, so the sampled result is
+    // checkable by eye: value = 1000 + row.
+    std::vector<float>   vals(static_cast<std::size_t>(nr) * nc);
+    std::vector<uint8_t> vmask(vals.size(), 1u);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+            vals[static_cast<std::size_t>(r) * nc + c] =
+                static_cast<float>(1000 + r);
+
+    const lsdtt::lsdtt_raster_result out =
+        lsdtt::sample_at_nearest_channel(flow, vals, vmask, chan);
+
+    // -- NC1: every pixel AT OR ABOVE the channel samples the channel row -----
+    {
+        int n_checked = 0, n_wrong = 0;
+        for (int r = 0; r <= channel_row; ++r)
+        {
+            for (int c = 0; c < nc; ++c)
+            {
+                const std::size_t i = static_cast<std::size_t>(r) * nc + c;
+                if (out.mask[i] == 0) { ++n_wrong; continue; }
+                ++n_checked;
+                if (std::abs(out.data[i] - (1000.0f + channel_row)) > 1e-4f)
+                    ++n_wrong;
+            }
+        }
+        check("NC1 upslope pixels sample the value AT the channel row",
+              n_wrong == 0 && n_checked == (channel_row + 1) * nc,
+              "checked=" + std::to_string(n_checked) +
+              " wrong=" + std::to_string(n_wrong));
+    }
+
+    // -- NC2: a channel pixel samples itself ---------------------------------
+    {
+        const std::size_t i = static_cast<std::size_t>(channel_row) * nc + 4;
+        check("NC2 a channel pixel samples its own value",
+              out.mask[i] != 0 &&
+                  std::abs(out.data[i] - (1000.0f + channel_row)) < 1e-4f,
+              "got " + std::to_string(out.data[i]));
+    }
+
+    // -- NC3: below the channel there is no downstream channel -> nodata ------
+    // This is the HAND convention, and it is the case a naive implementation
+    // gets wrong by returning the nearest channel in ANY direction.
+    {
+        int n_valid_below = 0;
+        for (int r = channel_row + 1; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+                if (out.mask[static_cast<std::size_t>(r) * nc + c] != 0)
+                    ++n_valid_below;
+        check("NC3 pixels with no downstream channel are nodata",
+              n_valid_below == 0,
+              std::to_string(n_valid_below) + " pixels below the channel row "
+              "were given a value");
+    }
+
+    // -- NC4: it is NOT the distance-to-channel raster ------------------------
+    // Guards the confusion the function exists to resolve. Feeding it the
+    // distance-from-outlet raster must give the distance-from-outlet OF the
+    // channel, which on this fixture is a constant per column, whereas
+    // get_distance_to_channel_raster varies with row.
+    {
+        const lsdtt::lsdtt_raster_result fd = flow.get_distance_from_outlet_raster();
+        const lsdtt::lsdtt_raster_result fd_at_ch =
+            lsdtt::sample_at_nearest_channel(flow, fd.data, fd.mask, chan);
+        // Threshold form, since that is the signature this one takes. On this
+        // fixture every column drains straight down, so contributing pixels at
+        // row r is r+1 and a threshold of 8 puts the channel head at row 7 --
+        // the same row as `chan` above.
+        const lsdtt::lsdtt_raster_result d_to_ch =
+            flow.get_distance_to_channel_raster(channel_row + 1);
+
+        const std::size_t top = static_cast<std::size_t>(0) * nc + 4;
+        const std::size_t mid = static_cast<std::size_t>(4) * nc + 4;
+
+        const bool constant_up_column =
+            fd_at_ch.mask[top] && fd_at_ch.mask[mid] &&
+            std::abs(fd_at_ch.data[top] - fd_at_ch.data[mid]) < 1e-3f;
+        const bool distance_varies =
+            d_to_ch.mask[top] && d_to_ch.mask[mid] &&
+            std::abs(d_to_ch.data[top] - d_to_ch.data[mid]) > 1e-3f;
+
+        check("NC4 sampling flow distance AT the channel is constant up a column",
+              constant_up_column,
+              "top=" + std::to_string(fd_at_ch.data[top]) +
+              " mid=" + std::to_string(fd_at_ch.data[mid]));
+        check("NC4 distance TO the channel varies up the same column, so the "
+              "two rasters are genuinely different quantities",
+              distance_varies,
+              "top=" + std::to_string(d_to_ch.data[top]) +
+              " mid=" + std::to_string(d_to_ch.data[mid]));
+    }
+}
+
+// =============================================================================
 // PP -- periodic-aware filling
 //
 // A periodic edge is not a boundary: the cell across the seam is an ordinary
@@ -1114,6 +1248,8 @@ int main(int argc, char** argv)
 
     // Analytic oracle: independent of any fixture, so run it once.
     std::cout << "--- reconstruction backend: edge cases ---\n";
+    test_sample_at_nearest_channel();
+
     test_periodic_fill();
 
     test_reconstruction_edge_cases();

@@ -177,4 +177,65 @@ std::unique_ptr<lsdtt_flow_base> make_flow_base(
     return std::make_unique<lsdtt_flowinfo>(dem, mask, meta, options);
 }
 
+// -----------------------------------------------------------------------------
+// sample_at_nearest_channel
+//
+// See the header for what this is and why the existing
+// get_distance_to_channel_raster does not answer the same question.
+// -----------------------------------------------------------------------------
+lsdtt_raster_result sample_at_nearest_channel(
+    const lsdtt_flow_base&      flow,
+    const std::vector<float>&   values,
+    const std::vector<uint8_t>& values_mask,
+    const std::vector<uint8_t>& channel_mask)
+{
+    const lsdtt_raster_meta& meta = flow.meta();
+    const std::size_t n =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+
+    if (values.size() != n || values_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "sample_at_nearest_channel: values and values_mask must have "
+            "flat-index size n_rows * n_cols");
+    }
+    if (channel_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "sample_at_nearest_channel: channel_mask must have flat-index size "
+            "n_rows * n_cols");
+    }
+
+    // donor_flat[i] is the flat index of the channel pixel i drains into, or -1.
+    // The donor traversal does not depend on the VALUES, only on the masks and
+    // the flow graph, so passing `values` as the elevation argument is safe and
+    // avoids duplicating the walk.
+    const height_above_channel_donor_result donor =
+        flow.get_height_above_channel_mask_donor_raster(
+            values, values_mask, channel_mask);
+
+    const float ndv = static_cast<float>(meta.no_data_value);
+
+    lsdtt_raster_result r;
+    r.meta = meta;
+    r.data.assign(n, ndv);
+    r.mask.assign(n, static_cast<std::uint8_t>(0));
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const std::int64_t d = donor.donor_flat[i];
+        if (d < 0) continue;
+
+        const std::size_t di = static_cast<std::size_t>(d);
+        // The donor must itself carry a valid value; a channel pixel that is
+        // nodata in `values` cannot define anything upstream of it.
+        if (values_mask[di] == 0) continue;
+
+        r.data[i] = values[di];
+        r.mask[i] = static_cast<std::uint8_t>(1);
+    }
+
+    return r;
+}
+
 } // namespace lsdtt

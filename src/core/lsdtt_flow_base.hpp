@@ -506,6 +506,43 @@ inline double d8_step_length(
 }
 
 // -----------------------------------------------------------------------------
+// sample_at_nearest_channel
+//
+// For every pixel, the value of `values` AT the nearest downstream channel
+// pixel -- not the distance to it, and not the difference from it.
+//
+// This is the input Goren & Shelef (2024) paired-flow-path statistics need:
+// their lengthwise asymmetry uses
+//     L_ij = FD_nearest_channel(i) - FD_nearest_channel(common junction)
+// so what is required is the flow distance OF the channel a pixel drains into,
+// evaluated at a common datum, rather than the distance from the pixel to it.
+// lsdtt3 already had `get_distance_to_channel_raster` (the latter), which is a
+// different quantity and cannot be substituted.
+//
+// Feed it `get_distance_from_outlet_raster()` to get FD_nearest_channel, or a
+// chi raster to get chi_nearest_channel. Any per-pixel field works.
+//
+// Implemented on top of get_height_above_channel_mask_donor_raster, whose
+// `donor_flat` already carries the flat index of the nearest downstream channel
+// pixel. Reusing that traversal keeps one definition of "the channel a pixel
+// drains into" for HAND and for this, and means the routine works for every
+// flow backend without a per-backend implementation.
+//
+// Channel pixels return their own value. Pixels that reach an outlet without
+// passing through a channel are nodata, as in HAND.
+//
+// `values_mask` gates the traversal, so a pixel whose value is invalid gets no
+// donor -- pass the validity mask of `values`, not the DEM mask, when they
+// differ.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_result sample_at_nearest_channel(
+    const lsdtt_flow_base&       flow,
+    const std::vector<float>&    values,
+    const std::vector<uint8_t>&  values_mask,
+    const std::vector<uint8_t>&  channel_mask
+);
+
+// -----------------------------------------------------------------------------
 // get_largest_basin_outlet_flat
 //
 // Scans all outlet cells in the flow object and returns the flat index of the

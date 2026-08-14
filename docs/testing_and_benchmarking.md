@@ -3151,6 +3151,72 @@ distinguishable, so the flag cannot silently become a no-op.
 
 ---
 
+### 8b.1c Drainage-area exceedance exponent beta, and an unresolved gap (2026-08-14)
+
+`compute_area_scaling` in `lsdtt_strahler_tokunaga_analysis_cpu` fits
+`P(A > a) ~ a^-beta`, the standard characterisation of how drainage area is
+partitioned across a network (Rodriguez-Iturbe et al. 1992 WRR 28:1095; Rigon et
+al. 1996 WRR 32:3367). Exposed as `write_area_scaling_summary` /
+`write_area_scaling_curve`; pinned by `unit_synthetic_networks` case B.
+
+#### Three things that had to be got right, each of which was wrong first
+
+**The fit must be two-sided.** The first implementation trimmed only from below
+and fitted the tail, which is the standard heavy-tail recipe and completely wrong
+here: at the large-a end sits the finite-size rollover, since no basin can exceed
+the domain. Worse, for a complete single basin the endpoints PIN the full-range
+slope near 1 regardless of the network, because N(>= smallest) = N and
+N(>= A_max) = 1. Measured on a 400x200 OCN: full-range slope **-0.986**, while
+half-decade local slopes in the scaling regime give beta = **0.31-0.53**. The
+tail fit returned a confident **0.76**. `upper_exclude_decades` (default 1.0)
+now discards the rollover before any cutoff is selected.
+
+**KS selection alone favours short ranges.** A short segment of any smooth curve
+looks like a power law, so the search happily returned r^2 = 0.999 over half a
+decade. Without a floor the chosen range collapsed to 0.53-1.10 decades and beta
+swung 0.29-0.52 with it. `min_fit_decades` (default 1.5) is enforced inside the
+candidate loop, so a short-and-tidy segment is never a candidate; if the
+constraint cannot be met the result is NaN, which is the correct answer when
+there is not enough range.
+
+**Grid size matters more than expected.** At 96x96 the fit is ill-conditioned
+(r^2 = 0.83, beta = 0.57). The test fixture is 200x200; below that beta should
+not be read.
+
+The exponent is the **MLE** (Clauset, Shalizi & Newman 2009, SIAM Review 51:661),
+not least squares on the log-log curve, which those authors show to be biased.
+Both are reported: `beta` (MLE) and `beta_ols` with its `r_squared`, kept as
+shape diagnostics. On the test fixture they agree to 0.02, and case B asserts
+they agree within 0.1 -- a wide gap means the fitted range is not a power law and
+the number should not be read as one.
+
+#### The unresolved part, stated plainly
+
+**lsdtt3 measures beta ~0.54-0.58 where the literature reports 0.43-0.45.**
+
+The obvious suspect was the length-weighted energy that became the default on
+2026-08-14. It is not: measured on the same grid, seed, gamma and schedule,
+
+| network | beta |
+|---|---:|
+| OCNet parity (`energy_length_weighted: false`) | 0.540 |
+| length-weighted (default) | 0.581 |
+
+The parity network is bit-identical to OCNet and still sits ~0.1 above the
+published value, so the gap is **not** caused by our energy change. It is either
+in how beta is measured here versus in the literature, or in grid size, and
+neither has been established. Candidates not yet tested: the literature may fit
+over a different range, may use a different exceedance normalisation, or may
+require substantially larger grids than 200x200.
+
+Case B therefore asserts a **broad** band (0.3-0.8) and prints the value every
+run, rather than a band tuned to the literature. It is a drift guard, not a
+validation of agreement. **Do not cite beta from lsdtt3 as agreeing with
+Rodriguez-Iturbe et al. until this gap is explained**, and do not narrow the band
+to make a point -- the gap is the finding.
+
+---
+
 ### 8b.2 Regression artefacts for the OCN — oracle, band, pin, and no sentinel
 
 These four words are not interchangeable, and the OCN is a good example of why.

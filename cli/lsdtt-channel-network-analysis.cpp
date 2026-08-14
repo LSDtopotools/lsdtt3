@@ -341,6 +341,40 @@ int main(int argc, char* argv[])
         "analysis. Output: <write_fname>_junction_area_ratios.csv.",
         "Junction area-ratio outputs (complement to Tokunaga)", "switch", ""};
 
+    bool_default_map["write_area_scaling_summary"] = false;
+    help_map["write_area_scaling_summary"] = {"bool","false",
+        "Write the drainage-area exceedance exponent beta, P(A > a) ~ a^-beta.",
+        "The standard description of how drainage area is partitioned across a "
+        "network, complementing the junction area ratios: those describe how "
+        "area splits at one confluence, this describes the resulting "
+        "distribution. Literature values are ~0.43 for real networks and ~0.45 "
+        "for Optimal Channel Networks (Rodriguez-Iturbe et al. 1992; Rigon et "
+        "al. 1996). NOTE lsdtt3 currently measures ~0.54-0.58 on generated OCNs "
+        "and the gap is unexplained -- read the reported a_min, n_decades and "
+        "n_used before using the number, and see "
+        "docs/testing_and_benchmarking.md 8b.1c. Outputs "
+        "<write_fname>_area_scaling_summary.csv and _area_scaling_curve.csv.",
+        "Junction area-ratio outputs (complement to Tokunaga)", "switch", ""};
+
+    float_default_map["area_scaling_upper_exclude_decades"] = 1.0f;
+    help_map["area_scaling_upper_exclude_decades"] = {"float","1.0",
+        "Decades of the largest drainage areas excluded before fitting beta.",
+        "The top of the distribution is the finite-size rollover -- no basin can "
+        "exceed the domain -- and fitting it measures the truncation, not the "
+        "network. Raise this on small grids, lower it on large ones.",
+        "Junction area-ratio outputs (complement to Tokunaga)", "param",
+        "write_area_scaling_summary"};
+
+    float_default_map["area_scaling_min_fit_decades"] = 1.5f;
+    help_map["area_scaling_min_fit_decades"] = {"float","1.5",
+        "Minimum decades of drainage area the fitted range must span.",
+        "Cutoff selection on its own favours short ranges, because a short "
+        "segment of any smooth curve looks like a power law. If this cannot be "
+        "met the result is NaN, which is the correct answer when there is too "
+        "little range to fit.",
+        "Junction area-ratio outputs (complement to Tokunaga)", "param",
+        "write_area_scaling_summary"};
+
     bool_default_map["write_junction_area_ratio_summary"] = false;
     help_map["write_junction_area_ratio_summary"] = {"bool","false",
         "Write a junction area-ratio distribution summary to CSV.",
@@ -463,6 +497,7 @@ int main(int argc, char* argv[])
     const bool do_tokunaga_summary   = bf["write_tokunaga_summary_data"];
     const bool do_jar_data           = bf["write_junction_area_ratio_data"];
     const bool do_jar_summary        = bf["write_junction_area_ratio_summary"];
+    const bool do_area_scaling       = bf["write_area_scaling_summary"];
     const bool do_com_bearings       = bf["write_junction_centre_of_mass_bearings"];
     const bool do_link_bearing_vectors = bf["write_channel_link_bearing_vectors"];
     const bool do_junction_angle_bearing_vectors = bf["write_junction_angle_bearing_vectors"];
@@ -484,6 +519,7 @@ int main(int argc, char* argv[])
         do_tokunaga_summary               ||
         do_jar_data                       ||
         do_jar_summary                    ||
+        do_area_scaling                   ||
         do_com_bearings;
 
 
@@ -495,7 +531,14 @@ int main(int argc, char* argv[])
                   << "  write_strahler_channels\n"
                   << "  write_tokunaga_channels\n"
                   << "  write_tokunaga_channel_data\n"
-                  << "  write_tokunaga_summary_data\n";
+                  << "  write_tokunaga_summary_data\n"
+                  // These were missing from the list even though they are
+                  // accepted, so a user enabling only one of them was told to
+                  // enable something else.
+                  << "  write_junction_area_ratio_data\n"
+                  << "  write_junction_area_ratio_summary\n"
+                  << "  write_area_scaling_summary\n"
+                  << "  write_junction_centre_of_mass_bearings\n";
         return 1;
     }
 
@@ -1381,6 +1424,54 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: junction area-ratio analysis failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (do_area_scaling)
+    {
+        std::cout << "\n--- Drainage-area exceedance scaling ---\n";
+        try
+        {
+            const lsdtt::lsdtt_raster_result area = flow->get_drainage_area_raster();
+
+            const lsdtt::lsdtt_area_scaling_result sc =
+                lsdtt::compute_area_scaling(
+                    std::vector<double>(area.data.begin(), area.data.end()),
+                    area.mask,
+                    0.0,
+                    static_cast<double>(ff["area_scaling_upper_exclude_decades"]),
+                    static_cast<double>(ff["area_scaling_min_fit_decades"]));
+
+            std::cout << "beta (MLE)                  : " << sc.beta
+                      << " +/- " << sc.beta_stderr << "\n";
+            std::cout << "beta (least squares), r^2   : " << sc.beta_ols
+                      << ", " << sc.r_squared << "\n";
+            std::cout << "Fitted range                : " << sc.a_min << " to "
+                      << sc.a_max << " (" << sc.n_decades << " decades, "
+                      << sc.n_used << " of " << sc.n_total << " cells)\n";
+
+            if (!std::isfinite(sc.beta))
+            {
+                std::cerr << "Warning: beta is NaN -- the fitted range could not "
+                             "meet area_scaling_min_fit_decades. The grid is "
+                             "probably too small; beta should not be forced.\n";
+            }
+
+            const std::string f =
+                pp.make_output_path( "_area_scaling_summary", ".csv");
+            std::cout << "Writing: " << f << "\n";
+            lsdtt::write_area_scaling_summary(sc, f);
+
+            const std::string fc =
+                pp.make_output_path( "_area_scaling_curve", ".csv");
+            std::cout << "Writing: " << fc << "\n";
+            lsdtt::write_area_scaling_curve(sc, fc);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: drainage-area scaling failed: "
                       << e.what() << "\n";
             return 1;
         }
