@@ -563,11 +563,19 @@ wired to pass the boundary string through:
 `lsdtt-chi-analysis`, `lsdtt-cross-sections`, `lsdtt-divide-migration`,
 `lsdtt-drainage-analysis`, `lsdtt-lem`, `lsdtt-valley-centreline`.
 
+`lsdtt-ridgeline-analysis` was wired later (2026-08-14), when a periodic run of
+the paired-flow-path metric on the synthetic noise surfaces hit exactly the
+failure above — `could not assign a receiver at row 23, col 399`. Non-periodic
+behaviour is unchanged: the same DEM under `oooo` gives an identical median
+ΔL and 9721 pairs against 9755 for `opop`, the difference being the seam.
+Note there is **no CTest coverage of this CLI at all**, so that check was
+manual; the wiring is not regression-guarded.
+
 The change is a no-op for every non-periodic run, which is why the whole suite
 is unchanged at 134/134. **Still unwired**, because their call sites did not
 match the mechanical pattern and each needs a look: `lsdtt-cosmo-landslides`,
 `lsdtt-cosmo-prediction`, `lsdtt-cosmo-tool`, `lsdtt-flat-surface-finder`,
-`lsdtt-hydraulic-routing`, `lsdtt-ridgeline-analysis`, `lsdtt-sediment-routing`,
+`lsdtt-hydraulic-routing`, `lsdtt-sediment-routing`,
 `lsdtt-stream-burning`. Those will still fail on a periodic run.
 `lsdtt-basin-stats`, `lsdtt-feature-finder` and `lsdtt-mountain-front` do not
 expose `boundary_conditions` at all, so they cannot route periodically anyway.

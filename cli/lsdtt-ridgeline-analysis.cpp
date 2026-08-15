@@ -69,7 +69,9 @@
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
+#include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
+#include "../src/cpu/lsdtt_paired_flowpaths_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_ridgeline_cpu.hpp"
@@ -737,6 +739,23 @@ int main(int argc, char* argv[])
         "Inclusive. Defaults to -1, which means ignore maximum.",
         "Basin Outline Snapping / Filtering", "param", ""};
 
+    // These two switches gate the stream-order and area filters below. They were
+    // read via bf[...] but never declared, so they silently defaulted to false
+    // and the filters never ran no matter what the parameter file asked for.
+    bool_default_map["filter_basins_by_stream_order"] = false;
+    help_map["filter_basins_by_stream_order"] = {"bool", "false",
+        "Apply the stream order filter to the selected basins.",
+        "Uses basins_min_stream_order and basins_max_stream_order, each "
+        "inclusive, with -1 meaning ignore that bound.",
+        "Basin Outline Snapping / Filtering", "switch", ""};
+
+    bool_default_map["filter_basins_by_area"] = false;
+    help_map["filter_basins_by_area"] = {"bool", "false",
+        "Apply the area filter to the selected basins.",
+        "Uses basins_min_area_pixels and basins_max_area_pixels, each "
+        "inclusive, with -1 meaning ignore that bound.",
+        "Basin Outline Snapping / Filtering", "switch", ""};
+
     bool_default_map["filter_incomplete_basins"] = false;
     help_map["filter_incomplete_basins"] = {"bool", "false", 
         "Remove all incomplete basins.", 
@@ -853,6 +872,42 @@ int main(int argc, char* argv[])
         "Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node.",
         "Ridgeline CSV Outputs", "switch", ""};
 
+    // --- Paired flow paths (lengthwise asymmetry, Goren & Shelef 2024) ---
+    bool_default_map["print_paired_flowpath_statistics"] = false;
+    help_map["print_paired_flowpath_statistics"] = {"bool", "false",
+        "Write the lengthwise asymmetry (delta_L) of paired flow paths across each divide.",
+        "For the two flow paths that diverge across a divide and rejoin at a common "
+        "junction, delta_L = 2|L_i - L_j|/(L_i + L_j) measures planform complexity "
+        "(Goren and Shelef 2024). Published medians run from 0.19 for sub-parallel "
+        "trunk streams to 1.00 for tortuous networks. Requires "
+        "ridgeline_analysis_mode = interfluvial_divide_ridgelines, because the two "
+        "paths must rejoin: a basin outline separates a basin from its neighbours, so "
+        "its flanking pixels are in different basins and every pair would be discarded.",
+        "Paired flow paths", "switch", ""};
+
+    float_default_map["paired_flowpath_threshold_divide_distance"] = 1000.0f;
+    help_map["paired_flowpath_threshold_divide_distance"] = {"float", "1000.0",
+        "Reject divide edges within this distance (metres) ALONG THE DIVIDE of either end.",
+        "The ends of an interfluvial divide are where it meets a junction, and pairs "
+        "there are trivially symmetric because the two paths have barely separated "
+        "before rejoining. Including them drags the median down. Goren and Shelef use "
+        "1000 m. Set to 0 to disable the filter.",
+        "Paired flow paths", "param", ""};
+
+    bool_default_map["paired_flowpath_unique_pairs"] = false;
+    help_map["paired_flowpath_unique_pairs"] = {"bool", "false",
+        "Keep only one record per distinct channel pair.",
+        "Goren and Shelef iterate every divide edge and take data from the nearest "
+        "downstream channel, so two edges can yield the same channel pair and be "
+        "counted twice. The default (false) reproduces them; true de-duplicates.",
+        "Paired flow paths", "switch", ""};
+
+    bool_default_map["paired_flowpath_only_channel_heads"] = false;
+    help_map["paired_flowpath_only_channel_heads"] = {"bool", "false",
+        "Keep only pairs where both nearest downstream channels are channel heads.",
+        "Goren and Shelef do NOT restrict pairs to channel heads - a paired path may "
+        "start further down a channel - so the default reproduces them.",
+        "Paired flow paths", "switch", ""};
 
     // --- Polynomial surface fit ---
     bool_default_map["write_polyfit_rasters"] = false;
@@ -1017,8 +1072,14 @@ int main(int argc, char* argv[])
     if (!bf["raster_is_filled"]) {
         std::cout << "\n--- Pit filling ---\n";
         try {
+            // Periodic-aware overload: on a 'p' axis the edges are not spill
+            // points and the neighbour walk wraps. Filling with open edges and
+            // then routing periodically leaves cells with no downhill neighbour
+            // once the router wraps, and routing fails outright with
+            // "could not assign a receiver".
             routed_dem = lsdtt::fill_pits(
-                dem, ff["fill_min_slope"], ifs["n_threads"]
+                dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                ifs["n_threads"]
             );
         } catch (const std::exception& e) {
             std::cerr << "Fatal Error during pit filling: " << e.what() << "\n";
@@ -1524,6 +1585,128 @@ int main(int argc, char* argv[])
     {
         std::cerr << "Fatal Error during extraction: " << e.what() << "\n";
         return 1;
+    }
+
+    // =========================================================================
+    // Phase 5b - Paired flow path statistics (Goren & Shelef 2024)
+    //
+    // Runs on the RAW ridgeline geometry, before Phase 6 fills elevations and
+    // smooths: the pairing needs the divide edges as extracted, and smoothing
+    // moves the nodes.
+    // =========================================================================
+    if (bf["print_paired_flowpath_statistics"])
+    {
+        if (analysis_mode != "interfluvial_divide_ridgelines")
+        {
+            std::cerr << "FATAL: print_paired_flowpath_statistics requires "
+                      << "ridgeline_analysis_mode = interfluvial_divide_ridgelines.\n"
+                      << "The two flow paths in a pair must REJOIN at a common "
+                      << "junction. A basin outline separates a basin from its "
+                      << "neighbours, so its flanking pixels drain to different "
+                      << "outlets and every pair would be discarded.\n";
+            return 1;
+        }
+
+        std::cout << "\n--- Paired flow path statistics (lengthwise asymmetry) ---\n";
+
+        try
+        {
+            const std::size_t n_cells =
+                static_cast<std::size_t>(dem.get_meta().n_rows) *
+                static_cast<std::size_t>(dem.get_meta().n_cols);
+
+            // Channel mask straight from the junction network, so the channels
+            // used here are exactly the ones the divides were derived from.
+            std::vector<std::uint8_t> channel_mask(n_cells, 0);
+            for (std::size_t i = 0; i < n_cells; ++i)
+            {
+                const std::int64_t flat = static_cast<std::int64_t>(i);
+                if (flow->is_valid_cell(flat) && junction_network.is_channel(flat))
+                    channel_mask[i] = 1;
+            }
+
+            const lsdtt::lsdtt_raster_result fd_res =
+                flow->get_distance_from_outlet_raster();
+
+            lsdtt::lsdtt_chi_options chi_opts;
+            chi_opts.m_over_n = static_cast<double>(ff["m_over_n"]);
+            const lsdtt::lsdtt_raster_cpu chi_ras =
+                lsdtt::get_chi_raster(*flow, chi_opts);
+
+            const lsdtt::lsdtt_array2d_f& chi_arr = chi_ras.get_data_array();
+            const std::vector<float> chi_from_outlet(
+                chi_arr.data(), chi_arr.data() + n_cells);
+
+            const lsdtt::lsdtt_array2d_u8& mask_arr = dem.get_mask_array();
+            const std::vector<std::uint8_t> valid(
+                mask_arr.data(), mask_arr.data() + n_cells);
+
+            // The value of each field AT the channel a pixel drains into -- not
+            // the distance to it. See sample_at_nearest_channel.
+            const std::vector<float> fd_at_channel =
+                lsdtt::sample_at_nearest_channel(
+                    *flow, fd_res.data, valid, channel_mask).data;
+            const std::vector<float> chi_at_channel =
+                lsdtt::sample_at_nearest_channel(
+                    *flow, chi_from_outlet, valid, channel_mask).data;
+
+            std::vector<lsdtt::lsdtt_ridgeline_cpu> divides;
+            divides.reserve(all_ridgelines.size());
+            for (const auto& rec : all_ridgelines)
+                divides.push_back(rec.ridgeline);
+
+            lsdtt::lsdtt_paired_flowpath_options pf_opts;
+            pf_opts.threshold_divide_distance_m =
+                static_cast<double>(ff["paired_flowpath_threshold_divide_distance"]);
+            pf_opts.unique_pairs = bf["paired_flowpath_unique_pairs"];
+            pf_opts.only_take_channel_heads = bf["paired_flowpath_only_channel_heads"];
+
+            const lsdtt::lsdtt_paired_flowpath_result pf =
+                lsdtt::compute_paired_flowpath_statistics(
+                    *flow, divides, fd_at_channel, chi_at_channel,
+                    fd_res.data, chi_from_outlet, channel_mask, pf_opts);
+
+            std::cout << "  Divide edges examined: " << pf.n_edges_examined << "\n";
+            std::cout << "  Pairs retained:        " << pf.n_pairs << "\n";
+            std::cout << "    rejected, too close to a divide end: "
+                      << pf.n_rejected_distance << "\n";
+            std::cout << "    rejected, no downstream channel:     "
+                      << pf.n_rejected_no_channel << "\n";
+            std::cout << "    rejected, paths never rejoin:        "
+                      << pf.n_rejected_no_junction << "\n";
+            std::cout << "    rejected, duplicate pair:            "
+                      << pf.n_rejected_duplicate << "\n";
+            std::cout << "    rejected, not a channel head:        "
+                      << pf.n_rejected_not_head << "\n";
+
+            if (pf.n_pairs == 0)
+            {
+                std::cout << "  No pairs survived. The rejection counts above say "
+                          << "which filter removed them -- that is how you tell "
+                          << "'no complexity' from 'no data'.\n";
+            }
+            else
+            {
+                std::cout << "  median delta_L   = " << pf.median_delta_L << "\n";
+                std::cout << "  mean   delta_L   = " << pf.mean_delta_L << "\n";
+                std::cout << "  median delta_chi = " << pf.median_delta_chi << "\n";
+                std::cout << "  For scale: Goren & Shelef (2024) report median "
+                          << "delta_L of 0.19 for sub-parallel trunk streams and "
+                          << "1.00 for tortuous networks.\n";
+            }
+
+            lsdtt::write_paired_flowpath_data(
+                pf, dem.get_meta(),
+                pp.make_output_path("_paired_flowpaths", ".csv"));
+            lsdtt::write_paired_flowpath_summary(
+                pf, pp.make_output_path("_paired_flowpaths_summary", ".csv"));
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Fatal Error during paired flow path statistics: "
+                      << e.what() << "\n";
+            return 1;
+        }
     }
 
     // =========================================================================

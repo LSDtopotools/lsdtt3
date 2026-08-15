@@ -1173,6 +1173,9 @@ target_link_libraries(lsdtt-test-divide-migration PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-divide-diagnostics cpp/test_divide_diagnostics.cpp)
 target_link_libraries(lsdtt-test-divide-diagnostics PRIVATE lsdtt3_cpu)
 
+add_executable(lsdtt-test-paired-flowpaths cpp/test_paired_flowpaths.cpp)
+target_link_libraries(lsdtt-test-paired-flowpaths PRIVATE lsdtt3_cpu)
+
 add_executable(lsdtt-test-landscape-equilibration cpp/test_landscape_equilibration.cpp)
 target_link_libraries(lsdtt-test-landscape-equilibration PRIVATE lsdtt3_cpu)
 
@@ -1183,6 +1186,11 @@ add_test(NAME unit_divide_diagnostics
          COMMAND lsdtt-test-divide-diagnostics)
 set_tests_properties(unit_divide_diagnostics PROPERTIES
     LABELS "unit;divide_diagnostics")
+
+add_test(NAME unit_paired_flowpaths
+         COMMAND lsdtt-test-paired-flowpaths)
+set_tests_properties(unit_paired_flowpaths PROPERTIES
+    LABELS "unit;paired_flowpaths")
 
 add_test(NAME unit_divide_migration
          COMMAND lsdtt-test-divide-migration
@@ -2460,6 +2468,7 @@ set(LSDTT_DOMAIN_RULES
     "landslide"              "landslide"
     "step_change"            "step_change"
     "landscape_equilibration|lem_equilibration" "landscape_equilibration"
+    "paired_flowpaths"       "paired_flowpaths"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
     "fetch"                  "fetch"

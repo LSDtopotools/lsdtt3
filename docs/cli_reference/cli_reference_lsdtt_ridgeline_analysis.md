@@ -44,6 +44,7 @@ To analyse **all ridges in a DEM**, use the default mode with `select_all_basins
 | 3 | Select basins (from outlets, all, or range‑spanning detection) and apply filters |
 | 4 | Optionally write basin outlines / rasters |
 | 5 | Extract ridgelines according to the mode |
+| 5b | Optional paired flow path statistics (lengthwise asymmetry) |
 | 6 | Fill elevations, fit/detrend each profile, segment snouts, smooth |
 | 7 | Write ridgeline point / stats / extrema CSVs |
 | 9 | Optional polynomial surface fit, sample metrics along ridgelines, optional power spectra and characteristic spacing |
@@ -140,6 +141,68 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 | `print_ridgeline_extrema` | bool | `false` | `<write_fname><mode_prefix>_extrema.csv` — ridgeline extrema with distance/relief to the next extremum and distance to the triple divide. |
 
 `<mode_prefix>` is `_basin_outline_ridgelines`, `_interfluvial_ridgelines`, or `_range_defined_ridgelines`.
+
+---
+
+## Paired flow path statistics — lengthwise asymmetry (Phase 5b)
+
+For the two flow paths that diverge across a divide and rejoin at a common
+junction, the lengthwise asymmetry of Goren & Shelef (2024) is
+
+```
+delta_L   = 2 |L_i - L_j| / (L_i + L_j)
+delta_chi = 2 |chi_i - chi_j| / (chi_i + chi_j)
+```
+
+where `L_i` is the along‑channel distance from where path `i` enters the channel
+network down to the shared junction. Both are dimensionless and scale‑free.
+Published medians run from **0.19** for sub‑parallel trunk streams to **1.00**
+for tortuous networks.
+
+| Parameter | Type | Default | Meaning |
+|---|---|---|---|
+| `print_paired_flowpath_statistics` | bool | `false` | Write `<write_fname>_paired_flowpaths.csv` (one row per pair) and `<write_fname>_paired_flowpaths_summary.csv` (medians plus the rejection counts). |
+| `paired_flowpath_threshold_divide_distance` | float | `1000.0` | Reject divide edges within this distance, **along the divide**, of either end. See the warning below. |
+| `paired_flowpath_unique_pairs` | bool | `false` | Keep one record per distinct channel pair. The default reproduces Goren & Shelef, who iterate every divide edge and so can count a pair twice. |
+| `paired_flowpath_only_channel_heads` | bool | `false` | Keep only pairs whose nearest downstream channels are both channel heads. Goren & Shelef do **not** restrict to heads, so the default reproduces them. |
+
+### Requires `interfluvial_divide_ridgelines`, and sibling sub‑basins
+
+The two paths in a pair must **rejoin**, so the divide has to be internal — with
+both flanks draining to a common junction. The CLI refuses to run in any other
+mode: a basin *outline* separates a basin from its neighbours, so its flanking
+pixels drain to different outlets and every pair would be discarded.
+
+For the same reason, select **sibling sub‑basins**, not top‑level basins.
+`filter_nested_basins` leaves only top‑level basins, whose neighbours drain to
+different outlets — every pair is then rejected as "paths never rejoin", and the
+output is empty. Use `select_all_basins` with `filter_basins_by_stream_order`
+instead:
+
+```
+ridgeline_analysis_mode: interfluvial_divide_ridgelines
+select_all_basins: true
+filter_basins_by_stream_order: true
+basins_min_stream_order: 2
+basins_max_stream_order: 3
+print_paired_flowpath_statistics: true
+```
+
+A large "paths never rejoin" count is normal even so — sibling sub‑basins in
+different parents are correctly excluded. Read the rejection counts in the
+summary CSV before reading the median: they are how you tell "no complexity"
+from "no surviving pairs".
+
+### Choosing the divide‑end threshold
+
+The 1000 m default is Goren & Shelef's, and it is calibrated for real
+landscapes. On small synthetic grids it can remove essentially everything: on a
+400×200 grid of 30 m cells with stream order 2–3 basins, a 1000 m two‑ended
+filter left 40 pairs out of 9755. Check `n_rejected_distance` in the summary
+CSV, and lower or disable the threshold (`0`) when the divides are short.
+
+Note this measurement is taken on the **raw** ridgeline geometry, before the
+Phase 6 elevation fill and smoothing, which move the nodes.
 
 ---
 
