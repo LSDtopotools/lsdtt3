@@ -1022,9 +1022,15 @@ int main(int argc, char* argv[])
 
         try
         {
+            // Periodic-aware overload. This CLI routes with the user's
+            // boundary_conditions (see get_boundary_conditions below), so
+            // filling with open edges and then routing periodically leaves
+            // cells with no downhill neighbour at the seam and routing aborts
+            // with "could not assign a receiver at row N, col 0".
             routing_dem = lsdtt::fill_pits(
                 dem,
                 ff["fill_min_slope"],
+                join_boundary_conditions(pp.get_boundary_conditions()),
                 ifs["n_threads"]
             );
         }

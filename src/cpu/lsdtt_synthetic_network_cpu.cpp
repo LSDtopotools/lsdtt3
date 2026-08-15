@@ -137,10 +137,24 @@ void lsdtt_synthetic_network_cpu::setup_domain_and_outlets_()
     }
     else if (opts_.outlet_mode == ocn_outlet_mode::north_south)
     {
-        // Every land pixel on the north and south edges, and nothing else. With
-        // periodic_columns this gives a strip that drains through two opposed
-        // boundaries, so the main divide is free to sit anywhere between them.
-        for (int c = 0; c < ncols_; ++c)
+        // Land pixels on the north and south edges, every outlet_spacing-th
+        // column, and nothing else. With periodic_columns this gives a strip
+        // that drains through two opposed boundaries, so the main divide is
+        // free to sit anywhere between them.
+        //
+        // outlet_spacing is what sets the BASIN WIDTH, and it is worth being
+        // explicit about why it exists. At the default of 1 every boundary
+        // pixel is its own baselevel, so the tile is partitioned into as many
+        // basins as there are boundary cells and the basin scale is imposed by
+        // the grid rather than emerging from the optimisation. Annealing
+        // temperature cannot change that: it controls how each basin BRANCHES,
+        // not how many there are. Raising outlet_spacing forces the drainage to
+        // organise into wider basins, which is the OCN analogue of the
+        // diamond-square feature wavelength, and the continuous version of the
+        // single-outlet configuration used in much of the OCN literature.
+        const int spacing = (opts_.outlet_spacing > 1) ? opts_.outlet_spacing : 1;
+
+        for (int c = 0; c < ncols_; c += spacing)
         {
             for (int r : {0, nrows_ - 1})
             {
@@ -150,6 +164,25 @@ void lsdtt_synthetic_network_cpu::setup_domain_and_outlets_()
                 if (is_outlet_[static_cast<std::size_t>(f)]) continue;  // nrows_ == 1
                 is_outlet_[static_cast<std::size_t>(f)] = 1;
                 outlets_.push_back(f);
+            }
+        }
+
+        // A spaced set can miss every land pixel on a ragged coast, which would
+        // leave the domain with no exit at all. Fall back to every column
+        // rather than throw: the caller asked for a spacing, not for failure.
+        if (outlets_.empty() && spacing > 1)
+        {
+            for (int c = 0; c < ncols_; ++c)
+            {
+                for (int r : {0, nrows_ - 1})
+                {
+                    if (!land_at(r, c)) continue;
+                    const std::int64_t f =
+                        static_cast<std::int64_t>(r) * ncols_ + c;
+                    if (is_outlet_[static_cast<std::size_t>(f)]) continue;
+                    is_outlet_[static_cast<std::size_t>(f)] = 1;
+                    outlets_.push_back(f);
+                }
             }
         }
 

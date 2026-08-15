@@ -98,6 +98,13 @@ struct lsdtt_ocn_options
     std::vector<std::uint8_t> domain_mask;
     ocn_outlet_mode           outlet_mode = ocn_outlet_mode::single_south;
 
+    // Column spacing of baselevel outlets in north_south mode. 1 (the default)
+    // makes every boundary pixel an outlet, so basin width is set by the grid,
+    // not by the optimisation. Larger values force wider basins -- the OCN
+    // analogue of the diamond-square feature wavelength. Ignored in the other
+    // outlet modes.
+    int outlet_spacing = 1;
+
     // Wrap the lattice in the column direction, so column 0 and column n_cols-1
     // are D8 neighbours. Must match the 'p' flags in the boundary_conditions
     // used to route the resulting DEM: a network annealed with wrapping and then

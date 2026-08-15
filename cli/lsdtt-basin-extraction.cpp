@@ -615,7 +615,8 @@ int main(int argc, char* argv[])
     help_map["write_selected_basin_outlets_csv"] = {"bool", "false",
         "Write the outlets of the final selected basins to a CSV file.",
         "Outputs a _selected_basin_outlets.csv file with longitude, latitude, "
-        "basin_junction_number, and basin_outlet_flat_index. "
+        "basin_junction_number, basin_outlet_flat_index, and the basin size as "
+        "basin_n_pixels, basin_area_km2 and basin_fraction_of_domain. "
         "This file can be directly read back into lsdtt as a basin_outlet_file."
         "Note: write_basin_outlet_points writes the requested outlets, but "
         "this option writes the outlets of the selected basins.",
@@ -2248,12 +2249,33 @@ int main(int argc, char* argv[])
 
             try
             {
+                // The size columns close a gap: this CLI can FILTER basins by
+                // area but never reported the areas, so the size distribution
+                // of a selection could not be read without recomputing it
+                // downstream. The count comes straight from the s_vector -- the
+                // upslope set of the outlet -- so it is the same quantity the
+                // area filter uses.
+                //
+                // basin_fraction_of_domain is the share of the valid domain
+                // draining through this outlet. For a selection of top-level
+                // basins (select_all_basins + filter_nested_basins) these are
+                // the EDGE-DRAINING basins and the fractions partition the
+                // tile, which is what makes "do a few basins take up most of
+                // it?" answerable.
                 const std::vector<std::string> headers = {
                     "longitude",
                     "latitude",
                     "basin_junction_number",
-                    "basin_outlet_flat_index"
+                    "basin_outlet_flat_index",
+                    "basin_n_pixels",
+                    "basin_area_km2",
+                    "basin_fraction_of_domain"
                 };
+
+                const double cell_area_km2 =
+                    dem.get_meta().cell_size * dem.get_meta().cell_size * 1.0e-6;
+                const double n_valid_cells =
+                    static_cast<double>(flow->n_valid_cells());
 
                 std::vector<std::vector<std::string>> rows;
                 rows.reserve(basin_manager.size());
@@ -2290,11 +2312,18 @@ int main(int argc, char* argv[])
                         } catch (...) {}
                     }
 
+                    const double n_pix =
+                        static_cast<double>(flow->s_vector_size(flat));
+
                     rows.push_back({
                         precise_string(lon),
                         precise_string(lat),
                         std::to_string(junc),
-                        std::to_string(flat)
+                        std::to_string(flat),
+                        std::to_string(static_cast<std::int64_t>(n_pix)),
+                        precise_string(n_pix * cell_area_km2),
+                        precise_string(n_valid_cells > 0.0
+                                           ? n_pix / n_valid_cells : 0.0)
                     });
                 }
 

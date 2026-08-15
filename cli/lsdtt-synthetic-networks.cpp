@@ -106,6 +106,21 @@ int main(int argc, char* argv[])
         "Sets the grid spacing of the output rasters.",
         "Lattice geometry", "param", ""};
 
+    int_default_map["outlet_spacing"] = 1;
+    help_map["outlet_spacing"] = {"int","1",
+        "Column spacing of baselevel outlets, for outlet_mode north_south.",
+        "This is the knob that sets BASIN WIDTH. At 1 every boundary pixel is "
+        "its own baselevel, so the tile is partitioned into as many basins as "
+        "there are boundary cells and the basin scale is imposed by the grid "
+        "rather than emerging from the optimisation - annealing temperature "
+        "cannot change it, because temperature controls how each basin BRANCHES "
+        "and not how many there are. Larger values force the drainage to "
+        "organise into wider basins: it is the OCN analogue of the "
+        "diamond-square feature wavelength, and the continuous version of the "
+        "single-outlet configuration used in much of the OCN literature "
+        "(outlet_mode single). Ignored in the other outlet modes.",
+        "Lattice geometry", "param", ""};
+
     int_default_map["outlet_col"] = -1;
     help_map["outlet_col"] = {"int","-1",
         "Column of the single outlet on the south (bottom) edge.",
@@ -647,6 +662,7 @@ int main(int argc, char* argv[])
     opts.baselevel_elevation = ff["baselevel_elevation"];
     opts.seed       = static_cast<std::uint64_t>(ifs["random_seed"]);
     opts.outlet_col = ifs["outlet_col"];
+    opts.outlet_spacing = ifs["outlet_spacing"];
 
     if (has_centre_lat && !polygon_true_area)
     {

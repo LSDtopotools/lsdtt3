@@ -419,6 +419,8 @@ int main(int argc, char* argv[])
         {"diamond_square_initial_scale",1.0f},
         {"diamond_square_mean",         0.0f},
         {"diamond_square_stddev",       1.0f},
+        {"diamond_square_parabola_relief", 0.0f},
+        {"diamond_square_noise_relief",    0.0f},
 
         // Periodic wave
         {"periodic_amplitude_min",      1.0f},
@@ -542,6 +544,41 @@ int main(int argc, char* argv[])
              "0.5 gives Brownian noise; lower = smoother; higher = rougher."}},
         {"diamond_square_initial_scale",
             {"float","1.0","Initial perturbation amplitude for diamond-square.",""}},
+        {"diamond_square_parabola_relief",
+            {"float","0.0",
+             "Peak relief (m) of an N-S parabola superimposed on the "
+             "diamond-square surface. 0 disables it.",
+             "A raw diamond-square surface has no regional gradient, so it is "
+             "full of closed depressions; filling them creates flats, and "
+             "routing across a flat gives feathered parallel drainage that is "
+             "an artefact of the fill. The parabola is zero at the north and "
+             "south boundaries and peaks at the centre row, giving a regional "
+             "slope that drains to both boundaries so most depressions never "
+             "form. Pair with diamond_square_noise_relief. "
+             "CALIBRATION: measured on a 400x400 diamond-square of 537 m "
+             "relief, cells lying in depressions went 16.2% (no parabola) -> "
+             "12.0% (300 m) -> 2.7% (1075 m), and the MEAN FILL DEPTH, which is "
+             "what actually governs feathering, went 10.3 m -> 3.2 m -> 1.3 m. "
+             "But 1075 m (2x the fractal relief) over-corrects: the parabola "
+             "then dominates and the channels run near-parallel down the "
+             "regional slope, losing the dendritic structure the fractal was "
+             "there to provide. About 0.5x the fractal relief was the useful "
+             "setting - enough regional gradient to organise the drainage, not "
+             "enough to impose its direction."}},
+        {"diamond_square_noise_relief",
+            {"float","0.0",
+             "Amplitude (m) of white noise added to the diamond-square "
+             "surface. 0 disables it.",
+             "Roughens whatever depressions survive the parabola, so that when "
+             "they are filled the result still has a gradient to route on "
+             "rather than a flat. Applied everywhere, not only inside "
+             "depressions. SIZE IT AGAINST THE MEAN FILL DEPTH, not against the "
+             "relief: the noise has to be able to break up a filled pool, so it "
+             "must be comparable to or larger than the depth the fill adds. In "
+             "the calibration above, 5 m of noise cleared the feathering when "
+             "the parabola had brought the mean fill to 3.2 m, while 2 m did "
+             "not when the mean fill was 10.3 m. Small enough not to disturb "
+             "the fractal structure otherwise."}},
 
         // Hillslope strip (transient Roering hillslope solver test domain)
         {"write_hillslope_strip_surface",
@@ -731,6 +768,62 @@ int main(int argc, char* argv[])
                     ff["diamond_square_stddev"],
                     n_threads
                 );
+
+            // -----------------------------------------------------------------
+            // Drainage conditioning: parabolic template, then roughening.
+            //
+            // A raw diamond-square surface has no regional gradient, so it is
+            // full of closed depressions. Pit filling then flattens each one
+            // into a level pool, and routing across a flat produces the
+            // characteristic "feathered" parallel drainage that is an artefact
+            // of the fill, not of the fractal.
+            //
+            // The fix (after LSDRasterMaker::create_diamond_square_surface in
+            // LSDTT_Development) is two-part:
+            //
+            //   1. superimpose a low-relief N-S parabola, zero at the north and
+            //      south boundaries and peaking at the centre row, so the
+            //      surface has a regional slope draining to both boundaries and
+            //      most depressions never form;
+            //   2. add white noise, which roughens whatever depressions remain
+            //      so that when they are filled the resulting surface still has
+            //      a gradient to route on, instead of a flat.
+            //
+            // Both default to 0 (off), which reproduces the previous raw
+            // behaviour exactly. Note the roughening is applied everywhere, not
+            // only inside depressions -- as in the reference -- which is
+            // simpler and has the same effect on the pools.
+            if (ff["diamond_square_parabola_relief"] > 0.0f)
+            {
+                std::cout << "  Superimposing N-S parabola, peak "
+                          << ff["diamond_square_parabola_relief"] << " m\n";
+                r = lsdtt::superimpose_ns_parabola(
+                        r, ff["diamond_square_parabola_relief"]);
+            }
+
+            if (ff["diamond_square_noise_relief"] > 0.0f)
+            {
+                std::cout << "  Roughening with white noise, amplitude "
+                          << ff["diamond_square_noise_relief"] << " m\n";
+
+                // Uniform, pixelwise independent: the point is to break flats,
+                // so a correlated noise would defeat it.
+                const lsdtt::lsdtt_raster_cpu noise =
+                    lsdtt::generate_uniform_random_noise_surface(
+                        n_rows, n_cols, cell_size,
+                        seed + 977,          // decorrelated from the DS seed
+                        0.0,
+                        static_cast<double>(ff["diamond_square_noise_relief"]),
+                        n_threads
+                    );
+
+                float* z = r.get_data().data();
+                const float* nz = noise.get_data().data();
+                const std::size_t n_cells =
+                    static_cast<std::size_t>(n_rows) *
+                    static_cast<std::size_t>(n_cols);
+                for (std::size_t i = 0; i < n_cells; ++i) z[i] += nz[i];
+            }
 
             loader.write_full(r.get_data(), r.get_meta(), pp.make_output_path( "_diamond_square.tif"), out_fmt);
         }
