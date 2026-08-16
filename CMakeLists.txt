@@ -475,6 +475,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_divide_diagnostics_cpu.cpp
     src/cpu/lsdtt_paired_flowpaths_cpu.cpp
     src/cpu/lsdtt_landscape_equilibration_cpu.cpp
+    src/cpu/lsdtt_manning_hydraulics_cpu.cpp
 )
 
 if(LSDTT_HAS_EIGEN)
@@ -639,6 +640,7 @@ lsdtt_cli(lsdtt-basin-surface-metrics  cli/lsdtt-basin-surface-metrics.cpp)
 lsdtt_cli(lsdtt-divide-migration       cli/lsdtt-divide-migration.cpp)
 lsdtt_cli(lsdtt-raster-calculator      cli/lsdtt-raster-calculator.cpp)
 lsdtt_cli(lsdtt-fetch-raster           cli/lsdtt-fetch-raster.cpp)
+lsdtt_cli(lsdtt-bankfull-width         cli/lsdtt-bankfull-width.cpp)
 
 if(LSDTT_HAS_FFTW)
     lsdtt_cli(lsdtt-spectral-analysis cli/lsdtt-spectral-analysis.cpp)
