@@ -29,26 +29,42 @@ Can also be used as a developer guide.
 lsdtt3/
 ├── apptainer_def/
 │   └── apptainer_setup.md
-├── cli/
+├── cli/                                   — 35 command-line executables (lsdtt-* dashed names)
 │   ├── lsdtt-basin-extraction.cpp
+│   ├── lsdtt-basin-stats.cpp
+│   ├── lsdtt-basin-surface-metrics.cpp
+│   ├── lsdtt-bearing-comparison.cpp
 │   ├── lsdtt-channel-extraction.cpp
 │   ├── lsdtt-channel-network-analysis.cpp
 │   ├── lsdtt-chi-analysis.cpp             *(requires Eigen3)*
+│   ├── lsdtt-cosmo-column-tool.cpp
+│   ├── lsdtt-cosmo-landslides.cpp
 │   ├── lsdtt-cosmo-prediction.cpp
 │   ├── lsdtt-cosmo-tool.cpp
-│   ├── lsdtt-cosmo-column-tool.cpp
+│   ├── lsdtt-cross-sections.cpp
+│   ├── lsdtt-divide-migration.cpp
 │   ├── lsdtt-drainage-analysis.cpp
 │   ├── lsdtt-feature-finder.cpp
+│   ├── lsdtt-fetch-raster.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-hydraulic-routing.cpp
 │   ├── lsdtt-lem.cpp
+│   ├── lsdtt-linear-stats.cpp
+│   ├── lsdtt-marsh-topography.cpp
 │   ├── lsdtt-mountain-front.cpp
-│   ├── lsdtt-basin-stats.cpp
-│   ├── lsdtt-stream-burning.cpp
+│   ├── lsdtt-raster-calculator.cpp
 │   ├── lsdtt-raster-preprocessing.cpp
 │   ├── lsdtt-raster-synthetic-tests.cpp
+│   ├── lsdtt-ridgeline-analysis.cpp
+│   ├── lsdtt-sediment-routing.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
-│   └── lsdtt-surface-metrics.cpp
+│   ├── lsdtt-stream-burning.cpp
+│   ├── lsdtt-surface-metrics.cpp
+│   ├── lsdtt-swath-profile.cpp
+│   ├── lsdtt-synthetic-networks.cpp
+│   ├── lsdtt-valley-centreline.cpp
+│   ├── lsdtt-water-centreline.cpp
+│   └── lsdtt-water-line-repair.cpp
 ├── docs/                                   — organised by audience
 │   ├── index.md, overview.md               — user-facing, and the mkdocs site root
 │   ├── install_lsdtt3.md                   — user-facing install guide
@@ -92,7 +108,7 @@ lsdtt3/
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
 │   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
-│   ├── cpu/
+│   ├── cpu/                                   — 99 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                         — concrete CPU raster class
 │   │   ├── lsdtt_flow_base.cpp                               — factory impl for make_flow_base()
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                       — D8 CPU flow routing
@@ -101,6 +117,7 @@ lsdtt3/
 │   │   ├── lsdtt_fill_spill_merge_cpu.hpp/.cpp               — fill-spill-merge depression routing
 │   │   ├── lsdtt_flow_snapping_cpu.hpp/.cpp                  — snapping points to channel network
 │   │   ├── lsdtt_junction_network_cpu.hpp/.cpp               — CPU channel junction network
+│   │   ├── lsdtt_junction_network_base.cpp                   — factory impl for junction_network_base
 │   │   ├── lsdtt_basin_cpu.hpp/.cpp                          — CPU basin objects
 │   │   ├── lsdtt_junction_basin_cpu.hpp/.cpp                 — junction-based basin extraction
 │   │   ├── lsdtt_junction_basin_manager_cpu.hpp/.cpp         — basin selection and management
@@ -114,26 +131,37 @@ lsdtt3/
 │   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp                — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
 │   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp                  — OpenCV-based raster processing
 │   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp          — feature-specific raster workflows
+│   │   ├── lsdtt_raster_linear_features_cpu.hpp/.cpp         — curvilinear primitives; path opening, feature_type classification
 │   │   ├── lsdtt_raster_binary_mask_cpu.hpp/.cpp             — binary mask morphology (dilation, erosion, opening, closing, labelling)
 │   │   ├── lsdtt_raster_binary_mask_vectorise_cpu.hpp/.cpp   — binary mask to vector polygon conversion
 │   │   ├── lsdtt_raster_skeleton_graph_cpu.hpp/.cpp          — 1-pixel skeleton graph analysis, pruning, reconnection
 │   │   ├── lsdtt_raster_vectorise_cpu.hpp/.cpp               — raster to vector conversion
 │   │   ├── lsdtt_raster_mosaic_cpu.hpp/.cpp                  — raster mosaicking
+│   │   ├── lsdtt_raster_contours_cpu.hpp/.cpp                — contour extraction and vectorisation
+│   │   ├── lsdtt_raster_coregistration_cpu.hpp/.cpp          — raster coregistration and alignment
 │   │   ├── lsdtt_vector_rasterise_cpu.hpp/.cpp               — vector to raster rasterisation
+│   │   ├── lsdtt_vector_ops_cpu.hpp/.cpp                     — vector geometry operations and repairs
+│   │   ├── lsdtt_vector_network_d8_clean_cpu.hpp/.cpp        — D8 network vector cleaning and repair
+│   │   ├── lsdtt_vector_line_repair_cpu.hpp/.cpp             — polyline repair and topology fixing
+│   │   ├── lsdtt_vector_to_junction_network.hpp/.cpp         — convert vector networks to junction networks
+│   │   ├── lsdtt_burn_vectormap_cpu.hpp/.cpp                 — burn rasterized vector into DEM
 │   │   ├── lsdtt_connectivity_cpu.hpp/.cpp                   — raster connectivity analysis
 │   │   ├── lsdtt_proximity_cpu.hpp/.cpp                      — proximity / distance-to-feature rasters
 │   │   ├── lsdtt_swath_cpu.hpp/.cpp                          — swath profile extraction
+│   │   ├── lsdtt_cross_sections_cpu.hpp/.cpp                 — cross-section profile extraction
 │   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp                 — mountain front identification from DEM
 │   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
 │   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
 │   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
-│   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp           — transient hillslope transport (cidre, roering, linear, adi)
-│   │   ├── lsdtt_hillslope_implicit_cpu.hpp/.cpp            — implicit transient Roering solver (Eigen; backward-Euler/TR-BDF2 + damped Picard, channels as Dirichlet sinks)
-│   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp        — steady-state hillslope solver (SOR + pseudo-transient Cidre)
-│   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp               — Verlet cloth drape: upper envelope surface and incision depth
+│   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp             — transient hillslope transport (cidre, roering, linear, adi)
+│   │   ├── lsdtt_hillslope_implicit_cpu.hpp/.cpp              — implicit transient Roering solver (Eigen; backward-Euler/TR-BDF2 + damped Picard, channels as Dirichlet sinks)
+│   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp          — steady-state hillslope solver (SOR + pseudo-transient Cidre)
+│   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp                — Verlet cloth drape: upper envelope surface and incision depth
+│   │   ├── lsdtt_landscape_equilibration_cpu.hpp/.cpp        — divide equilibration and landscape relaxation
 │   │   ├── lsdtt_flat_surface_finder.hpp/.cpp                — flat surface identification (MADk2, residual IQR, NVD)
 │   │   ├── lsdtt_flat_surface_plane_analysis.hpp/.cpp        — plane analysis on detected flat surfaces
+│   │   ├── lsdtt_flat_surface_channel_classify_cpu.hpp/.cpp  — classify channels in flat surface areas
 │   │   ├── lsdtt_hydraulic_graph_cpu.hpp/.cpp                — CPU hydraulic routing (lsdtt_hydraulic_base impl, Gailleton et al. 2024)
 │   │   ├── lsdtt_chi_extraction_cpu.hpp/.cpp                 — chi coordinate extraction (full raster, outlet-seeded, inherited-base)
 │   │   ├── lsdtt_chi_network_analysis_cpu.hpp/.cpp           — piecewise-linear fitting of chi channel networks
@@ -141,15 +169,48 @@ lsdtt3/
 │   │   ├── lsdtt_chi_data_maps_cpu.hpp/.cpp                  — chi data-map output (per-node points, basin outlines, polylines)
 │   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
 │   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
+│   │   ├── lsdtt_channel_sources_wiener_cpu.hpp/.cpp         — channel source detection via Wiener filtering
+│   │   ├── lsdtt_channel_scope_cpu.hpp/.cpp                  — channel scope analysis and classification
 │   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity, junction area-ratio distribution
 │   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
+│   │   ├── lsdtt_ridgeline_cpu.hpp/.cpp                      — ridgeline extraction and analysis
+│   │   ├── lsdtt_valley_centreline_cpu.hpp/.cpp              — valley centreline extraction and tracing
+│   │   ├── lsdtt_valley_cross_sections_cpu.hpp/.cpp          — valley cross-section analysis
+│   │   ├── lsdtt_water_area_centreline_cpu.hpp/.cpp          — water/floodplain centreline extraction
+│   │   ├── lsdtt_marsh_platform_cpu.hpp/.cpp                 — marsh and tidal platform analysis
+│   │   ├── lsdtt_tidal_channel_cpu.hpp/.cpp                  — tidal channel analysis and metrics
+│   │   ├── lsdtt_tidal_skeleton_metrics_cpu.hpp/.cpp         — tidal network skeleton analysis
+│   │   ├── lsdtt_terrace_edge_tracer_cpu.hpp/.cpp            — terrace edge and scarp tracing
+│   │   ├── lsdtt_sediment_transport_cpu.hpp/.cpp             — sediment transport and routing
+│   │   ├── lsdtt_giuh_cpu.hpp/.cpp                           — geomorphologic unit hydrograph
+│   │   ├── lsdtt_side_tributary_basins_cpu.hpp/.cpp          — side tributary basin extraction
+│   │   ├── lsdtt_slope_break_finder_cpu.hpp/.cpp             — slope break and terrain transition detection
+│   │   ├── lsdtt_labelled_raster_stats_cpu.hpp/.cpp          — statistics on labelled raster regions
+│   │   ├── lsdtt_least_cost_path.hpp/.cpp                    — least-cost path computation
 │   │   ├── lsdtt_cosmo_raster_cpu.hpp/.cpp                   — raster CRN: production, SS/step-change concentration, flow accumulation
+│   │   ├── lsdtt_cosmo_site_cpu.hpp/.cpp                     — single-site CRN calculations
 │   │   ├── lsdtt_crn_parameters.hpp/.cpp                     — Stone 2000 scaling, muon schemes, ERA40/palaeomagnetic correction
 │   │   ├── lsdtt_crn_column.hpp/.cpp                         — 1-D transient CRN column simulation
 │   │   ├── lsdtt_crn_particle.hpp                            — header-only: SS and transient nuclide concentration particle
+│   │   ├── lsdtt_crn_diagnostics.hpp/.cpp                    — CRN diagnostic utilities
+│   │   ├── lsdtt_crn_units.hpp/.cpp                          — CRN unit conversion and constants
+│   │   ├── lsdtt_cronus_v3_input.hpp/.cpp                    — CRONUS v3 input file preparation
+│   │   ├── lsdtt_step_change_cpu.hpp/.cpp                    — step-change erosion scenario modelling
+│   │   ├── lsdtt_sti_cpu.hpp/.cpp                            — sediment trace isotope calculations
+│   │   ├── lsdtt_niemi_ensemble_cpu.hpp/.cpp                 — Niemi ensemble equilibrium models
+│   │   ├── lsdtt_landslide_crn_cpu.hpp/.cpp                  — cosmogenic nuclide analysis for landslide samples
+│   │   ├── lsdtt_landslide_event_cpu.hpp/.cpp                — landslide event detection and dating
+│   │   ├── lsdtt_landslide_placement_cpu.hpp/.cpp            — landslide placement and spatial distribution
+│   │   ├── lsdtt_landslide_size_cpu.hpp/.cpp                 — landslide size distribution analysis
+│   │   ├── lsdtt_divide_migration_cpu.hpp/.cpp               — divide migration analysis and tracking
+│   │   ├── lsdtt_divide_diagnostics_cpu.hpp/.cpp             — divide stability and diagnostic metrics
+│   │   ├── lsdtt_critical_slope_cpu.hpp/.cpp                 — critical slope calculations
+│   │   ├── lsdtt_paired_flowpaths_cpu.hpp/.cpp               — paired flowpath analysis
+│   │   ├── lsdtt_hilltop_flow_routing_cpu.hpp/.cpp           — hilltop flow routing and spacing
+│   │   ├── lsdtt_quartz_fertility_cpu.hpp/.cpp               — quartz fertility calculations for nuclides
 │   │   ├── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
-│   ├── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (masks + multi-outlet; tunable Tokunaga exponents)
-│   └── lsdtt_synthetic_domain_cpu.hpp/.cpp               — island domain masks (EFD, red-noise, polygon import) for the OCN generator
+│   │   ├── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (masks + multi-outlet; tunable Tokunaga exponents)
+│   │   └── lsdtt_synthetic_domain_cpu.hpp/.cpp               — island domain masks (EFD, red-noise, polygon import) for the OCN generator
 │   └── utils/
 │       ├── lsdtt_array2d.hpp                — header-only 2D array
 │       ├── lsdtt_raster_geometry.hpp        — header-only raster geometry helpers
@@ -710,6 +771,71 @@ Current CLI programs are:
   1-D cosmogenic nuclide column simulation (no DEM required).  Three modes:
   `steady_state`, `step_change`, and `full_transient` (user-supplied erosion-history CSV).
   Uses `lsdtt_crn_column` and `lsdtt_crn_parameters`.
+
+- **`lsdtt-cosmo-landslides.cpp`**  
+  Cosmogenic nuclide analysis for earthquake-triggered landslides. Models CRN 
+  concentration in landslide samples accounting for burial, incomplete exhumation, 
+  and depth-integrated production. Supports ensemble models for undated samples.
+
+- **`lsdtt-basin-surface-metrics.cpp`**  
+  Per-basin surface metrics extraction. Computes hillshade, relief, roughness, 
+  curvature, and texture metrics for each basin in a network, writing per-basin 
+  statistics CSV and optional raster maps.
+
+- **`lsdtt-swath-profile.cpp`**  
+  Swath profile extraction. Computes summary statistics (min, max, mean, percentiles) 
+  across a swath corridor perpendicular to a polyline baseline. Outputs swath 
+  CSV and optional visualization rasters.
+
+- **`lsdtt-cross-sections.cpp`**  
+  Cross-section extraction along a polyline. Samples elevation, slope, and metrics 
+  perpendicular to a baseline, outputs profiles as CSV or rasters.
+
+- **`lsdtt-valley-centreline.cpp`**  
+  Valley centreline extraction and tracing. Identifies valley networks from DEMs 
+  using SMAP (surface morphological classification) and traces centrelines through 
+  the identified valleys. Outputs centreline polylines.
+
+- **`lsdtt-water-centreline.cpp`**  
+  Water/floodplain centreline extraction. Combines multiple methods to identify 
+  river and floodplain centrelines. Outputs polyline networks.
+
+- **`lsdtt-water-line-repair.cpp`**  
+  Repairs vector water-line networks. Fixes topological issues, gaps, and 
+  inconsistencies in digitised stream networks.
+
+- **`lsdtt-ridgeline-analysis.cpp`**  
+  Ridgeline extraction and analysis. Identifies mountain ridges from high-curvature 
+  topography. Outputs ridgeline polylines and statistics.
+
+- **`lsdtt-divide-migration.cpp`**  
+  Divide migration analysis. Tracks changes in drainage divides through time or 
+  across parameter space. Uses multiple methods to quantify divide movement.
+
+- **`lsdtt-sediment-routing.cpp`**  
+  Sediment transport and routing through a flow network. Models detachment-limited 
+  and transport-limited sediment flux.
+
+- **`lsdtt-linear-stats.cpp`**  
+  Linear feature statistics. Extracts statistics from linear features (channels, 
+  ridges) in raster or vector form, including bearing analysis and sinuosity.
+
+- **`lsdtt-raster-calculator.cpp`**  
+  Map algebra calculator. Element-wise operations on rasters: addition, subtraction, 
+  multiplication, division, powers, and other mathematical functions.
+
+- **`lsdtt-fetch-raster.cpp`**  
+  Raster data fetching from remote sources. Downloads and processes elevation data 
+  from cloud providers (COP30, Planetary Computer, etc.) with optional tiling, 
+  reprojection, and mosaicking.
+
+- **`lsdtt-marsh-topography.cpp`**  
+  Marsh and tidal platform analysis. Identifies marsh platforms and intertidal zones, 
+  computes platform statistics, and extracts edges.
+
+- **`lsdtt-bearing-comparison.cpp`**  
+  Bearing and orientation analysis. Computes channel, ridge, and fracture bearings; 
+  outputs rose diagrams and bearing statistics.
 
 ### Polyfit method rule
 
