@@ -682,6 +682,72 @@ int main(int argc, char* argv[])
         "junction and constructs one lsdtt_junction_basin per junction.",
         "Basin Selection", "switch", ""};
 
+    bool_default_map["select_sibling_basins"] = false;
+    help_map["select_sibling_basins"] = {"bool","false",
+        "Select basins as SIBLING sets: every junction with two or more direct "
+        "donors becomes a parent, and its donor sub-basins are the selection.",
+        "This is the pair source for print_paired_flowpath_statistics. delta_L "
+        "only exists for a divide whose two flanking basins share a parent, "
+        "because otherwise the two flow paths never rejoin and the pair is "
+        "discarded. Selecting by an area or stream-order window over all "
+        "junctions leaves that to chance: on one snapping-sweep surface a "
+        "400-4000 pixel window selected 106 basins and every one of 10007 "
+        "divide edges was rejected as non-rejoining, since no two of those "
+        "basins shared a parent. Taking the donors of a parent directly makes "
+        "the guarantee structural, and makes the interfluvial divide search "
+        "linear in the number of parents rather than quadratic in the number of "
+        "basins. It replaces the standard basin filters, which are SKIPPED when "
+        "it is on, because dropping one member of a sibling group would remove "
+        "the very pairing it exists to provide.",
+        "Basin Selection", "switch", ""};
+
+    int_default_map["sibling_parent_min_stream_order"] = 0;
+    help_map["sibling_parent_min_stream_order"] = {"int","0",
+        "Minimum stream order of the PARENT junction in a sibling group.",
+        "0 means no lower bound. This is the order of the parent, not of the "
+        "donor sub-basins that make up the pair.",
+        "Basin Selection", "param", ""};
+
+    int_default_map["sibling_parent_max_stream_order"] = 0;
+    help_map["sibling_parent_max_stream_order"] = {"int","0",
+        "Maximum stream order of the PARENT junction in a sibling group.",
+        "0 means no upper bound.",
+        "Basin Selection", "param", ""};
+
+    int_default_map["sibling_donor_min_area_pixels"] = 0;
+    help_map["sibling_donor_min_area_pixels"] = {"int","0",
+        "Minimum size, in upslope pixels, of a donor sub-basin in a sibling group.",
+        "0 means no lower bound. A donor outside the window is dropped from its "
+        "group, and a group with fewer than two surviving donors is dropped "
+        "whole, so the sibling guarantee is never weakened by this filter.",
+        "Basin Selection", "param", ""};
+
+    int_default_map["sibling_donor_max_area_pixels"] = 0;
+    help_map["sibling_donor_max_area_pixels"] = {"int","0",
+        "Maximum size, in upslope pixels, of a donor sub-basin in a sibling group.",
+        "0 means no upper bound.",
+        "Basin Selection", "param", ""};
+
+    int_default_map["sibling_max_groups"] = 0;
+    help_map["sibling_max_groups"] = {"int","0",
+        "Keep at most this many sibling groups, the largest parent basins first.",
+        "0 keeps every group. Groups are ranked by descending parent drainage "
+        "area with ties broken by ascending junction number, truncated, and then "
+        "restored to ascending junction order, so the cap is reproducible. It is "
+        "how two treatments of the same landscape are compared at matched sample "
+        "size, which the snapping sweep could not do: it produced 12671 pairs on "
+        "one surface and 186 on another, and a median over 186 is not comparable "
+        "with a median over 12671. Note what it matches directly: the number of "
+        "PARENT BASINS sampled, not the number of pairs. Pairs per parent depend "
+        "on how long the shared divide is, and snapped surfaces have much longer "
+        "ones -- 200 groups gave 3761 pairs unsnapped and 39571 after Roering "
+        "snapping on the same landscape. To match PAIR counts, bisect this value "
+        "against n_pairs in the summary CSV: adding groups only ever adds pairs, "
+        "so n_pairs is monotone in it (10 / 20 / 30 groups gave 1421 / 3384 / "
+        "5888 pairs), and the ranking is deterministic so the bisection is "
+        "reproducible.",
+        "Basin Selection", "param", ""};
+
     // --- Basin Outline Snapping / Filtering ---
     string_default_map["basin_outlet_snapping_method"] = "downstream";
     help_map["basin_outlet_snapping_method"] = {"string","downstream",
@@ -909,6 +975,19 @@ int main(int argc, char* argv[])
         "start further down a channel - so the default reproduces them.",
         "Paired flow paths", "switch", ""};
 
+    bool_default_map["paired_flowpath_straight_link"] = false;
+    help_map["paired_flowpath_straight_link"] = {"bool", "false",
+        "Also compute the straight-link variant of delta_L, which ignores channel sinuosity.",
+        "The straight-link distance accumulates the straight-line (Pythagorean) "
+        "distance between successive junctions instead of the true flow distance, so "
+        "delta_L_straight_link separates genuine planform asymmetry from channel "
+        "sinuosity. Adds straight_link_a, straight_link_b and delta_L_straight_link to "
+        "the paired flowpath csv and the medians to the summary csv. THIS IS NOT the "
+        "Goren and Shelef (2024) statistic - it is an extension - so it must NOT be "
+        "compared with their published medians of 0.19 and 1.00, which are for the "
+        "flow-distance delta_L only.",
+        "Paired flow paths", "switch", ""};
+
     // --- Polynomial surface fit ---
     bool_default_map["write_polyfit_rasters"] = false;
     help_map["write_polyfit_rasters"] = {"bool","false",
@@ -1028,9 +1107,10 @@ int main(int argc, char* argv[])
     const int n_selection_modes = 
         static_cast<int>(bf["select_basins_from_outlets"]) +
         static_cast<int>(bf["select_basins_from_outlets_nested"]) +
-        static_cast<int>(bf["select_all_basins"]);
-    
-    if (analysis_mode != "range_defined_ridgelines" && n_selection_modes != 1) 
+        static_cast<int>(bf["select_all_basins"]) +
+        static_cast<int>(bf["select_sibling_basins"]);
+
+    if (analysis_mode != "range_defined_ridgelines" && n_selection_modes != 1)
     {
         std::cerr << "FATAL: Mode " << analysis_mode 
                   << " requires choosing exactly one basin selection method.\n";
@@ -1137,7 +1217,11 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_junction_basin_manager_cpu basin_manager(
         *flow, junction_network
     );
-    std::vector<std::vector<std::int32_t>> sorted_range_basins; 
+    std::vector<std::vector<std::int32_t>> sorted_range_basins;
+
+    // Sibling pair source (select_sibling_basins). Empty unless that mode is on.
+    std::vector<lsdtt::lsdtt_sibling_basin_group> sibling_groups;
+    std::vector<lsdtt::lsdtt_sibling_basin_pair>  sibling_pairs;
 
     try 
     {
@@ -1209,7 +1293,35 @@ int main(int argc, char* argv[])
         } 
         else 
         {
-            if (bf["select_all_basins"]) {
+            if (bf["select_sibling_basins"]) {
+                std::cout << "Basin selection mode: select_sibling_basins\n";
+                std::cout << "I am taking the direct donor sub-basins of each "
+                          << "junction, so both flanking basins of every divide "
+                          << "share a parent and their flow paths must rejoin.\n";
+
+                lsdtt::lsdtt_sibling_basin_options sib_opts;
+                sib_opts.min_parent_stream_order =
+                    ifs["sibling_parent_min_stream_order"];
+                sib_opts.max_parent_stream_order =
+                    ifs["sibling_parent_max_stream_order"];
+                sib_opts.min_donor_pixels = ifs["sibling_donor_min_area_pixels"];
+                sib_opts.max_donor_pixels = ifs["sibling_donor_max_area_pixels"];
+                sib_opts.max_groups = (ifs["sibling_max_groups"] > 0)
+                    ? static_cast<std::size_t>(ifs["sibling_max_groups"])
+                    : 0;
+
+                sibling_groups = lsdtt::select_sibling_basin_groups(
+                    *flow, junction_network, sib_opts);
+                sibling_pairs = lsdtt::get_sibling_basin_pairs(sibling_groups);
+
+                std::cout << "Sibling groups: " << sibling_groups.size()
+                          << ", candidate sibling pairs: " << sibling_pairs.size()
+                          << "\n";
+
+                basin_manager.select_junction_basins_from_basin_outlets(
+                    lsdtt::get_sibling_basin_outlet_flats(
+                        junction_network, sibling_groups));
+            } else if (bf["select_all_basins"]) {
                 std::cout << "Basin selection mode: select_all_basins\n";
                 basin_manager.select_all_junction_basins();
             } else {
@@ -1249,7 +1361,23 @@ int main(int argc, char* argv[])
                 }
             }
             
-            // Standard filters
+            // Standard filters.
+            //
+            // They are SKIPPED in sibling mode. Every one of them can remove one
+            // member of a sibling group while leaving the other, which destroys
+            // the pairing the mode exists to guarantee. The sibling windows
+            // (sibling_donor_*, sibling_parent_*) do the equivalent job inside
+            // select_sibling_basin_groups, where a group that loses a member is
+            // dropped whole.
+            if (bf["select_sibling_basins"])
+            {
+                std::cout << "Sibling selection: " << basin_manager.size()
+                          << " donor basins. The standard basin filters are "
+                          << "skipped here -- use the sibling_* windows instead, "
+                          << "which drop a whole group rather than half of one.\n";
+            }
+            else
+            {
             std::cout << "Filtering initial selection (" << basin_manager.size() << " basins)...\n";
 
             if (bf["filter_basins_by_stream_order"]) {
@@ -1274,6 +1402,7 @@ int main(int argc, char* argv[])
             if (bf["filter_nested_basins"]) basin_manager.filter_nested();
 
             std::cout << "Basin filtering complete. " << basin_manager.size() << " left.\n";
+            }
         }
     } 
     catch (const std::exception& e) 
@@ -1540,8 +1669,69 @@ int main(int argc, char* argv[])
         {
             std::cout << "\nYou selected an analysis option that requires finding interfluvial divides.\n";
             std::cout << "An interfluvial divide is the portion of a basin outline shared between any pair of two selected basins that are not nested.\n\n";
-            
-            for (std::size_t i = 0; i < basin_manager.size(); ++i) 
+
+            // Sibling pair source: only within-group pairs are candidates, so
+            // this is sum-over-parents of C(k,2) checks -- linear in the number
+            // of parents, since k is 2 at almost every junction. The all-pairs
+            // scan below is O(n_basins^2) with a full outline scan inside, and
+            // it does not scale (611 basins ran in minutes, 1438 did not finish
+            // in an hour).
+            if (bf["select_sibling_basins"])
+            {
+                std::map<std::int32_t, std::size_t> index_of_junction;
+                for (std::size_t i = 0; i < basin_manager.size(); ++i)
+                {
+                    index_of_junction[
+                        basin_manager.basin_at(i).get_junction_number()] = i;
+                }
+
+                std::cout << "Checking " << sibling_pairs.size()
+                          << " sibling pairs from " << sibling_groups.size()
+                          << " parent junctions.\n";
+
+                for (const auto& g : sibling_groups)
+                {
+                    const std::size_t k = g.donor_junctions.size();
+                    for (std::size_t i = 0; i + 1 < k; ++i)
+                    {
+                        const std::int32_t junc_i = g.donor_junctions[i];
+                        auto it_i = index_of_junction.find(junc_i);
+                        if (it_i == index_of_junction.end()) continue;
+
+                        const std::int64_t flat_i = basin_manager
+                            .basin_at(it_i->second).get_basin_outlet_flat_index();
+                        auto BO_i = basin_manager
+                            .basin_at(it_i->second).get_basin_outline();
+                        const float area_i = get_drainage_area(flat_i);
+
+                        for (std::size_t j = i + 1; j < k; ++j)
+                        {
+                            const std::int32_t junc_j = g.donor_junctions[j];
+                            auto it_j = index_of_junction.find(junc_j);
+                            if (it_j == index_of_junction.end()) continue;
+
+                            const std::int64_t flat_j = basin_manager
+                                .basin_at(it_j->second).get_basin_outlet_flat_index();
+
+                            auto shared_divide =
+                                BO_i.get_interfluvial_divide_as_ridgeline(
+                                    junc_i, junc_j, junction_network);
+
+                            if (shared_divide.empty()) continue;
+
+                            all_ridgelines.push_back({
+                                std::move(shared_divide),
+                                ridgeline_counter++,
+                                junc_i, junc_j,
+                                "interfluvial_divide", "_interfluvial_ridgelines",
+                                true, area_i, get_drainage_area(flat_j)
+                            });
+                        }
+                    }
+                }
+            }
+            else
+            for (std::size_t i = 0; i < basin_manager.size(); ++i)
             {
                 std::int32_t junc_i = basin_manager.basin_at(i).get_junction_number();
                 std::int64_t flat_i = basin_manager.basin_at(i).get_basin_outlet_flat_index();
@@ -1618,11 +1808,18 @@ int main(int argc, char* argv[])
             // Channel mask straight from the junction network, so the channels
             // used here are exactly the ones the divides were derived from.
             std::vector<std::uint8_t> channel_mask(n_cells, 0);
+            std::vector<std::uint8_t> junction_mask(n_cells, 0);
             for (std::size_t i = 0; i < n_cells; ++i)
             {
                 const std::int64_t flat = static_cast<std::int64_t>(i);
                 if (flow->is_valid_cell(flat) && junction_network.is_channel(flat))
+                {
                     channel_mask[i] = 1;
+                    // Sources, confluences and outlets are all junctions here,
+                    // so a channel node always reaches one going downstream.
+                    if (junction_network.is_junction_flat(flat))
+                        junction_mask[i] = 1;
+                }
             }
 
             const lsdtt::lsdtt_raster_result fd_res =
@@ -1650,6 +1847,19 @@ int main(int argc, char* argv[])
                 lsdtt::sample_at_nearest_channel(
                     *flow, chi_from_outlet, valid, channel_mask).data;
 
+            // Straight-link variant: one extra O(N) topological pass, only when
+            // asked for. An empty vector disables the variant downstream.
+            std::vector<float> sl_at_channel;
+            std::size_t n_sl_baselevel = 0;
+            if (bf["paired_flowpath_straight_link"])
+            {
+                const lsdtt::straight_link_distance_result sl =
+                    lsdtt::get_straight_link_distance_at_nearest_channel(
+                        *flow, channel_mask, junction_mask);
+                sl_at_channel  = sl.raster.data;
+                n_sl_baselevel = sl.n_channel_nodes_terminated_at_baselevel;
+            }
+
             std::vector<lsdtt::lsdtt_ridgeline_cpu> divides;
             divides.reserve(all_ridgelines.size());
             for (const auto& rec : all_ridgelines)
@@ -1661,10 +1871,11 @@ int main(int argc, char* argv[])
             pf_opts.unique_pairs = bf["paired_flowpath_unique_pairs"];
             pf_opts.only_take_channel_heads = bf["paired_flowpath_only_channel_heads"];
 
-            const lsdtt::lsdtt_paired_flowpath_result pf =
+            lsdtt::lsdtt_paired_flowpath_result pf =
                 lsdtt::compute_paired_flowpath_statistics(
-                    *flow, divides, fd_at_channel, chi_at_channel,
+                    *flow, divides, fd_at_channel, chi_at_channel, sl_at_channel,
                     fd_res.data, chi_from_outlet, channel_mask, pf_opts);
+            pf.n_straight_link_terminated_at_baselevel = n_sl_baselevel;
 
             std::cout << "  Divide edges examined: " << pf.n_edges_examined << "\n";
             std::cout << "  Pairs retained:        " << pf.n_pairs << "\n";
@@ -1693,6 +1904,21 @@ int main(int argc, char* argv[])
                 std::cout << "  For scale: Goren & Shelef (2024) report median "
                           << "delta_L of 0.19 for sub-parallel trunk streams and "
                           << "1.00 for tortuous networks.\n";
+
+                if (!sl_at_channel.empty())
+                {
+                    std::cout << "  straight-link pairs = "
+                              << pf.n_pairs_with_straight_link << "\n";
+                    std::cout << "  median delta_L_straight_link = "
+                              << pf.median_delta_L_straight_link << "\n";
+                    std::cout << "  mean   delta_L_straight_link = "
+                              << pf.mean_delta_L_straight_link << "\n";
+                    std::cout << "    channel nodes anchored at baselevel with no "
+                              << "junction below: " << n_sl_baselevel << "\n";
+                    std::cout << "  The straight-link variant is an EXTENSION, not "
+                              << "the Goren & Shelef statistic: do NOT compare it "
+                              << "with 0.19 / 1.00.\n";
+                }
             }
 
             lsdtt::write_paired_flowpath_data(

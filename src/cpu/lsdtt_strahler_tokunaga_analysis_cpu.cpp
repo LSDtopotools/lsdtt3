@@ -1850,6 +1850,69 @@ bool ols_fit(const std::vector<double>& x, const std::vector<double>& y,
     return true;
 }
 
+// -----------------------------------------------------------------------------
+// truncated_pareto_beta
+//
+// MLE of the exceedance exponent for a sample drawn from a power law that is
+// truncated at BOTH ends, on [a_lo, a_hi] (Aban, Meerschaert & Panorska 2006,
+// JASA 101:270). This is not a refinement -- using the untruncated estimator
+// here is a bias of the same size as the effect being measured, and it was a
+// real defect in this function until 2026-08-15 (see the note in
+// compute_area_scaling).
+//
+// For density p(x) ~ x^-(1+b) restricted to [L, U], the log-likelihood
+// derivative per observation is
+//
+//     1/b  -  ln(U/L) / (exp(b ln(U/L)) - 1)  =  mean( ln(x_i / L) )
+//
+// The second term is the correction the untruncated MLE omits: it is exactly
+// the mass the fit is not allowed to see above U. It is written with expm1 so
+// that the b ln(U/L) -> 0 limit (where the term tends to 1/b and cancels the
+// first) does not lose precision. The left side decreases monotonically in b --
+// its derivative is minus the Fisher information, which is a variance and so
+// positive -- so bisection is safe and needs no starting guess.
+//
+// Returns false when no positive root exists, which means mean(ln(x/L)) is at
+// or above ln(U/L)/2: the sample is not decreasing over the window and there is
+// no positive exponent to report.
+// -----------------------------------------------------------------------------
+bool truncated_pareto_beta(double mean_log_ratio, double log_range,
+                           double& beta, double& beta_stderr, double n_obs)
+{
+    if (!(log_range > 0.0) || !(mean_log_ratio > 0.0) || !(n_obs > 0.0))
+        return false;
+
+    auto score = [&](double b)
+    {
+        return 1.0 / b - log_range / std::expm1(b * log_range) - mean_log_ratio;
+    };
+
+    // score() falls monotonically from ln(U/L)/2 - mean at b -> 0+ to -mean as
+    // b -> inf, so a positive root exists only if the b -> 0 limit is positive.
+    if (!(0.5 * log_range - mean_log_ratio > 0.0)) return false;
+
+    double lo = 1e-6, hi = 1.0;
+    while (score(hi) > 0.0 && hi < 1e4) hi *= 2.0;
+    if (score(hi) > 0.0) return false;
+
+    for (int it = 0; it < 200; ++it)
+    {
+        const double mid = 0.5 * (lo + hi);
+        if (score(mid) > 0.0) lo = mid; else hi = mid;
+    }
+    beta = 0.5 * (lo + hi);
+
+    // Asymptotic standard error from the Fisher information of the truncated
+    // law, which INFLATES as the window narrows -- unlike beta/sqrt(n), which
+    // would understate the uncertainty exactly where it is largest.
+    const double e   = std::expm1(beta * log_range);
+    const double fi  = 1.0 / (beta * beta)
+                     - (log_range * log_range) * (e + 1.0) / (e * e);
+    beta_stderr = (fi > 0.0) ? 1.0 / std::sqrt(n_obs * fi)
+                             : std::numeric_limits<double>::quiet_NaN();
+    return true;
+}
+
 } // namespace
 
 lsdtt_area_scaling_result compute_area_scaling(
@@ -1944,17 +2007,8 @@ lsdtt_area_scaling_result compute_area_scaling(
             ly.push_back(std::log10(up[i]));
         }
 
-        // MLE for the exponent over [a_min, a_max], not least squares on the
-        // log-log curve. Clauset, Shalizi & Newman (2009) show the regression
-        // estimator is biased and its r^2 uninformative -- and it showed here:
-        // OLS gave beta anywhere in 0.29-0.68 depending on the fitting window,
-        // a spread larger than the difference from the literature value.
-        //
-        // For p(x) ~ x^-alpha above x_min the MLE is
-        //     alpha = 1 + n / sum(ln(x_i / x_min))
-        // and the exceedance exponent is beta = alpha - 1, so beta is simply
-        //     beta = n / sum(ln(x_i / x_min))
-        // taken over the cells inside the fitted range.
+        // OLS here is used only to give the KS comparison a reference line;
+        // the reported exponent is the MLE, computed once at the chosen cutoff.
         double slope = 0.0, se = 0.0, r2 = 0.0;
         if (!ols_fit(lx, ly, slope, se, r2)) continue;
 
@@ -1999,6 +2053,22 @@ lsdtt_area_scaling_result compute_area_scaling(
     const double a_lo = ua[best_k];
     const double a_hi = ua[hi - 1];
 
+    // ---- the exponent: MLE for a DOUBLY TRUNCATED power law ------------------
+    // The sample fitted here lives on [a_lo, a_hi] and nowhere else: a_hi is the
+    // top of the fitting window, not the largest basin, because the finite-size
+    // rollover was discarded above. The estimator has to match that sampling
+    // design.
+    //
+    // It did not, until 2026-08-15, and that was THE cause of the gap to the
+    // published beta ~ 0.45. The untruncated Clauset MLE beta = n/sum(ln(x/L))
+    // is consistent only for a sample on [L, inf); on a window it is biased
+    // HIGH, because the very terms with the largest ln(x/L) are the ones the
+    // upper exclusion threw away. Measured on the 1000x1000 sweep the bias was
+    // the whole discrepancy: holding a_min fixed on one OCN and moving the
+    // upper cut from 0 to 2 decades swung the untruncated estimate 0.50 -> 1.89
+    // while the truncated one stayed at 0.43-0.45, and the untruncated value was
+    // predicted to within ~1% on every case by applying this correction in
+    // reverse. See docs/testing_and_benchmarking.md 8b.1c.
     double sum_log = 0.0;
     std::size_t n_mle = 0;
     for (double v : a)
@@ -2010,9 +2080,14 @@ lsdtt_area_scaling_result compute_area_scaling(
 
     if (n_mle < 20 || !(sum_log > 0.0)) return r;
 
-    r.beta = static_cast<double>(n_mle) / sum_log;
-    // Standard error of the MLE exponent, Clauset et al. eq. 3.2 form.
-    r.beta_stderr = r.beta / std::sqrt(static_cast<double>(n_mle));
+    const double n_obs = static_cast<double>(n_mle);
+    if (!truncated_pareto_beta(sum_log / n_obs, std::log(a_hi / a_lo),
+                               r.beta, r.beta_stderr, n_obs))
+    {
+        r.beta        = std::numeric_limits<double>::quiet_NaN();
+        r.beta_stderr = std::numeric_limits<double>::quiet_NaN();
+        return r;
+    }
     r.a_min       = ua[best_k];
     r.ks_distance = best_ks;
 

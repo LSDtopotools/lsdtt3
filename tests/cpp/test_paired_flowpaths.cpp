@@ -34,14 +34,21 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
+#include "../../src/core/lsdtt_data_loader.hpp"
 #include "lsdtt_chi_extraction_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "lsdtt_junction_basin_manager_cpu.hpp"
+#include "lsdtt_junction_network_cpu.hpp"
 #include "lsdtt_paired_flowpaths_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
 namespace
 {
@@ -173,12 +180,47 @@ struct scene
     std::vector<float> fd_from_outlet;
     std::vector<float> chi_from_outlet;
     std::vector<std::uint8_t> channel_mask;
+    std::vector<std::uint8_t> junction_mask;
+    std::vector<float> sl_at_channel;
 };
+
+// A junction mask built straight from the flow graph and the channel mask:
+// a channel pixel is a junction if it is a channel source (no channel donor),
+// a confluence (two or more channel donors) or an outlet. That is the same rule
+// lsdtt_junction_network_cpu::identify_junctions uses, reproduced here so the
+// straight-link tests do not need a junction network object.
+std::vector<std::uint8_t> make_junction_mask(
+    const lsdtt::lsdtt_flowinfo& flow,
+    const std::vector<std::uint8_t>& channel_mask)
+{
+    const std::size_t n = channel_mask.size();
+    std::vector<int> n_channel_donors(n, 0);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!channel_mask[i]) continue;
+        const std::int64_t flat = static_cast<std::int64_t>(i);
+        const std::int64_t rec = flow.receiver_of(flat);
+        if (rec >= 0 && rec != flat && channel_mask[static_cast<std::size_t>(rec)])
+            ++n_channel_donors[static_cast<std::size_t>(rec)];
+    }
+
+    std::vector<std::uint8_t> jmask(n, 0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!channel_mask[i]) continue;
+        const std::int64_t flat = static_cast<std::int64_t>(i);
+        const std::int64_t rec = flow.receiver_of(flat);
+        const bool is_outlet = (rec < 0 || rec == flat);
+        if (n_channel_donors[i] != 1 || is_outlet) jmask[i] = 1;
+    }
+    return jmask;
+}
 
 scene build_scene(const lsdtt::lsdtt_flowinfo& flow,
                   lsdtt::lsdtt_raster_cpu dem)
 {
-    scene s{std::move(dem), {}, {}, {}, {}, {}};
+    scene s{std::move(dem), {}, {}, {}, {}, {}, {}, {}};
 
     const lsdtt::lsdtt_raster_result fd = flow.get_distance_from_outlet_raster();
     const lsdtt::lsdtt_raster_cpu chi = lsdtt::get_chi_raster(flow);
@@ -210,6 +252,11 @@ scene build_scene(const lsdtt::lsdtt_flowinfo& flow,
         lsdtt::sample_at_nearest_channel(flow, s.chi_from_outlet, valid,
                                          s.channel_mask).data;
 
+    s.junction_mask = make_junction_mask(flow, s.channel_mask);
+    s.sl_at_channel =
+        lsdtt::get_straight_link_distance_at_nearest_channel(
+            flow, s.channel_mask, s.junction_mask).raster.data;
+
     return s;
 }
 
@@ -223,8 +270,35 @@ lsdtt::lsdtt_paired_flowpath_result run(
     rls.push_back(make_straight_ridgeline(11, 21, s.dem.get_meta()));
 
     return lsdtt::compute_paired_flowpath_statistics(
-        flow, rls, s.fd_at_channel, s.chi_at_channel, s.fd_from_outlet,
-        s.chi_from_outlet, s.channel_mask, opts);
+        flow, rls, s.fd_at_channel, s.chi_at_channel, s.sl_at_channel,
+        s.fd_from_outlet, s.chi_from_outlet, s.channel_mask, opts);
+}
+
+// -----------------------------------------------------------------------------
+// CLI fixture. Written when argv[1] is a directory, following the convention
+// lsdtt-test-divide-migration uses, so a CLI driver test has a PROJECTED DEM to
+// run lsdtt-ridgeline-analysis on. tests/data/tiny30_dem.tif is geographic and
+// the CLI refuses it outright.
+//
+// A fractal surface rather than an analytic one: the pair source and the
+// straight-link switch both need a real branching network with sibling groups
+// in it, which a V-valley does not have.
+// -----------------------------------------------------------------------------
+void write_cli_fixture(const std::string& out_dir)
+{
+    const lsdtt::lsdtt_raster_cpu dem =
+        lsdtt::generate_diamond_square_surface(
+            120, 120, 30.0, /*seed*/ 1, /*roughness*/ 0.6,
+            /*initial_scale*/ 1.0, /*target_mean*/ 1000.0,
+            /*target_stddev*/ 40.0);
+
+    std::filesystem::create_directories(out_dir);
+    const std::string dem_path = out_dir + "/pfcli_dem.tif";
+
+    lsdtt::lsdtt_data_loader writer;
+    writer.write_full(dem.get_data(), dem.get_meta(), dem_path,
+                      lsdtt::raster_output_format::gtiff);
+    std::cout << "Wrote CLI fixture DEM: " << dem_path << "\n";
 }
 
 double median_of_copy(std::vector<double> v)
@@ -238,7 +312,7 @@ double median_of_copy(std::vector<double> v)
 } // namespace
 
 
-int main()
+int main(int argc, char* argv[])
 {
     std::cout << "=== paired flow path (lengthwise asymmetry) tests ===\n\n";
 
@@ -444,6 +518,388 @@ int main()
         check("PF5e an unreachable divide-distance threshold rejects everything",
               r.n_pairs == 0 && r.n_rejected_distance > 0,
               "n_pairs=" + std::to_string(r.n_pairs));
+    }
+
+    // -------------------------------------------------------------------------
+    // SL - the straight-link variant
+    //
+    // The point of the variant is that it does NOT count channel sinuosity, so
+    // the tests have to separate it from plain flow distance. On the V-valley
+    // every channel link is straight (flanks run a straight diagonal to the
+    // valley, the trunk runs straight south), so there SL and FD must AGREE --
+    // which pins the accumulation but cannot tell the two quantities apart.
+    // SL4 uses a deliberately sinuous channel to do that.
+    // -------------------------------------------------------------------------
+    {
+        const lsdtt::straight_link_distance_result sl =
+            lsdtt::get_straight_link_distance_at_nearest_channel(
+                flow, s.channel_mask, make_junction_mask(flow, s.channel_mask));
+
+        check("SL1 no channel node terminates at baselevel without a junction",
+              sl.n_channel_nodes_terminated_at_baselevel == 0,
+              "count=" +
+                  std::to_string(sl.n_channel_nodes_terminated_at_baselevel));
+
+        // Straight-line between two points can never exceed the path length
+        // between them, so this must hold on ANY surface. It is the defining
+        // inequality and catches a sign or accumulation error immediately.
+        bool sl_le_fd = true;
+        double worst_excess = 0.0;
+        for (std::size_t i = 0; i < s.channel_mask.size(); ++i)
+        {
+            if (!s.channel_mask[i]) continue;
+            const double a = static_cast<double>(sl.raster.data[i]);
+            const double b = static_cast<double>(s.fd_at_channel[i]);
+            if (!std::isfinite(a) || !std::isfinite(b)) continue;
+            if (a > b + 1e-3) { sl_le_fd = false; worst_excess =
+                std::max(worst_excess, a - b); }
+        }
+        check("SL2 straight-link distance never exceeds flow distance",
+              sl_le_fd, "worst excess " + std::to_string(worst_excess) + " m");
+
+        // Every link on this DEM is straight, so the two must coincide.
+        bool agree = true;
+        double worst_gap = 0.0;
+        for (std::size_t i = 0; i < s.channel_mask.size(); ++i)
+        {
+            if (!s.channel_mask[i]) continue;
+            const double a = static_cast<double>(sl.raster.data[i]);
+            const double b = static_cast<double>(s.fd_at_channel[i]);
+            if (!std::isfinite(a) || !std::isfinite(b)) continue;
+            worst_gap = std::max(worst_gap, std::abs(a - b));
+            if (std::abs(a - b) > 1e-2) agree = false;
+        }
+        check("SL3 on a DEM whose channel links are all straight, "
+              "straight-link equals flow distance",
+              agree, "worst gap " + std::to_string(worst_gap) + " m");
+    }
+
+    // SL4 - a sinuous channel, where the two quantities MUST differ.
+    //
+    // A zig-zag carved into a high plateau: D8 has nowhere to go but along it.
+    // The path alternates south and east, so its flow distance is the
+    // Manhattan length while the straight-link distance across the single
+    // source-to-outlet link is the Euclidean diagonal. Both are known exactly.
+    {
+        // Each iteration steps south once then east once, so the path makes
+        // n_step+1 south steps and n_step east steps and must end on the last
+        // row -- otherwise its final cell is an interior pit and the router
+        // rejects the DEM.
+        constexpr int n_step = 6;
+        constexpr int nr = n_step + 2;
+        constexpr int nc = n_step + 2;
+        constexpr double cs = 10.0;
+
+        lsdtt::lsdtt_raster_meta meta;
+        meta.n_rows = nr;
+        meta.n_cols = nc;
+        meta.cell_size = cs;
+        meta.no_data_value = -9999.0;
+        meta.set_default_synthetic_georeference();
+
+        const std::size_t n = static_cast<std::size_t>(nr) * nc;
+        std::vector<float> z(n, 1000.0f);
+        std::vector<std::uint8_t> mask(n, 1);
+        std::vector<std::uint8_t> chan(n, 0);
+
+        // The plateau has to drain too, or the router refuses the DEM for
+        // having a flat. A gentle south tilt does it, and stays far above the
+        // carved channel so the channel still captures its own path.
+        for (int rr = 0; rr < nr; ++rr)
+            for (int cc = 0; cc < nc; ++cc)
+                z[static_cast<std::size_t>(rr) * nc + cc] =
+                    static_cast<float>(1000.0 - 0.5 * rr);
+
+        // Carve the zig-zag, descending one metre per step.
+        int r = 0, c = 0, step = 0;
+        std::vector<std::size_t> path;
+        auto put = [&](int rr, int cc)
+        {
+            const std::size_t idx = static_cast<std::size_t>(rr) * nc + cc;
+            z[idx] = static_cast<float>(900.0 - step);
+            chan[idx] = 1;
+            path.push_back(idx);
+            ++step;
+        };
+        put(r, c);
+        for (int k = 0; k < n_step; ++k)
+        {
+            put(++r, c);          // south
+            put(r, ++c);          // east
+        }
+        put(++r, c);              // final south step onto the outlet row
+
+        lsdtt::lsdtt_raster_cpu dem_z(std::move(z), std::move(mask), meta);
+        const lsdtt::lsdtt_flowinfo zflow = make_flow(dem_z);
+
+        const std::vector<std::uint8_t> jmask = make_junction_mask(zflow, chan);
+        const lsdtt::straight_link_distance_result sl =
+            lsdtt::get_straight_link_distance_at_nearest_channel(
+                zflow, chan, jmask);
+
+        const std::size_t src = path.front();
+        const std::size_t out = path.back();
+        const int src_r = static_cast<int>(src) / nc;
+        const int src_c = static_cast<int>(src) % nc;
+        const int out_r = static_cast<int>(out) / nc;
+        const int out_c = static_cast<int>(out) % nc;
+
+        const double expect_sl =
+            std::hypot((out_r - src_r) * cs, (out_c - src_c) * cs);
+        const double got_sl = static_cast<double>(sl.raster.data[src]) -
+                              static_cast<double>(sl.raster.data[out]);
+
+        // Every carved step is cardinal, so the flow distance is the Manhattan
+        // length: (rows travelled + cols travelled) * cell size.
+        const double expect_fd =
+            (std::abs(out_r - src_r) + std::abs(out_c - src_c)) * cs;
+
+        check("SL4a straight-link across a sinuous link is the Euclidean "
+              "distance, not the path length",
+              std::abs(got_sl - expect_sl) < 1e-2,
+              "expected " + std::to_string(expect_sl) +
+                  " got " + std::to_string(got_sl));
+
+        check("SL4b and it is strictly SHORTER than the flow distance, "
+              "which is what removing sinuosity means",
+              expect_sl < expect_fd - 1e-6,
+              "SL=" + std::to_string(expect_sl) +
+                  " FD=" + std::to_string(expect_fd));
+    }
+
+    // -------------------------------------------------------------------------
+    // SIB - the sibling pair source, and THE GUARANTEE
+    //
+    // dL exists only for a divide whose two flanking basins share a parent. An
+    // area or stream-order window over all junctions cannot promise that: it
+    // selects on size, and sharing a parent is a topological property. On one
+    // snapping-sweep surface a 400-4000 pixel window selected 106 basins and
+    // every one of 10007 divide edges was rejected as "paths never rejoin".
+    //
+    // These checks are on a multi-outlet fractal surface, which is the case that
+    // discriminates: the single-outlet V-valley above rejoins everything, so it
+    // could not tell a guaranteed pair source from a lucky one. The contrast
+    // arms deliberately show the window-style selection producing non-rejoining
+    // pairs on the SAME surface where the sibling source produces none.
+    // -------------------------------------------------------------------------
+    {
+        constexpr int  sib_nr = 100;
+        constexpr int  sib_nc = 100;
+        constexpr double sib_cs = 30.0;
+
+        const lsdtt::lsdtt_raster_cpu ds_raw =
+            lsdtt::generate_diamond_square_surface(
+                sib_nr, sib_nc, sib_cs, /*seed*/ 1, /*roughness*/ 0.6,
+                /*initial_scale*/ 1.0, /*target_mean*/ 1000.0,
+                /*target_stddev*/ 40.0);
+        const lsdtt::lsdtt_raster_cpu ds = lsdtt::fill_pits(ds_raw, 0.0001f);
+
+        lsdtt::lsdtt_flowinfo_options fopts;
+        fopts.boundary_conditions     = "oooo";
+        fopts.build_topological_order = true;
+        fopts.build_s_vector          = true;
+        const lsdtt::lsdtt_flowinfo dflow(
+            ds.get_data_array(), ds.get_mask_array(), ds.get_meta(), fopts);
+
+        lsdtt::lsdtt_junction_network_options jopts;
+        jopts.build_topological_order = true;
+        jopts.build_s_vector          = true;
+        lsdtt::lsdtt_junction_network_cpu jn;
+        jn.create(dflow, dflow.get_sources_index_threshold(40), jopts);
+
+        const std::vector<lsdtt::lsdtt_sibling_basin_group> groups =
+            lsdtt::select_sibling_basin_groups(dflow, jn);
+        const std::vector<lsdtt::lsdtt_sibling_basin_pair> sib_pairs =
+            lsdtt::get_sibling_basin_pairs(groups);
+
+        check("SIB1a the sibling source finds groups on a fractal surface",
+              !groups.empty() && !sib_pairs.empty(),
+              "groups=" + std::to_string(groups.size()) +
+                  " pairs=" + std::to_string(sib_pairs.size()));
+
+        // The structural claim: a donor of a parent has that parent as its
+        // receiver. Everything else rests on this.
+        {
+            bool ok = !groups.empty();
+            for (const auto& g : groups)
+            {
+                if (g.donor_junctions.size() < 2) ok = false;
+                for (std::int32_t d : g.donor_junctions)
+                {
+                    if (jn.receiver_of_junction(d) != g.parent_junction)
+                        ok = false;
+                }
+            }
+            check("SIB1b every donor's receiver junction IS its group's parent",
+                  ok);
+        }
+
+        // Siblings are disjoint: neither basin can be upslope of the other, so
+        // no nesting test is needed downstream.
+        {
+            bool disjoint = !sib_pairs.empty();
+            for (const auto& p : sib_pairs)
+            {
+                const std::int64_t fa = jn.basin_outlet_flat_of_junction(p.junction_a);
+                const std::int64_t fb = jn.basin_outlet_flat_of_junction(p.junction_b);
+                if (dflow.is_upslope_of(fa, fb) || dflow.is_upslope_of(fb, fa))
+                    disjoint = false;
+            }
+            check("SIB1c sibling basins are never nested in one another",
+                  disjoint);
+        }
+
+        // THE GUARANTEE, at the level of the flow graph: both donor outlets
+        // drain into the parent junction pixel, so their paths must meet.
+        {
+            std::size_t n_no_common = 0;
+            for (const auto& p : sib_pairs)
+            {
+                const std::int64_t fa = jn.basin_outlet_flat_of_junction(p.junction_a);
+                const std::int64_t fb = jn.basin_outlet_flat_of_junction(p.junction_b);
+                if (lsdtt::find_common_downstream_node(dflow, fa, fb) < 0)
+                    ++n_no_common;
+            }
+            check("SIB1d every sibling pair has a common downstream node",
+                  n_no_common == 0,
+                  "pairs without one: " + std::to_string(n_no_common));
+        }
+
+        // CONTRAST. The same surface, selected the old way -- an area window
+        // over all junctions -- admits pairs whose paths never meet. Without
+        // this arm the check above would pass on any single-outlet DEM and prove
+        // nothing about the pair source.
+        {
+            std::vector<std::int64_t> window_outlets;
+            for (std::int32_t j = 0; j < jn.n_junctions(); ++j)
+            {
+                if (!jn.is_valid_junction(j)) continue;
+                const std::int64_t f = jn.basin_outlet_flat_of_junction(j);
+                if (f < 0 || !dflow.is_valid_cell(f)) continue;
+                const std::int64_t np = dflow.s_vector_size(f);
+                if (np >= 60 && np <= 600) window_outlets.push_back(f);
+                if (window_outlets.size() >= 60) break;   // keep the O(n^2) arm cheap
+            }
+
+            std::size_t n_window_pairs = 0, n_window_no_common = 0;
+            for (std::size_t i = 0; i + 1 < window_outlets.size(); ++i)
+            {
+                for (std::size_t j = i + 1; j < window_outlets.size(); ++j)
+                {
+                    // The same non-nesting test the CLI's all-pairs scan uses.
+                    if (dflow.is_upslope_of(window_outlets[i], window_outlets[j]) ||
+                        dflow.is_upslope_of(window_outlets[j], window_outlets[i]))
+                        continue;
+                    ++n_window_pairs;
+                    if (lsdtt::find_common_downstream_node(
+                            dflow, window_outlets[i], window_outlets[j]) < 0)
+                        ++n_window_no_common;
+                }
+            }
+            check("SIB1e an area window over all junctions DOES admit pairs "
+                  "whose paths never meet",
+                  n_window_no_common > 0,
+                  std::to_string(n_window_no_common) + " of " +
+                      std::to_string(n_window_pairs) + " window pairs");
+        }
+
+        // ---------------------------------------------------------------------
+        // SIB2 - end to end, through the real interfluvial divide extraction and
+        // the statistic itself. This is the check that matters: the "paths never
+        // rejoin" rejection count must be ZERO.
+        // ---------------------------------------------------------------------
+        {
+            lsdtt::lsdtt_sibling_basin_options sopts;
+            sopts.max_groups = 40;          // bounded, so the test stays cheap
+            const std::vector<lsdtt::lsdtt_sibling_basin_group> capped =
+                lsdtt::select_sibling_basin_groups(dflow, jn, sopts);
+
+            check("SIB2a the group cap is honoured and reproducible",
+                  capped.size() == std::min<std::size_t>(40, groups.size()),
+                  "capped=" + std::to_string(capped.size()));
+
+            lsdtt::lsdtt_junction_basin_manager_cpu bm(dflow, jn);
+            bm.select_junction_basins_from_basin_outlets(
+                lsdtt::get_sibling_basin_outlet_flats(jn, capped));
+
+            std::map<std::int32_t, std::size_t> index_of_junction;
+            for (std::size_t i = 0; i < bm.size(); ++i)
+                index_of_junction[bm.basin_at(i).get_junction_number()] = i;
+
+            std::vector<lsdtt::lsdtt_ridgeline_cpu> sib_divides;
+            for (const auto& g : capped)
+            {
+                for (std::size_t i = 0; i + 1 < g.donor_junctions.size(); ++i)
+                {
+                    auto it_i = index_of_junction.find(g.donor_junctions[i]);
+                    if (it_i == index_of_junction.end()) continue;
+                    auto BO = bm.basin_at(it_i->second).get_basin_outline();
+
+                    for (std::size_t j = i + 1; j < g.donor_junctions.size(); ++j)
+                    {
+                        if (index_of_junction.find(g.donor_junctions[j]) ==
+                            index_of_junction.end()) continue;
+
+                        auto rl = BO.get_interfluvial_divide_as_ridgeline(
+                            g.donor_junctions[i], g.donor_junctions[j], jn);
+                        if (!rl.empty()) sib_divides.push_back(std::move(rl));
+                    }
+                }
+            }
+
+            check("SIB2b sibling pairs yield real interfluvial divides",
+                  !sib_divides.empty(),
+                  "divides=" + std::to_string(sib_divides.size()));
+
+            const scene ss = build_scene(dflow, lsdtt::fill_pits(ds_raw, 0.0001f));
+
+            lsdtt::lsdtt_paired_flowpath_options po;
+            po.threshold_divide_distance_m = 0.0;
+
+            const lsdtt::lsdtt_paired_flowpath_result sr =
+                lsdtt::compute_paired_flowpath_statistics(
+                    dflow, sib_divides, ss.fd_at_channel, ss.chi_at_channel,
+                    ss.sl_at_channel, ss.fd_from_outlet, ss.chi_from_outlet,
+                    ss.channel_mask, po);
+
+            // Printed rather than only asserted: a guarantee over an empty or
+            // trivial sample is worth nothing, so the sample size has to be
+            // visible in the test log.
+            std::cout << "   [sibling source: " << capped.size() << " groups, "
+                      << sib_divides.size() << " divides, "
+                      << sr.n_edges_examined << " edges examined, "
+                      << sr.n_pairs << " pairs, "
+                      << sr.n_rejected_no_junction << " non-rejoining, "
+                      << sr.n_rejected_no_channel << " no-channel]\n";
+
+            check("SIB2c pairs survive from the sibling source", sr.n_pairs > 0,
+                  "n_pairs=" + std::to_string(sr.n_pairs) + " of " +
+                      std::to_string(sr.n_edges_examined) + " edges");
+
+            check("SIB2d THE GUARANTEE: not one pair is rejected as "
+                  "'paths never rejoin'",
+                  sr.n_rejected_no_junction == 0,
+                  "n_rejected_no_junction=" +
+                      std::to_string(sr.n_rejected_no_junction) +
+                      " of " + std::to_string(sr.n_edges_examined) + " edges");
+
+            check("SIB2e and the statistic itself is finite",
+                  std::isfinite(sr.median_delta_L),
+                  "median=" + std::to_string(sr.median_delta_L));
+        }
+    }
+
+    // The CLI driver fixture, written only when a directory is supplied.
+    if (argc > 1)
+    {
+        try
+        {
+            write_cli_fixture(argv[1]);
+        }
+        catch (const std::exception& e)
+        {
+            check("F1 CLI fixture written", false, e.what());
+        }
     }
 
     std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks

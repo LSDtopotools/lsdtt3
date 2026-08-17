@@ -19,8 +19,11 @@
 // gpu_available() check from lsdtt_backend_factory.
 // -----------------------------------------------------------------------------
 
+#include <cmath>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
@@ -236,6 +239,152 @@ lsdtt_raster_result sample_at_nearest_channel(
     }
 
     return r;
+}
+
+// -----------------------------------------------------------------------------
+// get_straight_link_distance_at_nearest_channel
+//
+// See the header for the provenance (this is RV's extension, NOT Goren &
+// Shelef 2024) and for the three defects of the reference implementation that
+// are fixed here.
+// -----------------------------------------------------------------------------
+straight_link_distance_result get_straight_link_distance_at_nearest_channel(
+    const lsdtt_flow_base&           flow,
+    const std::vector<std::uint8_t>& channel_mask,
+    const std::vector<std::uint8_t>& junction_mask)
+{
+    const lsdtt_raster_meta& meta = flow.meta();
+    const std::size_t n =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+
+    if (channel_mask.size() != n || junction_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            "get_straight_link_distance_at_nearest_channel: channel_mask and "
+            "junction_mask must have flat-index size n_rows * n_cols");
+    }
+    if (!flow.has_s_vector())
+    {
+        throw std::runtime_error(
+            "get_straight_link_distance_at_nearest_channel: the flow object was "
+            "built without an s_vector, and the s_vector ordering is what makes "
+            "the single pass valid");
+    }
+
+    const double cell = flow.cell_size();
+    const float  ndv  = static_cast<float>(meta.no_data_value);
+
+    straight_link_distance_result out;
+    out.raster.meta = meta;
+    out.raster.data.assign(n, ndv);
+    out.raster.mask.assign(n, static_cast<std::uint8_t>(0));
+
+    // nearest_junction[i] is the flat index of the first junction at or below i
+    // on the flow path -- or, where a channel runs to baselevel without meeting
+    // one, that baselevel node acting as the terminating anchor.
+    std::vector<std::int64_t> nearest_junction(n, -1);
+
+    auto euclid = [&](std::int64_t p, std::int64_t q) -> double
+    {
+        const double dr = static_cast<double>(flow.row_from_flat_unchecked(p) -
+                                              flow.row_from_flat_unchecked(q));
+        const double dc = static_cast<double>(flow.col_from_flat_unchecked(p) -
+                                              flow.col_from_flat_unchecked(q));
+        return cell * std::sqrt(dr * dr + dc * dc);
+    };
+
+    // ONE topological-order pass, downstream to upstream. upslope_nodes(outlet)
+    // is the whole basin in preorder with the node itself first, so a node's
+    // receiver is ALWAYS resolved before the node is reached. That ordering
+    // guarantee -- the same one the reference relied on with its bottom-up
+    // SVector loop, and the one part of it that was right -- is what makes a
+    // single pass sufficient and removes the need for any downstream walk.
+    const std::vector<std::int64_t> outlets = get_all_basin_outlet_flats(flow, 0);
+
+    for (const std::int64_t outlet : outlets)
+    {
+        const lsdtt_flat_index_slice basin = flow.upslope_nodes(outlet);
+
+        for (std::size_t k = 0; k < basin.size(); ++k)
+        {
+            const std::int64_t node = basin[k];
+            if (node < 0) continue;
+            const std::size_t inode = static_cast<std::size_t>(node);
+
+            const std::int64_t rec = flow.receiver_of(node);
+            const bool is_baselevel = (rec < 0 || rec == node);
+
+            if (is_baselevel)
+            {
+                // Terminating anchor. A baselevel node has nothing below it to
+                // measure from, so it is its own datum at zero. This is the
+                // explicit exit the reference's while-loop lacked.
+                if (channel_mask[inode] != 0)
+                {
+                    nearest_junction[inode] = node;
+                    out.raster.data[inode] = 0.0f;
+                    out.raster.mask[inode] = 1u;
+
+                    if (junction_mask[inode] == 0)
+                        ++out.n_channel_nodes_terminated_at_baselevel;
+                }
+                // A non-channel baselevel node has no downstream channel at all,
+                // so it stays nodata.
+                continue;
+            }
+
+            const std::size_t irec = static_cast<std::size_t>(rec);
+
+            if (channel_mask[inode] == 0)
+            {
+                // Hillslope: inherit the receiver's value unchanged, exactly as
+                // in the reference. This is what propagates channel straight-link
+                // distances up the hillslopes and makes the raster a
+                // "value at the nearest downstream channel" field. Nodata
+                // propagates too, so a pixel with no downstream channel stays
+                // nodata.
+                nearest_junction[inode] = nearest_junction[irec];
+                out.raster.data[inode]  = out.raster.data[irec];
+                out.raster.mask[inode]  = out.raster.mask[irec];
+                continue;
+            }
+
+            // Channel node. The recursion that replaces the reference's search:
+            //     J(node) = receiver is a junction ? receiver : J(receiver)
+            const std::int64_t j =
+                (junction_mask[irec] != 0) ? rec : nearest_junction[irec];
+
+            if (j < 0)
+            {
+                // A channel node whose receiver carries no anchor -- the channel
+                // mask and the flow graph disagree (channel-ness should be
+                // monotone downstream). Anchor here rather than spin, and count.
+                nearest_junction[inode] = node;
+                out.raster.data[inode] = 0.0f;
+                out.raster.mask[inode] = 1u;
+                ++out.n_channel_nodes_terminated_at_baselevel;
+                continue;
+            }
+
+            const std::size_t ij = static_cast<std::size_t>(j);
+            if (junction_mask[ij] == 0)
+            {
+                // The anchor is a baselevel node, not a junction: this channel
+                // node reached baselevel without an intervening junction. It is
+                // still measured (from the baselevel node, the only datum
+                // available) but it is counted, because the reference would have
+                // spun forever here.
+                ++out.n_channel_nodes_terminated_at_baselevel;
+            }
+
+            nearest_junction[inode] = j;
+            out.raster.data[inode] =
+                out.raster.data[ij] + static_cast<float>(euclid(node, j));
+            out.raster.mask[inode] = 1u;
+        }
+    }
+
+    return out;
 }
 
 } // namespace lsdtt

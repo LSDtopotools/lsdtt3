@@ -99,6 +99,7 @@ lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
     const std::vector<lsdtt_ridgeline_cpu>& divide_ridgelines,
     const std::vector<float>&               fd_at_channel,
     const std::vector<float>&               chi_at_channel,
+    const std::vector<float>&               sl_at_channel,
     const std::vector<float>&               fd_from_outlet,
     const std::vector<float>&               chi_from_outlet,
     const std::vector<std::uint8_t>&        channel_mask,
@@ -119,6 +120,17 @@ lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
         throw std::invalid_argument(
             "compute_paired_flowpath_statistics: all input rasters must have "
             "flat-index size n_rows * n_cols");
+    }
+
+    // The straight-link raster is OPTIONAL: empty means "do not compute the
+    // variant", and every straight-link field stays NaN. Any other size is a
+    // mistake rather than a choice.
+    const bool do_straight_link = !sl_at_channel.empty();
+    if (do_straight_link && sl_at_channel.size() != n)
+    {
+        throw std::invalid_argument(
+            "compute_paired_flowpath_statistics: sl_at_channel must be empty "
+            "(variant disabled) or have flat-index size n_rows * n_cols");
     }
 
     auto flat_of = [ncols](int r, int c) -> std::int64_t
@@ -321,6 +333,32 @@ lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
             rec.delta_L = normalised_asymmetry(L_a, L_b);
             rec.delta_chi = normalised_asymmetry(rec.chi_a, rec.chi_b);
 
+            if (do_straight_link)
+            {
+                // Same junction datum as L. The straight-link raster is defined
+                // on the channel network itself, so its value AT the common
+                // junction is simply the raster read there -- no second raster
+                // is needed the way fd_from_outlet is needed for L.
+                // Nodata in an lsdtt_raster_result is the meta sentinel, which
+                // is FINITE (-9999 by convention), so isfinite alone would let
+                // a sentinel through and produce a plausible-looking wrong
+                // ratio. Test against the sentinel explicitly.
+                const double sl_cj = static_cast<double>(sl_at_channel[icj]);
+                auto sl_valid = [&](std::size_t i) -> bool
+                {
+                    const double v = static_cast<double>(sl_at_channel[i]);
+                    return std::isfinite(v) &&
+                           std::abs(v - meta.no_data_value) > 1e-6;
+                };
+                if (sl_valid(icj) && sl_valid(ia) && sl_valid(ib))
+                {
+                    rec.SL_a = static_cast<double>(sl_at_channel[ia]) - sl_cj;
+                    rec.SL_b = static_cast<double>(sl_at_channel[ib]) - sl_cj;
+                    rec.delta_L_straight_link =
+                        normalised_asymmetry(rec.SL_a, rec.SL_b);
+                }
+            }
+
             if (!std::isfinite(rec.delta_L)) continue;
 
             out.pairs.push_back(rec);
@@ -329,12 +367,14 @@ lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
 
     out.n_pairs = out.pairs.size();
 
-    std::vector<double> dl, dchi;
+    std::vector<double> dl, dchi, dl_sl;
     dl.reserve(out.pairs.size());
     for (const lsdtt_paired_flowpath& p : out.pairs)
     {
         dl.push_back(p.delta_L);
         if (std::isfinite(p.delta_chi)) dchi.push_back(p.delta_chi);
+        if (std::isfinite(p.delta_L_straight_link))
+            dl_sl.push_back(p.delta_L_straight_link);
     }
 
     if (!dl.empty())
@@ -346,7 +386,176 @@ lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
     }
     out.median_delta_chi = median_of(dchi);
 
+    // Reported separately from n_pairs: the straight-link variant is defined
+    // only where all three straight-link reads are valid, so a median over
+    // fewer pairs than n_pairs is possible and must be visible.
+    out.n_pairs_with_straight_link = dl_sl.size();
+    if (!dl_sl.empty())
+    {
+        out.median_delta_L_straight_link = median_of(dl_sl);
+        double s = 0.0;
+        for (double v : dl_sl) s += v;
+        out.mean_delta_L_straight_link = s / static_cast<double>(dl_sl.size());
+    }
+
     return out;
+}
+
+
+// -----------------------------------------------------------------------------
+// The sibling pair source. See the header for why an area window cannot do this
+// job: it selects on size, and sharing a parent is a topological property.
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_sibling_basin_group> select_sibling_basin_groups(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& network,
+    const lsdtt_sibling_basin_options& opts)
+{
+    std::vector<lsdtt_sibling_basin_group> groups;
+
+    const bool use_order_window =
+        (opts.min_parent_stream_order > 0 || opts.max_parent_stream_order > 0);
+    const bool use_size_window =
+        (opts.min_donor_pixels > 0 || opts.max_donor_pixels > 0);
+
+    // Upslope pixel count of a basin, the same quantity the basin manager
+    // filters on. -1 when the outlet is not a usable cell.
+    auto donor_pixels = [&](std::int32_t j) -> std::int64_t
+    {
+        const std::int64_t outlet = network.basin_outlet_flat_of_junction(j);
+        if (outlet < 0 || !flow.is_valid_cell(outlet)) return -1;
+        return static_cast<std::int64_t>(flow.s_vector_size(outlet));
+    };
+
+    const std::int32_t n_junctions = network.n_junctions();
+
+    for (std::int32_t p = 0; p < n_junctions; ++p)
+    {
+        if (!network.is_valid_junction(p)) continue;
+        if (network.donor_junction_size(p) < 2) continue;
+
+        if (use_order_window)
+        {
+            const std::int32_t so = network.stream_order_of_junction(p);
+            if (opts.min_parent_stream_order > 0 &&
+                so < opts.min_parent_stream_order) continue;
+            if (opts.max_parent_stream_order > 0 &&
+                so > opts.max_parent_stream_order) continue;
+        }
+
+        lsdtt_sibling_basin_group g;
+        g.parent_junction = p;
+
+        const lsdtt_junction_index_slice donors = network.donor_junctions(p);
+        for (std::size_t k = 0; k < donors.size(); ++k)
+        {
+            const std::int32_t d = donors[k];
+            if (!network.is_valid_junction(d)) continue;
+
+            if (use_size_window)
+            {
+                const std::int64_t np = donor_pixels(d);
+                if (np < 0) continue;
+                if (opts.min_donor_pixels > 0 &&
+                    np < static_cast<std::int64_t>(opts.min_donor_pixels)) continue;
+                if (opts.max_donor_pixels > 0 &&
+                    np > static_cast<std::int64_t>(opts.max_donor_pixels)) continue;
+            }
+
+            g.donor_junctions.push_back(d);
+        }
+
+        // A group of one has no pair in it, so it is not a group.
+        if (g.donor_junctions.size() < 2) continue;
+
+        std::sort(g.donor_junctions.begin(), g.donor_junctions.end());
+        groups.push_back(std::move(g));
+    }
+
+    // Capped selection: rank by descending parent drainage area so a cap means
+    // "the N largest parent basins", which is comparable between two treatments
+    // of the same landscape, then restore ascending junction order.
+    if (opts.max_groups > 0 && groups.size() > opts.max_groups)
+    {
+        std::vector<std::pair<std::int64_t, std::size_t>> ranked;
+        ranked.reserve(groups.size());
+        for (std::size_t i = 0; i < groups.size(); ++i)
+        {
+            const std::int64_t outlet = network.basin_outlet_flat_of_junction(
+                groups[i].parent_junction);
+            const std::int64_t np =
+                (outlet >= 0 && flow.is_valid_cell(outlet))
+                    ? static_cast<std::int64_t>(flow.s_vector_size(outlet))
+                    : -1;
+            ranked.emplace_back(np, i);
+        }
+        std::sort(ranked.begin(), ranked.end(),
+                  [](const std::pair<std::int64_t, std::size_t>& l,
+                     const std::pair<std::int64_t, std::size_t>& r)
+                  {
+                      if (l.first != r.first) return l.first > r.first;
+                      return l.second < r.second;
+                  });
+        ranked.resize(opts.max_groups);
+
+        std::vector<std::size_t> keep;
+        keep.reserve(ranked.size());
+        for (const auto& r : ranked) keep.push_back(r.second);
+        std::sort(keep.begin(), keep.end());
+
+        std::vector<lsdtt_sibling_basin_group> trimmed;
+        trimmed.reserve(keep.size());
+        for (std::size_t i : keep) trimmed.push_back(std::move(groups[i]));
+        groups = std::move(trimmed);
+    }
+
+    return groups;
+}
+
+
+std::vector<lsdtt_sibling_basin_pair> get_sibling_basin_pairs(
+    const std::vector<lsdtt_sibling_basin_group>& groups)
+{
+    std::vector<lsdtt_sibling_basin_pair> pairs;
+
+    for (const lsdtt_sibling_basin_group& g : groups)
+    {
+        const std::size_t k = g.donor_junctions.size();
+        for (std::size_t i = 0; i + 1 < k; ++i)
+        {
+            for (std::size_t j = i + 1; j < k; ++j)
+            {
+                lsdtt_sibling_basin_pair p;
+                p.parent_junction = g.parent_junction;
+                p.junction_a      = g.donor_junctions[i];
+                p.junction_b      = g.donor_junctions[j];
+                pairs.push_back(p);
+            }
+        }
+    }
+
+    return pairs;
+}
+
+
+std::vector<std::int64_t> get_sibling_basin_outlet_flats(
+    const lsdtt_junction_network_base&            network,
+    const std::vector<lsdtt_sibling_basin_group>& groups)
+{
+    std::vector<std::int64_t> flats;
+
+    for (const lsdtt_sibling_basin_group& g : groups)
+    {
+        for (std::int32_t d : g.donor_junctions)
+        {
+            const std::int64_t f = network.basin_outlet_flat_of_junction(d);
+            if (f >= 0) flats.push_back(f);
+        }
+    }
+
+    std::sort(flats.begin(), flats.end());
+    flats.erase(std::unique(flats.begin(), flats.end()), flats.end());
+    return flats;
 }
 
 
@@ -363,7 +572,8 @@ void write_paired_flowpath_data(
         "divide_distance_m",
         "path_length_a", "path_length_b",
         "chi_a", "chi_b",
-        "delta_L", "delta_chi"
+        "straight_link_a", "straight_link_b",
+        "delta_L", "delta_chi", "delta_L_straight_link"
     };
 
     const int ncols = meta.n_cols;
@@ -382,7 +592,9 @@ void write_paired_flowpath_data(
             precise(p.divide_distance_m),
             precise(p.L_a), precise(p.L_b),
             precise(p.chi_a), precise(p.chi_b),
-            precise(p.delta_L), precise(p.delta_chi)
+            precise(p.SL_a), precise(p.SL_b),
+            precise(p.delta_L), precise(p.delta_chi),
+            precise(p.delta_L_straight_link)
         });
     }
 
@@ -400,7 +612,12 @@ void write_paired_flowpath_summary(
         "n_pairs", "median_delta_L", "mean_delta_L", "median_delta_chi",
         "n_edges_examined",
         "n_rejected_distance", "n_rejected_no_channel",
-        "n_rejected_no_junction", "n_rejected_duplicate", "n_rejected_not_head"
+        "n_rejected_no_junction", "n_rejected_duplicate", "n_rejected_not_head",
+        // Straight-link variant. NOT comparable with the published 0.19 / 1.00
+        // end-members -- see the header.
+        "n_pairs_straight_link",
+        "median_delta_L_straight_link", "mean_delta_L_straight_link",
+        "n_straight_link_terminated_at_baselevel"
     };
 
     std::vector<std::vector<std::string>> rows = {{
@@ -413,7 +630,11 @@ void write_paired_flowpath_summary(
         std::to_string(result.n_rejected_no_channel),
         std::to_string(result.n_rejected_no_junction),
         std::to_string(result.n_rejected_duplicate),
-        std::to_string(result.n_rejected_not_head)
+        std::to_string(result.n_rejected_not_head),
+        std::to_string(result.n_pairs_with_straight_link),
+        precise(result.median_delta_L_straight_link),
+        precise(result.mean_delta_L_straight_link),
+        std::to_string(result.n_straight_link_terminated_at_baselevel)
     }};
 
     loader.write_csv(out_path, headers, rows);

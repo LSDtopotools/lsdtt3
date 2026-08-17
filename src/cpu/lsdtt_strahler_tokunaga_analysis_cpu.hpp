@@ -621,10 +621,23 @@ void write_junction_area_ratio_decades(
 //   Expect real uncertainty even so. On a 96x96 grid the usable range is about
 //   two decades, so beta is a check that the generator is in the right family,
 //   not a precise measurement.
+//
+// AND THE ESTIMATOR MUST MATCH THE WINDOW THE FIT IS TAKEN OVER
+//   Excluding the top of the range makes the fitted sample DOUBLY truncated, on
+//   [a_min, a_max] and nowhere else, so the exponent is the truncated-Pareto MLE
+//   (Aban, Meerschaert & Panorska 2006, JASA 101:270) and not the untruncated
+//   Clauset form. Using the untruncated one here is not a refinement issue: it
+//   is biased high by about the size of the effect, because the largest
+//   ln(a/a_min) terms are exactly the ones the upper exclusion removed. That bug
+//   was the entire reported gap to the literature and is described at the point
+//   of the fix in compute_area_scaling.
 // -----------------------------------------------------------------------------
 struct lsdtt_area_scaling_result
 {
-    // MLE exponent (Clauset et al. 2009). This is the value to use.
+    // MLE exponent for the doubly truncated power law over [a_min, a_max]
+    // (Aban et al. 2006). This is the value to use. beta_stderr comes from the
+    // Fisher information of that same truncated law, so it widens as the fitted
+    // window narrows.
     double beta        = std::numeric_limits<double>::quiet_NaN();
     double beta_stderr = std::numeric_limits<double>::quiet_NaN();
 
@@ -659,8 +672,11 @@ struct lsdtt_area_scaling_result
 // -----------------------------------------------------------------------------
 // compute_area_scaling
 //
-// Fits P(A > a) ~ a^-beta by least squares on log10 P against log10 a, over the
-// tail above an automatically selected a_min.
+// Fits P(A > a) ~ a^-beta over an automatically selected intermediate window
+// [a_min, a_max], by maximum likelihood for a power law truncated to that
+// window. `beta_ols` is the least-squares slope of log10 P on log10 a over the
+// same window, kept as a diagnostic: the two are independent estimators of the
+// same exponent, so a wide gap means the window is not a power law.
 //
 // `areas` is any per-cell drainage-area field (pixel counts or m^2 -- beta is
 // dimensionless, so the units only shift a_min). Cells with mask == 0, or with

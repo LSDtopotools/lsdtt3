@@ -81,6 +81,7 @@
 #include <vector>
 
 #include "../core/lsdtt_flow_base.hpp"
+#include "../core/lsdtt_junction_network_base.hpp"
 #include "lsdtt_ridgeline_cpu.hpp"
 
 namespace lsdtt
@@ -122,8 +123,15 @@ struct lsdtt_paired_flowpath
     double chi_a = std::numeric_limits<double>::quiet_NaN();
     double chi_b = std::numeric_limits<double>::quiet_NaN();
 
+    // Straight-link variant (see the header note below): junction-to-junction
+    // Pythagorean distance instead of flow distance, so sinuosity does not
+    // count. NaN when no straight-link raster was supplied.
+    double SL_a = std::numeric_limits<double>::quiet_NaN();
+    double SL_b = std::numeric_limits<double>::quiet_NaN();
+
     double delta_L   = std::numeric_limits<double>::quiet_NaN();
     double delta_chi = std::numeric_limits<double>::quiet_NaN();
+    double delta_L_straight_link = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct lsdtt_paired_flowpath_result
@@ -141,6 +149,16 @@ struct lsdtt_paired_flowpath_result
     double median_delta_L   = std::numeric_limits<double>::quiet_NaN();
     double mean_delta_L     = std::numeric_limits<double>::quiet_NaN();
     double median_delta_chi = std::numeric_limits<double>::quiet_NaN();
+
+    // Straight-link variant. NaN when no straight-link raster was supplied.
+    std::size_t n_pairs_with_straight_link = 0;
+    double median_delta_L_straight_link = std::numeric_limits<double>::quiet_NaN();
+    double mean_delta_L_straight_link   = std::numeric_limits<double>::quiet_NaN();
+
+    // Carried through to the summary CSV from
+    // get_straight_link_distance_at_nearest_channel, so the diagnostic travels
+    // with the statistic it conditions. Set by the caller.
+    std::size_t n_straight_link_terminated_at_baselevel = 0;
 };
 
 // -----------------------------------------------------------------------------
@@ -191,16 +209,148 @@ struct lsdtt_paired_flowpath_result
 // both terms -- it cancels in the numerator of dL but not the denominator, so
 // leaving it in drives the ratio towards zero and makes every network look
 // symmetric. The junction datum is what makes the measure local to the pair.
+//
+// -----------------------------------------------------------------------------
+// THE STRAIGHT-LINK VARIANT, AND WHAT IT MAY BE COMPARED WITH
+//
+// `sl_at_channel` is the straight-link distance raster from
+// get_straight_link_distance_at_nearest_channel(): junction-to-junction
+// Pythagorean distance accumulated down the channel network instead of true
+// flow distance, so channel sinuosity does not contribute. Because that raster
+// already carries the "value at the nearest downstream channel" convention AND
+// is defined on the channel network itself, ONE raster serves both roles:
+//
+//     SL_i = sl_at_channel(pixel_i) - sl_at_channel(common junction)
+//     dL_SL = 2 |SL_ij - SL_ji| / (SL_ij + SL_ji)
+//
+// Pass an EMPTY vector to skip it; every straight-link field then stays NaN.
+//
+// PROVENANCE, AND IT IS LOAD-BEARING. The straight-link variant is RV's
+// extension (LSDTT_Development, LSDFlowInfo.cpp, 10/02/2025), NOT part of Goren
+// & Shelef (2024). Their published end-members -- median dL = 0.19 for
+// sub-parallel trunks and 1.00 for a tortuous network -- are for the
+// FLOW-DISTANCE dL only. dL_SL must NEVER be quoted against 0.19 / 1.00: there
+// is no published reference value for it, and by construction it removes a
+// contribution (sinuosity) that those numbers include.
 // -----------------------------------------------------------------------------
 [[nodiscard]] lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
     const lsdtt_flow_base&                  flow,
     const std::vector<lsdtt_ridgeline_cpu>& divide_ridgelines,
     const std::vector<float>&               fd_at_channel,
     const std::vector<float>&               chi_at_channel,
+    const std::vector<float>&               sl_at_channel,
     const std::vector<float>&               fd_from_outlet,
     const std::vector<float>&               chi_from_outlet,
     const std::vector<std::uint8_t>&        channel_mask,
     const lsdtt_paired_flowpath_options&    opts = {}
+);
+
+// -----------------------------------------------------------------------------
+// THE PAIR SOURCE: SIBLING SUB-BASINS, GUARANTEED
+//
+// dL only exists for a divide whose two flanking basins SHARE A PARENT. Adjacent
+// top-level basins drain to different outlets, their flow paths never meet, and
+// every pair is discarded -- correctly, but with nothing to show for the work.
+//
+// Selecting basins by an area or stream-order window over ALL junctions and then
+// testing each candidate pair leaves the sibling structure to chance. It works
+// often enough to be misleading: on one snapping-sweep surface an area window of
+// 400-4000 pixels selected 106 basins, 10007 divide edges were examined, and
+// EVERY ONE was rejected as "paths never rejoin", because no two of those 106
+// basins happened to share a parent. A window cannot promise otherwise, since
+// nothing in a size criterion refers to the topology.
+//
+// So take the siblings directly from the junction topology instead: choose a
+// PARENT junction and use its direct DONOR junctions as the basins. Two direct
+// donors of the same parent are disjoint, neither is upslope of the other, and
+// both drain into the parent junction pixel -- so their flow paths necessarily
+// rejoin at or above it. The "paths never rejoin" rejection is then zero by
+// construction rather than by luck.
+//
+// It is also far cheaper. The all-pairs interfluvial divide search is
+// O(n_basins^2) with a full outline scan inside, and it does not scale: 611
+// basins ran in minutes, 1438 had not finished in over an hour. A sibling source
+// yields sum over parents of C(k, 2) candidate pairs, and k is 2 for almost
+// every junction, so the count is LINEAR in the number of parents.
+//
+// Reproducibility and matched samples. Groups are returned in ascending parent
+// junction order. When `max_groups` is set the groups are first ranked by
+// descending parent drainage area (ties broken by ascending junction number),
+// truncated, and then restored to ascending junction order -- so a capped
+// selection is the N largest parent basins, which is a defensible common
+// currency when two treatments of the same landscape must be compared at
+// matched sample size.
+//
+// What the cap matches is the number of PARENTS, not the number of pairs: pairs
+// per parent scale with the length of the shared divide, and snapped surfaces
+// have far longer ones (200 groups gave 3761 pairs unsnapped and 39571 after
+// Roering snapping on the same landscape). Pair counts are monotone in
+// `max_groups` and the ranking is deterministic, so a target pair count is
+// reached by bisecting on it -- but say which was matched, because they are not
+// the same thing.
+// -----------------------------------------------------------------------------
+struct lsdtt_sibling_basin_options
+{
+    // Parent stream-order window. Both zero (the default) means no constraint;
+    // this is the order of the PARENT junction, not of the donors.
+    std::int32_t min_parent_stream_order = 0;
+    std::int32_t max_parent_stream_order = 0;
+
+    // Donor basin size window, in upslope pixels. Both zero means no constraint.
+    // A donor outside the window is dropped from its group; if fewer than two
+    // donors survive, the group is dropped.
+    std::int32_t min_donor_pixels = 0;
+    std::int32_t max_donor_pixels = 0;
+
+    // Keep at most this many groups, the largest parents first (see above).
+    // 0 means keep all.
+    std::size_t max_groups = 0;
+};
+
+struct lsdtt_sibling_basin_group
+{
+    std::int32_t parent_junction = -1;
+
+    // Direct donor junctions of `parent_junction`, ascending, always >= 2.
+    std::vector<std::int32_t> donor_junctions;
+};
+
+// One candidate divide: two basins whose common parent is named, so the
+// guarantee travels with the pair rather than being re-derived downstream.
+struct lsdtt_sibling_basin_pair
+{
+    std::int32_t parent_junction = -1;
+    std::int32_t junction_a      = -1;
+    std::int32_t junction_b      = -1;
+};
+
+// -----------------------------------------------------------------------------
+// select_sibling_basin_groups
+//
+// Every junction with two or more direct donors becomes a group, subject to the
+// windows in `opts`. Donor basin size is `flow.s_vector_size()` at the donor's
+// basin outlet, which is the same upslope pixel count the basin manager filters
+// on.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_sibling_basin_group> select_sibling_basin_groups(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& network,
+    const lsdtt_sibling_basin_options& opts = {}
+);
+
+// All within-group pairs, in group order then ascending (a, b). This is the
+// list to iterate for the interfluvial divide search: it is C(k, 2) per parent,
+// NOT a scan over all selected basins.
+[[nodiscard]] std::vector<lsdtt_sibling_basin_pair> get_sibling_basin_pairs(
+    const std::vector<lsdtt_sibling_basin_group>& groups
+);
+
+// The basin outlet flat index of every donor in every group, de-duplicated and
+// ascending -- the selection to hand to
+// lsdtt_junction_basin_manager_cpu::select_junction_basins_from_basin_outlets.
+[[nodiscard]] std::vector<std::int64_t> get_sibling_basin_outlet_flats(
+    const lsdtt_junction_network_base&            network,
+    const std::vector<lsdtt_sibling_basin_group>& groups
 );
 
 // Per-pair CSV (one row per paired flow path).

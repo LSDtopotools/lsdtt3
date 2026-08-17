@@ -543,6 +543,69 @@ inline double d8_step_length(
 );
 
 // -----------------------------------------------------------------------------
+// get_straight_link_distance_at_nearest_channel
+//
+// PROVENANCE, AND IT MATTERS FOR HOW THE NUMBER MAY BE QUOTED.
+// The straight-link variant of the paired-flow-path asymmetry is RV's extension
+// (LSDTT_Development, LSDFlowInfo::get_straight_link_distance_of_nearest_channel,
+// 10/02/2025). It is NOT part of Goren, L. and Shelef, E. (2024), Earth Surf.
+// Dynam. 12, 1347-1369, doi:10.5194/esurf-12-1347-2024. That paper's published
+// end-members -- median dL = 0.19 for sub-parallel trunks and 1.00 for a
+// tortuous network -- are for the FLOW-DISTANCE dL only. A straight-link dL must
+// never be quoted against 0.19 / 1.00; there is no published reference value for
+// it.
+//
+// WHAT IT IS. Per channel link, the straight-line (Pythagorean) distance between
+// successive junctions is accumulated instead of the true flow distance, so
+// channel sinuosity does not count and only planform asymmetry does:
+//
+//     SL(node) = SL(next junction downstream) + euclidean(that junction, node)
+//
+// Non-channel (hillslope) pixels inherit their receiver's value unchanged, so
+// the raster carries the straight-link distance OF the channel a pixel drains
+// into -- the same "at the nearest downstream channel" convention as
+// sample_at_nearest_channel above, and the reason the two can be differenced
+// against a common junction.
+//
+// A pixel that reaches an outlet without passing through a channel is nodata, as
+// in sample_at_nearest_channel and HAND. (The reference left those at zero,
+// which is indistinguishable from a genuine zero at an outlet.)
+//
+// COST. One O(N) topological pass. The reference searched `channel_NI_vec` and
+// `junction_nodes` linearly inside a per-node downstream walk -- hence its own
+// "this can take a while" warning. Nothing here searches: the caller supplies
+// junction membership as a mask, and the nearest downstream junction of each
+// node is carried forward from its receiver.
+//
+// TERMINATION. The reference's inner `while (!is_junction)` loop had no exit
+// other than finding a junction, so a channel that reached baselevel without an
+// intervening junction span forever. Here a baselevel node is an explicit
+// terminating anchor with SL = 0, and channel nodes that terminate that way are
+// COUNTED and returned rather than silently absorbed. With a junction mask taken
+// from lsdtt_junction_network (which marks outlets as junctions) the count
+// should be zero; a non-zero count means the mask and the flow graph disagree.
+//
+// `channel_mask` and `junction_mask` are flat-index rasters of size
+// n_rows * n_cols. Junction pixels are expected to be channel pixels.
+// -----------------------------------------------------------------------------
+struct straight_link_distance_result
+{
+    lsdtt_raster_result raster;
+
+    // Channel nodes that hit baselevel without passing a junction. Diagnostic,
+    // not an error: the value at such a node is measured from the baselevel node
+    // itself, which is the only anchor available.
+    std::size_t n_channel_nodes_terminated_at_baselevel = 0;
+};
+
+[[nodiscard]] straight_link_distance_result
+get_straight_link_distance_at_nearest_channel(
+    const lsdtt_flow_base&            flow,
+    const std::vector<std::uint8_t>&  channel_mask,
+    const std::vector<std::uint8_t>&  junction_mask
+);
+
+// -----------------------------------------------------------------------------
 // get_largest_basin_outlet_flat
 //
 // Scans all outlet cells in the flow object and returns the flat index of the

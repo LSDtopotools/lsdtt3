@@ -173,12 +173,21 @@ void run_area_scaling_checks(const std::string& case_name)
                    std::isfinite(res_par.beta),
                    "beta=" + std::to_string(res_par.beta));
 
-        // Both are asserted against a BROAD band. lsdtt3 measures beta ~0.55-0.60
-        // where the literature reports ~0.43-0.45; that gap is recorded as an
-        // open question in docs/testing_and_benchmarking.md rather than tuned
-        // away here. What this test guards is that the generator stays in the
-        // family it is in now, and in particular that beta does not drift
-        // silently -- so the band is wide but the value is printed every run.
+        // THE GAP TO THE LITERATURE WAS A BUG, AND IT IS FIXED (2026-08-15).
+        // beta used to read ~0.55-0.60 against a published ~0.43-0.45. The
+        // cause was the estimator not matching the window: excluding the top of
+        // the range makes the sample DOUBLY truncated, but the untruncated
+        // Clauset MLE was being applied to it, which is biased high by roughly
+        // the size of the discrepancy. compute_area_scaling now uses the
+        // truncated-Pareto MLE (Aban et al. 2006). On the 1000x1000 sweep the
+        // OCN moved 0.605 -> 0.460, i.e. into the published range.
+        //
+        // THE BAND HERE IS STILL BROAD, DELIBERATELY. This fixture is small
+        // enough that the fitted range spans ~3 decades from a_min = 3 cells,
+        // and it still reads ~0.53 rather than 0.46 -- a finite-size effect,
+        // not the old bug. Tightening the band to the published range would
+        // fail on this grid. Judge beta on a large grid; here the band guards
+        // against silent drift and the value is printed every run.
         check_case(case_name,
                    "B2 beta is in the broad plausible band 0.3-0.8 for both energies",
                    res.beta > 0.3 && res.beta < 0.8 &&

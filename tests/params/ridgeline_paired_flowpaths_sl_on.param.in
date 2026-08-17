@@ -1,0 +1,20 @@
+read_path: __READ_PATH__
+read_fname: pfcli_dem.tif
+write_path: __WRITE_PATH__
+write_fname: pfslon
+
+boundary_conditions: oooo
+source_pixels_threshold: 50
+m_over_n: 0.45
+
+ridgeline_analysis_mode: interfluvial_divide_ridgelines
+
+# The sibling pair source: donor sub-basins of a common parent, so every pair
+# has a common junction by construction and nothing is rejected as
+# "paths never rejoin".
+select_sibling_basins: true
+sibling_max_groups: 25
+
+print_paired_flowpath_statistics: true
+paired_flowpath_threshold_divide_distance: 0
+paired_flowpath_straight_link: true

@@ -1,0 +1,22 @@
+read_path: __READ_PATH__
+read_fname: pfcli_dem.tif
+write_path: __WRITE_PATH__
+write_fname: pfsall
+
+boundary_conditions: oooo
+source_pixels_threshold: 50
+m_over_n: 0.45
+
+ridgeline_analysis_mode: interfluvial_divide_ridgelines
+
+# The CONTRAST arm. select_all_basins with the all-pairs interfluvial divide
+# scan is the selection the A5 sweep used: it does admit sibling pairs, but it
+# does not guarantee them, and on this fixture 32291 of 38852 divide edges are
+# rejected as "paths never rejoin". The sibling arm rejects none. Without this
+# test the zero in the sibling arm could be a property of the fixture rather
+# than of the pair source.
+select_all_basins: true
+
+print_paired_flowpath_statistics: true
+paired_flowpath_threshold_divide_distance: 0
+paired_flowpath_straight_link: true

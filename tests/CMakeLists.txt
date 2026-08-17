@@ -9,6 +9,13 @@ set(LSDTT_TEST_PARAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/params")
 set(LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/divide_migration_fixture")
 
+# Written by lsdtt-test-paired-flowpaths (the unit_paired_flowpaths CTest
+# fixture): a projected 120x120 diamond-square DEM.  tests/data/tiny30_dem.tif
+# is geographic and lsdtt-ridgeline-analysis refuses it outright, so the paired
+# flow-path CLI tests need a projected surface of their own.
+set(LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/paired_flowpaths_fixture")
+
 # Written by lsdtt-test-synthetic-networks (the unit_synthetic_networks CTest
 # fixture): the 3000 m square polygon in EPSG:32758 that the polygon/true_area
 # CLI test rasterises.
@@ -1188,9 +1195,72 @@ set_tests_properties(unit_divide_diagnostics PROPERTIES
     LABELS "unit;divide_diagnostics")
 
 add_test(NAME unit_paired_flowpaths
-         COMMAND lsdtt-test-paired-flowpaths)
+         COMMAND lsdtt-test-paired-flowpaths
+                 "${LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR}")
 set_tests_properties(unit_paired_flowpaths PROPERTIES
-    LABELS "unit;paired_flowpaths")
+    LABELS "unit;paired_flowpaths"
+    FIXTURES_SETUP paired_flowpaths_fixture)
+
+# =============================================================================
+# lsdtt-ridgeline-analysis -- paired flow paths through the CLI
+#
+# There was NO end-to-end coverage of this CLI at all.  The unit cases in
+# lsdtt-test-paired-flowpaths exercise the kernel only, and the failure mode
+# that silently changed what the network-geometry sweeps measured -- a
+# parameter READ via bf[...] but never DECLARED in bool_default_map, which
+# default-constructs to false with no parse error and no warning -- is
+# invisible to them because it lives in the CLI's parameter plumbing.  These
+# run the binary.
+#
+# The straight-link pair is the switch assertion: the summary CSV must gain a
+# non-NaN median_delta_L_straight_link when the switch is on and keep NaN when
+# it is off.  Each assertion fails on the other arm's output, so the pair
+# discriminates rather than merely passing.
+# =============================================================================
+add_lsdtt_cli_smoke_test(
+    smoke_ridgeline_paired_flowpaths_sl_on
+    lsdtt-ridgeline-analysis
+    ridgeline_paired_flowpaths_sl_on.param.in
+    pfslon_paired_flowpaths_summary.csv
+    --read-path "${LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR}"
+    --expect pfslon_paired_flowpaths.csv
+    --expect-file-contains "pfslon_paired_flowpaths_summary.csv:,870,0."
+    --stdout-contains "straight-link pairs = 870"
+    --stdout-contains "rejected, paths never rejoin:        0"
+)
+set_tests_properties(smoke_ridgeline_paired_flowpaths_sl_on PROPERTIES
+    LABELS "smoke;cli;paired_flowpaths"
+    FIXTURES_REQUIRED paired_flowpaths_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_ridgeline_paired_flowpaths_sl_off
+    lsdtt-ridgeline-analysis
+    ridgeline_paired_flowpaths_sl_off.param.in
+    pfsloff_paired_flowpaths_summary.csv
+    --read-path "${LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR}"
+    --expect-file-contains "pfsloff_paired_flowpaths_summary.csv:,0,NaN,NaN,0"
+    --stdout-contains "rejected, paths never rejoin:        0"
+)
+set_tests_properties(smoke_ridgeline_paired_flowpaths_sl_off PROPERTIES
+    LABELS "smoke;cli;paired_flowpaths"
+    FIXTURES_REQUIRED paired_flowpaths_fixture)
+
+# The contrast that makes the two zeroes above mean something: the same fixture
+# selected the OLD way (all junction basins, all pairs) rejects 32291 of 38852
+# divide edges as non-rejoining.  Without this row, "0 rejected" could be an
+# artefact of a fixture that simply has no non-sibling pairs to reject.
+add_lsdtt_cli_smoke_test(
+    smoke_ridgeline_paired_flowpaths_all_basins
+    lsdtt-ridgeline-analysis
+    ridgeline_paired_flowpaths_all_basins.param.in
+    pfsall_paired_flowpaths_summary.csv
+    --read-path "${LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR}"
+    --stdout-contains "rejected, paths never rejoin:        32291"
+    --expect-file-contains "pfsall_paired_flowpaths_summary.csv:6561,0."
+)
+set_tests_properties(smoke_ridgeline_paired_flowpaths_all_basins PROPERTIES
+    LABELS "smoke;cli;paired_flowpaths"
+    FIXTURES_REQUIRED paired_flowpaths_fixture)
 
 add_test(NAME unit_divide_migration
          COMMAND lsdtt-test-divide-migration
