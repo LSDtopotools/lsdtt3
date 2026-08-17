@@ -6,7 +6,19 @@ spinning up a new `lsdtt3` release.
 
 ## Finding the latest version number
 
-From the repository root, use one of:
+**`CMakeLists.txt` line 2 is the single source of truth.** Every other version
+string in the project — release tags, package filenames, the version the
+binaries print — is derived from it:
+
+```bash
+sed -n 2p CMakeLists.txt      # project(lsdtt3 VERSION 0.3.0 LANGUAGES CXX)
+```
+
+Read it before quoting a version anywhere. Documentation that spells out a
+version in an example command is a snapshot and drifts; this line does not.
+
+To see what has actually been *published* (which can lag the version in
+`CMakeLists.txt`, if it has been bumped ahead of a release):
 
 ```bash
 # latest tag available in your local checkout
@@ -16,9 +28,10 @@ git describe --tags --abbrev=0
 gh release list --limit 1
 ```
 
-For script arguments, use the numeric part without `v` (for example `0.2.2`).
+For script arguments, use the numeric part without `v` (for example `0.3.0`).
 If you are cutting a new release, that value must match
-`project(lsdtt3 VERSION ...)` in `CMakeLists.txt`.
+`project(lsdtt3 VERSION ...)` in `CMakeLists.txt` — `make_release.sh` reads
+that line and refuses to run on a mismatch.
 
 For local Windows packaging, `package_windows_backend.ps1` does **not** validate
 the version string against git tags or `CMakeLists.txt`: it simply writes your

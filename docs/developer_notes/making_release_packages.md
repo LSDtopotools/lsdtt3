@@ -29,6 +29,15 @@ CLI with `-v` → package → optionally publish. CI is a thin wrapper that
 apt-installs dependencies and calls it, so a local release runs the identical
 code path.
 
+**The version lives in exactly one place: line 2 of `CMakeLists.txt`.** Tags,
+bundle filenames, the manifest, and the version the binaries report are all
+derived from `project(lsdtt3 VERSION ...)`, and `make_release.sh` aborts if the
+version it is asked to release disagrees with it. Bumping is therefore a
+one-line edit plus the version numbers quoted in the install documentation
+(`README.md`, `docs/install_lsdtt3.md`), which are examples and have no
+authority — always check `CMakeLists.txt` rather than trusting a version you
+read in prose.
+
 Which CLIs go in a bundle is a **profile** (`tools/cli_profiles.txt`, the single
 source of truth for all four scripts): `qgis` (the plugin subset, Windows
 default), `core` (Linux/macOS/CI default), `all` (local releases only). The

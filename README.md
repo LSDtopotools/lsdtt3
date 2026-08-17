@@ -57,12 +57,19 @@ and troubleshooting, are in [`docs/install_lsdtt3.md`](docs/install_lsdtt3.md).*
 Packages are on the [Releases page](../../releases/latest) and at
 <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>.
 
+> **Check the version number before you copy the commands below.** The version
+> in these examples is whatever was current when the page was last edited, and
+> it goes stale. The authoritative current version is line 2 of
+> [`CMakeLists.txt`](CMakeLists.txt) — `project(lsdtt3 VERSION ...)` — which is
+> what release tags and package filenames are built from. Substitute that
+> number wherever you see one here.
+
 ### Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.2.2.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.2.2.tar.gz
-source lsdtt3-backend-linux-x86_64-core-v0.2.2/setenv.sh
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz
+source lsdtt3-backend-linux-x86_64-core-v0.3.0/setenv.sh
 lsdtt-channel-extraction --help
 ```
 

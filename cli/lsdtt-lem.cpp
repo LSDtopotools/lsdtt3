@@ -54,7 +54,7 @@
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
-static const std::string k_version  = "0.1.0";
+static const std::string k_version  = "0.2.0";
 static const std::string k_citation =
     "Mudd et al. (2023) LSDTopoTools2. "
     "Anand et al. (2020) Env. Modell. Softw. 134:104803. "
