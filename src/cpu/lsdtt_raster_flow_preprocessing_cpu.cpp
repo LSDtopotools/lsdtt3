@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <deque>
 #include <iostream>
 #include <limits>
@@ -340,13 +341,14 @@ static void priority_flood_core(
 // -----------------------------------------------------------------------------
 
 static void seed_raster_boundary(
-    const lsdtt_array2d<float>& filled,
-    lsdtt_array2d<int>&         idx,
-    pf_heap&                    pq,
+    const lsdtt_array2d<float>&   filled,
+    lsdtt_array2d<int>&           idx,
+    pf_heap&                      pq,
     int nrows, int ncols,
     int r0, int r1,
     bool per_ns,
-    bool per_ew)
+    bool per_ew,
+    const lsdtt_array2d<uint8_t>* sink_plane = nullptr)
 {
     // The 8-neighbour scan below exists solely to find cells adjacent to an
     // INTERIOR nodata void, so that those voids also act as drainage exits.
@@ -383,6 +385,16 @@ static void seed_raster_boundary(
             bool seed = (!per_ns && (r == 0 || r == nrows - 1)) ||
                         (!per_ew && (c == 0 || c == ncols - 1));
 
+            // A designated sink is a drainage exit in its own right. It is
+            // seeded at its OWN elevation, so the flood starts from the floor
+            // of the closed depression and works outwards -- the depression is
+            // therefore never raised to its spill point, and flow inside it
+            // still descends to the sink.
+            if (!seed && sink_plane != nullptr && (*sink_plane)(r, c) != 0)
+            {
+                seed = true;
+            }
+
             if (!seed && has_interior_nodata)
             {
                 for (int n = 0; n < 8 && !seed; ++n)
@@ -406,19 +418,20 @@ static void seed_raster_boundary(
 // -----------------------------------------------------------------------------
 
 static void fill_serial(
-    lsdtt_array2d<float>&        filled,
-    lsdtt_array2d<int>&          idx,
-    const lsdtt_raster_meta&     meta,
-    float                        min_slope,
-    bool                         per_ns = false,
-    bool                         per_ew = false)
+    lsdtt_array2d<float>&         filled,
+    lsdtt_array2d<int>&           idx,
+    const lsdtt_raster_meta&      meta,
+    float                         min_slope,
+    bool                          per_ns     = false,
+    bool                          per_ew     = false,
+    const lsdtt_array2d<uint8_t>* sink_plane = nullptr)
 {
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;
 
     pf_heap pq;
     seed_raster_boundary(filled, idx, pq, nrows, ncols, 0, nrows,
-                         per_ns, per_ew);
+                         per_ns, per_ew, sink_plane);
     priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols,
                         per_ns, per_ew);
 }
@@ -574,6 +587,89 @@ lsdtt_raster_cpu fill_pits_priority_flood(
     lsdtt_array2d<int>&     idx      = inputs.idx;
 
     fill_serial(filled, idx, meta, min_slope);
+
+    return lsdtt_raster_cpu(
+        std::move(filled.get_vector()),
+        std::move(mask_arr.get_vector()),
+        meta
+    );
+}
+
+// -----------------------------------------------------------------------------
+// fill_pits_with_sinks
+//
+// Priority-flood fill in which the designated sink cells join the seed set.
+// See the header for the semantics; the only difference from
+// fill_pits_priority_flood() is the extra seed class handed to fill_serial().
+// -----------------------------------------------------------------------------
+
+lsdtt_raster_cpu fill_pits_with_sinks(
+    const lsdtt_raster_cpu&          raster,
+    const std::vector<std::int64_t>& sink_flats,
+    float min_slope,
+    int   n_threads)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(
+            "lsdtt::fill_pits_with_sinks: invalid raster metadata"
+        );
+    }
+
+    // No sinks means no extra seeds, and therefore exactly the plain flood.
+    // Deferring keeps that equivalence structural rather than incidental.
+    if (sink_flats.empty())
+    {
+        return fill_pits_priority_flood(raster, min_slope, n_threads);
+    }
+
+    const int         nrows = meta.n_rows;
+    const int         ncols = meta.n_cols;
+    const std::int64_t n_cells =
+        static_cast<std::int64_t>(nrows) * static_cast<std::int64_t>(ncols);
+
+    fill_inputs inputs = make_fill_inputs(raster);
+    lsdtt_array2d<float>&   filled   = inputs.dem;
+    lsdtt_array2d<uint8_t>& mask_arr = inputs.mask;
+    lsdtt_array2d<int>&     idx      = inputs.idx;
+
+    // A uint8 plane rather than a search of sink_flats per cell: the sink set
+    // is small but the seeding loop visits every cell.
+    lsdtt_array2d<uint8_t> sink_plane(nrows, ncols, uint8_t{0});
+
+    for (std::size_t i = 0; i < sink_flats.size(); ++i)
+    {
+        const std::int64_t f = sink_flats[i];
+
+        if (f < 0 || f >= n_cells)
+        {
+            throw std::invalid_argument(
+                "lsdtt::fill_pits_with_sinks: sink flat index " +
+                std::to_string(f) + " (entry " + std::to_string(i) +
+                ") is outside the raster, which has " +
+                std::to_string(n_cells) + " cells"
+            );
+        }
+
+        const int r = static_cast<int>(f / static_cast<std::int64_t>(ncols));
+        const int c = static_cast<int>(f % static_cast<std::int64_t>(ncols));
+
+        if (mask_arr(r, c) == 0)
+        {
+            throw std::invalid_argument(
+                "lsdtt::fill_pits_with_sinks: sink flat index " +
+                std::to_string(f) + " (entry " + std::to_string(i) +
+                ", row " + std::to_string(r) + ", col " + std::to_string(c) +
+                ") lands on a nodata or masked cell, so it cannot act as a "
+                "drainage exit"
+            );
+        }
+
+        sink_plane(r, c) = uint8_t{1};
+    }
+
+    fill_serial(filled, idx, meta, min_slope, false, false, &sink_plane);
 
     return lsdtt_raster_cpu(
         std::move(filled.get_vector()),

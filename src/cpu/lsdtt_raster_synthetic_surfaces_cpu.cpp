@@ -10,6 +10,7 @@
 
 #include "../utils/lsdtt_thread_utils.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -2452,6 +2453,422 @@ lsdtt_hillslope_strip_surface generate_hillslope_strip_surface(
         baselevel_elevation, half_width,
         uplift_U, diffusivity_D, critical_slope_Sc,
         nonlinear_profile, init_amplitude, perturb_seed, n_threads);
+}
+
+// =============================================================================
+// Crater field
+//
+// A tilted plane with non-overlapping closed depressions cut into it. Every
+// reported quantity is derived from the crater specs, so the surface can be
+// used as an oracle for depression detection and for sink-terminated filling.
+// See the header for the surface definition and for the tolerances a caller
+// should expect against a raster measurement.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// crater_geometry
+//
+// The per-crater scalars that both the surface evaluation and the analytic
+// integrals need, derived once from the spec.
+// -----------------------------------------------------------------------------
+struct crater_geometry
+{
+    double cx     = 0.0;   // centre easting
+    double cy     = 0.0;   // centre northing
+    double R      = 0.0;   // rim radius
+    double F      = 0.0;   // floor radius
+    double D      = 0.0;   // R - F, the width of the sloping wall
+    double depth  = 0.0;
+    double s      = 0.0;   // background slope, m/m, rising north
+    double z_c    = 0.0;   // background elevation at the centre
+    double z_pit  = 0.0;   // z_c - depth
+    double z_spill= 0.0;   // z_c - s * R, the lowest point of the rim
+};
+
+// -----------------------------------------------------------------------------
+// crater_boundary_radius
+//
+// Distance from the crater centre, along the ray whose northward direction
+// cosine is uy, at which the surface reaches the spill elevation. This is the
+// boundary of the closed depression: inside it water is retained, outside it
+// water has already escaped over the rim.
+//
+// The surface on the wall is
+//   z(d) = z_c + a*d*(d - F)/D - depth*(R - d)/D,   a = s * uy
+// so setting z(d) = z_spill = z_c - s*R gives
+//   a*d^2 + (depth - a*F)*d + (s*R*D - depth*R) = 0
+// which has exactly one root in [F, R] because z is strictly increasing there
+// (guaranteed by the depth constraint validated in the generator).
+//
+// With a == 0 -- an untilted background, or the two rays running due east and
+// due west -- the quadratic degenerates to a linear equation, so the stable
+// citardauq form is used rather than the schoolbook one.
+// -----------------------------------------------------------------------------
+static double crater_boundary_radius(const crater_geometry& g, double uy)
+{
+    const double a = g.s * uy;
+    const double B = g.depth - a * g.F;
+    const double C = g.s * g.R * g.D - g.depth * g.R;
+
+    double d = 0.0;
+
+    if (std::abs(a) < 1e-300)
+    {
+        d = -C / B;
+    }
+    else
+    {
+        const double disc = B * B - 4.0 * a * C;
+        const double root = std::sqrt(disc > 0.0 ? disc : 0.0);
+
+        // q is the larger-magnitude of the two numerators, so q/a and C/q are
+        // the two roots with no cancellation in either.
+        const double q  = -0.5 * (B + (B >= 0.0 ? root : -root));
+        const double r1 = q / a;
+        const double r2 = (std::abs(q) > 0.0) ? (C / q) : r1;
+
+        const bool r1_ok = (r1 >= g.F - 1e-9) && (r1 <= g.R + 1e-9);
+        d = r1_ok ? r1 : r2;
+    }
+
+    if (d < g.F) d = g.F;
+    if (d > g.R) d = g.R;
+    return d;
+}
+
+// -----------------------------------------------------------------------------
+// crater_wall_volume_antiderivative
+//
+// Antiderivative in d of h(d) * d over the sloping wall, where
+//   h(d) = z_spill - z(d) = -s*R - a*d*(d - F)/D + depth*(R - d)/D
+// is the depth of standing water. Multiplying by d is the polar area element,
+// so integrating this radially and then over azimuth gives the fill volume.
+// -----------------------------------------------------------------------------
+static double crater_wall_volume_antiderivative(
+    const crater_geometry& g,
+    double a,
+    double d)
+{
+    const double d2 = d * d;
+    const double d3 = d2 * d;
+    const double d4 = d2 * d2;
+
+    return -g.s * g.R * d2 * 0.5
+         - (a / g.D) * (0.25 * d4 - g.F * d3 / 3.0)
+         + (g.depth / g.D) * (0.5 * g.R * d2 - d3 / 3.0);
+}
+
+// -----------------------------------------------------------------------------
+// crater_area_and_volume
+//
+// Planform area and fill volume of the closed depression, both exact.
+//
+// With no background tilt the depression boundary is the rim circle and both
+// integrals close in elementary form. With a tilt the boundary is no longer a
+// circle -- the depression is cut short on the down-tilt side -- so the radial
+// integral (which is still closed form) is swept over azimuth with a uniform
+// trapezoid rule. On a smooth periodic integrand the trapezoid rule converges
+// far faster than its formal second order, and the sample count below puts the
+// result well inside 1e-12 relative. Nothing here touches the raster, so the
+// answer is independent of cell size.
+// -----------------------------------------------------------------------------
+static void crater_area_and_volume(
+    const crater_geometry& g,
+    double& area_m2,
+    double& volume_m3)
+{
+    const double H = g.z_spill - g.z_pit;   // water depth over the flat floor
+
+    if (g.s == 0.0)
+    {
+        area_m2 = k_pi * g.R * g.R;
+        volume_m3 = 2.0 * k_pi
+            * ( 0.5 * H * g.F * g.F
+              + crater_wall_volume_antiderivative(g, 0.0, g.R)
+              - crater_wall_volume_antiderivative(g, 0.0, g.F) );
+        return;
+    }
+
+    constexpr int n_theta = 131072;
+
+    double area_acc   = 0.0;
+    double volume_acc = 0.0;
+
+    for (int i = 0; i < n_theta; ++i)
+    {
+        const double theta = 2.0 * k_pi * static_cast<double>(i)
+                           / static_cast<double>(n_theta);
+        const double uy = std::sin(theta);
+        const double a  = g.s * uy;
+        const double r  = crater_boundary_radius(g, uy);
+
+        area_acc += 0.5 * r * r;
+        volume_acc += 0.5 * H * g.F * g.F
+                    + crater_wall_volume_antiderivative(g, a, r)
+                    - crater_wall_volume_antiderivative(g, a, g.F);
+    }
+
+    const double dtheta = 2.0 * k_pi / static_cast<double>(n_theta);
+    area_m2   = area_acc   * dtheta;
+    volume_m3 = volume_acc * dtheta;
+}
+
+// -----------------------------------------------------------------------------
+// generate_crater_field_surface
+// -----------------------------------------------------------------------------
+lsdtt_crater_field_surface generate_crater_field_surface(
+    const lsdtt_raster_meta&              meta,
+    const std::vector<lsdtt_crater_spec>& craters,
+    double background_slope,
+    double background_elevation)
+{
+    static const char* fn = "lsdtt::generate_crater_field_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (!std::isfinite(background_slope) || background_slope < 0.0)
+    {
+        throw std::invalid_argument(
+            std::string(fn) + ": background_slope must be finite and >= 0"
+        );
+    }
+    if (!std::isfinite(background_elevation))
+    {
+        throw std::invalid_argument(
+            std::string(fn) + ": background_elevation must be finite"
+        );
+    }
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+    const double x_min     = meta.x_min;
+    const double y_min     = meta.y_min;
+    const double x_max     = meta.x_max();
+    const double y_max     = meta.y_max();
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    // -------------------------------------------------------------------------
+    // Validate every spec before touching the raster, so a bad field never
+    // produces a half-built surface.
+    // -------------------------------------------------------------------------
+    std::vector<crater_geometry> geom;
+    geom.reserve(craters.size());
+
+    for (std::size_t i = 0; i < craters.size(); ++i)
+    {
+        const lsdtt_crater_spec& cs = craters[i];
+        const std::string tag = " (crater " + std::to_string(i) + ")";
+
+        if (!std::isfinite(cs.centre_x) || !std::isfinite(cs.centre_y))
+        {
+            throw std::invalid_argument(
+                std::string(fn) + ": centre_x and centre_y must be finite" + tag
+            );
+        }
+        if (!std::isfinite(cs.radius_m) || cs.radius_m <= 0.0)
+        {
+            throw std::invalid_argument(
+                std::string(fn) + ": radius_m must be finite and > 0" + tag
+            );
+        }
+        if (!std::isfinite(cs.depth_m) || cs.depth_m <= 0.0)
+        {
+            throw std::invalid_argument(
+                std::string(fn) + ": depth_m must be finite and > 0" + tag
+            );
+        }
+        if (!std::isfinite(cs.floor_fraction) ||
+            cs.floor_fraction < 0.0 || cs.floor_fraction >= 1.0)
+        {
+            throw std::invalid_argument(
+                std::string(fn) + ": floor_fraction must be in [0, 1)" + tag
+            );
+        }
+
+        // The rim must sit inside the grid with a cell of margin, otherwise the
+        // depression opens onto the DEM edge and is not closed at all.
+        if (cs.centre_x - cs.radius_m < x_min + cell_size ||
+            cs.centre_x + cs.radius_m > x_max - cell_size ||
+            cs.centre_y - cs.radius_m < y_min + cell_size ||
+            cs.centre_y + cs.radius_m > y_max - cell_size)
+        {
+            throw std::invalid_argument(
+                std::string(fn) + ": the rim runs off the raster, so the "
+                "depression would not be closed" + tag
+            );
+        }
+
+        // The wall must outrun the regional tilt along every ray, including the
+        // down-tilt one, or there is no closed depression to find.
+        const double tilt_budget =
+            background_slope * cs.radius_m * (2.0 - cs.floor_fraction);
+        if (cs.depth_m <= tilt_budget)
+        {
+            throw std::invalid_argument(
+                std::string(fn) + ": depth_m (" + std::to_string(cs.depth_m) +
+                ") must exceed background_slope * radius_m * "
+                "(2 - floor_fraction) = " + std::to_string(tilt_budget) +
+                ", otherwise the regional tilt outruns the crater wall on the "
+                "down-tilt side and the depression is not closed" + tag
+            );
+        }
+
+        crater_geometry g;
+        g.cx      = cs.centre_x;
+        g.cy      = cs.centre_y;
+        g.R       = cs.radius_m;
+        g.F       = cs.floor_fraction * cs.radius_m;
+        g.D       = g.R - g.F;
+        g.depth   = cs.depth_m;
+        g.s       = background_slope;
+        g.z_c     = background_elevation + background_slope * (g.cy - y_min);
+        g.z_pit   = g.z_c - g.depth;
+        g.z_spill = g.z_c - background_slope * g.R;
+        geom.push_back(g);
+    }
+
+    for (std::size_t i = 0; i < geom.size(); ++i)
+    {
+        for (std::size_t j = i + 1; j < geom.size(); ++j)
+        {
+            const double dx = geom[i].cx - geom[j].cx;
+            const double dy = geom[i].cy - geom[j].cy;
+            const double sep = std::sqrt(dx * dx + dy * dy);
+            if (sep <= geom[i].R + geom[j].R)
+            {
+                throw std::invalid_argument(
+                    std::string(fn) + ": craters " + std::to_string(i) +
+                    " and " + std::to_string(j) + " overlap (centres " +
+                    std::to_string(sep) + " m apart, rims sum to " +
+                    std::to_string(geom[i].R + geom[j].R) +
+                    " m). Overlapping rims merge into one depression whose pit "
+                    "and spill point neither spec describes."
+                );
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Background plane, rising to the north.
+    // -------------------------------------------------------------------------
+    std::vector<float> dem(n_pixels, 0.0f);
+
+    for (int row = 0; row < n_rows; ++row)
+    {
+        const double y = y_max - (static_cast<double>(row) + 0.5) * cell_size;
+        const float  z = static_cast<float>(
+            background_elevation + background_slope * (y - y_min));
+
+        for (int col = 0; col < n_cols; ++col)
+        {
+            dem[flat_index(row, col, n_cols)] = z;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Cut each crater into its own bounding box. Rims cannot overlap, so no
+    // cell is written twice.
+    // -------------------------------------------------------------------------
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   id_data(n_pixels, nodata);
+    std::vector<uint8_t> id_mask(n_pixels, uint8_t{0});
+    std::vector<float>   sink_data(n_pixels, 0.0f);
+
+    lsdtt_crater_field_surface out{
+        lsdtt_raster_cpu(), lsdtt_raster_cpu(), lsdtt_raster_cpu(),
+        {}, {}, {}, {}, {}, {}
+    };
+
+    for (std::size_t i = 0; i < geom.size(); ++i)
+    {
+        const crater_geometry& g = geom[i];
+
+        const int col_lo = std::max(0,
+            static_cast<int>(std::floor((g.cx - g.R - x_min) / cell_size)));
+        const int col_hi = std::min(n_cols - 1,
+            static_cast<int>(std::ceil((g.cx + g.R - x_min) / cell_size)));
+        const int row_lo = std::max(0,
+            static_cast<int>(std::floor((y_max - (g.cy + g.R)) / cell_size)));
+        const int row_hi = std::min(n_rows - 1,
+            static_cast<int>(std::ceil((y_max - (g.cy - g.R)) / cell_size)));
+
+        for (int row = row_lo; row <= row_hi; ++row)
+        {
+            const double y = y_max - (static_cast<double>(row) + 0.5) * cell_size;
+
+            for (int col = col_lo; col <= col_hi; ++col)
+            {
+                const double x =
+                    x_min + (static_cast<double>(col) + 0.5) * cell_size;
+
+                const double dx = x - g.cx;
+                const double dy = y - g.cy;
+                const double d  = std::sqrt(dx * dx + dy * dy);
+                if (d >= g.R) continue;
+
+                const double w = (d <= g.F) ? 0.0 : (d - g.F) / g.D;
+                const double z_bg =
+                    background_elevation + background_slope * (y - y_min);
+
+                const std::size_t k = flat_index(row, col, n_cols);
+                dem[k] = static_cast<float>(
+                    g.z_c + (z_bg - g.z_c) * w - g.depth * (1.0 - w));
+
+                id_data[k] = static_cast<float>(i);
+                id_mask[k] = uint8_t{1};
+            }
+        }
+
+        // The pit is the cell containing the analytic apex. On a square grid
+        // the containing cell is also the cell whose centre is nearest the
+        // apex, so this is the raster minimum for any centre at or near a
+        // pixel centre -- see the header note.
+        int pit_row = static_cast<int>(std::floor((y_max - g.cy) / cell_size));
+        int pit_col = static_cast<int>(std::floor((g.cx - x_min) / cell_size));
+        if (pit_row < 0) pit_row = 0;
+        if (pit_col < 0) pit_col = 0;
+        if (pit_row > n_rows - 1) pit_row = n_rows - 1;
+        if (pit_col > n_cols - 1) pit_col = n_cols - 1;
+
+        const std::size_t pit_k = flat_index(pit_row, pit_col, n_cols);
+        sink_data[pit_k] = 1.0f;
+
+        double area_m2   = 0.0;
+        double volume_m3 = 0.0;
+        crater_area_and_volume(g, area_m2, volume_m3);
+
+        out.pit_rc.push_back(lsdtt_pixel_rc{ pit_row, pit_col });
+        out.pit_flats.push_back(static_cast<std::int64_t>(pit_k));
+        out.pit_elevation.push_back(g.z_pit);
+        out.spill_elevation.push_back(g.z_spill);
+        out.area_m2.push_back(area_m2);
+        out.volume_m3.push_back(volume_m3);
+    }
+
+    out.dem       = make_raster(std::move(dem), meta);
+    out.sink_mask = make_raster(std::move(sink_data), meta);
+    out.crater_id = lsdtt_raster_cpu(
+        std::move(id_data), std::move(id_mask), meta);
+
+    return out;
+}
+
+lsdtt_crater_field_surface generate_crater_field_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    const std::vector<lsdtt_crater_spec>& craters,
+    double background_slope,
+    double background_elevation)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_crater_field_surface(
+        meta, craters, background_slope, background_elevation);
 }
 
 } // namespace lsdtt

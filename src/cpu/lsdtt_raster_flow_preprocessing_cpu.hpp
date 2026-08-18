@@ -70,6 +70,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -151,6 +152,54 @@ lsdtt_raster_cpu fill_pits(
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu fill_pits_priority_flood(
     const lsdtt_raster_cpu& raster,
+    float min_slope = 0.0001f,
+    int   n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits_with_sinks
+//
+// Depression filling that RETAINS a designated set of sinks.
+//
+// This is fill_pits_priority_flood() -- the Barnes et al. (2014) Improved
+// Priority-Flood -- with one change: each cell listed in `sink_flats` joins the
+// seed set alongside the raster border and the cells that touch an interior
+// nodata void. A sink is therefore treated as a drainage exit, exactly as an
+// interior nodata hole already is, but WITHOUT punching a hole in the DEM.
+//
+// The consequence is the point of the function. Plain filling raises a closed
+// depression until it spills over its lowest saddle, which destroys it: flow
+// routing then carries the depression's water out over that saddle. Seeding the
+// flood from the sink instead means the flood works OUTWARDS from the
+// depression floor, the depression is never raised, and every cell inside it
+// keeps a descending path down to the sink. This is what internal drainage --
+// moulins, playas, sabkhas, sinkholes, quarries -- requires.
+//
+// A sink cell is seeded at its OWN original elevation and is never raised.
+//
+// sink_flats
+//   Flat (row-major) indices, i.e. row * n_cols + col. Order is irrelevant and
+//   duplicates are harmless. An index outside the raster, or one landing on a
+//   nodata or masked cell, throws std::invalid_argument -- a sink that is not a
+//   real cell cannot act as an exit and silently dropping it would leave the
+//   depression filled.
+//
+// min_slope
+//   Gradient in m/m (rise over run) imposed across the flats produced by
+//   filling; a cell is raised by min_slope * cell_size above its neighbour, or
+//   min_slope * cell_size * sqrt(2) on a diagonal. min_slope <= 0 leaves true
+//   flats, which lsdtt3's D8 router will not accept. See the FLAT HANDLING note
+//   at the top of this header.
+//
+// An empty `sink_flats` returns a raster identical to
+// fill_pits_priority_flood(raster, min_slope) -- there are no extra seeds, so
+// it is the same flood. Note that this is the PRIORITY-FLOOD backend, not
+// fill_pits(), which dispatches to the reconstruction backend when
+// min_slope <= 0.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_pits_with_sinks(
+    const lsdtt_raster_cpu&          raster,
+    const std::vector<std::int64_t>& sink_flats,
     float min_slope = 0.0001f,
     int   n_threads = 0
 );
