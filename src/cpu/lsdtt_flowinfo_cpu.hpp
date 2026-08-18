@@ -657,6 +657,17 @@ private:
         const lsdtt_raster_meta& meta
     ) const;
 
+    // validate_forced_outlet_flats:
+    //   Checks options.forced_outlet_flats before any storage is allocated.
+    //   Out-of-range indices and indices landing on masked or nodata cells
+    //   throw std::invalid_argument; duplicates are legal and are absorbed
+    //   when the forced-outlet plane is stamped.
+    void validate_forced_outlet_flats(
+        const lsdtt_array2d_u8&       mask,
+        const lsdtt_raster_meta&      meta,
+        const lsdtt_flowinfo_options& options
+    ) const;
+
     void initialise_storage(
         const lsdtt_array2d_u8&       mask,
         const lsdtt_raster_meta&      meta,

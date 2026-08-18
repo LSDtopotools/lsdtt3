@@ -201,6 +201,7 @@ void lsdtt_flowinfo::create(
     clear();
 
     validate_inputs(dem, mask, meta);
+    validate_forced_outlet_flats(mask, meta, options);
     parse_boundary_conditions(options.boundary_conditions);
     initialise_storage(mask, meta, options);
 
@@ -938,6 +939,60 @@ void lsdtt_flowinfo::validate_inputs(
 }
 
 
+// =============================================================================
+// validate_forced_outlet_flats
+//
+// options.forced_outlet_flats nominates cells as unconditional flow
+// terminations (see lsdtt_flowinfo_options). The set is checked here, before
+// any storage is allocated, so a bad index fails cheaply and with a message
+// that names both the index and its position in the caller's vector.
+//
+// Duplicates are not an error: stamping the same cell twice into the
+// forced-outlet plane is idempotent, so they are absorbed silently.
+// =============================================================================
+void lsdtt_flowinfo::validate_forced_outlet_flats(
+    const lsdtt_array2d_u8&       mask,
+    const lsdtt_raster_meta&      meta,
+    const lsdtt_flowinfo_options& options
+) const
+{
+    if (options.forced_outlet_flats.empty()) return;
+
+    const std::int64_t n_cells =
+        static_cast<std::int64_t>(meta.n_rows) *
+        static_cast<std::int64_t>(meta.n_cols);
+
+    for (std::size_t i = 0; i < options.forced_outlet_flats.size(); ++i)
+    {
+        const std::int64_t f = options.forced_outlet_flats[i];
+
+        if (f < 0 || f >= n_cells)
+        {
+            throw std::invalid_argument(
+                "lsdtt_flowinfo: forced outlet flat index " +
+                std::to_string(f) + " (entry " + std::to_string(i) +
+                ") is outside the raster, which has " +
+                std::to_string(n_cells) + " cells"
+            );
+        }
+
+        const int r = static_cast<int>(f / static_cast<std::int64_t>(meta.n_cols));
+        const int c = static_cast<int>(f % static_cast<std::int64_t>(meta.n_cols));
+
+        if (mask(r, c) == 0)
+        {
+            throw std::invalid_argument(
+                "lsdtt_flowinfo: forced outlet flat index " +
+                std::to_string(f) + " (entry " + std::to_string(i) +
+                ", row " + std::to_string(r) + ", col " + std::to_string(c) +
+                ") lands on a nodata or masked cell, so it cannot act as a "
+                "flow termination"
+            );
+        }
+    }
+}
+
+
 void lsdtt_flowinfo::initialise_storage(
     const lsdtt_array2d_u8&       mask,
     const lsdtt_raster_meta&      meta,
@@ -1016,6 +1071,33 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
     const double cardinal_length = meta_.cell_size;
     const double diagonal_length = meta_.cell_size * k_sqrt_2;
 
+    // Caller-nominated flow terminations (see lsdtt_flowinfo_options).
+    //
+    // The set is stamped once into a full-grid uint8_t plane so the hot loop
+    // below pays a single O(1) lookup per cell rather than a search over the
+    // vector. The plane is a local: it is needed only while the receiver graph
+    // is being built, and keeping it as a member would cost n_rows * n_cols
+    // bytes for the lifetime of every flow object.
+    //
+    // The overwhelmingly common case is an empty set, and that case allocates
+    // nothing and is guarded by a single bool - the same cheap-guard pattern
+    // has_interior_nodata uses in the fill code.
+    const bool has_forced_outlets = !options.forced_outlet_flats.empty();
+
+    lsdtt_array2d<std::uint8_t> forced_outlet_plane;
+
+    if (has_forced_outlets)
+    {
+        forced_outlet_plane.resize(meta_.n_rows, meta_.n_cols, std::uint8_t{0});
+
+        // Indices were range- and mask-checked in validate_forced_outlet_flats,
+        // so this stamp is unconditional. Duplicates are idempotent.
+        for (const std::int64_t f : options.forced_outlet_flats)
+        {
+            forced_outlet_plane.data()[f] = std::uint8_t{1};
+        }
+    }
+
     // Unresolvable-cell reporting.
     //
     // This CANNOT throw from inside the parallel region below. An exception that
@@ -1053,6 +1135,17 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
                     row, col,
                     meta_.n_rows, meta_.n_cols,
                     boundary_conditions_))
+            {
+                receiver_(row, col)     = outlet_receiver;
+                receiver_dir_(row, col) = no_direction;
+                continue;
+            }
+
+            // Caller-nominated forced outlet. This must be tested BEFORE the
+            // steepest-descent search below so that it wins over any downhill
+            // neighbour: the cell is a terminus even if the surface still
+            // descends away from it.
+            if (has_forced_outlets && forced_outlet_plane.data()[flat] != 0)
             {
                 receiver_(row, col)     = outlet_receiver;
                 receiver_dir_(row, col) = no_direction;
