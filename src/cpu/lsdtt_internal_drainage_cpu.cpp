@@ -23,6 +23,7 @@
 #include <map>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "../core/lsdtt_point_input.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
@@ -89,6 +90,7 @@ const std::vector<std::string>& candidate_field_names()
 {
     static const std::vector<std::string> names = {
         "sink_id",
+        "routing_sink_id",
         "pit_row",
         "pit_col",
         "pit_flat",
@@ -113,6 +115,7 @@ const std::vector<lsdtt_vector_field_type>& candidate_field_types()
 {
     static const std::vector<lsdtt_vector_field_type> types = {
         lsdtt_vector_field_type::int64_type,     // sink_id
+        lsdtt_vector_field_type::int64_type,     // routing_sink_id
         lsdtt_vector_field_type::int64_type,     // pit_row
         lsdtt_vector_field_type::int64_type,     // pit_col
         lsdtt_vector_field_type::int64_type,     // pit_flat
@@ -140,6 +143,7 @@ candidate_field_values(const sink_candidate& sink)
 {
     return {
         static_cast<std::int64_t>(sink.sink_id),
+        static_cast<std::int64_t>(sink.routing_sink_id),
         static_cast<std::int64_t>(sink.pit_row),
         static_cast<std::int64_t>(sink.pit_col),
         sink.pit_flat,
@@ -959,6 +963,8 @@ read_sink_candidates(const std::string&       path,
             sink.hierarchy_level = integer_value;
         if (attribute_as_int(attributes, { "parent_sink_id" }, integer_value))
             sink.parent_sink_id = integer_value;
+        if (attribute_as_int(attributes, { "routing_sink_id" }, integer_value))
+            sink.routing_sink_id = integer_value;
 
         // An absent accepted column means every feature present is accepted:
         // the reviewer deleted the ones they rejected.
@@ -986,7 +992,14 @@ read_sink_candidates(const std::string&       path,
     }
 
     // A hand-digitised feature carries no sink_id, so it gets a fresh one
-    // continuing from the largest id already in the file.
+    // continuing from the largest id already in the file. Sort by cell first:
+    // indexed vector formats may reorder features, but distinct digitised points
+    // must receive the same durable ids regardless of storage order.
+    std::sort(sinks_needing_an_id.begin(), sinks_needing_an_id.end(),
+              [&](std::size_t a, std::size_t b)
+              {
+                  return sinks[a].pit_flat < sinks[b].pit_flat;
+              });
     for (const std::size_t index : sinks_needing_an_id)
     {
         sinks[index].sink_id = ++highest_sink_id;
@@ -1009,29 +1022,34 @@ read_sink_candidates(const std::string&       path,
 std::vector<sink_candidate>
 accepted_sinks(const std::vector<sink_candidate>& sinks)
 {
-    std::unordered_map<int, int> renumbered;
-    std::vector<sink_candidate>  accepted;
+    std::vector<sink_candidate> accepted;
 
     for (const sink_candidate& sink : sinks)
     {
         if (!sink.accepted) continue;
-
-        sink_candidate kept = sink;
-        renumbered[sink.sink_id] = static_cast<int>(accepted.size());
-        kept.sink_id = static_cast<int>(accepted.size());
-        accepted.push_back(kept);
+        accepted.push_back(sink);
     }
 
-    // Nesting is remapped onto the new numbering; a sink whose parent was
-    // rejected becomes top level rather than pointing at an id that no longer
-    // exists.
-    for (sink_candidate& sink : accepted)
-    {
-        if (sink.parent_sink_id < 0) continue;
+    std::sort(accepted.begin(), accepted.end(),
+              [](const sink_candidate& a, const sink_candidate& b)
+              {
+                  return a.sink_id < b.sink_id;
+              });
 
-        const auto found = renumbered.find(sink.parent_sink_id);
-        sink.parent_sink_id =
-            (found == renumbered.end()) ? -1 : found->second;
+    for (std::size_t i = 0; i < accepted.size(); ++i)
+    {
+        if (accepted[i].sink_id < 0)
+        {
+            throw std::invalid_argument(
+                "accepted_sinks: accepted sinks must have non-negative sink_id values");
+        }
+        if (i > 0 && accepted[i - 1].sink_id == accepted[i].sink_id)
+        {
+            throw std::invalid_argument(
+                "accepted_sinks: accepted sinks must have unique sink_id values");
+        }
+
+        accepted[i].routing_sink_id = static_cast<int>(i);
     }
 
     return accepted;
@@ -1068,6 +1086,11 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
     };
 
     if (sinks.empty()) return result;
+    if (sinks.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        throw std::invalid_argument(
+            "sink_depressions_to_polygons: too many sinks for integer component labels");
+    }
 
     // The attributes of a polygon come from its sink, never from a second
     // measurement, so the point and polygon layers cannot disagree.
@@ -1088,11 +1111,12 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
     };
 
     // Footprint geometry is traced by the shared component vectoriser, which
-    // wants a label raster whose values are 1-based. Sinks are matched to it by
-    // sink_id + 1.
+    // wants a dense label raster whose values are 1-based. Durable sink_id
+    // values may be sparse, so geometry uses local vector indices and only the
+    // output attributes carry sink_id.
     const auto trace_footprints =
         [&](const std::vector<int>& sink_of_cell,
-            const std::vector<const sink_candidate*>& sink_by_id)
+            const std::vector<const sink_candidate*>& sink_by_index)
     {
         lsdtt_raster_meta label_meta = meta;
         label_meta.no_data_value = 0.0;
@@ -1136,29 +1160,20 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
             const std::size_t sink_index =
                 static_cast<std::size_t>(label_id - 1);
 
-            if (sink_index >= sink_by_id.size())     continue;
-            if (sink_by_id[sink_index] == nullptr)   continue;
+            if (sink_index >= sink_by_index.size())     continue;
+            if (sink_by_index[sink_index] == nullptr)   continue;
 
             lsdtt_vector_record out;
             out.geometry     = record.geometry;
-            out.field_values = attributes_of(*sink_by_id[sink_index]);
+            out.field_values = attributes_of(*sink_by_index[sink_index]);
             result.records.push_back(std::move(out));
         }
     };
 
-    // An index from sink_id to the sink, so a traced label can find its record.
-    int highest_sink_id = -1;
-    for (const sink_candidate& sink : sinks)
+    std::vector<const sink_candidate*> sink_by_index(sinks.size(), nullptr);
+    for (std::size_t i = 0; i < sinks.size(); ++i)
     {
-        highest_sink_id = std::max(highest_sink_id, sink.sink_id);
-    }
-
-    std::vector<const sink_candidate*> sink_by_id(
-        static_cast<std::size_t>(highest_sink_id + 1), nullptr);
-
-    for (const sink_candidate& sink : sinks)
-    {
-        if (sink.sink_id >= 0) sink_by_id[static_cast<std::size_t>(sink.sink_id)] = &sink;
+        sink_by_index[i] = &sinks[i];
     }
 
     const std::size_t n_cells =
@@ -1188,8 +1203,9 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
         std::vector<int> sink_of_depression(state.deps.size(), -1);
         std::fill(state.selected.begin(), state.selected.end(), 0);
 
-        for (const sink_candidate& sink : sinks)
+        for (std::size_t sink_index = 0; sink_index < sinks.size(); ++sink_index)
         {
+            const sink_candidate& sink = sinks[sink_index];
             const auto found = depressions_at_pit.find(sink.pit_flat);
             if (found == depressions_at_pit.end()) continue;
 
@@ -1208,7 +1224,7 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
             }
 
             state.selected[chosen]     = 1;
-            sink_of_depression[chosen] = sink.sink_id;
+            sink_of_depression[chosen] = static_cast<int>(sink_index);
         }
 
         // Each cell is drawn once, into the INNERMOST selected depression that
@@ -1274,7 +1290,7 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
             n_batches = std::max(n_batches, depth + 1);
         }
 
-        std::vector<int> batch_of_sink(sink_by_id.size(), -1);
+        std::vector<int> batch_of_sink(sink_by_index.size(), -1);
 
         for (std::size_t d = 1; d < state.deps.size(); ++d)
         {
@@ -1299,7 +1315,7 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
                 }
             }
 
-            trace_footprints(batch_cells, sink_by_id);
+            trace_footprints(batch_cells, sink_by_index);
         }
     }
     else
@@ -1314,8 +1330,9 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
 
         std::unordered_map<int, int> sink_of_component;
 
-        for (const sink_candidate& sink : sinks)
+        for (std::size_t sink_index = 0; sink_index < sinks.size(); ++sink_index)
         {
+            const sink_candidate& sink = sinks[sink_index];
             if (sink.pit_flat < 0 ||
                 static_cast<std::size_t>(sink.pit_flat) >= n_cells) continue;
 
@@ -1325,7 +1342,7 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
             const int component_label = static_cast<int>(label_data[index]);
             if (component_label <= 0) continue;
 
-            sink_of_component[component_label] = sink.sink_id;
+            sink_of_component[component_label] = static_cast<int>(sink_index);
         }
 
         std::vector<int> sink_of_cell(n_cells, -1);
@@ -1343,7 +1360,7 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
             sink_of_cell[i] = found->second;
         }
 
-        trace_footprints(sink_of_cell, sink_by_id);
+        trace_footprints(sink_of_cell, sink_by_index);
     }
 
     std::sort(result.records.begin(), result.records.end(),
@@ -1352,6 +1369,342 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
                   return std::get<std::int64_t>(a.field_values[0]) <
                          std::get<std::int64_t>(b.field_values[0]);
               });
+
+    return result;
+}
+
+// =============================================================================
+// Sink-terminated routing support
+// =============================================================================
+
+namespace {
+
+void validate_routing_sinks(const std::vector<sink_candidate>& sinks,
+                            std::size_t                         n_cells,
+                            int                                 n_cols,
+                            const char*                         caller)
+{
+    constexpr std::size_t max_exact_float_label =
+        static_cast<std::size_t>(1u) << 24u;
+    if (!sinks.empty() && sinks.size() - 1u > max_exact_float_label)
+    {
+        throw std::invalid_argument(
+            std::string(caller) +
+            ": routing_sink_id exceeds the exact integer range of a float raster");
+    }
+
+    std::vector<std::uint8_t> routing_ids(sinks.size(), 0u);
+    std::unordered_set<std::int64_t> pit_flats;
+
+    for (const sink_candidate& sink : sinks)
+    {
+        if (!sink.accepted)
+        {
+            throw std::invalid_argument(
+                std::string(caller) +
+                ": input contains a rejected sink; call accepted_sinks first");
+        }
+        if (sink.routing_sink_id < 0 ||
+            static_cast<std::size_t>(sink.routing_sink_id) >= sinks.size())
+        {
+            throw std::invalid_argument(
+                std::string(caller) +
+                ": routing_sink_id values must be contiguous from zero");
+        }
+
+        const std::size_t routing_id =
+            static_cast<std::size_t>(sink.routing_sink_id);
+        if (routing_ids[routing_id] != 0u)
+        {
+            throw std::invalid_argument(
+                std::string(caller) + ": duplicate routing_sink_id " +
+                std::to_string(sink.routing_sink_id));
+        }
+        routing_ids[routing_id] = 1u;
+
+        if (sink.pit_flat < 0 ||
+            static_cast<std::size_t>(sink.pit_flat) >= n_cells)
+        {
+            throw std::invalid_argument(
+                std::string(caller) + ": pit_flat is outside the raster for sink_id " +
+                std::to_string(sink.sink_id));
+        }
+        if (!pit_flats.insert(sink.pit_flat).second)
+        {
+            throw std::invalid_argument(
+                std::string(caller) + ": duplicate pit_flat " +
+                std::to_string(sink.pit_flat));
+        }
+
+        if (sink.pit_row >= 0 || sink.pit_col >= 0)
+        {
+            const int expected_row = static_cast<int>(sink.pit_flat / n_cols);
+            const int expected_col = static_cast<int>(sink.pit_flat % n_cols);
+            if (sink.pit_row != expected_row || sink.pit_col != expected_col)
+            {
+                throw std::invalid_argument(
+                    std::string(caller) +
+                    ": pit_row/pit_col do not match pit_flat for sink_id " +
+                    std::to_string(sink.sink_id));
+            }
+        }
+    }
+}
+
+struct routing_seed
+{
+    std::int64_t flat = -1;
+    double       final_step_m = 0.0;
+};
+
+} // namespace
+
+lsdtt_raster_cpu
+punch_sink_holes(const lsdtt_raster_cpu&            dem,
+                 const std::vector<sink_candidate>& sinks)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const std::size_t n_cells = dem.full_grid_size();
+
+    validate_routing_sinks(sinks, n_cells, meta.n_cols, "punch_sink_holes");
+
+    std::vector<float> data = dem.get_data();
+    std::vector<std::uint8_t> mask = dem.get_mask();
+    const float ndv = static_cast<float>(meta.no_data_value);
+
+    for (const sink_candidate& sink : sinks)
+    {
+        const std::size_t index = static_cast<std::size_t>(sink.pit_flat);
+        if (mask[index] == 0u || meta.is_nodata(data[index]))
+        {
+            throw std::invalid_argument(
+                "punch_sink_holes: pit_flat lands on nodata or a masked cell for sink_id " +
+                std::to_string(sink.sink_id));
+        }
+
+        data[index] = ndv;
+        mask[index] = 0u;
+    }
+
+    return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+}
+
+sink_tagging_result
+tag_upslope_of_sinks(const lsdtt_flow_base&            flow,
+                     const std::vector<sink_candidate>& sinks,
+                     sink_mode                          mode,
+                     const sink_tagging_options&        opts)
+{
+    if (flow.empty())
+    {
+        throw std::invalid_argument("tag_upslope_of_sinks: flow object is empty");
+    }
+    if (!flow.has_s_vector())
+    {
+        throw std::invalid_argument(
+            "tag_upslope_of_sinks: flow object has no s_vector");
+    }
+    if (std::isnan(opts.max_upslope_distance_m) ||
+        opts.max_upslope_distance_m < 0.0f)
+    {
+        throw std::invalid_argument(
+            "tag_upslope_of_sinks: max_upslope_distance_m must be non-negative");
+    }
+
+    const lsdtt_raster_meta& meta = flow.meta();
+    const std::size_t n_cells = flow.full_grid_size();
+    if (n_cells != static_cast<std::size_t>(meta.n_pixels()))
+    {
+        throw std::invalid_argument(
+            "tag_upslope_of_sinks: flow grid size does not match its metadata");
+    }
+
+    validate_routing_sinks(
+        sinks, n_cells, meta.n_cols, "tag_upslope_of_sinks");
+
+    std::vector<std::vector<routing_seed>> seeds(sinks.size());
+    std::unordered_map<std::int64_t, int> selected_outlets;
+
+    if (mode == sink_mode::forced_outlet)
+    {
+        for (const sink_candidate& sink : sinks)
+        {
+            if (!flow.is_valid_cell(sink.pit_flat) ||
+                !flow.is_outlet(sink.pit_flat))
+            {
+                throw std::invalid_argument(
+                    "tag_upslope_of_sinks: forced-outlet pit is not a valid outlet for sink_id " +
+                    std::to_string(sink.sink_id));
+            }
+
+            seeds[static_cast<std::size_t>(sink.routing_sink_id)].push_back(
+                { sink.pit_flat, 0.0 });
+            selected_outlets.emplace(sink.pit_flat, sink.routing_sink_id);
+        }
+    }
+    else
+    {
+        static constexpr int d_row[8] = { -1, -1, 0, 1, 1, 1, 0, -1 };
+        static constexpr int d_col[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+
+        for (const sink_candidate& sink : sinks)
+        {
+            if (flow.is_valid_cell(sink.pit_flat))
+            {
+                throw std::invalid_argument(
+                    "tag_upslope_of_sinks: nodata-hole pit is still valid for sink_id " +
+                    std::to_string(sink.sink_id));
+            }
+
+            const int pit_row = flow.row_from_flat(sink.pit_flat);
+            const int pit_col = flow.col_from_flat(sink.pit_flat);
+            std::vector<routing_seed>& sink_seeds =
+                seeds[static_cast<std::size_t>(sink.routing_sink_id)];
+
+            for (int direction = 0; direction < 8; ++direction)
+            {
+                const int row = pit_row + d_row[direction];
+                const int col = pit_col + d_col[direction];
+                if (!flow.in_bounds(row, col) || !flow.is_valid_cell(row, col))
+                    continue;
+
+                const std::int64_t flat = flow.flat_index_unchecked(row, col);
+                if (!flow.is_outlet(flat)) continue;
+
+                // The abstract flow API records only that this cell is an
+                // outlet, not which adjacent exit caused it. An edge outlet or
+                // a cell touching another void cannot be attributed uniquely
+                // to this hole, so refuse it rather than importing an external
+                // basin into the sink label.
+                if (row == 0 || row == meta.n_rows - 1 ||
+                    col == 0 || col == meta.n_cols - 1)
+                {
+                    throw std::invalid_argument(
+                        "tag_upslope_of_sinks: nodata-hole outlet attribution is ambiguous at the raster edge");
+                }
+                for (int around = 0; around < 8; ++around)
+                {
+                    const int other_row = row + d_row[around];
+                    const int other_col = col + d_col[around];
+                    if (!flow.in_bounds(other_row, other_col)) continue;
+
+                    const std::int64_t other =
+                        flow.flat_index_unchecked(other_row, other_col);
+                    if (other != sink.pit_flat && !flow.is_valid_cell(other))
+                    {
+                        throw std::invalid_argument(
+                            "tag_upslope_of_sinks: nodata-hole outlet attribution is ambiguous beside another nodata cell");
+                    }
+                }
+
+                const auto existing = selected_outlets.find(flat);
+                if (existing != selected_outlets.end() &&
+                    existing->second != sink.routing_sink_id)
+                {
+                    throw std::invalid_argument(
+                        "tag_upslope_of_sinks: an outlet neighbour is shared by multiple nodata holes");
+                }
+                if (existing != selected_outlets.end()) continue;
+
+                selected_outlets.emplace(flat, sink.routing_sink_id);
+                const bool diagonal = d_row[direction] != 0 && d_col[direction] != 0;
+                sink_seeds.push_back(
+                    { flat, meta.cell_size * (diagonal ? std::sqrt(2.0) : 1.0) });
+            }
+
+            if (sink_seeds.empty())
+            {
+                throw std::invalid_argument(
+                    "tag_upslope_of_sinks: nodata hole has no adjacent outlet for sink_id " +
+                    std::to_string(sink.sink_id));
+            }
+        }
+    }
+
+    const lsdtt_raster_result distance = flow.get_distance_from_outlet_raster();
+    if (distance.data.size() != n_cells || distance.mask.size() != n_cells)
+    {
+        throw std::runtime_error(
+            "tag_upslope_of_sinks: distance raster size does not match flow grid");
+    }
+
+    lsdtt_raster_meta label_meta = meta;
+    label_meta.no_data_value = -1.0;
+    const float ndv = -1.0f;
+    std::vector<float> tag_data(n_cells, ndv);
+    std::vector<std::uint8_t> tag_mask(n_cells, 0u);
+    std::vector<int> owner(n_cells, -1);
+
+    sink_tagging_result result;
+    result.area_m2.assign(sinks.size(), 0.0);
+    result.n_pixels.assign(sinks.size(), 0);
+
+    std::int64_t tagged_pixels = 0;
+    std::int64_t untagged_internal_pixels = 0;
+
+    for (std::size_t routing_id = 0; routing_id < seeds.size(); ++routing_id)
+    {
+        for (const routing_seed& seed : seeds[routing_id])
+        {
+            const lsdtt_flat_index_slice upslope = flow.upslope_nodes(seed.flat);
+            for (const std::int64_t flat : upslope)
+            {
+                const std::size_t index = static_cast<std::size_t>(flat);
+                const double distance_to_sink =
+                    static_cast<double>(distance.data[index]) + seed.final_step_m;
+                if (distance_to_sink >=
+                    static_cast<double>(opts.max_upslope_distance_m))
+                {
+                    ++untagged_internal_pixels;
+                    continue;
+                }
+
+                if (owner[index] >= 0 &&
+                    owner[index] != static_cast<int>(routing_id))
+                {
+                    throw std::runtime_error(
+                        "tag_upslope_of_sinks: sink upslope sets overlap");
+                }
+                if (owner[index] == static_cast<int>(routing_id)) continue;
+
+                owner[index] = static_cast<int>(routing_id);
+                tag_data[index] = static_cast<float>(routing_id);
+                tag_mask[index] = 1u;
+                ++result.n_pixels[routing_id];
+                ++tagged_pixels;
+            }
+        }
+    }
+
+    std::int64_t non_sink_outlet_pixels = 0;
+    for (std::size_t index = 0; index < n_cells; ++index)
+    {
+        const std::int64_t flat = static_cast<std::int64_t>(index);
+        if (!flow.is_valid_cell(flat) || !flow.is_outlet(flat)) continue;
+        if (selected_outlets.find(flat) != selected_outlets.end()) continue;
+        non_sink_outlet_pixels +=
+            static_cast<std::int64_t>(flow.s_vector_size(flat));
+    }
+
+    if (tagged_pixels + untagged_internal_pixels + non_sink_outlet_pixels !=
+        flow.n_valid_cells())
+    {
+        throw std::runtime_error(
+            "tag_upslope_of_sinks: area conservation failed");
+    }
+
+    const double pixel_area = meta.pixel_area();
+    for (std::size_t i = 0; i < result.n_pixels.size(); ++i)
+    {
+        result.area_m2[i] =
+            static_cast<double>(result.n_pixels[i]) * pixel_area;
+    }
+    result.non_sink_outlet_area_m2 =
+        static_cast<double>(non_sink_outlet_pixels) * pixel_area;
+    result.untagged_internal_area_m2 =
+        static_cast<double>(untagged_internal_pixels) * pixel_area;
+    result.sink_id_raster =
+        lsdtt_raster_cpu(std::move(tag_data), std::move(tag_mask), label_meta);
 
     return result;
 }

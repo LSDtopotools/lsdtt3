@@ -6,11 +6,11 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 //
 // -----------------------------------------------------------------------------
-// Unit tests for phases 0 and 1 of the internal-drainage work
+// Unit tests for phases 0, 1 and 3 of the internal-drainage work
 // (docs/plan_docs/internal_drainage_plan.md, section 6.1).
 //
-// Three things are under test, and nothing else -- detection, tagging, the CLI
-// and the vector round-trip belong to later phases and are not covered here:
+// Detection and the vector round-trip remain in the separate phase 2b test;
+// the CLI belongs to phase 4.
 //
 //   Phase 0
 //     generate_crater_field_surface()  the analytic oracle: a tilted plane with
@@ -26,6 +26,11 @@
 //                                      caller-nominated flow terminations,
 //                                      honoured by build_receiver_graph_d8()
 //
+//   Phase 3
+//     punch_sink_holes()               immutable nodata-hole preparation
+//     tag_upslope_of_sinks()           forced-outlet and nodata-hole basin tags,
+//                                      cutoffs, conservation and validation
+//
 // Everything is generated in process, so there is no fixture on disk and the
 // driver is fast enough for the inner loop.
 //
@@ -39,6 +44,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -47,6 +53,7 @@
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "lsdtt_internal_drainage_cpu.hpp"
 
 namespace
 {
@@ -844,6 +851,29 @@ routed_field make_routed_field()
 }
 
 
+std::vector<lsdtt::sink_candidate> make_routing_sinks(
+    const std::vector<std::int64_t>& pits,
+    const lsdtt::lsdtt_raster_meta& meta)
+{
+    static const int durable_ids[] = { 30, 10, 20, 40, 50, 60, 70, 80 };
+    std::vector<lsdtt::sink_candidate> sinks;
+    sinks.reserve(pits.size());
+
+    for (std::size_t i = 0; i < pits.size(); ++i)
+    {
+        lsdtt::sink_candidate sink;
+        sink.sink_id = durable_ids[i % 8] + static_cast<int>(i / 8) * 100;
+        sink.pit_flat = pits[i];
+        sink.pit_row = static_cast<int>(pits[i] / meta.n_cols);
+        sink.pit_col = static_cast<int>(pits[i] % meta.n_cols);
+        sink.accepted = true;
+        sinks.push_back(sink);
+    }
+
+    return lsdtt::accepted_sinks(sinks);
+}
+
+
 void test_forced_outlet_terminates()
 {
     const routed_field rf = make_routed_field();
@@ -1323,13 +1353,476 @@ void test_forced_outlet_validation()
           std::to_string(fb.outlets().size()) + " outlets");
 }
 
+
+// =============================================================================
+// Section 4: Phase 3 hole punching and sink tagging
+// =============================================================================
+
+void test_punch_sink_holes_contract()
+{
+    const lsdtt::lsdtt_crater_field_surface gt = make_crater_field();
+    const lsdtt::lsdtt_raster_meta& meta = gt.dem.get_meta();
+    const std::int64_t existing_hole = flat_of(meta, 10, 10);
+    const std::int64_t edge_sink = flat_of(meta, 0, 150);
+
+    std::vector<float> data = gt.dem.get_data();
+    std::vector<std::uint8_t> mask = gt.dem.get_mask();
+    data[static_cast<std::size_t>(existing_hole)] =
+        static_cast<float>(meta.no_data_value);
+    mask[static_cast<std::size_t>(existing_hole)] = 0u;
+
+    const lsdtt::lsdtt_raster_cpu input(
+        std::move(data), std::move(mask), meta);
+    const std::vector<float> input_data = input.get_data();
+    const std::vector<std::uint8_t> input_mask = input.get_mask();
+
+    std::vector<std::int64_t> requested = gt.pit_flats;
+    requested.push_back(edge_sink);
+    const std::vector<lsdtt::sink_candidate> sinks =
+        make_routing_sinks(requested, meta);
+
+    const lsdtt::lsdtt_raster_cpu punched =
+        lsdtt::punch_sink_holes(input, sinks);
+
+    bool requested_are_holes = true;
+    bool others_unchanged = true;
+    for (std::size_t i = 0; i < input_data.size(); ++i)
+    {
+        const bool requested_here =
+            std::find(requested.begin(), requested.end(),
+                      static_cast<std::int64_t>(i)) != requested.end();
+        if (requested_here)
+        {
+            if (punched.get_mask()[i] != 0u ||
+                !meta.is_nodata(punched.get_data()[i]))
+                requested_are_holes = false;
+        }
+        else if (punched.get_mask()[i] != input_mask[i] ||
+                 punched.get_data()[i] != input_data[i])
+        {
+            others_unchanged = false;
+        }
+    }
+
+    check("punch_sink_holes: every requested pit, including an edge cell, is nodata",
+          requested_are_holes);
+    check("punch_sink_holes: every other cell, including existing nodata, is unchanged",
+          others_unchanged);
+    check("punch_sink_holes: the input raster is not modified",
+          input.get_data() == input_data && input.get_mask() == input_mask);
+
+    const lsdtt::lsdtt_raster_cpu empty =
+        lsdtt::punch_sink_holes(input, {});
+    check("punch_sink_holes: empty input is an exact clone",
+          empty.get_data() == input_data && empty.get_mask() == input_mask);
+
+    lsdtt::sink_candidate rejected = sinks.front();
+    rejected.accepted = false;
+    check_throws("punch_sink_holes: rejected sinks are refused",
+                 [&] { (void)lsdtt::punch_sink_holes(input, { rejected }); },
+                 "accepted_sinks");
+
+    lsdtt::sink_candidate masked = sinks.front();
+    masked.pit_flat = existing_hole;
+    masked.pit_row = 10;
+    masked.pit_col = 10;
+    masked.routing_sink_id = 0;
+    check_throws("punch_sink_holes: a requested pre-existing hole is refused",
+                 [&] { (void)lsdtt::punch_sink_holes(input, { masked }); },
+                 "nodata or a masked cell");
+}
+
+
+void test_tag_forced_outlet_and_cutoffs()
+{
+    const routed_field rf = make_routed_field();
+    const lsdtt::lsdtt_raster_meta& meta = rf.filled.get_meta();
+    const std::vector<lsdtt::sink_candidate> sinks =
+        make_routing_sinks(rf.gt.pit_flats, meta);
+
+    lsdtt::lsdtt_flowinfo_options flow_opts;
+    flow_opts.forced_outlet_flats = rf.gt.pit_flats;
+    const lsdtt::lsdtt_flowinfo concrete(
+        rf.filled.get_data_array(), rf.filled.get_mask_array(), meta, flow_opts);
+    const lsdtt::lsdtt_flow_base& flow = concrete;
+
+    const lsdtt::sink_tagging_result unlimited =
+        lsdtt::tag_upslope_of_sinks(
+            flow, sinks, lsdtt::sink_mode::forced_outlet);
+
+    bool labels_exact = true;
+    std::int64_t expected_internal = 0;
+    for (const lsdtt::sink_candidate& sink : sinks)
+    {
+        const lsdtt::lsdtt_flat_index_slice upslope =
+            flow.upslope_nodes(sink.pit_flat);
+        expected_internal += static_cast<std::int64_t>(upslope.size());
+
+        if (unlimited.n_pixels[static_cast<std::size_t>(sink.routing_sink_id)] !=
+            static_cast<std::int64_t>(upslope.size()))
+            labels_exact = false;
+        if (unlimited.area_m2[static_cast<std::size_t>(sink.routing_sink_id)] !=
+            static_cast<double>(upslope.size()) * meta.pixel_area())
+            labels_exact = false;
+
+        for (const std::int64_t flat : upslope)
+        {
+            const std::size_t index = static_cast<std::size_t>(flat);
+            if (unlimited.sink_id_raster.get_mask()[index] == 0u ||
+                unlimited.sink_id_raster.get_data()[index] !=
+                    static_cast<float>(sink.routing_sink_id))
+                labels_exact = false;
+        }
+    }
+
+    check("tag_upslope_of_sinks: forced mode labels each exact S-vector slice",
+          labels_exact);
+    check("tag_upslope_of_sinks: durable ids are not used as raster labels",
+          unlimited.sink_id_raster.get_data()[
+              static_cast<std::size_t>(sinks.front().pit_flat)] == 0.0f &&
+          sinks.front().sink_id != 0 &&
+          unlimited.sink_id_raster.get_meta().no_data_value == -1.0);
+
+    const double pixel_area = meta.pixel_area();
+    const double unlimited_total =
+        static_cast<double>(expected_internal) * pixel_area +
+        unlimited.non_sink_outlet_area_m2 +
+        unlimited.untagged_internal_area_m2;
+    check("tag_upslope_of_sinks: unlimited area is conserved exactly",
+          unlimited_total ==
+              static_cast<double>(flow.n_valid_cells()) * pixel_area &&
+          unlimited.untagged_internal_area_m2 == 0.0);
+
+    lsdtt::sink_tagging_options finite_opts;
+    finite_opts.max_upslope_distance_m = 100.0f;
+    const lsdtt::sink_tagging_result finite =
+        lsdtt::tag_upslope_of_sinks(
+            flow, sinks, lsdtt::sink_mode::forced_outlet, finite_opts);
+    const lsdtt::lsdtt_raster_result distance =
+        flow.get_distance_from_outlet_raster();
+
+    std::int64_t expected_finite = 0;
+    for (const lsdtt::sink_candidate& sink : sinks)
+    {
+        for (const std::int64_t flat : flow.upslope_nodes(sink.pit_flat))
+        {
+            if (distance.data[static_cast<std::size_t>(flat)] < 100.0f)
+                ++expected_finite;
+        }
+    }
+
+    std::int64_t measured_finite = 0;
+    for (const std::int64_t count : finite.n_pixels) measured_finite += count;
+    check("tag_upslope_of_sinks: finite cutoff uses strict flow distance",
+          measured_finite == expected_finite &&
+          finite.untagged_internal_area_m2 ==
+              static_cast<double>(expected_internal - expected_finite) * pixel_area);
+    check("tag_upslope_of_sinks: cutoff does not change non-sink outlet area",
+          finite.non_sink_outlet_area_m2 == unlimited.non_sink_outlet_area_m2);
+
+    lsdtt::sink_tagging_options zero_opts;
+    zero_opts.max_upslope_distance_m = 0.0f;
+    const lsdtt::sink_tagging_result zero =
+        lsdtt::tag_upslope_of_sinks(
+            flow, sinks, lsdtt::sink_mode::forced_outlet, zero_opts);
+    std::int64_t zero_count = 0;
+    for (const std::int64_t count : zero.n_pixels) zero_count += count;
+    check("tag_upslope_of_sinks: zero cutoff tags nothing",
+          zero_count == 0 &&
+          zero.untagged_internal_area_m2 ==
+              static_cast<double>(expected_internal) * pixel_area);
+}
+
+
+void test_nodata_hole_equivalence()
+{
+    const lsdtt::lsdtt_crater_field_surface gt = make_crater_field();
+    const lsdtt::lsdtt_raster_meta& meta = gt.dem.get_meta();
+    const std::vector<lsdtt::sink_candidate> sinks =
+        make_routing_sinks(gt.pit_flats, meta);
+
+    const lsdtt::lsdtt_raster_cpu forced_filled =
+        lsdtt::fill_pits_with_sinks(gt.dem, gt.pit_flats, 0.0001f);
+    lsdtt::lsdtt_flowinfo_options forced_opts;
+    forced_opts.forced_outlet_flats = gt.pit_flats;
+    const lsdtt::lsdtt_flowinfo forced_flow(
+        forced_filled.get_data_array(), forced_filled.get_mask_array(),
+        meta, forced_opts);
+    const lsdtt::sink_tagging_result forced =
+        lsdtt::tag_upslope_of_sinks(
+            forced_flow, sinks, lsdtt::sink_mode::forced_outlet);
+
+    const lsdtt::lsdtt_raster_cpu punched =
+        lsdtt::punch_sink_holes(gt.dem, sinks);
+    const lsdtt::lsdtt_raster_cpu hole_filled =
+        lsdtt::fill_pits_priority_flood(punched, 0.0001f);
+    const lsdtt::lsdtt_flowinfo hole_flow(
+        hole_filled.get_data_array(), hole_filled.get_mask_array(), meta, {});
+    const lsdtt::sink_tagging_result holes =
+        lsdtt::tag_upslope_of_sinks(
+            hole_flow, sinks, lsdtt::sink_mode::nodata_hole);
+
+    bool common_labels_equal = true;
+    for (std::size_t i = 0; i < punched.full_grid_size(); ++i)
+    {
+        if (punched.get_mask()[i] == 0u) continue;
+        if (forced.sink_id_raster.get_mask()[i] !=
+                holes.sink_id_raster.get_mask()[i] ||
+            (forced.sink_id_raster.get_mask()[i] != 0u &&
+             forced.sink_id_raster.get_data()[i] !=
+                holes.sink_id_raster.get_data()[i]))
+            common_labels_equal = false;
+    }
+
+    check("nodata_hole_equivalence: labels match on the common valid domain",
+          common_labels_equal);
+
+    bool pit_policy_correct = true;
+    for (const lsdtt::sink_candidate& sink : sinks)
+    {
+        const std::size_t index = static_cast<std::size_t>(sink.pit_flat);
+        if (forced.sink_id_raster.get_mask()[index] == 0u ||
+            holes.sink_id_raster.get_mask()[index] != 0u)
+            pit_policy_correct = false;
+    }
+    check("nodata_hole_equivalence: forced pits are labelled and holes remain nodata",
+          pit_policy_correct);
+
+    double hole_internal = holes.untagged_internal_area_m2;
+    for (const double area : holes.area_m2) hole_internal += area;
+    check("nodata_hole_equivalence: hole-mode area is conserved",
+          hole_internal + holes.non_sink_outlet_area_m2 ==
+              static_cast<double>(hole_flow.n_valid_cells()) * meta.pixel_area());
+
+    lsdtt::sink_tagging_options cutoff;
+    cutoff.max_upslope_distance_m = 100.0f;
+    const lsdtt::sink_tagging_result holes_finite =
+        lsdtt::tag_upslope_of_sinks(
+            hole_flow, sinks, lsdtt::sink_mode::nodata_hole, cutoff);
+
+    const lsdtt::lsdtt_raster_result hole_distance =
+        hole_flow.get_distance_from_outlet_raster();
+    std::int64_t expected_hole_finite = 0;
+    for (const lsdtt::sink_candidate& sink : sinks)
+    {
+        for (int direction = 0; direction < 8; ++direction)
+        {
+            const int row = sink.pit_row + k_d_row[direction];
+            const int col = sink.pit_col + k_d_col[direction];
+            if (!hole_flow.in_bounds(row, col) ||
+                !hole_flow.is_valid_cell(row, col)) continue;
+
+            const std::int64_t seed = hole_flow.flat_index(row, col);
+            if (!hole_flow.is_outlet(seed)) continue;
+
+            const double final_step = meta.cell_size *
+                ((k_d_row[direction] != 0 && k_d_col[direction] != 0)
+                     ? std::sqrt(2.0) : 1.0);
+            for (const std::int64_t flat : hole_flow.upslope_nodes(seed))
+            {
+                if (static_cast<double>(
+                        hole_distance.data[static_cast<std::size_t>(flat)]) +
+                        final_step < 100.0)
+                    ++expected_hole_finite;
+            }
+        }
+    }
+    std::int64_t measured_hole_finite = 0;
+    for (const std::int64_t count : holes_finite.n_pixels)
+        measured_hole_finite += count;
+    check("nodata_hole_equivalence: finite cutoff includes the final step into the hole",
+          measured_hole_finite == expected_hole_finite);
+}
+
+
+void test_phase3_validation()
+{
+    const routed_field rf = make_routed_field();
+    const lsdtt::lsdtt_raster_meta& meta = rf.filled.get_meta();
+    const std::vector<lsdtt::sink_candidate> sinks =
+        make_routing_sinks(rf.gt.pit_flats, meta);
+
+    lsdtt::lsdtt_flowinfo_options opts;
+    opts.forced_outlet_flats = rf.gt.pit_flats;
+    const lsdtt::lsdtt_flowinfo flow(
+        rf.filled.get_data_array(), rf.filled.get_mask_array(), meta, opts);
+
+    const lsdtt::sink_tagging_result empty =
+        lsdtt::tag_upslope_of_sinks(
+            flow, {}, lsdtt::sink_mode::forced_outlet);
+    bool empty_mask = true;
+    for (const std::uint8_t value : empty.sink_id_raster.get_mask())
+    {
+        if (value != 0u) empty_mask = false;
+    }
+    check("phase3_validation: empty sinks classify all valid area as non-sink",
+          empty.non_sink_outlet_area_m2 ==
+              static_cast<double>(flow.n_valid_cells()) * meta.pixel_area() &&
+          empty.untagged_internal_area_m2 == 0.0 && empty_mask);
+
+    lsdtt::sink_tagging_options bad_cutoff;
+    bad_cutoff.max_upslope_distance_m = -1.0f;
+    check_throws("phase3_validation: negative cutoff is refused",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         flow, sinks, lsdtt::sink_mode::forced_outlet, bad_cutoff);
+                 },
+                 "non-negative");
+    bad_cutoff.max_upslope_distance_m =
+        std::numeric_limits<float>::quiet_NaN();
+    check_throws("phase3_validation: NaN cutoff is refused",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         flow, sinks, lsdtt::sink_mode::forced_outlet, bad_cutoff);
+                 },
+                 "non-negative");
+
+    std::vector<lsdtt::sink_candidate> duplicate = sinks;
+    duplicate[1].pit_flat = duplicate[0].pit_flat;
+    duplicate[1].pit_row = duplicate[0].pit_row;
+    duplicate[1].pit_col = duplicate[0].pit_col;
+    check_throws("phase3_validation: duplicate pit cells are refused",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         flow, duplicate, lsdtt::sink_mode::forced_outlet);
+                 },
+                 "duplicate pit_flat");
+
+    std::vector<lsdtt::sink_candidate> sparse = sinks;
+    sparse[0].routing_sink_id = 99;
+    check_throws("phase3_validation: sparse routing ids are refused",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         flow, sparse, lsdtt::sink_mode::forced_outlet);
+                 },
+                 "contiguous from zero");
+
+    std::vector<lsdtt::sink_candidate> rejected = sinks;
+    rejected[0].accepted = false;
+    check_throws("phase3_validation: rejected sinks are refused",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         flow, rejected, lsdtt::sink_mode::forced_outlet);
+                 },
+                 "accepted_sinks");
+
+    check_throws("phase3_validation: nodata mode refuses a valid pit",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         flow, sinks, lsdtt::sink_mode::nodata_hole);
+                 },
+                 "still valid");
+
+    lsdtt::lsdtt_flowinfo_options no_s_opts = opts;
+    no_s_opts.build_s_vector = false;
+    const lsdtt::lsdtt_flowinfo no_s_vector(
+        rf.filled.get_data_array(), rf.filled.get_mask_array(), meta, no_s_opts);
+    check_throws("phase3_validation: an absent S-vector is refused",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         no_s_vector, sinks, lsdtt::sink_mode::forced_outlet);
+                 },
+                 "no s_vector");
+
+    std::int64_t non_outlet = -1;
+    for (std::int64_t flat = 0;
+         flat < static_cast<std::int64_t>(flow.full_grid_size()); ++flat)
+    {
+        if (flow.is_valid_cell(flat) && !flow.is_outlet(flat))
+        {
+            non_outlet = flat;
+            break;
+        }
+    }
+    std::vector<lsdtt::sink_candidate> wrong_outlet =
+        make_routing_sinks({ non_outlet }, meta);
+    check_throws("phase3_validation: forced mode requires an outlet",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         flow, wrong_outlet, lsdtt::sink_mode::forced_outlet);
+                 },
+                 "not a valid outlet");
+
+    // Two adjacent holes can share an outlet neighbour. There is no flow-graph
+    // information that says which hole owns that outlet, so iteration order
+    // must not decide the label.
+    lsdtt::lsdtt_raster_meta small_meta;
+    small_meta.n_rows = 20;
+    small_meta.n_cols = 20;
+    small_meta.cell_size = 10.0;
+    small_meta.set_default_synthetic_georeference();
+    const lsdtt::lsdtt_crater_field_surface flat_surface =
+        lsdtt::generate_crater_field_surface(
+            small_meta, std::vector<lsdtt::lsdtt_crater_spec>{}, 0.0, 1000.0);
+    const std::vector<std::int64_t> adjacent_flats = {
+        flat_of(small_meta, 10, 9), flat_of(small_meta, 10, 10)
+    };
+    const std::vector<lsdtt::sink_candidate> adjacent_sinks =
+        make_routing_sinks(adjacent_flats, small_meta);
+    const lsdtt::lsdtt_raster_cpu adjacent_punched =
+        lsdtt::punch_sink_holes(flat_surface.dem, adjacent_sinks);
+    const lsdtt::lsdtt_raster_cpu adjacent_filled =
+        lsdtt::fill_pits_priority_flood(adjacent_punched, 0.0001f);
+    const lsdtt::lsdtt_flowinfo adjacent_flow(
+        adjacent_filled.get_data_array(), adjacent_filled.get_mask_array(),
+        small_meta, {});
+    check_throws("phase3_validation: a shared nodata-hole outlet is refused",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         adjacent_flow, adjacent_sinks,
+                         lsdtt::sink_mode::nodata_hole);
+                 },
+                 "attribution is ambiguous");
+
+    const std::vector<lsdtt::sink_candidate> edge_hole =
+        make_routing_sinks({ flat_of(small_meta, 0, 10) }, small_meta);
+    const lsdtt::lsdtt_raster_cpu edge_punched =
+        lsdtt::punch_sink_holes(flat_surface.dem, edge_hole);
+    const lsdtt::lsdtt_raster_cpu edge_filled =
+        lsdtt::fill_pits_priority_flood(edge_punched, 0.0001f);
+    const lsdtt::lsdtt_flowinfo edge_flow(
+        edge_filled.get_data_array(), edge_filled.get_mask_array(),
+        small_meta, {});
+    check_throws("phase3_validation: an edge hole is attribution-ambiguous",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         edge_flow, edge_hole, lsdtt::sink_mode::nodata_hole);
+                 },
+                 "raster edge");
+
+    std::vector<float> void_data = flat_surface.dem.get_data();
+    std::vector<std::uint8_t> void_mask = flat_surface.dem.get_mask();
+    const std::int64_t unrelated_void = flat_of(small_meta, 10, 12);
+    void_data[static_cast<std::size_t>(unrelated_void)] =
+        static_cast<float>(small_meta.no_data_value);
+    void_mask[static_cast<std::size_t>(unrelated_void)] = 0u;
+    const lsdtt::lsdtt_raster_cpu with_void(
+        std::move(void_data), std::move(void_mask), small_meta);
+    const std::vector<lsdtt::sink_candidate> nearby_hole =
+        make_routing_sinks({ flat_of(small_meta, 10, 10) }, small_meta);
+    const lsdtt::lsdtt_raster_cpu nearby_punched =
+        lsdtt::punch_sink_holes(with_void, nearby_hole);
+    const lsdtt::lsdtt_raster_cpu nearby_filled =
+        lsdtt::fill_pits_priority_flood(nearby_punched, 0.0001f);
+    const lsdtt::lsdtt_flowinfo nearby_flow(
+        nearby_filled.get_data_array(), nearby_filled.get_mask_array(),
+        small_meta, {});
+    check_throws("phase3_validation: a hole beside unrelated nodata is ambiguous",
+                 [&] {
+                     (void)lsdtt::tag_upslope_of_sinks(
+                         nearby_flow, nearby_hole,
+                         lsdtt::sink_mode::nodata_hole);
+                 },
+                 "another nodata cell");
+}
+
 } // namespace
 
 
 int main()
 {
     std::cout << "lsdtt3 internal-drainage unit tests "
-                 "(phases 0 and 1)\n\n";
+                 "(phases 0, 1 and 3)\n\n";
 
     std::cout << "--- crater generator: analytic oracle ---\n";
     test_single_crater_pit_location();
@@ -1351,6 +1844,12 @@ int main()
     test_forced_outlet_on_b_boundary();
     test_forced_outlet_without_sink_fill();
     test_forced_outlet_validation();
+
+    std::cout << "\n--- Phase 3: hole punching and sink tagging ---\n";
+    test_punch_sink_holes_contract();
+    test_tag_forced_outlet_and_cutoffs();
+    test_nodata_hole_equivalence();
+    test_phase3_validation();
 
     std::cout << "\n" << g_n_checks - g_n_failed << " / " << g_n_checks
               << " checks passed\n";

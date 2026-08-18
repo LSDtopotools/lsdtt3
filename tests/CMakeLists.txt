@@ -1154,9 +1154,10 @@ add_test(NAME unit_flow_properties
 set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 
-# Internal drainage, phases 0 and 1
+# Internal drainage, phases 0, 1 and 3
 # (docs/plan_docs/internal_drainage_plan.md section 6.1): the crater-field
-# oracle, fill_pits_with_sinks, and lsdtt_flowinfo_options::forced_outlet_flats.
+# oracle, fill_pits_with_sinks, forced_outlet_flats, hole punching and sink
+# tagging in both routing modes.
 # Synthetic surfaces generated in process, so there is no fixture on disk.
 add_executable(lsdtt-test-internal-drainage cpp/test_internal_drainage.cpp)
 target_link_libraries(lsdtt-test-internal-drainage PRIVATE lsdtt3_cpu)

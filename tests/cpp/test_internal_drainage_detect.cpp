@@ -63,6 +63,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -385,6 +386,7 @@ const lsdtt::sink_candidate* sink_at_pit(
 bool records_equal(const lsdtt::sink_candidate& a, const lsdtt::sink_candidate& b)
 {
     return a.sink_id         == b.sink_id         &&
+           a.routing_sink_id == b.routing_sink_id &&
            a.pit_flat        == b.pit_flat        &&
            a.pit_row         == b.pit_row         &&
            a.pit_col         == b.pit_col         &&
@@ -410,6 +412,7 @@ std::string describe(const lsdtt::sink_candidate& s)
     // a failure message that rounds it away is useless.
     out.precision(17);
     out << "id " << s.sink_id
+        << " routing_id " << s.routing_sink_id
         << " flat " << s.pit_flat
         << " z " << s.pit_elevation
         << " spill " << s.spill_elevation
@@ -1410,6 +1413,24 @@ void test_depression_polygon_join()
               static_cast<std::int64_t>(sinks[1].sink_id),
           std::to_string(one.records.size()) + " polygons");
 
+    std::vector<lsdtt::sink_candidate> sparse_ids = sinks;
+    sparse_ids[0].sink_id = std::numeric_limits<int>::max();
+    sparse_ids[1].sink_id = 1000000000;
+    sparse_ids[2].sink_id = 42;
+    const lsdtt::depression_polygons_result sparse_polygons =
+        lsdtt::sink_depressions_to_polygons(fx.gt.dem, sparse_ids, opts);
+    std::set<std::int64_t> sparse_polygon_ids;
+    for (const lsdtt::lsdtt_vector_record& record : sparse_polygons.records)
+    {
+        sparse_polygon_ids.insert(
+            std::get<std::int64_t>(record.field_values[0]));
+    }
+    check("depression_polygon_join: sparse durable ids are attributes, not dense indices",
+          sparse_polygons.records.size() == sparse_ids.size() &&
+          sparse_polygon_ids.count(std::numeric_limits<int>::max()) == 1 &&
+          sparse_polygon_ids.count(1000000000) == 1 &&
+          sparse_polygon_ids.count(42) == 1);
+
     check("depression_polygon_join: an empty sink list gives no polygons",
           lsdtt::sink_depressions_to_polygons(
               fx.gt.dem, std::vector<lsdtt::sink_candidate>{}, opts)
@@ -1643,9 +1664,10 @@ void test_candidate_round_trip_csv(const std::string&                        dir
     const std::vector<lsdtt::sink_candidate> kept =
         lsdtt::accepted_sinks(edited_back);
 
-    check("candidate_round_trip_csv: accepted: 0 rows are dropped and renumbered",
+    check("candidate_round_trip_csv: accepted rows keep durable ids and get routing ids",
           kept.size() == edited.size() - 1 &&
-          kept[0].sink_id == 0 && kept[1].sink_id == 1 &&
+          kept[0].sink_id == 0 && kept[1].sink_id == 2 &&
+          kept[0].routing_sink_id == 0 && kept[1].routing_sink_id == 1 &&
           kept[0].pit_flat == sinks[0].pit_flat &&
           kept[1].pit_flat == sinks[2].pit_flat,
           std::to_string(kept.size()) + " accepted");
@@ -1901,7 +1923,7 @@ void test_candidate_attribute_typing(const std::string&                        d
     check("candidate_attribute_typing: no field is a string", no_strings);
 
     const std::vector<std::string> int64_fields = {
-        "sink_id", "pit_row", "pit_col", "pit_flat",
+        "sink_id", "routing_sink_id", "pit_row", "pit_col", "pit_flat",
         "n_pixels", "hierarchy_level", "parent_sink_id", "accepted"
     };
     const std::vector<std::string> double_fields = {
@@ -1941,7 +1963,7 @@ void test_candidate_attribute_typing(const std::string&                        d
           typing_ok, wrong.empty() ? "" : ("wrong or missing: " + wrong));
 
     check("candidate_attribute_typing: every schema field is written",
-          layer.schema.size() == 17 &&
+          layer.schema.size() == 18 &&
           layer.records.size() == sinks.size(),
           std::to_string(layer.schema.size()) + " fields, " +
           std::to_string(layer.records.size()) + " features");
@@ -2323,6 +2345,24 @@ void test_hand_added_feature(const std::string&              dir,
           ids.find(7) != ids.end() && ids.find(9) != ids.end() &&
           ids.find(10) != ids.end(),
           "ids " + got.str());
+
+    const std::string several_bare = dir + "/hand_added_several_bare.fgb";
+    const std::vector<lsdtt::lsdtt_xy> several_points = {
+        { pixel_centre_x(meta, 220), pixel_centre_y(meta, 200) },
+        { pixel_centre_x(meta, 20), pixel_centre_y(meta, 30) }
+    };
+    write_bare_geometry_layer(meta, several_bare, several_points, false, {});
+    const std::vector<lsdtt::sink_candidate> several_back =
+        lsdtt::read_sink_candidates(
+            several_bare, meta, lsdtt::sink_io_format::flatgeobuf);
+    bool ids_follow_cells = several_back.size() == 2;
+    for (const lsdtt::sink_candidate& sink : several_back)
+    {
+        const int expected = (sink.pit_row == 30 && sink.pit_col == 20) ? 0 : 1;
+        if (sink.sink_id != expected) ids_follow_cells = false;
+    }
+    check("hand_added_feature: multiple missing ids are assigned by cell, not feature order",
+          ids_follow_cells);
 }
 
 
@@ -2595,6 +2635,27 @@ void test_fgb_spatial_index_round_trip(const std::string&              dir,
     check("fgb_spatial_index_round_trip: indexed and streamed layers hold the "
           "same records",
           same_set);
+
+    const std::vector<lsdtt::sink_candidate> indexed_accepted =
+        lsdtt::accepted_sinks(read_back);
+    const std::vector<lsdtt::sink_candidate> streamed_accepted =
+        lsdtt::accepted_sinks(streamed_back);
+
+    std::string accepted_difference;
+    bool ids_stable = indexed_accepted.size() == 6;
+    for (std::size_t i = 0; i < indexed_accepted.size(); ++i)
+    {
+        if (indexed_accepted[i].routing_sink_id != static_cast<int>(i))
+            ids_stable = false;
+        if (i > 0 &&
+            indexed_accepted[i - 1].sink_id >= indexed_accepted[i].sink_id)
+            ids_stable = false;
+    }
+
+    check("fgb_spatial_index_round_trip: routing ids are deterministic after reordering",
+          ids_stable && vectors_equal(indexed_accepted, streamed_accepted,
+                                      accepted_difference),
+          accepted_difference);
 }
 
 } // namespace

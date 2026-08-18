@@ -43,10 +43,12 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
 #include "../core/lsdtt_data_loader.hpp"
+#include "../core/lsdtt_flow_base.hpp"
 #include "../core/lsdtt_raster_meta.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"   // depression_polygons_result
@@ -88,7 +90,8 @@ enum class sink_detection_method
 // -----------------------------------------------------------------------------
 struct sink_candidate
 {
-    int          sink_id         = -1;     // sequential, stable across a run
+    int          sink_id         = -1;     // durable identity through review
+    int          routing_sink_id = -1;     // contiguous label assigned for routing
     std::int64_t pit_flat        = -1;     // the terminal cell
     int          pit_row         = -1;
     int          pit_col         = -1;
@@ -248,9 +251,10 @@ read_sink_candidates(const std::string&       path,
 // -----------------------------------------------------------------------------
 // accepted_sinks
 //
-// The accepted subset, renumbered contiguously from 0 so that sink_id matches
-// the label values in the sink_id raster. parent_sink_id is remapped onto the
-// new numbering, and becomes -1 where the parent was itself rejected.
+// The accepted subset, sorted by durable sink_id and assigned routing_sink_id
+// contiguously from zero. sink_id and parent_sink_id remain unchanged, so an
+// accepted export can still join back to the reviewed candidate layer even when
+// FlatGeobuf has reordered its features.
 // -----------------------------------------------------------------------------
 [[nodiscard]] std::vector<sink_candidate>
 accepted_sinks(const std::vector<sink_candidate>& sinks);
@@ -293,5 +297,58 @@ accepted_sinks(const std::vector<sink_candidate>& sinks);
 sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
                              const std::vector<sink_candidate>& sinks,
                              const sink_detection_options&      opts);
+
+// =============================================================================
+// Sink-terminated routing support
+// =============================================================================
+
+enum class sink_mode
+{
+    forced_outlet,
+    nodata_hole
+};
+
+// Returns a copy of dem with each accepted sink pit changed to nodata. The
+// input raster is never modified. Sinks must already have been passed through
+// accepted_sinks(), so routing_sink_id is contiguous from zero.
+[[nodiscard]] lsdtt_raster_cpu
+punch_sink_holes(const lsdtt_raster_cpu&            dem,
+                 const std::vector<sink_candidate>& sinks);
+
+struct sink_tagging_options
+{
+    float max_upslope_distance_m = std::numeric_limits<float>::max();
+};
+
+struct sink_tagging_result
+{
+    // Valid only where a cell is tagged. Values are routing_sink_id, including
+    // zero; all other cells are nodata with mask zero. The result uses -1 as
+    // nodata regardless of the DEM sentinel, so label zero remains writable.
+    lsdtt_raster_cpu          sink_id_raster;
+    std::vector<double>       area_m2;
+    std::vector<std::int64_t> n_pixels;
+
+    // Basins ending at outlets not represented by the supplied sinks.
+    double non_sink_outlet_area_m2 = 0.0;
+
+    // Internal-basin cells omitted by max_upslope_distance_m.
+    double untagged_internal_area_m2 = 0.0;
+};
+
+// Tags each sink's disjoint upslope basin in O(total valid cells). In
+// forced_outlet mode the valid pit is the seed. In nodata_hole mode the pit is
+// masked and the seeds are its adjacent valid outlet cells; a seed adjacent to
+// more than one hole, another void, or the raster edge is rejected as ambiguous
+// because the abstract flow graph does not record which exit created an outlet.
+//
+// The function requires an S-vector, accepted sinks, unique pit cells, and
+// routing_sink_id values exactly 0..sinks.size()-1. It enforces integer-pixel
+// conservation before converting counts to areas.
+[[nodiscard]] sink_tagging_result
+tag_upslope_of_sinks(const lsdtt_flow_base&           flow,
+                     const std::vector<sink_candidate>& sinks,
+                     sink_mode                         mode,
+                     const sink_tagging_options&       opts = {});
 
 } // namespace lsdtt
