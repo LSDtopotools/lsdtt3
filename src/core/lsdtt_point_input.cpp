@@ -34,7 +34,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <iostream>
 
 #include <gdal.h>
 #include <gdal_priv.h>
@@ -360,12 +359,12 @@ void map_raster_xy_to_pixel(
 // This implementation always retains outside-raster points so that the output
 // vector preserves one record per input row / feature in input order.
 // -----------------------------------------------------------------------------
-void append_input_point_record(
-    std::vector<lsdtt_input_point>& records,
-    lsdtt_input_point&&             record,
-    bool                            keep_points_outside_raster)
+void append_point_record(
+    std::vector<lsdtt_input_point_with_attributes>& records,
+    lsdtt_input_point_with_attributes&&             record,
+    bool                                           keep_points_outside_raster)
 {
-    if (record.status == lsdtt_point_input_status::outside_raster_extent &&
+    if (record.point.status == lsdtt_point_input_status::outside_raster_extent &&
         !keep_points_outside_raster)
     {
         // Intentional no-op:
@@ -437,50 +436,279 @@ OGRLayer* select_vector_layer(
     return layer;
 }
 
-} // unnamed namespace
+// -----------------------------------------------------------------------------
+// Attribute helpers
+//
+// These support both the OGR path and the CSV path so that neither the field
+// binding logic nor the value typing logic is duplicated.
+// -----------------------------------------------------------------------------
 
-// -----------------------------------------------------------------------------
-// Generic point-file loader
-// -----------------------------------------------------------------------------
-std::vector<lsdtt_input_point>
-load_points_in_raster_crs(
-    const std::string&              input_path,
-    const lsdtt_raster_meta&        raster_meta,
-    const lsdtt_point_input_options& options)
+// One requested attribute field bound onto a source column / OGR field.
+// index < 0 means the field is not present in the source schema, in which case
+// every record receives an absent value for it.
+struct attribute_field_binding
 {
-    const lsdtt_point_input_format resolved_format =
-        resolve_point_input_format(input_path, options.input_format);
+    std::string name  = "";
+    int         index = -1;
+};
 
-    if (resolved_format ==
-        lsdtt_point_input_format::csv_latitude_longitude_epsg4326)
+// Parses a whole token as an integer. Returns false unless the entire trimmed
+// token is consumed.
+bool parse_int64_token(const std::string& token, std::int64_t& value_out)
+{
+    const std::string text = trim(token);
+    if (text.empty())
     {
-        return load_csv_latitude_longitude_points_in_raster_crs(
-            input_path,
-            raster_meta,
-            options.csv_latitude_field_name,
-            options.csv_longitude_field_name,
-            options.keep_points_outside_raster
-        );
+        return false;
     }
 
-    return load_vector_point_layer_in_raster_crs(
-        input_path,
-        raster_meta,
-        options.vector_layer_name,
-        options.keep_points_outside_raster
-    );
+    try
+    {
+        std::size_t consumed = 0;
+        const long long parsed = std::stoll(text, &consumed);
+
+        if (consumed != text.size())
+        {
+            return false;
+        }
+
+        value_out = static_cast<std::int64_t>(parsed);
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+// Parses a whole token as a double. Returns false unless the entire trimmed
+// token is consumed and the result is finite.
+bool parse_double_token(const std::string& token, double& value_out)
+{
+    const std::string text = trim(token);
+    if (text.empty())
+    {
+        return false;
+    }
+
+    try
+    {
+        std::size_t consumed = 0;
+        const double parsed = std::stod(text, &consumed);
+
+        if (consumed != text.size() || !std::isfinite(parsed))
+        {
+            return false;
+        }
+
+        value_out = parsed;
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+// Types a CSV token by inspection: integer if it parses as one, otherwise real,
+// otherwise text. An empty token is absent.
+lsdtt_point_attribute_value type_csv_token(const std::string& token)
+{
+    lsdtt_point_attribute_value value;
+
+    const std::string text = trim(token);
+    if (text.empty())
+    {
+        return value;
+    }
+
+    std::int64_t as_integer = 0;
+    if (parse_int64_token(text, as_integer))
+    {
+        value.type = lsdtt_point_attribute_value::kind::integer;
+        value.i    = as_integer;
+        return value;
+    }
+
+    double as_real = 0.0;
+    if (parse_double_token(text, as_real))
+    {
+        value.type = lsdtt_point_attribute_value::kind::real;
+        value.d    = as_real;
+        return value;
+    }
+
+    value.type = lsdtt_point_attribute_value::kind::text;
+    value.s    = text;
+    return value;
+}
+
+// Reads one OGR field from a feature into a typed attribute value. Unset or
+// NULL fields become absent.
+lsdtt_point_attribute_value read_ogr_field_value(
+    OGRFeature* feature,
+    int         field_index)
+{
+    lsdtt_point_attribute_value value;
+
+    if (feature == nullptr || field_index < 0)
+    {
+        return value;
+    }
+
+    if (!feature->IsFieldSetAndNotNull(field_index))
+    {
+        return value;
+    }
+
+    const OGRFieldDefn* field_defn = feature->GetFieldDefnRef(field_index);
+    const OGRFieldType  field_type =
+        (field_defn != nullptr) ? field_defn->GetType() : OFTString;
+
+    switch (field_type)
+    {
+        case OFTInteger:
+        case OFTInteger64:
+            value.type = lsdtt_point_attribute_value::kind::integer;
+            value.i    = static_cast<std::int64_t>(
+                feature->GetFieldAsInteger64(field_index)
+            );
+            return value;
+
+        case OFTReal:
+            value.type = lsdtt_point_attribute_value::kind::real;
+            value.d    = feature->GetFieldAsDouble(field_index);
+            return value;
+
+        default:
+            value.type = lsdtt_point_attribute_value::kind::text;
+            value.s    = trim(
+                std::string(feature->GetFieldAsString(field_index))
+            );
+            return value;
+    }
+}
+
+// Binds requested field names onto source column indices. An empty
+// requested_field_names reads every field in source_field_names.
+std::vector<attribute_field_binding> bind_attribute_fields(
+    const std::vector<std::string>& source_field_names,
+    const std::vector<std::string>& requested_field_names,
+    std::vector<std::string>&       fields_found,
+    std::vector<std::string>&       fields_missing)
+{
+    std::vector<attribute_field_binding> bindings;
+
+    if (requested_field_names.empty())
+    {
+        bindings.reserve(source_field_names.size());
+
+        for (std::size_t i = 0; i < source_field_names.size(); ++i)
+        {
+            attribute_field_binding binding;
+            binding.name  = source_field_names[i];
+            binding.index = static_cast<int>(i);
+            bindings.push_back(binding);
+
+            fields_found.push_back(binding.name);
+        }
+
+        return bindings;
+    }
+
+    bindings.reserve(requested_field_names.size());
+
+    for (const std::string& requested : requested_field_names)
+    {
+        attribute_field_binding binding;
+        binding.name = requested;
+
+        // Exact match first, then a case-insensitive match, which mirrors the
+        // tolerance OGR itself offers for field lookup.
+        const std::string requested_key = to_lower_copy(trim(requested));
+
+        for (std::size_t i = 0; i < source_field_names.size(); ++i)
+        {
+            if (source_field_names[i] == requested)
+            {
+                binding.index = static_cast<int>(i);
+                break;
+            }
+        }
+
+        if (binding.index < 0)
+        {
+            for (std::size_t i = 0; i < source_field_names.size(); ++i)
+            {
+                if (to_lower_copy(trim(source_field_names[i])) == requested_key)
+                {
+                    binding.index = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+
+        if (binding.index < 0)
+        {
+            fields_missing.push_back(requested);
+        }
+        else
+        {
+            fields_found.push_back(requested);
+        }
+
+        bindings.push_back(binding);
+    }
+
+    return bindings;
+}
+
+// Seeds an attribute map with an absent value for every bound field, so that
+// callers can look up an optional column without checking for its key first.
+std::map<std::string, lsdtt_point_attribute_value> make_absent_attribute_map(
+    const std::vector<attribute_field_binding>& bindings)
+{
+    std::map<std::string, lsdtt_point_attribute_value> attributes;
+
+    for (const attribute_field_binding& binding : bindings)
+    {
+        attributes[binding.name] = lsdtt_point_attribute_value{};
+    }
+
+    return attributes;
+}
+
+// Strips the attribute payload from a read result, for the plain loaders.
+std::vector<lsdtt_input_point> extract_input_points(
+    lsdtt_point_attribute_read_result&& result)
+{
+    std::vector<lsdtt_input_point> points;
+    points.reserve(result.records.size());
+
+    for (lsdtt_input_point_with_attributes& record : result.records)
+    {
+        points.push_back(std::move(record.point));
+    }
+
+    return points;
 }
 
 // -----------------------------------------------------------------------------
-// CSV latitude/longitude loader
+// CSV latitude/longitude loader (shared core)
+//
+// Reads the CSV once, optionally binding attribute columns. The plain loader
+// and the attribute-aware loader both run through here so there is only one
+// CSV parser in this module.
 // -----------------------------------------------------------------------------
-std::vector<lsdtt_input_point>
-load_csv_latitude_longitude_points_in_raster_crs(
-    const std::string&       csv_path,
-    const lsdtt_raster_meta& raster_meta,
-    const std::string&       latitude_field_name,
-    const std::string&       longitude_field_name,
-    bool                     keep_points_outside_raster)
+lsdtt_point_attribute_read_result
+read_csv_latitude_longitude_points_impl(
+    const std::string&              csv_path,
+    const lsdtt_raster_meta&        raster_meta,
+    const std::string&              latitude_field_name,
+    const std::string&              longitude_field_name,
+    bool                            keep_points_outside_raster,
+    bool                            collect_attributes,
+    const std::vector<std::string>& field_names)
 {
     ensure_gdal_init();
 
@@ -533,9 +761,55 @@ load_csv_latitude_longitude_points_in_raster_crs(
         );
     }
 
+    lsdtt_point_attribute_read_result result;
+
+    // The latitude and longitude columns carry the geometry, not attributes,
+    // so they are excluded from the attribute schema. This keeps a CSV point
+    // file and the equivalent OGR layer returning the same attribute set.
+    std::vector<std::string> attribute_column_names;
+    std::vector<int>         attribute_column_indices;
+
+    if (collect_attributes)
+    {
+        for (std::size_t i = 0; i < header_tokens.size(); ++i)
+        {
+            const int column = static_cast<int>(i);
+            if (column == lat_col || column == lon_col)
+            {
+                continue;
+            }
+
+            attribute_column_names.push_back(header_tokens[i]);
+            attribute_column_indices.push_back(column);
+        }
+    }
+
+    std::vector<attribute_field_binding> bindings;
+
+    if (collect_attributes)
+    {
+        bindings = bind_attribute_fields(
+            attribute_column_names,
+            field_names,
+            result.fields_found,
+            result.fields_missing
+        );
+
+        // Rebase the bindings from attribute-schema positions onto raw CSV
+        // column positions.
+        for (attribute_field_binding& binding : bindings)
+        {
+            if (binding.index >= 0)
+            {
+                binding.index = attribute_column_indices[
+                    static_cast<std::size_t>(binding.index)
+                ];
+            }
+        }
+    }
+
     const oct_ptr transform = make_epsg4326_to_raster_transform(raster_meta);
 
-    std::vector<lsdtt_input_point> points;
     std::string line;
     int next_point_id = 1;
 
@@ -546,21 +820,43 @@ load_csv_latitude_longitude_points_in_raster_crs(
             continue;
         }
 
-        lsdtt_input_point point;
+        lsdtt_input_point_with_attributes record;
+        lsdtt_input_point& point = record.point;
+
         point.point_id = next_point_id++;
         point.source_format =
             lsdtt_point_input_format::csv_latitude_longitude_epsg4326;
         point.source_dataset_path = csv_path;
         point.source_layer_name   = "";
 
+        if (collect_attributes)
+        {
+            record.attributes = make_absent_attribute_map(bindings);
+        }
+
         const std::vector<std::string> tokens = split_csv_line(line);
+
+        if (collect_attributes)
+        {
+            for (const attribute_field_binding& binding : bindings)
+            {
+                if (binding.index < 0 ||
+                    static_cast<std::size_t>(binding.index) >= tokens.size())
+                {
+                    continue;
+                }
+
+                record.attributes[binding.name] =
+                    type_csv_token(tokens[static_cast<std::size_t>(binding.index)]);
+            }
+        }
 
         if (static_cast<int>(tokens.size()) <= std::max(lat_col, lon_col))
         {
             point.status = lsdtt_point_input_status::coordinate_transform_failed;
-            append_input_point_record(
-                points,
-                std::move(point),
+            append_point_record(
+                result.records,
+                std::move(record),
                 keep_points_outside_raster
             );
             continue;
@@ -577,9 +873,9 @@ load_csv_latitude_longitude_points_in_raster_crs(
         catch (const std::exception&)
         {
             point.status = lsdtt_point_input_status::coordinate_transform_failed;
-            append_input_point_record(
-                points,
-                std::move(point),
+            append_point_record(
+                result.records,
+                std::move(record),
                 keep_points_outside_raster
             );
             continue;
@@ -593,42 +889,44 @@ load_csv_latitude_longitude_points_in_raster_crs(
         point.x = longitude;
         point.y = latitude;
 
-        std::cout << "Got point, lat:" << point.y << " and long: " << point.x << std::endl;
-
         if (!transform_xy(transform, point.x, point.y))
         {
             point.status = lsdtt_point_input_status::coordinate_transform_failed;
-            append_input_point_record(
-                points,
-                std::move(point),
+            append_point_record(
+                result.records,
+                std::move(record),
                 keep_points_outside_raster
             );
             continue;
         }
 
-        std::cout << "Transformed point, easting:" << point.x << " and northing: " << point.y << std::endl;        
-
         map_raster_xy_to_pixel(raster_meta, point);
 
-        append_input_point_record(
-            points,
-            std::move(point),
+        append_point_record(
+            result.records,
+            std::move(record),
             keep_points_outside_raster
         );
     }
 
-    return points;
+    return result;
 }
 
 // -----------------------------------------------------------------------------
-// Vector point-layer loader
+// Vector point-layer loader (shared core)
+//
+// Reads the layer once, optionally binding attribute fields. The plain loader,
+// the attribute-aware loader, and load_drainage_injection_points all run
+// through here so there is only one OGR read loop in this module.
 // -----------------------------------------------------------------------------
-std::vector<lsdtt_input_point>
-load_vector_point_layer_in_raster_crs(
-    const std::string&       vector_path,
-    const lsdtt_raster_meta& raster_meta,
-    const std::string&       layer_name,
-    bool                     keep_points_outside_raster)
+lsdtt_point_attribute_read_result
+read_vector_point_layer_impl(
+    const std::string&              vector_path,
+    const lsdtt_raster_meta&        raster_meta,
+    const std::string&              layer_name,
+    bool                            keep_points_outside_raster,
+    bool                            collect_attributes,
+    const std::vector<std::string>& field_names)
 {
     ensure_gdal_init();
 
@@ -658,13 +956,40 @@ load_vector_point_layer_in_raster_crs(
         );
     }
 
-    const std::string resolved_layer_name = layer->GetName();
+    lsdtt_point_attribute_read_result result;
+    result.resolved_layer_name = layer->GetName();
+
+    std::vector<attribute_field_binding> bindings;
+
+    if (collect_attributes)
+    {
+        const OGRFeatureDefn* defn = layer->GetLayerDefn();
+        const int n_fields =
+            (defn != nullptr) ? defn->GetFieldCount() : 0;
+
+        std::vector<std::string> layer_field_names;
+        layer_field_names.reserve(static_cast<std::size_t>(std::max(n_fields, 0)));
+
+        for (int i = 0; i < n_fields; ++i)
+        {
+            const OGRFieldDefn* field_defn = defn->GetFieldDefn(i);
+            layer_field_names.push_back(
+                (field_defn != nullptr) ? field_defn->GetNameRef() : ""
+            );
+        }
+
+        bindings = bind_attribute_fields(
+            layer_field_names,
+            field_names,
+            result.fields_found,
+            result.fields_missing
+        );
+    }
 
     const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
     const oct_ptr transform =
         make_layer_to_raster_transform(layer_srs, raster_meta);
 
-    std::vector<lsdtt_input_point> points;
     layer->ResetReading();
 
     OGRFeature* feature = nullptr;
@@ -672,21 +997,39 @@ load_vector_point_layer_in_raster_crs(
 
     while ((feature = layer->GetNextFeature()) != nullptr)
     {
-        lsdtt_input_point point;
-        point.point_id           = next_point_id++;
-        point.source_format      = lsdtt_point_input_format::ogr_vector_layer;
+        lsdtt_input_point_with_attributes record;
+        lsdtt_input_point& point = record.point;
+
+        point.point_id            = next_point_id++;
+        point.source_format       = lsdtt_point_input_format::ogr_vector_layer;
         point.source_dataset_path = vector_path;
-        point.source_layer_name   = resolved_layer_name;
+        point.source_layer_name   = result.resolved_layer_name;
         point.source_feature_id   = static_cast<std::int64_t>(feature->GetFID());
+
+        if (collect_attributes)
+        {
+            record.attributes = make_absent_attribute_map(bindings);
+
+            for (const attribute_field_binding& binding : bindings)
+            {
+                if (binding.index < 0)
+                {
+                    continue;
+                }
+
+                record.attributes[binding.name] =
+                    read_ogr_field_value(feature, binding.index);
+            }
+        }
 
         OGRGeometry* geometry = feature->GetGeometryRef();
 
         if (geometry == nullptr)
         {
             point.status = lsdtt_point_input_status::empty_geometry;
-            append_input_point_record(
-                points,
-                std::move(point),
+            append_point_record(
+                result.records,
+                std::move(record),
                 keep_points_outside_raster
             );
             OGRFeature::DestroyFeature(feature);
@@ -699,9 +1042,9 @@ load_vector_point_layer_in_raster_crs(
         if (geom_type != wkbPoint)
         {
             point.status = lsdtt_point_input_status::unsupported_geometry_type;
-            append_input_point_record(
-                points,
-                std::move(point),
+            append_point_record(
+                result.records,
+                std::move(record),
                 keep_points_outside_raster
             );
             OGRFeature::DestroyFeature(feature);
@@ -722,9 +1065,9 @@ load_vector_point_layer_in_raster_crs(
         if (layer_srs == nullptr)
         {
             point.status = lsdtt_point_input_status::missing_source_crs;
-            append_input_point_record(
-                points,
-                std::move(point),
+            append_point_record(
+                result.records,
+                std::move(record),
                 keep_points_outside_raster
             );
             OGRFeature::DestroyFeature(feature);
@@ -734,9 +1077,9 @@ load_vector_point_layer_in_raster_crs(
         if (!transform_xy(transform, point.x, point.y))
         {
             point.status = lsdtt_point_input_status::coordinate_transform_failed;
-            append_input_point_record(
-                points,
-                std::move(point),
+            append_point_record(
+                result.records,
+                std::move(record),
                 keep_points_outside_raster
             );
             OGRFeature::DestroyFeature(feature);
@@ -745,20 +1088,284 @@ load_vector_point_layer_in_raster_crs(
 
         map_raster_xy_to_pixel(raster_meta, point);
 
-        append_input_point_record(
-            points,
-            std::move(point),
+        append_point_record(
+            result.records,
+            std::move(record),
             keep_points_outside_raster
         );
 
         OGRFeature::DestroyFeature(feature);
     }
 
-    return points;
+    return result;
+}
+
+} // unnamed namespace
+
+// -----------------------------------------------------------------------------
+// Generic point-file loader
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_input_point>
+load_points_in_raster_crs(
+    const std::string&              input_path,
+    const lsdtt_raster_meta&        raster_meta,
+    const lsdtt_point_input_options& options)
+{
+    const lsdtt_point_input_format resolved_format =
+        resolve_point_input_format(input_path, options.input_format);
+
+    if (resolved_format ==
+        lsdtt_point_input_format::csv_latitude_longitude_epsg4326)
+    {
+        return load_csv_latitude_longitude_points_in_raster_crs(
+            input_path,
+            raster_meta,
+            options.csv_latitude_field_name,
+            options.csv_longitude_field_name,
+            options.keep_points_outside_raster
+        );
+    }
+
+    return load_vector_point_layer_in_raster_crs(
+        input_path,
+        raster_meta,
+        options.vector_layer_name,
+        options.keep_points_outside_raster
+    );
+}
+
+// -----------------------------------------------------------------------------
+// CSV latitude/longitude loader
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_input_point>
+load_csv_latitude_longitude_points_in_raster_crs(
+    const std::string&       csv_path,
+    const lsdtt_raster_meta& raster_meta,
+    const std::string&       latitude_field_name,
+    const std::string&       longitude_field_name,
+    bool                     keep_points_outside_raster)
+{
+    return extract_input_points(
+        read_csv_latitude_longitude_points_impl(
+            csv_path,
+            raster_meta,
+            latitude_field_name,
+            longitude_field_name,
+            keep_points_outside_raster,
+            false,
+            std::vector<std::string>{}
+        )
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Vector point-layer loader
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_input_point>
+load_vector_point_layer_in_raster_crs(
+    const std::string&       vector_path,
+    const lsdtt_raster_meta& raster_meta,
+    const std::string&       layer_name,
+    bool                     keep_points_outside_raster)
+{
+    return extract_input_points(
+        read_vector_point_layer_impl(
+            vector_path,
+            raster_meta,
+            layer_name,
+            keep_points_outside_raster,
+            false,
+            std::vector<std::string>{}
+        )
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Typed attribute accessors
+// -----------------------------------------------------------------------------
+bool lsdtt_point_attribute_value::as_int64(std::int64_t& value_out) const
+{
+    switch (type)
+    {
+        case kind::integer:
+            value_out = i;
+            return true;
+
+        case kind::real:
+        {
+            // Only accept a real that is exactly an integer and in range.
+            if (!std::isfinite(d))
+            {
+                return false;
+            }
+
+            double integral_part = 0.0;
+            if (std::modf(d, &integral_part) != 0.0)
+            {
+                return false;
+            }
+
+            if (integral_part <
+                    static_cast<double>(
+                        std::numeric_limits<std::int64_t>::min()) ||
+                integral_part >
+                    static_cast<double>(
+                        std::numeric_limits<std::int64_t>::max()))
+            {
+                return false;
+            }
+
+            value_out = static_cast<std::int64_t>(integral_part);
+            return true;
+        }
+
+        case kind::text:
+            return parse_int64_token(s, value_out);
+
+        case kind::absent:
+        default:
+            return false;
+    }
+}
+
+bool lsdtt_point_attribute_value::as_double(double& value_out) const
+{
+    switch (type)
+    {
+        case kind::integer:
+            value_out = static_cast<double>(i);
+            return true;
+
+        case kind::real:
+            if (!std::isfinite(d))
+            {
+                return false;
+            }
+            value_out = d;
+            return true;
+
+        case kind::text:
+            return parse_double_token(s, value_out);
+
+        case kind::absent:
+        default:
+            return false;
+    }
+}
+
+bool lsdtt_point_attribute_value::as_bool(bool& value_out) const
+{
+    // Text booleans come from human-edited files, so the common spellings are
+    // all accepted, case insensitively.
+    if (type == kind::text)
+    {
+        const std::string key = to_lower_copy(trim(s));
+
+        if (key == "1" || key == "true" || key == "yes" ||
+            key == "t" || key == "y")
+        {
+            value_out = true;
+            return true;
+        }
+
+        if (key == "0" || key == "false" || key == "no" ||
+            key == "f" || key == "n")
+        {
+            value_out = false;
+            return true;
+        }
+
+        double numeric = 0.0;
+        if (parse_double_token(s, numeric))
+        {
+            value_out = (numeric != 0.0);
+            return true;
+        }
+
+        return false;
+    }
+
+    double numeric = 0.0;
+    if (!as_double(numeric))
+    {
+        return false;
+    }
+
+    value_out = (numeric != 0.0);
+    return true;
+}
+
+bool lsdtt_point_attribute_value::as_string(std::string& value_out) const
+{
+    switch (type)
+    {
+        case kind::integer:
+            value_out = std::to_string(i);
+            return true;
+
+        case kind::real:
+        {
+            std::ostringstream stream;
+            stream.precision(17);
+            stream << d;
+            value_out = stream.str();
+            return true;
+        }
+
+        case kind::text:
+            value_out = s;
+            return true;
+
+        case kind::absent:
+        default:
+            return false;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Attribute-aware point-layer loader
+// -----------------------------------------------------------------------------
+lsdtt_point_attribute_read_result
+load_point_layer_with_attributes(
+    const std::string&               path,
+    const lsdtt_raster_meta&         raster_meta,
+    const std::vector<std::string>&  field_names,
+    const lsdtt_point_input_options& options)
+{
+    const lsdtt_point_input_format resolved_format =
+        resolve_point_input_format(path, options.input_format);
+
+    if (resolved_format ==
+        lsdtt_point_input_format::csv_latitude_longitude_epsg4326)
+    {
+        return read_csv_latitude_longitude_points_impl(
+            path,
+            raster_meta,
+            options.csv_latitude_field_name,
+            options.csv_longitude_field_name,
+            options.keep_points_outside_raster,
+            true,
+            field_names
+        );
+    }
+
+    return read_vector_point_layer_impl(
+        path,
+        raster_meta,
+        options.vector_layer_name,
+        options.keep_points_outside_raster,
+        true,
+        field_names
+    );
 }
 
 // -----------------------------------------------------------------------------
 // load_drainage_injection_points
+//
+// A thin wrapper over load_point_layer_with_attributes(). The behaviour of the
+// original standalone implementation is preserved: a missing field is a
+// dataset-level error, and any feature that is not a usable point carrying a
+// finite non-negative value is silently skipped.
 // -----------------------------------------------------------------------------
 std::vector<lsdtt_drainage_injection_record>
 load_drainage_injection_points(
@@ -767,110 +1374,82 @@ load_drainage_injection_points(
     const std::string&       drainage_area_field,
     const std::string&       layer_name)
 {
-    ensure_gdal_init();
+    lsdtt_point_input_options options;
+    options.input_format       = lsdtt_point_input_format::ogr_vector_layer;
+    options.vector_layer_name  = layer_name;
 
-    GDALDataset* raw_dataset = static_cast<GDALDataset*>(
-        GDALOpenEx(
-            vector_path.c_str(),
-            GDAL_OF_VECTOR | GDAL_OF_READONLY,
-            nullptr, nullptr, nullptr
-        )
-    );
+    lsdtt_point_attribute_read_result read_result;
 
-    if (!raw_dataset)
+    try
     {
-        throw std::runtime_error(
-            "load_drainage_injection_points: could not open vector dataset: " +
-            vector_path
+        read_result = load_point_layer_with_attributes(
+            vector_path,
+            raster_meta,
+            std::vector<std::string>{drainage_area_field},
+            options
         );
     }
+    catch (const std::runtime_error& error)
+    {
+        // Preserve this function's own message for the open failure, which
+        // callers and their tests have long relied on.
+        const std::string open_failure_prefix =
+            "lsdtt_point_input: could not open vector dataset: ";
+        const std::string message = error.what();
 
-    gdal_dataset_ptr dataset(raw_dataset);
+        if (message.compare(
+                0, open_failure_prefix.size(), open_failure_prefix) == 0)
+        {
+            throw std::runtime_error(
+                "load_drainage_injection_points: could not open vector dataset: " +
+                vector_path
+            );
+        }
 
-    OGRLayer* layer = select_vector_layer(dataset.get(), layer_name);
+        throw;
+    }
 
-    OGRFeatureDefn* defn = layer->GetLayerDefn();
-    const int field_idx = defn->GetFieldIndex(drainage_area_field.c_str());
-    if (field_idx < 0)
+    if (!read_result.fields_missing.empty())
     {
         throw std::runtime_error(
             "load_drainage_injection_points: field '" + drainage_area_field +
-            "' not found in layer '" + std::string(layer->GetName()) +
+            "' not found in layer '" + read_result.resolved_layer_name +
             "' of dataset: " + vector_path
         );
     }
 
-    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
-    const oct_ptr transform =
-        make_layer_to_raster_transform(layer_srs, raster_meta);
-
     std::vector<lsdtt_drainage_injection_record> records;
-    layer->ResetReading();
+    records.reserve(read_result.records.size());
 
-    OGRFeature* feature = nullptr;
-    int next_point_id = 1;
-
-    while ((feature = layer->GetNextFeature()) != nullptr)
+    for (const lsdtt_input_point_with_attributes& record : read_result.records)
     {
-        const int point_id = next_point_id++;
-
-        OGRGeometry* geometry = feature->GetGeometryRef();
-
-        if (geometry == nullptr ||
-            wkbFlatten(geometry->getGeometryType()) != wkbPoint)
+        if (record.point.status != lsdtt_point_input_status::success)
         {
-            OGRFeature::DestroyFeature(feature);
             continue;
         }
 
-        const OGRPoint* ogr_point = geometry->toPoint();
-        double x = ogr_point->getX();
-        double y = ogr_point->getY();
-
-        if (layer_srs == nullptr)
+        const auto found = record.attributes.find(drainage_area_field);
+        if (found == record.attributes.end())
         {
-            OGRFeature::DestroyFeature(feature);
             continue;
         }
 
-        if (!transform_xy(transform, x, y))
+        double drainage_area = 0.0;
+        if (!found->second.as_double(drainage_area))
         {
-            OGRFeature::DestroyFeature(feature);
             continue;
         }
 
-        lsdtt_input_point pt;
-        pt.x = x;
-        pt.y = y;
-        map_raster_xy_to_pixel(raster_meta, pt);
-
-        if (pt.status != lsdtt_point_input_status::success)
+        if (!std::isfinite(drainage_area) || drainage_area < 0.0)
         {
-            OGRFeature::DestroyFeature(feature);
-            continue;
-        }
-
-        if (!feature->IsFieldSetAndNotNull(field_idx))
-        {
-            OGRFeature::DestroyFeature(feature);
-            continue;
-        }
-
-        const double da = feature->GetFieldAsDouble(field_idx);
-
-        if (!std::isfinite(da) || da < 0.0)
-        {
-            OGRFeature::DestroyFeature(feature);
             continue;
         }
 
         lsdtt_drainage_injection_record rec;
-        rec.point_id         = point_id;
-        rec.flat             = pt.flat;
-        rec.drainage_area_m2 = da;
+        rec.point_id         = record.point.point_id;
+        rec.flat             = record.point.flat;
+        rec.drainage_area_m2 = drainage_area;
         records.push_back(rec);
-
-        OGRFeature::DestroyFeature(feature);
     }
 
     return records;
