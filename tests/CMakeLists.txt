@@ -22,6 +22,9 @@ set(LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR
 set(LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/synthetic_networks_output")
 
+set(LSDTT_INTERNAL_DRAINAGE_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_fixture")
+
 function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
     set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
 
@@ -1166,6 +1169,125 @@ add_test(NAME unit_internal_drainage
          COMMAND lsdtt-test-internal-drainage)
 set_tests_properties(unit_internal_drainage PROPERTIES
     LABELS "unit;internal_drainage")
+
+add_test(NAME fixture_internal_drainage_cli
+         COMMAND lsdtt-test-internal-drainage --write-cli-fixture
+                 ${LSDTT_INTERNAL_DRAINAGE_FIXTURE_DIR})
+set_tests_properties(fixture_internal_drainage_cli PROPERTIES
+    LABELS "fixture;internal_drainage"
+    FIXTURES_SETUP internal_drainage_cli_fixture)
+
+function(add_internal_drainage_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
+    add_test(
+        NAME ${TEST_NAME}
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+                --exe "$<TARGET_FILE:lsdtt-internal-drainage>"
+                --param-template "${LSDTT_TEST_PARAM_DIR}/${PARAM_TEMPLATE}"
+                --read-path "${LSDTT_INTERNAL_DRAINAGE_FIXTURE_DIR}"
+                --work-dir "${work_dir}"
+                --expect "${EXPECTED_OUTPUT}"
+                ${ARGN})
+    set_tests_properties(${TEST_NAME} PROPERTIES
+        LABELS "smoke;cli;internal_drainage"
+        FIXTURES_REQUIRED internal_drainage_cli_fixture)
+endfunction()
+
+add_internal_drainage_cli_test(
+    smoke_internal_drainage_detect
+    internal_drainage_detect.param.in
+    phase4_detect_sink_candidates.fgb
+    --expect phase4_detect_sink_candidates.csv
+    --expect phase4_detect_sink_depressions.fgb
+    --expect phase4_detect_sink_depressions.csv
+    --expect phase4_detect_fill_diff.tif
+    --expect-vector-feature-min phase4_detect_sink_candidates.fgb:3
+    --stdout-contains "Stage: detect")
+
+add_internal_drainage_cli_test(
+    smoke_internal_drainage_both
+    internal_drainage_both.param.in
+    phase4_both_sink_id.tif
+    --expect phase4_both_accepted_sinks.fgb
+    --expect phase4_both_sink_stats.csv
+    --expect phase4_both_sink_basins.fgb
+    --expect phase4_both_sink_channels.fgb
+    --expect phase4_both_sink_channel_nodes.csv
+    --expect phase4_both_sink_junctions.fgb
+    --expect phase4_both_sink_chi.tif
+    --expect phase4_both_sink_drainage_area.tif
+    --expect phase4_both_sink_flow_direction.tif
+    --expect-file-contains "phase4_both_sink_stats.csv:routing_sink_id,sink_id"
+    --expect-file-contains "phase4_both_sink_stats.csv:0,0"
+    --expect-file-contains "phase4_both_sink_channel_nodes.csv:chi"
+    --expect-vector-feature-min phase4_both_accepted_sinks.fgb:3
+    --expect-vector-feature-min phase4_both_sink_basins.fgb:3
+    --expect-vector-feature-min phase4_both_sink_channels.fgb:1
+    --expect-raster-size phase4_both_sink_id.tif:300x300
+    --expect-raster-stat phase4_both_sink_id.tif:min:0:0
+    --expect-raster-stat phase4_both_sink_id.tif:max:2:2
+    --expect-raster-stat phase4_both_sink_chi.tif:min:0:0
+    --stdout-contains "Stage: route")
+
+add_internal_drainage_cli_test(
+    smoke_internal_drainage_route
+    internal_drainage_route.param.in
+    phase4_route_sink_id.tif
+    --expect phase4_route_accepted_sinks.csv
+    --expect phase4_route_sinks_punched.tif
+    --expect phase4_route_sink_stats.csv
+    --expect phase4_route_sink_channels.fgb
+    --expect phase4_route_sink_channel_nodes.csv
+    --expect phase4_route_sink_chi.tif
+    --expect-file-contains "phase4_route_sink_stats.csv:0,0"
+    --expect-file-contains "phase4_route_accepted_sinks.csv:1015.9000244140625"
+    --expect-raster-size phase4_route_sink_id.tif:300x300
+    --expect-raster-stat phase4_route_sink_id.tif:min:0:0
+    --expect-raster-stat phase4_route_sink_id.tif:max:2:2
+    --stdout-contains "Stage: route")
+
+add_internal_drainage_cli_test(
+    smoke_internal_drainage_moved_route
+    internal_drainage_moved_route.param.in
+    phase4_moved_route_accepted_sinks.csv
+    --expect phase4_moved_route_sink_stats.csv
+    --expect-file-contains "phase4_moved_route_accepted_sinks.csv:1033.9000244140625"
+    --expect-file-contains "phase4_moved_route_accepted_sinks.csv:nan"
+    --stdout-contains "Stage: route")
+
+add_internal_drainage_cli_test(
+    failure_internal_drainage_breach
+    internal_drainage_breach_failure.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "breach_depressions_with_sinks")
+
+add_internal_drainage_cli_test(
+    failure_internal_drainage_png
+    internal_drainage_png_failure.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "png is not supported")
+
+add_internal_drainage_cli_test(
+    failure_internal_drainage_nested_both
+    internal_drainage_nested_both_failure.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "both requires sink_leaves_only: true")
+
+add_internal_drainage_cli_test(
+    smoke_internal_drainage_empty_channels
+    internal_drainage_empty_channels.param.in
+    phase4_empty_channels_sink_channel_nodes.csv
+    --expect-file-contains "phase4_empty_channels_sink_channel_nodes.csv:routing_sink_id,sink_id"
+    --stderr-contains "FlatGeobuf cannot store an empty layer")
+
+add_test(NAME smoke_internal_drainage_help
+         COMMAND lsdtt-internal-drainage -h)
+set_tests_properties(smoke_internal_drainage_help PROPERTIES
+    LABELS "smoke;cli;internal_drainage"
+    PASS_REGULAR_EXPRESSION "sink_leaves_only")
 
 # Internal drainage, phase 2b
 # (docs/plan_docs/internal_drainage_plan.md sections 4.3, 5 and 6.1): the

@@ -42,9 +42,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -54,6 +56,9 @@
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_internal_drainage_cpu.hpp"
+#include "lsdtt_chi_extraction_cpu.hpp"
+#include "lsdtt_channel_network_analysis_cpu.hpp"
+#include "lsdtt_junction_network_base.hpp"
 
 namespace
 {
@@ -1816,11 +1821,134 @@ void test_phase3_validation()
                  "another nodata cell");
 }
 
+
+void test_phase4_channels_and_chi()
+{
+    const routed_field rf = make_routed_field();
+    const lsdtt::lsdtt_raster_meta& meta = rf.filled.get_meta();
+    const std::vector<lsdtt::sink_candidate> sinks =
+        make_routing_sinks(rf.gt.pit_flats, meta);
+
+    lsdtt::lsdtt_flowinfo_options options;
+    options.forced_outlet_flats = rf.gt.pit_flats;
+    const lsdtt::lsdtt_flowinfo flow(
+        rf.filled.get_data_array(), rf.filled.get_mask_array(), meta, options);
+    const lsdtt::sink_tagging_result tagged =
+        lsdtt::tag_upslope_of_sinks(
+            flow, sinks, lsdtt::sink_mode::forced_outlet);
+
+    std::vector<std::int64_t> sources = flow.get_sources_index_threshold(50);
+    sources.erase(
+        std::remove_if(sources.begin(), sources.end(),
+            [&](std::int64_t flat)
+            {
+                return tagged.sink_id_raster.get_mask()[
+                    static_cast<std::size_t>(flat)] == 0u;
+            }),
+        sources.end());
+    const std::unique_ptr<lsdtt::lsdtt_junction_network_base> network =
+        lsdtt::make_junction_network_base(flow, sources);
+
+    bool channels_are_internal = !sources.empty();
+    for (std::size_t index = 0; index < flow.full_grid_size(); ++index)
+    {
+        if (network->is_channel(static_cast<std::int64_t>(index)) &&
+            tagged.sink_id_raster.get_mask()[index] == 0u)
+            channels_are_internal = false;
+    }
+    check("phase4_channels: every extracted channel cell belongs to a sink basin",
+          channels_are_internal);
+
+    bool links_keep_sink_id = true;
+    for (std::int32_t junction = 0;
+         junction < network->n_junctions(); ++junction)
+    {
+        if (network->is_outlet_junction(junction)) continue;
+        const lsdtt::lsdtt_traced_channel_link link =
+            lsdtt::trace_channel_link_between_junctions(
+                flow, *network, junction);
+        if (link.empty()) continue;
+        const float expected = tagged.sink_id_raster.get_data()[
+            static_cast<std::size_t>(link.upstream_flat)];
+        for (const std::int64_t flat : link.flats)
+        {
+            const std::size_t index = static_cast<std::size_t>(flat);
+            if (tagged.sink_id_raster.get_mask()[index] == 0u ||
+                tagged.sink_id_raster.get_data()[index] != expected)
+                links_keep_sink_id = false;
+        }
+    }
+    check("phase4_channels: no channel link crosses a sink-basin boundary",
+          links_keep_sink_id);
+
+    lsdtt::lsdtt_chi_options chi_options;
+    const lsdtt::lsdtt_raster_cpu chi =
+        lsdtt::get_chi_raster(flow, chi_options);
+    bool chi_zero_at_sinks =
+        chi_options.m_over_n == 0.45 && chi_options.A_0 == 1.0;
+    for (const lsdtt::sink_candidate& sink : sinks)
+    {
+        if (chi.get_data()[static_cast<std::size_t>(sink.pit_flat)] != 0.0f)
+            chi_zero_at_sinks = false;
+    }
+    check("phase4_chi: defaults are theta 0.45/A0 1 and chi is zero at sinks",
+          chi_zero_at_sinks);
+
+    bool chi_increases_upstream = true;
+    for (std::size_t index = 0; index < flow.full_grid_size(); ++index)
+    {
+        const std::int64_t flat = static_cast<std::int64_t>(index);
+        if (!network->is_channel(flat) || flow.is_outlet(flat)) continue;
+        const std::int64_t receiver = flow.receiver_of(flat);
+        if (chi.get_data()[index] <=
+            chi.get_data()[static_cast<std::size_t>(receiver)])
+            chi_increases_upstream = false;
+    }
+    check("phase4_chi: chi increases strictly upstream along channels",
+          chi_increases_upstream);
+}
+
+
+void write_phase4_cli_fixture(const std::string& output_dir)
+{
+    std::filesystem::create_directories(output_dir);
+    const lsdtt::lsdtt_crater_field_surface gt = make_crater_field();
+    lsdtt::lsdtt_data_loader loader;
+    loader.write_full(
+        gt.dem.get_data(), gt.dem.get_meta(),
+        output_dir + "/phase4_dem.tif",
+        lsdtt::raster_output_format::gtiff);
+
+    lsdtt::sink_detection_options options;
+    options.min_pixels_in_patch = 100;
+    const std::vector<lsdtt::sink_candidate> candidates =
+        lsdtt::find_internal_drainage(gt.dem, options);
+    lsdtt::write_sink_candidates(
+        loader, output_dir + "/phase4_candidates.csv", candidates,
+        gt.dem.get_meta(), lsdtt::sink_io_format::csv);
+
+    std::vector<lsdtt::sink_candidate> moved = candidates;
+    moved[0].pit_row = 150;
+    moved[0].pit_col = 150;
+    moved[0].pit_flat = flat_of(gt.dem.get_meta(), 150, 150);
+    moved[0].pit_x = pixel_centre_x(gt.dem.get_meta(), 150);
+    moved[0].pit_y = pixel_centre_y(gt.dem.get_meta(), 150);
+    lsdtt::write_sink_candidates(
+        loader, output_dir + "/phase4_moved_candidates.csv", moved,
+        gt.dem.get_meta(), lsdtt::sink_io_format::csv);
+}
+
 } // namespace
 
 
-int main()
+int main(int argc, char* argv[])
 {
+    if (argc == 3 && std::string(argv[1]) == "--write-cli-fixture")
+    {
+        write_phase4_cli_fixture(argv[2]);
+        return 0;
+    }
+
     std::cout << "lsdtt3 internal-drainage unit tests "
                  "(phases 0, 1 and 3)\n\n";
 
@@ -1850,6 +1978,9 @@ int main()
     test_tag_forced_outlet_and_cutoffs();
     test_nodata_hole_equivalence();
     test_phase3_validation();
+
+    std::cout << "\n--- Phase 4: sink channels and chi ---\n";
+    test_phase4_channels_and_chi();
 
     std::cout << "\n" << g_n_checks - g_n_failed << " / " << g_n_checks
               << " checks passed\n";

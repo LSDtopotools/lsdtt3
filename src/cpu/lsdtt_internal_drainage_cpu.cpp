@@ -104,6 +104,8 @@ const std::vector<std::string>& candidate_field_names()
         "area_m2",
         "volume_m3",
         "n_pixels",
+        "tagged_drainage_area_m2",
+        "tagged_n_pixels",
         "hierarchy_level",
         "parent_sink_id",
         "accepted"
@@ -129,6 +131,8 @@ const std::vector<lsdtt_vector_field_type>& candidate_field_types()
         lsdtt_vector_field_type::double_type,    // area_m2
         lsdtt_vector_field_type::double_type,    // volume_m3
         lsdtt_vector_field_type::int64_type,     // n_pixels
+        lsdtt_vector_field_type::double_type,    // tagged_drainage_area_m2
+        lsdtt_vector_field_type::int64_type,     // tagged_n_pixels
         lsdtt_vector_field_type::int64_type,     // hierarchy_level
         lsdtt_vector_field_type::int64_type,     // parent_sink_id
         lsdtt_vector_field_type::int64_type      // accepted
@@ -157,6 +161,8 @@ candidate_field_values(const sink_candidate& sink)
         sink.area_m2,
         sink.volume_m3,
         static_cast<std::int64_t>(sink.n_pixels),
+        sink.tagged_drainage_area_m2,
+        sink.tagged_n_pixels,
         static_cast<std::int64_t>(sink.hierarchy_level),
         static_cast<std::int64_t>(sink.parent_sink_id),
         static_cast<std::int64_t>(sink.accepted ? 1 : 0)
@@ -257,6 +263,14 @@ bool attribute_as_int(const attribute_map&            attributes,
 
     value_out = static_cast<int>(as_int);
     return true;
+}
+
+bool attribute_as_int64(const attribute_map&            attributes,
+                        const std::vector<std::string>& aliases,
+                        std::int64_t&                   value_out)
+{
+    const lsdtt_point_attribute_value* value = find_attribute(attributes, aliases);
+    return value != nullptr && value->as_int64(value_out);
 }
 
 // =============================================================================
@@ -954,11 +968,16 @@ read_sink_candidates(const std::string&       path,
             sink.area_m2 = value;
         if (attribute_as_double(attributes, { "volume_m3", "volume" }, value))
             sink.volume_m3 = value;
+        if (attribute_as_double(attributes, { "tagged_drainage_area_m2" }, value))
+            sink.tagged_drainage_area_m2 = value;
 
         int integer_value = 0;
 
         if (attribute_as_int(attributes, { "n_pixels" }, integer_value))
             sink.n_pixels = integer_value;
+        std::int64_t int64_value = 0;
+        if (attribute_as_int64(attributes, { "tagged_n_pixels" }, int64_value))
+            sink.tagged_n_pixels = int64_value;
         if (attribute_as_int(attributes, { "hierarchy_level" }, integer_value))
             sink.hierarchy_level = integer_value;
         if (attribute_as_int(attributes, { "parent_sink_id" }, integer_value))
@@ -1070,7 +1089,8 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
     result.schema.field_names = {
         "sink_id", "pit_elevation", "spill_elevation", "depth_m",
         "area_m2", "volume_m3", "n_pixels", "hierarchy_level",
-        "parent_sink_id", "accepted"
+        "parent_sink_id", "tagged_drainage_area_m2", "tagged_n_pixels",
+        "accepted"
     };
     result.schema.field_types = {
         lsdtt_vector_field_type::int64_type,     // sink_id
@@ -1082,6 +1102,8 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
         lsdtt_vector_field_type::int64_type,     // n_pixels
         lsdtt_vector_field_type::int64_type,     // hierarchy_level
         lsdtt_vector_field_type::int64_type,     // parent_sink_id
+        lsdtt_vector_field_type::double_type,    // tagged_drainage_area_m2
+        lsdtt_vector_field_type::int64_type,     // tagged_n_pixels
         lsdtt_vector_field_type::int64_type      // accepted
     };
 
@@ -1106,6 +1128,8 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
             static_cast<std::int64_t>(sink.n_pixels),
             static_cast<std::int64_t>(sink.hierarchy_level),
             static_cast<std::int64_t>(sink.parent_sink_id),
+            sink.tagged_drainage_area_m2,
+            sink.tagged_n_pixels,
             static_cast<std::int64_t>(sink.accepted ? 1 : 0)
         };
     };

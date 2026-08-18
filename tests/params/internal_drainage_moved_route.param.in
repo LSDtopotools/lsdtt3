@@ -1,0 +1,16 @@
+read_path: __READ_PATH__
+read_fname: phase4_dem.tif
+write_path: __WRITE_PATH__
+write_fname: phase4_moved_route
+
+internal_drainage_stage: route
+sink_candidate_fname: phase4_moved_candidates.csv
+sink_candidate_format: csv
+sink_mode: forced_outlet
+minimum_pixels_in_patch: 999999
+write_accepted_sink_points: false
+write_accepted_sink_csv: true
+write_accepted_depression_polygons: false
+write_sink_id_raster: false
+write_sink_drainage_area_raster: false
+write_sink_stats_csv: true

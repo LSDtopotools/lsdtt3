@@ -105,6 +105,8 @@ struct sink_candidate
     double       area_m2         = 0.0;    // DEPRESSION FOOTPRINT, not the basin
     double       volume_m3       = 0.0;    // fill volume to the spill point
     int          n_pixels        = 0;      // cells in the depression footprint
+    double       tagged_drainage_area_m2 = 0.0; // routed basin, not depression
+    std::int64_t tagged_n_pixels = 0;
     int          hierarchy_level = 0;      // 0 = leaf; height above the leaves
     int          parent_sink_id  = -1;     // nesting, -1 if top level
     bool         accepted        = true;   // set by the review round-trip

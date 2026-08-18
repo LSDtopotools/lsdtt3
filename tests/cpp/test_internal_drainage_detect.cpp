@@ -400,6 +400,8 @@ bool records_equal(const lsdtt::sink_candidate& a, const lsdtt::sink_candidate& 
            a.area_m2         == b.area_m2         &&
            a.volume_m3       == b.volume_m3       &&
            a.n_pixels        == b.n_pixels        &&
+           a.tagged_drainage_area_m2 == b.tagged_drainage_area_m2 &&
+           a.tagged_n_pixels == b.tagged_n_pixels &&
            a.hierarchy_level == b.hierarchy_level &&
            a.parent_sink_id  == b.parent_sink_id  &&
            a.accepted        == b.accepted;
@@ -1924,11 +1926,13 @@ void test_candidate_attribute_typing(const std::string&                        d
 
     const std::vector<std::string> int64_fields = {
         "sink_id", "routing_sink_id", "pit_row", "pit_col", "pit_flat",
-        "n_pixels", "hierarchy_level", "parent_sink_id", "accepted"
+        "n_pixels", "tagged_n_pixels", "hierarchy_level", "parent_sink_id",
+        "accepted"
     };
     const std::vector<std::string> double_fields = {
         "easting", "northing", "latitude", "longitude",
-        "pit_elevation", "spill_elevation", "depth_m", "area_m2", "volume_m3"
+        "pit_elevation", "spill_elevation", "depth_m", "area_m2", "volume_m3",
+        "tagged_drainage_area_m2"
     };
 
     bool typing_ok = true;
@@ -1963,7 +1967,7 @@ void test_candidate_attribute_typing(const std::string&                        d
           typing_ok, wrong.empty() ? "" : ("wrong or missing: " + wrong));
 
     check("candidate_attribute_typing: every schema field is written",
-          layer.schema.size() == 18 &&
+          layer.schema.size() == 20 &&
           layer.records.size() == sinks.size(),
           std::to_string(layer.schema.size()) + " fields, " +
           std::to_string(layer.records.size()) + " features");
