@@ -175,6 +175,64 @@ void lsdtt_coordinate_transform::initialise_from_epsg(
     impl_->initialised = true;
 }
 
+lsdtt_coordinate_transform lsdtt_coordinate_transform::from_source_epsg(
+    int src_epsg,
+    const std::string& dst_wkt
+)
+{
+    lsdtt_coordinate_transform transform;
+    transform.initialise_from_source_epsg(src_epsg, dst_wkt);
+    return transform;
+}
+
+void lsdtt_coordinate_transform::initialise_from_source_epsg(
+    int src_epsg,
+    const std::string& dst_wkt
+)
+{
+    if (dst_wkt.empty())
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_utils: destination CRS WKT is empty"
+        );
+    }
+
+    impl_->src_srs.Clear();
+    impl_->dst_srs.Clear();
+    impl_->tx.reset();
+    impl_->initialised = false;
+
+    impl_->src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    impl_->dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    if (impl_->src_srs.importFromEPSG(src_epsg) != OGRERR_NONE)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_utils: failed to initialise source EPSG CRS"
+        );
+    }
+
+    if (impl_->dst_srs.importFromWkt(dst_wkt.c_str()) != OGRERR_NONE)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_utils: failed to parse destination CRS WKT"
+        );
+    }
+
+    OGRCoordinateTransformation* raw =
+        OGRCreateCoordinateTransformation(&impl_->src_srs, &impl_->dst_srs);
+
+    if (!raw)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_utils: failed to create coordinate transformation"
+        );
+    }
+
+    impl_->tx.reset(raw);
+    impl_->initialised = true;
+}
+
 bool lsdtt_coordinate_transform::is_initialised() const noexcept
 {
     return impl_ && impl_->initialised;

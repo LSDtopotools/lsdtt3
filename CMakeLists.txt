@@ -309,6 +309,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_feature_finder_cpu.cpp
     src/cpu/lsdtt_mountain_front_cpu.cpp
     src/cpu/lsdtt_depression_hierarchy_cpu.cpp
+    src/cpu/lsdtt_internal_drainage_cpu.cpp
     src/cpu/lsdtt_fill_spill_merge_cpu.cpp
     src/cpu/lsdtt_flow_snapping_cpu.cpp
     src/cpu/lsdtt_channel_scope_cpu.cpp

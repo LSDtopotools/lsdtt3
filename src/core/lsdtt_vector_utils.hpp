@@ -56,6 +56,14 @@ public:
         int dst_epsg
     );
 
+    // The other direction: an EPSG source CRS into a destination WKT CRS. Used
+    // to bring EPSG:4326 latitude/longitude supplied by a user back into a
+    // raster's projected CRS.
+    static lsdtt_coordinate_transform from_source_epsg(
+        int src_epsg,
+        const std::string& dst_wkt
+    );
+
     void initialise(
         const std::string& src_wkt,
         const std::string& dst_wkt
@@ -64,6 +72,11 @@ public:
     void initialise_from_epsg(
         const std::string& src_wkt,
         int dst_epsg
+    );
+
+    void initialise_from_source_epsg(
+        int src_epsg,
+        const std::string& dst_wkt
     );
 
     [[nodiscard]] bool is_initialised() const noexcept;

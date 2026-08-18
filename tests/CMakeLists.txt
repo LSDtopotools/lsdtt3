@@ -1166,6 +1166,48 @@ add_test(NAME unit_internal_drainage
 set_tests_properties(unit_internal_drainage PROPERTIES
     LABELS "unit;internal_drainage")
 
+# Internal drainage, phase 2b
+# (docs/plan_docs/internal_drainage_plan.md sections 4.3, 5 and 6.1): the
+# detection module src/cpu/lsdtt_internal_drainage_cpu.  Covers both detection
+# methods against the crater generator's analytic oracle, the binary-tree node
+# count of a nested depression group, the shared pit cell of a meta-depression,
+# the four size filters, the symmetric CSV / FlatGeobuf / GeoPackage review
+# round-trip including a write with the FlatGeobuf spatial index ON (which
+# reorders features, plan 5.7), and the depression footprint polygons.  Kept
+# separate from unit_internal_drainage because it writes vector fixtures and
+# therefore needs an output directory; the two together are the internal
+# drainage compartment.  Fixtures are written at run time, so nothing is
+# committed.
+add_executable(lsdtt-test-internal-drainage-detect
+               cpp/test_internal_drainage_detect.cpp)
+target_link_libraries(lsdtt-test-internal-drainage-detect PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_internal_drainage_detect
+         COMMAND lsdtt-test-internal-drainage-detect
+                 ${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_detect_output)
+set_tests_properties(unit_internal_drainage_detect PROPERTIES
+    LABELS "unit;internal_drainage")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_detect_output)
+
+# Internal drainage, phase 2a
+# (docs/plan_docs/internal_drainage_plan.md sections 6.3 and 6.4): the
+# point-input attribute reader in src/core/lsdtt_point_input.  Guards the
+# load_drainage_injection_points contract (message text, silent skipping,
+# point_id counting skipped features) for its two live callers, cross-format
+# equivalence of load_point_layer_with_attributes across .fgb / .gpkg / .csv,
+# fields_missing yielding kind::absent rather than throwing, the as_bool
+# spellings, and the deliberate divergences recorded in 6.4.  Fixtures are
+# written into the test output directory at run time, so nothing is committed.
+add_executable(lsdtt-test-point-input cpp/test_point_input.cpp)
+target_link_libraries(lsdtt-test-point-input PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_point_input
+         COMMAND lsdtt-test-point-input
+                 ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
+set_tests_properties(unit_point_input PROPERTIES
+    LABELS "unit;point_input")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
+
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
 target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
 
@@ -2561,6 +2603,7 @@ set(LSDTT_DOMAIN_RULES
     "chi|channel|drainage|basin|flow_properties"          "network"
     "raster|nodata|fill|tif|coastal|dem_grouping"         "raster"
     "param|secret"           "core"
+    "point_input"            "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. Measured
