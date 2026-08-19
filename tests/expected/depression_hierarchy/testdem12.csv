@@ -1,0 +1,4 @@
+dep,parent,lchild,rchild,pit_elev,out_elev,cell_count,ocean_parent,n_ocean_linked
+1,3,4294967295,4294967295,0,1,24,0,0
+2,3,4294967295,4294967295,0,1,1,0,0
+3,0,1,2,inf,2,25,1,0

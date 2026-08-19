@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <cmath>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -219,6 +220,28 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
     ocean_seeds.reserve(static_cast<std::size_t>(n_cells) / 40);
     land_seeds.reserve(static_cast<std::size_t>(n_cells) / 40);
 
+    // Explicit ocean rules (opts.nodata_is_ocean / opts.ocean_level). When
+    // nodata counts as ocean those cells must also become traversable, since
+    // the rest of the algorithm skips masked cells. "traversable" is therefore
+    // the valid mask widened by the nodata-ocean cells, and is used in place of
+    // dem_mask everywhere the BFS decides whether a cell participates.
+    const bool  use_ocean_level = !std::isnan(opts.ocean_level);
+    const float ocean_level     = opts.ocean_level;
+
+    std::vector<uint8_t> traversable(static_cast<std::size_t>(n_cells), 0u);
+    for (std::int64_t i = 0; i < n_cells; ++i)
+        traversable[i] = (dem_mask[i] != 0u ||
+                          (opts.nodata_is_ocean && dem_mask[i] == 0u)) ? 1u : 0u;
+
+    // True when the explicit rules say this cell is ocean.
+    const auto explicitly_ocean = [&](std::int64_t flat) -> bool
+    {
+        if (opts.nodata_is_ocean && dem_mask[flat] == 0u) return true;
+        if (use_ocean_level && dem_mask[flat] != 0u &&
+            elev_data[flat] == ocean_level) return true;
+        return false;
+    };
+
     for (int row = 0; row < n_rows; ++row)
     {
         for (int col = 0; col < n_cols; ++col)
@@ -226,21 +249,24 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             const std::int64_t flat =
                 static_cast<std::int64_t>(row) * n_cols + col;
 
-            if (dem_mask[flat] == 0u)
+            if (traversable[flat] == 0u)
                 continue;
 
             bool touches_open = false;
-            for (int d = 0; d < 8; ++d)
+            if (opts.ocean_from_boundary && dem_mask[flat] != 0u)
             {
-                if (exits_through_open_boundary(row, col, d,
-                                                n_rows, n_cols, bc))
+                for (int d = 0; d < 8; ++d)
                 {
-                    touches_open = true;
-                    break;
+                    if (exits_through_open_boundary(row, col, d,
+                                                    n_rows, n_cols, bc))
+                    {
+                        touches_open = true;
+                        break;
+                    }
                 }
             }
 
-            if (touches_open)
+            if (touches_open || explicitly_ocean(flat))
             {
                 label_out[flat] = k_ocean_label;
                 // flowdir stays k_dh_no_flow - drains off grid.
@@ -258,7 +284,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
                         continue;
                     const std::int64_t nflat =
                         static_cast<std::int64_t>(nr) * n_cols + nc;
-                    if (dem_mask[nflat] != 0u && elev_data[nflat] < my_elev)
+                    if (traversable[nflat] != 0u && elev_data[nflat] < my_elev)
                     {
                         has_lower = true;
                         break;
@@ -278,7 +304,8 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
         throw std::runtime_error(
             "build_depression_hierarchy: no ocean-seed cells found. "
             "Check that at least one boundary edge uses condition 'o' or 'b' "
-            "and that valid DEM cells exist on that edge.");
+            "and that valid DEM cells exist on that edge, or set "
+            "nodata_is_ocean / ocean_level to define the ocean explicitly.");
     }
 
     std::sort(ocean_seeds.begin(), ocean_seeds.end());
@@ -366,7 +393,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
             const std::int64_t ni =
                 static_cast<std::int64_t>(nr) * n_cols + nc;
 
-            if (dem_mask[ni] == 0u)
+            if (traversable[ni] == 0u)
                 continue;
 
             const dep_label_t nlabel = label_out[ni];
@@ -428,6 +455,16 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
         outlets.push_back(kv.second);
     outlet_db = outlet_db_t();
 
+    // Sort lowest outlet first: elevation ALONE, with an unstable std::sort,
+    // matching upstream exactly.
+    //
+    // This leaves the order of TIED outlets unspecified -- it falls out of
+    // outlet-hash-map iteration -- and tie order decides the SHAPE of the tree.
+    // A total order (elev, dep_a, dep_b, out_cell) was implemented and makes
+    // five of the 25 upstream oracle fixtures agree that currently do not, but
+    // it is BLOCKED on a separate latent defect in sink_depressions_to_polygons.
+    // See docs/plan_docs/depression_hierarchy_fix_plan.md 4.2e for the full
+    // diagnosis and the two-line change that reinstates it once that is fixed.
     std::sort(outlets.begin(), outlets.end(),
               [](const depression_outlet& a, const depression_outlet& b)
               { return a.out_elev < b.out_elev; });
