@@ -29,7 +29,7 @@ Can also be used as a developer guide.
 lsdtt3/
 ├── apptainer_def/
 │   └── apptainer_setup.md
-├── cli/                                   — 35 command-line executables (lsdtt-* dashed names)
+├── cli/                                   — command-line executables (lsdtt-* dashed names)
 │   ├── lsdtt-basin-extraction.cpp
 │   ├── lsdtt-basin-stats.cpp
 │   ├── lsdtt-basin-surface-metrics.cpp
@@ -48,6 +48,7 @@ lsdtt3/
 │   ├── lsdtt-fetch-raster.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-hydraulic-routing.cpp
+│   ├── lsdtt-internal-drainage.cpp
 │   ├── lsdtt-lem.cpp
 │   ├── lsdtt-linear-stats.cpp
 │   ├── lsdtt-marsh-topography.cpp
@@ -636,6 +637,12 @@ Current CLI programs are:
   Computes drainage-related rasters: optionally fills pits, then computes drainage
   area using D8 (`lsdtt_flowinfo`), D-infinity, or MFD (`lsdtt_flowgraph_cpu`),
   and derives the Topographic Wetness Index (TWI).
+
+- **`lsdtt-internal-drainage.cpp`**  
+  Detects closed depressions, round-trips sink candidates through CSV or vector
+  review, and routes accepted basins either to non-destructive forced outlets or
+  legacy-compatible nodata holes. Writes sink labels, drainage area, statistics,
+  basin polygons, optional sink channel networks, and full-raster chi.
 
 - **`lsdtt-channel-extraction.cpp`**  
   Builds or reuses a pit-filled DEM, constructs D8 flow routing, extracts source

@@ -38,6 +38,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -187,6 +188,99 @@ struct lsdtt_input_point
 };
 
 // -----------------------------------------------------------------------------
+// lsdtt_point_attribute_value
+//
+// One typed attribute value read from a point layer.
+//
+// Attribute values are typed rather than stringly, matching the typed vector
+// attribute convention used by the vector writer in lsdtt_data_loader.
+//
+// type
+//   integer  -> the value is held in i
+//   real     -> the value is held in d
+//   text     -> the value is held in s
+//   absent   -> the field was not in the layer schema, or the feature carried
+//               no value (NULL / empty) for it
+//
+// The as_* accessors convert between representations where that is sensible
+// and report failure through their return value. They never throw, because
+// this data typically comes from a human-edited file.
+// -----------------------------------------------------------------------------
+struct lsdtt_point_attribute_value
+{
+    enum class kind
+    {
+        integer,
+        real,
+        text,
+        absent
+    };
+
+    kind         type = kind::absent;
+    std::int64_t i    = 0;
+    double       d    = 0.0;
+    std::string  s    = "";
+
+    // True when the field carried a usable value.
+    [[nodiscard]] bool is_present() const noexcept
+    {
+        return type != kind::absent;
+    }
+
+    // Integer conversion. Real values must be integral and in range; text is
+    // parsed. Returns false if no integer can be recovered.
+    [[nodiscard]] bool as_int64(std::int64_t& value_out) const;
+
+    // Floating-point conversion. Integer values widen; text is parsed.
+    [[nodiscard]] bool as_double(double& value_out) const;
+
+    // Boolean conversion. Accepts 1 / 0, true / false, yes / no, case
+    // insensitively, and any numeric value (non-zero is true).
+    [[nodiscard]] bool as_bool(bool& value_out) const;
+
+    // Text conversion. Numeric values are rendered as text. Returns false only
+    // when the value is absent.
+    [[nodiscard]] bool as_string(std::string& value_out) const;
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_input_point_with_attributes
+//
+// One ingested point record together with its requested attribute values.
+// Attributes are keyed by the field name that was requested.
+// -----------------------------------------------------------------------------
+struct lsdtt_input_point_with_attributes
+{
+    lsdtt_input_point point;
+
+    std::map<std::string, lsdtt_point_attribute_value> attributes;
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_point_attribute_read_result
+//
+// records
+//   One record per input feature / row, in input order.
+//
+// resolved_layer_name
+//   The layer that was actually read. Empty for CSV input.
+//
+// fields_found / fields_missing
+//   The requested fields that were present in, and absent from, the layer
+//   schema. Absent fields still appear in every record's attribute map with
+//   type == kind::absent, so callers can treat an optional column uniformly.
+// -----------------------------------------------------------------------------
+struct lsdtt_point_attribute_read_result
+{
+    std::vector<lsdtt_input_point_with_attributes> records;
+
+    std::string resolved_layer_name = "";
+
+    std::vector<std::string> fields_found;
+    std::vector<std::string> fields_missing;
+};
+
+// -----------------------------------------------------------------------------
 // Generic point-file loader
 //
 // Reads any supported point input, transforms coordinates to the raster CRS,
@@ -237,6 +331,42 @@ load_vector_point_layer_in_raster_crs(
     const lsdtt_raster_meta& raster_meta,
     const std::string& layer_name = "",
     bool keep_points_outside_raster = true
+);
+
+// -----------------------------------------------------------------------------
+// Attribute-aware point-layer loader
+//
+// Reads a point layer, transforms each point into the raster CRS, maps it onto
+// a raster pixel, and pulls the named fields as typed attribute values.
+//
+// Both input paths are supported and are selected exactly as they are for
+// load_points_in_raster_crs():
+//   - OGR point layers (GeoPackage, FlatGeobuf, Shapefile, GeoJSON, ...)
+//   - CSV files carrying latitude / longitude columns, where the header row
+//     supplies the field names and values are typed by inspection (integer if
+//     the token parses as one, otherwise real, otherwise text). The latitude
+//     and longitude columns are geometry, not attributes, so they are not
+//     returned in the attribute map.
+//
+// field_names
+//   The fields to read. An empty vector reads every field in the layer, which
+//   is what round-tripping a reviewer-edited file needs. A requested field that
+//   is not in the schema is reported in fields_missing and yields
+//   kind::absent in every record rather than throwing, so an optional column
+//   such as "accepted" can simply be missing.
+//
+// Return policy
+// -------------
+// - Input order is preserved, one record per input feature / row.
+// - Per-point problems are recorded in record.point.status.
+// - Irrecoverable dataset-level problems throw std::runtime_error.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_point_attribute_read_result
+load_point_layer_with_attributes(
+    const std::string&               path,
+    const lsdtt_raster_meta&         raster_meta,
+    const std::vector<std::string>&  field_names,
+    const lsdtt_point_input_options& options = lsdtt_point_input_options{}
 );
 
 // -----------------------------------------------------------------------------

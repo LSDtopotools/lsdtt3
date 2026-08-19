@@ -309,6 +309,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_feature_finder_cpu.cpp
     src/cpu/lsdtt_mountain_front_cpu.cpp
     src/cpu/lsdtt_depression_hierarchy_cpu.cpp
+    src/cpu/lsdtt_internal_drainage_cpu.cpp
     src/cpu/lsdtt_fill_spill_merge_cpu.cpp
     src/cpu/lsdtt_flow_snapping_cpu.cpp
     src/cpu/lsdtt_channel_scope_cpu.cpp
@@ -530,6 +531,7 @@ lsdtt_cli(lsdtt-raster-synthetic-tests cli/lsdtt-raster-synthetic-tests.cpp)
 lsdtt_cli(lsdtt-synthetic-networks     cli/lsdtt-synthetic-networks.cpp)
 lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
+lsdtt_cli(lsdtt-internal-drainage      cli/lsdtt-internal-drainage.cpp)
 lsdtt_cli(lsdtt-drainage-analysis      cli/lsdtt-drainage-analysis.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)
 lsdtt_cli(lsdtt-mountain-front         cli/lsdtt-mountain-front.cpp)

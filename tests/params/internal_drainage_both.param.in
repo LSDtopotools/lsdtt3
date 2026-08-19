@@ -1,0 +1,20 @@
+read_path: __READ_PATH__
+read_fname: phase4_dem.tif
+write_path: __WRITE_PATH__
+write_fname: phase4_both
+
+internal_drainage_stage: both
+sink_mode: forced_outlet
+minimum_pixels_in_patch: 100
+fill_min_slope: 0.0001
+write_sink_basin_polygons: true
+write_flow_direction_raster: true
+extract_sink_channel_networks: true
+threshold_contributing_pixels: 50
+write_sink_channel_lines: true
+write_sink_channel_nodes_csv: true
+write_sink_junctions: true
+calculate_sink_chi: true
+write_chi_raster: true
+sink_vector_format: flatgeobuf
+write_output_format: gtiff

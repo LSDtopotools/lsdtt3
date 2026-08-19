@@ -83,6 +83,29 @@ struct lsdtt_flowinfo_options
     bool        build_s_vector            = true;
     int         n_threads                 = 0;
     bool        allow_pits_as_outlets     = false;
+
+    // Cells nominated by the caller as flow terminations, given as flat
+    // indices (row * n_cols + col). Every listed cell is made an outlet
+    // unconditionally: its receiver becomes outlet_receiver and its receiver
+    // direction becomes no_direction, in preference to any downhill neighbour.
+    //
+    // The intended use is internally drained basins - moulins, swallow holes,
+    // playas, quarries - where flow genuinely leaves the surface at the pit
+    // rather than spilling over the depression's lowest saddle.
+    //
+    // IMPORTANT: the DEM must have been prepared with fill_pits_with_sinks()
+    // (or breach_depressions_with_sinks()) using the SAME cell set. A plain
+    // fill_pits() raises the depression until it spills, so by the time the
+    // flow object sees it the depression floor is flat and drains outwards;
+    // the forced outlet would then be a terminus with nothing draining into
+    // it. Seeding the fill from the same cells keeps a monotone descent to
+    // each sink.
+    //
+    // Indices are validated at construction: out-of-range indices and indices
+    // landing on masked or nodata cells throw std::invalid_argument. Duplicate
+    // entries are harmless and are silently ignored. Default: empty, in which
+    // case routing is bit-for-bit identical to before this option existed.
+    std::vector<std::int64_t> forced_outlet_flats;
 };
 
 // -----------------------------------------------------------------------------

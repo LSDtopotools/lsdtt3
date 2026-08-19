@@ -1,0 +1,7 @@
+read_path: __READ_PATH__
+read_fname: phase4_dem.tif
+write_path: __WRITE_PATH__
+write_fname: phase4_png_failure
+
+internal_drainage_stage: both
+write_output_format: png
