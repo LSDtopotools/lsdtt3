@@ -455,6 +455,16 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
         outlets.push_back(kv.second);
     outlet_db = outlet_db_t();
 
+    // Sort lowest outlet first: elevation ALONE, with an unstable std::sort,
+    // matching upstream exactly.
+    //
+    // This leaves the order of TIED outlets unspecified -- it falls out of
+    // outlet-hash-map iteration -- and tie order decides the SHAPE of the tree.
+    // A total order (elev, dep_a, dep_b, out_cell) was implemented and makes
+    // five of the 25 upstream oracle fixtures agree that currently do not, but
+    // it is BLOCKED on a separate latent defect in sink_depressions_to_polygons.
+    // See docs/plan_docs/depression_hierarchy_fix_plan.md 4.2e for the full
+    // diagnosis and the two-line change that reinstates it once that is fixed.
     std::sort(outlets.begin(), outlets.end(),
               [](const depression_outlet& a, const depression_outlet& b)
               { return a.out_elev < b.out_elev; });

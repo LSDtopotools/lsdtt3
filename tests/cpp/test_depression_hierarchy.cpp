@@ -53,6 +53,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -386,6 +388,69 @@ void test_hierarchy_outlets_on_dense_pit_field()
 }
 
 // =============================================================================
+// COMPLEXITY GUARD  (phase 4 of the plan, section 4.3)
+//
+// The outlet_link defect made this algorithm QUADRATIC in cell count: 56.9 s on
+// a 400x400 noise surface, and 2 h 33 min on the 17.4 Mpx Greenland DEM. Barnes
+// reports it as near-linear, and after the fix it is (0.23 s at 400x400).
+//
+// A wall-clock ratio test would have caught that regression on day one, which is
+// why one exists now. It is deliberately loose -- this is a "has it gone
+// quadratic again" alarm, not a benchmark, and it must not go off because CI is
+// busy. Quadratic is exponent 2.0; the bound is 1.6.
+//
+// Uniform noise is used because outlet DENSITY, not cell count, is what drives
+// the cost: a flat-floored plateau of the same size yields ~2300 outlets against
+// ~32000 depressions for noise, and stays fast even with the defect present.
+// =============================================================================
+void test_scaling_is_not_quadratic()
+{
+    struct point { double cells; double secs; };
+    std::vector<point> pts;
+
+    for (const int n : {150, 300})
+    {
+        lsdtt::lsdtt_raster_meta meta = make_meta(n, n, 10.0);
+        lsdtt::lsdtt_raster_cpu  dem =
+            lsdtt::generate_uniform_random_noise_surface(meta, 1, 0.0, 10.0);
+
+        std::vector<lsdtt::dep_label_t> labels;
+        std::vector<uint8_t>            flowdirs;
+
+        const auto t0 = std::chrono::steady_clock::now();
+        const lsdtt::lsdtt_depression_hierarchy hier =
+            lsdtt::build_depression_hierarchy(dem, labels, flowdirs);
+        const auto t1 = std::chrono::steady_clock::now();
+
+        (void)hier;
+        pts.push_back({static_cast<double>(n) * n,
+                       std::chrono::duration<double>(t1 - t0).count()});
+    }
+
+    // Guard against a machine so fast the smaller case is unmeasurable, which
+    // would make the ratio meaningless rather than failing honestly.
+    const double floor_s = 1e-4;
+    if (pts[0].secs < floor_s)
+    {
+        report("scaling exponent",
+               "smaller case too fast to time reliably (" +
+                   std::to_string(pts[0].secs) + " s); check skipped");
+        return;
+    }
+
+    const double exponent = std::log(pts[1].secs / pts[0].secs) /
+                            std::log(pts[1].cells / pts[0].cells);
+
+    check("depression hierarchy is not quadratic in cell count",
+          exponent < 1.6,
+          "exponent " + std::to_string(exponent) + " (quadratic is 2.0); " +
+              std::to_string(pts[0].secs) + " s at " +
+              std::to_string(static_cast<long>(pts[0].cells)) + " cells vs " +
+              std::to_string(pts[1].secs) + " s at " +
+              std::to_string(static_cast<long>(pts[1].cells)) + " cells");
+}
+
+// =============================================================================
 // SCALING HARNESS  (--scaling)
 //
 // A fast stand-in for the Greenland case, so a candidate fix can be judged in
@@ -518,6 +583,224 @@ void run_oracle_dump(const std::string& path, double ocean_level)
     }
 }
 
+// =============================================================================
+// ORACLE SUITE  (--oracle <data_dir> <expected_dir>)
+//
+// Phase 3 of docs/plan_docs/depression_hierarchy_fix_plan.md.
+//
+// Compares build_depression_hierarchy() field by field against expected output
+// generated ONCE from the upstream Barnes implementation.  The expected files
+// are committed; upstream is NOT built by lsdtt3 and is not needed to run this.
+// See the plan's 3.3 for how they were produced and which commits they pin.
+//
+// Both sides are asked the same question via the explicit ocean options added in
+// phase 2 (plan 4.2b): ocean = NODATA cells or cells at ocean_level, exactly as
+// upstream's driver defines it, with the boundary-condition rule switched off.
+//
+// KNOWN DIVERGENCES.  Six fixtures disagree structurally: upstream records
+// depressions joined through the ocean in a Depression::ocean_linked LIST, while
+// our port instead creates a binary meta-depression parenting them.  Those are
+// named below and reported as KNOWN, not silently skipped -- and a fixture NOT on
+// the list that disagrees is a hard failure.  A listed fixture that starts
+// agreeing is also reported, so the list gets pruned when phase 5 fixes the
+// underlying divergence rather than quietly rotting.
+// =============================================================================
+//
+// Phase 5 established that FIVE of these 13 (kerry_test, kerry_test2,
+// kerry_test3, kerry_test7, testdem2) disagree only because of TIE ORDER, not
+// logic: upstream sorts outlets on elevation alone with an unstable std::sort,
+// so tied outlets are ordered by hash-map iteration -- unspecified, and
+// different for any two implementations. Imposing a total order makes those five
+// agree, but also reshapes the tree on tied outlets elsewhere and breaks merged
+// internal-drainage behaviour, so it was not adopted. See plan 4.2d.
+//
+// The other 8 share ONE cause. Upstream records depressions joined through the ocean
+// in a Depression::ocean_linked LIST, leaving their `parent` as OCEAN; our port
+// instead links them into the binary tree, either by chaining parents or by
+// inventing a meta-depression. Two symptoms, same defect:
+//
+//   parent chain      kerry_test3: upstream parents are 0,0,0
+//                     ours are 2,3,0
+//   extra meta node   testdem2:    upstream has 2 ocean-linked leaves
+//                     ours adds a meta-depression parenting both
+//
+// The other 12 fixtures agree field for field, so this is a contained defect in
+// the ocean-link handling and not a general disagreement about the algorithm.
+// Diagnosing it is phase 5; these fixtures are its test set.
+const char* const k_known_divergent[] = {
+    "kerry_test",   "kerry_test1",  "kerry_test2",  "kerry_test3",
+    "kerry_test4",  "kerry_test5",  "kerry_test6",  "kerry_test7",
+    "kerry_test10", "kerry_test11", "kerry_test12",
+    "testdem2",     "testdem10",
+};
+
+struct dep_row
+{
+    unsigned dep = 0, parent = 0, lchild = 0, rchild = 0, cell_count = 0;
+    double   pit_elev = 0.0, out_elev = 0.0;
+    int      ocean_parent = 0;
+};
+
+std::vector<dep_row> parse_expected(const std::string& path, bool& ok)
+{
+    std::vector<dep_row> rows;
+    std::ifstream in(path);
+    ok = in.good();
+    if (!ok) return rows;
+    std::string line;
+    std::getline(in, line);                     // header
+    while (std::getline(in, line))
+    {
+        if (line.empty()) continue;
+
+        // Split on commas and convert each field with std::stod / std::stoul.
+        // NOT with operator>> on a double: libstdc++'s num_get FAILS on the
+        // token "inf", which upstream writes for every meta-depression's
+        // pit_elev. That silently zeroed every field after it and produced a
+        // suite full of bogus cell_count mismatches.
+        std::vector<std::string> tok;
+        std::string              cur;
+        std::istringstream       ss(line);
+        while (std::getline(ss, cur, ',')) tok.push_back(cur);
+        if (tok.size() < 8) continue;
+
+        dep_row r;
+        r.dep          = static_cast<unsigned>(std::stoul(tok[0]));
+        r.parent       = static_cast<unsigned>(std::stoul(tok[1]));
+        r.lchild       = static_cast<unsigned>(std::stoul(tok[2]));
+        r.rchild       = static_cast<unsigned>(std::stoul(tok[3]));
+        r.pit_elev     = std::stod(tok[4]);
+        r.out_elev     = std::stod(tok[5]);
+        r.cell_count   = static_cast<unsigned>(std::stoul(tok[6]));
+        r.ocean_parent = std::stoi(tok[7]);
+        rows.push_back(r);
+    }
+    return rows;
+}
+
+void run_oracle_suite(const std::string& data_dir, const std::string& expected_dir)
+{
+    std::cout << "=== depression hierarchy: oracle suite vs upstream Barnes ===\n";
+
+    // Every fixture in the upstream test_cases set.
+    const char* const fixtures[] = {
+        "kerry_test",  "kerry_test1", "kerry_test2", "kerry_test3", "kerry_test4",
+        "kerry_test5", "kerry_test6", "kerry_test7", "kerry_test8", "kerry_test9",
+        "kerry_test10","kerry_test11","kerry_test12",
+        "testdem1", "testdem2", "testdem3",  "testdem4",  "testdem5",  "testdem6",
+        "testdem7", "testdem8", "testdem9",  "testdem10", "testdem11", "testdem12",
+    };
+
+    for (const char* name : fixtures)
+    {
+        const std::string dem = data_dir + "/" + name + ".dem";
+        const std::string exp = expected_dir + "/" + name + ".csv";
+
+        bool known = false;
+        for (const char* k : k_known_divergent)
+            if (std::string(k) == name) known = true;
+
+        bool have_expected = false;
+        const std::vector<dep_row> want = parse_expected(exp, have_expected);
+        if (!have_expected)
+        {
+            check(std::string("oracle ") + name + ": expected file present",
+                  false, "missing " + exp);
+            continue;
+        }
+
+        lsdtt::lsdtt_data_loader loader;
+        loader.open_raster(dem);
+        lsdtt::lsdtt_raster_tile tile = loader.read_full();
+        lsdtt::lsdtt_raster_cpu  raster;
+        raster.set_from_vectors(std::move(tile.data), std::move(tile.mask),
+                                tile.meta);
+
+        lsdtt::depression_hierarchy_options opts;
+        opts.ocean_from_boundary = false;
+        opts.nodata_is_ocean     = true;
+        opts.ocean_level         = -9999.0f;
+
+        std::vector<lsdtt::dep_label_t> labels;
+        std::vector<uint8_t>            flowdirs;
+        lsdtt::lsdtt_depression_hierarchy hier;
+        try
+        {
+            hier = lsdtt::build_depression_hierarchy(raster, labels, flowdirs,
+                                                     opts);
+        }
+        catch (const std::exception& e)
+        {
+            check(std::string("oracle ") + name + ": builds", false, e.what());
+            continue;
+        }
+
+        const std::size_t got_n = hier.size() - 1;   // exclude the ocean node
+
+        // Field-by-field comparison. Elevations are copied, never computed, so
+        // they are compared exactly; a tolerance here would hide real errors.
+        std::string first_diff;
+        bool        agrees = (got_n == want.size());
+        if (!agrees)
+            first_diff = "count " + std::to_string(got_n) + " vs " +
+                         std::to_string(want.size());
+
+        if (agrees)
+        {
+            for (std::size_t i = 0; i < want.size(); ++i)
+            {
+                const dep_row&                w = want[i];
+                const lsdtt::depression_node& g = hier[i + 1];
+                const char* field = nullptr;
+                if      (g.parent     != w.parent)     field = "parent";
+                else if (g.lchild     != w.lchild)     field = "lchild";
+                else if (g.rchild     != w.rchild)     field = "rchild";
+                else if (g.cell_count != w.cell_count) field = "cell_count";
+                else if ((g.ocean_parent ? 1 : 0) != w.ocean_parent)
+                                                       field = "ocean_parent";
+                // Compare in FLOAT, not double. The fixture stores %.9g, which
+                // round-trips a float exactly -- but static_cast<double>(float)
+                // is not equal to std::stod of that text, so comparing as
+                // doubles fails on values that are in fact bit-identical.
+                // Elevations are copied, never computed, so exact float
+                // equality is the right test and no tolerance is warranted.
+                else if (std::isfinite(w.pit_elev) &&
+                         g.pit_elev != static_cast<float>(w.pit_elev))
+                                                       field = "pit_elev";
+                else if (std::isfinite(w.out_elev) &&
+                         g.out_elev != static_cast<float>(w.out_elev))
+                                                       field = "out_elev";
+                if (field)
+                {
+                    agrees    = false;
+                    first_diff = std::string("dep ") + std::to_string(i + 1) +
+                                 " field " + field;
+                    break;
+                }
+            }
+        }
+
+        if (known)
+        {
+            // Not asserted -- but a fixture that starts agreeing must be noticed
+            // so this list can be pruned.
+            if (agrees)
+                report(std::string("oracle ") + name,
+                       "KNOWN DIVERGENCE NOW AGREES -- remove it from "
+                       "k_known_divergent");
+            else
+                report(std::string("oracle ") + name,
+                       "known divergence (" + first_diff + ")");
+        }
+        else
+        {
+            check(std::string("oracle ") + name + " matches upstream",
+                  agrees, agrees ? std::to_string(got_n) + " depressions"
+                                 : first_diff);
+        }
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -526,6 +809,14 @@ int main(int argc, char** argv)
     {
         run_scaling_harness();
         return 0;
+    }
+    if (argc > 3 && std::string(argv[1]) == "--oracle")
+    {
+        run_oracle_suite(argv[2], argv[3]);
+        std::cout << "\n" << g_n_checks - g_n_failed << " / " << g_n_checks
+                  << " checks passed\n";
+        std::cout << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+        return (g_n_failed == 0) ? 0 : 1;
     }
     if (argc > 2 && std::string(argv[1]) == "--dump")
     {
@@ -548,6 +839,9 @@ int main(int argc, char** argv)
 
         std::cout << "\n--- the algorithm on a dense pit field ---\n";
         test_hierarchy_outlets_on_dense_pit_field();
+
+        std::cout << "\n--- complexity guard ---\n";
+        test_scaling_is_not_quadratic();
     }
     catch (const std::exception& e)
     {

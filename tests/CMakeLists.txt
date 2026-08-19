@@ -1174,6 +1174,18 @@ add_test(NAME unit_depression_hierarchy
 set_tests_properties(unit_depression_hierarchy PROPERTIES
     LABELS "unit;depression_hierarchy")
 
+# Oracle comparison against the upstream Barnes implementation
+# (docs/plan_docs/depression_hierarchy_fix_plan.md phase 3). The expected files
+# were generated ONCE from upstream and are committed; upstream is NOT built by
+# lsdtt3 and is not needed to run this. Provenance, including the commit hashes
+# pinned, is in tests/expected/depression_hierarchy/PROVENANCE.md.
+add_test(NAME unit_depression_hierarchy_oracle
+         COMMAND lsdtt-test-depression-hierarchy --oracle
+                 "${LSDTT_TEST_DATA_DIR}/depression_hierarchy"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/expected/depression_hierarchy")
+set_tests_properties(unit_depression_hierarchy_oracle PROPERTIES
+    LABELS "unit;depression_hierarchy")
+
 # Internal drainage, phases 0, 1 and 3
 # (docs/plan_docs/internal_drainage_plan.md section 6.1): the crater-field
 # oracle, fill_pits_with_sinks, forced_outlet_flats, hole punching and sink
