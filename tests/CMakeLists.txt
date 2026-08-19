@@ -1157,6 +1157,23 @@ add_test(NAME unit_flow_properties
 set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 
+# Depression hierarchy, phase 0
+# (docs/plan_docs/depression_hierarchy_fix_plan.md section 4.1): pins the
+# dangling-reference defect in outlet_link -- copy semantics, outlet_db across a
+# rehash, and the algorithm on a pit field dense enough to force one.
+#
+# NOTE: on unmodified HEAD this test FAILS BY DESIGN. It is written before the
+# phase 1 fix so that the fix is what makes it pass. Do not "repair" it by
+# weakening the assertions.
+# Synthetic surfaces generated in process, so there is no fixture on disk.
+add_executable(lsdtt-test-depression-hierarchy cpp/test_depression_hierarchy.cpp)
+target_link_libraries(lsdtt-test-depression-hierarchy PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_depression_hierarchy
+         COMMAND lsdtt-test-depression-hierarchy)
+set_tests_properties(unit_depression_hierarchy PROPERTIES
+    LABELS "unit;depression_hierarchy")
+
 # Internal drainage, phases 0, 1 and 3
 # (docs/plan_docs/internal_drainage_plan.md section 6.1): the crater-field
 # oracle, fill_pits_with_sinks, forced_outlet_flats, hole punching and sink
@@ -2726,6 +2743,7 @@ set(LSDTT_DOMAIN_RULES
     "chi|channel|drainage|basin|flow_properties"          "network"
     "raster|nodata|fill|tif|coastal|dem_grouping"         "raster"
     "param|secret"           "core"
+    "depression_hierarchy"   "network"
     "point_input"            "core"
 )
 
