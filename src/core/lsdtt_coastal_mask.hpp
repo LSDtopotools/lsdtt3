@@ -5,6 +5,8 @@
 // Copyright (C) 2026 Simon M. Mudd
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// Used in conjunction with lsdtt_dem_grouping for bulk downloading
+// of tiles, which tries to stop data being downloaded over the ocean
 
 #pragma once
 
