@@ -776,6 +776,10 @@ int main(int argc, char* argv[])
 
     const bool do_basin_selection = (n_selection_modes == 1);
 
+    // Line crossing basins: if you want a quick and dirty way to get basins
+    // emerging across a fault, or mountain front. 
+    // Draw a line in QGIS, save as gpkg or fgb, and then get all the basins crossing
+    // this line. You can also use faults that are stored in vector formatF
     // Line-crossing basins are, by definition, the largest complete basin per
     // independent crossing: force the incomplete/nested filters on.
     if (select_basins_from_line_crossings)
@@ -930,7 +934,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Load into CPU raster
+    // Load into CPU raster (could be relaxed for GPU later)
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
@@ -943,7 +947,7 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Pit filling ---\n";
         std::cout << "Raster is not marked as filled. Running fill_pits().\n";
         std::cout << "Minimum slope: " << ff["fill_min_slope"] << "\n";
-
+        std::cout << "NOTE: this only fills pits, if you want breaching then do that in lsdtt-raster-preprocessing" << "\n";
         try
         {
             routed_dem = lsdtt::fill_pits(
@@ -963,6 +967,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\nRaster is marked as already filled. "
                   << "Skipping fill step.\n";
+                  << "You just saved loads of time, great job!\n";
     }
 
     // -------------------------------------------------------------------------
@@ -971,6 +976,7 @@ int main(int argc, char* argv[])
     std::cout << "\n--- Flow routing ---\n";
     std::cout << "Boundary conditions: " << sf["boundary_conditions"] << "\n";
     std::cout << "Threads            : " << ifs["n_threads"] << "\n";
+    std::cout << "If you have a big DEM, have a book ready for this step.\n";
 
     lsdtt::lsdtt_flowinfo_options fi_opts;
     fi_opts.boundary_conditions       = sf["boundary_conditions"];
@@ -1007,6 +1013,10 @@ int main(int argc, char* argv[])
         std::cout << (single_channel_mode
                       ? "\n--- Single-channel side-basin extraction ---\n"
                       : "\n--- Side-tributary basin extraction ---\n");
+        std::cout << "Hello user. I am entering something called side tributary mode.\n";
+        std::cout << "This basically looks for basins drainaing into a channel you extract or supply.\n";
+        std::cout << "Use case is to get all basins drainage to a big main stem river.\n";
+        std::cout << "This will save a lot of time, make sure you tell everyone in linkedin how great lsdtt3 is.\n";
 
         lsdtt::lsdtt_side_tributary_basin_options side_opts;
         side_opts.input_points_path =
@@ -1186,6 +1196,7 @@ int main(int argc, char* argv[])
 
     // -------------------------------------------------------------------------
     // Step 3 - Extract source pixels
+    // This is needed befor channel network is built
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source extraction ---\n";
     std::cout << "Contributing-pixel threshold: "
@@ -1331,6 +1342,9 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Basin selection ---\n";
 
+        // initiate basin manager, this is the free function that deals with the different flavours of 
+        // basin selection
+        // The different flavours (hopfully) have names that make sense.
         lsdtt::lsdtt_junction_basin_manager_cpu basin_manager(
             *flow,
             *channel_network
@@ -1550,7 +1564,8 @@ int main(int argc, char* argv[])
             std::cout << "Read " << requested_outlets.size()
                       << " basin outlet point(s)\n";
 
-            // Per-point status warnings
+            // Per-point status warnings. Tells user why a point failed if it has done so. 
+            // involves checking all kinds of tedious edge cases
             {
                 int n_transform_failed = 0;
                 int n_unsupported_geom = 0;
@@ -2197,6 +2212,7 @@ int main(int argc, char* argv[])
             }
         }
 
+        // basins datamap: some metadata for the basins that can be used for plotting
         if (bf["write_basins_datamap"])
         {
             std::cout << "\n--- Basin datamap output ---\n";
