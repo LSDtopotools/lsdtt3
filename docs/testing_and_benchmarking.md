@@ -431,26 +431,49 @@ another tool with similar conventions) and see disagreement, check here first.
 
 ### 5.1 RichDEM's D8 is not steepest descent — do not use it as a D8 reference
 
-`richdem/flowmet/d8_flowdirs.hpp` selects the neighbour with the **lowest
-elevation**, with a tie-break that explicitly prefers diagonals. True D8
+`richdem/flowmet/d8_flowdirs.hpp`, `d8_FlowDir()`, selects the neighbour with the
+**lowest elevation**. Distance never enters the comparison. True D8
 (O'Callaghan & Mark 1984, which both tools cite) divides the drop by the
-**distance**, so a diagonal neighbour must be √2 lower to win.
+**distance**, so a diagonal neighbour must be √2 lower to win. lsdtt3 and
+TopoToolbox both implement drop-over-distance; RichDEM does not.
 
-Demonstrated on a 50×50 plane tilted purely north–south, where every cell must
-drain straight down its column (row *r* accumulates *r*+1 cells):
+The divergence appears whenever the lowest neighbour is diagonal but a cardinal
+neighbour is steeper. On a 1 m grid, with cardinal south 1.0 m lower and diagonal
+south-east 1.2 m lower:
 
-| Row | Expected | lsdtt3 | RichDEM |
-|---|---|---|---|
-| 25 | 26 | **26** | 1, 2, 3, 4 … |
-| bottom | 50 | **50** | 1, 2, 3, 4 … |
+| | drop | distance | gradient | chosen by |
+|---|---|---|---|---|
+| cardinal S | 1.0 | 1.0 | **1.000** | lsdtt3, TopoToolbox |
+| diagonal SE | 1.2 | 1.414 | 0.849 | **RichDEM** |
 
-On a plane the S, SE and SW neighbours sit at the same elevation, so RichDEM
-ties and breaks toward a diagonal, producing diagonal stripes instead of
-columns. **lsdtt3 is exactly right here and RichDEM is not.** Planar hillslopes
-are ubiquitous in real terrain, so the disagreement is pervasive rather than
-confined to flats — measured rank correlation on a real DEM is 0.51 for D8,
-0.74 for D-inf, 0.99 for MFD (MFD spreads flow across neighbours, so a
-single-direction tie-break barely registers).
+Verified by calling `d8_FlowDir` directly against RichDEM at commit `af61c65`:
+it returns 6 (diagonal SE) for this configuration. No tie is involved, which is
+why the disagreement is pervasive on real terrain rather than confined to flats —
+measured rank correlation on a real DEM is 0.51 for D8, 0.74 for D-inf, 0.99 for
+MFD (MFD spreads flow across neighbours, so the single-direction choice barely
+registers).
+
+#### Correction, 2026-08-21
+
+An earlier version of this section made two claims about the *mechanism* that are
+wrong. Both were checked against the RichDEM source and by running `d8_FlowDir`:
+
+1. It said the tie-break "explicitly prefers diagonals". **It prefers cardinals.**
+   In RichDEM's numbering `n8_diag = {false,false,true,false,true,false,true,
+   false,true}`, so **odd `n` is cardinal**; the clause
+   `flowdir>0 && flowdir%2==0 && n%2==1` switches *from* a diagonal *to* a
+   cardinal at equal elevation. RichDEM's own source carries
+   `//TODO: What is this modulus stuff for?` beside it.
+2. It presented a table showing RichDEM producing `1, 2, 3, 4 …` accumulation on
+   a 50×50 north–south plane. **RichDEM passes that test.** Running `d8_FlowDir`
+   over the interior of exactly that ramp returns direction 7 — cardinal south —
+   for **all 2304 cells**, because the tie-break above pulls it off the diagonal.
+   Those RichDEM figures were never measured; the ramp test in
+   `test_flow_properties.cpp` is an analytic oracle and does not invoke RichDEM.
+
+The conclusion is unchanged — RichDEM's D8 is not steepest descent and is not a
+valid D8 reference — but it follows from the *selection rule*, not from tie
+behaviour, and not from the ramp.
 
 Consequently **RichDEM's accumulation comparisons are reported, not asserted.**
 Correctness of lsdtt3's accumulation is established instead by property tests,

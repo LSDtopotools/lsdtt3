@@ -986,18 +986,29 @@ void test_reconstruction_matches_priority_flood(const fixture& fx)
 // A surface tilted purely north-south has an exactly known answer: every cell
 // drains straight down its own column, so row r accumulates r+1 cells.
 //
-// This is the check that distinguishes true steepest descent (drop / distance)
-// from "lowest neighbour by elevation". On a planar ramp the S, SE and SW
-// neighbours all sit at the same elevation, but the diagonals are sqrt(2)
-// further away, so only the cardinal S is the steepest DESCENT. An
-// implementation that compares raw elevation instead ties, breaks toward a
-// diagonal, and produces diagonal stripes rather than columns.
+// On a planar ramp the S, SE and SW neighbours all sit at the same elevation,
+// but the diagonals are sqrt(2) further away, so only the cardinal S is the
+// steepest DESCENT. An implementation that compared raw elevation and then broke
+// the tie toward a diagonal would produce diagonal stripes rather than columns,
+// and would fail here.
 //
-// RichDEM does exactly that (richdem/flowmet/d8_flowdirs.hpp:63-71 selects the
-// minimum-elevation neighbour with a diagonal-preferring tie-break), which is
-// why it is NOT a usable reference for D8 accumulation -- see
-// docs/testing_and_benchmarking.md Sec7d. Hence this analytic oracle rather
-// than a comparison.
+// NOTE (corrected 2026-08-21): this test does NOT discriminate against RichDEM,
+// and an earlier version of this comment claimed that it did. RichDEM selects
+// the minimum-ELEVATION neighbour (richdem/flowmet/d8_flowdirs.hpp,
+// d8_FlowDir), but its tie-break prefers CARDINALS, not diagonals -- in its
+// numbering odd n is cardinal, and the clause `flowdir%2==0 && n%2==1` switches
+// off a diagonal onto a cardinal. Run over the interior of exactly this 50x50
+// ramp it returns direction 7 (cardinal south) for all 2304 cells, i.e. it
+// passes.
+//
+// RichDEM's D8 still is not steepest descent and still must not be used as a D8
+// reference, but the divergence needs a case where the lowest neighbour is
+// diagonal AND a cardinal neighbour is steeper -- not a tie. See
+// docs/testing_and_benchmarking.md 5.1 and docs/flow_routing.md.
+//
+// What this test is for is therefore simpler than the old comment suggested: it
+// is an ANALYTIC ORACLE pinning lsdtt3's own drop-over-distance rule against a
+// surface with a known exact answer. That is worth having on its own terms.
 // =============================================================================
 void test_d8_accumulation_on_ramp()
 {
