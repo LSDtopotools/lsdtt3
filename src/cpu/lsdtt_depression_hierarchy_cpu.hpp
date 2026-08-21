@@ -177,7 +177,35 @@ using lsdtt_depression_hierarchy = std::vector<depression_node>;
 // ---------------------------------------------------------------------------
 struct depression_hierarchy_options
 {
+    // Cells that drain off an open ('o'/'b') grid edge become ocean seeds.
+    // This is lsdtt3's native way of saying "water leaves here".
     std::string boundary_conditions = "oooo";
+
+    // ---- Explicit ocean definition (optional) --------------------------
+    //
+    // Upstream Barnes takes an ocean MASK rather than a boundary-condition
+    // string: GetDepressionHierarchy() is documented as requiring the caller to
+    // have labelled ocean cells already, and its example driver does so with
+    //     topo.isNoData(i) || topo(i) == ocean_level
+    // (Barnes2019-DepressionHierarchy/src/main.cpp).
+    //
+    // These three fields express the same thing, so that lsdtt3 can be asked
+    // exactly the question upstream is asked. They are also useful in their own
+    // right: a DEM whose sea is encoded as a nodata region, or as a constant
+    // elevation, is common and cannot be described by boundary conditions alone.
+    //
+    // The ocean seed set is the UNION of whichever of these are enabled.
+
+    // Include cells that drain off an open grid edge (the default behaviour).
+    // Set false to use only the explicit rules below.
+    bool ocean_from_boundary = true;
+
+    // Treat NODATA cells as ocean. They are seeded at their stored elevation,
+    // matching upstream, where a nodata cell keeps the file's nodata value.
+    bool nodata_is_ocean = false;
+
+    // Treat valid cells at exactly this elevation as ocean. NaN disables it.
+    float ocean_level = std::numeric_limits<float>::quiet_NaN();
 };
 
 // ---------------------------------------------------------------------------
@@ -188,16 +216,33 @@ struct depression_hierarchy_options
 
 // Key for the outlet hash map: canonical (min, max) pair so that (A,B) and
 // (B,A) always map to the same slot.
-struct outlet_link : std::pair<dep_label_t, dep_label_t>
+// An unordered pair of depression labels, used as the key of outlet_db.
+//
+// The two labels are VALUE members, matching upstream's OutletLink
+// (Barnes2019-DepressionHierarchy/include/dephier/dephier.hpp).  They must stay
+// values: an earlier version derived from std::pair and aliased first/second
+// with REFERENCE members, which made the implicitly generated copy constructor
+// bind a copy's references to the source object's storage.  Copying a
+// stack-local link into outlet_db then left the stored key holding dangling
+// references, and outlet_link_hash reads exactly those.  See
+// tests/cpp/test_depression_hierarchy.cpp, which pins this.
+struct outlet_link
 {
-    dep_label_t& dep_a = std::pair<dep_label_t, dep_label_t>::first;
-    dep_label_t& dep_b = std::pair<dep_label_t, dep_label_t>::second;
+    dep_label_t dep_a = 0u;
+    dep_label_t dep_b = 0u;
 
+    outlet_link() = default;
+
+    // Labels are normalised so that (a,b) and (b,a) are the same key.
     outlet_link(dep_label_t a, dep_label_t b)
-        : std::pair<dep_label_t, dep_label_t>(
-              (a < b) ? a : b,
-              (a < b) ? b : a)
+        : dep_a((a < b) ? a : b),
+          dep_b((a < b) ? b : a)
     {}
+
+    bool operator==(const outlet_link& o) const noexcept
+    {
+        return dep_a == o.dep_a && dep_b == o.dep_b;
+    }
 };
 
 struct outlet_link_hash

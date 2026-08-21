@@ -66,6 +66,8 @@ static void print_banner()
         << "|| Welcome to lsdtt-marsh-topography                    ||\n"
         << "|| Marsh-platform, tidal-channel, and skeleton metrics  ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                      ||\n"
+        << "|| Some of this is a port of Goodwin, Mudd and Clubb    ||\n"
+        << "|| marsh surface finder (ESURF)                         ||\n"
         << "=========================================================\n"
         << "|| CLI version: " << k_version  << "\n"
         << "|| Citation   : " << k_citation << "\n"

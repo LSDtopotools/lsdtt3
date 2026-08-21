@@ -1,6 +1,12 @@
 // lsdtt_dem_grouping.hpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
+// This is a utility for looking at bounding boxes and making 
+// sensible groups. It is used when you have a big regional DEM
+// at low resolution and gather some basins from it, and then
+// want to find a collection of bounding boxes for a higher resolution
+// DEM that covers all the basins with some balance of number of 
+// tiles and storage size. 
 
 #pragma once
 
