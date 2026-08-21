@@ -753,11 +753,55 @@ read_csv_latitude_longitude_points_impl(
         }
     }
 
+    // Fallback: a CSV positioned in the RASTER'S OWN CRS rather than in
+    // latitude/longitude.
+    //
+    // Projected-CRS point files are at least as common as geographic ones -- any
+    // table exported from a GIS alongside the DEM will carry easting and
+    // northing -- and requiring latitude/longitude forced users to convert a
+    // file that was already in the right coordinate system. The OGR path has
+    // accepted easting/northing attributes for a long time; this brings CSV into
+    // line with it.
+    //
+    // Latitude/longitude wins when both are present, so nothing that worked
+    // before changes behaviour.
+    int  easting_col  = -1;
+    int  northing_col = -1;
+    bool coordinates_are_raster_crs = false;
+
+    if (lat_col < 0 || lon_col < 0)
+    {
+        static const char* const k_easting_names[]  = { "easting",  "x", "pit_x" };
+        static const char* const k_northing_names[] = { "northing", "y", "pit_y" };
+
+        for (std::size_t i = 0; i < header_tokens.size(); ++i)
+        {
+            const std::string key = to_lower_copy(trim(header_tokens[i]));
+
+            for (const char* name : k_easting_names)
+                if (easting_col < 0 && key == name)
+                    easting_col = static_cast<int>(i);
+
+            for (const char* name : k_northing_names)
+                if (northing_col < 0 && key == name)
+                    northing_col = static_cast<int>(i);
+        }
+
+        if (easting_col >= 0 && northing_col >= 0)
+        {
+            coordinates_are_raster_crs = true;
+            lat_col = northing_col;   // reused below as the "y" column
+            lon_col = easting_col;    // reused below as the "x" column
+        }
+    }
+
     if (lat_col < 0 || lon_col < 0)
     {
         throw std::runtime_error(
             "lsdtt_point_input: CSV input must contain columns named '" +
-            latitude_field_name + "' and '" + longitude_field_name + "'"
+            latitude_field_name + "' and '" + longitude_field_name +
+            "', or 'easting' and 'northing' (or 'x' and 'y') if the points are "
+            "already in the raster's coordinate system: " + csv_path
         );
     }
 
@@ -808,7 +852,11 @@ read_csv_latitude_longitude_points_impl(
         }
     }
 
-    const oct_ptr transform = make_epsg4326_to_raster_transform(raster_meta);
+    // Not needed when the CSV is already in the raster CRS.
+    const oct_ptr transform =
+        coordinates_are_raster_crs
+            ? oct_ptr{}
+            : make_epsg4326_to_raster_transform(raster_meta);
 
     std::string line;
     int next_point_id = 1;
@@ -884,12 +932,15 @@ read_csv_latitude_longitude_points_impl(
         point.has_original_coordinates = true;
         point.original_x = longitude;
         point.original_y = latitude;
-        point.original_coordinates_are_longitude_latitude = true;
+        point.original_coordinates_are_longitude_latitude =
+            !coordinates_are_raster_crs;
 
         point.x = longitude;
         point.y = latitude;
 
-        if (!transform_xy(transform, point.x, point.y))
+        // Already in the raster CRS: nothing to transform.
+        if (!coordinates_are_raster_crs &&
+            !transform_xy(transform, point.x, point.y))
         {
             point.status = lsdtt_point_input_status::coordinate_transform_failed;
             append_point_record(

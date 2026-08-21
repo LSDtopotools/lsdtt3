@@ -48,6 +48,7 @@ nav:
     - Overview: overview.md
     - Workflows: workflows.md
     - Flow routing: flow_routing.md
+    - Worked example - internal drainage: internal_drainage_workflow.md
     - Surface metrics: surface_metrics.md
   - Installation:
     - Install lsdtt3: install_lsdtt3.md
