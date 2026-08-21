@@ -129,6 +129,134 @@ the repository benchmark harness and report environment + fixture details.
 
 ---
 
+## Depression hierarchy
+
+`lsdtt_depression_hierarchy_cpu` is lsdtt3's port of the Barnes et al. (2020)
+depression hierarchy: a tree in which every closed depression is a node, leaves
+are the innermost hollows, and a parent is the meta-depression two children merge
+into once water rises to their shared saddle. It underpins
+`lsdtt-internal-drainage`'s `depression_hierarchy` detector and the fill-spill-merge
+routines in `lsdtt-raster-preprocessing`.
+
+It is validated against the upstream reference implementation by
+`unit_depression_hierarchy_oracle`, which compares depression count and the
+per-depression fields (`parent`, `lchild`, `rchild`, `pit_elev`, `out_elev`,
+`cell_count`, `ocean_parent`) across 25 committed test DEMs. Provenance of those
+fixtures, including the upstream commits they pin, is in
+`tests/expected/depression_hierarchy/PROVENANCE.md`.
+
+### Choosing a detector: what the hierarchy adds, and what it risks
+
+`lsdtt-internal-drainage` offers two sink detectors through
+`sink_detection_algorithm_choice`. **The default is `fill_difference`.**
+
+**`fill_difference`** takes the difference between the filled and raw DEM and
+treats each connected patch that filling would raise as one sink, keeping its
+deepest cell as the pit. It is the method the published Greenland moulin work
+used. It is fast, robust on rough surfaces, and has no notion of nesting: a lake
+containing several hollows is one sink.
+
+**`depression_hierarchy`** builds the full tree and adds three things
+`fill_difference` cannot give you:
+
+- **Nesting.** A lake containing several hollows becomes a parent with children,
+  reported through `parent_sink_id` and `hierarchy_level`. With
+  `sink_leaves_only: true` you get the innermost hollows; with `false` you also
+  get the enclosing depressions.
+- **True depression volume**, accumulated over the tree, rather than a summed
+  fill difference.
+- **Spill relationships between depressions** — which depression overflows into
+  which, and which reach the ocean directly.
+
+Use it where that structure is the point: playas, karst, quarry benches, closed
+tectonic basins — terrain with real depressions inside depressions.
+
+#### The risk: it can report nothing at all
+
+On a rough surface, **every innermost hollow is tiny**. Combining
+`depression_hierarchy` with `sink_leaves_only: true` and a
+`minimum_pixels_in_patch` threshold can therefore filter out *every* sink and
+return an empty result, with no error.
+
+This is not hypothetical. On an 18 m Greenland ablation-zone DEM (17.4 Mpx) with
+the configuration that reproduces the published work
+(`minimum_pixels_in_patch: 1000`):
+
+| detector | sinks found | runtime |
+|---|---|---|
+| `fill_difference` | **143** | 5.4 s |
+| `depression_hierarchy` | **0** | 24.6 s |
+
+The hierarchy is not wrong there — it finds 468,878 leaf depressions. But every
+one is a metres-across dimple in the ice, none reaches 1000 pixels, and the size
+filter removes them all. The fill-difference patches, by contrast, are the
+filled lakes the analysis is actually about.
+
+So before using `depression_hierarchy` on a noisy surface, either smooth the DEM
+first, or filter on depth or volume rather than on pixel count, or set
+`sink_leaves_only: false` so enclosing depressions survive the threshold. If a
+run reports zero sinks, this is the first thing to check.
+
+Note that `sink_leaves_only` applies **only** to `depression_hierarchy`. Under
+`fill_difference` there is no tree to take the leaves of, and setting it to
+`false` prints a warning and is otherwise ignored.
+
+### Defining where water leaves the grid
+
+The hierarchy needs to know which cells are "ocean" — the places water leaves the
+model. There are two ways to say it, and they can be combined:
+
+- **Boundary conditions** (`boundary_conditions`, default `"oooo"`). Valid cells
+  that drain off an open grid edge become ocean seeds. This is lsdtt3's native
+  convention and matches the rest of the flow-routing layer.
+- **An explicit ocean definition**, for DEMs where the sea is encoded in the data
+  rather than at the edge:
+  - `nodata_is_ocean` — treat NODATA cells as ocean. Common where a coastline or
+    ice margin has been masked out.
+  - `ocean_level` — treat valid cells at exactly this elevation as ocean. Common
+    where the sea is burned in as a constant.
+  - `ocean_from_boundary` — set to `false` to use only the explicit rules.
+
+Seeds are the **union** of whichever rules are enabled. If none of them selects
+any cell, `build_depression_hierarchy()` throws rather than guessing.
+
+This matters beyond convenience: a DEM whose sea is a nodata region cannot be
+described by boundary conditions at all, because no valid cell touches the grid
+edge. Upstream Barnes takes an ocean mask for the same reason.
+
+### Ties are broken deterministically
+
+Depressions merge in order of increasing outlet elevation. Outlets frequently
+**tie** — flat saddles and integer DEMs produce them constantly — and the order
+among tied outlets decides which depressions merge first, and therefore the shape
+of the tree.
+
+The upstream implementation sorts on elevation alone with an unstable sort, so
+tied outlets end up ordered by hash-table iteration: unspecified, and different
+between implementations, compilers, or even container sizes. lsdtt3 instead
+breaks ties on the two depression labels and then the outlet cell, giving a
+**total order**. The tree is therefore reproducible across platforms.
+
+The cost is that lsdtt3 and upstream build different — both valid — trees on a
+DEM with tied outlets. Eight of the 25 oracle fixtures differ for exactly this
+reason: their leaf depressions are identical to upstream, and in five of them
+every outlet in the DEM sits at one elevation, so no well-defined nesting exists.
+The oracle test asserts leaf-set equality on those fixtures rather than skipping
+them.
+
+### Multipart footprints
+
+A sink's cells need not be contiguous. When `min_pixels_in_patch` filters out a
+small hollow, its cells are attributed to the nearest surviving ancestor, and
+that ancestor's footprint can end up in two or more pieces separated by its other
+children. `sink_depressions_to_polygons()` emits **one polygon record per
+connected part**, all carrying the same sink attributes, so no terrain is lost.
+`test_min_pixels_conserves_terrain` pins the invariant: the union of all reported
+footprints must not change when the size filter is applied, because the filter
+merges sinks and never removes ground.
+
+---
+
 ## Important behavioral differences
 
 ### RichDEM as a D8 reference

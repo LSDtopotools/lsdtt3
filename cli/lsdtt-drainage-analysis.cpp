@@ -69,6 +69,8 @@ static void print_banner()
         << "|| Welcome to lsdtt-drainage-analysis                  ||\n"
         << "|| I am going to compute drainage rasters for you      ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
+        << "|| This CLI is for looking at various runoff metrics   ||\n"
+        << "|| such as TWI, SWI and connectivity                   ||\n"
         << "=========================================================\n"
         << "|| CLI version: " << k_version  << "\n"
         << "|| Citation   : " << k_citation << "\n"

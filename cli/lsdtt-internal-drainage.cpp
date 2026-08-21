@@ -48,6 +48,10 @@ static void print_banner()
         << "|| Welcome to lsdtt-internal-drainage                  ||\n"
         << "|| Detect and route closed drainage basins             ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
+        << "|| Originally designed to characterise areas into which||\n"
+        << "|| water from the greenland ice sheet drained into     ||\n"
+        << "|| moulins. However will be generally useful in karst  ||\n"
+        << "|| arid environments, extensional tectonic settings,etc||\n"
         << "=========================================================\n"
         << "|| CLI version: " << k_version << "\n"
         << "|| Citation   : " << k_citation << "\n"
@@ -650,7 +654,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     string_default_map["internal_drainage_stage"] = "detect";
-    string_default_map["sink_detection_algorithm_choice"] = "depression_hierarchy";
+    string_default_map["sink_detection_algorithm_choice"] = "fill_difference";
     string_default_map["sink_mode"] = "forced_outlet";
     string_default_map["boundary_conditions"] = "oooo";
     string_default_map["sink_candidate_fname"] = "";
@@ -697,8 +701,17 @@ int main(int argc, char* argv[])
     help_map["internal_drainage_stage"] = {"string", "detect", "Workflow stage.",
         "detect writes candidates; route consumes reviewed candidates; both runs without review.",
         "Workflow", "switch", ""};
-    help_map["sink_detection_algorithm_choice"] = {"string", "depression_hierarchy",
-        "Sink detector.", "depression_hierarchy or fill_difference.",
+    help_map["sink_detection_algorithm_choice"] = {"string", "fill_difference",
+        "Sink detector.",
+        "fill_difference (default) takes each connected patch that filling would "
+        "raise as one sink: robust, fast, and what the published Greenland work "
+        "used. depression_hierarchy additionally resolves NESTING, so a lake "
+        "containing several hollows becomes a tree rather than one patch, and it "
+        "reports parent_sink_id, hierarchy_level and true depression volume. Use "
+        "it for genuinely nested terrain such as playas, karst or quarry benches. "
+        "RISK: on rough surfaces every innermost hollow is tiny, so combining it "
+        "with sink_leaves_only and a minimum_pixels_in_patch threshold can filter "
+        "out EVERY sink and report nothing at all.",
         "Detection", "switch", ""};
     help_map["sink_mode"] = {"string", "forced_outlet", "Sink routing mode.",
         "forced_outlet is non-destructive; nodata_hole reproduces legacy routing.",
@@ -814,10 +827,27 @@ int main(int argc, char* argv[])
             throw std::invalid_argument("breach_before_fill requires breach_depressions_with_sinks and is not yet supported");
         if (stage == "route" && sf.at("sink_candidate_fname").empty())
             throw std::invalid_argument("sink_candidate_fname is required when internal_drainage_stage is route");
-        if (stage == "both" && !bf.at("sink_leaves_only"))
+        // sink_leaves_only only means anything to the hierarchy: fill_difference
+        // produces one flat sink per patch, with no tree to take the leaves of.
+        // So the constraint below is scoped to the hierarchy, and asking for the
+        // switch alongside fill_difference is reported rather than silently
+        // ignored.
+        if (algorithm == "depression_hierarchy" && stage == "both" &&
+            !bf.at("sink_leaves_only"))
             throw std::invalid_argument(
-                "internal_drainage_stage both requires sink_leaves_only: true; "
+                "internal_drainage_stage both requires sink_leaves_only: true "
+                "when sink_detection_algorithm_choice is depression_hierarchy; "
                 "use detect then route to review nested sinks that may share pit cells");
+
+        // sink_leaves_only defaults to true, so a false value was asked for
+        // deliberately -- and that is the case where the user expected nested
+        // sinks and will not get them.
+        if (algorithm == "fill_difference" && !bf.at("sink_leaves_only"))
+            std::cerr << "Warning: sink_leaves_only: false has no effect with "
+                         "sink_detection_algorithm_choice: fill_difference. "
+                         "Each filled patch becomes one sink, with no nesting to "
+                         "expose. Use sink_detection_algorithm_choice: "
+                         "depression_hierarchy if you need nested sinks.\n";
         if (ip.at("minimum_pixels_in_patch") < 1 || ff.at("minimum_sink_depth") < 0.0f ||
             ff.at("minimum_sink_area") < 0.0f || ff.at("minimum_sink_volume") < 0.0f)
             throw std::invalid_argument("sink detection thresholds must be non-negative and minimum_pixels_in_patch >= 1");

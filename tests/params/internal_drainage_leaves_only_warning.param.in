@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+read_fname: phase4_dem.tif
+write_path: __WRITE_PATH__
+write_fname: phase4_leaves_warning
+
+internal_drainage_stage: detect
+sink_detection_algorithm_choice: fill_difference
+sink_leaves_only: false

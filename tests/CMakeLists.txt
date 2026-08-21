@@ -1298,6 +1298,15 @@ add_internal_drainage_cli_test(
     --expect-failure
     --stderr-contains "png is not supported")
 
+# sink_leaves_only means nothing to fill_difference: each filled patch is one
+# sink, with no nesting to take the leaves of. Asking for it must WARN and carry
+# on, not fail and not be silently ignored (plan 7.4 Q2a).
+add_internal_drainage_cli_test(
+    smoke_internal_drainage_leaves_only_warning
+    internal_drainage_leaves_only_warning.param.in
+    phase4_leaves_warning_sink_candidates.fgb
+    --stderr-contains "sink_leaves_only: false has no effect")
+
 add_internal_drainage_cli_test(
     failure_internal_drainage_nested_both
     internal_drainage_nested_both_failure.param.in

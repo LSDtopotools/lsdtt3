@@ -5,3 +5,4 @@ write_fname: phase4_nested_failure
 
 internal_drainage_stage: both
 sink_leaves_only: false
+sink_detection_algorithm_choice: depression_hierarchy

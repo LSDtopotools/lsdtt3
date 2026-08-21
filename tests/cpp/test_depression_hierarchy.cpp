@@ -58,6 +58,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <array>
 #include <chrono>
 #include <type_traits>
 #include <unordered_map>
@@ -606,15 +607,21 @@ void run_oracle_dump(const std::string& path, double ocean_level)
 // underlying divergence rather than quietly rotting.
 // =============================================================================
 //
-// Phase 5 established that FIVE of these 13 (kerry_test, kerry_test2,
-// kerry_test3, kerry_test7, testdem2) disagree only because of TIE ORDER, not
-// logic: upstream sorts outlets on elevation alone with an unstable std::sort,
-// so tied outlets are ordered by hash-map iteration -- unspecified, and
-// different for any two implementations. Imposing a total order makes those five
-// agree, but also reshapes the tree on tied outlets elsewhere and breaks merged
-// internal-drainage behaviour, so it was not adopted. See plan 4.2d.
+// ALL of these are DEGENERATE-TIE cases, and none is a detection error.
 //
-// The other 8 share ONE cause. Upstream records depressions joined through the ocean
+// For every one of the 8, the LEAF SET is identical to upstream -- same
+// depressions, same pit and outlet elevations, same cell counts -- so the BFS
+// and the partition of cells agree exactly. Only the tree ABOVE the leaves
+// differs, and in five of the 8 every outlet in the DEM shares a single
+// elevation (`kerry_test1`: nine leaves, every out_elev 6), so there is no
+// well-defined nesting to find: upstream's binary tree is an artefact of its
+// hash-map iteration order, and ours of our tie-break. See plan 7.2.
+//
+// The leaf-set equality is ASSERTED below rather than skipped, so a genuine
+// detection bug cannot hide behind this list.
+//
+// Historical note: phase 5b removed five other entries (kerry_test, kerry_test2,
+// kerry_test3, kerry_test7, testdem2) by giving the outlet sort a total order. Upstream records depressions joined through the ocean
 // in a Depression::ocean_linked LIST, leaving their `parent` as OCEAN; our port
 // instead links them into the binary tree, either by chaining parents or by
 // inventing a meta-depression. Two symptoms, same defect:
@@ -628,11 +635,11 @@ void run_oracle_dump(const std::string& path, double ocean_level)
 // the ocean-link handling and not a general disagreement about the algorithm.
 // Diagnosing it is phase 5; these fixtures are its test set.
 const char* const k_known_divergent[] = {
-    "kerry_test",   "kerry_test1",  "kerry_test2",  "kerry_test3",
-    "kerry_test4",  "kerry_test5",  "kerry_test6",  "kerry_test7",
-    "kerry_test10", "kerry_test11", "kerry_test12",
-    "testdem2",     "testdem10",
+    "kerry_test1",  "kerry_test4",  "kerry_test5",  "kerry_test6",
+    "kerry_test10", "kerry_test11", "kerry_test12", "testdem10",
 };
+
+constexpr unsigned k_no_child = 4294967295u;   // upstream NO_VALUE
 
 struct dep_row
 {
@@ -782,15 +789,47 @@ void run_oracle_suite(const std::string& data_dir, const std::string& expected_d
 
         if (known)
         {
-            // Not asserted -- but a fixture that starts agreeing must be noticed
-            // so this list can be pruned.
             if (agrees)
+            {
                 report(std::string("oracle ") + name,
                        "KNOWN DIVERGENCE NOW AGREES -- remove it from "
                        "k_known_divergent");
-            else
-                report(std::string("oracle ") + name,
-                       "known divergence (" + first_diff + ")");
+                continue;
+            }
+
+            report(std::string("oracle ") + name,
+                   "known divergence (" + first_diff + ")");
+
+            // The tree above the leaves is arbitrary here, but the LEAF SET is
+            // not: the depressions themselves, and the partition of cells
+            // between them, are fully determined. Assert that much rather than
+            // skipping the fixture outright -- otherwise a real detection bug
+            // could hide behind a "known divergence" label.
+            std::vector<std::array<double, 3>> want_leaves, got_leaves;
+
+            for (const dep_row& w : want)
+                if (w.lchild == k_no_child && w.rchild == k_no_child)
+                    want_leaves.push_back({w.pit_elev, w.out_elev,
+                                           static_cast<double>(w.cell_count)});
+
+            for (std::size_t d = 1; d < hier.size(); ++d)
+            {
+                const lsdtt::depression_node& g = hier[d];
+                if (g.lchild == lsdtt::k_no_label &&
+                    g.rchild == lsdtt::k_no_label)
+                    got_leaves.push_back({static_cast<double>(g.pit_elev),
+                                          static_cast<double>(g.out_elev),
+                                          static_cast<double>(g.cell_count)});
+            }
+
+            std::sort(want_leaves.begin(), want_leaves.end());
+            std::sort(got_leaves.begin(),  got_leaves.end());
+
+            check(std::string("oracle ") + name +
+                      ": leaf depressions match upstream exactly",
+                  want_leaves == got_leaves,
+                  std::to_string(got_leaves.size()) + " leaves vs " +
+                      std::to_string(want_leaves.size()));
         }
         else
         {
