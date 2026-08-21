@@ -1148,13 +1148,78 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
         std::vector<float>   label_data(sink_of_cell.size(), 0.0f);
         std::vector<uint8_t> label_mask(sink_of_cell.size(), 0u);
 
+        // A sink's cells need not be CONNECTED. When min_pixels_in_patch drops a
+        // leaf, its cells reattach to the nearest selected ancestor, and that
+        // ancestor's footprint then has an outlying patch separated from its main
+        // body by the footprints of its other children.
+        //
+        // binary_components_to_polygon_records_with_holes() returns one record
+        // per LABEL, so labelling cells by sink id would collapse those patches
+        // and silently discard all but one -- terrain that is plainly on the DEM
+        // would appear in no footprint at all.
+        //
+        // So each 8-connected COMPONENT of each sink gets its own label here, and
+        // component_sink maps back afterwards. A sink with a multipart footprint
+        // therefore emits one record per part, all carrying its attributes.
+        std::vector<int> component_of_cell(sink_of_cell.size(), -1);
+        std::vector<int> component_sink;
+
+        {
+            const int n_rows_l = meta.n_rows;
+            const int n_cols_l = meta.n_cols;
+            std::vector<std::size_t> stack;
+
+            for (std::size_t start = 0; start < sink_of_cell.size(); ++start)
+            {
+                if (sink_of_cell[start] < 0)          continue;
+                if (component_of_cell[start] >= 0)    continue;
+
+                const int this_sink = sink_of_cell[start];
+                const int component = static_cast<int>(component_sink.size());
+                component_sink.push_back(this_sink);
+
+                component_of_cell[start] = component;
+                stack.push_back(start);
+
+                while (!stack.empty())
+                {
+                    const std::size_t cell = stack.back();
+                    stack.pop_back();
+
+                    const int row = static_cast<int>(cell) / n_cols_l;
+                    const int col = static_cast<int>(cell) % n_cols_l;
+
+                    for (int d_row = -1; d_row <= 1; ++d_row)
+                    for (int d_col = -1; d_col <= 1; ++d_col)
+                    {
+                        if (d_row == 0 && d_col == 0) continue;
+
+                        const int n_row = row + d_row;
+                        const int n_col = col + d_col;
+
+                        if (n_row < 0 || n_row >= n_rows_l) continue;
+                        if (n_col < 0 || n_col >= n_cols_l) continue;
+
+                        const std::size_t neighbour =
+                            static_cast<std::size_t>(n_row) * n_cols_l + n_col;
+
+                        if (sink_of_cell[neighbour] != this_sink)  continue;
+                        if (component_of_cell[neighbour] >= 0)     continue;
+
+                        component_of_cell[neighbour] = component;
+                        stack.push_back(neighbour);
+                    }
+                }
+            }
+        }
+
         bool any = false;
 
         for (std::size_t i = 0; i < sink_of_cell.size(); ++i)
         {
-            if (sink_of_cell[i] < 0) continue;
+            if (component_of_cell[i] < 0) continue;
 
-            label_data[i] = static_cast<float>(sink_of_cell[i] + 1);
+            label_data[i] = static_cast<float>(component_of_cell[i] + 1);
             label_mask[i] = 1u;
             any = true;
         }
@@ -1179,10 +1244,17 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
         {
             if (record.field_values.empty()) continue;
 
+            // label_id is a COMPONENT id (+1), not a sink index -- see the
+            // relabelling above. Map it back to the sink that owns the part.
             const std::int64_t label_id =
                 std::get<std::int64_t>(record.field_values[0]);
-            const std::size_t sink_index =
+            const std::size_t component =
                 static_cast<std::size_t>(label_id - 1);
+
+            if (component >= component_sink.size())     continue;
+
+            const std::size_t sink_index =
+                static_cast<std::size_t>(component_sink[component]);
 
             if (sink_index >= sink_by_index.size())     continue;
             if (sink_by_index[sink_index] == nullptr)   continue;
@@ -1286,10 +1358,12 @@ sink_depressions_to_polygons(const lsdtt_raster_cpu&            dem,
                 current = state.deps[current].parent;
             }
 
+
             if (current == k_no_parent || current == k_ocean_label) continue;
 
             sink_of_cell[i] = sink_of_depression[current];
         }
+
 
         // Two selected depressions overlap only when one is an ancestor of the
         // other, so grouping by the number of selected ancestors gives batches

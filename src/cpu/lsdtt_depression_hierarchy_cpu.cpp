@@ -455,19 +455,26 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
         outlets.push_back(kv.second);
     outlet_db = outlet_db_t();
 
-    // Sort lowest outlet first: elevation ALONE, with an unstable std::sort,
-    // matching upstream exactly.
+    // Sort lowest outlet first, on a TOTAL order.
     //
-    // This leaves the order of TIED outlets unspecified -- it falls out of
-    // outlet-hash-map iteration -- and tie order decides the SHAPE of the tree.
-    // A total order (elev, dep_a, dep_b, out_cell) was implemented and makes
-    // five of the 25 upstream oracle fixtures agree that currently do not, but
-    // it is BLOCKED on a separate latent defect in sink_depressions_to_polygons.
-    // See docs/plan_docs/depression_hierarchy_fix_plan.md 4.2e for the full
-    // diagnosis and the two-line change that reinstates it once that is fixed.
+    // Upstream compares out_elev alone with an unstable std::sort, so the order
+    // of TIED outlets is whatever its hash map happened to iterate in --
+    // unspecified, and different for any two implementations. Ties are common
+    // (flat saddles, integer DEMs) and tie order decides the SHAPE of the tree,
+    // so leaving it to hash iteration would make lsdtt3's own results depend on
+    // the standard library version and the container's reserve size. That is not
+    // acceptable for a scientific code.
+    //
+    // This deliberately does not reproduce upstream's arbitrary order; see
+    // docs/plan_docs/depression_hierarchy_fix_plan.md 4.2d/4.3a.
     std::sort(outlets.begin(), outlets.end(),
               [](const depression_outlet& a, const depression_outlet& b)
-              { return a.out_elev < b.out_elev; });
+              {
+                  if (a.out_elev != b.out_elev) return a.out_elev < b.out_elev;
+                  if (a.dep_a    != b.dep_a)    return a.dep_a    < b.dep_a;
+                  if (a.dep_b    != b.dep_b)    return a.dep_b    < b.dep_b;
+                  return a.out_cell < b.out_cell;
+              });
 
     // ------------------------------------------------------------------
     // 5. Build the hierarchy from outlets (lowest to highest).

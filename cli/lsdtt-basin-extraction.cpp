@@ -966,7 +966,7 @@ int main(int argc, char* argv[])
     else
     {
         std::cout << "\nRaster is marked as already filled. "
-                  << "Skipping fill step.\n";
+                  << "Skipping fill step.\n"
                   << "You just saved loads of time, great job!\n";
     }
 

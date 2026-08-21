@@ -1112,6 +1112,82 @@ void test_min_pixels_filters_a_leaf()
 
 
 // =============================================================================
+// min_pixels_in_patch must CONSERVE TERRAIN
+//
+// The size filter decides which SINKS are reported. It must never make DEM cells
+// disappear from every footprint: a filtered leaf is merged into its nearest
+// surviving ancestor, so the ground it covered is still inside some reported
+// footprint, just attributed to a coarser sink.
+//
+// This is the invariant that phase 5b of
+// docs/plan_docs/depression_hierarchy_fix_plan.md restored. It was violated
+// because a sink whose cells are disconnected -- exactly what happens when a
+// dropped leaf's patch reattaches to an ancestor across a sibling's footprint --
+// had all but one of its parts silently discarded by the polygon tracer.
+//
+// It is pinned here on total covered AREA rather than on any one pit, so it does
+// not depend on the crater geometry that happened to expose the bug. Footprints
+// of different sinks do not overlap (asserted separately), so summing
+// exterior-minus-holes over every record gives the union.
+// =============================================================================
+double total_traced_area(const lsdtt::depression_polygons_result& polygons)
+{
+    double total = 0.0;
+    for (const lsdtt::lsdtt_vector_record& record : polygons.records)
+    {
+        if (!std::holds_alternative<lsdtt::lsdtt_polygon_geom>(record.geometry))
+            continue;
+        total += polygon_area(
+            std::get<lsdtt::lsdtt_polygon_geom>(record.geometry));
+    }
+    return total;
+}
+
+void test_min_pixels_conserves_terrain()
+{
+    const nested_field_fixture fx = make_nested_crater_field();
+
+    lsdtt::sink_detection_options all_opts;
+    all_opts.leaves_only = false;
+
+    const std::vector<lsdtt::sink_candidate> all =
+        lsdtt::find_internal_drainage(fx.dem, all_opts);
+
+    // The smallest leaf, and a threshold that removes it and nothing else.
+    const lsdtt::sink_candidate* smallest = nullptr;
+    for (const lsdtt::sink_candidate& s : all)
+    {
+        if (s.hierarchy_level != 0) continue;
+        if (smallest == nullptr || s.n_pixels < smallest->n_pixels) smallest = &s;
+    }
+
+    check("min_pixels_conserves_terrain: fixture has a leaf to filter",
+          smallest != nullptr);
+    if (smallest == nullptr) return;
+
+    lsdtt::sink_detection_options filtered = all_opts;
+    filtered.min_pixels_in_patch = smallest->n_pixels + 1;
+
+    const std::vector<lsdtt::sink_candidate> kept =
+        lsdtt::find_internal_drainage(fx.dem, filtered);
+
+    const double area_all =
+        total_traced_area(sink_depressions_to_polygons(fx.dem, all, all_opts));
+    const double area_kept =
+        total_traced_area(sink_depressions_to_polygons(fx.dem, kept, filtered));
+
+    // Areas are traced along cell boundaries, so equality is exact up to the
+    // accumulation of many shoelace terms; a relative bound well below one cell
+    // is the right tolerance.
+    const double tol = 1.0e-9 * std::max(area_all, 1.0);
+
+    check("min_pixels_conserves_terrain: filtering a leaf covers the same ground",
+          std::fabs(area_all - area_kept) <= tol,
+          "unfiltered " + std::to_string(area_all) +
+              " m2 vs filtered " + std::to_string(area_kept) + " m2");
+}
+
+// =============================================================================
 // Section B: the legacy fill-difference path
 // =============================================================================
 
@@ -2698,6 +2774,7 @@ int main(int argc, char** argv)
         std::cout << "\n--- depression footprints ---\n";
         test_depression_polygon_join();
         test_nested_sink_may_have_no_polygon();
+        test_min_pixels_conserves_terrain();
 
         // One detection run feeds every round-trip test, which is the point:
         // the .csv and the .fgb written from THE SAME run must parse back to
