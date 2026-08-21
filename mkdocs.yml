@@ -67,6 +67,7 @@ nav:
       - Valley centreline: cli_reference/cli_reference_lsdtt_valley_centreline.md
       - Basin extraction: cli_reference/cli_reference_lsdtt_basin_extraction.md
       - Basin statistics: cli_reference/cli_reference_lsdtt_basin_stats.md
+      - Internal drainage: cli_reference/cli_reference_lsdtt_internal_drainage.md
     - Channel network analysis:
       - Channel network analysis: cli_reference/cli_reference_lsdtt_channel_network_analysis.md
       - Chi analysis: cli_reference/cli_reference_lsdtt_chi_analysis.md

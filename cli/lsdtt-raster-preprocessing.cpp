@@ -77,6 +77,7 @@
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_mosaic_cpu.hpp"
 #include "../src/cpu/lsdtt_depression_hierarchy_cpu.hpp"
+#include "../src/cpu/lsdtt_internal_drainage_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 #include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
@@ -528,6 +529,29 @@ int main(int argc, char* argv[])
         "Example: nnnn = closed basin (no edge is ocean; requires interior pits).",
         "Pit filling", "param", "write_fill_raster"};
  
+    // --- Sink candidates ---
+    //
+    // The same detection lsdtt-internal-drainage runs, surfaced here so a
+    // reviewer can see closed depressions while conditioning a DEM, before
+    // deciding whether any of them should be treated as real sinks. This CLI
+    // only WRITES the candidates; routing into them is lsdtt-internal-drainage's
+    // job.
+    bool_default_map["write_sink_candidates"] = false;
+    help_map["write_sink_candidates"] = {"bool","false",
+        "Write a point layer of candidate internally drained sinks.",
+        "Finds closed depressions that never drain to the DEM edge and writes "
+        "them for review in a GIS. Pass the reviewed file to "
+        "lsdtt-internal-drainage to route flow into the accepted sinks. Output "
+        "format follows write_vector_format.",
+        "Sink candidates", "switch", ""};
+
+    int_default_map["sink_candidate_min_pixels"] = 1;
+    help_map["sink_candidate_min_pixels"] = {"int","1",
+        "Minimum sink size in pixels.",
+        "Closed depressions smaller than this are not reported. Raise it to "
+        "suppress DEM noise on rough surfaces.",
+        "Sink candidates", "param", "write_sink_candidates"};
+
     // --- Depression polygons ---
     bool_default_map["write_depression_polygons"] = false;
     help_map["write_depression_polygons"] = {"bool","false",
@@ -1470,6 +1494,46 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 7 - Depression polygons
     // -------------------------------------------------------------------------
+    if (bf["write_sink_candidates"])
+    {
+        std::cout << "\n--- Sink candidates ---\n";
+
+        try
+        {
+            lsdtt::sink_detection_options sink_opts;
+            // fill_difference, not depression_hierarchy: on a rough surface the
+            // hierarchy's leaves are individually tiny and a pixel threshold can
+            // remove every one of them. See docs/flow_routing.md.
+            sink_opts.method = lsdtt::sink_detection_method::fill_difference;
+            sink_opts.min_pixels_in_patch = ifs["sink_candidate_min_pixels"];
+
+            const std::vector<lsdtt::sink_candidate> sinks =
+                lsdtt::find_internal_drainage(working_dem, sink_opts);
+
+            std::cout << "Found " << sinks.size()
+                      << " candidate sink(s).\n";
+
+            const lsdtt::vector_output_format vec_fmt =
+                lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+            const std::string o =
+                pp.make_output_path("_sink_candidates" +
+                                    lsdtt::output_extension(vec_fmt));
+
+            lsdtt::write_sink_candidates(
+                loader, o, sinks, working_dem.get_meta(),
+                lsdtt::resolve_sink_io_format(o, "same_as_extension"));
+
+            std::cout << "Review these in a GIS, delete the ones that are not "
+                         "real sinks, then pass the saved file to "
+                         "lsdtt-internal-drainage as sink_candidate_fname.\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: sink candidate detection failed: "
+                      << e.what() << "\n";
+        }
+    }
+
     if (bf["write_depression_polygons"])
     {
         std::cout << "\n--- Depression polygons ---\n";
