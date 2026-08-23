@@ -7,11 +7,16 @@ the two.
 
 WHY BOTH REFERENCES
 
-RichDEM's D8 selects the neighbour with the LOWEST ELEVATION with a
-diagonal-preferring tie-break, not the steepest DESCENT (drop / distance). On a
-planar ramp with a known analytic answer it routes diagonally and gets the
-accumulation wrong. It is therefore kept as a *report-only* reference for
-accumulation.
+RichDEM's D8 selects the neighbour with the LOWEST ELEVATION, not the steepest
+DESCENT (drop / distance). Wherever the lowest neighbour is diagonal but a
+cardinal neighbour is steeper, the two rules disagree, so its accumulation is
+kept as a *report-only* reference.
+
+(Corrected 2026-08-21: this previously said RichDEM has a diagonal-preferring
+tie-break and fails a planar ramp. Both are wrong -- its tie-break prefers
+cardinals, and on a 50x50 north-south ramp it returns cardinal south for all
+2304 interior cells. The divergence comes from the selection rule and needs no
+tie at all. See docs/testing_and_benchmarking.md 5.1.)
 
 TopoToolbox computes true steepest descent -- `libtopotoolbox/src/flow_routing.c`
 divides the drop by a chamfer distance (1 for cardinals, sqrt(2) for diagonals)

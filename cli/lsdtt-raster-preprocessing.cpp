@@ -77,9 +77,12 @@
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_mosaic_cpu.hpp"
 #include "../src/cpu/lsdtt_depression_hierarchy_cpu.hpp"
+#include "../src/cpu/lsdtt_internal_drainage_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 #include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
+
+#include <filesystem>
 
 
 static const std::string k_version  = "0.2.0";
@@ -528,6 +531,61 @@ int main(int argc, char* argv[])
         "Example: nnnn = closed basin (no edge is ocean; requires interior pits).",
         "Pit filling", "param", "write_fill_raster"};
  
+    // --- Pixel replacement ---
+    //
+    // A CSV-driven per-pixel edit: set named cells to arbitrary values. The
+    // raster-driven equivalent is apply_binary_mask; this covers the case where
+    // you know the coordinates of a handful of bad cells and want to blank or
+    // correct them without building a mask raster.
+    string_default_map["replace_pixels_from_csv"] = "";
+    help_map["replace_pixels_from_csv"] = {"string","",
+        "Point file listing pixels to overwrite with new values.",
+        "CSV, FlatGeobuf or GeoPackage. Positions come from geometry, or from "
+        "latitude/longitude, or from easting/northing in the raster CRS. The "
+        "replacement value is read from the column named by "
+        "replace_pixels_value_field. Setting a cell to the raster's nodata value "
+        "marks it nodata rather than merely writing the number. Applied before "
+        "breaching, filling and nodata filling.",
+        "Pixel replacement", "param", ""};
+
+    bool_default_map["write_replaced_pixels_raster"] = false;
+    help_map["write_replaced_pixels_raster"] = {"bool","false",
+        "Write the DEM after pixel replacement.",
+        "Without this the corrected DEM is still used by every later stage, but "
+        "is not written on its own. Set it when the corrected DEM is the thing "
+        "you want.",
+        "Pixel replacement", "switch", "replace_pixels_from_csv"};
+
+    string_default_map["replace_pixels_value_field"] = "value";
+    help_map["replace_pixels_value_field"] = {"string","value",
+        "Column holding the replacement value.",
+        "Named field in replace_pixels_from_csv giving the new value for each "
+        "listed pixel.",
+        "Pixel replacement", "param", "replace_pixels_from_csv"};
+
+    // --- Sink candidates ---
+    //
+    // The same detection lsdtt-internal-drainage runs, surfaced here so a
+    // reviewer can see closed depressions while conditioning a DEM, before
+    // deciding whether any of them should be treated as real sinks. This CLI
+    // only WRITES the candidates; routing into them is lsdtt-internal-drainage's
+    // job.
+    bool_default_map["write_sink_candidates"] = false;
+    help_map["write_sink_candidates"] = {"bool","false",
+        "Write a point layer of candidate internally drained sinks.",
+        "Finds closed depressions that never drain to the DEM edge and writes "
+        "them for review in a GIS. Pass the reviewed file to "
+        "lsdtt-internal-drainage to route flow into the accepted sinks. Output "
+        "format follows write_vector_format.",
+        "Sink candidates", "switch", ""};
+
+    int_default_map["sink_candidate_min_pixels"] = 1;
+    help_map["sink_candidate_min_pixels"] = {"int","1",
+        "Minimum sink size in pixels.",
+        "Closed depressions smaller than this are not reported. Raise it to "
+        "suppress DEM noise on rough surfaces.",
+        "Sink candidates", "param", "write_sink_candidates"};
+
     // --- Depression polygons ---
     bool_default_map["write_depression_polygons"] = false;
     help_map["write_depression_polygons"] = {"bool","false",
@@ -1199,6 +1257,93 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Step 2c - Pixel replacement
+    //
+    // Runs before breaching, filling and nodata filling: this is a correction to
+    // the source data, and anything downstream should see the corrected DEM.
+    // -------------------------------------------------------------------------
+    if (!sf["replace_pixels_from_csv"].empty())
+    {
+        std::cout << "\n--- Pixel replacement ---\n";
+
+        const std::filesystem::path given(sf["replace_pixels_from_csv"]);
+        const std::string points_path =
+            given.is_absolute() ? sf["replace_pixels_from_csv"]
+                                : pp.get_read_path() + sf["replace_pixels_from_csv"];
+
+        const std::string value_field = sf["replace_pixels_value_field"];
+
+        const lsdtt::lsdtt_point_attribute_read_result points =
+            lsdtt::load_point_layer_with_attributes(
+                points_path, dem.get_meta(), std::vector<std::string>{});
+
+        lsdtt::lsdtt_array2d_f&  data = dem.get_data_array();
+        lsdtt::lsdtt_array2d_u8& mask = dem.get_mask_array();
+
+        const double nodata = dem.get_meta().no_data_value;
+
+        std::size_t replaced = 0, blanked = 0;
+        std::size_t outside = 0, no_value = 0;
+
+        for (const lsdtt::lsdtt_input_point_with_attributes& record :
+             points.records)
+        {
+            if (record.point.status != lsdtt::lsdtt_point_input_status::success)
+            {
+                ++outside;
+                continue;
+            }
+
+            const auto it = record.attributes.find(value_field);
+            double new_value = 0.0;
+            if (it == record.attributes.end() ||
+                !it->second.as_double(new_value))
+            {
+                ++no_value;
+                continue;
+            }
+
+            const int r = record.point.row;
+            const int c = record.point.col;
+
+            // A value equal to the raster's nodata must also clear the validity
+            // mask, or the cell would carry the nodata number while still being
+            // treated as data by everything downstream.
+            if (new_value == nodata)
+            {
+                data(r, c) = static_cast<float>(nodata);
+                mask(r, c) = 0u;
+                ++blanked;
+            }
+            else
+            {
+                data(r, c) = static_cast<float>(new_value);
+                mask(r, c) = 1u;
+                ++replaced;
+            }
+        }
+
+        std::cout << "Replaced " << replaced << " pixel(s); blanked "
+                  << blanked << " to nodata.\n";
+
+        if (outside > 0)
+            std::cerr << "Warning: " << outside
+                      << " listed pixel(s) fall outside the raster and were "
+                         "skipped.\n";
+        if (no_value > 0)
+            std::cerr << "Warning: " << no_value
+                      << " listed pixel(s) had no readable '" << value_field
+                      << "' value and were skipped.\n";
+
+        if (bf["write_replaced_pixels_raster"])
+        {
+            const std::string o = pp.make_output_path("_pixels_replaced.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(dem.get_data(), dem.get_meta(), o, out_fmt);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Step 3 - Interior nodata filling
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu nodata_filled_dem = dem;
@@ -1470,6 +1615,46 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 7 - Depression polygons
     // -------------------------------------------------------------------------
+    if (bf["write_sink_candidates"])
+    {
+        std::cout << "\n--- Sink candidates ---\n";
+
+        try
+        {
+            lsdtt::sink_detection_options sink_opts;
+            // fill_difference, not depression_hierarchy: on a rough surface the
+            // hierarchy's leaves are individually tiny and a pixel threshold can
+            // remove every one of them. See docs/flow_routing.md.
+            sink_opts.method = lsdtt::sink_detection_method::fill_difference;
+            sink_opts.min_pixels_in_patch = ifs["sink_candidate_min_pixels"];
+
+            const std::vector<lsdtt::sink_candidate> sinks =
+                lsdtt::find_internal_drainage(working_dem, sink_opts);
+
+            std::cout << "Found " << sinks.size()
+                      << " candidate sink(s).\n";
+
+            const lsdtt::vector_output_format vec_fmt =
+                lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+            const std::string o =
+                pp.make_output_path("_sink_candidates" +
+                                    lsdtt::output_extension(vec_fmt));
+
+            lsdtt::write_sink_candidates(
+                loader, o, sinks, working_dem.get_meta(),
+                lsdtt::resolve_sink_io_format(o, "same_as_extension"));
+
+            std::cout << "Review these in a GIS, delete the ones that are not "
+                         "real sinks, then pass the saved file to "
+                         "lsdtt-internal-drainage as sink_candidate_fname.\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: sink candidate detection failed: "
+                      << e.what() << "\n";
+        }
+    }
+
     if (bf["write_depression_polygons"])
     {
         std::cout << "\n--- Depression polygons ---\n";

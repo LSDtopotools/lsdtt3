@@ -46,9 +46,13 @@ REPORT_ONLY = {
 # subprocess so that a missing optional package is a clean skip rather than an
 # import failure in the driver.
 #
-# richdem     -- valid for depression handling; NOT valid for D8 flow direction
-#                (it uses lowest-neighbour with a diagonal-preferring tie-break
-#                rather than steepest descent, and fails a planar-ramp oracle).
+# richdem     -- valid for depression handling; NOT valid for D8 flow direction.
+#                It selects the LOWEST-ELEVATION neighbour rather than the
+#                steepest descent (drop / distance), so it takes a diagonal
+#                wherever the diagonal is lower but a cardinal is steeper.
+#                (Corrected 2026-08-21: its tie-break prefers CARDINALS, and it
+#                passes a planar-ramp oracle -- the divergence is the selection
+#                rule, not ties. See docs/testing_and_benchmarking.md 5.1.)
 # topotoolbox -- true steepest descent, same rule as lsdtt3; the reference that
 #                accumulation comparisons are actually asserted against.
 #

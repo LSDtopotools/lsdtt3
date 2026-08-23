@@ -1189,8 +1189,14 @@ void lsdtt_param_parser::print_help(
         // group/role/parent columns are appended so readers of the previous
         // five-column format keep working; entries without the grouped
         // metadata leave those columns empty.
+        // Every field goes through csv_quote(). Descriptions and guidance
+        // routinely contain commas, and writing them raw produced a file that
+        // no CSV reader could parse: the group column picked up sentence
+        // fragments and every column after it shifted. The sibling writer above
+        // already quoted; this one did not.
         csv << "name,type,default,description,guidance,group,role,parent\n";
-        csv << "version," << version << ",citation," << citation
+        csv << "version," << csv_quote(version) << ",citation,"
+            << csv_quote(citation)
             << ",see code output for additional algorithm citations,,,\n";
 
         for (const auto& key : all_keys)
@@ -1198,17 +1204,20 @@ void lsdtt_param_parser::print_help(
             auto it = help_map.find(key);
             if (it == help_map.end() || it->second.size() < 4)
             {
-                csv << key << ",not available,not available,"
+                csv << csv_quote(key) << ",not available,not available,"
                     << "not available,not available,,,\n";
             }
             else
             {
                 const auto& h = it->second;
-                csv << key << "," << h[0] << "," << h[1] << ","
-                    << h[2] << "," << h[3] << ","
-                    << lsdtt_help_registry::field(h, 4) << ","
-                    << lsdtt_help_registry::field(h, 5) << ","
-                    << lsdtt_help_registry::field(h, 6) << "\n";
+                csv << csv_quote(key) << ","
+                    << csv_quote(h[0]) << ","
+                    << csv_quote(h[1]) << ","
+                    << csv_quote(h[2]) << ","
+                    << csv_quote(h[3]) << ","
+                    << csv_quote(lsdtt_help_registry::field(h, 4)) << ","
+                    << csv_quote(lsdtt_help_registry::field(h, 5)) << ","
+                    << csv_quote(lsdtt_help_registry::field(h, 6)) << "\n";
             }
         }
         csv.close();

@@ -94,6 +94,7 @@ public:
     const lsdtt_array2d_f&  get_data_array() const { return data_; }
     lsdtt_array2d_f&        get_data_array()       { return data_; }
     const lsdtt_array2d_u8& get_mask_array() const { return mask_; }
+    lsdtt_array2d_u8&       get_mask_array()       { return mask_; }
 
     // -------------------------------------------------------------------------
     // std::vector accessors - zero-copy into the array2d-owned vector

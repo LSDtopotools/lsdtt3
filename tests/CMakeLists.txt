@@ -324,6 +324,20 @@ add_lsdtt_cli_smoke_test(
     tiny_fill.tif
 )
 
+# replace_pixels_from_csv: sets listed cells to new values, and a value equal to
+# the raster nodata must also clear the validity mask rather than merely writing
+# the number. The fixture covers all three outcomes -- a real replacement, a
+# blank-to-nodata, and a point off the grid, which must warn and be skipped
+# rather than fail the run.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_replace_pixels
+    lsdtt-raster-preprocessing
+    raster_preprocessing_replace_pixels.param.in
+    tiny_replaced_pixels_replaced.tif
+    --stdout-contains "Replaced 1 pixel(s)\; blanked 1 to nodata."
+    --stderr-contains "1 listed pixel(s) fall outside the raster"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_raster_preprocessing_tif
     lsdtt-raster-preprocessing

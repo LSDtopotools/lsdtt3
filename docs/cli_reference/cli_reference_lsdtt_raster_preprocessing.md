@@ -135,6 +135,47 @@ Output: `<write_fname>_polygon_clipped.tif`
 
 ---
 
+## Step 2d: Pixel replacement
+
+Overwrite individual cells with new values, listed in a point file. Use it to
+blank a handful of known-bad pixels, or to correct spot elevations, without
+building a mask raster — `apply_binary_mask` is the raster-driven equivalent.
+
+Runs **before** breaching, filling and interior nodata filling: it is a
+correction to the source data, so everything downstream sees the corrected DEM.
+The corrected DEM is only written on its own if you ask for it.
+
+Output: `<write_fname>_pixels_replaced.tif` (with `write_replaced_pixels_raster`)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `replace_pixels_from_csv` | string | _(empty)_ | Point file listing pixels to overwrite. CSV, FlatGeobuf or GeoPackage. Empty disables the step. |
+| `replace_pixels_value_field` | string | `value` | Name of the column holding each pixel's new value. |
+| `write_replaced_pixels_raster` | bool | `false` | Write the DEM after replacement. Without it the corrected DEM still feeds every later stage but is not written separately. |
+
+**Positions** come from the geometry for vector formats. For CSV, either
+`latitude` / `longitude` (read as EPSG:4326) or `easting` / `northing` — `x` and
+`y` also work — read as being in the raster's own coordinate system.
+
+**Setting a cell to the raster's nodata value blanks it properly**: the cell is
+marked invalid, not merely given the nodata number. That distinction matters,
+because a cell holding `-9999` while still flagged as valid data would be treated
+as a very deep pit by every routing routine downstream.
+
+Pixels that fall outside the raster, or whose value column cannot be read, are
+**skipped with a warning** rather than failing the run — so one bad row in a long
+list does not cost you the whole job.
+
+Example CSV:
+
+```
+easting,northing,value
+-121503,-2502711,-99999
+ 486210,  4321870,  1204.5
+```
+
+---
+
 ## Step 3: Interior nodata fill
 
 Fill nodata pixels that are completely surrounded by valid data (voids that do not touch the raster edge). Recommended before clipping to a rectangle.

@@ -940,14 +940,107 @@ void test_order_status_and_dataset_throws(const lsdtt::lsdtt_raster_meta& meta,
         out << "sink_id,area_m2\n1,10.0\n";
     }
 
+    // The message names BOTH accepted positionings and the offending file, so a
+    // user whose CSV is in the raster's CRS is told what to do rather than being
+    // pushed into converting a file that was already usable.
     check_throws_exact(
-        "dataset: a CSV without latitude/longitude columns throws",
+        "dataset: a CSV with neither latitude/longitude nor easting/northing throws",
         [&]() {
             (void)lsdtt::load_point_layer_with_attributes(
                 bad_csv, meta, std::vector<std::string>{});
         },
         "lsdtt_point_input: CSV input must contain columns named 'latitude' "
-        "and 'longitude'");
+        "and 'longitude', or 'easting' and 'northing' (or 'x' and 'y') if the "
+        "points are already in the raster's coordinate system: " + bad_csv);
+}
+
+// =============================================================================
+// A CSV positioned in the RASTER'S OWN CRS
+//
+// Projected point files are at least as common as geographic ones: anything
+// exported from a GIS beside the DEM carries easting and northing. Requiring
+// latitude/longitude made users convert a file that was already in the right
+// coordinate system -- and the OGR path had accepted easting/northing all along,
+// so CSV was the odd one out.
+//
+// The three checks below are the contract: projected columns position a point
+// identically to the lat/long form, the aliases x/y work, and latitude/longitude
+// still wins when a file carries both.
+// =============================================================================
+void test_csv_in_raster_crs(const lsdtt::lsdtt_raster_meta& meta,
+                            const std::string&              dir)
+{
+    const lon_lat a = raster_xy_to_lon_lat(meta, k_ax, k_ay);
+
+    // Same point, written three ways.
+    const std::string ll_csv   = dir + "/crs_latlon.csv";
+    const std::string en_csv   = dir + "/crs_easting.csv";
+    const std::string xy_csv   = dir + "/crs_xy.csv";
+    const std::string both_csv = dir + "/crs_both.csv";
+
+    {
+        std::ofstream out(ll_csv);
+        out << std::setprecision(15) << "latitude,longitude,tag\n"
+            << a.lat << "," << a.lon << ",one\n";
+    }
+    {
+        std::ofstream out(en_csv);
+        out << std::setprecision(15) << "easting,northing,tag\n"
+            << k_ax << "," << k_ay << ",one\n";
+    }
+    {
+        std::ofstream out(xy_csv);
+        out << std::setprecision(15) << "x,y,tag\n"
+            << k_ax << "," << k_ay << ",one\n";
+    }
+    {
+        // Both present: latitude/longitude must win. The easting/northing here
+        // deliberately point somewhere else, so a wrong choice is visible.
+        std::ofstream out(both_csv);
+        out << std::setprecision(15) << "latitude,longitude,easting,northing,tag\n"
+            << a.lat << "," << a.lon << "," << k_bx << "," << k_by << ",one\n";
+    }
+
+    const auto load = [&](const std::string& path) {
+        return lsdtt::load_point_layer_with_attributes(
+            path, meta, std::vector<std::string>{});
+    };
+
+    const auto ll   = load(ll_csv);
+    const auto en   = load(en_csv);
+    const auto xy   = load(xy_csv);
+    const auto both = load(both_csv);
+
+    const bool have = ll.records.size() == 1 && en.records.size() == 1 &&
+                      xy.records.size() == 1 && both.records.size() == 1;
+
+    check("raster-CRS CSV: every variant reads one record", have,
+          "sizes " + std::to_string(ll.records.size()) + "/" +
+              std::to_string(en.records.size()) + "/" +
+              std::to_string(xy.records.size()) + "/" +
+              std::to_string(both.records.size()));
+    if (!have) return;
+
+    const auto& p_ll   = ll.records[0].point;
+    const auto& p_en   = en.records[0].point;
+    const auto& p_xy   = xy.records[0].point;
+    const auto& p_both = both.records[0].point;
+
+    check("raster-CRS CSV: easting/northing lands on the same pixel as lat/long",
+          p_en.row == p_ll.row && p_en.col == p_ll.col,
+          "easting/northing (" + std::to_string(p_en.row) + "," +
+              std::to_string(p_en.col) + ") vs lat/long (" +
+              std::to_string(p_ll.row) + "," + std::to_string(p_ll.col) + ")");
+
+    check("raster-CRS CSV: x/y are accepted as aliases",
+          p_xy.row == p_ll.row && p_xy.col == p_ll.col,
+          "x/y (" + std::to_string(p_xy.row) + "," + std::to_string(p_xy.col) + ")");
+
+    check("raster-CRS CSV: latitude/longitude wins when a file carries both",
+          p_both.row == p_ll.row && p_both.col == p_ll.col,
+          "both-columns file landed at (" + std::to_string(p_both.row) + "," +
+              std::to_string(p_both.col) + "), lat/long is (" +
+              std::to_string(p_ll.row) + "," + std::to_string(p_ll.col) + ")");
 }
 
 // =============================================================================
@@ -1145,6 +1238,7 @@ int main(int argc, char** argv)
         test_cross_format_equivalence(meta, fgb_path, gpkg_path, csv_path);
         test_missing_field_is_absent_not_a_throw(meta, fgb_path, csv_path);
         test_order_status_and_dataset_throws(meta, injection_path, output_dir);
+        test_csv_in_raster_crs(meta, output_dir);
 
         std::cout << "\n--- typed attribute accessors ---\n";
         test_as_bool_spellings();

@@ -5,6 +5,60 @@ method is for, and where `lsdtt3` deliberately differs from common references.
 
 ---
 
+## Graph vocabulary used on this page
+
+Flow routing is graph work (in the mathematical sense) work, and to read this section you will need to know what some terms mean. 
+They are defined once here.
+
+- **Node and edge.** Each valid DEM cell is a **node**. An **edge** points from a
+  cell to a cell it sends water to. "Receiver" means the cell downstream;
+  "donor" means a cell upstream that sends water in.
+
+- **Tree.** A graph where every node has **exactly one** outgoing edge, and
+  following those edges never returns you to where you started. D8 produces a
+  tree (strictly, a forest - one tree per outlet). Because each cell has one
+  receiver, the set of cells draining to a point is a clean, non-overlapping
+  group, which is what makes basins and drainage area exact.
+
+- **DAG - directed acyclic graph.** "Directed" because edges have a direction;
+  "acyclic" because you can never go round in a circle. A DAG relaxes the tree
+  rule: a node may have **several** outgoing edges. D-infinity and MFD produce
+  DAGs, because a cell splits its water between two or more receivers. Every
+  tree is a DAG; not every DAG is a tree. The difference is why the D8 flow routing
+  routines are numerically different from routines using multiple flow directions. 
+
+- **Topological order.** An ordering of the nodes in which every node appears
+  *after* all the nodes that feed into it. Any DAG has one; a graph with a cycle
+  has none. It is what lets flow accumulation be computed in a single sweep:
+  when you reach a cell, everything upstream of it is already finished. Many of the 
+  big gains in computational efficiency come from this, as compare to brute force 
+  searches, which were the standard method in DEM processing prior to the introduction
+  of graph theory.
+
+- **CSR - compressed sparse row.** A compact way to store a graph in which each
+  node has a variable number of edges, using two flat arrays instead of a list
+  per node: one array holds all the edges end to end, and an *offsets* array
+  records where each node's edges begin. Node `i`'s edges are the slice from
+  `offsets[i]` to `offsets[i+1]`. It is the standard sparse-matrix layout, and it
+  is used here because a D-infinity or MFD cell may have one to eight receivers.
+
+- **DFS - depth-first search.** Traversing a graph by following one branch as far
+  as it goes before backtracking to the next. A **preorder** DFS records each
+  node when it is first reached. Done from an outlet up a D8 tree, it lists every
+  cell of a drainage basin consecutively - which is what `s_vector` exploits. More on that below.
+
+- **Kahn's algorithm and the "ready queue".** A way of producing a topological
+  order without recursion (Kahn 1962). Count how many donors each node is still
+  waiting on. Any node waiting on none is **ready**, so put it in a queue. Pop a
+  node, emit it, and decrement its receiver's count; if that receiver's count
+  reaches zero it is now ready, so push it. Repeat until the queue empties. If
+  nodes remain unemitted, the graph had a cycle - which is a useful built-in
+  check on a routing graph that should not have one. Another algorithm that has been
+  around in computer science for a long time but has only recently been injected into 
+  flow routing routines. 
+
+---
+
 ## Routing objects and use-cases
 
 `lsdtt3` has two flow-routing backends:
@@ -24,38 +78,233 @@ In practice:
 
 ---
 
-## Methods and references
+## Provenance of the routing schemes
 
-### D8
+The three routing schemes in `lsdtt3` are not variants of one idea. They are
+three answers to the question of how much a grid cell
+is allowed to know about where its water goes. Each was a response to a specific
+failure of the one before.
 
-- Single-flow-direction routing after O'Callaghan and Mark (1984): each cell
-  routes to one steepest-descending neighbour.
-- `lsdtt3` uses drop divided by distance (cardinal distance = 1, diagonal =
-  sqrt(2)), consistent with the D8 definition.
+### D8 - O'Callaghan and Mark (1984)
 
-### D-infinity
+The original. Each cell sends **all** of its water to exactly one of its eight
+neighbours: the one of steepest descent. The network that results is a forest of
+trees, every cell having one receiver and any number of donors.
 
-- Tarboton (1997) triangular-facet method.
-- Each cell routes to up to two receivers with angle-based partitioning.
+The crucial detail, and the one most often got wrong, is that steepest descent is
+**drop divided by distance**, not lowest elevation. A diagonal neighbour is
+`sqrt(2)` cell-widths away, so it must be `sqrt(2)` times lower to win against a
+cardinal one. `lsdtt3` implements the drop-over-distance rule. Implementations
+that instead pick the lowest neighbour by elevation give systematically different
+networks - see "Why RichDEM's D8 differs" below, which is a worked example of
+exactly this.
 
-### MFD
+D8's weaknesses were understood from the beginning and are geometric, not
+computational:
 
-- Quinn et al. (1991) / Freeman (1991) multiple-flow-direction routing.
-- Flow is partitioned across all downslope neighbours, weighted by
-  `slope^exponent` (`mfd_exponent` in CLI/config).
+- **Flow is quantised to 45 degrees.** A hillslope draining at 20 degrees is
+  represented as alternating cardinal and diagonal steps.
+- **It cannot diverge.** On a ridge, a fan, or any convex surface, real water
+  spreads and D8 cannot. Every cell has one receiver, so upslope area is a set of
+  disjoint trees, and adjacent hillslope cells can be assigned to different
+  basins on the strength of a centimetre of elevation difference.
+- **Flat areas have no defined direction at all**, which is why depression
+  handling (below) is a prerequisite rather than a refinement.
 
-### DAG traversal for multi-receiver routing
+What it buys in exchange is the reason it is still the default: the network is a
+tree, so upslope area is exact and integer, basins partition the DEM cleanly,
+channel extraction and chi analysis are well posed, and the whole thing is
+linear-time (see "Why D8 is effectively O(n)").
 
-- `lsdtt_flowgraph_cpu` builds a receiver DAG and traverses it in topological
-  order (Kahn-style ready queue), following the multi-receiver layout idea used
-  in Anand et al. (2020).
+### MFD - Freeman (1991) and Quinn et al. (1991)
 
-### Hydraulic graph routing (Gailleton lineage)
+Multiple-flow-direction routing attacks the divergence problem directly: a cell
+gives water to **every** downslope neighbour, in proportion to
 
-- `lsdtt_hydraulic_graph_cpu` is a graph-based hydraulic solver that uses a
-  fixed routing graph and updates water state over time.
-- In `lsdtt3` documentation and code comments this is explicitly credited as
-  based on Gailleton et al. (2024) concepts.
+    weight_i  proportional to  (tan beta_i)^p
+
+where `tan beta_i` is the slope to neighbour `i` and `p` is a tuning exponent
+(`mfd_exponent`). Freeman and Quinn et al. arrived at the same formulation
+independently in the same year, from different directions - Freeman from
+catchment-area computation, Quinn et al. from TOPMODEL-style distributed
+hydrology, where the D8 assumption that a hillslope drains along a single line
+made the wetness index behave badly. MFD looks much more like a finite difference approach 
+than a flow routing approach. 
+
+The exponent is the whole argument. `p = 1` spreads flow broadly and is defensible
+on hillslopes; large `p` concentrates flow and converges toward D8 in the limit.
+There is no physically derived value, which is MFD's central weakness: the answer
+depends on a parameter chosen by the user.
+
+MFD also gives up the tree. Upslope "area" becomes a fractional, overlapping
+quantity - a cell can be partly in several basins - so basin partitioning,
+chi analysis, and O(1) upslope queries are no longer available in the same form.
+
+### D-infinity - Tarboton (1997)
+
+Tarboton's method lies between these end members. The eight neighbours define
+eight triangular facets around the central cell; the steepest downslope direction
+is computed **on those facets** as a continuous angle, not snapped to a
+neighbour. Flow is then split between the **two** neighbours that bracket that
+angle, in proportion to how close the angle is to each.
+
+This keeps most of what MFD was after - flow is no longer quantised to 45
+degrees, and divergence on a convex surface is representable - while limiting
+dispersion to two receivers rather than up to eight. It also removes MFD's free
+parameter: the partition is fixed by the geometry.
+
+The price is that it is still not a tree, so the same structural limits apply as
+for MFD, and the facet computation is more expensive per cell.
+
+### How to choose
+
+| | D8 | D-infinity | MFD |
+|---|---|---|---|
+| receivers per cell | 1 | 1-2 | up to 8 |
+| flow direction | 45-degree steps | continuous | continuous, dispersed |
+| free parameter | none | none | `mfd_exponent` |
+| structure | tree | DAG | DAG |
+| exact basins, chi, O(1) upslope | yes | no | no |
+
+Use D8 when the tree structure is the point: basin delineation, channel networks,
+chi analysis, most cosmogenic work. Use D-infinity or MFD when hillslope
+divergence matters and you do not need a partition - hydrological wetness indices,
+sediment or contaminant dispersal, debris-flow inundation.
+
+### How the D8 graph and the multi-receiver graph differ
+
+The difference between D8 and D-infinity/MFD is not a tuning choice; it changes
+the *kind of graph* the library is holding, and most of the downstream
+consequences follow from that.
+
+| | D8 | D-infinity / MFD |
+|---|---|---|
+| outgoing edges per cell | exactly 1 | 1 to 8 |
+| graph type | **tree** (forest) | **DAG** |
+| edges carry a weight? | no - all the water goes | yes - a fraction per edge |
+| storage | one receiver per cell, a fixed-size array | **CSR**, because the count varies |
+| upslope set of a cell | a disjoint group of cells | overlapping, fractional |
+| drainage area | integer count of cells | a weighted sum |
+| basins | partition the DEM exactly | overlap; no clean partition |
+
+Two practical consequences:
+
+- **You can index a tree in a way you cannot index a DAG.** In a tree, the cells
+  upslope of a point form one contiguous block under a preorder DFS, so
+  membership is an interval test - this is `s_vector`, below. In a DAG a cell can
+  be partly upslope of two different points at once, so no such interval exists.
+- **Storage must be variable-width for a DAG.** One receiver per cell fits a
+  plain array; one-to-eight weighted receivers per cell is exactly the case CSR
+  exists for.
+
+`lsdtt_flowgraph_cpu` builds the receiver DAG in CSR form and walks it in
+topological order using a Kahn ready queue (see the vocabulary above), following
+the multi-receiver linear-layout idea in Anand et al. (2020).
+
+### Hydraulic graph routing (GraphFlood lineage)
+
+`lsdtt_hydraulic_graph_cpu` is a graph-based hydraulic solver: rather than
+recomputing routing each step, it fixes the routing graph and advances water
+depth over it through time. This is the approach of **GraphFlood**
+(Gailleton et al., 2024), which approximates 2-D shallow-water hydrodynamics by
+solving for a steady water surface on the flow graph, at a small fraction of the
+cost of a full hydrodynamic model. `lsdtt3`'s implementation is credited to those
+concepts in the code comments.
+
+The relevance to this page is that GraphFlood consumes a **multi-receiver** graph:
+water spreading across a floodplain is precisely the situation D8's single
+receiver cannot represent, so the DAG is not an optional refinement here but a
+prerequisite. Much of the logic behind our MFD algorithms stems from the Anand paper and 
+the Gailleton et al. 2024 papers. 
+
+---
+
+## Braun and Willett: graph theory enters the field
+
+Braun and Willett (2013) is not a routing method, and it is worth being precise
+about what it did contribute, because the vocabulary it introduced is now
+everywhere in this codebase.
+
+**The problem it solved.** Landscape evolution models integrate the stream power
+law, in which a cell's incision depends on its own elevation and on the elevation
+of the cell it drains to. Solved explicitly, the timestep is limited by the
+Courant condition and shrinks as resolution rises. Solved implicitly, you appear
+to need a large sparse linear solve every step.
+
+**The observation.** Under D8 the drainage network is a **directed tree**: every
+cell has exactly one receiver, so the dependency graph of the implicit update is
+a tree, not a general sparse matrix. If you process cells in an order where every
+cell comes *after* the cell it drains into, each update needs only a value already
+computed. No matrix, no iteration - one sweep, `O(n)`, and unconditionally stable.
+
+**The machinery.** Braun and Willett laid out how to build that order in linear
+time, and their construction is a textbook graph algorithm dressed in
+geomorphological clothes:
+
+1. count donors per cell (`NDonorsVector`);
+2. prefix-sum those counts into offsets (`DeltaVector`) and fill a flat donor
+   list (`DonorStackVector`) - this is a **counting sort into CSR adjacency**,
+   exactly the layout a sparse-matrix library would use;
+3. depth-first traverse from each base level, pushing cells onto a stack
+   (`SVector`) - a **preorder DFS**, giving both the update order and, as a
+   by-product, contiguous upslope intervals.
+
+Those four array names appear verbatim in LSDTopoTools2's `LSDFlowInfo`, which
+implements the paper directly.
+
+**What lsdtt3 kept and what it changed.** The *idea* - order the cells so that
+donors precede receivers, then sweep once - is retained and is the basis of
+every accumulation in the library. The *construction* is different:
+
+- `lsdtt3` orders cells with **Kahn's algorithm** (Kahn 1962) on a donor
+  *count*, not on a stored donor list. Every cell holds a single number: how many
+  donors it is still waiting for. Cells waiting for none are emitted, and each
+  time a cell is emitted its receiver's count drops by one; when a receiver
+  reaches zero it becomes ready in turn.
+
+  **Why change it?** Braun and Willett's construction has to know, for each cell,
+  *which* cells drain into it, so it builds the full donor list (the CSR arrays).
+  Kahn's algorithm only ever needs to know *how many* are left. That difference
+  is worth three things:
+
+  - **Memory.** A D8 cell has at most 8 donors, so the count fits in one byte.
+    The donor list it replaces costs 12 bytes per cell (`NDonorsVector` +
+    `DeltaVector` + `DonorStackVector`), and building it needs a second pass and
+    a temporary. See the memory section below.
+  - **Cycle detection for free.** If the queue empties while cells remain
+    unemitted, the receiver graph contains a cycle. A recursive DFS would have to
+    be instrumented to notice; here it falls out of the loop condition, and
+    `lsdtt3` uses it to mark the object non-acyclic rather than producing a
+    silently wrong ordering.
+  - **No recursion.** The DFS formulation recurses to the depth of the longest
+    flow path, which on a large DEM can be tens of thousands of cells - a real
+    stack-overflow risk. Kahn's algorithm is a flat loop over a queue.
+
+  The trade is that Kahn's order is breadth-like rather than depth-first, so it
+  does **not** produce contiguous upslope blocks as a by-product. That is why
+  `s_vector` is a separate, optional structure in `lsdtt3` rather than something
+  the ordering hands you for nothing.
+- The preorder-DFS product is kept, but as an **optional** structure
+  (`s_vector`), built only when O(1) upslope queries are actually wanted. 
+  Note that for most geomorphology operations you will want to retain the `s_vector` 
+  so the "savings" gained from leaving it out are a bit notional.  
+
+**What "owing a debt" to the paper means here.** `lsdtt3` does not run Braun and
+Willett's algorithm: none of their four arrays exists in the code. However, 
+the code in lsdtt3 has legacy from LSDTopoTools2 and LSDTopoTools, which 
+were direct implementations of the Brain and Willet algorithm, coded very shortly 
+after the lead developer (SMM) was blown away by Jean's presentation at EGU in 2013. 
+What lsdtt3 takes from Braun and Willet is the *framing*: that a D8 drainage network is a directed tree, that
+the useful question is what order to visit its cells in, and that the right order
+turns an apparently expensive implicit calculation into one linear sweep. That
+insight is now so embedded in the field that it is easy to forget it was an
+argument someone had to make. Every accumulation in this library is a single pass
+over a topological order because of it, even though the order is built by a
+different algorithm. 
+
+The paper is therefore cited for the idea, not the implementation - and the
+shared vocabulary in LSDTopoTools2 (`SVector`, `DeltaVector` and the rest) is a
+direct trace of the older code following the paper array for array.
 
 ---
 
@@ -106,7 +355,81 @@ contiguous interval index is not available in the same form.
   older 32-bit-indexed designs.
 
 See `docs/overview.md` (Memory use and Very large DEMs) for measured and derived
-capacity/memory discussion.
+capacity/memory discussion. The use of a 64 bit integer has a memory cost, but `lsdtt3`
+is aimed at processing very large DEMs, so we don't want to run out of indices!! 
+
+---
+
+## Memory: what lsdtt3 changed from LSDTopoTools2
+
+Both libraries build the same D8 topology. They store it very differently, and
+the difference is mostly a matter of what is **kept** versus what is **recomputed
+or never needed**.
+
+Writing `n` for grid cells and `m` for valid (non-nodata) cells:
+
+**LSDTopoTools2** (`LSDFlowInfo`, protected members):
+
+| structure | type | extent | bytes |
+|---|---|---|---|
+| `NodeIndex` | `Array2D<int>` | n | 4n |
+| `FlowDirection` | `Array2D<int>` | n | 4n |
+| `FlowLengthCode` | `Array2D<int>` | n | 4n |
+| `RowIndex`, `ColIndex` | `vector<int>` x2 | m | 8m |
+| `NDonorsVector`, `DeltaVector`, `DonorStackVector` | `vector<int>` x3 | m | 12m |
+| `ReceiverVector` | `vector<int>` | m | 4m |
+| `SVector`, `SVectorIndex`, `NContributingNodes`, `BLBasinVector` | `vector<int>` x4 | m | 16m |
+
+roughly **12n + 40m bytes**, or about **52 bytes per cell** when most cells are
+valid.
+
+**lsdtt3** (`lsdtt_flowinfo`, private members):
+
+| structure | type | extent | bytes | when |
+|---|---|---|---|---|
+| `mask_` | `uint8` | n | 1n | always |
+| `receiver_` | `int64` | n | 8n | always |
+| `receiver_dir_` | `uint8` | n | 1n | always |
+| `donor_count_` | `uint8` | n | 1n | always |
+| `topological_order_` | `int64` | m | 8m | released if not requested |
+| `s_vector_` + `s_vector_start_` + `s_vector_size_` | `int64`/`int64`/`uint64` | m + n + n | 8m + 16n | only if built |
+
+roughly **11 bytes per cell** for the core graph, **19** with a retained
+topological order, and **43** with the O(1) upslope index.
+
+### Where the savings come from
+
+- **The flat index *is* the node id.** LSDTopoTools2 maintains a `(row, col) ->
+  NodeIndex` map plus `RowIndex`/`ColIndex` to invert it. `lsdtt3` addresses
+  cells by flat index throughout, so `NodeIndex`, `RowIndex` and `ColIndex` -
+  three arrays - simply do not exist.
+- **`FlowLengthCode` is derivable.** LSDTopoTools2 stores a full `int` grid whose
+  only values are 1 (cardinal) and 2 (diagonal). `lsdtt3` recovers that from the
+  direction code, which it already has.
+- **The donor CSR is never materialised.** `NDonorsVector` + `DeltaVector` +
+  `DonorStackVector` - 12 bytes per cell - collapse to a single `uint8`
+  `donor_count_`. A D8 cell can have at most 8 donors, so a byte is sufficient,
+  and Kahn's algorithm needs only the count.
+- **Narrow types where the range allows.** Direction codes and donor counts are
+  `uint8`, not `int`.
+- **Optional structures are optional.** The topological order is released after
+  build if the caller did not ask for it, and `s_vector` is built only on demand.
+
+### What it costs
+
+64-bit indexing. `receiver_` is `int64` over the full grid - 8 bytes per cell
+where LSDTopoTools2 spends 4 per valid node. That is a deliberate trade: it
+removes the 32-bit ceiling on raster size (see below) at a cost the eliminations
+above more than repay: the overall memory usage in `lsdtt3` is less than `LSDTopoTools2`.
+
+### Net effect
+
+For the equivalent capability - D8 topology plus the O(1) upslope index -
+the documented 10k x 10k comparison shows `lsdtt3` using **about 20% less
+memory**, which the accounting above reproduces (43 versus 52 bytes per cell).
+The gap widens substantially when the upslope index is not needed, where
+`lsdtt3` holds 11-19 bytes per cell against LSDTopoTools2's 52, because
+LSDTopoTools2 builds `SVector` and its companions unconditionally.
 
 ---
 
@@ -224,25 +547,52 @@ This matters beyond convenience: a DEM whose sea is a nodata region cannot be
 described by boundary conditions at all, because no valid cell touches the grid
 edge. Upstream Barnes takes an ocean mask for the same reason.
 
-### Ties are broken deterministically
+### Depressions that spill at the same height
 
-Depressions merge in order of increasing outlet elevation. Outlets frequently
-**tie** — flat saddles and integer DEMs produce them constantly — and the order
-among tied outlets decides which depressions merge first, and therefore the shape
-of the tree.
+Imagine slowly raising the water level across a landscape. Each depression fills
+until it reaches its lowest rim, then spills over and joins whatever is next
+door. The hierarchy records the order in which those joins happen: the depression
+that spills first sits lowest in the tree.
 
-The upstream implementation sorts on elevation alone with an unstable sort, so
-tied outlets end up ordered by hash-table iteration: unspecified, and different
-between implementations, compilers, or even container sizes. lsdtt3 instead
-breaks ties on the two depression labels and then the outlet cell, giving a
-**total order**. The tree is therefore reproducible across platforms.
+That ordering is obvious when every rim is at a different height. **It is not
+obvious when two rims are at the same height.** If two depressions would spill at
+exactly the same moment, which one joins first? Nothing in the landscape decides
+it — the answer has to come from the software.
 
-The cost is that lsdtt3 and upstream build different — both valid — trees on a
-DEM with tied outlets. Eight of the 25 oracle fixtures differ for exactly this
-reason: their leaf depressions are identical to upstream, and in five of them
-every outlet in the DEM sits at one elevation, so no well-defined nesting exists.
-The oracle test asserts leaf-set equality on those fixtures rather than skipping
-them.
+Equal rim heights are common rather than exotic. Any DEM stored as whole-number
+elevations produces them constantly, and so does any flat saddle.
+
+**What the original code does.** It sorts the spill points by height and takes
+them in that order. When two have the same height, it leaves their relative order
+to whatever the sorting routine happens to do — which in practice depends on the
+order items came out of an internal lookup table. That order is not defined by
+anything meaningful. It can differ between one computer and another, between
+compiler versions, or even if the table happens to be a different size.
+
+**What lsdtt3 does.** When two spill points are at the same height, lsdtt3
+compares the identifying numbers of the depressions involved, and then the
+position of the spill cell itself, and uses that to decide. These are arbitrary
+tie-breakers, but they are *fixed*: the same DEM gives the same tree on any
+machine, every time. For a tool producing published results, reproducibility is
+worth more than matching another implementation's accident.
+
+**What this costs.** On a DEM with equal-height rims, lsdtt3 and the original
+build **different trees — and both are correct**. They disagree about the order
+of events that genuinely happened simultaneously.
+
+This shows up in testing. Of the 25 reference DEMs checked against the original
+implementation, 8 produce a different tree. In every one of those 8:
+
+- the **depressions themselves are identical** — same locations, same floor and
+  rim elevations, same number of cells in each;
+- only the way they are *linked together* differs.
+
+In five of the eight, **every spill point in the DEM is at the same elevation**,
+so there is no correct nesting to find at all; any tree is as good as any other.
+
+Because the depressions agree even when the tree does not, the test on those 8
+DEMs checks the depressions and ignores the tree, rather than skipping the DEM.
+That way a genuine mistake in finding depressions would still be caught.
 
 ### Multipart footprints
 
@@ -259,13 +609,71 @@ merges sinks and never removes ground.
 
 ## Important behavioral differences
 
-### RichDEM as a D8 reference
+### Why RichDEM's D8 differs from lsdtt3 and TopoToolbox
 
-`lsdtt3` docs explicitly warn that RichDEM should not be used as the definitive
-D8 correctness reference for steepest-descent D8. The documented reason is that
-RichDEM's D8 implementation (as source-checked in `docs/testing_and_benchmarking.md`)
-selects the lowest neighbour with tie behavior that can differ from
-drop-over-distance steepest descent.
+RichDEM should **not** be used as the reference for steepest-descent D8. This is
+a genuine definitional difference, not an implementation bug, and it is worth
+stating precisely because it has been described loosely elsewhere.
+
+**The mechanism.** `richdem/flowmet/d8_flowdirs.hpp`, `d8_FlowDir()`:
+
+```cpp
+T   minimum_elevation = elevations(x,y);
+int flowdir           = NO_FLOW;
+for(int n=1;n<=8;n++)
+  if( elevations(x+d8x[n],y+d8y[n]) < minimum_elevation
+      || (elevations(x+d8x[n],y+d8y[n]) == minimum_elevation
+            && flowdir>0 && flowdir%2==0 && n%2==1) )
+  { minimum_elevation = ...; flowdir = n; }
+```
+
+The selection criterion is **lowest elevation**. Distance never enters. True D8
+(O'Callaghan and Mark 1984, which both libraries cite) selects on **drop divided
+by distance**, so a diagonal neighbour must be `sqrt(2)` times lower to win.
+lsdtt3 and TopoToolbox both implement drop-over-distance; RichDEM does not.
+
+**A worked case.** Cardinal south is 1.0 m lower; diagonal south-east is 1.2 m
+lower on a 1 m grid:
+
+| | drop | distance | gradient | chosen by |
+|---|---|---|---|---|
+| cardinal S | 1.0 | 1.0 | **1.000** | lsdtt3, TopoToolbox |
+| diagonal SE | 1.2 | 1.414 | 0.849 | **RichDEM** |
+
+RichDEM takes the diagonal because it is lower; steepest descent takes the
+cardinal because it is steeper. Verified directly against the RichDEM source at
+commit `af61c65`: `d8_FlowDir` returns 6 (diagonal SE) for this configuration.
+
+**Two corrections to earlier descriptions in this repository.** Both were checked
+against the source and by running `d8_FlowDir` directly:
+
+1. The tie-break is often described as *preferring diagonals*. It does the
+   opposite. In RichDEM's numbering, `n8_diag = {false,false,true,false,true,
+   false,true,false,true}` - **odd `n` is cardinal**, even is diagonal - so the
+   clause `flowdir%2==0 && n%2==1` switches *from* a diagonal *to* a cardinal at
+   equal elevation. RichDEM's own source carries the comment
+   `//TODO: What is this modulus stuff for?` beside it.
+2. RichDEM is often said to **fail a planar-ramp test**, producing diagonal
+   stripes. It does not. On a surface tilted purely north-south,
+   `d8_FlowDir` returns 7 - cardinal south, the correct answer - because the
+   tie-break above pulls it off the diagonal.
+
+Neither correction weakens the conclusion. The divergence does not depend on ties
+at all: it appears wherever the lowest neighbour is diagonal and a cardinal
+neighbour is steeper, which is common on real terrain. Measured consequences on
+`alpine_small`:
+
+| | peak D8 accumulation |
+|---|---|
+| lsdtt3 | 41,437 |
+| TopoToolbox | **41,437** |
+| RichDEM | 40,446 |
+
+with a D8 rank correlation of 0.51 against RichDEM, rising to 0.74 for D-infinity
+and 0.99 for MFD - dispersion washes the single-receiver choice out.
+
+RichDEM remains a valid reference for **depression handling**, where lsdtt3 tests
+against it directly. It is only D8 flow direction that is incomparable.
 
 ### TopoToolbox as a cross-check
 
@@ -280,18 +688,6 @@ for D8 accumulation checks.
 - They are not alternative D8 routing equations.
 - In low-relief settings, flat-resolution choices (`fill_min_slope`, breach
   policy) can strongly influence subsequent D8 network realization.
-
----
-
-## Braun and Willett context
-
-Braun and Willett (2013) appears in `lsdtt3` in the implicit stream-power
-incision solver context (landscape-evolution modeling), not as a replacement D8
-router. In other words:
-
-- D8/D-infinity/MFD define how flow is routed.
-- Braun-Willett-style implicit updates use that routing/topological structure in
-  fluvial incision calculations.
 
 ---
 
@@ -322,6 +718,13 @@ router. In other words:
 - Anand, S.K., Hooshyar, M., and Porporato, A. (2020). Linear layout of
   multiple flow-direction networks for landscape-evolution simulations.
   *Environmental Modelling & Software* 133, 104804.
+- Kahn, A.B. (1962). Topological sorting of large networks.
+  *Communications of the ACM* 5(11), 558-562. The ready-queue topological sort
+  used to order both the D8 tree and the multi-receiver DAG.
+- Gailleton, B., Steer, P., Davy, P., Schwanghart, W., and Bernard, T. (2024).
+  GraphFlood 1.0: an efficient algorithm to approximate 2D hydrodynamics for
+  landscape evolution models. *Earth Surface Dynamics* 12, 1295-1313. The
+  graph-based hydraulic approach behind `lsdtt_hydraulic_graph_cpu`.
 
 For implementation specifics, also see:
 
