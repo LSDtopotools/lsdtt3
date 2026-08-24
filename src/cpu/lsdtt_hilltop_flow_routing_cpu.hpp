@@ -14,8 +14,8 @@
 // is a general source-to-sink tracer and stays ignorant of hilltops, while this
 // module supplies the ridge-specific structure and statistics.
 //
-// PHASE 1 SCOPE: ridge extraction only.  Hillslope metrics (mean path gradient,
-// E*, R*, channel linkage) are Phase 2 and are not here yet.
+// Scope: ridge extraction (Phase 1) and the hillslope metrics that hang off the
+// traces run from those pixels (Phase 2).
 //
 // -----------------------------------------------------------------------------
 // WHAT A HILLTOP PIXEL IS HERE
@@ -77,9 +77,12 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
+#include <string>
 #include <vector>
 
 #include "../core/lsdtt_raster_meta.hpp"
+#include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_ridgeline_cpu.hpp"
 
 namespace lsdtt
@@ -271,9 +274,9 @@ struct lsdtt_hilltop_filter_report
     const std::vector<lsdtt_hilltop_pixel>& pixels,
     const lsdtt_raster_meta&                dem_meta,
     const lsdtt_hilltop_filter_options&     opts,
-    const std::vector<float>*               channel_mask,
-    const std::vector<float>*               gradient,
-    const std::vector<float>*               curvature,
+    const lsdtt_raster_cpu*                 channel_mask,
+    const lsdtt_raster_cpu*                 gradient,
+    const lsdtt_raster_cpu*                 curvature,
     lsdtt_hilltop_filter_report&            report);
 
 [[nodiscard]] lsdtt_ridge_extraction_result extract_hilltop_pixels(
@@ -281,5 +284,156 @@ struct lsdtt_hilltop_filter_report
     const lsdtt_raster_meta&                 dem_meta,
     const lsdtt_ridge_extraction_options&    opts = {},
     const std::vector<std::int64_t>&         basin_outlet_flats = {});
+
+
+// =============================================================================
+// PHASE 2 -- HILLSLOPE METRICS
+// =============================================================================
+//
+// The Hurst et al. (2012) / Grieve et al. (2016) quantities, computed by
+// tracing from every hilltop pixel to the channel network.
+//
+//   Lh  hillslope length  = the traced path length
+//   R   relief            = hilltop elevation minus channel elevation
+//   S   mean path gradient
+//   E*  = 2 |Cht| Lh / S_c
+//   R*  = R / (Lh S_c)
+//
+// THREE THINGS THE LEGACY SOURCE SETTLES, each of which an earlier reading of
+// it got wrong:
+//
+//  - S is NOT a mean of sampled gradients.  LSDFlowInfo.cpp:7028 computes
+//    mean_slope = relief / (length * DataResolution), i.e. simply R / Lh.  It
+//    follows that R* == S / S_c: R* is the mean path gradient expressed as a
+//    fraction of the critical slope.
+//
+//  - S_c is HARD-CODED to 0.8 in the legacy formulas (LSDFlowInfo.cpp:7037-7038).
+//    Exposing it here is an improvement, not a port; a comparison against legacy
+//    numbers must use 0.8.
+//
+//  - DivergentCount / PlanarCountFlag are PLAN-CURVATURE counts, not
+//    edge-routing counts.  LSDFlowInfo.cpp:6993-7000 increments the first when
+//    abs(plan curvature) exceeds a threshold at the visited cell and the second
+//    otherwise, so the two sum to the number of visited cells and
+//    "DivergentCount" counts CURVED cells of either sign.  The legacy threshold
+//    (0.001) is hard-coded; here it is a parameter.
+//
+// EVERY HILLTOP PIXEL GETS A ROW.  The tracer enumerates sources strictly
+// inside the outer ring, so hilltop pixels on the DEM border produce no trace
+// and no record of any kind (Phase 0 Finding 1; measured at 35 % of the
+// filtered set on a 60x60 fixture).  Those pixels are emitted here with status
+// not_traced_border rather than dropped, so the table always reconciles against
+// the ridge set.
+// =============================================================================
+
+enum class hilltop_trace_status
+{
+    reached_channel = 0,
+    hit_edge        = 1,
+    loop_detected   = 2,
+    no_aspect       = 3,
+    not_traced_border = 4   // never offered to the tracer; see the note above
+};
+
+struct lsdtt_hillslope_metrics_options
+{
+    // Critical gradient for the non-dimensional pair.  MUST be > 0.
+    // 0.8 reproduces the legacy hard-coded value.
+    double critical_slope_Sc = 0.8;
+
+    // abs(plan curvature) above this counts as a curved cell.
+    // 0.001 reproduces the legacy hard-coded threshold.
+    double plan_curvature_threshold = 0.001;
+
+    int max_steps = 100000;
+    int n_threads = 0;
+};
+
+// =============================================================================
+// lsdtt_hilltop_metrics_row - one row per hilltop pixel
+//
+// Quantities that are undefined for this row are NaN, never inf and never a
+// magic number: E*/R*/mean_path_gradient are undefined when Lh == 0, and every
+// trace-derived field is undefined when the trace did not reach a channel.
+// =============================================================================
+struct lsdtt_hilltop_metrics_row
+{
+    lsdtt_hilltop_pixel ridge;              // identity + ordering attributes
+
+    hilltop_trace_status status = hilltop_trace_status::not_traced_border;
+
+    // trace-derived
+    double hillslope_length_m    = std::numeric_limits<double>::quiet_NaN();
+    double relief_m              = std::numeric_limits<double>::quiet_NaN();
+    double euclidean_distance_m  = std::numeric_limits<double>::quiet_NaN();
+    double mean_path_gradient    = std::numeric_limits<double>::quiet_NaN();
+    int    channel_row = -1;
+    int    channel_col = -1;
+
+    // sampled at the ridge pixel
+    double hilltop_curvature = std::numeric_limits<double>::quiet_NaN();
+    double hilltop_gradient  = std::numeric_limits<double>::quiet_NaN();
+
+    // non-dimensional (Grieve et al. 2016)
+    double E_star = std::numeric_limits<double>::quiet_NaN();
+    double R_star = std::numeric_limits<double>::quiet_NaN();
+
+    // per-trace path diagnostics
+    int divergent_count = 0;
+    int planar_count    = 0;
+};
+
+struct lsdtt_hillslope_metrics_result
+{
+    std::vector<lsdtt_hilltop_metrics_row> rows;
+
+    std::int64_t n_reached_channel   = 0;
+    std::int64_t n_hit_edge          = 0;
+    std::int64_t n_loop_detected     = 0;
+    std::int64_t n_no_aspect         = 0;
+    std::int64_t n_not_traced_border = 0;
+
+    // Rows where Lh == 0 so the non-dimensional pair is undefined.
+    std::int64_t n_undefined_nondimensional = 0;
+};
+
+// =============================================================================
+// compute_hillslope_metrics
+//
+// dem           - elevations; traced on the RAW surface, not a filled one
+// channel_mask  - sinks; > 0.5 marks a channel pixel
+// curvature     - hilltop curvature source (may be null; Cht then NaN and E*
+//                 with it).  lsdtt3 sign convention: a convex-up ridge is
+//                 NEGATIVE, and E* uses the magnitude.
+// gradient      - gradient at the ridge pixel (may be null)
+// plan_curvature- for the divergent/planar counts (may be null; counts stay 0)
+//
+// THE ANCILLARY RASTERS ARE PASSED AS RASTERS, NOT BARE VECTORS, AND THAT IS
+// DELIBERATE.  An earlier signature took std::vector<float>*, which drops the
+// validity mask -- and the polyfit engine leaves nodata at raster edges and
+// beside nodata, so 259 of 627 hilltop pixels on the first real run took
+// Cht = -9999 as a genuine curvature and E* came back at 1.4e5.  Every value
+// read here is guarded by its own mask; an invalid cell leaves the field NaN
+// rather than propagating a sentinel.
+//
+// Throws std::invalid_argument on a non-positive S_c or a raster whose grid
+// does not match the DEM.
+// =============================================================================
+[[nodiscard]] lsdtt_hillslope_metrics_result compute_hillslope_metrics(
+    const std::vector<lsdtt_hilltop_pixel>& hilltop_pixels,
+    const lsdtt_raster_cpu&                 dem,
+    const lsdtt_raster_cpu&                 channel_mask,
+    const lsdtt_raster_cpu*                 curvature,
+    const lsdtt_raster_cpu*                 gradient,
+    const lsdtt_raster_cpu*                 plan_curvature,
+    const lsdtt_hillslope_metrics_options&  opts = {});
+
+// Writes the metrics table as CSV.  The product CLI writes FlatGeobuf by
+// default (plan section 4.4); this is the plain-table path used by tests and by
+// the development driver.
+void write_hilltop_metrics_csv(
+    const lsdtt_hillslope_metrics_result& result,
+    const lsdtt_raster_meta&              meta,
+    const std::string&                    out_path);
 
 } // namespace lsdtt

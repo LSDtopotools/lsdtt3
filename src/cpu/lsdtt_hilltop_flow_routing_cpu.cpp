@@ -13,7 +13,14 @@
 #include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <unordered_map>
 #include <unordered_set>
+
+#include "lsdtt_streamlines_cpu.hpp"
 
 namespace lsdtt
 {
@@ -101,22 +108,25 @@ std::vector<lsdtt_hilltop_pixel> filter_hilltop_pixels(
     const std::vector<lsdtt_hilltop_pixel>& pixels,
     const lsdtt_raster_meta&                dem_meta,
     const lsdtt_hilltop_filter_options&     opts,
-    const std::vector<float>*               channel_mask,
-    const std::vector<float>*               gradient,
-    const std::vector<float>*               curvature,
+    const lsdtt_raster_cpu*                 channel_mask,
+    const lsdtt_raster_cpu*                 gradient,
+    const lsdtt_raster_cpu*                 curvature,
     lsdtt_hilltop_filter_report&            report)
 {
     const int nr = dem_meta.n_rows;
     const int nc = dem_meta.n_cols;
     const std::size_t ncell = static_cast<std::size_t>(nr) * nc;
 
-    auto check_size = [&](const std::vector<float>* v, const char* what) {
-        if (v && v->size() != ncell)
+    auto check_size = [&](const lsdtt_raster_cpu* r, const char* what) {
+        if (r && (r->get_meta().n_rows != nr || r->get_meta().n_cols != nc))
             throw std::invalid_argument(
                 std::string("lsdtt_hilltop_flow_routing_cpu: ") + what +
-                " raster does not match the DEM grid (" +
-                std::to_string(v->size()) + " against " +
-                std::to_string(ncell) + " cells).");
+                " raster does not match the DEM grid.");
+    };
+
+    // Read a value only where the raster says it is valid.
+    auto valid_at = [](const lsdtt_raster_cpu* r, int row, int col) -> bool {
+        return r && r->get_mask_array().at(row, col) != 0;
     };
     check_size(channel_mask, "channel mask");
     check_size(gradient, "gradient");
@@ -127,7 +137,8 @@ std::vector<lsdtt_hilltop_pixel> filter_hilltop_pixels(
 
     if (channel_mask)
         for (const auto& p : pixels)
-            if ((*channel_mask)[static_cast<std::size_t>(p.flat)] > 0.5f)
+            if (valid_at(channel_mask, p.row, p.col) &&
+                channel_mask->get_data_array().at(p.row, p.col) > 0.5f)
                 ++report.n_on_channel_before;
 
     const int pad = opts.stream_network_padding_pixels;
@@ -137,8 +148,6 @@ std::vector<lsdtt_hilltop_pixel> filter_hilltop_pixels(
 
     for (const auto& p : pixels)
     {
-        const std::size_t k = static_cast<std::size_t>(p.flat);
-
         if (channel_mask && pad > 0)
         {
             // Chebyshev neighbourhood: pad = 1 tests the pixel itself only.
@@ -149,18 +158,22 @@ std::vector<lsdtt_hilltop_pixel> filter_hilltop_pixels(
                 {
                     const int rr = p.row + dr, cc = p.col + dc;
                     if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
-                    if ((*channel_mask)[static_cast<std::size_t>(rr) * nc + cc] > 0.5f)
+                    if (valid_at(channel_mask, rr, cc) &&
+                        channel_mask->get_data_array().at(rr, cc) > 0.5f)
                         near = true;
                 }
             if (near) { ++report.n_dropped_near_channel; continue; }
         }
 
         if (gradient && opts.threshold_hilltop_gradient > 0.0f &&
-            (*gradient)[k] > opts.threshold_hilltop_gradient)
+            valid_at(gradient, p.row, p.col) &&
+            gradient->get_data_array().at(p.row, p.col) >
+                opts.threshold_hilltop_gradient)
         { ++report.n_dropped_steep; continue; }
 
         if (curvature && opts.remove_positive_curvature_hilltops &&
-            (*curvature)[k] > 0.0f)
+            valid_at(curvature, p.row, p.col) &&
+            curvature->get_data_array().at(p.row, p.col) > 0.0f)
         { ++report.n_dropped_convex_up; continue; }
 
         out.push_back(p);
@@ -388,6 +401,249 @@ lsdtt_ridge_extraction_result extract_hilltop_pixels(
     }
 
     return result;
+}
+
+
+// =============================================================================
+// PHASE 2 -- HILLSLOPE METRICS
+// =============================================================================
+
+namespace
+{
+
+constexpr double k_nan = std::numeric_limits<double>::quiet_NaN();
+
+hilltop_trace_status status_from_outcome(streamline_outcome o)
+{
+    switch (o)
+    {
+        case streamline_outcome::reached_sink:  return hilltop_trace_status::reached_channel;
+        case streamline_outcome::hit_edge:      return hilltop_trace_status::hit_edge;
+        case streamline_outcome::loop_detected: return hilltop_trace_status::loop_detected;
+        case streamline_outcome::no_aspect:     return hilltop_trace_status::no_aspect;
+    }
+    return hilltop_trace_status::hit_edge;
+}
+
+} // namespace
+
+lsdtt_hillslope_metrics_result compute_hillslope_metrics(
+    const std::vector<lsdtt_hilltop_pixel>& hilltop_pixels,
+    const lsdtt_raster_cpu&                 dem,
+    const lsdtt_raster_cpu&                 channel_mask,
+    const lsdtt_raster_cpu*                 curvature,
+    const lsdtt_raster_cpu*                 gradient,
+    const lsdtt_raster_cpu*                 plan_curvature,
+    const lsdtt_hillslope_metrics_options&  opts)
+{
+    if (!(opts.critical_slope_Sc > 0.0))
+        throw std::invalid_argument(
+            "lsdtt_hilltop_flow_routing_cpu: critical_slope_Sc must be > 0 (got "
+            + std::to_string(opts.critical_slope_Sc) + "). E* and R* are "
+              "undefined otherwise.");
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int nr = meta.n_rows;
+    const int nc = meta.n_cols;
+    const std::size_t ncell = static_cast<std::size_t>(nr) * nc;
+
+    auto check = [&](const lsdtt_raster_cpu* r, const char* what) {
+        if (r && (r->get_meta().n_rows != nr || r->get_meta().n_cols != nc))
+            throw std::invalid_argument(
+                std::string("lsdtt_hilltop_flow_routing_cpu: ") + what +
+                " raster does not match the DEM grid.");
+    };
+
+    // Read a value only where the raster's own mask says it is valid; a nodata
+    // sentinel must never reach a metric.
+    auto sample = [](const lsdtt_raster_cpu* r, int row, int col) -> double {
+        if (!r) return k_nan;
+        if (r->get_mask_array().at(row, col) == 0) return k_nan;
+        const double v = r->get_data_array().at(row, col);
+        return std::isnan(v) ? k_nan : v;
+    };
+    check(curvature, "curvature");
+    check(gradient, "gradient");
+    check(plan_curvature, "plan curvature");
+
+    // ---- build the source mask from the hilltop pixels ----------------------
+    std::vector<float>        src(ncell, 0.0f);
+    std::vector<std::uint8_t> src_valid(ncell, 1);
+    for (const auto& p : hilltop_pixels)
+        if (p.flat >= 0 && static_cast<std::size_t>(p.flat) < ncell)
+            src[static_cast<std::size_t>(p.flat)] = 1.0f;
+
+    lsdtt_raster_cpu source_mask(std::move(src), std::move(src_valid), meta);
+
+    // ---- trace ---------------------------------------------------------------
+    // save_nodes is required, not optional: the divergent/planar counts are
+    // sampled along the path and there is no other way to know which cells the
+    // trace visited.
+    lsdtt_streamline_options topts;
+    topts.save_nodes = true;
+    topts.max_steps  = opts.max_steps;
+    topts.n_threads  = opts.n_threads;
+
+    const lsdtt_streamline_result traces =
+        trace_streamlines(dem, source_mask, channel_mask, topts);
+
+    // ---- index the traces by source pixel ------------------------------------
+    std::unordered_map<std::int64_t, const lsdtt_streamline*> by_source;
+    by_source.reserve(traces.streamlines.size() * 2);
+    for (const auto& t : traces.streamlines)
+    {
+        if (t.source_row < 0 || t.source_col < 0) continue;
+        by_source.emplace(
+            static_cast<std::int64_t>(t.source_row) * nc + t.source_col, &t);
+    }
+
+    const double cell = meta.cell_size;
+    const double Sc   = opts.critical_slope_Sc;
+
+    lsdtt_hillslope_metrics_result result;
+    result.rows.reserve(hilltop_pixels.size());
+
+    for (const auto& p : hilltop_pixels)
+    {
+        lsdtt_hilltop_metrics_row row;
+        row.ridge = p;
+
+        row.hilltop_curvature = sample(curvature, p.row, p.col);
+        row.hilltop_gradient  = sample(gradient,  p.row, p.col);
+
+        auto it = by_source.find(p.flat);
+        if (it == by_source.end())
+        {
+            // Never offered to the tracer: it sits on the outer ring.
+            row.status = hilltop_trace_status::not_traced_border;
+            ++result.n_not_traced_border;
+            result.rows.push_back(row);
+            continue;
+        }
+
+        const lsdtt_streamline& t = *it->second;
+        row.status = status_from_outcome(t.outcome);
+
+        switch (row.status)
+        {
+            case hilltop_trace_status::reached_channel: ++result.n_reached_channel; break;
+            case hilltop_trace_status::hit_edge:        ++result.n_hit_edge;        break;
+            case hilltop_trace_status::loop_detected:   ++result.n_loop_detected;   break;
+            case hilltop_trace_status::no_aspect:       ++result.n_no_aspect;       break;
+            default: break;
+        }
+
+        // Path diagnostics are meaningful for any trace that actually moved.
+        if (plan_curvature && !t.nodes.empty())
+        {
+            const double thresh = opts.plan_curvature_threshold;
+            for (const auto& nd : t.nodes)
+            {
+                // map the sub-pixel node back to its cell
+                const int c = static_cast<int>(
+                    std::floor((nd.x - meta.x_min) / cell));
+                const int r = nr - 1 - static_cast<int>(
+                    std::floor((nd.y - meta.y_min) / cell));
+                if (r < 0 || r >= nr || c < 0 || c >= nc) continue;
+
+                const double pc = sample(plan_curvature, r, c);
+                if (std::isnan(pc)) continue;
+                if (std::abs(pc) > thresh) ++row.divergent_count;
+                else                       ++row.planar_count;
+            }
+        }
+
+        if (row.status != hilltop_trace_status::reached_channel)
+        {
+            // Lh and R are meaningless for a trace that never found a channel;
+            // leave them NaN rather than reporting the distance it happened to
+            // cover before failing.
+            result.rows.push_back(row);
+            continue;
+        }
+
+        row.hillslope_length_m = t.length_m;
+        row.relief_m           = t.relief_m;
+        row.channel_row        = t.sink_row;
+        row.channel_col        = t.sink_col;
+
+        const double dr = static_cast<double>(t.sink_row - t.source_row) * cell;
+        const double dc = static_cast<double>(t.sink_col - t.source_col) * cell;
+        row.euclidean_distance_m = std::sqrt(dr * dr + dc * dc);
+
+        if (t.length_m > 0.0)
+        {
+            // Legacy definition: S is relief over path length, not a mean of
+            // sampled gradients (LSDFlowInfo.cpp:7028). R* is therefore S / Sc.
+            row.mean_path_gradient = t.relief_m / t.length_m;
+            row.R_star             = t.relief_m / (t.length_m * Sc);
+
+            if (!std::isnan(row.hilltop_curvature))
+                row.E_star = 2.0 * std::abs(row.hilltop_curvature)
+                             * t.length_m / Sc;
+        }
+        else
+        {
+            ++result.n_undefined_nondimensional;
+        }
+
+        result.rows.push_back(row);
+    }
+
+    return result;
+}
+
+// =============================================================================
+// write_hilltop_metrics_csv
+// =============================================================================
+void write_hilltop_metrics_csv(
+    const lsdtt_hillslope_metrics_result& result,
+    const lsdtt_raster_meta&              meta,
+    const std::string&                    out_path)
+{
+    std::ofstream f(out_path);
+    if (!f)
+        throw std::runtime_error(
+            "lsdtt_hilltop_flow_routing_cpu: cannot open " + out_path);
+
+    f << std::setprecision(10);
+    f << "row,col,easting,northing,"
+         "ridgeline_id,ridgeline_node_index,distance_along_ridgeline_m,"
+         "ridgeline_total_length_m,ridge_side,basin_outlet_flat,"
+         "Cht,hilltop_gradient,mean_path_gradient,relief_m,hillslope_length_m,"
+         "euclidean_distance_m,channel_row,channel_col,E_star,R_star,"
+         "divergent_count,planar_count,trace_status\n";
+
+    auto num = [](double v) -> std::string {
+        // NaN is written as an empty field so a reader sees a null rather than
+        // the string "nan" or, worse, a magic number.
+        if (std::isnan(v)) return std::string();
+        std::ostringstream os;
+        os << std::setprecision(10) << v;
+        return os.str();
+    };
+
+    for (const auto& r : result.rows)
+    {
+        const double easting  = meta.x_min + (r.ridge.col + 0.5) * meta.cell_size;
+        const double northing = meta.y_min +
+            (meta.n_rows - r.ridge.row - 1 + 0.5) * meta.cell_size;
+
+        f << r.ridge.row << ',' << r.ridge.col << ','
+          << easting << ',' << northing << ','
+          << r.ridge.ridgeline_id << ',' << r.ridge.ridgeline_node_index << ','
+          << r.ridge.distance_along_ridgeline_m << ','
+          << r.ridge.ridgeline_total_length_m << ','
+          << static_cast<int>(r.ridge.ridge_side) << ','
+          << r.ridge.basin_outlet_flat << ','
+          << num(r.hilltop_curvature) << ',' << num(r.hilltop_gradient) << ','
+          << num(r.mean_path_gradient) << ',' << num(r.relief_m) << ','
+          << num(r.hillslope_length_m) << ',' << num(r.euclidean_distance_m) << ','
+          << r.channel_row << ',' << r.channel_col << ','
+          << num(r.E_star) << ',' << num(r.R_star) << ','
+          << r.divergent_count << ',' << r.planar_count << ','
+          << static_cast<int>(r.status) << '\n';
+    }
 }
 
 } // namespace lsdtt

@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "lsdtt_hilltop_flow_routing_cpu.hpp"
+#include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_ridgeline_cpu.hpp"
 
 namespace
@@ -482,6 +483,325 @@ void test_degenerate_inputs()
           " card=" + std::to_string(rep.n_edges_cardinal));
 }
 
+
+// =============================================================================
+// 5. PHASE 2 -- hillslope metrics
+//
+// The fixture is a plane descending due south with a channel on one row, so
+// every quantity has a closed form (see test_streamlines.cpp for the length
+// derivation):
+//
+//     Lh = (rs - r0 - 0.5) * cell          trace stops on ENTERING the sink cell
+//     R  = gradient * cell * (rs - r0)     relief is to the sink cell CENTRE
+//     S  = R / Lh
+//     E* = 2 |Cht| Lh / Sc
+//     R* = R / (Lh Sc)
+// =============================================================================
+
+lsdtt::lsdtt_raster_cpu make_south_plane(int n_rows, int n_cols, double cell,
+                                         double gradient, double z0)
+{
+    auto meta = make_dem_meta(n_rows, n_cols, cell);
+    std::vector<float> data(static_cast<std::size_t>(n_rows) * n_cols, 0.0f);
+    std::vector<std::uint8_t> mask(data.size(), 1);
+    for (int r = 0; r < n_rows; ++r)
+        for (int c = 0; c < n_cols; ++c)
+            data[static_cast<std::size_t>(r) * n_cols + c] =
+                static_cast<float>(z0 + gradient * cell *
+                                   static_cast<double>(n_rows - 1 - r));
+    return lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+}
+
+lsdtt::lsdtt_raster_cpu make_channel_row(const lsdtt::lsdtt_raster_meta& meta,
+                                         int channel_row)
+{
+    std::vector<float> data(
+        static_cast<std::size_t>(meta.n_rows) * meta.n_cols, 0.0f);
+    std::vector<std::uint8_t> mask(data.size(), 1);
+    for (int c = 0; c < meta.n_cols; ++c)
+        data[static_cast<std::size_t>(channel_row) * meta.n_cols + c] = 1.0f;
+    return lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+}
+
+lsdtt::lsdtt_raster_cpu make_constant_raster(const lsdtt::lsdtt_raster_meta& meta,
+                                             float value)
+{
+    std::vector<float> data(
+        static_cast<std::size_t>(meta.n_rows) * meta.n_cols, value);
+    std::vector<std::uint8_t> mask(data.size(), 1);
+    return lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+}
+
+std::vector<lsdtt::lsdtt_hilltop_pixel> one_hilltop(int row, int col, int n_cols)
+{
+    lsdtt::lsdtt_hilltop_pixel p;
+    p.row = row;
+    p.col = col;
+    p.flat = static_cast<std::int64_t>(row) * n_cols + col;
+    p.ridgeline_id = 0;
+    p.ridge_side = 0;
+    return {p};
+}
+
+void test_metrics_analytic()
+{
+    const int    nr = 41, nc = 41;
+    const double cell = 10.0, grad = 0.2, z0 = 100.0;
+    const int    r0 = 8, c0 = 20, rs = 30;
+
+    auto dem  = make_south_plane(nr, nc, cell, grad, z0);
+    auto chan = make_channel_row(dem.get_meta(), rs);
+
+    const double cht_value = -0.01;                       // convex up, lsdtt3 sign
+    auto curv  = make_constant_raster(dem.get_meta(), static_cast<float>(cht_value));
+    auto gradr = make_constant_raster(dem.get_meta(), static_cast<float>(grad));
+
+    lsdtt::lsdtt_hillslope_metrics_options opts;
+    opts.critical_slope_Sc = 0.8;
+    opts.n_threads = 1;
+
+    const auto res = lsdtt::compute_hillslope_metrics(
+        one_hilltop(r0, c0, nc), dem, chan, &curv, &gradr, nullptr, opts);
+
+    check("metrics: one row per hilltop pixel", res.rows.size() == 1,
+          std::to_string(res.rows.size()));
+    if (res.rows.empty()) return;
+
+    const auto& row = res.rows.front();
+
+    check("metrics: reached the channel",
+          row.status == lsdtt::hilltop_trace_status::reached_channel,
+          "status=" + std::to_string(static_cast<int>(row.status)));
+
+    const double want_Lh = (static_cast<double>(rs - r0) - 0.5) * cell;
+    const double want_R  = grad * cell * static_cast<double>(rs - r0);
+
+    check("metrics: Lh matches the analytic path length",
+          std::abs(row.hillslope_length_m - want_Lh) < 1e-6,
+          std::to_string(row.hillslope_length_m) + " want " +
+          std::to_string(want_Lh));
+
+    check("metrics: R matches the analytic relief",
+          std::abs(row.relief_m - want_R) < 1e-3,
+          std::to_string(row.relief_m) + " want " + std::to_string(want_R));
+
+    check("metrics: S is R/Lh (the legacy definition, not a sampled mean)",
+          std::abs(row.mean_path_gradient - want_R / want_Lh) < 1e-9,
+          std::to_string(row.mean_path_gradient));
+
+    check("metrics: E* = 2|Cht|Lh/Sc",
+          std::abs(row.E_star - 2.0 * std::abs(cht_value) * want_Lh / 0.8) < 1e-6,
+          std::to_string(row.E_star));
+
+    check("metrics: R* = R/(Lh Sc)",
+          std::abs(row.R_star - want_R / (want_Lh * 0.8)) < 1e-6,
+          std::to_string(row.R_star));
+
+    check("metrics: R* equals S/Sc exactly",
+          std::abs(row.R_star - row.mean_path_gradient / 0.8) < 1e-12);
+
+    check("metrics: channel linkage is the channel row",
+          row.channel_row == rs, std::to_string(row.channel_row));
+
+    check("metrics: EucDist equals Lh on a straight due-south path to the "
+          "sink CENTRE",
+          std::abs(row.euclidean_distance_m -
+                   static_cast<double>(rs - r0) * cell) < 1e-6,
+          std::to_string(row.euclidean_distance_m));
+
+    // FINDING: length stops at the sink cell ENTRY while relief is measured to
+    // its CENTRE, so S = R/Lh is biased high by Lh_centre/Lh_entry.
+    const double bias = (want_R / want_Lh) / grad;
+    check("metrics: S is biased high by the entry-vs-centre mismatch "
+          "(documented, not a defect in this layer)",
+          bias > 1.0 && bias < 1.05,
+          "bias factor " + std::to_string(bias));
+    std::cout << "      [info] S/true plane gradient = " << bias
+              << "  (" << 100.0 * (bias - 1.0) << " % high)\n";
+}
+
+void test_metrics_every_pixel_gets_a_row()
+{
+    const int    nr = 21, nc = 21;
+    const double cell = 10.0;
+    auto dem  = make_south_plane(nr, nc, cell, 0.2, 100.0);
+    auto chan = make_channel_row(dem.get_meta(), 15);
+
+    std::vector<lsdtt::lsdtt_hilltop_pixel> pixels;
+    for (auto rc : {std::pair<int,int>{5, 10},     // interior: traced
+                    std::pair<int,int>{0, 10},     // top row: never traced
+                    std::pair<int,int>{5, 0}})     // west edge: never traced
+    {
+        lsdtt::lsdtt_hilltop_pixel p;
+        p.row = rc.first; p.col = rc.second;
+        p.flat = static_cast<std::int64_t>(rc.first) * nc + rc.second;
+        pixels.push_back(p);
+    }
+
+    lsdtt::lsdtt_hillslope_metrics_options opts;
+    opts.n_threads = 1;
+    const auto res = lsdtt::compute_hillslope_metrics(
+        pixels, dem, chan, nullptr, nullptr, nullptr, opts);
+
+    check("metrics: every hilltop pixel gets a row, border ones included",
+          res.rows.size() == 3, std::to_string(res.rows.size()));
+
+    check("metrics: border pixels are reported as not_traced_border",
+          res.n_not_traced_border == 2,
+          std::to_string(res.n_not_traced_border));
+
+    check("metrics: the status counters sum to the row count",
+          res.n_reached_channel + res.n_hit_edge + res.n_loop_detected +
+          res.n_no_aspect + res.n_not_traced_border ==
+          static_cast<std::int64_t>(res.rows.size()));
+
+    bool border_fields_null = true;
+    for (const auto& r : res.rows)
+        if (r.status == lsdtt::hilltop_trace_status::not_traced_border &&
+            !(std::isnan(r.hillslope_length_m) && std::isnan(r.E_star)))
+            border_fields_null = false;
+    check("metrics: an untraced pixel has NaN metrics, not zeros",
+          border_fields_null);
+}
+
+void test_metrics_failed_trace_has_no_length()
+{
+    const int    nr = 21, nc = 21;
+    auto dem  = make_south_plane(nr, nc, 10.0, 0.2, 100.0);
+    // channel on the outer ring: unreachable (Phase 0 Finding 3)
+    auto chan = make_channel_row(dem.get_meta(), nr - 1);
+
+    lsdtt::lsdtt_hillslope_metrics_options opts;
+    opts.n_threads = 1;
+    const auto res = lsdtt::compute_hillslope_metrics(
+        one_hilltop(5, 10, nc), dem, chan, nullptr, nullptr, nullptr, opts);
+
+    check("metrics: a trace that never found a channel is not reached_channel",
+          !res.rows.empty() &&
+          res.rows.front().status != lsdtt::hilltop_trace_status::reached_channel);
+
+    check("metrics: a failed trace reports NaN Lh rather than the distance it "
+          "happened to cover",
+          !res.rows.empty() && std::isnan(res.rows.front().hillslope_length_m));
+}
+
+void test_metrics_plan_curvature_counts()
+{
+    const int    nr = 41, nc = 41;
+    auto dem  = make_south_plane(nr, nc, 10.0, 0.2, 100.0);
+    auto chan = make_channel_row(dem.get_meta(), 30);
+
+    lsdtt::lsdtt_hillslope_metrics_options opts;
+    opts.plan_curvature_threshold = 0.001;
+    opts.n_threads = 1;
+
+    // everywhere curved
+    {
+        auto pc = make_constant_raster(dem.get_meta(), 0.01f);
+        const auto res = lsdtt::compute_hillslope_metrics(
+            one_hilltop(8, 20, nc), dem, chan, nullptr, nullptr, &pc, opts);
+        check("metrics: every visited cell counted as curved",
+              !res.rows.empty() && res.rows.front().divergent_count > 0 &&
+              res.rows.front().planar_count == 0,
+              "div=" + std::to_string(res.rows.front().divergent_count) +
+              " plan=" + std::to_string(res.rows.front().planar_count));
+    }
+
+    // everywhere planar
+    {
+        auto pc = make_constant_raster(dem.get_meta(), 0.0f);
+        const auto res = lsdtt::compute_hillslope_metrics(
+            one_hilltop(8, 20, nc), dem, chan, nullptr, nullptr, &pc, opts);
+        check("metrics: every visited cell counted as planar",
+              !res.rows.empty() && res.rows.front().planar_count > 0 &&
+              res.rows.front().divergent_count == 0,
+              "div=" + std::to_string(res.rows.front().divergent_count) +
+              " plan=" + std::to_string(res.rows.front().planar_count));
+    }
+
+    // NEGATIVE plan curvature must also count as curved: the legacy counter is
+    // named "Divergent" but tests abs(), so it counts CONVERGENT cells too.
+    {
+        auto pc = make_constant_raster(dem.get_meta(), -0.01f);
+        const auto res = lsdtt::compute_hillslope_metrics(
+            one_hilltop(8, 20, nc), dem, chan, nullptr, nullptr, &pc, opts);
+        check("metrics: NEGATIVE plan curvature counts as curved too "
+              "(the counter is abs-based despite its name)",
+              !res.rows.empty() && res.rows.front().divergent_count > 0 &&
+              res.rows.front().planar_count == 0);
+    }
+}
+
+void test_metrics_guards()
+{
+    const int nr = 21, nc = 21;
+    auto dem  = make_south_plane(nr, nc, 10.0, 0.2, 100.0);
+    auto chan = make_channel_row(dem.get_meta(), 15);
+
+    bool threw_sc = false;
+    try
+    {
+        lsdtt::lsdtt_hillslope_metrics_options bad;
+        bad.critical_slope_Sc = 0.0;
+        (void)lsdtt::compute_hillslope_metrics(
+            one_hilltop(5, 10, nc), dem, chan, nullptr, nullptr, nullptr, bad);
+    }
+    catch (const std::invalid_argument&) { threw_sc = true; }
+    check("metrics: a non-positive S_c throws", threw_sc);
+
+    bool threw_size = false;
+    try
+    {
+        auto wrong = make_constant_raster(make_dem_meta(9, 9, 10.0), 0.0f);
+        (void)lsdtt::compute_hillslope_metrics(
+            one_hilltop(5, 10, nc), dem, chan, &wrong, nullptr, nullptr, {});
+    }
+    catch (const std::invalid_argument&) { threw_size = true; }
+    check("metrics: a mis-sized curvature raster throws", threw_size);
+}
+
+// REGRESSION: an earlier signature took bare std::vector<float>*, which drops
+// the validity mask. The polyfit engine leaves nodata at raster edges, so
+// 259 of 627 hilltop pixels took Cht = -9999 as a real curvature and E* came
+// back at 1.4e5. A masked-out cell must yield NaN, never a sentinel.
+void test_metrics_nodata_curvature_is_not_a_value()
+{
+    const int nr = 41, nc = 41;
+    auto dem  = make_south_plane(nr, nc, 10.0, 0.2, 100.0);
+    auto chan = make_channel_row(dem.get_meta(), 30);
+
+    auto curv = make_constant_raster(dem.get_meta(), -9999.0f);
+    curv.get_mask_array().at(8, 20) = 0;          // ridge pixel is nodata
+
+    lsdtt::lsdtt_hillslope_metrics_options opts;
+    opts.n_threads = 1;
+    const auto res = lsdtt::compute_hillslope_metrics(
+        one_hilltop(8, 20, nc), dem, chan, &curv, nullptr, nullptr, opts);
+
+    check("metrics: a nodata curvature cell gives NaN Cht, not the sentinel",
+          !res.rows.empty() && std::isnan(res.rows.front().hilltop_curvature),
+          res.rows.empty() ? "" : std::to_string(res.rows.front().hilltop_curvature));
+
+    check("metrics: E* is NaN when its curvature was nodata, not a huge number",
+          !res.rows.empty() && std::isnan(res.rows.front().E_star));
+}
+
+void test_metrics_no_curvature_leaves_estar_null()
+{
+    const int nr = 41, nc = 41;
+    auto dem  = make_south_plane(nr, nc, 10.0, 0.2, 100.0);
+    auto chan = make_channel_row(dem.get_meta(), 30);
+
+    lsdtt::lsdtt_hillslope_metrics_options opts;
+    opts.n_threads = 1;
+    const auto res = lsdtt::compute_hillslope_metrics(
+        one_hilltop(8, 20, nc), dem, chan, nullptr, nullptr, nullptr, opts);
+
+    check("metrics: with no curvature raster, E* is NaN but R* still computes",
+          !res.rows.empty() && std::isnan(res.rows.front().E_star) &&
+          !std::isnan(res.rows.front().R_star));
+}
+
 } // namespace
 
 int main()
@@ -508,6 +828,15 @@ int main()
     test_shared_divide_deduplication();
     test_basin_outlet_passthrough();
     test_degenerate_inputs();
+
+    std::cout << "\n-- 5. Phase 2: hillslope metrics -----------------------\n";
+    test_metrics_analytic();
+    test_metrics_every_pixel_gets_a_row();
+    test_metrics_failed_trace_has_no_length();
+    test_metrics_plan_curvature_counts();
+    test_metrics_guards();
+    test_metrics_nodata_curvature_is_not_a_value();
+    test_metrics_no_curvature_leaves_estar_null();
 
     std::cout << "\n=======================================================\n";
     std::cout << "checks: " << g_n_checks << "   failed: " << g_n_failed << "\n";

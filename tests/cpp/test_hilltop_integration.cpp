@@ -41,6 +41,7 @@
 #include "lsdtt_junction_network_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_ridgeline_cpu.hpp"
+#include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_streamlines_cpu.hpp"
 
 namespace
@@ -272,8 +273,11 @@ int main(int argc, char** argv)
     fopt.stream_network_padding_pixels = 2;
 
     lsdtt::lsdtt_hilltop_filter_report frep;
+    lsdtt::lsdtt_raster_cpu chan_raster(std::vector<float>(chan_data),
+                                        std::vector<std::uint8_t>(chan_mask),
+                                        dem.get_meta());
     auto filtered = lsdtt::filter_hilltop_pixels(
-        res.pixels, dem.get_meta(), fopt, &chan_data, nullptr, nullptr, frep);
+        res.pixels, dem.get_meta(), fopt, &chan_raster, nullptr, nullptr, frep);
 
     const double frac_on_channel =
         frep.n_in > 0 ? static_cast<double>(frep.n_on_channel_before) /
@@ -363,6 +367,101 @@ int main(int argc, char** argv)
             lengths_positive = false;
     check("end to end: every successful trace has a positive hillslope length",
           lengths_positive);
+
+    // ---- Phase 2: surface metrics at the ridge pixels ------------------------
+    // Curvature and gradient come from the polyfit engine, over a window a few
+    // cells across. The plan-curvature raster drives the divergent/planar path
+    // counts.
+    std::unique_ptr<lsdtt::lsdtt_raster_cpu> curv_r, grad_r, plan_r;
+    try
+    {
+        const auto coeffs = lsdtt::direct_polyfit(dem, 3.0 * cell, 1);
+        lsdtt::polyfit_metric_request req;
+        req.metrics = std::vector<lsdtt::polyfit_metric>{
+            lsdtt::polyfit_metric::mean_curvature,
+            lsdtt::polyfit_metric::slope,
+            lsdtt::polyfit_metric::plan_curvature};
+        req.n_threads = 1;
+        const auto metrics = lsdtt::compute_polyfit_metrics(coeffs, req);
+
+        if (metrics.has(lsdtt::polyfit_metric::mean_curvature))
+            curv_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(
+                metrics.rasters.at(lsdtt::polyfit_metric::mean_curvature));
+        if (metrics.has(lsdtt::polyfit_metric::slope))
+            grad_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(
+                metrics.rasters.at(lsdtt::polyfit_metric::slope));
+        if (metrics.has(lsdtt::polyfit_metric::plan_curvature))
+            plan_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(
+                metrics.rasters.at(lsdtt::polyfit_metric::plan_curvature));
+    }
+    catch (const std::exception& e)
+    {
+        std::cout << "      [info] polyfit metrics unavailable: " << e.what() << "\n";
+    }
+
+    check("phase 2: surface metrics computed at the DEM resolution",
+          curv_r != nullptr && grad_r != nullptr);
+
+    lsdtt::lsdtt_hillslope_metrics_options mopts;
+    mopts.critical_slope_Sc = 0.8;      // the legacy hard-coded value
+    mopts.n_threads = 1;
+
+    const auto metrics = lsdtt::compute_hillslope_metrics(
+        filtered, dem, sink_mask,
+        curv_r.get(), grad_r.get(), plan_r.get(), mopts);
+
+    check("phase 2: one metrics row per filtered hilltop pixel",
+          metrics.rows.size() == filtered.size(),
+          std::to_string(metrics.rows.size()) + " of " +
+          std::to_string(filtered.size()));
+
+    check("phase 2: status counters reconcile against the row count",
+          metrics.n_reached_channel + metrics.n_hit_edge +
+          metrics.n_loop_detected + metrics.n_no_aspect +
+          metrics.n_not_traced_border ==
+          static_cast<std::int64_t>(metrics.rows.size()));
+
+    check("phase 2: the border shortfall is now an explicit status, not a "
+          "missing row",
+          metrics.n_not_traced_border == n_dropped_at_border,
+          std::to_string(metrics.n_not_traced_border) + " vs " +
+          std::to_string(n_dropped_at_border));
+
+    // E*/R* sanity on a real surface: both must be finite and positive wherever
+    // the trace succeeded and a curvature was available.
+    std::int64_t n_estar = 0, n_rstar = 0, n_bad = 0;
+    double estar_sum = 0.0, rstar_sum = 0.0;
+    for (const auto& r : metrics.rows)
+    {
+        if (r.status != lsdtt::hilltop_trace_status::reached_channel) continue;
+        if (!std::isnan(r.E_star)) { ++n_estar; estar_sum += r.E_star;
+                                     if (r.E_star < 0.0 || std::isinf(r.E_star)) ++n_bad; }
+        if (!std::isnan(r.R_star)) { ++n_rstar; rstar_sum += r.R_star;
+                                     if (std::isinf(r.R_star)) ++n_bad; }
+    }
+
+    std::cout << "\n      [measurement] rows with E* = " << n_estar
+              << ", mean E* = " << (n_estar ? estar_sum / n_estar : 0.0)
+              << "\n      [measurement] rows with R* = " << n_rstar
+              << ", mean R* = " << (n_rstar ? rstar_sum / n_rstar : 0.0)
+              << "\n";
+
+    check("phase 2: E* and R* are finite and non-negative where defined",
+          n_bad == 0, std::to_string(n_bad) + " bad values");
+
+    // A weaker assertion than this let a nodata sentinel through once: E* was
+    // 1.4e5 and still 'finite and non-negative'. Bound it physically.
+    const double mean_estar = n_estar ? estar_sum / n_estar : 0.0;
+    check("phase 2: mean E* is physically plausible (< 1e3), which a nodata "
+          "curvature sentinel would not be",
+          mean_estar < 1.0e3, "mean E* = " + std::to_string(mean_estar));
+
+    check("phase 2: E* is defined for most successful traces",
+          n_estar > 0.5 * static_cast<double>(metrics.n_reached_channel),
+          std::to_string(n_estar) + " of " +
+          std::to_string(metrics.n_reached_channel));
+
+
 
     // =========================================================================
     // Optional artefacts for visual inspection (plan section 4.7 group A/B).
@@ -464,6 +563,16 @@ int main(int argc, char** argv)
             }
         }
 
+        try
+        {
+            lsdtt::write_hilltop_metrics_csv(metrics, dem.get_meta(),
+                                             dir + "/hilltop_metrics.csv");
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << "  ! metrics CSV write failed: " << e.what() << "\n";
+        }
+
         {
             std::ofstream f(dir + "/run_summary.csv");
             f << "quantity,value\n"
@@ -488,7 +597,11 @@ int main(int argc, char** argv)
               << "n_hit_edge," << traces.n_hit_edge << "\n"
               << "n_loop_detected," << traces.n_loop_detected << "\n"
               << "n_no_aspect," << traces.n_no_aspect << "\n"
-              << "n_dropped_at_border," << n_dropped_at_border << "\n";
+              << "n_dropped_at_border," << n_dropped_at_border << "\n"
+              << "n_metrics_rows," << metrics.rows.size() << "\n"
+              << "n_reached_channel," << metrics.n_reached_channel << "\n"
+              << "n_not_traced_border," << metrics.n_not_traced_border << "\n"
+              << "critical_slope_Sc," << mopts.critical_slope_Sc << "\n";
         }
 
         std::cout << "  wrote DEM, channel mask, ridge-side raster, "
