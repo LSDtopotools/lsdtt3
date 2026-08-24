@@ -194,6 +194,27 @@ struct lsdtt_streamline_options
 
     // Number of OMP threads.  0 = use OMP or hardware default.
     int n_threads = 0;
+
+    // -------------------------------------------------------------------------
+    // Reuse instrumentation (plan_hillslope_channel_coupling_cli.md section 4.3,
+    // Step 0).  OFF by default and guarded in the hot loop.
+    //
+    // The trace is iteration of a pure map on the 3-tuple
+    // (cell, inlet face, entry coordinate p in [0,1]), so any two traces that
+    // reach the same state have identical remaining paths.  With p quantised
+    // into `reuse_bins` bins, the ratio
+    //
+    //     n_steps_total / n_distinct_states
+    //
+    // is an UPPER BOUND on the speedup memoisation could deliver.  Measuring it
+    // is the whole of Step 0: if the ratio is near 1 there is nothing to win and
+    // the memoisation work should not be started.
+    //
+    // Collecting the states costs memory proportional to the total step count,
+    // so use it on a sample, not on a production run.
+    // -------------------------------------------------------------------------
+    bool collect_reuse_stats = false;
+    int  reuse_bins          = 16;
 };
 
 // =============================================================================
@@ -209,6 +230,14 @@ struct lsdtt_streamline_result
     int n_hit_edge      = 0;
     int n_loop_detected = 0;
     int n_no_aspect     = 0;
+
+    // Populated only when lsdtt_streamline_options::collect_reuse_stats is set.
+    // reuse_ratio = n_steps_total / n_distinct_states, the upper bound on what
+    // memoisation could save.  See the option's documentation.
+    std::int64_t n_steps_total     = 0;
+    std::int64_t n_distinct_states = 0;
+    double       reuse_ratio       = 0.0;
+    int          reuse_bins_used   = 0;
 };
 
 // =============================================================================

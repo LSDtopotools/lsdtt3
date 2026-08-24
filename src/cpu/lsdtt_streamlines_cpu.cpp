@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -153,7 +154,121 @@ static void precompute_aspect(
 //   x = meta.x_min + (c + xi) * cell_size
 //   y = meta.y_min + (n_rows - r - 1 + yi) * cell_size
 // =============================================================================
+
+// =============================================================================
+// visit_table - loop-detection state for one trace
+//
+// PHASE 3 STEP 1.  Replaces a per-trace std::unordered_map<int,int>, which
+// heap-allocated inside the innermost loop of every trace.
+//
+// Why not the stamped full-grid array the research report suggested: at
+// 20000^2 that is 2 GB per thread, 16 GB across 8 threads, because it scales
+// with the GRID.  This table scales with the TRACE, which is short -- measured
+// at 13 steps per trace on corrugated terrain and ~200 on a long planar run --
+// so a few kilobytes per thread suffices and it is reused across traces via a
+// generation counter rather than reallocated.
+//
+// Open addressing with linear probing; the generation stamp makes reset O(1).
+// =============================================================================
+class visit_table
+{
+public:
+    explicit visit_table(std::size_t initial_capacity_pow2 = 1024)
+    {
+        resize_(initial_capacity_pow2);
+    }
+
+    // O(1): bump the generation rather than clearing.
+    void reset()
+    {
+        ++generation_;
+        n_entries_ = 0;
+        if (generation_ == 0)   // wrapped: the only time a real clear is needed
+        {
+            std::fill(gen_.begin(), gen_.end(), 0u);
+            generation_ = 1;
+        }
+    }
+
+    // Increment the visit count for `cell` and return the new value.
+    int visit(int cell)
+    {
+        if (n_entries_ * 2 >= capacity_) grow_();
+
+        std::size_t h = hash_(cell) & mask_;
+        while (gen_[h] == generation_ && cell_[h] != cell)
+            h = (h + 1) & mask_;
+
+        if (gen_[h] != generation_)
+        {
+            gen_[h]   = generation_;
+            cell_[h]  = cell;
+            count_[h] = 1;
+            ++n_entries_;
+            return 1;
+        }
+        if (count_[h] < 255) ++count_[h];
+        return count_[h];
+    }
+
+private:
+    static std::size_t hash_(int cell)
+    {
+        // Fibonacci hashing: cheap and adequate for row-major cell indices,
+        // which are otherwise highly clustered and probe badly.
+        return static_cast<std::size_t>(
+            static_cast<std::uint64_t>(static_cast<std::uint32_t>(cell))
+            * 0x9E3779B97F4A7C15ull >> 32);
+    }
+
+    void resize_(std::size_t capacity_pow2)
+    {
+        capacity_ = capacity_pow2;
+        mask_     = capacity_ - 1;
+        gen_.assign(capacity_, 0u);
+        cell_.assign(capacity_, -1);
+        count_.assign(capacity_, 0u);
+        generation_ = 1;
+        n_entries_  = 0;
+    }
+
+    void grow_()
+    {
+        // Rehash the live entries of the current generation into a table twice
+        // the size.  Rare: only a trace longer than half the capacity triggers
+        // it, and the capacity then persists for every later trace on this
+        // thread.
+        std::vector<std::uint32_t> old_gen   = gen_;
+        std::vector<std::int32_t>  old_cell  = cell_;
+        std::vector<std::uint8_t>  old_count = count_;
+        const std::uint32_t        live      = generation_;
+
+        resize_(capacity_ * 2);
+
+        for (std::size_t i = 0; i < old_gen.size(); ++i)
+        {
+            if (old_gen[i] != live) continue;
+            std::size_t h = hash_(old_cell[i]) & mask_;
+            while (gen_[h] == generation_) h = (h + 1) & mask_;
+            gen_[h]   = generation_;
+            cell_[h]  = old_cell[i];
+            count_[h] = old_count[i];
+            ++n_entries_;
+        }
+    }
+
+    std::vector<std::uint32_t> gen_;
+    std::vector<std::int32_t>  cell_;
+    std::vector<std::uint8_t>  count_;
+    std::uint32_t              generation_ = 1;
+    std::size_t                capacity_   = 0;
+    std::size_t                mask_       = 0;
+    std::size_t                n_entries_  = 0;
+};
+
 static lsdtt_streamline trace_one_streamline(
+    visit_table&                    visits,      // reused across traces
+    std::vector<std::uint64_t>*     state_out,   // nullptr unless instrumenting
     int                             src_row,
     int                             src_col,
     const float*                    dem_data,
@@ -292,9 +407,9 @@ static lsdtt_streamline trace_one_streamline(
     }
 
     // -------------------------------------------------------------------------
-    // Loop-detection state: flat-index -> visit count (thread-private)
+    // Loop-detection state: reused across traces, reset in O(1).
     // -------------------------------------------------------------------------
-    std::unordered_map<int, int> visit_count;
+    visits.reset();
 
     // -------------------------------------------------------------------------
     // Main trace loop
@@ -307,9 +422,24 @@ static lsdtt_streamline trace_one_streamline(
     {
         int fk = flat(a, b);
 
+        // Step 0 instrumentation: record the state on ENTERING this cell.
+        // The free coordinate on the inlet face is yi for east/west travel and
+        // xi for north/south travel.
+        if (state_out)
+        {
+            const double p = (dir == 1 || dir == 3) ? yi : xi;
+            const int nb   = opts.reuse_bins > 0 ? opts.reuse_bins : 1;
+            int bin = static_cast<int>(p * nb);
+            if (bin < 0) bin = 0;
+            if (bin >= nb) bin = nb - 1;
+            state_out->push_back(
+                (static_cast<std::uint64_t>(fk) * 4u +
+                 static_cast<std::uint64_t>(dir - 1)) * static_cast<std::uint64_t>(nb)
+                + static_cast<std::uint64_t>(bin));
+        }
+
         // Loop detection: increment visit count; terminate on third visit
-        int& vc = visit_count[fk];
-        ++vc;
+        const int vc = visits.visit(fk);
         if (vc >= 3)
         {
             skip_trace = true;
@@ -677,10 +807,21 @@ lsdtt_streamline_result trace_streamlines(
 
     std::atomic<int> done_count{0};
 
-    #pragma omp parallel for schedule(dynamic, 16) num_threads(nthreads)
+    // Step 0 instrumentation: one state list per trace, merged after the loop.
+    // Kept out of the hot path entirely when the option is off.
+    std::vector<std::vector<std::uint64_t>> state_lists;
+    if (opts.collect_reuse_stats) state_lists.resize(nsrc);
+
+    #pragma omp parallel
+    {
+        visit_table visits;
+
+    #pragma omp for schedule(dynamic, 16)
     for (int k = 0; k < nsrc; ++k)
     {
         raw[k] = trace_one_streamline(
+            visits,
+            opts.collect_reuse_stats ? &state_lists[k] : nullptr,
             sources[k].first, sources[k].second,
             dem_data, dem_mask_p,
             snk_data, snk_mask_p,
@@ -703,6 +844,7 @@ lsdtt_streamline_result trace_streamlines(
             }
         }
     }
+    }   // end omp parallel (visit_table is per-thread)
 
     std::cout << "\r  100% complete  (" << nsrc << " / " << nsrc << " traces)\n"
               << std::flush;
@@ -725,12 +867,41 @@ lsdtt_streamline_result trace_streamlines(
         result.streamlines.push_back(std::move(sl));
     }
 
+    // -------------------------------------------------------------------------
+    // Step 0 instrumentation: merge the per-trace state lists and report the
+    // reuse ratio.  This is the number that decides whether memoisation is
+    // worth building at all.
+    // -------------------------------------------------------------------------
+    if (opts.collect_reuse_stats)
+    {
+        std::unordered_set<std::uint64_t> distinct;
+        std::int64_t total = 0;
+        for (const auto& lst : state_lists) total += static_cast<std::int64_t>(lst.size());
+        distinct.reserve(static_cast<std::size_t>(total));
+        for (const auto& lst : state_lists)
+            for (std::uint64_t st : lst) distinct.insert(st);
+
+        result.n_steps_total     = total;
+        result.n_distinct_states = static_cast<std::int64_t>(distinct.size());
+        result.reuse_bins_used   = opts.reuse_bins > 0 ? opts.reuse_bins : 1;
+        result.reuse_ratio =
+            result.n_distinct_states > 0
+            ? static_cast<double>(result.n_steps_total) /
+              static_cast<double>(result.n_distinct_states)
+            : 0.0;
+    }
+
     std::cout << "Streamline tracing complete.\n"
               << "  Reached sink:  " << result.n_reached_sink  << "\n"
               << "  Hit edge:      " << result.n_hit_edge       << "\n"
               << "  Loop detected: " << result.n_loop_detected  << "\n"
-              << "  No aspect:     " << result.n_no_aspect      << "\n"
-              << std::flush;
+              << "  No aspect:     " << result.n_no_aspect      << "\n";
+    if (opts.collect_reuse_stats)
+        std::cout << "  Steps total:   " << result.n_steps_total << "\n"
+                  << "  Distinct states (bins=" << result.reuse_bins_used
+                  << "): " << result.n_distinct_states << "\n"
+                  << "  Reuse ratio:   " << result.reuse_ratio << "\n";
+    std::cout << std::flush;
 
     return result;
 }

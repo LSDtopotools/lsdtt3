@@ -1547,6 +1547,18 @@ add_test(NAME unit_hilltop_flow_routing_integration
 set_tests_properties(unit_hilltop_flow_routing_integration PROPERTIES
     LABELS "unit;hilltop_flow_routing")
 
+# SCAFFOLDING for the E*-R* validation workflow (plan section 4.8): runs the
+# hilltop pipeline on a supplied DEM. Not a test - it is built but never
+# registered with CTest, and it exists only until the Phase 4 CLI replaces it.
+add_executable(hilltop-workflow-driver cpp/hilltop_workflow_driver.cpp)
+target_link_libraries(hilltop-workflow-driver PRIVATE lsdtt3_cpu)
+
+# Phase 3 Step 0: measures the streamline reuse ratio and the per-trace cost.
+# Reports rather than asserts - the reuse ratio is landscape-dependent, so it is
+# not a pass/fail quantity. Built but not registered with CTest.
+add_executable(bench-streamlines cpp/bench_streamlines.cpp)
+target_link_libraries(bench-streamlines PRIVATE lsdtt3_cpu)
+
 # Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
 # (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the
 # analytic Roering steady profile, the SOR steady-state solver, and the
