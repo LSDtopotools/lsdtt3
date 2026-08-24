@@ -1522,6 +1522,31 @@ add_test(NAME unit_streamlines
 set_tests_properties(unit_streamlines PROPERTIES
     LABELS "unit;streamlines")
 
+# Ridge extraction for hilltop flow routing (Phase 1). The divide-grid corner
+# convention is the one claim everything downstream rests on, so the fixtures
+# are hand-drawn 5x5 grids with the expected pixels written out explicitly,
+# including a periodic-seam case and the non-4-connected step.
+add_executable(lsdtt-test-hilltop-flow-routing cpp/test_hilltop_flow_routing.cpp)
+target_link_libraries(lsdtt-test-hilltop-flow-routing PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hilltop_flow_routing
+         COMMAND lsdtt-test-hilltop-flow-routing)
+set_tests_properties(unit_hilltop_flow_routing PROPERTIES
+    LABELS "unit;hilltop_flow_routing")
+
+# The integration half of Phase 1: run ridge extraction against REAL basin
+# outlines rather than hand-made ridgelines, and MEASURE what fraction of real
+# outline steps are 4-connected. If real outlines were full of diagonal steps
+# the edge-based derivation would be the wrong model, so this is the check that
+# decides whether the approach is sound.
+add_executable(lsdtt-test-hilltop-integration cpp/test_hilltop_integration.cpp)
+target_link_libraries(lsdtt-test-hilltop-integration PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hilltop_flow_routing_integration
+         COMMAND lsdtt-test-hilltop-integration)
+set_tests_properties(unit_hilltop_flow_routing_integration PROPERTIES
+    LABELS "unit;hilltop_flow_routing")
+
 # Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
 # (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the
 # analytic Roering steady profile, the SOR steady-state solver, and the
@@ -2782,6 +2807,7 @@ set(LSDTT_DOMAIN_RULES
     "step_change"            "step_change"
     "landscape_equilibration|lem_equilibration" "landscape_equilibration"
     "streamlines"            "streamlines"
+    "hilltop_flow_routing"   "hilltop_flow_routing"
     "paired_flowpaths"       "paired_flowpaths"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
