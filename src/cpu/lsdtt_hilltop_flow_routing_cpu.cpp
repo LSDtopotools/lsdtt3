@@ -95,6 +95,82 @@ ridgeline_step_kind classify_ridgeline_step(
 }
 
 // =============================================================================
+// filter_hilltop_pixels
+// =============================================================================
+std::vector<lsdtt_hilltop_pixel> filter_hilltop_pixels(
+    const std::vector<lsdtt_hilltop_pixel>& pixels,
+    const lsdtt_raster_meta&                dem_meta,
+    const lsdtt_hilltop_filter_options&     opts,
+    const std::vector<float>*               channel_mask,
+    const std::vector<float>*               gradient,
+    const std::vector<float>*               curvature,
+    lsdtt_hilltop_filter_report&            report)
+{
+    const int nr = dem_meta.n_rows;
+    const int nc = dem_meta.n_cols;
+    const std::size_t ncell = static_cast<std::size_t>(nr) * nc;
+
+    auto check_size = [&](const std::vector<float>* v, const char* what) {
+        if (v && v->size() != ncell)
+            throw std::invalid_argument(
+                std::string("lsdtt_hilltop_flow_routing_cpu: ") + what +
+                " raster does not match the DEM grid (" +
+                std::to_string(v->size()) + " against " +
+                std::to_string(ncell) + " cells).");
+    };
+    check_size(channel_mask, "channel mask");
+    check_size(gradient, "gradient");
+    check_size(curvature, "curvature");
+
+    report = lsdtt_hilltop_filter_report{};
+    report.n_in = static_cast<std::int64_t>(pixels.size());
+
+    if (channel_mask)
+        for (const auto& p : pixels)
+            if ((*channel_mask)[static_cast<std::size_t>(p.flat)] > 0.5f)
+                ++report.n_on_channel_before;
+
+    const int pad = opts.stream_network_padding_pixels;
+
+    std::vector<lsdtt_hilltop_pixel> out;
+    out.reserve(pixels.size());
+
+    for (const auto& p : pixels)
+    {
+        const std::size_t k = static_cast<std::size_t>(p.flat);
+
+        if (channel_mask && pad > 0)
+        {
+            // Chebyshev neighbourhood: pad = 1 tests the pixel itself only.
+            const int reach = pad - 1;
+            bool near = false;
+            for (int dr = -reach; dr <= reach && !near; ++dr)
+                for (int dc = -reach; dc <= reach && !near; ++dc)
+                {
+                    const int rr = p.row + dr, cc = p.col + dc;
+                    if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
+                    if ((*channel_mask)[static_cast<std::size_t>(rr) * nc + cc] > 0.5f)
+                        near = true;
+                }
+            if (near) { ++report.n_dropped_near_channel; continue; }
+        }
+
+        if (gradient && opts.threshold_hilltop_gradient > 0.0f &&
+            (*gradient)[k] > opts.threshold_hilltop_gradient)
+        { ++report.n_dropped_steep; continue; }
+
+        if (curvature && opts.remove_positive_curvature_hilltops &&
+            (*curvature)[k] > 0.0f)
+        { ++report.n_dropped_convex_up; continue; }
+
+        out.push_back(p);
+    }
+
+    report.n_out = static_cast<std::int64_t>(out.size());
+    return out;
+}
+
+// =============================================================================
 // extract_hilltop_pixels
 // =============================================================================
 lsdtt_ridge_extraction_result extract_hilltop_pixels(

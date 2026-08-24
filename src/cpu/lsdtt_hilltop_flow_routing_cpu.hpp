@@ -208,6 +208,74 @@ void infer_divide_grid_periodicity(
 // basin_outlet_flats, if non-empty, must be the same length as `ridgelines` and
 // supplies basin_outlet_flat for each.
 // =============================================================================
+// =============================================================================
+// lsdtt_hilltop_filter_options - the three geomorphic filters
+//
+// These are carried over from the legacy driver because they are geomorphic
+// rather than algorithmic, and the first of them is not optional in practice:
+// a basin outline includes segments that run close to the channel near the
+// outlet, so an unfiltered ridge set contains pixels that sit ON the channel
+// network and have no hillslope at all.  MEASURED on the 60x60 ridge-and-valley
+// fixture with split_outline_into_ridgelines_by_equal_length: 419 of 1067
+// hilltop pixels (39 %) coincide with a channel pixel before filtering.  That is
+// large enough that the filter is a correctness requirement, not a refinement --
+// and it also signals that splitting an outline by EQUAL LENGTH is the wrong
+// splitter for hilltop work, because it hands back the near-outlet segments of
+// the outline as though they were divides.
+// =============================================================================
+struct lsdtt_hilltop_filter_options
+{
+    // Drop hilltop pixels within this many pixels of a channel (Chebyshev
+    // distance on the grid).  0 disables the filter; 1 drops only pixels that
+    // are themselves channel pixels.  Legacy name: StreamNetworkPadding.
+    int stream_network_padding_pixels = 0;
+
+    // Drop hilltop pixels steeper than this.  Steep "ridges" are usually
+    // landslide scarps or DEM noise.  <= 0 disables.  Legacy default was 0.4.
+    float threshold_hilltop_gradient = 0.0f;
+
+    // Drop hilltop pixels with POSITIVE curvature.  A hilltop is convex, and
+    // under lsdtt3's sign convention a convex-up ridge has NEGATIVE curvature
+    // (docs/testing_and_benchmarking.md), so a positive value is not a hilltop.
+    bool remove_positive_curvature_hilltops = false;
+};
+
+// =============================================================================
+// lsdtt_hilltop_filter_report - what each filter removed
+//
+// Reported separately so a thin ridge set can be attributed to the filter that
+// caused it rather than guessed at.
+// =============================================================================
+struct lsdtt_hilltop_filter_report
+{
+    std::int64_t n_in                    = 0;
+    std::int64_t n_out                   = 0;
+    std::int64_t n_dropped_near_channel  = 0;
+    std::int64_t n_dropped_steep         = 0;
+    std::int64_t n_dropped_convex_up     = 0;
+
+    // Diagnostic taken BEFORE any filtering: how many hilltop pixels are
+    // themselves channel pixels.  If this is large the ridge set is being
+    // contaminated by outline segments near basin outlets.
+    std::int64_t n_on_channel_before = 0;
+};
+
+// =============================================================================
+// filter_hilltop_pixels
+//
+// Any of the three rasters may be null, in which case the corresponding filter
+// is skipped regardless of its option value.  All supplied rasters must share
+// the DEM grid geometry.
+// =============================================================================
+[[nodiscard]] std::vector<lsdtt_hilltop_pixel> filter_hilltop_pixels(
+    const std::vector<lsdtt_hilltop_pixel>& pixels,
+    const lsdtt_raster_meta&                dem_meta,
+    const lsdtt_hilltop_filter_options&     opts,
+    const std::vector<float>*               channel_mask,
+    const std::vector<float>*               gradient,
+    const std::vector<float>*               curvature,
+    lsdtt_hilltop_filter_report&            report);
+
 [[nodiscard]] lsdtt_ridge_extraction_result extract_hilltop_pixels(
     const std::vector<lsdtt_ridgeline_cpu>&  ridgelines,
     const lsdtt_raster_meta&                 dem_meta,

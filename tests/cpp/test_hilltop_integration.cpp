@@ -264,13 +264,52 @@ int main(int argc, char** argv)
         if (cp.mask[i] && cp.data[i] >= static_cast<float>(channel_threshold_px))
         { chan_data[i] = 1.0f; ++n_channel_px; }
 
+    // ---- the three geomorphic filters (section 3.2) -------------------------
+    // The unfiltered ridge set contains pixels sitting ON the channel network,
+    // because a basin outline includes segments that run close to the channel
+    // near the outlet. Measure it, then apply the padding filter.
+    lsdtt::lsdtt_hilltop_filter_options fopt;
+    fopt.stream_network_padding_pixels = 2;
+
+    lsdtt::lsdtt_hilltop_filter_report frep;
+    auto filtered = lsdtt::filter_hilltop_pixels(
+        res.pixels, dem.get_meta(), fopt, &chan_data, nullptr, nullptr, frep);
+
+    const double frac_on_channel =
+        frep.n_in > 0 ? static_cast<double>(frep.n_on_channel_before) /
+                        static_cast<double>(frep.n_in) : 0.0;
+
+    std::cout << "\n      [measurement] hilltop pixels before filter = " << frep.n_in
+              << "\n      [measurement] ON a channel pixel           = "
+              << frep.n_on_channel_before << "  (" << 100.0 * frac_on_channel << " %)"
+              << "\n      [measurement] dropped within 2 px of channel = "
+              << frep.n_dropped_near_channel
+              << "\n      [measurement] hilltop pixels after filter  = " << frep.n_out
+              << "\n";
+
+    check("filters: the channel-padding filter removes the contaminated pixels",
+          frep.n_dropped_near_channel >= frep.n_on_channel_before,
+          std::to_string(frep.n_dropped_near_channel) + " vs " +
+          std::to_string(frep.n_on_channel_before));
+
+    check("filters: no surviving hilltop pixel is a channel pixel",
+          [&]{
+              for (const auto& p : filtered)
+                  if (chan_data[static_cast<std::size_t>(p.flat)] > 0.5f) return false;
+              return true;
+          }());
+
+    check("filters: the filter keeps most of the ridge set",
+          frep.n_out > 0.5 * static_cast<double>(frep.n_in),
+          std::to_string(frep.n_out) + " of " + std::to_string(frep.n_in));
+
     lsdtt::lsdtt_raster_cpu sink_mask(std::vector<float>(chan_data),
                                       std::vector<std::uint8_t>(chan_mask),
                                       dem.get_meta());
 
     std::vector<float>        src_data(cp.data.size(), 0.0f);
     std::vector<std::uint8_t> src_mask_v(cp.data.size(), 1);
-    for (const auto& p : res.pixels)
+    for (const auto& p : filtered)
         src_data[static_cast<std::size_t>(p.flat)] = 1.0f;
 
     lsdtt::lsdtt_raster_cpu source_mask(std::vector<float>(src_data),
@@ -306,7 +345,7 @@ int main(int argc, char** argv)
     // count is <= the hilltop count. Reconcile it explicitly rather than
     // letting the shortfall vanish.
     const std::int64_t n_dropped_at_border =
-        static_cast<std::int64_t>(res.pixels.size()) -
+        static_cast<std::int64_t>(filtered.size()) -
         static_cast<std::int64_t>(traces.streamlines.size());
     std::cout << "      [measurement] hilltop pixels dropped at the DEM border = "
               << n_dropped_at_border << "\n\n";
@@ -347,7 +386,7 @@ int main(int argc, char** argv)
                               lsdtt::raster_output_format::gtiff);
 
             std::vector<float> side_raster(cp.data.size(), 0.0f);
-            for (const auto& p : res.pixels)
+            for (const auto& p : filtered)
                 side_raster[static_cast<std::size_t>(p.flat)] =
                     static_cast<float>(p.ridge_side + 1);   // 1 = left, 2 = right
             loader.write_full(side_raster, dem.get_meta(),
@@ -365,7 +404,7 @@ int main(int argc, char** argv)
             f << "row,col,flat,ridgeline_id,ridgeline_node_index,"
                  "distance_along_ridgeline_m,ridgeline_total_length_m,"
                  "ridge_side,basin_outlet_flat\n";
-            for (const auto& p : res.pixels)
+            for (const auto& p : filtered)
                 f << p.row << ',' << p.col << ',' << p.flat << ','
                   << p.ridgeline_id << ',' << p.ridgeline_node_index << ','
                   << p.distance_along_ridgeline_m << ','
@@ -438,7 +477,10 @@ int main(int argc, char** argv)
               << "n_edges_cardinal," << res.n_edges_cardinal << "\n"
               << "n_edges_diagonal," << res.n_edges_diagonal << "\n"
               << "n_edges_disjoint," << res.n_edges_disjoint << "\n"
-              << "n_hilltop_pixels," << res.pixels.size() << "\n"
+              << "n_hilltop_pixels_raw," << res.pixels.size() << "\n"
+              << "n_hilltop_on_channel," << frep.n_on_channel_before << "\n"
+              << "n_hilltop_dropped_near_channel," << frep.n_dropped_near_channel << "\n"
+              << "n_hilltop_pixels," << filtered.size() << "\n"
               << "n_duplicates_dropped," << res.n_duplicates_dropped << "\n"
               << "n_off_grid_dropped," << res.n_off_grid_dropped << "\n"
               << "n_traces," << traces.streamlines.size() << "\n"
