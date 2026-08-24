@@ -1508,6 +1508,20 @@ add_test(NAME unit_hillslope_critical_slope
 set_tests_properties(unit_hillslope_critical_slope PROPERTIES
     LABELS "unit;hillslope")
 
+# Kinematic streamline tracing (Lea 1992 + Tarboton 1997 edge routing).
+# Phase 0 of the hillslope-channel coupling work: the module shipped as a draft
+# with no tests and no caller, and the hilltop-flow-routing layer is to be built
+# on it, so this driver characterises it before anything depends on it.
+# Analytic fixtures only (tilted planes with an exact central-difference aspect,
+# and a cone), so there is no committed DEM and it runs in the default suite.
+add_executable(lsdtt-test-streamlines cpp/test_streamlines.cpp)
+target_link_libraries(lsdtt-test-streamlines PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_streamlines
+         COMMAND lsdtt-test-streamlines)
+set_tests_properties(unit_streamlines PROPERTIES
+    LABELS "unit;streamlines")
+
 # Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
 # (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the
 # analytic Roering steady profile, the SOR steady-state solver, and the
@@ -2767,6 +2781,7 @@ set(LSDTT_DOMAIN_RULES
     "landslide"              "landslide"
     "step_change"            "step_change"
     "landscape_equilibration|lem_equilibration" "landscape_equilibration"
+    "streamlines"            "streamlines"
     "paired_flowpaths"       "paired_flowpaths"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
