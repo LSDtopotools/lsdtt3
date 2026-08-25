@@ -101,7 +101,15 @@ if(Eigen3_FOUND)
     list(APPEND LSDTT3_CPU_SOURCES "${LSDTT3_SRC_DIR}/cpu/lsdtt_chi_ksn_inversion_cpu.cpp")
 endif()
 
-add_library(lsdtt3_runtime SHARED
+if(WIN32)
+    # Keep the LSDTT implementation inside the extension on Windows. The
+    # project does not annotate its C++ API for DLL export, so a separate
+    # runtime DLL would not produce the import library required by _core.
+    set(LSDTT_PYTHON_RUNTIME_LIBRARY_TYPE STATIC)
+else()
+    set(LSDTT_PYTHON_RUNTIME_LIBRARY_TYPE SHARED)
+endif()
+add_library(lsdtt3_runtime ${LSDTT_PYTHON_RUNTIME_LIBRARY_TYPE}
     ${LSDTT3_CORE_SOURCES}
     ${LSDTT3_UTILS_SOURCES}
     ${LSDTT3_CPU_SOURCES}
