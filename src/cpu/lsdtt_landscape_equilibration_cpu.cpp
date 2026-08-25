@@ -50,113 +50,6 @@ double tolerance_multiplier_for_cycle(double schedule, int cycle, int max_cycles
 // obvious summary; the p90 is the one the gradient prediction needs, because
 // the solver is pushed hardest by the LONGEST hillslopes, not the average one.
 // Both come from the same distance sweep, so the percentile is nearly free.
-struct hillslope_length_stats
-{
-    double mean_m = 0.0;
-    double p90_m = 0.0;
-};
-
-hillslope_length_stats estimate_hillslope_length_stats(
-    const lsdtt_flowinfo& flow,
-    const std::vector<std::uint8_t>& is_channel)
-{
-    const std::size_t n = flow.full_grid_size();
-    std::vector<double> dist_to_channel(n, -1.0);
-    for (std::size_t s = 0; s < n; ++s)
-    {
-        if (s < is_channel.size() && is_channel[s] != 0)
-            dist_to_channel[s] = 0.0;
-    }
-
-    double sum = 0.0;
-    std::int64_t count = 0;
-    std::vector<double> sampled;
-
-    for (std::int64_t flat = 0; flat < static_cast<std::int64_t>(n); ++flat)
-    {
-        if (!flow.is_valid_cell(flat)) continue;
-        const std::size_t s0 = static_cast<std::size_t>(flat);
-        if (s0 >= is_channel.size() || is_channel[s0] != 0) continue;
-
-        if (dist_to_channel[s0] >= 0.0)
-        {
-            sum += dist_to_channel[s0];
-            sampled.push_back(dist_to_channel[s0]);
-            ++count;
-            continue;
-        }
-
-        std::vector<std::int64_t> path;
-        std::vector<double> step_lens;
-        std::int64_t cur = flat;
-        double known_tail = 0.0;
-        bool anchored = false;
-
-        for (std::size_t guard = 0; guard <= n; ++guard)
-        {
-            if (!flow.is_valid_cell(cur))
-            {
-                anchored = true;
-                known_tail = 0.0;
-                break;
-            }
-
-            const std::size_t cs = static_cast<std::size_t>(cur);
-            if (dist_to_channel[cs] >= 0.0)
-            {
-                anchored = true;
-                known_tail = dist_to_channel[cs];
-                break;
-            }
-
-            path.push_back(cur);
-
-            const std::int64_t rec = flow.receiver_of_unchecked(cur);
-            if (rec < 0 || !flow.is_valid_cell(rec))
-            {
-                anchored = true;
-                known_tail = 0.0;
-                break;
-            }
-
-            step_lens.push_back(flow_step_length_to_receiver(flow, cur));
-            cur = rec;
-        }
-
-        if (!anchored)
-            continue;
-
-        double tail = known_tail;
-        for (std::size_t p = path.size(); p-- > 0;)
-        {
-            if (p < step_lens.size())
-                tail += step_lens[p];
-            dist_to_channel[static_cast<std::size_t>(path[p])] = tail;
-        }
-
-        if (dist_to_channel[s0] >= 0.0)
-        {
-            sum += dist_to_channel[s0];
-            sampled.push_back(dist_to_channel[s0]);
-            ++count;
-        }
-    }
-
-    hillslope_length_stats stats;
-    if (count > 0)
-    {
-        stats.mean_m = sum / static_cast<double>(count);
-
-        // Nearest-rank p90, matching the convention used by the divide-step
-        // percentiles in lsdtt_divide_diagnostics_cpu.
-        std::sort(sampled.begin(), sampled.end());
-        const std::size_t idx = std::min(
-            sampled.size() - 1,
-            static_cast<std::size_t>(0.9 * static_cast<double>(sampled.size())));
-        stats.p90_m = sampled[idx];
-    }
-    return stats;
-}
 
 // Steady-state relief of a 1-D hillslope of length L under the nonlinear
 // (Roering) transport law, obtained by integrating the closed-form gradient.
@@ -512,6 +405,212 @@ std::string make_non_converged_reason(
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Hillslope length statistics. Defined outside the anonymous namespace because
+// they are declared in the header and used by other translation units.
+// ---------------------------------------------------------------------------
+hillslope_length_stats estimate_hillslope_length_stats(
+    const lsdtt_flowinfo& flow,
+    const std::vector<std::uint8_t>& is_channel,
+    std::vector<double>* out_distances,
+    bool channel_anchored_only)
+{
+    const std::size_t n = flow.full_grid_size();
+    std::vector<double> dist_to_channel(n, -1.0);
+
+    // What each resolved distance is measured TO: 1 = a channel pixel,
+    // 0 = the domain edge. Propagated along each path so a cell inherits the
+    // anchor kind of whatever its path terminated on.
+    std::vector<std::uint8_t> anchored_on_channel(n, 0u);
+
+    for (std::size_t s = 0; s < n; ++s)
+    {
+        if (s < is_channel.size() && is_channel[s] != 0)
+        {
+            dist_to_channel[s]      = 0.0;
+            anchored_on_channel[s]  = 1u;
+        }
+    }
+
+    double sum = 0.0;
+    std::int64_t count = 0;
+    std::vector<double> sampled;
+
+    // The ridge subset: non-channel cells with no D8 donors. Accumulated in the
+    // same pass and from the same memoised distances, so `ridge_mean_m` cannot
+    // drift from `mean_m` -- they are two summaries of one measurement.
+    double ridge_sum = 0.0;
+    std::int64_t ridge_count = 0;
+    std::vector<double> ridge_sampled;
+
+    std::int64_t edge_anchored = 0;
+
+    // One place decides whether a resolved cell contributes, so the four
+    // statistics cannot disagree about which cells they cover.
+    const auto record = [&](std::size_t k, bool is_ridge)
+    {
+        const bool on_channel = (anchored_on_channel[k] != 0u);
+        if (!on_channel) ++edge_anchored;
+        if (channel_anchored_only && !on_channel) return;
+
+        sum += dist_to_channel[k];
+        sampled.push_back(dist_to_channel[k]);
+        ++count;
+        if (is_ridge)
+        {
+            ridge_sum += dist_to_channel[k];
+            ridge_sampled.push_back(dist_to_channel[k]);
+            ++ridge_count;
+        }
+    };
+
+    for (std::int64_t flat = 0; flat < static_cast<std::int64_t>(n); ++flat)
+    {
+        if (!flow.is_valid_cell(flat)) continue;
+        const std::size_t s0 = static_cast<std::size_t>(flat);
+        if (s0 >= is_channel.size() || is_channel[s0] != 0) continue;
+
+        const bool is_ridge = (flow.donor_count_of_unchecked(flat) == 0);
+
+        if (dist_to_channel[s0] >= 0.0)
+        {
+            record(s0, is_ridge);
+            continue;
+        }
+
+        std::vector<std::int64_t> path;
+        std::vector<double> step_lens;
+        std::int64_t cur = flat;
+        double known_tail = 0.0;
+        bool anchored = false;
+        bool tail_on_channel = false;   // false => anchored on the domain edge
+
+        for (std::size_t guard = 0; guard <= n; ++guard)
+        {
+            if (!flow.is_valid_cell(cur))
+            {
+                // Left the grid: the EDGE is the terminus, not a channel.
+                anchored = true;
+                known_tail = 0.0;
+                tail_on_channel = false;
+                break;
+            }
+
+            const std::size_t cs = static_cast<std::size_t>(cur);
+            if (dist_to_channel[cs] >= 0.0)
+            {
+                anchored = true;
+                known_tail = dist_to_channel[cs];
+                tail_on_channel = (anchored_on_channel[cs] != 0u);
+                break;
+            }
+
+            path.push_back(cur);
+
+            const std::int64_t rec = flow.receiver_of_unchecked(cur);
+            if (rec < 0 || !flow.is_valid_cell(rec))
+            {
+                anchored = true;
+                known_tail = 0.0;
+                tail_on_channel = false;
+                break;
+            }
+
+            step_lens.push_back(flow_step_length_to_receiver(flow, cur));
+            cur = rec;
+        }
+
+        if (!anchored)
+            continue;
+
+        double tail = known_tail;
+        for (std::size_t p = path.size(); p-- > 0;)
+        {
+            if (p < step_lens.size())
+                tail += step_lens[p];
+            const std::size_t pk = static_cast<std::size_t>(path[p]);
+            dist_to_channel[pk]     = tail;
+            anchored_on_channel[pk] = tail_on_channel ? 1u : 0u;
+        }
+
+        if (dist_to_channel[s0] >= 0.0)
+            record(s0, is_ridge);
+    }
+
+    hillslope_length_stats stats;
+    if (count > 0)
+    {
+        stats.mean_m = sum / static_cast<double>(count);
+
+        // Nearest-rank p90, matching the convention used by the divide-step
+        // percentiles in lsdtt_divide_diagnostics_cpu.
+        std::sort(sampled.begin(), sampled.end());
+        const std::size_t idx = std::min(
+            sampled.size() - 1,
+            static_cast<std::size_t>(0.9 * static_cast<double>(sampled.size())));
+        stats.p90_m = sampled[idx];
+    }
+
+    if (out_distances) *out_distances = dist_to_channel;
+
+    stats.n_hillslope_pixels = count;
+    stats.n_ridge_pixels     = ridge_count;
+    stats.n_edge_anchored    = edge_anchored;
+
+    if (ridge_count > 0)
+    {
+        stats.ridge_mean_m = ridge_sum / static_cast<double>(ridge_count);
+        std::sort(ridge_sampled.begin(), ridge_sampled.end());
+        const std::size_t ridx = std::min(
+            ridge_sampled.size() - 1,
+            static_cast<std::size_t>(0.9 * static_cast<double>(ridge_sampled.size())));
+        stats.ridge_p90_m = ridge_sampled[ridx];
+    }
+
+    return stats;
+}
+
+hillslope_length_statistic parse_hillslope_length_statistic(const std::string& name)
+{
+    std::string k;
+    for (char ch : name)
+        k += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+    if (k == "ridge_mean")     return hillslope_length_statistic::ridge_mean;
+    if (k == "all_pixel_mean") return hillslope_length_statistic::all_pixel_mean;
+    if (k == "p90")            return hillslope_length_statistic::p90;
+
+    // Fatal rather than defaulting: the three statistics differ by a factor of
+    // two, so a typo that quietly selected one of them would deliver hillslopes
+    // twice the requested length with nothing to show for it.
+    throw std::runtime_error(
+        "unrecognised hillslope_length_statistic '" + name +
+        "' - expected one of: ridge_mean, all_pixel_mean, p90");
+}
+
+const char* name_of(hillslope_length_statistic which) noexcept
+{
+    switch (which)
+    {
+        case hillslope_length_statistic::ridge_mean:     return "ridge_mean";
+        case hillslope_length_statistic::all_pixel_mean: return "all_pixel_mean";
+        case hillslope_length_statistic::p90:            return "p90";
+    }
+    return "unknown";
+}
+
+double value_of(const hillslope_length_stats& stats,
+                hillslope_length_statistic     which) noexcept
+{
+    switch (which)
+    {
+        case hillslope_length_statistic::ridge_mean:     return stats.ridge_mean_m;
+        case hillslope_length_statistic::all_pixel_mean: return stats.mean_m;
+        case hillslope_length_statistic::p90:            return stats.p90_m;
+    }
+    return 0.0;
+}
+
 std::vector<std::string> lsdtt_snap_cycle_record::csv_headers()
 {
     return {
@@ -856,6 +955,8 @@ lsdtt_equilibration_result equilibrate_landscape(
                 estimate_hillslope_length_stats(flow, is_channel);
             result.mean_hillslope_length_m = lh_stats.mean_m;
             result.p90_hillslope_length_m  = lh_stats.p90_m;
+            result.ridge_mean_hillslope_length_m = lh_stats.ridge_mean_m;
+            result.n_ridge_pixels                = lh_stats.n_ridge_pixels;
 
             const double U = static_cast<double>(opts.hillslope.U);
             const double D = static_cast<double>(opts.hillslope.D);
@@ -917,8 +1018,14 @@ lsdtt_equilibration_result equilibrate_landscape(
                 ? (opts.channel_threshold_area * flow.cell_size())
                 : opts.channel_threshold_area;
 
+            // All three statistics, always. They differ by a factor of two on
+            // a uniform hillslope, so reporting one alone invites it being
+            // quoted as "the" hillslope length.
             pf << " Pre-flight: mean_hillslope_length_m="
                << result.mean_hillslope_length_m
+               << ", ridge_mean_hillslope_length_m="
+               << result.ridge_mean_hillslope_length_m
+               << " (over " << result.n_ridge_pixels << " ridge pixels)"
                << ", p90_hillslope_length_m="
                << result.p90_hillslope_length_m
                << ", predicted_hillslope_relief_m="

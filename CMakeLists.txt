@@ -290,6 +290,7 @@ target_include_directories(lsdtt3_utils
 # Depends on lsdtt3_core, OpenMP (optional), FFTW (optional).
 # =============================================================================
 set(LSDTT3_CPU_SOURCES
+    src/cpu/lsdtt_hillslope_length_search_cpu.cpp
     src/cpu/lsdtt_usgs_elevation.cpp
     src/cpu/lsdtt_raster_cpu.cpp
     src/cpu/lsdtt_raster_algebra.cpp

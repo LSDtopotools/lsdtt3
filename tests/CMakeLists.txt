@@ -1426,6 +1426,16 @@ target_link_libraries(lsdtt-test-paired-flowpaths PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-landscape-equilibration cpp/test_landscape_equilibration.cpp)
 target_link_libraries(lsdtt-test-landscape-equilibration PRIVATE lsdtt3_cpu)
 
+# The factor-of-two ambiguity in "mean hillslope length" (plan_lem_hillslope_
+# length_targeting.md section 3): ridge_mean is L where the all-pixel mean is L/2.
+add_executable(lsdtt-test-hillslope-length-statistic cpp/test_hillslope_length_statistic.cpp)
+target_link_libraries(lsdtt-test-hillslope-length-statistic PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_length_statistic
+         COMMAND lsdtt-test-hillslope-length-statistic)
+set_tests_properties(unit_hillslope_length_statistic PROPERTIES
+    LABELS "unit;hillslope")
+
 add_executable(lsdtt-test-critical-slope cpp/test_critical_slope.cpp)
 target_link_libraries(lsdtt-test-critical-slope PRIVATE lsdtt3_cpu)
 
@@ -1646,6 +1656,22 @@ add_hilltop_coupling_cli_test(
 # SCAFFOLDING for the E*-R* validation workflow (plan section 4.8): runs the
 # hilltop pipeline on a supplied DEM. Not a test - it is built but never
 # registered with CTest, and it exists only until the Phase 4 CLI replaces it.
+# Pathway A (plan_lem_hillslope_length_targeting.md section 4): the channel
+# threshold search, and the ways its objective can be plausibly wrong.
+add_executable(lsdtt-test-hillslope-length-search cpp/test_hillslope_length_search.cpp)
+target_link_libraries(lsdtt-test-hillslope-length-search PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_length_search
+         COMMAND lsdtt-test-hillslope-length-search)
+set_tests_properties(unit_hillslope_length_search PROPERTIES
+    LABELS "unit;hillslope")
+
+# Phase 1b of plan_lem_hillslope_length_targeting.md: writes the D8
+# distance-to-channel field so it can be compared against the streamline
+# tracer's Lh on the same source pixels. A driver, not a CTest entry.
+add_executable(hillslope-length-comparison-driver cpp/hillslope_length_comparison_driver.cpp)
+target_link_libraries(hillslope-length-comparison-driver PRIVATE lsdtt3_cpu)
+
 add_executable(hilltop-workflow-driver cpp/hilltop_workflow_driver.cpp)
 target_link_libraries(hilltop-workflow-driver PRIVATE lsdtt3_cpu)
 

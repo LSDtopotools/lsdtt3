@@ -37,6 +37,101 @@
 namespace lsdtt
 {
 
+// =============================================================================
+// Hillslope length statistics
+//
+// "Mean hillslope length" is ambiguous by a factor of two, and that matters as
+// soon as anyone targets a value. On an idealised planar hillslope of length L
+// with uniformly distributed pixels:
+//
+//   mean over ALL hillslope pixels    -> L/2   (`mean_m`)
+//   mean over RIDGE pixels only       -> L     (`ridge_mean_m`)
+//   p90 over all pixels               -> ~L    (`p90_m`)
+//
+// A tool that hits "100 m" against the wrong statistic delivers 200 m
+// hillslopes. All three are therefore reported together and the caller must say
+// which one it meant.
+//
+// A RIDGE PIXEL here is a cell with NO D8 DONORS -- nothing drains into it. That
+// is the D8 flow field's own definition of a ridgetop, it costs nothing
+// (donor counts are already built), and it is the definition that matches the
+// question "what is the average D8 path distance from the ridgetops".
+//
+// `mean_m` and `p90_m` keep exactly the meaning they have always had: they are
+// already recorded in the snap-convergence CSV and the pre-flight line, and
+// reinterpreting them would invalidate every number measured so far.
+// =============================================================================
+struct hillslope_length_stats
+{
+    // Over every non-channel pixel. L/2 on a uniform hillslope.
+    double mean_m = 0.0;
+    double p90_m  = 0.0;
+
+    // Over non-channel pixels with no D8 donors. L on a uniform hillslope.
+    double ridge_mean_m = 0.0;
+    double ridge_p90_m  = 0.0;
+
+    std::int64_t n_hillslope_pixels = 0;
+    std::int64_t n_ridge_pixels     = 0;
+
+    // Sampled cells whose path left the GRID without ever meeting a channel.
+    //
+    // Such a path is anchored at distance 0 on the domain edge, so the edge is
+    // indistinguishable from a channel unless this is checked. On a strip
+    // draining out of both ends, or on any DEM whose channel network does not
+    // cover it, these dominate: 48.6% of the Indian Creek 1 m DEM is more than
+    // 200 m from any channel, and its domain-wide mean is 3.6x the mean over
+    // cells that actually reach one.
+    //
+    // ANY SEARCH OVER THE CHANNEL THRESHOLD MUST WATCH THIS. Raising the
+    // threshold is the direction that lengthens hillslopes, and it also removes
+    // channels -- so the contamination grows in the direction the search moves,
+    // and never announces itself as a failure.
+    std::int64_t n_edge_anchored = 0;
+};
+
+// Which statistic a caller means. Used by anything that targets a hillslope
+// length, so the target and the measurement cannot disagree silently.
+enum class hillslope_length_statistic
+{
+    all_pixel_mean,   // mean_m       -- the historical default
+    ridge_mean,       // ridge_mean_m -- "distance from the ridgetops"
+    p90               // p90_m
+};
+
+[[nodiscard]] hillslope_length_statistic parse_hillslope_length_statistic(
+    const std::string& name);
+
+[[nodiscard]] const char* name_of(hillslope_length_statistic which) noexcept;
+
+// The value of `stats` under `which`.
+[[nodiscard]] double value_of(const hillslope_length_stats& stats,
+                              hillslope_length_statistic     which) noexcept;
+
+// Flow-path distance to the nearest channel pixel, summarised four ways.
+//
+// D8 distances, memoised along each path so every cell is resolved once.
+// NOTE this is a D8 measurement: it is confined to eight directions and so
+// runs long relative to a sub-pixel streamline tracer (as used by
+// lsdtt-hillslope-channel-coupling), which follows the true aspect. The two are
+// not interchangeable; anything calibrated against one must be validated
+// against the same one.
+// `out_distances`, when non-null, receives the per-cell flow distance to the
+// nearest channel: >= 0 where resolved, -1 where the cell was never anchored.
+// Needed to compare this measurement against a different one on the SAME source
+// pixels; the summary statistics alone cannot separate an algorithm difference
+// from a difference in which pixels were averaged.
+// `channel_anchored_only` excludes edge-anchored cells from all four summary
+// statistics (they are still counted in `n_edge_anchored`). Default false, which
+// is the historical behaviour: `mean_m` and `p90_m` are already recorded in the
+// snap-convergence CSV and the pre-flight line, and changing what they mean
+// would invalidate every number measured so far.
+[[nodiscard]] hillslope_length_stats estimate_hillslope_length_stats(
+    const lsdtt_flowinfo&            flow,
+    const std::vector<std::uint8_t>& is_channel,
+    std::vector<double>*             out_distances        = nullptr,
+    bool                             channel_anchored_only = false);
+
 struct lsdtt_snap_cycle_record
 {
     int    cycle = 0;
@@ -181,6 +276,12 @@ struct lsdtt_equilibration_result
     // The p90 is the one the gradient prediction uses; see below.
     double mean_hillslope_length_m = 0.0;
     double p90_hillslope_length_m = 0.0;
+
+    // Mean flow-path distance from the RIDGETOPS (D8 cells with no donors).
+    // On a uniform hillslope this is L where mean_hillslope_length_m is L/2, so
+    // the two are not interchangeable -- see hillslope_length_stats.
+    double ridge_mean_hillslope_length_m = 0.0;
+    std::int64_t n_ridge_pixels = 0;
 
     // Steady-state hillslope relief predicted for the hillslope_model actually
     // requested:
