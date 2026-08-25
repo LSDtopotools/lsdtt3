@@ -25,6 +25,9 @@ set(LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR
 set(LSDTT_INTERNAL_DRAINAGE_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_fixture")
 
+set(LSDTT_HILLTOP_COUPLING_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/hilltop_coupling_fixture")
+
 function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
     set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
 
@@ -1071,6 +1074,14 @@ add_test(NAME unit_surface_metrics
                  ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
 set_tests_properties(unit_surface_metrics PROPERTIES LABELS "unit;surface_metrics")
 
+# Vertical units: the feet/metres trap and the plausibility warning that makes
+# it discoverable (docs/testing_and_benchmarking.md).
+add_executable(lsdtt-test-vertical-units cpp/test_vertical_units.cpp)
+target_link_libraries(lsdtt-test-vertical-units PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_vertical_units COMMAND lsdtt-test-vertical-units)
+set_tests_properties(unit_vertical_units PROPERTIES LABELS "unit;raster")
+
 add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
 target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
 
@@ -1507,6 +1518,142 @@ add_test(NAME unit_hillslope_critical_slope
          COMMAND lsdtt-test-critical-slope)
 set_tests_properties(unit_hillslope_critical_slope PROPERTIES
     LABELS "unit;hillslope")
+
+# Kinematic streamline tracing (Lea 1992 + Tarboton 1997 edge routing).
+# Phase 0 of the hillslope-channel coupling work: the module shipped as a draft
+# with no tests and no caller, and the hilltop-flow-routing layer is to be built
+# on it, so this driver characterises it before anything depends on it.
+# Analytic fixtures only (tilted planes with an exact central-difference aspect,
+# and a cone), so there is no committed DEM and it runs in the default suite.
+add_executable(lsdtt-test-streamlines cpp/test_streamlines.cpp)
+target_link_libraries(lsdtt-test-streamlines PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_streamlines
+         COMMAND lsdtt-test-streamlines)
+set_tests_properties(unit_streamlines PROPERTIES
+    LABELS "unit;streamlines")
+
+# Ridge extraction for hilltop flow routing (Phase 1). The divide-grid corner
+# convention is the one claim everything downstream rests on, so the fixtures
+# are hand-drawn 5x5 grids with the expected pixels written out explicitly,
+# including a periodic-seam case and the non-4-connected step.
+add_executable(lsdtt-test-hilltop-flow-routing cpp/test_hilltop_flow_routing.cpp)
+target_link_libraries(lsdtt-test-hilltop-flow-routing PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hilltop_flow_routing
+         COMMAND lsdtt-test-hilltop-flow-routing)
+set_tests_properties(unit_hilltop_flow_routing PROPERTIES
+    LABELS "unit;hilltop_flow_routing")
+
+# The integration half of Phase 1: run ridge extraction against REAL basin
+# outlines rather than hand-made ridgelines, and MEASURE what fraction of real
+# outline steps are 4-connected. If real outlines were full of diagonal steps
+# the edge-based derivation would be the wrong model, so this is the check that
+# decides whether the approach is sound.
+add_executable(lsdtt-test-hilltop-integration cpp/test_hilltop_integration.cpp)
+target_link_libraries(lsdtt-test-hilltop-integration PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hilltop_flow_routing_integration
+         COMMAND lsdtt-test-hilltop-integration)
+set_tests_properties(unit_hilltop_flow_routing_integration PROPERTIES
+    LABELS "unit;hilltop_flow_routing")
+
+# --------------------------------------------------------------------------
+# lsdtt-hillslope-channel-coupling (Phase 4 of the coupling plan)
+#
+# The CLI runs on the SAME ridge-and-valley surface the integration driver
+# asserts against, so the tool is exercised on a landscape whose behaviour is
+# already characterised rather than on an unrelated fixture.
+# --------------------------------------------------------------------------
+file(MAKE_DIRECTORY ${LSDTT_HILLTOP_COUPLING_FIXTURE_DIR})
+
+add_test(NAME fixture_hilltop_coupling_cli
+         COMMAND lsdtt-test-hilltop-integration --write-cli-fixture
+                 ${LSDTT_HILLTOP_COUPLING_FIXTURE_DIR})
+set_tests_properties(fixture_hilltop_coupling_cli PROPERTIES
+    LABELS "fixture;hilltop_flow_routing"
+    FIXTURES_SETUP hilltop_coupling_cli_fixture)
+
+function(add_hilltop_coupling_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
+    add_test(
+        NAME ${TEST_NAME}
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+                --exe "$<TARGET_FILE:lsdtt-hillslope-channel-coupling>"
+                --param-template "${LSDTT_TEST_PARAM_DIR}/${PARAM_TEMPLATE}"
+                --read-path "${LSDTT_HILLTOP_COUPLING_FIXTURE_DIR}"
+                --work-dir "${work_dir}"
+                --expect "${EXPECTED_OUTPUT}"
+                ${ARGN})
+    set(lbl "cli;hilltop_flow_routing")
+    if(TEST_NAME MATCHES "^failure_")
+        list(APPEND lbl "failure")
+    else()
+        list(APPEND lbl "smoke")
+    endif()
+    set_tests_properties(${TEST_NAME} PROPERTIES
+        LABELS "${lbl}"
+        FIXTURES_REQUIRED hilltop_coupling_cli_fixture)
+endfunction()
+
+add_hilltop_coupling_cli_test(
+    smoke_hillslope_channel_coupling
+    hillslope_channel_coupling_smoke.param.in
+    hcc_hilltop_points.csv
+    --expect hcc_ridgelines.fgb
+    --stdout-contains "never traced (DEM border)")
+
+# E* and R* must be undefined, not zero, where the trace never ran.
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_null_handling
+    hillslope_channel_coupling_smoke.param.in
+    hcc_hilltop_points.csv
+    --expect-file-not-contains "hcc_hilltop_points.csv:nan"
+    --expect-file-not-contains "hcc_hilltop_points.csv:-9999")
+
+# Phase 5: k_sn must reach the hilltop table, and must stay EMPTY (not zero)
+# on rows whose trace never found a channel.
+add_hilltop_coupling_cli_test(
+    smoke_hillslope_channel_coupling_chi
+    hillslope_channel_coupling_chi.param.in
+    hccchi_hilltop_points.csv
+    --expect-file-contains "hccchi_hilltop_points.csv:channel_k_sn"
+    --expect-file-not-contains "hccchi_hilltop_points.csv:nan"
+    --expect-file-not-contains "hccchi_hilltop_points.csv:-9999"
+    --stdout-contains "Joined k_sn onto")
+
+add_hilltop_coupling_cli_test(
+    failure_hillslope_channel_coupling_bad_sc
+    hillslope_channel_coupling_bad_sc.param.in
+    ""
+    --expect-failure
+    --stderr-contains "critical_hillslope_slope must be > 0")
+
+add_hilltop_coupling_cli_test(
+    failure_hillslope_channel_coupling_bad_ridge_choice
+    hillslope_channel_coupling_bad_ridge_choice.param.in
+    ""
+    --expect-failure
+    --stderr-contains "ridge_extraction_algorithm_choice must be")
+
+add_hilltop_coupling_cli_test(
+    failure_hillslope_channel_coupling_no_channels
+    hillslope_channel_coupling_no_channels.param.in
+    ""
+    --expect-failure
+    --stderr-contains "no channel")
+
+# SCAFFOLDING for the E*-R* validation workflow (plan section 4.8): runs the
+# hilltop pipeline on a supplied DEM. Not a test - it is built but never
+# registered with CTest, and it exists only until the Phase 4 CLI replaces it.
+add_executable(hilltop-workflow-driver cpp/hilltop_workflow_driver.cpp)
+target_link_libraries(hilltop-workflow-driver PRIVATE lsdtt3_cpu)
+
+# Phase 3 Step 0: measures the streamline reuse ratio and the per-trace cost.
+# Reports rather than asserts - the reuse ratio is landscape-dependent, so it is
+# not a pass/fail quantity. Built but not registered with CTest.
+add_executable(bench-streamlines cpp/bench_streamlines.cpp)
+target_link_libraries(bench-streamlines PRIVATE lsdtt3_cpu)
 
 # Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
 # (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the
@@ -2767,6 +2914,8 @@ set(LSDTT_DOMAIN_RULES
     "landslide"              "landslide"
     "step_change"            "step_change"
     "landscape_equilibration|lem_equilibration" "landscape_equilibration"
+    "streamlines"            "streamlines"
+    "hilltop_flow_routing|hilltop_coupling|hillslope_channel_coupling" "hilltop_flow_routing"
     "paired_flowpaths"       "paired_flowpaths"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
@@ -2776,7 +2925,7 @@ set(LSDTT_DOMAIN_RULES
     "hillslope"              "hillslope"
     "lem"                    "lem"
     "chi|channel|drainage|basin|flow_properties"          "network"
-    "raster|nodata|fill|tif|coastal|dem_grouping"         "raster"
+    "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units" "raster"
     "param|secret"           "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"

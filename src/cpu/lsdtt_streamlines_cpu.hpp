@@ -123,9 +123,12 @@ enum class streamline_outcome
 {
     reached_sink,    // trace terminated at a sink pixel - success
     hit_edge,        // trace left the valid raster domain without finding a sink
-    loop_detected,   // trace revisited a pixel three or more times
-    no_aspect        // source pixel has no valid aspect (raster edge or nodata
+    loop_detected,   // trace revisited a pixel three or more times WHILE STILL
+                     // ON DESCENDING GROUND - a genuine routing failure
+    no_aspect,       // source pixel has no valid aspect (raster edge or nodata
                      // neighbour prevents central-difference computation)
+    stalled_on_flat  // trace revisited a pixel, but on ground too flat to leave:
+                     // it descended correctly and then had nowhere to go
 };
 
 // =============================================================================
@@ -187,6 +190,23 @@ struct lsdtt_streamline_options
     // Prevents runaway traces on flat or heavily noisy topography.
     int max_steps = 100000;
 
+    // Gradient below which a terminating cell counts as FLAT, splitting a
+    // revisit into `stalled_on_flat` rather than `loop_detected`.
+    //
+    // A revisit is not by itself a routing failure. On Indian Creek (1 m lidar)
+    // 35% of hilltop traces ended as `loop_detected`, and the elevation profiles
+    // showed every one of them descending monotonically from ridge to valley
+    // floor: the path was right, it simply arrived somewhere with no sink to
+    // terminate on and oscillated on the flat until the visit counter tripped.
+    // Those traces end a median of 116 m from the nearest channel, whereas
+    // successful ones end ON a channel 100% of the time.
+    //
+    // Conflating the two hides a data-coverage problem (the sink mask does not
+    // reach that valley) inside what reads as a tracer defect. 0.02 is well
+    // below any hillslope and well above the residual gradient a fill leaves on
+    // a flat.
+    double flat_terminus_gradient = 0.02;
+
     // When true, each lsdtt_streamline::nodes vector is populated with the
     // sub-pixel path for visualisation.  Approximately doubles memory use
     // per trace.
@@ -194,6 +214,27 @@ struct lsdtt_streamline_options
 
     // Number of OMP threads.  0 = use OMP or hardware default.
     int n_threads = 0;
+
+    // -------------------------------------------------------------------------
+    // Reuse instrumentation (plan_hillslope_channel_coupling_cli.md section 4.3,
+    // Step 0).  OFF by default and guarded in the hot loop.
+    //
+    // The trace is iteration of a pure map on the 3-tuple
+    // (cell, inlet face, entry coordinate p in [0,1]), so any two traces that
+    // reach the same state have identical remaining paths.  With p quantised
+    // into `reuse_bins` bins, the ratio
+    //
+    //     n_steps_total / n_distinct_states
+    //
+    // is an UPPER BOUND on the speedup memoisation could deliver.  Measuring it
+    // is the whole of Step 0: if the ratio is near 1 there is nothing to win and
+    // the memoisation work should not be started.
+    //
+    // Collecting the states costs memory proportional to the total step count,
+    // so use it on a sample, not on a production run.
+    // -------------------------------------------------------------------------
+    bool collect_reuse_stats = false;
+    int  reuse_bins          = 16;
 };
 
 // =============================================================================
@@ -207,8 +248,17 @@ struct lsdtt_streamline_result
 
     int n_reached_sink  = 0;
     int n_hit_edge      = 0;
-    int n_loop_detected = 0;
-    int n_no_aspect     = 0;
+    int n_loop_detected  = 0;
+    int n_no_aspect      = 0;
+    int n_stalled_flat   = 0;
+
+    // Populated only when lsdtt_streamline_options::collect_reuse_stats is set.
+    // reuse_ratio = n_steps_total / n_distinct_states, the upper bound on what
+    // memoisation could save.  See the option's documentation.
+    std::int64_t n_steps_total     = 0;
+    std::int64_t n_distinct_states = 0;
+    double       reuse_ratio       = 0.0;
+    int          reuse_bins_used   = 0;
 };
 
 // =============================================================================

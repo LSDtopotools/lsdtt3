@@ -290,6 +290,7 @@ target_include_directories(lsdtt3_utils
 # Depends on lsdtt3_core, OpenMP (optional), FFTW (optional).
 # =============================================================================
 set(LSDTT3_CPU_SOURCES
+    src/cpu/lsdtt_usgs_elevation.cpp
     src/cpu/lsdtt_raster_cpu.cpp
     src/cpu/lsdtt_raster_algebra.cpp
     src/cpu/lsdtt_raster_coregistration_cpu.cpp
@@ -361,6 +362,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_landslide_crn_cpu.cpp
     src/cpu/lsdtt_step_change_cpu.cpp
     src/cpu/lsdtt_critical_slope_cpu.cpp
+    src/cpu/lsdtt_hilltop_flow_routing_cpu.cpp
     src/cpu/lsdtt_quartz_fertility_cpu.cpp
     src/cpu/lsdtt_niemi_ensemble_cpu.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
@@ -532,6 +534,7 @@ lsdtt_cli(lsdtt-synthetic-networks     cli/lsdtt-synthetic-networks.cpp)
 lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-internal-drainage      cli/lsdtt-internal-drainage.cpp)
+lsdtt_cli(lsdtt-hillslope-channel-coupling cli/lsdtt-hillslope-channel-coupling.cpp)
 lsdtt_cli(lsdtt-drainage-analysis      cli/lsdtt-drainage-analysis.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)
 lsdtt_cli(lsdtt-mountain-front         cli/lsdtt-mountain-front.cpp)

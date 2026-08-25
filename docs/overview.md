@@ -1,6 +1,6 @@
 # Overview
 
-`lsdtt3` is a redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) that retains the many of the same scientific algorithms while rebuilding the codebase for modern C++17, better memory efficiency, and easier ongoing development. It also includes a number of new analyses and some replacement algorithms where there is a substantial improvement in performance or accuracy. 
+`lsdtt3` is a redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) that retains the many of the same scientific algorithms while rebuilding the codebase for modern C++17, better memory efficiency, and easier ongoing development. It also includes a number of new analyses and some replacement algorithms where there is a substantial improvement in performance or accuracy. `lsdtt3` also includes testing suites, as well as a QGIS plugin. 
 
 ---
 
@@ -31,7 +31,7 @@ And many other features.
 | Flow routing | D8 | D8, D-infinity, MFD |
 | Memory | Higher | Reduced — see [Memory use](#memory-use) below |
 | Parallelism | Limited OpenMP | OpenMP across most bottleneck routines |
-| Output format | Standard GeoTIFF | Cloud-Optimised GeoTIFF (COG) by default |
+| Output format | ENVI bil | Cloud-Optimised GeoTIFF (COG) by default, GeoTIFF on small rasters |
 | Testing | No test suite | Multiple test suites to comare against alternative analyses (e.g., TopoToolbox3, RichDEM, Cronus Calculator) 
 
 ---
@@ -44,7 +44,7 @@ almost any drainage analysis: `lsdtt_flowinfo` in lsdtt3, `LSDFlowInfo` in
 LSDTopoTools2. Neither stores the elevation raster itself — this is the cost of
 the topology on top of the DEM.
 
-For a **10 000 × 10 000 float32 DEM (10⁸ cells, all valid)**:
+For a **10 000 × 10 000 float32 DEM (10^8 cells, all valid)**:
 
 | | LSDTopoTools2 `LSDFlowInfo` | lsdtt3 `lsdtt_flowinfo` |
 |---|---|---|
@@ -73,7 +73,7 @@ is still smaller overall. It is also what makes the next point possible.
 
 ### Very large DEMs
 
-LSDTopoTools2's 32-bit indexing caps it at about 2.1 × 10⁹ cells, and its
+LSDTopoTools2's 32-bit indexing caps it at about 2.1 × 10^9 cells, and its
 underlying array class computes the allocation size in a 32-bit integer, so
 allocation overflows above roughly **46 000 × 46 000**. A 40 000 × 40 000 DEM is
 already near that ceiling.
@@ -116,9 +116,9 @@ lsdtt3 is aimed at geomorphologists, physical geographers, hydrologists and eart
 For reproducible multi-stage pipelines with Snakemake + Pixi, see
 [Workflows](workflows.md).
 
-It is not a GIS — it has no interactive GUI. Inputs and outputs are files. 
+It is not a GIS — it has no interactive GUI. Inputs and outputs are files. However we have provided a lightweight QGIS plugin (which is under development). The QGIS plugin has a reduced feature set to the full `lsdtt3` command line interface collection. But for many users, the "core" analyses tools that are in the QGIS plugin should be sufficient for everyday use. 
 
-However we have provided a lightweight QGIS plugin (which is under development). The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R.
+The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R.
 
 ---
 
@@ -134,7 +134,7 @@ install it. They are self-contained: no compiler, no library installation, no
   route and gives the full tool set; in our testing it is also faster than a
   native Windows build on the same machine. A native Windows package is
   provided as well, but it is a reduced build intended as the QGIS plugin
-  backend.
+  backend. 
 - **macOS** — no macOS package yet. Run the Linux package inside a Multipass
   Ubuntu VM.
 - **Google Colab** — the Linux package works there with nothing installed
