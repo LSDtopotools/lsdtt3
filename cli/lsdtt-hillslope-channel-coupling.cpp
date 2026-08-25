@@ -67,8 +67,10 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
@@ -187,6 +189,28 @@ int main(int argc, char* argv[])
         "Note 'o' and 'b' are inconsistent between the router and the hillslope "
         "solvers, so divides within one hillslope length of such an edge are not "
         "trustworthy.",
+        "Input", "param", ""};
+
+    string_default_map["vertical_units"] = "metres";
+    help_map["vertical_units"] = {"string","metres",
+        "Vertical unit of the input elevations: metres, feet or us_survey_feet.",
+        "NO raster format records the vertical unit, so this CANNOT be detected "
+        "and is NEVER applied automatically. Much US state lidar is NAVD88 FEET "
+        "on a metre grid; left uncorrected, hilltop curvature, relief, E* and R* "
+        "are all wrong by 3.28 and NOTHING downstream looks broken - the "
+        "landscape merely appears far steeper than it is. Establish the vertical "
+        "datum from the data provider before setting this.",
+        "Input", "param", "metres|feet|us_survey_feet"};
+
+    float_default_map["minimum_elevation"] = -9999.0f;
+    help_map["minimum_elevation"] = {"float","-9999",
+        "Pixels at or below this elevation become nodata. -9999 disables.",
+        "MANY DEMs CARRY NODATA AS ZERO regardless of what their header "
+        "declares, and a block of zeros beside real terrain is a cliff hundreds "
+        "of metres high: it corrupts the polyfit, drags every flow path into it, "
+        "and inflates hillslope relief and gradient. Check the elevation "
+        "histogram before trusting a run. Set to 0 to drop sea-level and "
+        "nodata-as-zero pixels.",
         "Input", "param", ""};
 
     bool_default_map["fill_before_routing"] = true;
@@ -334,6 +358,21 @@ int main(int argc, char* argv[])
         "Floodplain", "param", "find_floodplain"};
 
     // ---- tracing -------------------------------------------------------------
+    string_default_map["trace_surface_choice"] = "raw";
+    help_map["trace_surface_choice"] = {"string", "raw",
+        "Which surface the flow paths are traced on: raw or fitted.",
+        "raw (default): the unmodified DEM, so paths follow true topography. "
+        "That is the right choice in principle, but on high-resolution lidar "
+        "micro-topography makes the Tarboton edge-routing branch cycle, and a "
+        "trace that cycles yields no hillslope length at all -- measured at 48 "
+        "percent of traces on a 1 m dataset. "
+        "fitted: the polynomial fitted surface at surface_fitting_window_radius, "
+        "which is the SAME surface the curvature is measured on, so aspect and "
+        "Cht become mutually consistent. It CHANGES WHAT Lh MEANS -- shorter, "
+        "smoother paths -- so it is a declared choice and is reported in the "
+        "run header, never applied silently.",
+        "Tracing", "param", ""};
+
     int_default_map["hilltop_thinning"] = 1;
     help_map["hilltop_thinning"] = {"int", "1",
         "Analyse every Nth hilltop pixel. 1 = all of them.",
@@ -478,6 +517,14 @@ int main(int argc, char* argv[])
         "Only produced when find_floodplain is true.",
         "Output", "switch", "find_floodplain"};
 
+    bool_default_map["write_channel_mask_raster"] = false;
+    help_map["write_channel_mask_raster"] = {"bool", "false",
+        "Write the channel mask actually used as sinks.",
+        "Worth having when the network was INGESTED: it is the only way to see "
+        "what was really used, as opposed to what the file was supposed to "
+        "contain.",
+        "Output", "switch", ""};
+
     bool_default_map["write_floodplain_mask_raster"] = false;
     help_map["write_floodplain_mask_raster"] = {"bool", "false",
         "Write the floodplain mask actually used.",
@@ -566,7 +613,31 @@ int main(int argc, char* argv[])
         loader.print_raster_info();
         loader.get_meta().check_projected_metres();
 
-        const lsdtt::lsdtt_raster_cpu dem_raw(loader);
+        lsdtt::lsdtt_raster_cpu dem_raw(loader);
+
+        // Vertical units BEFORE anything else: every hillslope metric this tool
+        // reports scales linearly with elevation, so a foot/metre mix-up is a
+        // uniform 3.28x error that leaves no visible symptom. Opt-in only.
+        const lsdtt::vertical_unit vunit =
+            lsdtt::parse_vertical_unit(sf.at("vertical_units"));
+        if (vunit != lsdtt::vertical_unit::metres)
+        {
+            std::cout << "Converting elevations from " << sf.at("vertical_units")
+                      << " to metres.\n";
+            dem_raw = lsdtt::convert_vertical_units_to_metres(dem_raw, vunit);
+        }
+        else
+        {
+            lsdtt::warn_if_vertically_implausible(dem_raw, std::cout);
+        }
+
+        if (ff.at("minimum_elevation") > -9998.0f)
+        {
+            std::cout << "Masking pixels at or below "
+                      << ff.at("minimum_elevation") << " m to nodata\n";
+            dem_raw = lsdtt::mask_to_nodata_using_threshold(
+                dem_raw, ff.at("minimum_elevation"), true);
+        }
         const lsdtt::lsdtt_raster_meta meta = dem_raw.get_meta();
         const int nr = meta.n_rows, nc = meta.n_cols;
         const double cell = meta.cell_size;
@@ -605,23 +676,147 @@ int main(int argc, char* argv[])
 
         std::vector<float>        chan_data(ncell, 0.0f);
         std::int64_t n_channel = 0;
+        std::vector<std::int64_t> sources;
+
+        const std::string chan_file = sf.at("channel_network_file");
+        if (!chan_file.empty())
+        {
+            // INGEST. A channel network extracted elsewhere -- typically by
+            // lsdtt-channel-extraction with a Wiener source detector, which
+            // finds channel heads from curvature rather than from a drainage
+            // area threshold. The point of supporting this is that the channel
+            // head placement is the single thing that sets hillslope length,
+            // so it should be possible to use a better detector than a
+            // threshold.
+            std::cout << "Ingesting channel network from " << chan_file << "\n";
+
+            std::vector<std::pair<int,int>> pts;
+            const std::string ext = chan_file.size() >= 4
+                ? lower(chan_file.substr(chan_file.size() - 4)) : std::string();
+
+            if (ext == ".csv")
+            {
+                const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(chan_file);
+                if (!lsdtt::csv_has_column(t, "row") || !lsdtt::csv_has_column(t, "col"))
+                    throw std::invalid_argument(
+                        "channel_network_file " + chan_file + " has no 'row'/'col' "
+                        "columns. Write it with lsdtt-channel-extraction's "
+                        "write_channel_network_points.");
+                int line = 1;
+                for (const auto& r : t.rows)
+                {
+                    ++line;
+                    pts.emplace_back(
+                        static_cast<int>(lsdtt::csv_row_double_required(r, "row", chan_file, line)),
+                        static_cast<int>(lsdtt::csv_row_double_required(r, "col", chan_file, line)));
+                }
+            }
+            else
+            {
+                lsdtt::lsdtt_data_loader vl;
+                vl.open_vector(chan_file);
+                const auto names = vl.get_layer_names();
+                if (names.empty())
+                    throw std::invalid_argument(
+                        "channel_network_file " + chan_file + " has no layers");
+                const lsdtt::lsdtt_vector_layer layer = vl.read_vector_layer(names.front());
+                const int i_row = layer.schema.index_of("row");
+                const int i_col = layer.schema.index_of("col");
+                if (i_row < 0 || i_col < 0)
+                    throw std::invalid_argument(
+                        "channel_network_file " + chan_file + " has no 'row'/'col' "
+                        "fields. Write it with lsdtt-channel-extraction's "
+                        "write_channel_network_points.");
+                for (const auto& rec : layer.records)
+                    pts.emplace_back(
+                        static_cast<int>(std::get<std::int64_t>(rec.field_values[i_row])),
+                        static_cast<int>(std::get<std::int64_t>(rec.field_values[i_col])));
+            }
+
+            if (pts.empty())
+                throw std::runtime_error(
+                    "channel_network_file " + chan_file + " contained no points");
+
+            // The row/col indices are row-major on the grid the network was
+            // extracted from. Reject an out-of-range index rather than wrapping
+            // it into a wrong pixel -- a network from a different DEM must not
+            // be silently accepted.
+            std::int64_t n_bad = 0, n_invalid = 0;
+            for (const auto& rc : pts)
+            {
+                if (rc.first < 0 || rc.first >= nr || rc.second < 0 || rc.second >= nc)
+                { ++n_bad; continue; }
+                const std::size_t k =
+                    static_cast<std::size_t>(rc.first) * nc + rc.second;
+                if (!flow.is_valid_cell(static_cast<std::int64_t>(k)))
+                { ++n_invalid; continue; }
+                if (chan_data[k] == 0.0f) { chan_data[k] = 1.0f; ++n_channel; }
+            }
+            if (n_bad > 0)
+                throw std::runtime_error(
+                    "channel_network_file has " + std::to_string(n_bad) +
+                    " points outside this DEM (" + std::to_string(nr) + "x" +
+                    std::to_string(nc) + "). It was extracted on a different "
+                    "grid; row/col are row-major on that grid and cannot be "
+                    "reused here.");
+
+            if (n_invalid > 0)
+                std::cout << "Dropped " << n_invalid << " ingested channel points "
+                             "that fall on nodata in this DEM. If that count is "
+                             "large the network was extracted BEFORE the DEM was "
+                             "masked, and should be re-extracted.\n";
+            if (n_channel == 0)
+                throw std::runtime_error(
+                    "every ingested channel point fell on nodata - re-extract the "
+                    "network on the same (masked) DEM");
+
+            // Sources are the channel cells with no channel donor. Derived
+            // rather than ingested, because the points file carries the whole
+            // network and not its heads.
+            for (int r = 0; r < nr; ++r)
+                for (int c = 0; c < nc; ++c)
+                {
+                    const std::size_t k = static_cast<std::size_t>(r) * nc + c;
+                    if (chan_data[k] < 0.5f) continue;
+                    const std::int64_t flat = static_cast<std::int64_t>(k);
+                    bool has_channel_donor = false;
+                    for (int dr = -1; dr <= 1 && !has_channel_donor; ++dr)
+                        for (int dc = -1; dc <= 1 && !has_channel_donor; ++dc)
+                        {
+                            if (dr == 0 && dc == 0) continue;
+                            const int rr = r + dr, cc = c + dc;
+                            if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
+                            const std::int64_t nf =
+                                static_cast<std::int64_t>(rr) * nc + cc;
+                            if (chan_data[static_cast<std::size_t>(nf)] < 0.5f) continue;
+                            if (!flow.is_valid_cell(nf)) continue;
+                            if (flow.receiver_of(nf) == flat) has_channel_donor = true;
+                        }
+                    if (!has_channel_donor) sources.push_back(flat);
+                }
+
+            std::cout << "Ingested " << pts.size() << " channel points -> "
+                      << n_channel << " channel pixels, " << sources.size()
+                      << " derived heads\n";
+        }
+        else
         {
             const lsdtt::lsdtt_raster_result cp =
                 flow.get_n_contributing_pixels_raster();
             for (std::size_t i = 0; i < ncell; ++i)
                 if (cp.mask[i] && cp.data[i] >= static_cast<float>(chan_threshold))
                 { chan_data[i] = 1.0f; ++n_channel; }
-        }
-        if (n_channel == 0)
-            throw std::runtime_error(
-                "no channel pixels at source_pixels_threshold "
-                + std::to_string(chan_threshold) + " - lower it");
 
-        const auto sources = flow.get_sources_index_threshold(chan_threshold);
+            if (n_channel == 0)
+                throw std::runtime_error(
+                    "no channel pixels at source_pixels_threshold "
+                    + std::to_string(chan_threshold) + " - lower it");
+
+            sources = flow.get_sources_index_threshold(chan_threshold);
+        }
+
         if (sources.empty())
-            throw std::runtime_error(
-                "no channel sources at source_pixels_threshold "
-                + std::to_string(chan_threshold));
+            throw std::runtime_error("no channel sources");
 
         lsdtt::lsdtt_junction_network_options jopts;
         lsdtt::lsdtt_junction_network_cpu jn(flow, sources, jopts);
@@ -647,14 +842,20 @@ int main(int argc, char* argv[])
                 "curvature_metric_choice must be mean_curvature, profile_curvature, "
                 "tangential_curvature or laplacian");
 
-        std::unique_ptr<lsdtt::lsdtt_raster_cpu> curv_r, grad_r, plan_r;
+        const std::string trace_surface = lower(sf.at("trace_surface_choice"));
+        if (trace_surface != "raw" && trace_surface != "fitted")
+            throw std::invalid_argument(
+                "trace_surface_choice must be raw or fitted");
+
+        std::unique_ptr<lsdtt::lsdtt_raster_cpu> curv_r, grad_r, plan_r, fitted_r;
         {
             const auto coeffs = lsdtt::direct_polyfit(dem_raw, window, n_threads);
             lsdtt::polyfit_metric_request req;
             req.metrics = std::vector<lsdtt::polyfit_metric>{
                 curv_it->second,
                 lsdtt::polyfit_metric::slope,
-                lsdtt::polyfit_metric::plan_curvature};
+                lsdtt::polyfit_metric::plan_curvature,
+                lsdtt::polyfit_metric::fitted_surface};
             req.n_threads = n_threads;
             const auto m = lsdtt::compute_polyfit_metrics(coeffs, req);
 
@@ -664,7 +865,18 @@ int main(int argc, char* argv[])
                 m.rasters.at(lsdtt::polyfit_metric::slope));
             plan_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(
                 m.rasters.at(lsdtt::polyfit_metric::plan_curvature));
+            fitted_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(
+                m.rasters.at(lsdtt::polyfit_metric::fitted_surface));
         }
+
+        const lsdtt::lsdtt_raster_cpu& trace_dem =
+            (trace_surface == "fitted") ? *fitted_r : dem_raw;
+        std::cout << "Tracing surface: " << trace_surface
+                  << (trace_surface == "fitted"
+                        ? "  (polyfit fitted surface -- Lh is smoother and shorter "
+                          "than on the raw DEM)"
+                        : "  (raw DEM)")
+                  << "\n";
 
         // ---- floodplain ---------------------------------------------------------
         std::vector<float> floodplain(ncell, 0.0f);
@@ -903,7 +1115,7 @@ int main(int argc, char* argv[])
         mopts.n_threads                = n_threads;
 
         auto metrics = lsdtt::compute_hillslope_metrics(
-            filtered, dem_raw, sink_raster,
+            filtered, trace_dem, sink_raster,
             curv_r.get(), grad_r.get(), plan_r.get(), mopts);
 
         std::cout << "Rows: " << metrics.rows.size()
@@ -945,6 +1157,37 @@ int main(int argc, char* argv[])
             outlet_flats.erase(std::unique(outlet_flats.begin(), outlet_flats.end()),
                                outlet_flats.end());
 
+            // The chi extractor REJECTS an outlet below its contributing-pixel
+            // threshold, and that throw would abort a whole run for one small
+            // basin. With an INGESTED network the junction outlets have nothing
+            // to do with source_pixels_threshold, so filter here rather than
+            // letting the extractor decide.
+            const lsdtt::lsdtt_raster_result cp_chi =
+                flow.get_n_contributing_pixels_raster();
+            const std::int64_t n_before = static_cast<std::int64_t>(outlet_flats.size());
+            std::vector<std::int64_t> kept;
+            kept.reserve(outlet_flats.size());
+            for (const std::int64_t f : outlet_flats)
+            {
+                const std::size_t k = static_cast<std::size_t>(f);
+                if (k < cp_chi.data.size() && cp_chi.mask[k] &&
+                    cp_chi.data[k] >= static_cast<float>(chan_threshold))
+                    kept.push_back(f);
+            }
+            outlet_flats.swap(kept);
+            if (n_before != static_cast<std::int64_t>(outlet_flats.size()))
+                std::cout << "Dropped " << (n_before - static_cast<std::int64_t>(outlet_flats.size()))
+                          << " of " << n_before << " basin outlets below the chi "
+                             "contributing-pixel threshold (" << chan_threshold << ")\n";
+
+            if (outlet_flats.empty())
+            {
+                std::cout << "No basin outlet meets the chi threshold; skipping the "
+                             "chi join. Lower source_pixels_threshold to enable it.\n";
+                goto chi_done;
+            }
+
+            {
             const lsdtt::lsdtt_chi_collection_result chi_networks =
                 lsdtt::get_chi_from_outlets_zero_base_threshold(
                     flow, outlet_flats, chan_threshold, chi_opts);
@@ -988,6 +1231,8 @@ int main(int argc, char* argv[])
                 std::cout << "Note: rows whose channel pixel was not part of a "
                              "fitted network keep an empty channel_k_sn. They are "
                              "not zero and are not dropped.\n";
+            }
+            chi_done: ;
         }
 
         // ---- outputs ---------------------------------------------------------------
@@ -1179,7 +1424,7 @@ int main(int argc, char* argv[])
             topts.n_threads  = n_threads;
 
             const auto traces =
-                lsdtt::trace_streamlines(dem_raw, src_raster, sink_raster, topts);
+                lsdtt::trace_streamlines(trace_dem, src_raster, sink_raster, topts);
 
             const std::string path = pp.make_output_path(
                 "_hillslope_traces", lsdtt::output_extension(traces_format));
@@ -1220,6 +1465,13 @@ int main(int argc, char* argv[])
             [](const lsdtt::lsdtt_hilltop_metrics_row& r) { return r.hillslope_length_m; });
         write_hilltop_raster(bf.at("write_relief_raster"), "_hillslope_relief",
             [](const lsdtt::lsdtt_hilltop_metrics_row& r) { return r.relief_m; });
+
+        if (bf.at("write_channel_mask_raster"))
+        {
+            const std::string path = pp.make_output_path("_channel_mask", raster_ext);
+            loader.write_full(chan_data, meta, path, raster_format);
+            std::cout << "Wrote " << path << "\n";
+        }
 
         if (bf.at("write_floodplain_mask_raster") && have_floodplain)
         {

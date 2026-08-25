@@ -354,6 +354,18 @@ int main(int argc, char* argv[])
         "Must be positive when force_resampling is true. Ignored otherwise.",
         "Projection", "param", "force_resampling"};
 
+    // --- Vertical units ---
+    string_default_map["vertical_units"] = "metres";
+    help_map["vertical_units"] = {"string","metres",
+        "Vertical unit of the input elevations: metres, feet or us_survey_feet.",
+        "NO raster format records the vertical unit, so this CANNOT be detected "
+        "and is NEVER applied automatically. Much US state lidar is delivered as "
+        "NAVD88 FEET on a metre UTM grid; left uncorrected every slope, "
+        "curvature and relief is too large by 3.28. Establish the vertical datum "
+        "from the data provider before setting this - a wrong setting silently "
+        "corrupts correct data. The tool warns when slopes look implausible.",
+        "Vertical units", "param", "metres|feet|us_survey_feet"};
+
     // --- Threshold masking ---
     float_default_map["minimum_elevation"] = 0.0f;
     help_map["minimum_elevation"] = {"float","0.0",
@@ -1096,6 +1108,27 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu dem(loader);
 
     const std::string write_stem = pp.get_write_fname();
+
+    // -------------------------------------------------------------------------
+    // Step 1b - Vertical units
+    //
+    // Before ANY masking or analysis, so that minimum_elevation and every
+    // derived quantity below are in metres. Opt-in only; see the header of
+    // lsdtt_raster_cpu.hpp for why this is never inferred.
+    // -------------------------------------------------------------------------
+    const lsdtt::vertical_unit vunit =
+        lsdtt::parse_vertical_unit(sf["vertical_units"]);
+    if (vunit != lsdtt::vertical_unit::metres)
+    {
+        std::cout << "\nConverting elevations from " << sf["vertical_units"]
+                  << " to metres.\n";
+        dem = lsdtt::convert_vertical_units_to_metres(dem, vunit);
+    }
+    else
+    {
+        // Only worth warning when the user has NOT already told us the unit.
+        lsdtt::warn_if_vertically_implausible(dem, std::cout);
+    }
 
     // -------------------------------------------------------------------------
     // Step 2 - Threshold masking

@@ -29,6 +29,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <ostream>
 #include <vector>
 #include <memory>
 
@@ -208,6 +210,82 @@ enum class MaskedFill
     Value,   // fill outside the mask with `value` too -- the array is uniform
     NoData   // fill outside the mask with the metadata's no-data value
 };
+
+// -----------------------------------------------------------------------------
+// Vertical units
+//
+// A DEM's vertical unit is NOT recorded in any format lsdtt3 reads. ENVI
+// headers, ESRI .hdr/.prj and GeoTIFF all describe the HORIZONTAL CRS only, so
+// a raster on a 1 m UTM grid whose elevations are in feet is indistinguishable,
+// to every reader, from one whose elevations are in metres. Much US state lidar
+// is delivered exactly that way (NAVD88 feet on a metre grid).
+//
+// Every slope, curvature, relief and gradient lsdtt3 computes is then wrong by
+// 3.28, and wrong CONSISTENTLY, so nothing downstream looks broken -- the
+// landscape just appears far steeper than it is.
+//
+// THIS IS NEVER APPLIED AUTOMATICALLY, and must not be. The unit cannot be
+// inferred from the data with any certainty: a genuinely alpine catchment in
+// metres and a gentle one in feet overlap in every statistic. Guessing would
+// silently corrupt correct data, which is worse than the bug it fixes. The user
+// must establish the vertical datum from the data provider's metadata and say
+// so explicitly.
+// -----------------------------------------------------------------------------
+enum class vertical_unit
+{
+    metres,           // no conversion
+    feet,             // international foot, exactly 0.3048 m
+    us_survey_feet    // 1200/3937 m -- differs from the international foot by
+                      // 2 ppm, i.e. ~0.6 mm over the 327 m relief of a
+                      // catchment. Distinguished because US datums specify it,
+                      // not because the difference is ever measurable here.
+};
+
+// Parse a vertical_unit from a parameter string. Accepts "metres"/"meters"/"m",
+// "feet"/"foot"/"ft", "us_survey_feet"/"us_feet". Throws std::runtime_error on
+// anything else rather than defaulting, so a typo cannot silently mean metres.
+[[nodiscard]] vertical_unit parse_vertical_unit(const std::string& name);
+
+// Multiply every valid pixel by the factor that converts `from` to metres.
+// A no-op for vertical_unit::metres.
+[[nodiscard]] lsdtt_raster_cpu convert_vertical_units_to_metres(
+    const lsdtt_raster_cpu& dem,
+    vertical_unit           from);
+
+// What a plausibility check found. Slopes are gradient magnitudes converted to
+// degrees, over valid interior pixels only.
+struct vertical_plausibility_report
+{
+    double      median_slope_deg      = 0.0;
+    double      p90_slope_deg         = 0.0;
+    double      p99_slope_deg         = 0.0;
+    double      relief_m              = 0.0;
+    // The same median if the elevations were really feet. Reported so the user
+    // can see both candidates side by side; NOT a recommendation.
+    double      median_slope_deg_if_feet = 0.0;
+    std::size_t n_sampled             = 0;
+    bool        implausible           = false;
+};
+
+// Measure the slope distribution and flag it as physically implausible when the
+// MEDIAN slope exceeds `median_slope_limit_deg`.
+//
+// The threshold is a statement about landscapes, not about a number: soil and
+// regolith fail at around 30-35 degrees, so a landscape whose MEDIAN pixel is
+// steeper than that cannot be soil-mantled terrain. Isolated cliffs are
+// expected and do not move a median, which is why the median is tested rather
+// than a maximum. A real bedrock-cliff landscape can trip this legitimately --
+// hence a warning, never an error and never an automatic conversion.
+[[nodiscard]] vertical_plausibility_report check_vertical_plausibility(
+    const lsdtt_raster_cpu& dem,
+    double                  median_slope_limit_deg = 30.0);
+
+// Run the check and, if it fails, write a warning to `out` naming the feet
+// hypothesis and the parameter that would fix it. Returns the report.
+vertical_plausibility_report warn_if_vertically_implausible(
+    const lsdtt_raster_cpu& dem,
+    std::ostream&           out,
+    const std::string&      vertical_units_parameter = "vertical_units");
 
 [[nodiscard]] lsdtt_raster_cpu make_uniform_raster(
     const lsdtt_raster_cpu& reference,

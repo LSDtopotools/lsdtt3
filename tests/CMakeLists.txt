@@ -1074,6 +1074,14 @@ add_test(NAME unit_surface_metrics
                  ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
 set_tests_properties(unit_surface_metrics PROPERTIES LABELS "unit;surface_metrics")
 
+# Vertical units: the feet/metres trap and the plausibility warning that makes
+# it discoverable (docs/testing_and_benchmarking.md).
+add_executable(lsdtt-test-vertical-units cpp/test_vertical_units.cpp)
+target_link_libraries(lsdtt-test-vertical-units PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_vertical_units COMMAND lsdtt-test-vertical-units)
+set_tests_properties(unit_vertical_units PROPERTIES LABELS "unit;raster")
+
 add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
 target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
 
@@ -2917,7 +2925,7 @@ set(LSDTT_DOMAIN_RULES
     "hillslope"              "hillslope"
     "lem"                    "lem"
     "chi|channel|drainage|basin|flow_properties"          "network"
-    "raster|nodata|fill|tif|coastal|dem_grouping"         "raster"
+    "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units" "raster"
     "param|secret"           "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
