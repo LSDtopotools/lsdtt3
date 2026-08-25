@@ -396,6 +396,23 @@ int main(int argc, char* argv[])
         "Stops a runaway trace on flat or noisy topography.",
         "Tracing", "param", ""};
 
+    float_default_map["flat_terminus_gradient"] = 0.02f;
+    help_map["flat_terminus_gradient"] = {"float", "0.02",
+        "Gradient below which a trace that revisits a cell is reported as "
+        "stalled_on_flat (5) rather than loop_detected (2).",
+        "These are different failures and want different responses. A stall "
+        "means the path descended CORRECTLY and then found no channel to "
+        "terminate on - a statement about the channel network's coverage, not "
+        "about the routing; extend the network, or read Lh as covering only the "
+        "part of the DEM the network reaches. A loop means the trace revisited a "
+        "cell on ground it could still have descended, which is a genuine "
+        "routing failure and makes Lh unreliable. Measured as the steepest "
+        "descent to any of the eight neighbours at the terminating cell. The "
+        "default is below any hillslope and above the residual gradient a fill "
+        "leaves on a flat; it is calibrated on one 1 m landscape, where 74% of "
+        "reported loops turned out to be stalls.",
+        "Tracing", "param", ""};
+
     float_default_map["plan_curvature_threshold"] = 0.001f;
     help_map["plan_curvature_threshold"] = {"float", "0.001",
         "abs(plan curvature) above this counts a path cell as curved.",
@@ -1111,6 +1128,7 @@ int main(int argc, char* argv[])
         mopts.critical_slope_Sc        = ff.at("critical_hillslope_slope");
         mopts.plan_curvature_threshold = ff.at("plan_curvature_threshold");
         mopts.max_steps                = ip.at("trace_max_steps");
+        mopts.flat_terminus_gradient   = ff.at("flat_terminus_gradient");
         mopts.n_threads                = n_threads;
 
         auto metrics = lsdtt::compute_hillslope_metrics(

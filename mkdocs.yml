@@ -58,6 +58,7 @@ nav:
       - Raster preprocessing: cli_reference/cli_reference_lsdtt_raster_preprocessing.md
     - Surface analysis:
       - Surface metrics: cli_reference/cli_reference_lsdtt_surface_metrics.md
+      - Hillslope-channel coupling: cli_reference/cli_reference_lsdtt_hillslope_channel_coupling.md
       - Mountain front: cli_reference/cli_reference_lsdtt_mountain_front.md
     - Flow routing and drainage:
       - Drainage analysis: cli_reference/cli_reference_lsdtt_drainage_analysis.md
