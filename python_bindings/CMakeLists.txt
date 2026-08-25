@@ -35,7 +35,7 @@ set(LSDTT_PYTHON_PROJ_DATA_DIR "" CACHE PATH
 # A direct CMake invocation does not automatically add a pip-installed
 # nanobind package to CMAKE_PREFIX_PATH. Ask the active Python interpreter
 # for it; scikit-build-core already supplies the same package in wheel builds.
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
     RESULT_VARIABLE NANOBIND_CMAKE_DIR_RESULT
@@ -147,13 +147,20 @@ if(Eigen3_FOUND)
     target_compile_definitions(lsdtt3_runtime PUBLIC LSDTT_HAS_EIGEN=1)
 endif()
 
+# Both shared objects are installed into the Python package. The platform
+# runtime path makes _core locate liblsdtt3_runtime beside it, independently
+# of the root build.
+if(APPLE)
+    set(LSDTT_PYTHON_RUNTIME_PATH "@loader_path")
+else()
+    set(LSDTT_PYTHON_RUNTIME_PATH "$ORIGIN")
+endif()
+
 add_subdirectory(bindings)
 
-# Both shared objects are installed into the Python package. $ORIGIN makes
-# _core locate liblsdtt3_runtime beside it, independently of the root build.
 set_target_properties(lsdtt3_runtime PROPERTIES
-    BUILD_RPATH "$ORIGIN"
-    INSTALL_RPATH "$ORIGIN"
+    BUILD_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"
+    INSTALL_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"
 )
 install(TARGETS lsdtt3_runtime LIBRARY DESTINATION lsdtt3)
 install(

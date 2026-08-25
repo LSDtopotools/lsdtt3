@@ -89,19 +89,19 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             arch: x86_64
-            cmake_args: -DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF
+            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF"
           - name: macOS ARM64
             os: macos-15
             arch: arm64
-            cmake_args: -DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF
+            environment: MACOSX_DEPLOYMENT_TARGET=11.0 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF"
           - name: macOS Intel
             os: macos-15-intel
             arch: x86_64
-            cmake_args: -DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF
+            environment: MACOSX_DEPLOYMENT_TARGET=10.15 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF"
           - name: Windows x86_64
             os: windows-2025
             arch: AMD64
-            cmake_args: -DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
     runs-on: ${{ matrix.os }}
 
@@ -115,6 +115,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set the wheel package version
+        shell: bash
         env:
           VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
@@ -145,7 +146,7 @@ jobs:
       - name: Build and test wheels
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
-          CIBW_ENVIRONMENT: CMAKE_ARGS="${{ matrix.cmake_args }}"
+          CIBW_ENVIRONMENT: ${{ matrix.environment }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: python -m delvewheel repair --add-path C:\\vcpkg\\installed\\x64-windows\\bin --wheel-dir {dest_dir} {wheel}
         run: |
