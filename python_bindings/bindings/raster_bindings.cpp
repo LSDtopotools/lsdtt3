@@ -11,8 +11,11 @@
 
 #include <core/lsdtt_data_loader.hpp>
 #include <core/lsdtt_raster_meta.hpp>
+#include <cpu/lsdtt_raster_algebra.hpp>
+#include <cpu/lsdtt_raster_flow_preprocessing_cpu.hpp>
 #include <cpu/lsdtt_raster_nodata_filling_cpu.hpp>
 #include <cpu/lsdtt_raster_cpu.hpp>
+#include <cpu/lsdtt_raster_surface_metrics_cpu.hpp>
 
 namespace nb = nanobind;
 
@@ -251,6 +254,152 @@ Raster clip_to_maximum_rectangle(const Raster& raster)
     return Raster(lsdtt::clip_to_maximum_rectangle(raster.native()));
 }
 
+Raster mask_to_nodata(const Raster& raster, float threshold, bool below)
+{
+    return Raster(lsdtt::mask_to_nodata_using_threshold(
+        raster.native(), threshold, below
+    ));
+}
+
+Raster threshold_above(const Raster& raster, float threshold)
+{
+    return Raster(lsdtt::algebra::raster_binary_true_above_threshold(
+        raster.native(), threshold
+    ));
+}
+
+Raster threshold_below(const Raster& raster, float threshold)
+{
+    return Raster(lsdtt::algebra::raster_binary_true_below_threshold(
+        raster.native(), threshold
+    ));
+}
+
+Raster invert_binary_mask(const Raster& raster)
+{
+    return Raster(lsdtt::algebra::invert_binary_mask(raster.native()));
+}
+
+Raster mask_by_binary(const Raster& values, const Raster& keep_mask)
+{
+    return Raster(lsdtt::algebra::raster_mask_by_binary_keep(
+        values.native(), keep_mask.native()
+    ));
+}
+
+Raster add(const Raster& a, const Raster& b)
+{
+    return Raster(lsdtt::algebra::raster_add(a.native(), b.native()));
+}
+
+Raster subtract(const Raster& a, const Raster& b)
+{
+    return Raster(lsdtt::algebra::raster_subtract(a.native(), b.native()));
+}
+
+Raster multiply(const Raster& a, const Raster& b)
+{
+    return Raster(lsdtt::algebra::raster_multiply(a.native(), b.native()));
+}
+
+Raster divide(const Raster& a, const Raster& b)
+{
+    return Raster(lsdtt::algebra::raster_divide(a.native(), b.native()));
+}
+
+Raster scale(const Raster& raster, float factor)
+{
+    return Raster(lsdtt::algebra::raster_scale(raster.native(), factor));
+}
+
+Raster normalize_unit_interval(const Raster& raster)
+{
+    return Raster(lsdtt::algebra::raster_normalise_unit_interval(raster.native()));
+}
+
+Raster fill_pits(const Raster& raster, float min_slope, int n_threads)
+{
+    return Raster(lsdtt::fill_pits(raster.native(), min_slope, n_threads));
+}
+
+Raster fill_depth(const Raster& raster, float min_slope, int n_threads)
+{
+    const lsdtt::lsdtt_raster_cpu filled = lsdtt::fill_pits(
+        raster.native(), min_slope, n_threads
+    );
+    return Raster(lsdtt::algebra::raster_positive_difference(filled, raster.native()));
+}
+
+Raster breach_depressions(const Raster& raster, int n_threads)
+{
+    return Raster(lsdtt::breach_depressions(raster.native(), n_threads));
+}
+
+Raster carve_depth(const Raster& raster, int n_threads)
+{
+    const lsdtt::lsdtt_raster_cpu breached = lsdtt::breach_depressions(
+        raster.native(), n_threads
+    );
+    return Raster(lsdtt::algebra::raster_positive_difference(raster.native(), breached));
+}
+
+Raster hillshade(const Raster& raster, double azimuth, double altitude, double z_factor)
+{
+    return Raster(lsdtt::compute_hillshade(
+        raster.native(), azimuth, altitude, z_factor
+    ));
+}
+
+Raster multidirectional_hillshade(
+    const Raster& raster,
+    int n_directions,
+    double altitude,
+    double z_factor,
+    double start_azimuth)
+{
+    return Raster(lsdtt::compute_multidirectional_hillshade(
+        raster.native(), n_directions, altitude, z_factor, start_azimuth
+    ));
+}
+
+Raster slope(const Raster& raster)
+{
+    return Raster(lsdtt::compute_gradient_magnitude_3x3_square(raster.native()));
+}
+
+Raster plan_curvature(const Raster& raster)
+{
+    return Raster(lsdtt::compute_plan_curvature_3x3_square(raster.native()));
+}
+
+Raster total_curvature(const Raster& raster, double radius_metres)
+{
+    return Raster(lsdtt::moving_window_total_curvature(
+        raster.native(), radius_metres
+    ));
+}
+
+Raster aspect(
+    const Raster& raster,
+    double lambda_metres,
+    int n_threads,
+    double flat_slope_tolerance)
+{
+    const double lambda = lambda_metres > 0.0
+        ? lambda_metres
+        : 3.0 * raster.native().get_meta().cell_size;
+    const lsdtt::poly_fit_coeffs coefficients = lsdtt::direct_polyfit(
+        raster.native(), lambda, n_threads
+    );
+    lsdtt::polyfit_metric_request request;
+    request.metrics = {lsdtt::polyfit_metric::aspect_degrees};
+    request.n_threads = n_threads;
+    request.flat_slope_tolerance = flat_slope_tolerance;
+    return Raster(lsdtt::compute_polyfit_metrics(coefficients, request).at(
+        lsdtt::polyfit_metric::aspect_degrees
+    ));
+}
+
 } // namespace
 
 NB_MODULE(_core, module)
@@ -322,4 +471,33 @@ NB_MODULE(_core, module)
         nb::arg("col_start"), nb::arg("col_stop"),
         "Return a new raster with a half-open [row, col) rectangle set to nodata."
     );
+    module.def("mask_to_nodata", &mask_to_nodata, nb::arg("raster"),
+        nb::arg("threshold"), nb::arg("below") = true);
+    module.def("threshold_above", &threshold_above, nb::arg("raster"), nb::arg("threshold"));
+    module.def("threshold_below", &threshold_below, nb::arg("raster"), nb::arg("threshold"));
+    module.def("invert_binary_mask", &invert_binary_mask, nb::arg("raster"));
+    module.def("mask_by_binary", &mask_by_binary, nb::arg("values"), nb::arg("keep_mask"));
+    module.def("add", &add, nb::arg("a"), nb::arg("b"));
+    module.def("subtract", &subtract, nb::arg("a"), nb::arg("b"));
+    module.def("multiply", &multiply, nb::arg("a"), nb::arg("b"));
+    module.def("divide", &divide, nb::arg("a"), nb::arg("b"));
+    module.def("scale", &scale, nb::arg("raster"), nb::arg("factor"));
+    module.def("normalize_unit_interval", &normalize_unit_interval, nb::arg("raster"));
+    module.def("fill_pits", &fill_pits, nb::arg("raster"),
+        nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0);
+    module.def("fill_depth", &fill_depth, nb::arg("raster"),
+        nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0);
+    module.def("breach_depressions", &breach_depressions, nb::arg("raster"),
+        nb::arg("n_threads") = 0);
+    module.def("carve_depth", &carve_depth, nb::arg("raster"), nb::arg("n_threads") = 0);
+    module.def("hillshade", &hillshade, nb::arg("raster"), nb::arg("azimuth") = 315.0,
+        nb::arg("altitude") = 45.0, nb::arg("z_factor") = 1.0);
+    module.def("multidirectional_hillshade", &multidirectional_hillshade,
+        nb::arg("raster"), nb::arg("n_directions") = 8, nb::arg("altitude") = 45.0,
+        nb::arg("z_factor") = 1.0, nb::arg("start_azimuth") = 0.0);
+    module.def("slope", &slope, nb::arg("raster"));
+    module.def("aspect", &aspect, nb::arg("raster"), nb::arg("lambda_metres") = 0.0,
+        nb::arg("n_threads") = 0, nb::arg("flat_slope_tolerance") = 1e-12);
+    module.def("plan_curvature", &plan_curvature, nb::arg("raster"));
+    module.def("total_curvature", &total_curvature, nb::arg("raster"), nb::arg("radius_metres"));
 }
