@@ -626,10 +626,9 @@ int main(int argc, char* argv[])
                       << " to metres.\n";
             dem_raw = lsdtt::convert_vertical_units_to_metres(dem_raw, vunit);
         }
-        else
-        {
-            lsdtt::warn_if_vertically_implausible(dem_raw, std::cout);
-        }
+        // No plausibility warning here: it lives in lsdtt-raster-preprocessing,
+        // which is where a DEM gets inspected and corrected, and where the 3DEP
+        // check can be answered by rerunning one cheap tool rather than this one.
 
         if (ff.at("minimum_elevation") > -9998.0f)
         {
@@ -1122,6 +1121,7 @@ int main(int argc, char* argv[])
                   << "   reached channel " << metrics.n_reached_channel
                   << ", hit edge " << metrics.n_hit_edge
                   << ", looped " << metrics.n_loop_detected
+                  << ", stalled on flat " << metrics.n_stalled_on_flat
                   << ", no aspect " << metrics.n_no_aspect
                   << ", never traced (DEM border) " << metrics.n_not_traced_border
                   << "\n";
@@ -1130,10 +1130,26 @@ int main(int argc, char* argv[])
                       << " hilltop pixels sit on the outer ring and are never "
                          "offered to the tracer. They are in the table with "
                          "trace_status = 4 and empty metrics.\n";
+        // These two say different things and get different advice. A stall is a
+        // statement about where the CHANNEL NETWORK reaches; a loop is a
+        // statement about the routing.
+        if (metrics.n_stalled_on_flat > metrics.n_reached_channel / 4 &&
+            metrics.n_reached_channel > 0)
+            std::cout << "NOTE: " << metrics.n_stalled_on_flat
+                      << " traces (trace_status = 5) descended correctly and "
+                         "then ran out of\n      descent with no channel to "
+                         "terminate on. That is the channel network's\n"
+                         "      coverage, not a routing failure: those hilltops "
+                         "drain to valleys the\n      extraction did not put a "
+                         "channel in. Extend the network, or read the Lh\n"
+                         "      distribution as covering only the part of the "
+                         "DEM the network reaches.\n";
         if (metrics.n_loop_detected >
             metrics.n_reached_channel / 2 && metrics.n_reached_channel > 0)
-            std::cout << "WARNING: a large fraction of traces cycled. Lh "
-                         "distributions from this run are not reliable.\n";
+            std::cout << "WARNING: a large fraction of traces cycled ON "
+                         "DESCENDING GROUND (trace_status = 2).\n         That "
+                         "is a routing failure, and Lh distributions from this "
+                         "run are not reliable.\n";
 
         // ---- chi join (Phase 5) -------------------------------------------------
         // The channel a hilltop drains to is already known from the trace; this

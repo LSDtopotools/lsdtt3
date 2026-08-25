@@ -295,6 +295,38 @@ static lsdtt_streamline trace_one_streamline(
         return y_min + (nr - r - 1 + yi) * cs;
     };
 
+    // Is the ground at `fk` too flat for the trace to have left it?
+    //
+    // Steepest descent to any of the eight neighbours, which is the gradient
+    // the trace would need to keep moving. Diagonals are divided by sqrt(2).
+    // Nodata neighbours are skipped; a cell whose every neighbour is nodata
+    // counts as flat, since the trace certainly could not descend out of it.
+    auto terminus_is_flat = [&](int fk) -> bool
+    {
+        const int r = fk / nc;
+        const int c = fk % nc;
+        if (!dem_mask[fk]) return true;
+
+        const double z = static_cast<double>(dem_data[fk]);
+        double best = 0.0;
+
+        for (int dr = -1; dr <= 1; ++dr)
+            for (int dc = -1; dc <= 1; ++dc)
+            {
+                if (dr == 0 && dc == 0) continue;
+                const int rr = r + dr, cc = c + dc;
+                if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
+                const int nk = flat(rr, cc);
+                if (!dem_mask[nk]) continue;
+
+                const double run = ((dr != 0 && dc != 0) ? std::sqrt(2.0) : 1.0) * cs;
+                const double g   = (z - static_cast<double>(dem_data[nk])) / run;
+                if (g > best) best = g;
+            }
+
+        return best < opts.flat_terminus_gradient;
+    };
+
     lsdtt_streamline result;
     result.source_row = src_row;
     result.source_col = src_col;
@@ -414,9 +446,10 @@ static lsdtt_streamline trace_one_streamline(
     // -------------------------------------------------------------------------
     // Main trace loop
     // -------------------------------------------------------------------------
-    bool flag       = true;
-    bool skip_trace = false;
-    int  steps      = 1;
+    bool flag         = true;
+    bool skip_trace   = false;
+    bool stalled_flat = false;
+    int  steps        = 1;
 
     while (flag && a > 0 && a < nr-1 && b > 0 && b < nc-1)
     {
@@ -442,7 +475,8 @@ static lsdtt_streamline trace_one_streamline(
         const int vc = visits.visit(fk);
         if (vc >= 3)
         {
-            skip_trace = true;
+            skip_trace   = true;
+            stalled_flat = terminus_is_flat(fk);
             flag = false;
             break;
         }
@@ -669,7 +703,13 @@ static lsdtt_streamline trace_one_streamline(
     // -------------------------------------------------------------------------
     if (skip_trace)
     {
-        result.outcome = streamline_outcome::loop_detected;
+        // A revisit on flat ground is not the same failure as a revisit on a
+        // hillslope: the first means "descended correctly, found no sink", the
+        // second means the routing genuinely went wrong. See
+        // lsdtt_streamline_options::flat_terminus_gradient.
+        result.outcome = stalled_flat
+            ? streamline_outcome::stalled_on_flat
+            : streamline_outcome::loop_detected;
     }
     else if (a <= 0 || a >= nr-1 || b <= 0 || b >= nc-1)
     {
@@ -862,6 +902,7 @@ lsdtt_streamline_result trace_streamlines(
             case streamline_outcome::reached_sink:  ++result.n_reached_sink;  break;
             case streamline_outcome::hit_edge:      ++result.n_hit_edge;      break;
             case streamline_outcome::loop_detected: ++result.n_loop_detected; break;
+            case streamline_outcome::stalled_on_flat: ++result.n_stalled_flat; break;
             case streamline_outcome::no_aspect:     ++result.n_no_aspect;     break;
         }
         result.streamlines.push_back(std::move(sl));
@@ -895,6 +936,7 @@ lsdtt_streamline_result trace_streamlines(
               << "  Reached sink:  " << result.n_reached_sink  << "\n"
               << "  Hit edge:      " << result.n_hit_edge       << "\n"
               << "  Loop detected: " << result.n_loop_detected  << "\n"
+              << "  Stalled flat:  " << result.n_stalled_flat   << "\n"
               << "  No aspect:     " << result.n_no_aspect      << "\n";
     if (opts.collect_reuse_stats)
         std::cout << "  Steps total:   " << result.n_steps_total << "\n"
@@ -940,6 +982,7 @@ void write_streamlines(
     //   0 = reached_sink
     //   1 = hit_edge
     //   2 = loop_detected
+    //   5 = stalled_on_flat
     //   3 = no_aspect
     // -------------------------------------------------------------------------
     lsdtt_vector_schema schema;
@@ -975,6 +1018,7 @@ void write_streamlines(
             case streamline_outcome::reached_sink:  return 0;
             case streamline_outcome::hit_edge:      return 1;
             case streamline_outcome::loop_detected: return 2;
+            case streamline_outcome::stalled_on_flat: return 5;
             case streamline_outcome::no_aspect:     return 3;
         }
         return 3;

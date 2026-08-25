@@ -333,9 +333,18 @@ enum class hilltop_trace_status
 {
     reached_channel = 0,
     hit_edge        = 1,
-    loop_detected   = 2,
+    loop_detected   = 2,    // revisited a cell on DESCENDING ground: a genuine
+                            // routing failure
     no_aspect       = 3,
-    not_traced_border = 4   // never offered to the tracer; see the note above
+    not_traced_border = 4,  // never offered to the tracer; see the note above
+    stalled_on_flat = 5     // descended correctly, then ran out of descent with
+                            // no channel to terminate on. This is a statement
+                            // about the CHANNEL NETWORK's coverage, not about
+                            // the trace: such traces end a median of 116 m from
+                            // the nearest channel on Indian Creek, where
+                            // successful ones end on one every time. Their Lh
+                            // and relief are still meaningless, but the reason
+                            // is "no channel there", not "bad routing".
 };
 
 struct lsdtt_hillslope_metrics_options
@@ -408,6 +417,7 @@ struct lsdtt_hillslope_metrics_result
     std::int64_t n_loop_detected     = 0;
     std::int64_t n_no_aspect         = 0;
     std::int64_t n_not_traced_border = 0;
+    std::int64_t n_stalled_on_flat   = 0;
 
     // Rows where Lh == 0 so the non-dimensional pair is undefined.
     std::int64_t n_undefined_nondimensional = 0;

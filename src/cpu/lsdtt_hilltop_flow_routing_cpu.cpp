@@ -422,6 +422,7 @@ hilltop_trace_status status_from_outcome(streamline_outcome o)
         case streamline_outcome::reached_sink:  return hilltop_trace_status::reached_channel;
         case streamline_outcome::hit_edge:      return hilltop_trace_status::hit_edge;
         case streamline_outcome::loop_detected: return hilltop_trace_status::loop_detected;
+        case streamline_outcome::stalled_on_flat: return hilltop_trace_status::stalled_on_flat;
         case streamline_outcome::no_aspect:     return hilltop_trace_status::no_aspect;
     }
     return hilltop_trace_status::hit_edge;
@@ -531,6 +532,7 @@ lsdtt_hillslope_metrics_result compute_hillslope_metrics(
             case hilltop_trace_status::reached_channel: ++result.n_reached_channel; break;
             case hilltop_trace_status::hit_edge:        ++result.n_hit_edge;        break;
             case hilltop_trace_status::loop_detected:   ++result.n_loop_detected;   break;
+            case hilltop_trace_status::stalled_on_flat: ++result.n_stalled_on_flat; break;
             case hilltop_trace_status::no_aspect:       ++result.n_no_aspect;       break;
             default: break;
         }

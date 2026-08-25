@@ -71,6 +71,7 @@
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_raster_reproject.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_usgs_elevation.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
@@ -365,6 +366,19 @@ int main(int argc, char* argv[])
         "from the data provider before setting this - a wrong setting silently "
         "corrupts correct data. The tool warns when slopes look implausible.",
         "Vertical units", "param", "metres|feet|us_survey_feet"};
+
+    bool_default_map["check_vertical_units_against_usgs"] = true;
+    help_map["check_vertical_units_against_usgs"] = {"bool","true",
+        "When the slope-plausibility warning fires, query USGS 3DEP to settle "
+        "whether the elevations are metres or feet.",
+        "Plausibility can only FLAG a suspicious DEM; an external reference "
+        "SETTLES it, because nothing but a unit error puts a DEM 3.28x off a "
+        "national elevation dataset. Runs ONLY if the warning fires AND the DEM "
+        "sits in US coverage - which is not the limitation it appears, since "
+        "feet-on-a-metre-grid is a US delivery convention. Sends 5 pixel "
+        "coordinates to epqs.nationalmap.gov. Set false to keep the run offline. "
+        "Nothing is ever converted automatically.",
+        "Vertical units", "param", "true|false"};
 
     // --- Threshold masking ---
     float_default_map["minimum_elevation"] = 0.0f;
@@ -1127,7 +1141,28 @@ int main(int argc, char* argv[])
     else
     {
         // Only worth warning when the user has NOT already told us the unit.
-        lsdtt::warn_if_vertically_implausible(dem, std::cout);
+        const auto plaus = lsdtt::warn_if_vertically_implausible(dem, std::cout);
+
+        // The warning can only say "this looks impossible". 3DEP can say which
+        // unit it actually is, so it runs only when there is a question to
+        // answer -- never as a routine network call on a healthy DEM.
+        if (plaus.implausible && bf["check_vertical_units_against_usgs"])
+        {
+            std::cout << "Checking the vertical unit against USGS 3DEP...\n";
+            const lsdtt::usgs_unit_check chk =
+                lsdtt::check_vertical_units_against_usgs(dem);
+            std::cout << "  " << chk.message << "\n\n";
+
+            if (chk.verdict == lsdtt::vertical_unit_verdict::feet)
+            {
+                // Deliberately NOT applied here. The user asked for this DEM as
+                // it stands; converting behind their back would make the output
+                // disagree with the input for a reason nothing in the file
+                // records. They are told exactly what to set.
+                std::cout << "  Rerun with 'vertical_units: feet' to write a "
+                             "corrected raster.\n\n";
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

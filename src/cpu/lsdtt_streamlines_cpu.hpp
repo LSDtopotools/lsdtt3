@@ -123,9 +123,12 @@ enum class streamline_outcome
 {
     reached_sink,    // trace terminated at a sink pixel - success
     hit_edge,        // trace left the valid raster domain without finding a sink
-    loop_detected,   // trace revisited a pixel three or more times
-    no_aspect        // source pixel has no valid aspect (raster edge or nodata
+    loop_detected,   // trace revisited a pixel three or more times WHILE STILL
+                     // ON DESCENDING GROUND - a genuine routing failure
+    no_aspect,       // source pixel has no valid aspect (raster edge or nodata
                      // neighbour prevents central-difference computation)
+    stalled_on_flat  // trace revisited a pixel, but on ground too flat to leave:
+                     // it descended correctly and then had nowhere to go
 };
 
 // =============================================================================
@@ -187,6 +190,23 @@ struct lsdtt_streamline_options
     // Prevents runaway traces on flat or heavily noisy topography.
     int max_steps = 100000;
 
+    // Gradient below which a terminating cell counts as FLAT, splitting a
+    // revisit into `stalled_on_flat` rather than `loop_detected`.
+    //
+    // A revisit is not by itself a routing failure. On Indian Creek (1 m lidar)
+    // 35% of hilltop traces ended as `loop_detected`, and the elevation profiles
+    // showed every one of them descending monotonically from ridge to valley
+    // floor: the path was right, it simply arrived somewhere with no sink to
+    // terminate on and oscillated on the flat until the visit counter tripped.
+    // Those traces end a median of 116 m from the nearest channel, whereas
+    // successful ones end ON a channel 100% of the time.
+    //
+    // Conflating the two hides a data-coverage problem (the sink mask does not
+    // reach that valley) inside what reads as a tracer defect. 0.02 is well
+    // below any hillslope and well above the residual gradient a fill leaves on
+    // a flat.
+    double flat_terminus_gradient = 0.02;
+
     // When true, each lsdtt_streamline::nodes vector is populated with the
     // sub-pixel path for visualisation.  Approximately doubles memory use
     // per trace.
@@ -228,8 +248,9 @@ struct lsdtt_streamline_result
 
     int n_reached_sink  = 0;
     int n_hit_edge      = 0;
-    int n_loop_detected = 0;
-    int n_no_aspect     = 0;
+    int n_loop_detected  = 0;
+    int n_no_aspect      = 0;
+    int n_stalled_flat   = 0;
 
     // Populated only when lsdtt_streamline_options::collect_reuse_stats is set.
     // reuse_ratio = n_steps_total / n_distinct_states, the upper bound on what

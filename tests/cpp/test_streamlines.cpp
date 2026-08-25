@@ -477,6 +477,7 @@ void test_closed_pit_terminates()
 
     const bool defined =
         t->outcome == lsdtt::streamline_outcome::loop_detected ||
+        t->outcome == lsdtt::streamline_outcome::stalled_on_flat ||
         t->outcome == lsdtt::streamline_outcome::hit_edge ||
         t->outcome == lsdtt::streamline_outcome::no_aspect;
 
@@ -752,6 +753,162 @@ void test_cone_radial()
               << worst << "\n";
 }
 
+
+// -----------------------------------------------------------------------------
+// The loop / stall split.
+//
+// A revisited cell was one outcome until 2026-08-25, and it hid a data problem
+// inside what read as a tracer bug. On Indian Creek 35% of hilltop traces came
+// back `loop_detected`; the elevation profiles showed every one descending
+// monotonically ridge to valley floor, and they ended a median of 116 m from
+// the nearest channel while successful traces ended ON one every time. The path
+// was right -- there was simply no sink where it arrived. Splitting the outcome
+// moved 74% of those into `stalled_on_flat` and cut the genuine loop rate from
+// 35% to 9%.
+//
+// The two are separated by the ground the trace stops on:
+//   - stops where it could still descend -> loop_detected   (routing failed)
+//   - stops where it could not           -> stalled_on_flat (no sink there)
+//
+// FIXTURE. A hillslope draining into a closed bowl whose centre is off the
+// column axis. Two details are load-bearing:
+//   - a bowl, not a flat plain: a dead-flat surface has no aspect at all, so a
+//     trace breaks on nodata-aspect before it can ever revisit a cell, which is
+//     a different failure;
+//   - off-centre: a bowl centred on a symmetry axis is descended straight down
+//     that axis and never revisits anything.
+// Only the bowl's GRADIENT changes between the two cases, so nothing but the
+// classifier can be responsible for the different verdicts.
+// -----------------------------------------------------------------------------
+lsdtt::lsdtt_raster_cpu bowl_dem(const lsdtt::lsdtt_raster_meta& meta,
+                                 double bowl_gradient)
+{
+    const int    nr = meta.n_rows, nc = meta.n_cols;
+    const double cell = meta.cell_size;
+
+    std::vector<float>        data(static_cast<std::size_t>(nr) * nc);
+    std::vector<std::uint8_t> mask(data.size(), 1);
+
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+        {
+            const double dr = r - 28.0, dc = c - 20.5;   // 20.5: off-axis
+            data[static_cast<std::size_t>(r) * nc + c] =
+                (r < 20) ? static_cast<float>(120.0 - 2.0 * r)
+                         : static_cast<float>(80.0 + bowl_gradient * cell *
+                                              std::sqrt(dr * dr + dc * dc));
+        }
+
+    return lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+}
+
+lsdtt::lsdtt_streamline_result trace_into_bowl(double bowl_gradient)
+{
+    auto meta = make_meta(41, 41, 10.0);
+    auto dem  = bowl_dem(meta, bowl_gradient);
+
+    auto src = make_mask_raster(meta);
+    set_cell(src, 3, 20, 1.0f);
+    auto snk = make_mask_raster(meta);   // deliberately empty: no sink anywhere
+
+    lsdtt::lsdtt_streamline_options opts;
+    opts.n_threads = 1;
+    opts.max_steps = 50000;
+    return lsdtt::trace_streamlines(dem, src, snk, opts);
+}
+
+void test_revisit_on_flat_ground_is_a_stall()
+{
+    auto res = trace_into_bowl(0.004);
+    const auto* t = find_trace(res, 3, 20);
+    if (!t) { check("stall: trace produced", false); return; }
+
+    check("a revisit on ground too flat to leave is stalled_on_flat",
+          t->outcome == lsdtt::streamline_outcome::stalled_on_flat,
+          "outcome=" + std::to_string(static_cast<int>(t->outcome)));
+    check("and is counted apart from loops",
+          res.n_stalled_flat == 1 && res.n_loop_detected == 0,
+          "stalled=" + std::to_string(res.n_stalled_flat) +
+          " looped=" + std::to_string(res.n_loop_detected));
+
+    // The whole point of the split: the trace DESCENDED. A stall must never be
+    // read as a path that went nowhere.
+    check("a stalled trace still descended the hillslope", t->relief_m > 30.0,
+          "relief=" + std::to_string(t->relief_m));
+}
+
+void test_revisit_on_descending_ground_is_still_a_loop()
+{
+    // Same landscape, same source, ONLY the bowl gradient raised above the
+    // threshold. If this also came back as a stall, the classifier would be
+    // answering something other than the ground.
+    auto res = trace_into_bowl(0.20);
+    const auto* t = find_trace(res, 3, 20);
+    if (!t) { check("loop: trace produced", false); return; }
+
+    check("a revisit where the trace could still descend is loop_detected",
+          t->outcome == lsdtt::streamline_outcome::loop_detected,
+          "outcome=" + std::to_string(static_cast<int>(t->outcome)));
+    check("and no stall is recorded", res.n_stalled_flat == 0,
+          "stalled=" + std::to_string(res.n_stalled_flat));
+}
+
+void test_the_split_turns_on_the_threshold()
+{
+    // The gentle bowl, reclassified purely by moving the threshold below its
+    // gradient. Nothing about the DEM changes.
+    auto meta = make_meta(41, 41, 10.0);
+    auto dem  = bowl_dem(meta, 0.004);
+    auto src  = make_mask_raster(meta);
+    set_cell(src, 3, 20, 1.0f);
+    auto snk  = make_mask_raster(meta);
+
+    lsdtt::lsdtt_streamline_options opts;
+    opts.n_threads = 1;
+    opts.max_steps = 50000;
+    opts.flat_terminus_gradient = 0.0;   // "no ground is ever flat"
+
+    auto res = lsdtt::trace_streamlines(dem, src, snk, opts);
+    const auto* t = find_trace(res, 3, 20);
+    if (!t) { check("threshold: trace produced", false); return; }
+
+    check("with flat_terminus_gradient = 0 the same trace is a loop",
+          t->outcome == lsdtt::streamline_outcome::loop_detected,
+          "outcome=" + std::to_string(static_cast<int>(t->outcome)));
+}
+
+void test_a_reachable_sink_is_unaffected_by_the_split()
+{
+    // The split must not cost a successful trace.
+    auto meta = make_meta(41, 41, 10.0);
+
+    std::vector<float>        data(static_cast<std::size_t>(41) * 41);
+    std::vector<std::uint8_t> mask(data.size(), 1);
+    for (int r = 0; r < 41; ++r)
+        for (int c = 0; c < 41; ++c)
+            data[static_cast<std::size_t>(r) * 41 + c] =
+                static_cast<float>(100.0 - 2.0 * r);
+
+    lsdtt::lsdtt_raster_cpu dem(std::move(data), std::move(mask), meta);
+    auto src = make_mask_raster(meta);
+    set_cell(src, 5, 20, 1.0f);
+    auto snk = make_mask_raster(meta);
+    for (int c = 0; c < 41; ++c) set_cell(snk, 30, c, 1.0f);
+
+    lsdtt::lsdtt_streamline_options opts;
+    opts.n_threads = 1;
+
+    auto res = lsdtt::trace_streamlines(dem, src, snk, opts);
+    const auto* t = find_trace(res, 5, 20);
+    if (!t) { check("reachable sink: trace produced", false); return; }
+
+    check("a reachable sink still reports reached_sink",
+          t->outcome == lsdtt::streamline_outcome::reached_sink,
+          "outcome=" + std::to_string(static_cast<int>(t->outcome)));
+    check("and no stall is recorded", res.n_stalled_flat == 0,
+          "stalled=" + std::to_string(res.n_stalled_flat));
+}
+
 } // namespace
 
 int main()
@@ -778,6 +935,12 @@ int main()
     test_nodata_neighbour_no_aspect();
     test_sink_on_outer_ring_is_unreachable();
     test_closed_pit_terminates();
+
+    std::cout << "\n-- B2. loop vs stall -----------------------------------\n";
+    test_revisit_on_flat_ground_is_a_stall();
+    test_revisit_on_descending_ground_is_still_a_loop();
+    test_the_split_turns_on_the_threshold();
+    test_a_reachable_sink_is_unaffected_by_the_split();
 
     std::cout << "\n-- C. determinism --------------------------------------\n";
     test_thread_independence();
