@@ -8,6 +8,8 @@
 
 #include "lsdtt_landscape_equilibration_cpu.hpp"
 
+#include "lsdtt_stream_power_cpu.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -767,9 +769,9 @@ lsdtt_equilibration_result equilibrate_landscape(
             if (!surface.get_mask()[s])
                 continue;
 
-            double area_for_threshold = area_d[s];
-            if (fluvial_opts.divide_area_by_dx)
-                area_for_threshold /= dx;
+            // Same convention as the LEM step, from one definition.
+            const double area_for_threshold = channel_threshold_quantity(
+                area_d[s], dx, fluvial_opts.divide_area_by_dx);
 
             const bool was_channel = previous != nullptr
                 && s < previous->size() && (*previous)[s] != 0;

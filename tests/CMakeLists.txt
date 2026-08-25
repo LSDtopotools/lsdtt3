@@ -1656,6 +1656,16 @@ add_hilltop_coupling_cli_test(
 # SCAFFOLDING for the E*-R* validation workflow (plan section 4.8): runs the
 # hilltop pipeline on a supplied DEM. Not a test - it is built but never
 # registered with CTest, and it exists only until the Phase 4 CLI replaces it.
+# What incision_threshold_area is compared against: specific area in METRES
+# under divide_area_by_dx, map area in m^2 without it (plan section 4.4).
+add_executable(lsdtt-test-channel-threshold-units cpp/test_channel_threshold_units.cpp)
+target_link_libraries(lsdtt-test-channel-threshold-units PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_channel_threshold_units
+         COMMAND lsdtt-test-channel-threshold-units)
+set_tests_properties(unit_channel_threshold_units PROPERTIES
+    LABELS "unit;lem")
+
 # Pathway A (plan_lem_hillslope_length_targeting.md section 4): the channel
 # threshold search, and the ways its objective can be plausibly wrong.
 add_executable(lsdtt-test-hillslope-length-search cpp/test_hillslope_length_search.cpp)

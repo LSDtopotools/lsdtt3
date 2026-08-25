@@ -96,4 +96,64 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     int   n_threads = 0
 );
 
+// =============================================================================
+// The channel threshold, and the units trap in it
+//
+// `incision_threshold_area` is compared against a quantity WHOSE UNITS DEPEND ON
+// `divide_area_by_dx`, and the two are dimensionally different:
+//
+//   divide_area_by_dx = false   upslope area        A        [m^2]
+//   divide_area_by_dx = true    specific area   a = A / dx   [m]     <- DEFAULT
+//
+// So on the default setting the parameter is a LENGTH, not an area, despite
+// being named `..._area` and having been documented as m^2. Two practical
+// consequences, both of which have caught this project already:
+//
+//   1. THE SAME NUMBER MEANS DIFFERENT NETWORKS ON DIFFERENT GRIDS. Under the
+//      default, threshold T selects cells with at least T/dx upstream pixels --
+//      so halving the cell size doubles the pixel count required, and a .param
+//      file carried from a 10 m DEM to a 1 m DEM silently asks for a ten times
+//      larger network in pixel terms.
+//   2. A value chosen as though it were m^2 is wrong by a factor of dx. On a
+//      10 m grid, "1000" reads as 1000 m of specific area = 100 pixels, not the
+//      10 pixels that 1000 m^2 would imply.
+//
+// The specific-area convention is not a mistake -- it is the Bonetti et al.
+// (2020) / Litwin et al. (2022) formulation, chosen to remove grid dependence
+// from the erosion law itself. Only its documentation was wrong.
+//
+// These helpers exist so the comparison is written once. It was previously
+// open-coded at two sites (the LEM step and the equilibration cycle) with the
+// same reasoning duplicated in both.
+// =============================================================================
+
+// The quantity a threshold is compared against, from an upslope area in m^2.
+[[nodiscard]] double channel_threshold_quantity(
+    double upslope_area_m2,
+    double cell_size_m,
+    bool   divide_area_by_dx) noexcept;
+
+// One threshold expressed every way a reader might need it. Report all three:
+// the number alone is ambiguous without the convention that produced it.
+struct channel_threshold_report
+{
+    double specific_area_m   = 0.0;   // A / dx   [m]
+    double map_area_m2       = 0.0;   // A        [m^2]
+    double equivalent_pixels = 0.0;   // A / dx^2 -- what people actually reason in
+};
+
+[[nodiscard]] channel_threshold_report describe_channel_threshold(
+    double threshold,
+    double cell_size_m,
+    bool   divide_area_by_dx) noexcept;
+
+// Channel mask from an upslope-area field (m^2) and a threshold, applying the
+// convention. Cells the flow graph does not consider valid are never channels.
+[[nodiscard]] std::vector<std::uint8_t> channel_mask_from_area_threshold(
+    const lsdtt_flowinfo&      flow,
+    const std::vector<double>& upslope_area_m2,
+    double                     threshold,
+    double                     cell_size_m,
+    bool                       divide_area_by_dx);
+
 } // namespace lsdtt

@@ -52,13 +52,18 @@ build_channel_mask(
     }
     else if (opts.incision_threshold_area > 0.0f && flow != nullptr)
     {
+        // The threshold convention lives in one place now
+        // (lsdtt_stream_power_cpu.hpp): `incision_threshold_area` is a SPECIFIC
+        // area in metres when divide_area_by_dx is set, and a map area in m^2
+        // when it is not.
         std::vector<double> area = flow->accumulate();
         for (std::int64_t flat = 0; flat < n_cells; ++flat)
         {
             if (!flow->is_valid_flat(flat)) continue;
-            double a = area[static_cast<std::size_t>(flat)];
-            if (opts.divide_area_by_dx) a /= static_cast<double>(dx);
-            if (a >= static_cast<double>(opts.incision_threshold_area))
+            const double q = channel_threshold_quantity(
+                area[static_cast<std::size_t>(flat)],
+                static_cast<double>(dx), opts.divide_area_by_dx);
+            if (q >= static_cast<double>(opts.incision_threshold_area))
                 is_channel[static_cast<std::size_t>(flat)] = 1;
         }
     }

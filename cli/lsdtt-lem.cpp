@@ -45,6 +45,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/cpu/lsdtt_lem_cpu.hpp"
+#include "../src/cpu/lsdtt_stream_power_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
@@ -649,15 +650,34 @@ int main(int argc, char* argv[])
 
     float_default_map["incision_threshold_area"] = 0.0f;
     help_map["incision_threshold_area"] = {"float","0",
-        "Minimum drainage area (m^2) for fluvial incision. 0 = no threshold.",
-        "Also defines channel pixels for hillslope coupling.",
+        "Channel threshold for fluvial incision. 0 = no threshold. UNITS DEPEND "
+        "ON divide_area_by_dx - see below.",
+        "THIS IS NOT ALWAYS AN AREA, despite the name. With divide_area_by_dx "
+        "true (the DEFAULT) the threshold is compared against SPECIFIC "
+        "catchment area a = A/dx, which is a LENGTH IN METRES; with it false, "
+        "against map area A in m^2. Two consequences worth knowing before "
+        "choosing a value: (1) under the default, threshold T selects cells "
+        "with at least T/dx upstream pixels, so the same .param file carried "
+        "from a 10 m DEM to a 1 m DEM asks for a ten times larger network in "
+        "pixel terms; (2) a value picked as though it were m^2 is wrong by a "
+        "factor of dx - on a 10 m grid '1000' means 100 pixels, not the 10 that "
+        "1000 m^2 would give. The run header prints the resolved threshold in "
+        "all three forms. The specific-area convention follows Bonetti et al. "
+        "(2020) and Litwin et al. (2022) and exists to remove grid dependence "
+        "from the erosion law; only its documentation was ever wrong. Also "
+        "defines channel pixels for hillslope coupling.",
         "Process parameters", "param", ""};
 
     bool_default_map["divide_area_by_dx"] = true;
     help_map["divide_area_by_dx"] = {"bool","true",
-        "Divide drainage area by cell size to get specific area.",
-        "Applies to both fluvial incision and hillslope coupling threshold.",
-        "Process parameters", "param", ""};
+        "Divide drainage area by cell size to get specific area a = A/dx.",
+        "Applies to both fluvial incision and the hillslope coupling threshold, "
+        "and CHANGES THE UNITS of incision_threshold_area from m^2 to metres. "
+        "True is the Bonetti et al. (2020) / Litwin et al. (2022) convention "
+        "(specific area, grid-independent); false is the Perron et al. (2008) "
+        "total-area convention. The choice also changes the exponent in the "
+        "landscape Peclet number, so it is not a free setting.",
+        "Process parameters", "param", "true|false"};
 
     float_default_map["slope_clamp"] = 1e-5f;
     help_map["slope_clamp"] = {"float","1e-5",
@@ -1056,6 +1076,27 @@ int main(int argc, char* argv[])
               << "  (U=" << opts.uplift_rate << " m/yr)\n";
     std::cout << "  Timestep          : " << opts.timestep << " yr\n";
     std::cout << "  Boundary conds    : " << opts.boundary_conditions << "\n";
+
+    // The channel threshold in all three forms. The number alone is ambiguous:
+    // its UNITS depend on divide_area_by_dx (specific area in metres when set,
+    // map area in m^2 when not), so a reader cannot tell what was asked for
+    // without the convention beside it.
+    if (opts.incision_threshold_area > 0.0f)
+    {
+        const double dx = static_cast<double>(dem.get_meta().cell_size);
+        const auto ct = lsdtt::describe_channel_threshold(
+            static_cast<double>(opts.incision_threshold_area),
+            dx, opts.divide_area_by_dx);
+        std::cout << "  Channel threshold : " << opts.incision_threshold_area
+                  << (opts.divide_area_by_dx
+                        ? " m of SPECIFIC area (divide_area_by_dx on)"
+                        : " m^2 of MAP area (divide_area_by_dx off)")
+                  << "\n"
+                  << "                      = " << ct.map_area_m2 << " m^2 map area"
+                  << " = " << ct.specific_area_m << " m specific area"
+                  << " = " << ct.equivalent_pixels << " upstream pixels at dx="
+                  << dx << " m\n";
+    }
     std::cout << "  Threads           : " << opts.n_threads << "\n";
 
     // -------------------------------------------------------------------------
