@@ -1,6 +1,8 @@
 import unittest
 
+import geopandas as gpd
 import numpy as np
+from shapely.geometry import Point, Polygon
 
 import lsdtt3
 
@@ -96,6 +98,90 @@ class RasterTest(unittest.TestCase):
         self.assertTrue(lsdtt3.aspect(plane, n_threads=1).mask_numpy()[2, 2])
         self.assertTrue(lsdtt3.plan_curvature(plane).mask_numpy()[2, 2])
         self.assertTrue(lsdtt3.total_curvature(plane, radius_metres=1.0).mask_numpy()[2, 2])
+
+    def test_boundary_sinks_and_least_cost_breaching(self):
+        metadata = lsdtt3.RasterMeta.from_shape(5, 5)
+        values = np.full((5, 5), 10.0, dtype=np.float32)
+        values[2, 2] = 0.0
+        depression = lsdtt3.Raster.from_numpy(
+            values, np.ones((5, 5), dtype=bool), metadata
+        )
+
+        self.assertEqual(
+            lsdtt3.make_boundary_conditions("closed", "periodic", "closed", "periodic"),
+            "npnp",
+        )
+        outlets = lsdtt3.make_outlet_mask(depression, south=True)
+        np.testing.assert_array_equal(outlets.to_numpy()[-1], np.ones(5, dtype=np.float32))
+        self.assertEqual(
+            lsdtt3.fill_pits_with_outlets(
+                depression, outlets, min_slope=0.0, n_threads=1
+            ).to_numpy()[2, 2],
+            10.0,
+        )
+
+        points = np.array([[2, 2]], dtype=np.int64)
+        sink_mask = lsdtt3.mask_from_points(depression, points)
+        self.assertEqual(
+            lsdtt3.fill_pits_with_sinks(
+                depression, points, min_slope=0.0, n_threads=1
+            ).to_numpy()[2, 2],
+            0.0,
+        )
+        self.assertEqual(
+            lsdtt3.fill_pits_with_sinks(
+                depression, sink_mask, min_slope=0.0, n_threads=1
+            ).to_numpy()[2, 2],
+            0.0,
+        )
+        self.assertEqual(
+            lsdtt3.fill_pits_boundary_aware(
+                depression, "onnn", min_slope=0.0, n_threads=1
+            ).to_numpy()[2, 2],
+            10.0,
+        )
+        self.assertEqual(
+            lsdtt3.breach_least_cost(depression, n_threads=1).shape,
+            depression.shape,
+        )
+        self.assertTrue(np.all(
+            lsdtt3.least_cost_carve_depth(depression, n_threads=1).to_numpy() >= 0.0
+        ))
+
+    def test_geopandas_reprojection_mosaic_clipping_and_sampling(self):
+        crs = gpd.GeoSeries([], crs=32612).crs
+        metadata = lsdtt3.RasterMeta.from_shape(
+            5, 5, x_min=500000.0, y_min=4400000.0, cell_size=10.0,
+            crs_wkt=crs.to_wkt(),
+        )
+        raster = lsdtt3.Raster.from_numpy(
+            np.arange(25, dtype=np.float32).reshape(5, 5),
+            np.ones((5, 5), dtype=bool), metadata,
+        )
+        polygon = gpd.GeoDataFrame(
+            geometry=[Polygon([
+                (500000.0, 4400000.0), (500050.0, 4400000.0),
+                (500050.0, 4400050.0), (500000.0, 4400050.0),
+            ])],
+            crs=crs,
+        )
+
+        polygon_mask = lsdtt3.rasterize_polygons(raster, polygon)
+        self.assertEqual(polygon_mask.valid_pixel_count, 25)
+        np.testing.assert_array_equal(polygon_mask.to_numpy(), np.ones((5, 5), dtype=np.float32))
+        self.assertEqual(lsdtt3.clip_to_polygons(raster, polygon).shape, (5, 5))
+
+        sampled = lsdtt3.sample_points(
+            raster,
+            gpd.GeoDataFrame(geometry=[Point(500005.0, 4400045.0)], crs=crs),
+            column="elevation",
+        )
+        self.assertEqual(sampled.loc[0, "elevation"], 0.0)
+        np.testing.assert_array_equal(
+            lsdtt3.mosaic([raster, raster]).to_numpy(), raster.to_numpy()
+        )
+        regridded = lsdtt3.reproject_to_grid(raster, metadata)
+        np.testing.assert_array_equal(regridded.to_numpy(), raster.to_numpy())
 
 
 if __name__ == "__main__":
