@@ -49,7 +49,7 @@ endif()
 find_package(nanobind CONFIG REQUIRED)
 find_package(GDAL REQUIRED)
 
-if(LSDTT_PYTHON_OPENMP)
+if(LSDTT_PYTHON_OPENMP AND NOT WIN32)
     find_package(OpenMP QUIET)
 endif()
 

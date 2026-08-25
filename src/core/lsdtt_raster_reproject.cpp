@@ -19,6 +19,7 @@
 #include <string>
 
 #include <gdal.h>
+#include <gdal_version.h>
 #include <gdal_priv.h>
 #include <gdal_utils.h>      // GDALWarpAppOptions
 #include <gdalwarper.h>      // GDALResampleAlg, GRA_* constants
@@ -53,7 +54,15 @@ static GDALResampleAlg resample_algo(const std::string& s)
     if (s == "med")                              return GRA_Med;
     if (s == "q1")                               return GRA_Q1;
     if (s == "q3")                               return GRA_Q3;
-    if (s == "sum")                              return GRA_Sum;
+    if (s == "sum")
+    {
+#if GDAL_VERSION_NUM >= 3010000
+        return GRA_Sum;
+#else
+        throw std::invalid_argument(
+            "lsdtt_reproject: 'sum' resampling requires GDAL 3.1 or newer");
+#endif
+    }
 
     std::cerr << "lsdtt_reproject: unknown resampling_method '"
               << s << "' - falling back to cubic.\n";
