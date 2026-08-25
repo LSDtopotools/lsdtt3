@@ -1,0 +1,352 @@
+# Landscape Evolution Modelling in lsdtt3
+
+This page explains the design choices available in lsdtt3's landscape evolution model (LEM): what incision and transport laws are implemented, what numerical schemes solve them, where the theory comes from, and what trade-offs guide you toward one choice or another. It is not a CLI reference — for parameter names and default values see [CLI reference: lsdtt-lem](cli_reference/cli_reference_lsdtt_lem.md). Instead, this page is for understanding the landscape processes and numerics that each parameter controls.
+
+It should be noted: lsdtt3's lem functionality has come about because it has been aimed at answering specific research questions and testing different components of the topographic analysis packages. It is not a full landscape evolution model with all the bells and whistles of, say, landlab. But if you just want a simulation using basic stream power + hillslopes on a rectangular grid lsdtt-lem will do the job. 
+
+If you are modelling a landscape for the first time (I'm not sure you would be reading this page if that were the case, but whatever), start with [Understanding fluvial and hillslope processes](#fluvial-and-hillslope-laws-in-lsdtt3) and [Steady state versus time stepping](#steady-state-versus-time-stepping), then turn to the CLI reference to find parameter values that match your process choice.
+
+---
+
+## Overview
+
+The lsdtt3 LEM computes landscape evolution by applying three processes to a DEM at each timestep (or iteratively for steady-state): **fluvial incision**, **hillslope sediment transport**, and **uniform tectonic uplift**. Each process is optional and can be switched on independently. The core idea is that erosion/deposition = stream power (on channels) + diffusive/threshold transport (on hillslopes) + uplift, and the landscape evolves by solving this differential equation forward in time or toward a steady state.
+
+Two broad strategies are available:
+
+- **Time stepping**: integrate the governing equations forward from an initial topography at small timesteps over long model duration.
+- **Analytical steady state**: compute the fluvial part directly in one pass (no time loop), optionally solve the hillslope part iteratively, and optionally repeat ("snap") to let drainage divides migrate.
+
+---
+
+## Fluvial and hillslope laws in lsdtt3
+
+### Stream power and fluvial incision
+
+The **stream power law** describes erosion on channelized flow paths. It states that the rate of channel incision is
+
+```
+dz/dt = K · A^m · S^n − U
+```
+
+where `z` is elevation, `t` is time, `K` is an erodibility coefficient, `A` is the drainage area, `S` is the local slope, `m` and `n` are dimensionless exponents (typically 0.4–0.5 and 1, respectively, although n = 1 is more for computational convinience than for accurate physics, see the last two decades of landscape evolution papers), and `U` is uplift rate. The area-slope form comes from **Howard and Kerby (1983)**, who measured it directly on rapidly eroding badland channels. In lsdtt3 it is the basis of all fluvial incision.
+
+#### The exponents m and n
+
+- **`m`** (the drainage-area exponent, default 0.45) captures how incision scales with catchment size. A larger basin carries more water, so it erodes faster. `m ≈ 0.4–0.5` reflects observations that incision is sub-linear in area: doubling the catchment does not double the erosion rate. This exponent acutually includes exponents about runoff efficiency as well as channel width scaling: see Whipple and Tucker (1999). 
+- **`n`** (the slope exponent, default 1.0) determines how strongly the channel responds to slope. `n = 1` (linear slope dependence) is the simplest choice and is physically motivated by laminar shear stress on the bed. `n ≠ 1` is also observed in real landscapes (in fact much more frequently than n = 1) but requires iterative (Newton–Raphson) solution instead of a closed-form formula, making it numerically (much) more expensive.
+
+The combination matters for landscape form: the landscape **Péclet number** `p = m + n` (under the Bonetti convention for specific area, discussed below) sets the ratio of advective (fluvial) to diffusive (hillslope) transport. A hillslope length `L_h` emerges at the crossover where `K A^m S^n ≈ D S^2 / L_h^2`, which gives `L_h ~ (D / K)^(1/p)`. Getting the exponent `p` wrong is an error in an **exponent, not a constant**, so it cannot be calibrated away by adjusting `K` or `D` after the fact.
+
+#### Numerical schemes for stream power
+
+The stream power law is stiff: steep hillslopes try to transport sediment very fast, and naïve time-stepping requires tiny timesteps. lsdtt3 solves this using **implicit (unconditionally stable) numerical schemes**:
+
+- **n = 1 (default):** A closed-form implicit solution exists (a quartic equation, solved in closed form). This is the fastest route and is used automatically when `n_exponent: 1.0`.
+- **n ≠ 1:** Newton–Raphson iteration over an implicit equation. More expensive but allows exponents like `n = 1.5` or `n = 2`. The implementation builds on the implicit stream-power solver strategy of **Braun and Willett (2013)** — the FastScape algorithm, an O(n) implicit sweep in topological order. **Anand, Hooshyar and Porporato (2020)** extend that ordering from single- to multiple-flow-direction networks, which is what makes a D-infinity fluvial step affordable at the same complexity; and **Anand et al. (2022)** give a linear stability analysis of when a fluvial landscape channelises and at what spacing, which is the analytical counterpart of the emergent drainage density discussed below.
+
+See the CLI reference for the `n_exponent` and `slope_clamp` parameters that control this solver.
+
+---
+
+### Hillslope sediment transport
+
+Hillslopes carry sediment differently from channels. The two regimes represented in lsdtt3 are:
+
+#### Linear diffusive transport
+
+The simplest model: sediment flux on a slope is proportional to gradient,
+
+```
+q = −D · ∇z
+```
+
+where `q` is the sediment flux (volume per unit width per time), `D` is a diffusivity coefficient (m² yr⁻¹), and `∇z` is the elevation gradient. This is a diffusion equation, and it is reversible — material spreads downhill and fills valleys, and at equilibrium the landscape is a parabola. It is named for **Culling (1960)**, who drew the analogy between hillslope erosion and Fourier heat conduction; **Culling (1963)** later derived the same form from random particle motion, which is the paper to cite when the mechanism rather than the equation is the point.
+
+Advantages: simple, fast, always stable.
+Disadvantage: real hillslopes often have a threshold slope beyond which transport accelerates sharply (e.g. soil creep at low slopes, landsliding at high slopes). Linear diffusion does not capture this.
+
+#### Nonlinear (critical-slope) transport
+
+Above a **critical slope** `S_c`, sediment transport becomes much faster — non-linearly so. The **Roering law** (Roering, Kirchner, and Dietrich 1999) captures this:
+
+```
+q = −D · ∇z / (1 − (|∇z| / S_c)^2)
+```
+
+At slopes much below `S_c`, this reduces to linear diffusion (the denominator → 1). As slope approaches `S_c`, the transport coefficient diverges, modeling an abrupt increase in sediment flux — a threshold effect. Above `S_c`, the model is often modified to ensure mass balance; a common approach is **Cidre-style** (Carretier et al. 2016, *Earth Surface Dynamics* 4:237–251), which applies a slope-restoration term to drive slopes that exceed `S_c` back toward `S_c`, so the landscape self-organizes toward a critical-slope topography.
+
+This nonlinear law is physically motivated by hillslope processes: at low angles, soil creep dominates (nearly linear); at high angles, landsliding or soil raveling dominates (nonlinear). Real hillslopes rarely exceed `S_c ≈ 0.8` (45 degrees) in steady state.
+
+---
+
+## Numerical schemes and solvers for hillslope transport
+
+lsdtt3 offers five solvers for hillslope transport, selected via the `hillslope_model` parameter. Choose based on your process model and computational budget:
+
+| Solver | Equation | Time stepping | Stability | Best for |
+|---|---|---|---|---|
+| `linear` | D · ∇²z | explicit FD | CFL-limited | Thick sediment cover, long time horizons, when diffusion dominates |
+| `roering` | Roering (1999) nonlinear law | explicit FD with auto-subcycling | CFL-limited near S_c | Transient dynamics, landscapes with strong slope feedback |
+| `cidre` | Carretier et al. (2016) finite-volume | explicit FV + D-infinity routing | CFL-limited | Coupled fluvial–hillslope on emergent network (D-infinity). Note that this does not have significant time savings over roering for test cases.|
+| `roering_implicit` | Roering nonlinear law | implicit backward-Euler or TR-BDF2 | unconditionally stable | Long, fine-grid runs; relief-targeting studies; see caveat below |
+| `adi` | Laplacian | alternating-direction implicit | unconditionally stable | Regular grids; when explicit schemes bottleneck |
+
+### Linear diffusion solver (`linear`)
+
+Solves `dz/dt = D · ∇²z` using an **explicit finite-difference stencil** (forward Euler). Stability is subject to the CFL condition: the timestep must not exceed `Δt ≤ h² / (4D)`, where `h` is the cell size. On fine grids (`h = 1` m) this can force very small timesteps unless `D` is large. However, it is simple, well-understood, and when the diffusivity is genuinely high (thick mantles of soil or saprolite), the CFL limit is not severe.
+
+### Roering explicit solver (`roering`)
+
+Solves the nonlinear Roering law using an **explicit finite-difference stencil** with **automatic subcycling** near critical slope. When a cell's slope approaches `S_c`, the time step is locally subdivided to remain stable. This is slower than linear diffusion but captures the nonlinear threshold behaviour without the cost of matrix solves. It is suitable for transient models where you want to see how hillslopes respond to a changing climate or base level, and where you have time to run.
+
+### Cidre solver (`cidre`)
+
+**Cidre** (from Carretier et al. 2016) is a **finite-volume forward sweep** along a D-infinity flow graph. Instead of solving a stencil equation, it: (1) traces each cell's neighbors along a D-infinity flow net, (2) sweeps in topological order (headwaters to outlet), and (3) at each cell computes erosion and routes sediment downslope weighted by the flow partition. It naturally couples fluvial and hillslope transport — channels emerge without being pre-defined — and because it already routes on D-infinity it is the **most natural** choice for a fully coupled landscape where drainage density is an emergent property. It is not the only one that *can* run there: `linear`, `roering` and `adi` all work with an empty channel set. `roering_implicit` is the sole exception, and the reason is structural rather than incidental (below). See [Imposed versus emergent drainage density](#imposed-versus-emergent-drainage-density) below.
+
+It uses D-infinity routing (Tarboton 1997), so it is more expensive than a regular-grid stencil, but it scales well on distributed networks.
+
+### Roering implicit solver (`roering_implicit`)
+
+The **unconditionally stable backward-Euler solver** for the Roering law. It solves an implicit nonlinear equation (using Picard iteration + a sparse linear solver from Eigen3) and is the most robust for long runs on fine grids. It is the **only solver that eliminates CFL limitation**, allowing arbitrarily small time steps or large grids without risking instability.
+
+**Important caveat:** `roering_implicit` **cannot run in the emergent-drainage-density regime** (see below). It requires `incision_threshold_area > 0`, i.e., channels must be pre-defined as Dirichlet boundary conditions. If the channel set is empty, the solver skips the hillslope step entirely and continues the run. This is by design: without Dirichlet sinks, the solve degenerates to diffusion to the edges, which is meaningless. This is **a real and non-obvious constraint on experimental design**: if you want the most numerically robust hillslope solver, you cannot also have the most physically interesting coupled regime.
+
+### ADI solver (`adi`)
+
+**Alternating-Direction Implicit** (ADI) method for solving the Laplacian, splitting the 2D problem into two 1D line solves and repeating. It is unconditionally stable and very fast on regular grids, but it applies only to linear diffusion (no nonlinearity). It does not require Eigen and is a useful fallback when explicit schemes bottleneck but you want to avoid a full sparse-matrix solve.
+
+---
+
+## Steady state versus time stepping
+
+lsdtt3 offers two fundamentally different routes to evolve a landscape: **transient (time-stepping)** and **analytical steady-state with optional iteration**.
+
+### Time-stepping mode (`run_steady_state: false`)
+
+The straightforward approach: apply fluvial incision, hillslope transport, and uplift as a sequence at each timestep, advance by `timestep` (yr), and repeat for `number_of_iterations` steps or until `stop_at_steady_state` is met.
+
+This is the mode that directly solves the governing differential equations and is most appropriate when you want to **see transient dynamics** — e.g., a landscape's response to a change in climate, tectonics, or base level. It is also the mode that can run the coupled emergent-drainage case with Cidre (or other explicit schemes).
+
+A landscape reaches **statistical steady state** (mean erosion rate = uplift rate) after a time that depends on the basin size and process rates. For a small synthetic model, this might be a few hundred timesteps; for a large real landscape, millions of years.
+
+### Steady-state mode (`run_steady_state: true`)
+
+Rather than integrating forward in time, the code uses an **analytical chi inversion** to compute the steady-state fluvial elevation profile in one pass:
+
+1. **Integrate chi** along every D8 flow path, starting from the outlet and going upslope, where chi is `∫ A^(−m/n) ds` (an integral along the path). The steady-state elevation is obtained by inverting the stream power law.
+
+2. **Optionally iterate** (the "snapping cycle"): take the computed elevations, recompute the flow graph (so divides can migrate), and snap again. This is necessary because a single pass leaves sharp steps across divides — each divide side is built independently from its own channel, with nothing forcing the two sides to meet smoothly.
+
+3. **Optionally solve hillslope steady state** after fluvial snapping: on the final fluvial surface, set channel pixels as fixed Dirichlet boundary conditions and solve the hillslope equation iteratively to reach steady state (solving `D ∇²z = U` for linear, or the Roering equation for nonlinear).
+
+#### Why snapping: divide equilibration
+
+A **single-pass snap** leaves an elevated step along drainage divides. This is not an error — it is a fundamental consequence of building each side of a divide independently. The solution is to **iterate**: after snapping, recompute flow routing from the new elevations (so the divides can migrate if they want to), and snap again. Over several cycles, the divides settle into an equilibrium position where the two sides agree.
+
+You can control the iteration using `steady_state_n_cycles` (how many to run) and optionally `steady_state_check_convergence` (stop early if the landscape stops changing). The equilibration cycle (enabled by `use_landscape_equilibration_cycle: true`) adds detailed diagnostics — per-cycle divide metrics, per-pixel divide steps, and per-cycle routing changes — so you can inspect whether the landscape actually settled.
+
+**Caution:** A landscape need not converge to a fixed point. It can settle into a repeating **limit cycle** (e.g., oscillating drainage configuration) or wander indefinitely (especially with critical-slope hillslopes). The diagnostics warn you if a cycle repeats; if the reader's eye can't see a fixed point after many cycles, you may not have one.
+
+#### Relief-mode calibration
+
+One special steady-state feature: `steady_state_mode: relief`. Instead of specifying `erodibility` (K), you specify `target_relief` and the code back-calculates the K that produces that relief. This is convenient for target-based studies — "I want a landscape with relief between X and Y metres" — without having to guess K.
+
+**Caveat:** The maximum relief is computed as `max_chi_on_domain` (over all cells), so on a **fluvial-only landscape** (no hillslopes), the channel network extends all the way to the divides. Channel tips are inherently steeper than real hillslopes, so the maximum relief is higher than it would be with hillslopes engaged. **Introducing hillslope transport lowers the relief below the target**, because the hillslopes relax the steep channel tips. If you use relief-mode with intended hillslope coupling, iterate: solve fluvial steady state with relief-mode, then solve hillslope steady state, measure the relief, and re-run fluvial steady state with a higher target.
+
+---
+
+## Erosivity conventions: Perron versus Bonetti
+
+A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_area` and the exponent in the landscape Péclet number.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
+
+### The two conventions
+
+**Convention 1 (Bonetti et al. 2020): Specific area** (`divide_area_by_dx: true`, default)
+
+Compute `a = A / dx` (drainage area divided by cell size), so `a` has units of **metres**. The stream power law becomes
+
+```
+dz/dt = K · (a)^m · S^n − U  =  K · (A/dx)^m · S^n − U
+```
+
+This is the **default in lsdtt3** and was advocated by **Bonetti, Hooshyar, Camporeale and Porporato (2020, PNAS 117:1375–1382)** and **Litwin et al. (2022, JGR-ES)**.
+
+**Convention 2 (Perron et al. 2008, 2009): Total area** (`divide_area_by_dx: false`)
+
+Use the raw upslope area `A` in m², without dividing by dx. The law is
+
+```
+dz/dt = K · A^m · S^n − U
+```
+
+This was used in **Perron et al. (2008, JGR-ES 113:F04016)** and **Perron et al. (2009, Nature 460:502–505)**.
+
+### Two critical consequences
+
+**1. Units of the incision threshold**
+
+- **`divide_area_by_dx: true`** → `incision_threshold_area` is a **specific area in metres**. A value of 1,000,000 m means "cells with at least 1 million metres of upstream area per cell width". On a 10 m DEM this is 100,000 pixels; on a 1 m DEM this is 1,000,000 pixels.
+- **`divide_area_by_dx: false`** → `incision_threshold_area` is a **map area in m²**. A value of 1,000,000 m² means 1 km², regardless of cell size.
+
+**2. The landscape Péclet number**
+
+The ratio of fluvial to hillslope transport (which sets hillslope length) depends on the convention:
+
+- **Specific area** (Bonetti convention): `p = m + n`  
+- **Total area** (Perron convention): `p = 2m + n`
+
+So a landscape designed with `m = 0.45, n = 1.0` under the Bonetti convention (`p = 1.45`) produces **different** mean hillslope lengths than the same parameters under Perron (`p = 1.9`). The error propagates into the calibrated constants (`c` in `L_h = c · (D/K)^(1/p)`) — calibrating `c` under the wrong convention is the kind of systematic error that field data cannot fix.
+
+### Choosing a convention
+
+If you are setting up a new model, **use the default (`divide_area_by_dx: true`, specific area)**, which matches recent literature and is the lsdtt3 convention. If you are reproducing a published study or comparing against code that uses raw area, flip `divide_area_by_dx: false` and adjust your `incision_threshold_area` and any calibrated constants accordingly.
+
+The CLI reference documents the resolved threshold value in the run header so you can double-check what was actually compared.
+
+---
+
+## Imposed versus emergent drainage density
+
+One of the most important design choices in landscape evolution modelling is whether the **channel network is fixed or allowed to emerge**. lsdtt3 supports both.
+
+**Say which one you mean.** `hillslope_channel_coupling` takes `auto`, `coupled` or
+`channels_as_boundaries`. Historically the choice was an unreported side effect of
+`incision_threshold_area`, and a run could not be interpreted afterwards without
+re-reading its parameter file. `auto` is the default and reproduces that inference
+exactly — a positive threshold means channels are boundaries — but it now *reports*
+what it resolved to, and the explicit values override the threshold rather than
+merely describing it.
+
+These are two different experiments, not two settings, so the combinations that
+contradict themselves are refused rather than silently resolved: asking for
+`coupled` together with `roering_implicit`, with `enable_d8_fluvial_erosion: true`,
+or with `run_steady_state`; and asking for `channels_as_boundaries` with no channel
+set at all.
+
+### Imposed drainage density (`incision_threshold_area > 0`)
+
+When you set `incision_threshold_area > 0`, the code identifies channels as any cell with drainage area exceeding this threshold. Channels become **Dirichlet boundary conditions** for the hillslope equation — they have fixed elevation during the hillslope solve and act as sediment sinks. The drainage density is an **input**, not an output: you choose the network spacing by picking the threshold.
+
+Mind the units when picking a value — they depend on `divide_area_by_dx` (see
+above). On a 10 m grid, a 10 km² network is `10 000 000` in map area, or
+`1 000 000` as specific area; the two numbers differ by a factor of `dx`, and the
+run header prints all three forms so a log can be read without the parameter file.
+
+This is the approach of the **MUDDPILE model** (from which lsdtt3 was partly descended) and is appropriate when you have a **field-mapped channel network** or when you are studying hillslope form **conditional on a known network**.
+
+The channel set is computed once per fluvial solve (D8 routing) and remains fixed during that timestep's hillslope transport. The network is fast and deterministic.
+
+### Emergent drainage density (`incision_threshold_area = 0`)
+
+When `incision_threshold_area: 0`, there are no pre-defined channels: **both fluvial and hillslope processes act everywhere**, and the network must **emerge**. Sediment is partitioned between fluvial and diffusive transport based on local slope and area, and the landscape self-organizes into channels where flow concentrates.
+
+This is the approach of the **DonkModel** and is physically more realistic — channel heads are not imposed but arise where hydrology and sediment dynamics favor their development. However, it is **more sensitive to numerics and requires care**:
+
+- **D-infinity routing is required** for hillslope coupling to work correctly. With D8, a diverging hillslope cell (upslope area increases downslope) may manufacture spurious channel heads because area concentrates artificially along one receiver.
+- **The coupled regime is slower**: every hillslope solve must build a D-infinity flow graph to identify (non-existent) channels. Cidre routing adds further cost.
+- **`roering_implicit` cannot run in this regime.** The implicit solver requires Dirichlet sinks (channels) to anchor the boundary-value problem; with an empty channel set it skips the hillslope step entirely. So **the most numerically robust hillslope solver is the one that cannot run the emergent-drainage-density experiment** — a real and non-obvious constraint on experimental design, not a temporary limitation. Use `roering`, `linear`, `cidre` or `adi` instead. Asking for `coupled` with `roering_implicit` is refused outright rather than silently skipping the hillslopes.
+
+### Coupling models in the literature
+
+These two choices reflect two lineages:
+
+| Lineage | Channel treatment | Routing | Regime name |
+|---|---|---|---|
+| MUDDPILE | Fixed threshold, Dirichlet | D8 | `channels_as_boundaries` |
+| DonkModel | No threshold, coupled | D-infinity | `coupled` |
+
+lsdtt3 supports both. If you want to model long-lived landscape evolution on a known network (e.g., a catchment where channels are mapped), use imposed drainage with D8. If you want to ask "what network would emerge?" or are studying **channelization**, use emergent drainage with D-infinity and Cidre.
+
+---
+
+## Summary: choosing a model
+
+Here is a decision tree:
+
+1. **Do you want to see transient dynamics** (response to climate change, base-level fall, etc.)? → **Time stepping** (`run_steady_state: false`) with one of the explicit solvers (`linear`, `roering`, or `cidre`).
+
+2. **Do you want a landscape in steady state quickly** (with known boundary conditions)? → **Analytical steady state** (`run_steady_state: true`) with optional snapping (`steady_state_n_cycles > 1` or `use_landscape_equilibration_cycle: true`).
+
+3. **Do you have a field-mapped channel network**? → Impose it with `incision_threshold_area > 0` (converted to the right units: specific area or map area). Use D8 routing. Choose `roering_implicit` if you want unconditional stability, otherwise `roering` or `linear`.
+
+4. **Do you want to ask "what network emerges?"** → Set `incision_threshold_area: 0`, use D-infinity and Cidre, accept the longer run times.
+
+5. **How long is your run?** 
+   - Short (synthetic, < 1 My) with explicit scheme: fine either way.  
+   - Long (realistic timescale, > 10 My): consider `roering_implicit` (if you have an imposed network) or `adi` for linear diffusion.
+
+---
+
+## References
+
+Every citation below was verified against Crossref or the publisher. Where the
+text names a paper, this is the paper it means.
+
+**Fluvial incision**
+
+- **Howard, A. D., & Kerby, G. (1983).** Channel changes in badlands.
+  *Geological Society of America Bulletin*, 94(6), 739–752.
+  doi:10.1130/0016-7606(1983)94&lt;739:CCIB&gt;2.0.CO;2 — the badlands study from
+  which the area–slope form of the incision law comes.
+- **Braun, J., & Willett, S. D. (2013).** A very efficient O(n), implicit and
+  parallel method to solve the stream power equation governing fluvial incision
+  and landscape evolution. *Geomorphology*, 180–181, 170–179.
+  doi:10.1016/j.geomorph.2012.10.008 — the implicit, topologically ordered
+  scheme (FastScape).
+- **Anand, S. K., Hooshyar, M., & Porporato, A. (2020).** Linear layout of
+  multiple flow-direction networks for landscape-evolution simulations.
+  *Environmental Modelling & Software*, 133, 104804.
+  doi:10.1016/j.envsoft.2020.104804 — extends the O(n) ordering of Braun and
+  Willett from single- to multiple-flow-direction networks, which is what makes
+  a D-infinity fluvial step affordable.
+- **Anand, S. K., Bonetti, S., Camporeale, C., & Porporato, A. (2022).**
+  Inception of Regular Valley Spacing in Fluvial Landscapes: A Linear Stability
+  Analysis. *Journal of Geophysical Research: Earth Surface*, 127(11),
+  e2022JF006716. doi:10.1029/2022JF006716 — a linear stability analysis of when
+  a fluvial landscape channelises, and at what spacing. Directly relevant to the
+  emergent drainage density discussed above.
+
+**Hillslope transport**
+
+- **Culling, W. E. H. (1960).** Analytical theory of erosion. *The Journal of
+  Geology*, 68(3), 336–344. doi:10.1086/626663 — introduces the analogy between
+  hillslope erosion and heat conduction, i.e. linear diffusion.
+- **Culling, W. E. H. (1963).** Soil creep and the development of hillside
+  slopes. *The Journal of Geology*, 71(2), 127–161. doi:10.1086/626891 — derives
+  the diffusive form from random particle motion. Cite alongside the 1960 paper
+  when the *mechanism* rather than the equation is the point.
+- **Roering, J. J., Kirchner, J. W., & Dietrich, W. E. (1999).** Evidence for
+  nonlinear, diffusive sediment transport on hillslopes and implications for
+  landscape morphology. *Water Resources Research*, 35(3), 853–870.
+  doi:10.1029/1998WR900090 — the nonlinear flux law with a critical gradient.
+- **Carretier, S., Martinod, P., Reich, M., & Goddéris, Y. (2016).** Modelling
+  sediment clasts transport during landscape evolution. *Earth Surface
+  Dynamics*, 4, 237–251. doi:10.5194/esurf-4-237-2016 — the Cidre model.
+
+**Erosivity conventions and valley spacing**
+
+- **Perron, J. T., Dietrich, W. E., & Kirchner, J. W. (2008).** Controls on the
+  spacing of first-order valleys. *Journal of Geophysical Research: Earth
+  Surface*, 113, F04016. doi:10.1029/2007JF000977 — the total-area convention
+  and the landscape Péclet number.
+- **Perron, J. T., Kirchner, J. W., & Dietrich, W. E. (2009).** Formation of
+  evenly spaced ridges and valleys. *Nature*, 460, 502–505.
+  doi:10.1038/nature08174
+- **Bonetti, S., Hooshyar, M., Camporeale, C., & Porporato, A. (2020).**
+  Channelization cascade in landscape evolution. *Proceedings of the National
+  Academy of Sciences*, 117(3), 1375–1382. doi:10.1073/pnas.1911817117 — the
+  specific-area convention, adopted to remove grid dependence from the erosion
+  law, and the channelisation index.
+- **Litwin, D. G., Tucker, G. E., Barnhart, K. R., & Harman, C. J. (2022).**
+  Groundwater affects the geomorphic and hydrologic properties of coevolved
+  landscapes. *Journal of Geophysical Research: Earth Surface*, 127(1),
+  e2021JF006239. doi:10.1029/2021JF006239 — also uses area per unit contour
+  width. **Note** its "Hillslope number" is a Péclet number for *groundwater*
+  flow, not the geomorphic fluvial/diffusive one used here.
+
+**Flow routing**
+
+- **Tarboton, D. G. (1997).** A new method for the determination of flow
+  directions and upslope areas in grid digital elevation models. *Water
+  Resources Research*, 33(2), 309–319. doi:10.1029/96WR03137

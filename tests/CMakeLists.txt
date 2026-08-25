@@ -867,6 +867,97 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "divide_merge_search_steps must be > 0"
 )
 
+# -----------------------------------------------------------------------------
+# hillslope_channel_coupling: naming the two coupling regimes (plan section 6).
+#
+# lsdtt3 has always contained BOTH couplings, and which one ran was an
+# unreported side effect of incision_threshold_area. These pin the naming, the
+# override, and the five configurations that are contradictions rather than
+# settings.
+# -----------------------------------------------------------------------------
+
+# THE BACK-COMPATIBILITY GUARD. Parameter files across this project already
+# depend on the implicit behaviour, so `auto` must still infer exactly what it
+# always did: a positive threshold means channels are boundaries.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_coupling_auto
+    lsdtt-lem
+    lem_coupling_auto.param.in
+    tiny_coup_auto_modelled_topography.tif
+    --stdout-contains "Coupling regime   : channels_as_boundaries (inferred"
+    --stdout-contains "drainage density is IMPOSED"
+)
+
+# The parameter OVERRIDES the threshold rather than merely describing it: the
+# same file with a positive threshold runs coupled when asked to.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_coupling_coupled_overrides_threshold
+    lsdtt-lem
+    lem_coupling_coupled_overrides.param.in
+    tiny_coup_override_modelled_topography.tif
+    --stdout-contains "Coupling regime   : coupled (requested)"
+    --stdout-contains "drainage density EMERGES"
+    --stdout-contains "selected D-infinity routing"
+    --stdout-contains "Dinf fluvial erosion   : on"
+)
+
+# The most numerically robust hillslope solver is the one that cannot run the
+# emergent-drainage-density experiment. Fatal, and the message names the four
+# that can.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_roering_implicit
+    lsdtt-lem
+    lem_coupling_roering_implicit.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "roering_implicit"
+    --stderr-contains "linear, roering, cidre, adi"
+)
+
+# D8 on a diverging hillslope manufactures channel heads, so the drainage
+# density would be an artefact of the router.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_d8_conflict
+    lsdtt-lem
+    lem_coupling_d8_conflict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "enable_d8_fluvial_erosion"
+    --stderr-contains "manufactures channel"
+)
+
+# The analytical steady-state path snaps channels then solves hillslopes against
+# them, so it IS the boundary-condition model by construction.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_steady_conflict
+    lsdtt-lem
+    lem_coupling_steady_conflict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "run_steady_state"
+    --stderr-contains "boundary-condition model"
+)
+
+# Asking to impose a drainage density while supplying no channels.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_no_channels
+    lsdtt-lem
+    lem_coupling_no_channels.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "channels_as_boundaries needs a channel set"
+)
+
+# A typo must not quietly select one of two different experiments.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_typo
+    lsdtt-lem
+    lem_coupling_typo.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "unrecognised hillslope_channel_coupling"
+)
+
 add_lsdtt_cli_smoke_test(
     failure_lem_equilibration_dinf_conflict
     lsdtt-lem
@@ -1675,6 +1766,18 @@ add_test(NAME unit_hillslope_length_search
          COMMAND lsdtt-test-hillslope-length-search)
 set_tests_properties(unit_hillslope_length_search PROPERTIES
     LABELS "unit;hillslope")
+
+# chi at the channel head, as distinct from domain-wide MaxChi (plan 2.2a).
+add_executable(lsdtt-test-chi-channel-head cpp/test_chi_channel_head.cpp)
+target_link_libraries(lsdtt-test-chi-channel-head PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_chi_channel_head COMMAND lsdtt-test-chi-channel-head)
+set_tests_properties(unit_chi_channel_head PROPERTIES LABELS "unit;lem")
+
+# chi_c against domain-wide MaxChi (plan section 2.2a): the size of the relief
+# error relief-mode carries for a landscape that will have hillslopes.
+add_executable(chi-c-ratio-driver cpp/chi_c_ratio_driver.cpp)
+target_link_libraries(chi-c-ratio-driver PRIVATE lsdtt3_cpu)
 
 # Phase 1b of plan_lem_hillslope_length_targeting.md: writes the D8
 # distance-to-channel field so it can be compared against the streamline

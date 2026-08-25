@@ -485,6 +485,20 @@ private:
     // Raw string map of all key:value pairs read from file
     std::map<std::string, std::string> parameter_map_;
 
+public:
+    // True if the parameter file actually contained this key.
+    //
+    // Distinguishes "the user asked for the default value" from "the user said
+    // nothing", which the typed maps cannot: both come back as the default.
+    // Needed wherever a tool wants to CHOOSE a setting on the user's behalf but
+    // must not override an explicit request -- selecting a router to match a
+    // coupling regime, for instance, where silently overriding what was asked
+    // for would produce a run that is not the experiment requested.
+    [[nodiscard]] bool parameter_supplied(const std::string& key) const
+    { return parameter_map_.find(key) != parameter_map_.end(); }
+
+private:
+
     // Diagnostic maps - used for print_parameters() and print_help()
     std::map<std::string, std::string> defaults_used_map_;
     std::map<std::string, std::string> parameters_read_map_;

@@ -37,6 +37,56 @@ namespace lsdtt
 {
 
 // Per-step tuning knobs
+// =============================================================================
+// Which coupling model is running
+//
+// lsdtt3 contains BOTH of the two standard couplings between channels and
+// hillslopes, and until now which one you got was an unreported side effect of
+// `incision_threshold_area`:
+//
+//   > 0   channels become FIXED (Dirichlet) nodes for the hillslope solve, and
+//         drainage density is an INPUT -- the MuddPILE lineage, D8 routing
+//   = 0   no Dirichlet set; both processes act everywhere and valley spacing,
+//         hillslope length and drainage density EMERGE -- the DonkModel
+//         lineage, D-infinity routing
+//
+// These are different experiments, not different settings, and a run that did
+// not report which one it performed could not be interpreted afterwards. This
+// enum names the choice; `automatic` preserves the historical inference exactly
+// and only reports it.
+// =============================================================================
+enum class hillslope_coupling_regime
+{
+    // Infer from incision_threshold_area, as the code has always done. THE
+    // DEFAULT, and it must stay the default: parameter files across this
+    // project already depend on the implicit behaviour, and a default that
+    // silently reinterpreted them would invalidate recorded measurements.
+    automatic,
+
+    // Drainage density emerges. The hillslope Dirichlet set is empty whatever
+    // incision_threshold_area says.
+    coupled,
+
+    // Drainage density is imposed by the channel threshold.
+    channels_as_boundaries
+};
+
+[[nodiscard]] const char* name_of(hillslope_coupling_regime r) noexcept;
+
+// Fatal on an unrecognised name rather than defaulting: the two regimes are
+// different experiments, so a typo that quietly selected one would produce a
+// result the user did not ask for and could not tell apart from the one they
+// did.
+[[nodiscard]] hillslope_coupling_regime parse_hillslope_coupling_regime(
+    const std::string& name);
+
+// What `automatic` resolves to for a given configuration. Never returns
+// `automatic`.
+[[nodiscard]] hillslope_coupling_regime resolve_hillslope_coupling_regime(
+    hillslope_coupling_regime requested,
+    float                     incision_threshold_area,
+    bool                      has_explicit_channel_mask) noexcept;
+
 struct lsdtt_lem_options
 {
     float timestep                        = 100.0f;
@@ -47,6 +97,11 @@ struct lsdtt_lem_options
     float n_exponent                      = 1.0f;
     float incision_threshold_area         = 0.0f;
     bool  divide_area_by_dx               = true;
+
+    // Which of the two couplings to run. `automatic` infers it from
+    // incision_threshold_area, which is what the code has always done.
+    hillslope_coupling_regime coupling_regime =
+        hillslope_coupling_regime::automatic;
     float slope_clamp                     = 1e-5f;
 
     // Hillslope

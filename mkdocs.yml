@@ -84,6 +84,7 @@ nav:
       - Cosmo prediction: cli_reference/cli_reference_lsdtt_cosmo_prediction.md
       - Cosmo column tool: cli_reference/cli_reference_lsdtt_cosmo_column_tool.md
     - Landscape evolution:
+      - Modelling choices: landscape_evolution_modelling.md
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
       - Cosmo landslides: cli_reference/cli_reference_lsdtt_cosmo_landslides.md
   - Developer notes:

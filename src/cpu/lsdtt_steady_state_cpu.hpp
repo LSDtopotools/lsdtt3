@@ -65,6 +65,12 @@ struct lsdtt_fluvial_steady_state_options
     float baselevel_elevation = 0.0f;    // elevation assigned to outlet nodes
     bool  divide_area_by_dx   = true;    // if true, use specific area A/dx
     int   n_threads           = 0;       // 0 = OMP default (D-infinity path only)
+
+    // Channel threshold used ONLY to report chi_c (see the result struct). Same
+    // units as incision_threshold_area -- specific area in metres when
+    // divide_area_by_dx, map area in m^2 otherwise. 0 disables the calculation
+    // and leaves chi_c unreported; it never affects the elevation field.
+    float channel_threshold_area = 0.0f;
 };
 
 // -----------------------------------------------------------------------------
@@ -78,6 +84,34 @@ struct lsdtt_fluvial_steady_state_result
     float max_unit_height;          // max(z - baselevel) computed with f = 1
                                     //   equals max chi when A_0 = 1 (D8 case)
     float computed_relief;          // actual max(z) - baselevel in the result
+
+    // -------------------------------------------------------------------------
+    // chi at the CHANNEL HEAD, and why it is not max_unit_height
+    //
+    // `max_unit_height` is MaxChi over ALL valid cells. On a fluvial-only
+    // landscape the channel therefore runs to the drainage divide, and because
+    // chi integrates (A_0/A)^(m/n) the integrand blows up as A falls to a single
+    // pixel: the last few cells before the divide contribute a disproportionate
+    // share of MaxChi, and they are far steeper than any real hillslope.
+    //
+    // So relief-mode, which solves K from target_relief / MaxChi, is solving for
+    // a landscape that will not exist once hillslopes are switched on. ADDING
+    // HILLSLOPES LOWERS THE RELIEF BELOW THE TARGET, because the steep fluvial
+    // tips are replaced by gentler hillslopes. That is expected, not a bug.
+    //
+    // `max_unit_height_at_channel_head` (chi_c) is MaxChi restricted to CHANNEL
+    // pixels. It is the right quantity for a landscape that has hillslopes:
+    //
+    //     R_fluvial = (U/K)^(1/n) * chi_c     divide-to-channel-head relief
+    //
+    // Reported only; `max_unit_height` and the elevation field are unchanged,
+    // because both are already recorded in outputs across this project.
+    // -------------------------------------------------------------------------
+    float        max_unit_height_at_channel_head = 0.0f;   // chi_c
+    std::int64_t n_channel_pixels                = 0;
+    bool         chi_c_reported                  = false;  // false if no threshold
+                                                           // was given, or no cell
+                                                           // met it
 };
 
 // -----------------------------------------------------------------------------
@@ -147,6 +181,11 @@ struct lsdtt_fluvial_steady_state_field
     float K_used          = 0.0f;
     float max_unit_height = 0.0f;        // MaxChi (chi with f = 1)
     float computed_relief = 0.0f;        // f * MaxChi
+
+    // chi restricted to channel pixels -- see lsdtt_fluvial_steady_state_result.
+    float        max_unit_height_at_channel_head = 0.0f;
+    std::int64_t n_channel_pixels                = 0;
+    bool         chi_c_reported                  = false;
 };
 
 lsdtt_fluvial_steady_state_field compute_fluvial_steady_state_on_tree(
