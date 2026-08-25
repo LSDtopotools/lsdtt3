@@ -72,6 +72,8 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
+#include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
+#include "../src/cpu/lsdtt_chi_network_analysis_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
 #include "../src/cpu/lsdtt_divide_diagnostics_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
@@ -362,6 +364,37 @@ int main(int argc, char* argv[])
         "number of visited cells. Note 'divergent' counts CURVED cells of "
         "either sign, because the test is on the magnitude.",
         "Tracing", "param", ""};
+
+    // ---- chi ------------------------------------------------------------------
+    bool_default_map["run_chi_analysis"] = false;
+    help_map["run_chi_analysis"] = {"bool", "false",
+        "Fit the chi network and attach channel steepness to every hilltop row.",
+        "This is the COUPLING the tool is named for: hillslope form (Cht, Lh, "
+        "E*, R*) alongside the k_sn of the channel that hillslope actually "
+        "drains to. k_sn is fitted per SEGMENT, so each channel node is matched "
+        "to the segment whose chi interval contains it. Off by default because "
+        "the fit costs real time and is not needed for the hillslope metrics "
+        "alone.",
+        "Chi", "switch", ""};
+
+    float_default_map["m_over_n"] = 0.45f;
+    help_map["m_over_n"] = {"float", "0.45",
+        "Concavity index m/n used for the chi integration.",
+        "Chi is only comparable between basins computed with the SAME m/n, so "
+        "this value is written into the summary.",
+        "Chi", "param", "run_chi_analysis"};
+
+    float_default_map["chi_A_0"] = 1.0f;
+    help_map["chi_A_0"] = {"float", "1.0",
+        "Reference drainage area A_0 for the chi integration.",
+        "Changes the units of chi and therefore of k_sn.",
+        "Chi", "param", "run_chi_analysis"};
+
+    float_default_map["chi_critical_divergence_m"] = 5.0f;
+    help_map["chi_critical_divergence_m"] = {"float", "5.0",
+        "Segment-fitting tolerance: max divergence (m) before a new segment.",
+        "Larger values give fewer, longer segments and therefore smoother k_sn.",
+        "Chi", "param", "run_chi_analysis"};
 
     // ---- non-dimensional -----------------------------------------------------
     float_default_map["critical_hillslope_slope"] = 0.8f;
@@ -869,7 +902,7 @@ int main(int argc, char* argv[])
         mopts.max_steps                = ip.at("trace_max_steps");
         mopts.n_threads                = n_threads;
 
-        const auto metrics = lsdtt::compute_hillslope_metrics(
+        auto metrics = lsdtt::compute_hillslope_metrics(
             filtered, dem_raw, sink_raster,
             curv_r.get(), grad_r.get(), plan_r.get(), mopts);
 
@@ -889,6 +922,73 @@ int main(int argc, char* argv[])
             metrics.n_reached_channel / 2 && metrics.n_reached_channel > 0)
             std::cout << "WARNING: a large fraction of traces cycled. Lh "
                          "distributions from this run are not reliable.\n";
+
+        // ---- chi join (Phase 5) -------------------------------------------------
+        // The channel a hilltop drains to is already known from the trace; this
+        // attaches that channel's steepness. Done IN PROCESS: a post-hoc CSV
+        // join on floating-point coordinates drops rows silently, and a dropped
+        // row is indistinguishable from a hilltop that genuinely has no channel.
+        if (bf.at("run_chi_analysis"))
+        {
+            std::cout << "\n--- Chi ---\n";
+            lsdtt::lsdtt_chi_options chi_opts;
+            chi_opts.m_over_n = ff.at("m_over_n");
+            chi_opts.A_0      = ff.at("chi_A_0");
+
+            // Seed from the basin outlets of the junction network, so chi is
+            // computed on the same channels the traces terminate on.
+            std::vector<std::int64_t> outlet_flats;
+            for (std::int32_t j = 0; j < jn.n_junctions(); ++j)
+                try { outlet_flats.push_back(jn.basin_outlet_flat_of_junction(j)); }
+                catch (const std::exception&) {}
+            std::sort(outlet_flats.begin(), outlet_flats.end());
+            outlet_flats.erase(std::unique(outlet_flats.begin(), outlet_flats.end()),
+                               outlet_flats.end());
+
+            const lsdtt::lsdtt_chi_collection_result chi_networks =
+                lsdtt::get_chi_from_outlets_zero_base_threshold(
+                    flow, outlet_flats, chan_threshold, chi_opts);
+
+            lsdtt::lsdtt_chi_network_fit_options fit_opts;
+            fit_opts.critical_divergence_m = ff.at("chi_critical_divergence_m");
+
+            const auto fits = lsdtt::fit_chi_networks(chi_networks, dem_routed, fit_opts);
+            const auto chi_nodes    = lsdtt::export_chi_network_fit_nodes(fits);
+            const auto chi_segments = lsdtt::export_chi_network_fit_segments(fits);
+
+            std::vector<float> flow_dist;
+            std::vector<float> drainage_area;
+            {
+                const lsdtt::lsdtt_raster_result fd =
+                    flow.get_distance_from_outlet_raster();
+                flow_dist = fd.data;
+                const lsdtt::lsdtt_raster_result da = flow.get_drainage_area_raster();
+                drainage_area = da.data;
+            }
+
+            const auto chan_props = lsdtt::build_channel_property_map(
+                chi_nodes, chi_segments, &flow_dist, &drainage_area);
+
+            const std::int64_t n_joined =
+                lsdtt::attach_channel_properties(metrics, chan_props, nc);
+
+            std::cout << "m/n = " << chi_opts.m_over_n
+                      << "   fitted channel nodes " << chi_nodes.flat.size()
+                      << ", segments " << chi_segments.segment_id.size() << "\n"
+                      << "Joined k_sn onto " << n_joined << " of "
+                      << metrics.n_reached_channel
+                      << " hilltop rows that reached a channel";
+            if (metrics.n_reached_channel > 0)
+                std::cout << "  ("
+                          << (100.0 * static_cast<double>(n_joined)
+                              / static_cast<double>(metrics.n_reached_channel))
+                          << " %)";
+            std::cout << "\n";
+            if (n_joined < metrics.n_reached_channel)
+                std::cout << "Note: rows whose channel pixel was not part of a "
+                             "fitted network keep an empty channel_k_sn. They are "
+                             "not zero and are not dropped.\n";
+        }
 
         // ---- outputs ---------------------------------------------------------------
         std::cout << "\n--- Output ---\n";
@@ -920,6 +1020,13 @@ int main(int argc, char* argv[])
             add("divergent_count", FT::int64_type);
             add("planar_count", FT::int64_type);
             add("trace_status", FT::int64_type);
+            add("channel_k_sn", FT::double_type);
+            add("channel_chi", FT::double_type);
+            add("channel_elevation", FT::double_type);
+            add("channel_flow_distance_m", FT::double_type);
+            add("channel_drainage_area_m2", FT::double_type);
+            add("channel_basin_index", FT::int64_type);
+            add("channel_segment_id", FT::int64_type);
 
             const std::string ext = points_as_csv
                 ? ".csv" : lsdtt::output_extension(points_format);
@@ -945,7 +1052,10 @@ int main(int argc, char* argv[])
                            "E_star", "R_star", "ridgeline_id",
                            "ridgeline_node_index", "distance_along_ridgeline_m",
                            "ridge_side", "basin_outlet_flat", "divergent_count",
-                           "planar_count", "trace_status"};
+                           "planar_count", "trace_status", "channel_k_sn",
+                           "channel_chi", "channel_elevation",
+                           "channel_flow_distance_m", "channel_drainage_area_m2",
+                           "channel_basin_index", "channel_segment_id"};
                 csv_rows.reserve(metrics.rows.size());
                 for (const auto& r : metrics.rows)
                     csv_rows.push_back({
@@ -964,7 +1074,12 @@ int main(int argc, char* argv[])
                         std::to_string(r.ridge.basin_outlet_flat),
                         std::to_string(r.divergent_count),
                         std::to_string(r.planar_count),
-                        std::to_string(static_cast<int>(r.status))});
+                        std::to_string(static_cast<int>(r.status)),
+                        num(r.channel_k_sn), num(r.channel_chi),
+                        num(r.channel_elevation), num(r.channel_flow_distance_m),
+                        num(r.channel_drainage_area_m2),
+                        std::to_string(r.channel_basin_index),
+                        std::to_string(r.channel_segment_id)});
                 loader.write_csv(path, headers, csv_rows);
                 std::cout << "Wrote " << path << "  (" << metrics.rows.size()
                           << " rows)\n";
@@ -996,6 +1111,13 @@ int main(int argc, char* argv[])
                 v.emplace_back(static_cast<std::int64_t>(r.divergent_count));
                 v.emplace_back(static_cast<std::int64_t>(r.planar_count));
                 v.emplace_back(static_cast<std::int64_t>(r.status));
+                v.push_back(opt_double(r.channel_k_sn));
+                v.push_back(opt_double(r.channel_chi));
+                v.push_back(opt_double(r.channel_elevation));
+                v.push_back(opt_double(r.channel_flow_distance_m));
+                v.push_back(opt_double(r.channel_drainage_area_m2));
+                v.emplace_back(static_cast<std::int64_t>(r.channel_basin_index));
+                v.emplace_back(static_cast<std::int64_t>(r.channel_segment_id));
                 loader.write_point(easting_of(meta, r.ridge.col),
                                    northing_of(meta, r.ridge.row), v);
             }

@@ -1603,6 +1603,17 @@ add_hilltop_coupling_cli_test(
     --expect-file-not-contains "hcc_hilltop_points.csv:nan"
     --expect-file-not-contains "hcc_hilltop_points.csv:-9999")
 
+# Phase 5: k_sn must reach the hilltop table, and must stay EMPTY (not zero)
+# on rows whose trace never found a channel.
+add_hilltop_coupling_cli_test(
+    smoke_hillslope_channel_coupling_chi
+    hillslope_channel_coupling_chi.param.in
+    hccchi_hilltop_points.csv
+    --expect-file-contains "hccchi_hilltop_points.csv:channel_k_sn"
+    --expect-file-not-contains "hccchi_hilltop_points.csv:nan"
+    --expect-file-not-contains "hccchi_hilltop_points.csv:-9999"
+    --stdout-contains "Joined k_sn onto")
+
 add_hilltop_coupling_cli_test(
     failure_hillslope_channel_coupling_bad_sc
     hillslope_channel_coupling_bad_sc.param.in

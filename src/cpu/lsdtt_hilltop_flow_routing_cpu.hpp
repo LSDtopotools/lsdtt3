@@ -81,7 +81,10 @@
 #include <string>
 #include <vector>
 
+#include <unordered_map>
+
 #include "../core/lsdtt_raster_meta.hpp"
+#include "lsdtt_chi_network_analysis_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_ridgeline_cpu.hpp"
 
@@ -356,6 +359,8 @@ struct lsdtt_hillslope_metrics_options
 // magic number: E*/R*/mean_path_gradient are undefined when Lh == 0, and every
 // trace-derived field is undefined when the trace did not reach a channel.
 // =============================================================================
+struct lsdtt_channel_properties;
+
 struct lsdtt_hilltop_metrics_row
 {
     lsdtt_hilltop_pixel ridge;              // identity + ordering attributes
@@ -381,6 +386,17 @@ struct lsdtt_hilltop_metrics_row
     // per-trace path diagnostics
     int divergent_count = 0;
     int planar_count    = 0;
+
+    // Channel properties at the trace terminus (Phase 5). All undefined until
+    // attach_channel_properties has run, and undefined for any row whose trace
+    // did not reach a channel.
+    double       channel_k_sn           = std::numeric_limits<double>::quiet_NaN();
+    double       channel_chi            = std::numeric_limits<double>::quiet_NaN();
+    double       channel_elevation      = std::numeric_limits<double>::quiet_NaN();
+    double       channel_flow_distance_m = std::numeric_limits<double>::quiet_NaN();
+    double       channel_drainage_area_m2 = std::numeric_limits<double>::quiet_NaN();
+    std::int32_t channel_basin_index    = -1;
+    std::int32_t channel_segment_id     = -1;
 };
 
 struct lsdtt_hillslope_metrics_result
@@ -427,6 +443,80 @@ struct lsdtt_hillslope_metrics_result
     const lsdtt_raster_cpu*                 gradient,
     const lsdtt_raster_cpu*                 plan_curvature,
     const lsdtt_hillslope_metrics_options&  opts = {});
+
+// =============================================================================
+// PHASE 5 -- THE CHI JOIN
+// =============================================================================
+//
+// Attaches channel properties to each hilltop row through the channel pixel its
+// trace reached. This is the "coupling" the tool is named for: hillslope form
+// (Cht, Lh, E*, R*) alongside the steepness of the channel that hillslope
+// actually drains to.
+//
+// WHY IN PROCESS RATHER THAN A CSV JOIN. The legacy tool joined
+// _HilltopData_TN.csv against _MChiSegmented.csv after the fact. Here the
+// mapping is available directly, and a post-hoc join keyed on floating-point
+// coordinates silently drops rows -- which on this data would look like
+// hilltops that simply have no channel, indistinguishable from a real result.
+//
+// THE NODE -> SEGMENT -> k_sn MAPPING. k_sn is fitted PER SEGMENT and the node
+// table carries no segment id, so the two have to be related. The rule matches
+// lsdviztools3's `assign_node_ksn`, which is the established semantics:
+//
+//   within each (basin_index, branch_id) group, a node belongs to the segment
+//   whose [downstream_chi, upstream_chi] interval contains the node's chi;
+//   a node falling just outside every interval (endpoint rounding) takes the
+//   NEAREST segment in that branch.
+//
+// Endpoints are stored in either order, so the interval is normalised before
+// testing.
+// =============================================================================
+
+struct lsdtt_channel_properties
+{
+    double       k_sn              = std::numeric_limits<double>::quiet_NaN();
+    double       chi               = std::numeric_limits<double>::quiet_NaN();
+    double       channel_elevation = std::numeric_limits<double>::quiet_NaN();
+    double       flow_distance_m   = std::numeric_limits<double>::quiet_NaN();
+    double       drainage_area_m2  = std::numeric_limits<double>::quiet_NaN();
+    std::int32_t basin_index       = -1;
+    std::int32_t branch_id         = -1;
+    std::int32_t segment_id        = -1;
+};
+
+// A per-DEM-cell lookup of channel properties, empty where the cell is not a
+// fitted channel node.
+using lsdtt_channel_property_map =
+    std::unordered_map<std::int64_t, lsdtt_channel_properties>;
+
+// =============================================================================
+// build_channel_property_map
+//
+// nodes / segments come from export_chi_network_fit_nodes / _segments.
+// flow_distance and drainage_area are optional per-cell rasters; pass nullptr
+// to leave those columns undefined rather than zero.
+// =============================================================================
+[[nodiscard]] lsdtt_channel_property_map build_channel_property_map(
+    const lsdtt_chi_network_fit_node_table&    nodes,
+    const lsdtt_chi_network_fit_segment_table& segments,
+    const std::vector<float>*                  flow_distance,
+    const std::vector<float>*                  drainage_area);
+
+// =============================================================================
+// attach_channel_properties
+//
+// Joins the map onto each metrics row by its channel_row/channel_col. Rows whose
+// trace did not reach a channel are left undefined, as are rows whose channel
+// pixel was not part of any fitted network -- the two are distinguishable
+// through trace_status, and neither is silently zero.
+//
+// Returns the number of rows that received a defined k_sn, so a caller can
+// report the join rate instead of assuming it worked.
+// =============================================================================
+std::int64_t attach_channel_properties(
+    lsdtt_hillslope_metrics_result&    metrics,
+    const lsdtt_channel_property_map&  channel_properties,
+    int                                n_cols);
 
 // Writes the metrics table as CSV.  The product CLI writes FlatGeobuf by
 // default (plan section 4.4); this is the plain-table path used by tests and by

@@ -43,6 +43,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -802,6 +803,170 @@ void test_metrics_no_curvature_leaves_estar_null()
           !std::isnan(res.rows.front().R_star));
 }
 
+
+// =============================================================================
+// 6. PHASE 5 -- the chi join
+//
+// k_sn is fitted PER SEGMENT and the node table carries no segment id, so nodes
+// are matched to the segment whose [downstream_chi, upstream_chi] interval
+// contains them, WITHIN a (basin_index, branch_id) group. Two things make this
+// worth testing rather than eyeballing: chi intervals from different branches
+// overlap, so matching across groups would silently attach the wrong k_sn; and
+// endpoint rounding puts some nodes just outside every interval, where the rule
+// is to take the nearest segment rather than drop the node.
+// =============================================================================
+
+lsdtt::lsdtt_chi_network_fit_node_table make_nodes(
+    const std::vector<std::tuple<std::int64_t, std::int32_t, std::int32_t, float, float>>& rows)
+{
+    lsdtt::lsdtt_chi_network_fit_node_table t;
+    for (const auto& r : rows)
+    {
+        t.flat.push_back(std::get<0>(r));
+        t.basin_index.push_back(std::get<1>(r));
+        t.branch_id.push_back(std::get<2>(r));
+        t.chi.push_back(std::get<3>(r));
+        t.observed_elevation.push_back(std::get<4>(r));
+        t.outlet_flat.push_back(0);
+        t.receiver_flat.push_back(-1);
+        t.fitted_elevation.push_back(std::get<4>(r));
+        t.residual_elevation.push_back(0.0f);
+        t.abs_residual_elevation.push_back(0.0f);
+        t.is_main_stem.push_back(1);
+        t.is_source.push_back(0);
+        t.is_junction.push_back(0);
+        t.is_split_point.push_back(0);
+    }
+    return t;
+}
+
+lsdtt::lsdtt_chi_network_fit_segment_table make_segments(
+    const std::vector<std::tuple<std::int32_t, std::int32_t, std::int32_t, float, float, float>>& rows)
+{
+    lsdtt::lsdtt_chi_network_fit_segment_table t;
+    for (const auto& r : rows)
+    {
+        t.segment_id.push_back(std::get<0>(r));
+        t.basin_index.push_back(std::get<1>(r));
+        t.branch_id.push_back(std::get<2>(r));
+        t.downstream_chi.push_back(std::get<3>(r));
+        t.upstream_chi.push_back(std::get<4>(r));
+        t.k_sn.push_back(std::get<5>(r));
+        t.parent_segment_id.push_back(-1);
+        t.outlet_flat.push_back(0);
+        t.downstream_flat.push_back(0);
+        t.upstream_flat.push_back(0);
+        t.downstream_elevation.push_back(0.0f);
+        t.upstream_elevation.push_back(0.0f);
+        t.max_abs_residual.push_back(0.0f);
+        t.n_nodes.push_back(1);
+    }
+    return t;
+}
+
+void test_chi_join_interval_containment()
+{
+    // branch 0: two segments, chi 0-10 (k_sn 5) and 10-20 (k_sn 9)
+    const auto segs = make_segments({{0, 0, 0, 0.0f, 10.0f, 5.0f},
+                                     {1, 0, 0, 10.0f, 20.0f, 9.0f}});
+    const auto nodes = make_nodes({{100, 0, 0, 2.0f, 50.0f},
+                                   {101, 0, 0, 15.0f, 80.0f}});
+
+    const auto map = lsdtt::build_channel_property_map(nodes, segs, nullptr, nullptr);
+
+    check("chi join: node inside the lower interval takes its k_sn",
+          map.count(100) && std::abs(map.at(100).k_sn - 5.0) < 1e-9,
+          map.count(100) ? std::to_string(map.at(100).k_sn) : "missing");
+    check("chi join: node inside the upper interval takes its k_sn",
+          map.count(101) && std::abs(map.at(101).k_sn - 9.0) < 1e-9,
+          map.count(101) ? std::to_string(map.at(101).k_sn) : "missing");
+    check("chi join: chi and elevation carried through",
+          map.count(101) && std::abs(map.at(101).chi - 15.0) < 1e-6 &&
+          std::abs(map.at(101).channel_elevation - 80.0) < 1e-6);
+}
+
+void test_chi_join_does_not_cross_branches()
+{
+    // Two branches whose chi intervals OVERLAP. Matching across them would
+    // attach the wrong k_sn, and nothing downstream would reveal it.
+    const auto segs = make_segments({{0, 0, 0, 0.0f, 10.0f, 5.0f},
+                                     {1, 0, 1, 0.0f, 10.0f, 99.0f}});
+    const auto nodes = make_nodes({{200, 0, 1, 5.0f, 60.0f}});
+
+    const auto map = lsdtt::build_channel_property_map(nodes, segs, nullptr, nullptr);
+    check("chi join: a node takes k_sn from ITS OWN branch, not an overlapping one",
+          map.count(200) && std::abs(map.at(200).k_sn - 99.0) < 1e-9,
+          map.count(200) ? std::to_string(map.at(200).k_sn) : "missing");
+}
+
+void test_chi_join_nearest_segment_fallback_and_reversed_endpoints()
+{
+    // chi 12 falls outside [0,10]; the rule is nearest, not dropped.
+    const auto segs = make_segments({{0, 0, 0, 0.0f, 10.0f, 5.0f}});
+    const auto nodes = make_nodes({{300, 0, 0, 12.0f, 70.0f}});
+    const auto map = lsdtt::build_channel_property_map(nodes, segs, nullptr, nullptr);
+    check("chi join: a node just outside every interval takes the NEAREST segment",
+          map.count(300) && std::abs(map.at(300).k_sn - 5.0) < 1e-9);
+
+    // Endpoints stored high-then-low must still CONTAIN the node.
+    //
+    // This fixture is deliberately contrived, because a naive one does not
+    // discriminate: without the normalisation, containment simply never fires
+    // and the nearest-segment fallback usually returns the same answer anyway.
+    // A negative control confirmed a simpler version of this test passed with
+    // the normalisation deleted. So: segment A is [20,30] stored REVERSED, and
+    // segment B sits at [15,16], nearer to the node under the BROKEN distance
+    // (which measures from the stored 'lo' of 30) but not under the correct one.
+    // Node chi = 21 is inside A. Correct answer 7; the un-normalised code
+    // returns 13.
+    const auto rev_segs = make_segments({{0, 0, 0, 30.0f, 20.0f, 7.0f},
+                                         {1, 0, 0, 15.0f, 16.0f, 13.0f}});
+    const auto rev_nodes = make_nodes({{301, 0, 0, 21.0f, 70.0f}});
+    const auto rev_map = lsdtt::build_channel_property_map(rev_nodes, rev_segs,
+                                                           nullptr, nullptr);
+    check("chi join: reversed interval endpoints are normalised (containment "
+          "wins over a nearer-looking neighbour)",
+          rev_map.count(301) && std::abs(rev_map.at(301).k_sn - 7.0) < 1e-9,
+          rev_map.count(301) ? std::to_string(rev_map.at(301).k_sn) : "missing");
+}
+
+void test_chi_join_attaches_only_to_reached_rows()
+{
+    const auto segs  = make_segments({{0, 0, 0, 0.0f, 10.0f, 5.0f}});
+    const auto nodes = make_nodes({{7 * 9 + 3, 0, 0, 2.0f, 50.0f}});   // (row 7, col 3) on a 9-col grid
+    const auto map   = lsdtt::build_channel_property_map(nodes, segs, nullptr, nullptr);
+
+    lsdtt::lsdtt_hillslope_metrics_result res;
+    {
+        lsdtt::lsdtt_hilltop_metrics_row a;   // reached, terminates on the node
+        a.status = lsdtt::hilltop_trace_status::reached_channel;
+        a.channel_row = 7; a.channel_col = 3;
+        res.rows.push_back(a);
+
+        lsdtt::lsdtt_hilltop_metrics_row b;   // never traced
+        b.status = lsdtt::hilltop_trace_status::not_traced_border;
+        b.channel_row = 7; b.channel_col = 3;   // stale coords must NOT be used
+        res.rows.push_back(b);
+
+        lsdtt::lsdtt_hilltop_metrics_row c;   // reached, but not a fitted node
+        c.status = lsdtt::hilltop_trace_status::reached_channel;
+        c.channel_row = 1; c.channel_col = 1;
+        res.rows.push_back(c);
+    }
+    res.n_reached_channel = 2;
+
+    const std::int64_t n = lsdtt::attach_channel_properties(res, map, 9);
+
+    check("chi join: exactly the reached row on a fitted node is joined", n == 1,
+          std::to_string(n));
+    check("chi join: the reached row got its k_sn",
+          std::abs(res.rows[0].channel_k_sn - 5.0) < 1e-9);
+    check("chi join: an UNTRACED row is not joined even with stale channel coords",
+          std::isnan(res.rows[1].channel_k_sn));
+    check("chi join: a reached row off the fitted network stays undefined, not zero",
+          std::isnan(res.rows[2].channel_k_sn));
+}
+
 } // namespace
 
 int main()
@@ -837,6 +1002,12 @@ int main()
     test_metrics_guards();
     test_metrics_nodata_curvature_is_not_a_value();
     test_metrics_no_curvature_leaves_estar_null();
+
+    std::cout << "\n-- 6. Phase 5: the chi join ---------------------------\n";
+    test_chi_join_interval_containment();
+    test_chi_join_does_not_cross_branches();
+    test_chi_join_nearest_segment_fallback_and_reversed_endpoints();
+    test_chi_join_attaches_only_to_reached_rows();
 
     std::cout << "\n=======================================================\n";
     std::cout << "checks: " << g_n_checks << "   failed: " << g_n_failed << "\n";
