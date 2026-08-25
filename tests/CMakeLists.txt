@@ -25,6 +25,9 @@ set(LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR
 set(LSDTT_INTERNAL_DRAINAGE_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_fixture")
 
+set(LSDTT_HILLTOP_COUPLING_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/hilltop_coupling_fixture")
+
 function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
     set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
 
@@ -1547,6 +1550,80 @@ add_test(NAME unit_hilltop_flow_routing_integration
 set_tests_properties(unit_hilltop_flow_routing_integration PROPERTIES
     LABELS "unit;hilltop_flow_routing")
 
+# --------------------------------------------------------------------------
+# lsdtt-hillslope-channel-coupling (Phase 4 of the coupling plan)
+#
+# The CLI runs on the SAME ridge-and-valley surface the integration driver
+# asserts against, so the tool is exercised on a landscape whose behaviour is
+# already characterised rather than on an unrelated fixture.
+# --------------------------------------------------------------------------
+file(MAKE_DIRECTORY ${LSDTT_HILLTOP_COUPLING_FIXTURE_DIR})
+
+add_test(NAME fixture_hilltop_coupling_cli
+         COMMAND lsdtt-test-hilltop-integration --write-cli-fixture
+                 ${LSDTT_HILLTOP_COUPLING_FIXTURE_DIR})
+set_tests_properties(fixture_hilltop_coupling_cli PROPERTIES
+    LABELS "fixture;hilltop_flow_routing"
+    FIXTURES_SETUP hilltop_coupling_cli_fixture)
+
+function(add_hilltop_coupling_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
+    add_test(
+        NAME ${TEST_NAME}
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+                --exe "$<TARGET_FILE:lsdtt-hillslope-channel-coupling>"
+                --param-template "${LSDTT_TEST_PARAM_DIR}/${PARAM_TEMPLATE}"
+                --read-path "${LSDTT_HILLTOP_COUPLING_FIXTURE_DIR}"
+                --work-dir "${work_dir}"
+                --expect "${EXPECTED_OUTPUT}"
+                ${ARGN})
+    set(lbl "cli;hilltop_flow_routing")
+    if(TEST_NAME MATCHES "^failure_")
+        list(APPEND lbl "failure")
+    else()
+        list(APPEND lbl "smoke")
+    endif()
+    set_tests_properties(${TEST_NAME} PROPERTIES
+        LABELS "${lbl}"
+        FIXTURES_REQUIRED hilltop_coupling_cli_fixture)
+endfunction()
+
+add_hilltop_coupling_cli_test(
+    smoke_hillslope_channel_coupling
+    hillslope_channel_coupling_smoke.param.in
+    hcc_hilltop_points.csv
+    --expect hcc_ridgelines.fgb
+    --stdout-contains "never traced (DEM border)")
+
+# E* and R* must be undefined, not zero, where the trace never ran.
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_null_handling
+    hillslope_channel_coupling_smoke.param.in
+    hcc_hilltop_points.csv
+    --expect-file-not-contains "hcc_hilltop_points.csv:nan"
+    --expect-file-not-contains "hcc_hilltop_points.csv:-9999")
+
+add_hilltop_coupling_cli_test(
+    failure_hillslope_channel_coupling_bad_sc
+    hillslope_channel_coupling_bad_sc.param.in
+    ""
+    --expect-failure
+    --stderr-contains "critical_hillslope_slope must be > 0")
+
+add_hilltop_coupling_cli_test(
+    failure_hillslope_channel_coupling_bad_ridge_choice
+    hillslope_channel_coupling_bad_ridge_choice.param.in
+    ""
+    --expect-failure
+    --stderr-contains "ridge_extraction_algorithm_choice must be")
+
+add_hilltop_coupling_cli_test(
+    failure_hillslope_channel_coupling_no_channels
+    hillslope_channel_coupling_no_channels.param.in
+    ""
+    --expect-failure
+    --stderr-contains "no channel")
+
 # SCAFFOLDING for the E*-R* validation workflow (plan section 4.8): runs the
 # hilltop pipeline on a supplied DEM. Not a test - it is built but never
 # registered with CTest, and it exists only until the Phase 4 CLI replaces it.
@@ -2819,7 +2896,7 @@ set(LSDTT_DOMAIN_RULES
     "step_change"            "step_change"
     "landscape_equilibration|lem_equilibration" "landscape_equilibration"
     "streamlines"            "streamlines"
-    "hilltop_flow_routing"   "hilltop_flow_routing"
+    "hilltop_flow_routing|hilltop_coupling|hillslope_channel_coupling" "hilltop_flow_routing"
     "paired_flowpaths"       "paired_flowpaths"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"

@@ -99,12 +99,34 @@ lsdtt::lsdtt_raster_cpu make_ridge_and_valley(int n_rows, int n_cols,
 
 int main(int argc, char** argv)
 {
-    std::cout << "=== hilltop ridge extraction: integration with real outlines ===\n\n";
-
     const int    nr = 60, nc = 60;
     const double cell = 10.0;
 
     auto dem = make_ridge_and_valley(nr, nc, cell, 15.0);
+
+    // --write-cli-fixture <dir>: emit only the DEM, for the CLI tests to consume.
+    // Same surface the assertions below run on, so the CLI is exercised against
+    // a landscape whose behaviour is already characterised.
+    if (argc > 2 && std::string(argv[1]) == "--write-cli-fixture")
+    {
+        try
+        {
+            lsdtt::lsdtt_data_loader loader;
+            loader.write_full(dem.get_data_array().get_vector(), dem.get_meta(),
+                              std::string(argv[2]) + "/hilltop_cli_dem.tif",
+                              lsdtt::raster_output_format::gtiff);
+            std::cout << "wrote CLI fixture DEM to " << argv[2]
+                      << "/hilltop_cli_dem.tif\n";
+            return 0;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: could not write CLI fixture: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    std::cout << "=== hilltop ridge extraction: integration with real outlines ===\n\n";
 
     // ---- flow routing -------------------------------------------------------
     lsdtt::lsdtt_flowinfo_options fopts;

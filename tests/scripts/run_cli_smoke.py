@@ -118,6 +118,18 @@ def parse_args() -> argparse.Namespace:
             "colon, so the substring may itself contain colons."
         ),
     )
+    parser.add_argument(
+        "--expect-file-not-contains",
+        action="append",
+        default=[],
+        help=(
+            "Substring an output file must NOT contain, as rel_path:SUBSTRING. "
+            "The negative form is what catches a nodata sentinel or a NaN "
+            "reaching a data column: a positive assertion cannot, because the "
+            "value is still present and still numeric. Splits on the FIRST "
+            "colon."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -129,6 +141,20 @@ def assert_file_contains(file_path: pathlib.Path, needle: str) -> None:
         raise AssertionError(
             f"Expected {file_path} to contain {needle!r}, but it does not. "
             f"First line was: {text.splitlines()[0] if text else '(empty)'!r}"
+        )
+
+
+def assert_file_not_contains(file_path: pathlib.Path, needle: str) -> None:
+    if not file_path.is_file():
+        raise AssertionError(f"Expected file {file_path} does not exist")
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    if needle in text:
+        offending = next(
+            (ln for ln in text.splitlines() if needle in ln), ""
+        )
+        raise AssertionError(
+            f"Expected {file_path} NOT to contain {needle!r}, but it does. "
+            f"Offending line: {offending[:200]!r}"
         )
 
 
@@ -475,6 +501,10 @@ def main() -> int:
         for spec in args.expect_file_contains:
             rel_path, needle = spec.split(":", 1)
             assert_file_contains(out_dir / rel_path, needle)
+
+        for spec in args.expect_file_not_contains:
+            rel_path, needle = spec.split(":", 1)
+            assert_file_not_contains(out_dir / rel_path, needle)
     except Exception as exc:
         print(f"Validation check failed: {exc}", file=sys.stderr)
         print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)

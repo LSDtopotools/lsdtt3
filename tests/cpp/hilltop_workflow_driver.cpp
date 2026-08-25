@@ -28,6 +28,7 @@
 //   remove_positive_curv   [1]     drop non-convex "hilltops"
 //   max_basins             [0]     0 = every junction
 //   n_threads              [0]
+//   boundary_conditions    [nbnb]  MUST match how the DEM was generated
 // -----------------------------------------------------------------------------
 
 #include <cmath>
@@ -91,6 +92,12 @@ int main(int argc, char** argv)
     const int    max_basins           = static_cast<int>(arg_num(kv, "max_basins", 0));
     const int    n_threads            = static_cast<int>(arg_num(kv, "n_threads", 0));
 
+    // MUST match the boundary conditions the DEM was generated with: a grid
+    // with no open edge has nowhere to drain and the router throws.
+    std::string boundary_conditions = "nbnb";
+    { auto it = kv.find("boundary_conditions");
+      if (it != kv.end()) boundary_conditions = it->second; }
+
     // ---- load ---------------------------------------------------------------
     lsdtt::lsdtt_data_loader loader;
     try { loader.open_raster(dem_path); }
@@ -113,12 +120,25 @@ int main(int argc, char** argv)
     lsdtt::lsdtt_raster_cpu dem_filled = lsdtt::fill_pits(dem_raw);
 
     lsdtt::lsdtt_flowinfo_options fopts;
-    fopts.boundary_conditions     = "nnnn";
+    fopts.boundary_conditions     = boundary_conditions;
     fopts.build_topological_order = true;
     fopts.build_s_vector          = true;
 
-    lsdtt::lsdtt_flowinfo flow(dem_filled.get_data_array(),
-                               dem_filled.get_mask_array(), meta, fopts);
+    std::unique_ptr<lsdtt::lsdtt_flowinfo> flow_p;
+    try
+    {
+        flow_p = std::make_unique<lsdtt::lsdtt_flowinfo>(
+            dem_filled.get_data_array(), dem_filled.get_mask_array(), meta, fopts);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: flow routing failed with boundary_conditions '"
+                  << boundary_conditions << "': " << e.what()
+                  << "\n       These must match the boundary conditions the DEM "
+                     "was generated with.\n";
+        return 1;
+    }
+    lsdtt::lsdtt_flowinfo& flow = *flow_p;
 
     const auto sources = flow.get_sources_index_threshold(channel_threshold_px);
     if (sources.empty())
