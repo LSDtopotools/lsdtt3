@@ -14,6 +14,7 @@ nanobind_add_module(_core
     valley_helpers.cpp
     flow_info.cpp
     flow_products.cpp
+    flow_network.cpp
     raster_geospatial.cpp
 )
 

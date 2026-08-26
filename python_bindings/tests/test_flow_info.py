@@ -47,6 +47,22 @@ class FlowInfoTest(unittest.TestCase):
         )
         self.assertTrue(flow.is_outlet(3, 2))
 
+    def test_channel_scope_and_junction_network(self):
+        scope = self.flow.channel_scope(3)
+        self.assertEqual(scope.mode, "all_channels_threshold")
+        self.assertEqual(scope.mask.shape, self.dem.shape)
+        self.assertEqual(scope.source_id.shape, self.dem.shape)
+        self.assertEqual(scope.nodes(0).shape[1], 2)
+        self.assertGreater(len(scope.table()), 0)
+
+        network = self.flow.channel_network(scope)
+        self.assertEqual(network.channel_mask.shape, self.dem.shape)
+        self.assertEqual(network.junction_id.shape, self.dem.shape)
+        self.assertGreater(network.n_channel_cells, 0)
+        self.assertGreater(network.n_junctions, 0)
+        self.assertIn("stream_order", network.junctions().columns)
+        self.assertIn("length_metres", network.links().columns)
+
 
 if __name__ == "__main__":
     unittest.main()
