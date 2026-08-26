@@ -485,6 +485,7 @@ lsdtt_hillslope_metrics_result compute_hillslope_metrics(
     lsdtt_streamline_options topts;
     topts.save_nodes = true;
     topts.max_steps  = opts.max_steps;
+    topts.flat_terminus_gradient = opts.flat_terminus_gradient;
     topts.n_threads  = opts.n_threads;
 
     const lsdtt_streamline_result traces =

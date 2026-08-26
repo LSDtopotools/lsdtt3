@@ -359,6 +359,11 @@ struct lsdtt_hillslope_metrics_options
 
     int max_steps = 100000;
     int n_threads = 0;
+
+    // Passed through to the tracer: the gradient below which a terminating cell
+    // counts as flat, splitting a revisit into `stalled_on_flat` rather than
+    // `loop_detected`. See lsdtt_streamline_options::flat_terminus_gradient.
+    double flat_terminus_gradient = 0.02;
 };
 
 // =============================================================================
