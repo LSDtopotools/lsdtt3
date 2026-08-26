@@ -12,3 +12,16 @@ dependencies = ["numpy>=1.24", "geopandas>=1.0"]
 [tool.scikit-build]
 wheel.packages = ["src/lsdtt3"]
 cmake.build-type = "Release"
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "pp* *-musllinux_*"
+test-command = "cd {project}/python_bindings && python -m unittest discover -s tests -p test_*.py"
+environment = { CMAKE_ARGS = "-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF" }
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
+before-all = "dnf install -y cmake gcc-c++ pkgconf-pkg-config gdal-devel fftw-devel netcdf-devel eigen3-devel libgomp || yum install -y cmake gcc-c++ pkgconfig gdal-devel fftw-devel netcdf-devel eigen3-devel libgomp"
+
+[tool.cibuildwheel.macos]
+before-all = "brew install gdal fftw netcdf eigen libomp"

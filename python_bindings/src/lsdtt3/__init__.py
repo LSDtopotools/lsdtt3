@@ -1,3 +1,25 @@
+"""Python bindings for LSDTopoTools3."""
+
+import os
+from pathlib import Path
+
+
+def _configure_bundled_geospatial_data() -> None:
+    """Point GDAL and PROJ at data shipped in a standalone wheel."""
+    package_dir = Path(__file__).resolve().parent
+    gdal_data = package_dir / "gdal_data"
+    proj_data = package_dir / "proj_data"
+
+    if gdal_data.is_dir():
+        os.environ.setdefault("GDAL_DATA", str(gdal_data))
+    if proj_data.is_dir():
+        os.environ.setdefault("PROJ_DATA", str(proj_data))
+        # Older GDAL/PROJ combinations use the legacy spelling.
+        os.environ.setdefault("PROJ_LIB", str(proj_data))
+
+
+_configure_bundled_geospatial_data()
+
 from ._core import (
     Raster,
     RasterMeta,

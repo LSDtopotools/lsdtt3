@@ -306,7 +306,8 @@ std::vector<power_spectrum_bin> compute_power_spectrum(
         double detrended_y = y[i] - (m * xi + c);
         
         // Hann window: 0.5 * (1 - cos(2 * pi * i / (N - 1)))
-        double hann = 0.5 * (1.0 - std::cos(2.0 * M_PI * i / static_cast<double>(N - 1)));
+        constexpr double pi = 3.141592653589793238462643383279502884;
+        double hann = 0.5 * (1.0 - std::cos(2.0 * pi * i / static_cast<double>(N - 1)));
         signal[i] = detrended_y * hann;
     }
 
