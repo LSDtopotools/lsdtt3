@@ -8,6 +8,7 @@ import lsdtt3
 
 dem = lsdtt3.Raster.read("perso_tests/dem/green_river_1.tif")
 meta = dem.metadata
+swath_half_width = 0.06 * min(meta.x_max - meta.x_min, meta.y_max - meta.y_min)
 baseline = gpd.GeoDataFrame(
     geometry=[LineString([
         (meta.x_min + 0.10 * (meta.x_max - meta.x_min), meta.y_min + 0.35 * (meta.y_max - meta.y_min)),
@@ -18,7 +19,9 @@ baseline = gpd.GeoDataFrame(
     ])],
     crs=meta.crs_wkt,
 )
-profile = lsdtt3.swath_profile(dem, baseline, half_width_metres=500.0, bin_width_metres=100.0)
+profile = lsdtt3.swath_profile(
+    dem, baseline, half_width_metres=swath_half_width, bin_width_metres=100.0
+)
 
 table = profile.table
 fig, (map_axis, profile_axis) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
@@ -29,12 +32,8 @@ image = map_axis.imshow(
     origin="upper",
     cmap="terrain",
 )
-map_axis.imshow(
-    np.where(profile.perpendicular_distance.mask_numpy(), 1.0, np.nan),
-    extent=[meta.x_min, meta.x_max, meta.y_min, meta.y_max],
-    origin="upper",
-    cmap="Blues",
-    alpha=0.18,
+baseline.buffer(swath_half_width).plot(
+    ax=map_axis, color="deepskyblue", alpha=0.28, edgecolor="none"
 )
 baseline.plot(ax=map_axis, color="black", linewidth=2)
 map_axis.set_aspect("equal")
