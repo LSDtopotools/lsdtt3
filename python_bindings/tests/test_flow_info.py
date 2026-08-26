@@ -66,6 +66,14 @@ class FlowInfoTest(unittest.TestCase):
         self.assertGreater(network.n_junctions, 0)
         self.assertIn("stream_order", network.junctions().columns)
         self.assertIn("length_metres", network.links().columns)
+        self.assertIn("value", network.link_profiles(self.dem).columns)
+        self.assertGreater(len(network.link_bearings()), 0)
+        self.assertIn("donor_opening_angle_deg", network.junction_angles().columns)
+        self.assertEqual(len(network.basin_com_bearings()), network.n_junctions)
+        chi = network.chi()
+        self.assertGreater(chi.n_basins, 0)
+        self.assertIn("chi", chi.nodes().columns)
+        self.assertEqual(chi.raster().shape, self.dem.shape)
 
     def test_fractional_flow_graphs(self):
         for method in ("mfd", "dinf"):
@@ -124,6 +132,29 @@ class FlowInfoTest(unittest.TestCase):
             )
             self.assertEqual(sti.sti.shape, self.dem.shape)
             self.assertGreater(sti.stats["valid_output_pixels"], 0)
+
+    def test_scope_workflows_and_basin_collection(self):
+        scope = self.flow.channel_scope(3)
+        valleys = lsdtt3.extract_valley_centrelines(
+            self.dem, scope, corridor_width_metres=100.0, n_threads=1
+        )
+        self.assertEqual(valleys.valley_mask.shape, self.dem.shape)
+
+        labels = lsdtt3.Raster.from_numpy(
+            np.ones(self.dem.shape, dtype=np.float32),
+            np.ones(self.dem.shape, dtype=bool), self.meta,
+        )
+        flat_classes = lsdtt3.classify_flat_surfaces_with_scope(
+            labels, self.dem, scope, n_threads=1
+        )
+        self.assertEqual(flat_classes.surface_class.shape, self.dem.shape)
+
+        basins = self.flow.basins([[5, 0], [3, 0]])
+        self.assertEqual(basins.size, 2)
+        self.assertEqual(basins.mask(0).shape, self.dem.shape)
+        self.assertEqual(basins.pixels(0).shape[1], 2)
+        self.assertEqual(int(basins.table.loc[1, "parent_id"]), 0)
+        np.testing.assert_array_equal(basins.membership(0, 0), [0, 1])
 
 
 if __name__ == "__main__":

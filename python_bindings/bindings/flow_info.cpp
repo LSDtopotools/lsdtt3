@@ -164,5 +164,6 @@ are an N by 2 array of ``(row, col)`` surface-flow terminations.)doc")
         .def("is_upslope", [](const FlowInfo& self, int cr, int cc, int tr, int tc) { return self.native().is_upslope_of(self.native().flat_index(cr, cc), self.native().flat_index(tr, tc)); }, nb::arg("candidate_row"), nb::arg("candidate_col"), nb::arg("target_row"), nb::arg("target_col"));
     bind_flow_products(flow);
     bind_flow_network(module, flow);
+    bind_basins(module, flow);
 }
 } // namespace lsdtt3_python
