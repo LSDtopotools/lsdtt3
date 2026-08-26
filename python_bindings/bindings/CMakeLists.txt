@@ -6,6 +6,8 @@ nanobind_add_module(_core
     raster_surface_metrics.cpp
     raster_spectral.cpp
     raster_swath.cpp
+    raster_mountain_front.cpp
+    raster_feature_finder.cpp
     raster_geospatial.cpp
 )
 
