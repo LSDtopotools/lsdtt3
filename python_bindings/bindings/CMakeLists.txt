@@ -4,6 +4,7 @@ nanobind_add_module(_core
     raster_basic_ops.cpp
     raster_pit_processing.cpp
     raster_surface_metrics.cpp
+    raster_spectral.cpp
     raster_geospatial.cpp
 )
 
