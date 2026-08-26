@@ -905,11 +905,18 @@ int main(int argc, char* argv[])
 
         try
         {
+            // Elevation is passed so the points can carry a longitudinal
+            // profile. The ROUTED (filled) surface is used, because that is the
+            // one the flow distances were measured on -- pairing a filled
+            // distance with an unfilled elevation would put a profile's two
+            // axes on different surfaces.
             channel_network->write_channel_network_points(
                 output_file,
                 cn_points_output_format,
                 "channel_network_points",
-                bf["calculate_spatial_index"]
+                bf["calculate_spatial_index"],
+                routed_dem.get_data(),
+                routed_dem.get_mask()
             );
         }
         catch (const std::exception& e)

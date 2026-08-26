@@ -867,6 +867,97 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "divide_merge_search_steps must be > 0"
 )
 
+# -----------------------------------------------------------------------------
+# hillslope_channel_coupling: naming the two coupling regimes (plan section 6).
+#
+# lsdtt3 has always contained BOTH couplings, and which one ran was an
+# unreported side effect of incision_threshold_area. These pin the naming, the
+# override, and the five configurations that are contradictions rather than
+# settings.
+# -----------------------------------------------------------------------------
+
+# THE BACK-COMPATIBILITY GUARD. Parameter files across this project already
+# depend on the implicit behaviour, so `auto` must still infer exactly what it
+# always did: a positive threshold means channels are boundaries.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_coupling_auto
+    lsdtt-lem
+    lem_coupling_auto.param.in
+    tiny_coup_auto_modelled_topography.tif
+    --stdout-contains "Coupling regime   : channels_as_boundaries (inferred"
+    --stdout-contains "drainage density is IMPOSED"
+)
+
+# The parameter OVERRIDES the threshold rather than merely describing it: the
+# same file with a positive threshold runs coupled when asked to.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_coupling_coupled_overrides_threshold
+    lsdtt-lem
+    lem_coupling_coupled_overrides.param.in
+    tiny_coup_override_modelled_topography.tif
+    --stdout-contains "Coupling regime   : coupled (requested)"
+    --stdout-contains "drainage density EMERGES"
+    --stdout-contains "selected D-infinity routing"
+    --stdout-contains "Dinf fluvial erosion   : on"
+)
+
+# The most numerically robust hillslope solver is the one that cannot run the
+# emergent-drainage-density experiment. Fatal, and the message names the four
+# that can.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_roering_implicit
+    lsdtt-lem
+    lem_coupling_roering_implicit.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "roering_implicit"
+    --stderr-contains "linear, roering, cidre, adi"
+)
+
+# D8 on a diverging hillslope manufactures channel heads, so the drainage
+# density would be an artefact of the router.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_d8_conflict
+    lsdtt-lem
+    lem_coupling_d8_conflict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "enable_d8_fluvial_erosion"
+    --stderr-contains "manufactures channel"
+)
+
+# The analytical steady-state path snaps channels then solves hillslopes against
+# them, so it IS the boundary-condition model by construction.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_steady_conflict
+    lsdtt-lem
+    lem_coupling_steady_conflict.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "run_steady_state"
+    --stderr-contains "boundary-condition model"
+)
+
+# Asking to impose a drainage density while supplying no channels.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_no_channels
+    lsdtt-lem
+    lem_coupling_no_channels.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "channels_as_boundaries needs a channel set"
+)
+
+# A typo must not quietly select one of two different experiments.
+add_lsdtt_cli_smoke_test(
+    failure_lem_coupling_typo
+    lsdtt-lem
+    lem_coupling_typo.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "unrecognised hillslope_channel_coupling"
+)
+
 add_lsdtt_cli_smoke_test(
     failure_lem_equilibration_dinf_conflict
     lsdtt-lem
@@ -1426,6 +1517,16 @@ target_link_libraries(lsdtt-test-paired-flowpaths PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-landscape-equilibration cpp/test_landscape_equilibration.cpp)
 target_link_libraries(lsdtt-test-landscape-equilibration PRIVATE lsdtt3_cpu)
 
+# The factor-of-two ambiguity in "mean hillslope length" (plan_lem_hillslope_
+# length_targeting.md section 3): ridge_mean is L where the all-pixel mean is L/2.
+add_executable(lsdtt-test-hillslope-length-statistic cpp/test_hillslope_length_statistic.cpp)
+target_link_libraries(lsdtt-test-hillslope-length-statistic PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_length_statistic
+         COMMAND lsdtt-test-hillslope-length-statistic)
+set_tests_properties(unit_hillslope_length_statistic PROPERTIES
+    LABELS "unit;hillslope")
+
 add_executable(lsdtt-test-critical-slope cpp/test_critical_slope.cpp)
 target_link_libraries(lsdtt-test-critical-slope PRIVATE lsdtt3_cpu)
 
@@ -1646,6 +1747,106 @@ add_hilltop_coupling_cli_test(
 # SCAFFOLDING for the E*-R* validation workflow (plan section 4.8): runs the
 # hilltop pipeline on a supplied DEM. Not a test - it is built but never
 # registered with CTest, and it exists only until the Phase 4 CLI replaces it.
+# What incision_threshold_area is compared against: specific area in METRES
+# under divide_area_by_dx, map area in m^2 without it (plan section 4.4).
+add_executable(lsdtt-test-channel-threshold-units cpp/test_channel_threshold_units.cpp)
+target_link_libraries(lsdtt-test-channel-threshold-units PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_channel_threshold_units
+         COMMAND lsdtt-test-channel-threshold-units)
+set_tests_properties(unit_channel_threshold_units PROPERTIES
+    LABELS "unit;lem")
+
+# Pathway A (plan_lem_hillslope_length_targeting.md section 4): the channel
+# threshold search, and the ways its objective can be plausibly wrong.
+add_executable(lsdtt-test-hillslope-length-search cpp/test_hillslope_length_search.cpp)
+target_link_libraries(lsdtt-test-hillslope-length-search PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_length_search
+         COMMAND lsdtt-test-hillslope-length-search)
+set_tests_properties(unit_hillslope_length_search PROPERTIES
+    LABELS "unit;hillslope")
+
+# Phase 5 sweep: every vector-ingesting CLI against multipart input.
+# A SCRIPT rather than a C++ test because it drives the shipped binaries -- the
+# defect it guards was invisible at the library level and only showed up in what
+# a CLI actually wrote.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/multipart_sweep_output)
+    add_test(NAME smoke_multipart_cli_sweep
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/multipart_sweep.py
+                     $<TARGET_FILE_DIR:lsdtt-linear-stats>
+                     ${CMAKE_CURRENT_BINARY_DIR}/multipart_sweep_output)
+    set_tests_properties(smoke_multipart_cli_sweep PROPERTIES
+        LABELS "smoke;cli;raster" TIMEOUT 1200)
+endif()
+
+# Longitudinal profile from the points output (plan_multilinestring... phase 4).
+add_executable(lsdtt-test-channel-profile-attributes cpp/test_channel_profile_attributes.cpp)
+target_link_libraries(lsdtt-test-channel-profile-attributes PRIVATE lsdtt3_cpu)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/profile_output)
+add_test(NAME unit_channel_profile_attributes
+         COMMAND lsdtt-test-channel-profile-attributes
+                 ${CMAKE_CURRENT_BINARY_DIR}/profile_output)
+set_tests_properties(unit_channel_profile_attributes PROPERTIES LABELS "unit;network")
+
+# link_length under periodic boundaries (plan_multilinestring... phase 2).
+add_executable(lsdtt-test-link-length-periodic cpp/test_link_length_periodic.cpp)
+target_link_libraries(lsdtt-test-link-length-periodic PRIVATE lsdtt3_cpu)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/link_length_output)
+add_test(NAME unit_link_length_periodic
+         COMMAND lsdtt-test-link-length-periodic
+                 ${CMAKE_CURRENT_BINARY_DIR}/link_length_output)
+set_tests_properties(unit_link_length_periodic PROPERTIES LABELS "unit;network")
+
+# Multipart geometry on read (plan_multilinestring_channel_outputs.md phase 1).
+add_executable(lsdtt-test-multipart-geometry cpp/test_multipart_geometry.cpp)
+target_link_libraries(lsdtt-test-multipart-geometry PRIVATE lsdtt3_core)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/multipart_output)
+add_test(NAME unit_multipart_geometry
+         COMMAND lsdtt-test-multipart-geometry
+                 ${CMAKE_CURRENT_BINARY_DIR}/multipart_output)
+set_tests_properties(unit_multipart_geometry PROPERTIES LABELS "unit;raster")
+
+# Pathway A from the command line, while it is not yet a lsdtt-lem parameter.
+add_executable(find-threshold-for-hillslope-length cpp/find_threshold_for_hillslope_length_driver.cpp)
+target_link_libraries(find-threshold-for-hillslope-length PRIVATE lsdtt3_cpu)
+
+# Phase 6: hillslope length on a COUPLED landscape, where there is no channel
+# threshold. Valleys come from the curvature inflection instead.
+add_executable(emergent-hillslope-length-driver cpp/emergent_hillslope_length_driver.cpp)
+target_link_libraries(emergent-hillslope-length-driver PRIVATE lsdtt3_cpu)
+
+# Pathway B (plan section 5): K and D from a target relief and hillslope length.
+add_executable(lsdtt-test-hillslope-peclet cpp/test_hillslope_peclet.cpp)
+target_link_libraries(lsdtt-test-hillslope-peclet PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_peclet COMMAND lsdtt-test-hillslope-peclet)
+set_tests_properties(unit_hillslope_peclet PROPERTIES LABELS "unit;hillslope")
+
+# chi at the channel head, as distinct from domain-wide MaxChi (plan 2.2a).
+add_executable(lsdtt-test-chi-channel-head cpp/test_chi_channel_head.cpp)
+target_link_libraries(lsdtt-test-chi-channel-head PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_chi_channel_head COMMAND lsdtt-test-chi-channel-head)
+set_tests_properties(unit_chi_channel_head PROPERTIES LABELS "unit;lem")
+
+# chi_c against domain-wide MaxChi (plan section 2.2a): the size of the relief
+# error relief-mode carries for a landscape that will have hillslopes.
+add_executable(chi-c-ratio-driver cpp/chi_c_ratio_driver.cpp)
+target_link_libraries(chi-c-ratio-driver PRIVATE lsdtt3_cpu)
+
+# Phase 1b of plan_lem_hillslope_length_targeting.md: writes the D8
+# distance-to-channel field so it can be compared against the streamline
+# tracer's Lh on the same source pixels. A driver, not a CTest entry.
+add_executable(hillslope-length-comparison-driver cpp/hillslope_length_comparison_driver.cpp)
+target_link_libraries(hillslope-length-comparison-driver PRIVATE lsdtt3_cpu)
+
 add_executable(hilltop-workflow-driver cpp/hilltop_workflow_driver.cpp)
 target_link_libraries(hilltop-workflow-driver PRIVATE lsdtt3_cpu)
 
@@ -2924,8 +3125,8 @@ set(LSDTT_DOMAIN_RULES
     "surface_metrics"        "surface_metrics"
     "hillslope"              "hillslope"
     "lem"                    "lem"
-    "chi|channel|drainage|basin|flow_properties"          "network"
-    "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units" "raster"
+    "chi|channel|drainage|basin|flow_properties|link_length"  "network"
+    "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret"           "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"

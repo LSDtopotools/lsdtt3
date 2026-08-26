@@ -8,6 +8,8 @@
 
 #include "lsdtt_steady_state_cpu.hpp"
 
+#include "lsdtt_stream_power_cpu.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -83,6 +85,31 @@ lsdtt_fluvial_steady_state_field compute_fluvial_steady_state_on_tree(
     out.K_used          = K_used;
     out.max_unit_height = MaxChi;
     out.computed_relief = f * MaxChi;
+
+    // chi_c: MaxChi over CHANNEL pixels only. Reported alongside MaxChi, never
+    // in place of it -- see the result struct for why the two differ and why
+    // the difference matters once hillslopes are switched on.
+    if (opts.channel_threshold_area > 0.0f)
+    {
+        float chi_c = 0.0f;
+        std::int64_t n_chan = 0;
+        for (std::size_t s = 0; s < n; ++s)
+        {
+            if (!valid[s]) continue;
+            const double q = channel_threshold_quantity(
+                drainage_area[s], static_cast<double>(dx), opts.divide_area_by_dx);
+            if (q < static_cast<double>(opts.channel_threshold_area)) continue;
+            ++n_chan;
+            chi_c = std::max(chi_c, chi[s]);
+        }
+        out.n_channel_pixels = n_chan;
+        if (n_chan > 0)
+        {
+            out.max_unit_height_at_channel_head = chi_c;
+            out.chi_c_reported = true;
+        }
+    }
+
     return out;
 }
 
@@ -129,6 +156,9 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
     result.elevation       = lsdtt_raster_cpu(std::move(z), std::move(mask), meta);
     result.K_used          = field.K_used;
     result.max_unit_height = field.max_unit_height;
+    result.max_unit_height_at_channel_head = field.max_unit_height_at_channel_head;
+    result.n_channel_pixels                = field.n_channel_pixels;
+    result.chi_c_reported                  = field.chi_c_reported;
     result.computed_relief = field.computed_relief;
     return result;
 }
@@ -298,6 +328,33 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
     result.elevation       = lsdtt_raster_cpu(std::move(z), std::move(mask), meta);
     result.K_used          = K_used;
     result.max_unit_height = max_unit_height;
+
+    // chi_c on the D-infinity path too. The plan asked only for D8, but leaving
+    // one path reporting it and the other silent would be a worse trap than not
+    // reporting it at all: a caller would read a zero as "the channel head is at
+    // the outlet" rather than "this path does not compute it".
+    if (opts.channel_threshold_area > 0.0f)
+    {
+        float chi_c = 0.0f;
+        std::int64_t n_chan = 0;
+        for (std::int64_t flat = 0; flat < n_cells; ++flat)
+        {
+            if (!flow.is_valid_flat(flat)) continue;
+            const std::size_t s = static_cast<std::size_t>(flat);
+            const double q = channel_threshold_quantity(
+                area_d[s], static_cast<double>(dx), opts.divide_area_by_dx);
+            if (q < static_cast<double>(opts.channel_threshold_area)) continue;
+            ++n_chan;
+            chi_c = std::max(chi_c, chi[s]);
+        }
+        result.n_channel_pixels = n_chan;
+        if (n_chan > 0)
+        {
+            result.max_unit_height_at_channel_head = chi_c;
+            result.chi_c_reported = true;
+        }
+    }
+
     result.computed_relief = computed_relief;
     return result;
 }

@@ -45,6 +45,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/cpu/lsdtt_lem_cpu.hpp"
+#include "../src/cpu/lsdtt_stream_power_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
@@ -649,15 +650,55 @@ int main(int argc, char* argv[])
 
     float_default_map["incision_threshold_area"] = 0.0f;
     help_map["incision_threshold_area"] = {"float","0",
-        "Minimum drainage area (m^2) for fluvial incision. 0 = no threshold.",
-        "Also defines channel pixels for hillslope coupling.",
+        "Channel threshold for fluvial incision. 0 = no threshold. UNITS DEPEND "
+        "ON divide_area_by_dx - see below.",
+        "THIS IS NOT ALWAYS AN AREA, despite the name. With divide_area_by_dx "
+        "true (the DEFAULT) the threshold is compared against SPECIFIC "
+        "catchment area a = A/dx, which is a LENGTH IN METRES; with it false, "
+        "against map area A in m^2. Two consequences worth knowing before "
+        "choosing a value: (1) under the default, threshold T selects cells "
+        "with at least T/dx upstream pixels, so the same .param file carried "
+        "from a 10 m DEM to a 1 m DEM asks for a ten times larger network in "
+        "pixel terms; (2) a value picked as though it were m^2 is wrong by a "
+        "factor of dx - on a 10 m grid '1000' means 100 pixels, not the 10 that "
+        "1000 m^2 would give. The run header prints the resolved threshold in "
+        "all three forms. The specific-area convention follows Bonetti et al. "
+        "(2020) and Litwin et al. (2022) and exists to remove grid dependence "
+        "from the erosion law; only its documentation was ever wrong. Also "
+        "defines channel pixels for hillslope coupling.",
         "Process parameters", "param", ""};
+
+    string_default_map["hillslope_channel_coupling"] = "auto";
+    help_map["hillslope_channel_coupling"] = {"string","auto",
+        "Which channel/hillslope coupling to run: auto, coupled, or "
+        "channels_as_boundaries.",
+        "lsdtt3 contains BOTH standard couplings, and which one you get has "
+        "until now been an unreported side effect of incision_threshold_area. "
+        "channels_as_boundaries makes channels FIXED (Dirichlet) nodes for the "
+        "hillslope solve, so drainage density is an INPUT - the MuddPILE "
+        "configuration, D8 routing. coupled gives no Dirichlet set: both "
+        "processes act everywhere and valley spacing, hillslope length and "
+        "drainage density EMERGE - the DonkModel configuration, which needs "
+        "D-infinity because D8 on a diverging hillslope manufactures channel "
+        "heads. These are different experiments, not different settings. 'auto' "
+        "reproduces the historical inference exactly and only reports it, and "
+        "is the default because parameter files across this project already "
+        "depend on the implicit behaviour. NOTE roering_implicit cannot run the "
+        "coupled regime: it needs a Dirichlet set, so the most robust hillslope "
+        "solver is the one that cannot do the emergent-drainage-density "
+        "experiment.",
+        "Process parameters", "param", "auto|coupled|channels_as_boundaries"};
 
     bool_default_map["divide_area_by_dx"] = true;
     help_map["divide_area_by_dx"] = {"bool","true",
-        "Divide drainage area by cell size to get specific area.",
-        "Applies to both fluvial incision and hillslope coupling threshold.",
-        "Process parameters", "param", ""};
+        "Divide drainage area by cell size to get specific area a = A/dx.",
+        "Applies to both fluvial incision and the hillslope coupling threshold, "
+        "and CHANGES THE UNITS of incision_threshold_area from m^2 to metres. "
+        "True is the Bonetti et al. (2020) / Litwin et al. (2022) convention "
+        "(specific area, grid-independent); false is the Perron et al. (2008) "
+        "total-area convention. The choice also changes the exponent in the "
+        "landscape Peclet number, so it is not a free setting.",
+        "Process parameters", "param", "true|false"};
 
     float_default_map["slope_clamp"] = 1e-5f;
     help_map["slope_clamp"] = {"float","1e-5",
@@ -975,6 +1016,8 @@ int main(int argc, char* argv[])
     opts.n_exponent                      = ff["n_exponent"];
     opts.incision_threshold_area         = ff["incision_threshold_area"];
     opts.divide_area_by_dx               = bf["divide_area_by_dx"];
+    opts.coupling_regime =
+        lsdtt::parse_hillslope_coupling_regime(sf["hillslope_channel_coupling"]);
     opts.slope_clamp                     = ff["slope_clamp"];
     opts.hillslope_diffusivity           = ff["hillslope_diffusivity"];
     opts.enable_nonlinear_hillslopes     = bf["enable_nonlinear_hillslopes"];
@@ -1036,6 +1079,93 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Print settings summary
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Coupling regime: resolve, validate, report.
+    //
+    // Every rule here is FATAL rather than a silent override. Each one describes
+    // a configuration where the user has asked for two things that cannot both
+    // be true, and quietly honouring one of them would produce a run that looks
+    // like the experiment they wanted and is not.
+    // -------------------------------------------------------------------------
+    const lsdtt::hillslope_coupling_regime resolved_regime =
+        lsdtt::resolve_hillslope_coupling_regime(
+            opts.coupling_regime, opts.incision_threshold_area,
+            !opts.explicit_channel_mask.empty());
+
+    const bool regime_requested =
+        opts.coupling_regime != lsdtt::hillslope_coupling_regime::automatic;
+    bool routing_selected_by_regime = false;
+
+    if (resolved_regime == lsdtt::hillslope_coupling_regime::coupled &&
+        regime_requested)
+    {
+        std::string hs_model = sf["hillslope_model"];
+        for (char& ch : hs_model)
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+        if (hs_model == "roering_implicit")
+        {
+            std::cerr << "\nFATAL: hillslope_channel_coupling: coupled cannot be "
+                         "run with hillslope_model: roering_implicit.\n"
+                         "  That solver needs a Dirichlet channel set; with none "
+                         "it degenerates to sink-free\n  diffusion toward the "
+                         "domain edges, so it skips the hillslope step entirely.\n"
+                         "  The emergent-drainage-density experiment therefore "
+                         "cannot use the most robust\n  solver. Use one of: "
+                         "linear, roering, cidre, adi.\n";
+            return 1;
+        }
+
+        if (pp.parameter_supplied("enable_d8_fluvial_erosion") &&
+            bf["enable_d8_fluvial_erosion"])
+        {
+            std::cerr << "\nFATAL: hillslope_channel_coupling: coupled was asked "
+                         "for together with\n  enable_d8_fluvial_erosion: true. "
+                         "D8 on a diverging hillslope manufactures channel\n"
+                         "  heads, so the drainage density would be an artefact "
+                         "of the router rather than\n  an emergent property - "
+                         "which is the whole point of the coupled regime.\n"
+                         "  Use D-infinity, or ask for channels_as_boundaries.\n";
+            return 1;
+        }
+
+        if (bf["run_steady_state"])
+        {
+            std::cerr << "\nFATAL: hillslope_channel_coupling: coupled is not "
+                         "available in the analytical\n  steady-state path "
+                         "(run_steady_state). That path snaps channels first and "
+                         "then\n  solves hillslopes against them, so it IS the "
+                         "boundary-condition model by\n  construction. Coupled "
+                         "behaviour exists only in the time-stepping path.\n";
+            return 1;
+        }
+
+        // Routing: select D-infinity when the user left it unset, rather than
+        // silently running D8.
+        if (!pp.parameter_supplied("enable_dinf_fluvial_erosion") &&
+            !pp.parameter_supplied("enable_d8_fluvial_erosion"))
+        {
+            opts.enable_d8_fluvial_erosion   = false;
+            opts.enable_dinf_fluvial_erosion = true;
+            routing_selected_by_regime       = true;
+            // Reported below, in the configuration summary, so the D8/Dinf
+            // line there shows what will actually run.
+        }
+    }
+
+    if (resolved_regime == lsdtt::hillslope_coupling_regime::channels_as_boundaries &&
+        regime_requested &&
+        !(opts.incision_threshold_area > 0.0f) &&
+        opts.explicit_channel_mask.empty())
+    {
+        std::cerr << "\nFATAL: hillslope_channel_coupling: channels_as_boundaries "
+                     "needs a channel set,\n  but incision_threshold_area is 0 "
+                     "and no channel_mask_fname was given. There are\n  no "
+                     "Dirichlet nodes to impose. Set incision_threshold_area > 0, "
+                     "supply a mask,\n  or ask for coupled.\n";
+        return 1;
+    }
+
     std::cout << "\n--- Model configuration ---\n";
     std::cout << "  D8 fluvial erosion   : " << (opts.enable_d8_fluvial_erosion  ? "on" : "off")
               << "  Dinf fluvial erosion   : " << (opts.enable_dinf_fluvial_erosion  ? "on" : "off")
@@ -1055,7 +1185,55 @@ int main(int argc, char* argv[])
     std::cout << "  Uplift            : " << (opts.enable_uplift ? "on" : "off")
               << "  (U=" << opts.uplift_rate << " m/yr)\n";
     std::cout << "  Timestep          : " << opts.timestep << " yr\n";
+    std::cout << "  Coupling regime   : " << lsdtt::name_of(resolved_regime)
+              << (regime_requested ? " (requested)" : " (inferred from "
+                                                      "incision_threshold_area)")
+              << "\n"
+              << "                      "
+              << (resolved_regime == lsdtt::hillslope_coupling_regime::coupled
+                    ? "no Dirichlet channels: drainage density EMERGES"
+                    : "channels are Dirichlet nodes: drainage density is IMPOSED")
+              << "\n";
+    if (routing_selected_by_regime)
+        std::cout << "                      selected D-infinity routing "
+                     "(D8 would manufacture channel heads)\n";
+
+    {
+        // The erosivity convention and the Peclet exponent it implies. One flag
+        // sets both, and a run that reported one and applied the other would be
+        // undetectable from its output.
+        const double m = static_cast<double>(opts.m_exponent);
+        const double n = static_cast<double>(opts.n_exponent);
+        std::cout << "  Erosivity         : "
+                  << (opts.divide_area_by_dx
+                        ? "specific area a = A/dx (Bonetti/Litwin)"
+                        : "total area A (Perron)")
+                  << ", Peclet exponent p = "
+                  << (opts.divide_area_by_dx ? (m + n) : (2.0 * m + n)) << "\n";
+    }
+
     std::cout << "  Boundary conds    : " << opts.boundary_conditions << "\n";
+
+    // The channel threshold in all three forms. The number alone is ambiguous:
+    // its UNITS depend on divide_area_by_dx (specific area in metres when set,
+    // map area in m^2 when not), so a reader cannot tell what was asked for
+    // without the convention beside it.
+    if (opts.incision_threshold_area > 0.0f)
+    {
+        const double dx = static_cast<double>(dem.get_meta().cell_size);
+        const auto ct = lsdtt::describe_channel_threshold(
+            static_cast<double>(opts.incision_threshold_area),
+            dx, opts.divide_area_by_dx);
+        std::cout << "  Channel threshold : " << opts.incision_threshold_area
+                  << (opts.divide_area_by_dx
+                        ? " m of SPECIFIC area (divide_area_by_dx on)"
+                        : " m^2 of MAP area (divide_area_by_dx off)")
+                  << "\n"
+                  << "                      = " << ct.map_area_m2 << " m^2 map area"
+                  << " = " << ct.specific_area_m << " m specific area"
+                  << " = " << ct.equivalent_pixels << " upstream pixels at dx="
+                  << dx << " m\n";
+    }
     std::cout << "  Threads           : " << opts.n_threads << "\n";
 
     // -------------------------------------------------------------------------

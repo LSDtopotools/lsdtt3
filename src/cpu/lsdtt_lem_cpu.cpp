@@ -9,6 +9,7 @@
 #include "lsdtt_lem_cpu.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <numeric>
 #include <fstream>
@@ -25,6 +26,50 @@
 
 namespace lsdtt
 {
+
+const char* name_of(hillslope_coupling_regime r) noexcept
+{
+    switch (r)
+    {
+        case hillslope_coupling_regime::automatic:              return "auto";
+        case hillslope_coupling_regime::coupled:                return "coupled";
+        case hillslope_coupling_regime::channels_as_boundaries: return "channels_as_boundaries";
+    }
+    return "unknown";
+}
+
+hillslope_coupling_regime parse_hillslope_coupling_regime(const std::string& name)
+{
+    std::string k;
+    for (char ch : name)
+        if (!std::isspace(static_cast<unsigned char>(ch)))
+            k += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+    if (k == "auto" || k == "automatic")   return hillslope_coupling_regime::automatic;
+    if (k == "coupled")                    return hillslope_coupling_regime::coupled;
+    if (k == "channels_as_boundaries" || k == "channels_as_boundary")
+        return hillslope_coupling_regime::channels_as_boundaries;
+
+    throw std::runtime_error(
+        "unrecognised hillslope_channel_coupling '" + name +
+        "' - expected one of: auto, coupled, channels_as_boundaries");
+}
+
+hillslope_coupling_regime resolve_hillslope_coupling_regime(
+    hillslope_coupling_regime requested,
+    float                     incision_threshold_area,
+    bool                      has_explicit_channel_mask) noexcept
+{
+    if (requested != hillslope_coupling_regime::automatic) return requested;
+
+    // The historical inference, unchanged: a channel set exists if a threshold
+    // was given or a mask was supplied, and if one exists the channels are
+    // Dirichlet nodes.
+    return (incision_threshold_area > 0.0f || has_explicit_channel_mask)
+        ? hillslope_coupling_regime::channels_as_boundaries
+        : hillslope_coupling_regime::coupled;
+}
+
 
 namespace
 {
@@ -44,6 +89,18 @@ build_channel_mask(
 
     std::vector<uint8_t> is_channel(static_cast<std::size_t>(n_cells), 0);
 
+    // `coupled` means drainage density EMERGES, so there is no Dirichlet set --
+    // whatever incision_threshold_area or an explicit mask say. Returning early
+    // here is what makes the parameter override the threshold rather than
+    // merely describe it.
+    if (resolve_hillslope_coupling_regime(
+            opts.coupling_regime, opts.incision_threshold_area,
+            !opts.explicit_channel_mask.empty()) ==
+        hillslope_coupling_regime::coupled)
+    {
+        return is_channel;
+    }
+
     if (opts.explicit_channel_mask.size() == static_cast<std::size_t>(n_cells))
     {
         for (std::int64_t flat = 0; flat < n_cells; ++flat)
@@ -52,13 +109,18 @@ build_channel_mask(
     }
     else if (opts.incision_threshold_area > 0.0f && flow != nullptr)
     {
+        // The threshold convention lives in one place now
+        // (lsdtt_stream_power_cpu.hpp): `incision_threshold_area` is a SPECIFIC
+        // area in metres when divide_area_by_dx is set, and a map area in m^2
+        // when it is not.
         std::vector<double> area = flow->accumulate();
         for (std::int64_t flat = 0; flat < n_cells; ++flat)
         {
             if (!flow->is_valid_flat(flat)) continue;
-            double a = area[static_cast<std::size_t>(flat)];
-            if (opts.divide_area_by_dx) a /= static_cast<double>(dx);
-            if (a >= static_cast<double>(opts.incision_threshold_area))
+            const double q = channel_threshold_quantity(
+                area[static_cast<std::size_t>(flat)],
+                static_cast<double>(dx), opts.divide_area_by_dx);
+            if (q >= static_cast<double>(opts.incision_threshold_area))
                 is_channel[static_cast<std::size_t>(flat)] = 1;
         }
     }

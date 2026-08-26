@@ -1046,6 +1046,45 @@ read_vector_point_layer_impl(
     OGRFeature* feature = nullptr;
     int next_point_id = 1;
 
+    // Everything that happens to ONE point once its coordinates are known.
+    // Factored out so a MultiPoint can run it per part without duplicating the
+    // CRS, transform and in-raster logic -- three places where a copy would
+    // quietly drift.
+    const auto emit_one_point =
+        [&](const OGRPoint* ogr_point,
+            lsdtt_input_point_with_attributes& rec,
+            lsdtt_input_point& pt)
+    {
+        pt.has_original_coordinates = true;
+        pt.original_x = ogr_point->getX();
+        pt.original_y = ogr_point->getY();
+        pt.original_coordinates_are_longitude_latitude = false;
+
+        pt.x = pt.original_x;
+        pt.y = pt.original_y;
+
+        if (layer_srs == nullptr)
+        {
+            pt.status = lsdtt_point_input_status::missing_source_crs;
+            append_point_record(result.records, std::move(rec),
+                                keep_points_outside_raster);
+            return;
+        }
+
+        if (!transform_xy(transform, pt.x, pt.y))
+        {
+            pt.status = lsdtt_point_input_status::coordinate_transform_failed;
+            append_point_record(result.records, std::move(rec),
+                                keep_points_outside_raster);
+            return;
+        }
+
+        map_raster_xy_to_pixel(raster_meta, pt);
+
+        append_point_record(result.records, std::move(rec),
+                            keep_points_outside_raster);
+    };
+
     while ((feature = layer->GetNextFeature()) != nullptr)
     {
         lsdtt_input_point_with_attributes record;
@@ -1090,7 +1129,40 @@ read_vector_point_layer_impl(
         const OGRwkbGeometryType geom_type =
             wkbFlatten(geometry->getGeometryType());
 
-        if (geom_type != wkbPoint)
+        // MULTIPOINT IS EXPLODED, not rejected.
+        //
+        // Until 2026-08-26 anything other than wkbPoint was marked
+        // unsupported_geometry_type here, so a MultiPoint layer produced no
+        // usable points at all. Measured through lsdtt-raster-preprocessing
+        // point sampling: three coordinates as three Points gave three sampled
+        // features; the SAME three as one MultiPoint gave a 0-byte output file
+        // and a zero exit code.
+        //
+        // This is a SECOND reader with the same gap as lsdtt_data_loader --
+        // point sampling does not go through read_vector_layer at all. Fixing
+        // only one of the two leaves the other broken while every line-based
+        // test passes.
+        std::vector<const OGRPoint*> point_parts;
+
+        if (geom_type == wkbPoint)
+        {
+            point_parts.push_back(geometry->toPoint());
+        }
+        else if (geom_type == wkbMultiPoint)
+        {
+            const OGRMultiPoint* mp = geometry->toMultiPoint();
+            for (int gi = 0; gi < mp->getNumGeometries(); ++gi)
+            {
+                const OGRGeometry* part = mp->getGeometryRef(gi);
+                if (part != nullptr &&
+                    wkbFlatten(part->getGeometryType()) == wkbPoint)
+                {
+                    point_parts.push_back(part->toPoint());
+                }
+            }
+        }
+
+        if (point_parts.empty())
         {
             point.status = lsdtt_point_input_status::unsupported_geometry_type;
             append_point_record(
@@ -1102,50 +1174,26 @@ read_vector_point_layer_impl(
             continue;
         }
 
-        const OGRPoint* ogr_point =
-            geometry->toPoint();
-
-        point.has_original_coordinates = true;
-        point.original_x = ogr_point->getX();
-        point.original_y = ogr_point->getY();
-        point.original_coordinates_are_longitude_latitude = false;
-
-        point.x = point.original_x;
-        point.y = point.original_y;
-
-        if (layer_srs == nullptr)
+        // One record per part. The attributes and the source feature id are
+        // copied onto each, so a multipart feature stays recoverable.
+        for (std::size_t part_index = 0; part_index < point_parts.size();
+             ++part_index)
         {
-            point.status = lsdtt_point_input_status::missing_source_crs;
-            append_point_record(
-                result.records,
-                std::move(record),
-                keep_points_outside_raster
-            );
-            OGRFeature::DestroyFeature(feature);
-            continue;
+            const bool last_part = (part_index + 1 == point_parts.size());
+
+            lsdtt_input_point_with_attributes part_record =
+                last_part ? std::move(record) : record;
+            lsdtt_input_point& part_point = part_record.point;
+
+            if (part_index > 0)
+                part_point.point_id = next_point_id++;
+
+            emit_one_point(point_parts[part_index], part_record, part_point);
         }
-
-        if (!transform_xy(transform, point.x, point.y))
-        {
-            point.status = lsdtt_point_input_status::coordinate_transform_failed;
-            append_point_record(
-                result.records,
-                std::move(record),
-                keep_points_outside_raster
-            );
-            OGRFeature::DestroyFeature(feature);
-            continue;
-        }
-
-        map_raster_xy_to_pixel(raster_meta, point);
-
-        append_point_record(
-            result.records,
-            std::move(record),
-            keep_points_outside_raster
-        );
 
         OGRFeature::DestroyFeature(feature);
+        continue;
+
     }
 
     return result;

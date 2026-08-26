@@ -782,9 +782,26 @@ int main(int argc, char* argv[])
                              "large the network was extracted BEFORE the DEM was "
                              "masked, and should be re-extracted.\n";
             if (n_channel == 0)
+            {
+                // Two different causes, and blaming the wrong one sends the user
+                // to re-extract a network that was never the problem. If NO
+                // point had usable geometry the file is the issue; if points
+                // were read but all landed on nodata, the DEM is.
+                if (pts.empty())
+                    throw std::runtime_error(
+                        "channel_network_file: no usable POINT geometry was read "
+                        "from '" + chan_file + "'. Multipart points are supported "
+                        "and split automatically, so this is either an empty "
+                        "layer or a geometry type that is not points - check that "
+                        "the file is the *_channel_network_points output and not "
+                        "the *_channel_network_lines one.");
+
                 throw std::runtime_error(
-                    "every ingested channel point fell on nodata - re-extract the "
-                    "network on the same (masked) DEM");
+                    "channel_network_file: all " + std::to_string(pts.size()) +
+                    " ingested channel points fell on nodata in this DEM. The "
+                    "network was extracted on a different (or unmasked) DEM - "
+                    "re-extract it on the same one.");
+            }
 
             // Sources are the channel cells with no channel donor. Derived
             // rather than ingested, because the points file carries the whole

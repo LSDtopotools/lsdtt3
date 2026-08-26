@@ -1,0 +1,10 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+write_path: __WRITE_PATH__
+write_fname: tiny_coup_nochan
+write_output_format: gtiff
+n_timesteps: 1
+enable_hillslope_transport: true
+incision_threshold_area: 0
+hillslope_channel_coupling: channels_as_boundaries

@@ -1,0 +1,9 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+write_path: __WRITE_PATH__
+write_fname: tiny_coup_typo
+write_output_format: gtiff
+n_timesteps: 1
+enable_hillslope_transport: true
+hillslope_channel_coupling: coupledd

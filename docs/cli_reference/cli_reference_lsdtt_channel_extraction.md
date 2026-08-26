@@ -23,6 +23,11 @@ Keys use `snake_case`. All keys and their defaults are listed below.
 
 ---
 
+!!! note "Multipart lines"
+    `stream_vector_path` accepts multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
+
+    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../vector_data.md).
+
 ## Pipeline overview
 
 Steps run in this order:
@@ -114,6 +119,17 @@ One point per channel pixel, with drainage area as an attribute.
 | `write_channel_network_points` | bool | `false` | Write the channel network as a point layer (one feature per channel pixel). |
 | `channel_network_points_output_format` | string | `flatgeobuf` | Output format. `csv`: latitude/longitude in EPSG:4326. `gpkg`: GeoPackage. `flatgeobuf` / `fgb`: FlatGeobuf (preferred on WSL2). |
 
+!!! tip "Longitudinal profiles come from the POINTS, not the lines"
+    Each channel point carries `flow_distance` (distance to the outlet along the
+    routed flow path, in metres) and `elevation`. Plot one against the other for
+    a longitudinal profile.
+
+    **Do not derive distance from the line geometry.** `flow_distance` is
+    accumulated from the D8 direction code — one cell size per cardinal step,
+    `cell_size × √2` per diagonal — so it is correct on a periodic domain and is
+    unaffected by how the lines are packaged or split. See
+    [Vector data](../vector_data.md).
+
 Output file: `<write_fname>_channel_network.<ext>`
 
 ---
@@ -128,6 +144,14 @@ One polyline per channel link (source-to-junction or junction-to-junction). Smal
 | `channel_network_lines_output_format` | string | `flatgeobuf` | Output format. `flatgeobuf` / `fgb`: FlatGeobuf. `gpkg`: GeoPackage. CSV is not supported for lines. |
 
 Output file: `<write_fname>_channel_network_lines.<ext>`
+
+!!! note "The lines are MultiLineString"
+    Channel links are written as `MultiLineString`, uniformly. An ordinary link
+    is a single-part one whose coordinates are exactly what a `LineString` would
+    have carried. A link that crosses a **periodic** boundary (available in
+    `lsdtt-lem`) is split at the wrap, so no renderer draws a line across the
+    whole domain. `link_length` is measured along the flow path, so it is
+    correct in either case. See [Vector data](../vector_data.md).
 
 ---
 

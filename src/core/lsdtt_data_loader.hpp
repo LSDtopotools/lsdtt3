@@ -169,11 +169,24 @@ struct lsdtt_polygon_geom
 };
  
 // std::monostate = null / no geometry
+// A line in several disjoint parts.
+//
+// The parts are NEVER joined. That is the whole reason the type exists: a
+// channel crossing a periodic boundary, an island, a road interrupted by a
+// bridge -- joining part N's end to part N+1's start invents a segment that is
+// not in the landscape, and on a periodic grid that segment is a whole domain
+// wide and renders as a channel straight across the map.
+struct lsdtt_multiline_geom
+{
+    std::vector<std::vector<lsdtt_xy>> parts;
+};
+
 using lsdtt_geom = std::variant<
     std::monostate,
     lsdtt_point_geom,
     lsdtt_line_geom,
-    lsdtt_polygon_geom
+    lsdtt_polygon_geom,
+    lsdtt_multiline_geom
 >;
  
 // =============================================================================
@@ -238,6 +251,21 @@ struct lsdtt_vector_layer
 {
     lsdtt_vector_schema              schema;
     std::vector<lsdtt_vector_record> records;
+
+    // Which INPUT FEATURE each record came from, parallel to `records`.
+    //
+    // A multipart geometry is exploded into one record per part on read, so the
+    // record count no longer matches the source feature count. This recovers the
+    // grouping.
+    //
+    // It is deliberately NOT a schema field. The schema describes the columns
+    // that exist in the file, and a synthetic column would make every
+    // read-then-write round trip emit something the source did not have --
+    // caught by unit_internal_drainage_detect, which asserts that every schema
+    // field is written. Provenance is metadata about the read, not data.
+    //
+    // Empty when nothing was exploded, so a caller can ignore it entirely.
+    std::vector<std::int64_t>        source_feature_index;
  
     std::size_t size()  const noexcept { return records.size(); }
     bool        empty() const noexcept { return records.empty(); }
@@ -534,6 +562,16 @@ public:
  
     void write_line(
         const std::vector<lsdtt_xy>&                 points,
+        const std::vector<lsdtt_vector_field_value>& field_values
+    );
+
+    // Write a line in several disjoint parts as a single MultiLineString
+    // feature. A one-part call is written as a single-part MultiLineString --
+    // the coordinates are identical to write_line's, only the container
+    // differs, which is what lets a writer emit a uniform geometry type without
+    // changing any geometry.
+    void write_multiline(
+        const std::vector<std::vector<lsdtt_xy>>&    parts,
         const std::vector<lsdtt_vector_field_value>& field_values
     );
  

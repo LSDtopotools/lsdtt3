@@ -436,3 +436,61 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
 
 
 } // namespace lsdtt
+
+// =============================================================================
+// The channel threshold. See the header for the units trap this centralises.
+// =============================================================================
+namespace lsdtt
+{
+
+double channel_threshold_quantity(double upslope_area_m2,
+                                  double cell_size_m,
+                                  bool   divide_area_by_dx) noexcept
+{
+    if (!divide_area_by_dx) return upslope_area_m2;
+    return upslope_area_m2 / std::max(1e-12, cell_size_m);
+}
+
+channel_threshold_report describe_channel_threshold(double threshold,
+                                                    double cell_size_m,
+                                                    bool   divide_area_by_dx) noexcept
+{
+    const double dx = std::max(1e-12, cell_size_m);
+    channel_threshold_report r;
+
+    if (divide_area_by_dx)
+    {
+        r.specific_area_m = threshold;
+        r.map_area_m2     = threshold * dx;
+    }
+    else
+    {
+        r.map_area_m2     = threshold;
+        r.specific_area_m = threshold / dx;
+    }
+    r.equivalent_pixels = r.map_area_m2 / (dx * dx);
+    return r;
+}
+
+std::vector<std::uint8_t> channel_mask_from_area_threshold(
+    const lsdtt_flowinfo&      flow,
+    const std::vector<double>& upslope_area_m2,
+    double                     threshold,
+    double                     cell_size_m,
+    bool                       divide_area_by_dx)
+{
+    const std::size_t n = flow.full_grid_size();
+    std::vector<std::uint8_t> is_channel(n, 0u);
+    if (!(threshold > 0.0)) return is_channel;
+
+    for (std::size_t i = 0; i < n && i < upslope_area_m2.size(); ++i)
+    {
+        if (!flow.is_valid_cell(static_cast<std::int64_t>(i))) continue;
+        const double q = channel_threshold_quantity(
+            upslope_area_m2[i], cell_size_m, divide_area_by_dx);
+        if (q >= threshold) is_channel[i] = 1u;
+    }
+    return is_channel;
+}
+
+} // namespace lsdtt

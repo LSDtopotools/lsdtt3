@@ -167,6 +167,18 @@ OGRGeometry* build_ogr_geometry(const lsdtt_geom& geom)
                     ls->setPoint(i, g.points[i].x, g.points[i].y);
                 return ls;
             }
+            else if constexpr (std::is_same_v<T, lsdtt_multiline_geom>)
+            {
+                OGRMultiLineString* mls = new OGRMultiLineString();
+                for (const auto& part : g.parts)
+                {
+                    if (part.size() < 2) continue;
+                    OGRLineString ls;
+                    for (const lsdtt_xy& p : part) ls.addPoint(p.x, p.y);
+                    mls->addGeometry(&ls);
+                }
+                return mls;
+            }
             else if constexpr (std::is_same_v<T, lsdtt_polygon_geom>)
             {
                 OGRPolygon*    poly = new OGRPolygon();
@@ -188,8 +200,10 @@ OGRGeometry* build_ogr_geometry(const lsdtt_geom& geom)
     );
 }
  
-// Read an OGRGeometry into an lsdtt_geom. Returns monostate for unsupported types.
-lsdtt_geom read_ogr_geometry(OGRGeometry* ogr_geom)
+// Read a SINGLE-PART OGRGeometry into an lsdtt_geom. Returns monostate for
+// anything else -- callers should go through read_ogr_geometry_parts(), which
+// handles multipart and reports what it could not read.
+lsdtt_geom read_ogr_geometry_single(OGRGeometry* ogr_geom)
 {
     if (!ogr_geom) return std::monostate{};
  
@@ -236,6 +250,73 @@ lsdtt_geom read_ogr_geometry(OGRGeometry* ogr_geom)
     }
  
     return std::monostate{};  // unsupported geometry type
+}
+
+// -----------------------------------------------------------------------------
+// read_ogr_geometry_parts
+//
+// Explode a geometry into its single parts.
+//
+// WHY EXPLODE RATHER THAN ADD A MULTIPART VARIANT. `lsdtt_line_geom` holds one
+// vector of points, so a multipart line has to become either several records or
+// a new variant type. Flattening the parts into ONE line is not an option: it
+// invents a segment joining part N's end to part N+1's start, which is exactly
+// the artefact that makes multipart necessary in the first place (a channel
+// crossing a periodic boundary, an island, a road interrupted by a bridge).
+//
+// Exploding gives every existing consumer the right answer with no change: they
+// all iterate records and handle single-part geometry. The cost is that the
+// record count no longer matches the input feature count, which is why the
+// caller stamps `source_feature_index` on each part.
+//
+// Until 2026-08-26 there was no multipart branch AT ALL, in any of the four
+// types, and an unrecognised geometry returned monostate silently. Every line
+// consumer then did `get_if<lsdtt_line_geom>(...)`, got nullptr, and skipped the
+// feature -- so a MultiLineString input produced an empty output and a zero exit
+// code. Demonstrated on lsdtt-linear-stats (1 feature vs empty layer) and on
+// lsdtt-raster-preprocessing point sampling (3 features vs a 0-byte file).
+// -----------------------------------------------------------------------------
+std::vector<lsdtt_geom> read_ogr_geometry_parts(OGRGeometry* ogr_geom,
+                                                std::string&  unsupported_name)
+{
+    std::vector<lsdtt_geom> out;
+    if (!ogr_geom) return out;
+
+    const OGRwkbGeometryType gt = wkbFlatten(ogr_geom->getGeometryType());
+
+    if (gt == wkbMultiPoint || gt == wkbMultiLineString ||
+        gt == wkbMultiPolygon || gt == wkbGeometryCollection)
+    {
+        OGRGeometryCollection* gc =
+            static_cast<OGRGeometryCollection*>(ogr_geom);
+
+        for (int i = 0; i < gc->getNumGeometries(); ++i)
+        {
+            // Recurse: a GeometryCollection may nest, and a nested collection
+            // is not a part we can hand to a consumer.
+            std::vector<lsdtt_geom> inner =
+                read_ogr_geometry_parts(gc->getGeometryRef(i), unsupported_name);
+            out.insert(out.end(), inner.begin(), inner.end());
+        }
+        return out;
+    }
+
+    lsdtt_geom single = read_ogr_geometry_single(ogr_geom);
+    if (std::holds_alternative<std::monostate>(single))
+    {
+        // Report the type rather than dropping it in silence. A reader that
+        // discards data without saying so is the defect this function exists to
+        // fix; leaving the behaviour for the NEXT unsupported type repeats it.
+        if (unsupported_name.empty())
+        {
+            const char* name = OGRGeometryTypeToName(ogr_geom->getGeometryType());
+            unsupported_name = name ? name : "unknown";
+        }
+        return out;
+    }
+
+    out.push_back(std::move(single));
+    return out;
 }
 
 } // unnamed namespace
@@ -1127,21 +1208,73 @@ lsdtt_vector_layer lsdtt_data_loader::read_vector_layer(
     // Read features.
     layer->ResetReading();
     OGRFeature* raw_feat = nullptr;
+    std::int64_t feature_index  = 0;
+    std::int64_t n_empty        = 0;
+    std::int64_t n_exploded     = 0;
+    std::int64_t n_unsupported  = 0;
+    std::string  unsupported_name;
+
     while ((raw_feat = layer->GetNextFeature()) != nullptr)
     {
-        lsdtt_vector_record record;
-        record.geometry = read_ogr_geometry(raw_feat->GetGeometryRef());
- 
-        record.field_values.reserve(n_fields);
+        std::vector<lsdtt_geom> parts =
+            read_ogr_geometry_parts(raw_feat->GetGeometryRef(), unsupported_name);
+
+        std::vector<lsdtt_vector_field_value> fields;
+        fields.reserve(n_fields);
         for (int f = 0; f < n_fields; ++f)
-            record.field_values.push_back(
+            fields.push_back(
                 get_typed_field_value(raw_feat, f, result.schema.field_types[f])
             );
- 
-        result.records.push_back(std::move(record));
+
+        if (parts.empty())
+        {
+            // Nothing readable. The record is still emitted with an empty
+            // geometry so the feature count and the field values survive, which
+            // is the historical behaviour; what is NEW is that it is counted and
+            // reported below rather than vanishing without trace.
+            if (raw_feat->GetGeometryRef() == nullptr) ++n_empty;
+            else                                       ++n_unsupported;
+
+            lsdtt_vector_record record;
+            record.field_values = std::move(fields);
+            result.records.push_back(std::move(record));
+            result.source_feature_index.push_back(feature_index);
+        }
+        else
+        {
+            if (parts.size() > 1) ++n_exploded;
+            for (lsdtt_geom& g : parts)
+            {
+                lsdtt_vector_record record;
+                record.geometry     = std::move(g);
+                record.field_values = fields;      // copied onto every part
+                result.records.push_back(std::move(record));
+                result.source_feature_index.push_back(feature_index);
+            }
+        }
+
+        ++feature_index;
         OGRFeature::DestroyFeature(raw_feat);
     }
- 
+
+    if (n_exploded > 0)
+        std::cout << "lsdtt_data_loader: " << n_exploded
+                  << " multipart feature(s) in layer '" << layer_name
+                  << "' were split into single parts ("
+                  << result.records.size() << " records from "
+                  << feature_index << " features). Attributes are copied onto "
+                     "each part; layer.source_feature_index recovers the "
+                     "grouping.\n";
+
+    if (n_unsupported > 0)
+        std::cout << "lsdtt_data_loader: WARNING - " << n_unsupported
+                  << " feature(s) in layer '" << layer_name
+                  << "' have a geometry type this reader does not support"
+                  << (unsupported_name.empty() ? std::string()
+                                               : " (" + unsupported_name + ")")
+                  << " and carry NO geometry. They are counted in the record "
+                     "total but every consumer will skip them.\n";
+
     return result;
 }
  
@@ -1327,6 +1460,26 @@ void lsdtt_data_loader::write_line(
         write_session_->buffer.records.push_back(std::move(record));
 }
  
+void lsdtt_data_loader::write_multiline(
+    const std::vector<std::vector<lsdtt_xy>>&    parts,
+    const std::vector<lsdtt_vector_field_value>& field_values
+)
+{
+    if (!write_session_)
+        throw std::runtime_error(
+            "lsdtt_data_loader: write_multiline() called outside a write session"
+        );
+
+    lsdtt_vector_record record;
+    record.geometry     = lsdtt_multiline_geom{ parts };
+    record.field_values = field_values;
+
+    if (!write_session_->spatial_index)
+        write_record_to_layer(record, write_session_->layer);
+    else
+        write_session_->buffer.records.push_back(std::move(record));
+}
+
 void lsdtt_data_loader::write_polygon(
     const std::vector<lsdtt_xy>&                 exterior,
     const std::vector<lsdtt_vector_field_value>& field_values
@@ -1379,6 +1532,8 @@ void lsdtt_data_loader::finish_vector_write()
                 geom_type = wkbPoint;
             else if (std::holds_alternative<lsdtt_line_geom>(first_geom))
                 geom_type = wkbLineString;
+            else if (std::holds_alternative<lsdtt_multiline_geom>(first_geom))
+                geom_type = wkbMultiLineString;
             else if (std::holds_alternative<lsdtt_polygon_geom>(first_geom))
                 geom_type = wkbPolygon;
         }
