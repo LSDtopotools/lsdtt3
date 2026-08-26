@@ -387,6 +387,23 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
     const bool per_s = (boundary_conditions.size() > 2 && boundary_conditions[2] == 'p');
     const bool per_w = (boundary_conditions.size() > 3 && boundary_conditions[3] == 'p');
 
+    // 'o' is a DIRICHLET edge (base level): the edge cell is held at its input
+    // elevation, giving an identity row in the tridiagonal solve.  'n' is the
+    // Neumann (zero-flux) edge, handled by zeroing the face conductance below.
+    // These were previously treated alike, both as zero-flux, which silently
+    // turned a declared fixed-elevation boundary into a no-flux one.
+    auto bc_at = [&](std::size_t i) -> char
+    {
+        return (boundary_conditions.size() > i) ? boundary_conditions[i] : 'n';
+    };
+    const char cN = bc_at(0), cE = bc_at(1), cS = bc_at(2), cW = bc_at(3);
+
+    auto is_o_edge = [&](int r, int c) -> bool
+    {
+        return (r == 0         && cN == 'o') || (r == nrows - 1 && cS == 'o')
+            || (c == 0         && cW == 'o') || (c == ncols - 1 && cE == 'o');
+    };
+
     // Safe neighbour Z fetch using reflection logic for boundary edges and masked cells
     auto nbr_z = [&](int r, int c, int dr, int dc, const std::vector<float>& arr) -> float
     {
@@ -495,7 +512,7 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
         for (int c = 0; c < ncols; ++c)
         {
             std::size_t idx = static_cast<std::size_t>(r * ncols + c);
-            if (!mask[idx])
+            if (!mask[idx] || is_o_edge(r, c))
             {
                 A[c] = 0.0f; B[c] = 1.0f; C_arr[c] = 0.0f; D[c] = z_old[idx];
             }
@@ -535,7 +552,7 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
         for (int r = 0; r < nrows; ++r)
         {
             std::size_t idx = static_cast<std::size_t>(r * ncols + c);
-            if (!mask[idx])
+            if (!mask[idx] || is_o_edge(r, c))
             {
                 A[r] = 0.0f; B[r] = 1.0f; C_arr[r] = 0.0f; D[r] = z_half[idx];
             }

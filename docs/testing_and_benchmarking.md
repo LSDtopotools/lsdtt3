@@ -4017,6 +4017,91 @@ fail.
 
 ---
 
+## 10d. The steady-state SOR tolerance sat below the float noise floor (2026-08-26)
+
+A 250 x 250 steady-state hillslope solve at 5 m was taking ~13 minutes and reporting
+`converged: NO`. Optimal SOR needs O(n) iterations, so n = 250 should reach a 1e-4 m
+tolerance in roughly 364 sweeps. The gap between ~364 and 250,000 was the whole finding.
+
+**Measurement.** Running the LINEAR solver (which removes the Roering nonlinearity from
+suspicion) at increasing iteration caps on the `ocn` landscape:
+
+| iterations | max\|dz\| (m) |
+|---:|---:|
+| 200 | 2.5e-3 |
+| 500 | 1.98e-4 |
+| 1000 | 1.83e-4 |
+| 2000 | 1.91e-4 |
+| 5000 | 1.98e-4 |
+
+The residual falls normally to ~2e-4 by iteration 500 and then stops -- and *wanders*,
+non-monotonically. That is an arithmetic floor, not a convergence rate. Confirmed directly
+by tolerance bisection against the real binary:
+
+* tolerance 3e-4 -> converged in **243** iterations
+* tolerance 1e-4 -> ran **20,000** iterations, finishing at 2.29e-4, i.e. *worse* than it
+  had been at iteration 243.
+
+**Cause.** The working array `z` was `std::vector<float>`. The convergence test is
+`max|z_new - z_old|`, an increment tending to zero measured on a field of O(100 m), formed
+by differencing a four-neighbour sum of O(400). Float spacing at that magnitude is ~6e-5 m,
+so the increment could not be resolved below ~2e-4 m. The default tolerance of 1e-4 m was
+therefore unreachable in principle: `converged` could never be set, and every solve ran to
+`hillslope_ss_max_iterations` no matter how well converged the field was.
+
+**Fix.** `src/cpu/lsdtt_hillslope_steady_state_cpu.cpp` carries the SOR iteration, its
+constants and its residual accumulators in `double`; the raster is converted back to `float`
+on the way out. Same landscape, same parameters, after the fix:
+
+| case | before | after |
+|---|---|---|
+| linear, tol 1e-4 | 20,000 iters, not converged | **261 iters, 2.7 s, converged** |
+| linear, tol 1e-6 | unreachable at any iteration count | **350 iters, 1.8 s, converged** |
+
+261 and 350 both sit where SOR theory says they should for n = 250. See
+[Landscape evolution modelling](landscape_evolution_modelling.md) for the numerics.
+
+**Separate defect, since RESOLVED: the nonlinear solve did not converge.** Double precision did
+not change the Roering case, correctly -- its residual plateaued at ~1.3 m, nine orders above any
+precision floor, and the plateau scaled with the relaxation factor (omega 0.3 -> 1.33, 0.8 -> 4.64,
+1.3 -> 18.8, auto -> 133). The field was converged (RMS change 0.023 m between 20k and 60k sweeps)
+but **106 cells of 62,500 (0.17%)**, at median `S/Sc` 0.735 against 0.365 grid-wide, oscillated at
+~1.3 m and held the max-norm up. No cell reached the `s2` clamp.
+
+**Cause: the face coefficient was not a property of the face.** `alpha` for the N face of `(r,c)`
+used the E-W cross-slope evaluated at `(r,c)`, while `alpha` for the S face of `(r-1,c)` -- the
+same physical face -- used it at `(r-1,c)`. The two differed, making the discrete operator
+non-symmetric and the scheme non-conservative: flux leaving one cell through a face did not equal
+flux entering its neighbour through it. Non-symmetric operators admit complex eigenvalue pairs,
+i.e. modes that oscillate rather than decay.
+
+**Fix.** The tangential slope is averaged *across* the face from the two cells sharing it, which
+required splitting the `nbr_z` accessor into an index resolver plus a value read so the
+neighbour's own centred slope gets identical periodic-wrap / Neumann / masked-cell handling.
+
+| Roering nonlinear, omega 0.3 | before | after |
+|---|---|---|
+| result | 30,000 sweeps, plateau 1.33 m, not converged | **5,120 sweeps, 23 s, converged (9.99e-5)** |
+| max `S/Sc` in the solution | 0.970 | **0.882** |
+| cost per sweep | 2.8 ms | 4.6 ms (1.63x) |
+
+The over-steepening (0.970 -> 0.882) is the conservation defect appearing directly in the answer.
+**Physical validation against known forcing:** for a 1-D steady hillslope the divide curvature is
+exactly `U/D` as `S -> 0`. The converged field gives a median Laplacian over the flattest 1% of
+interior pixels of **-0.007985** against a predicted **0.008** (convex-up is negative in lsdtt3) --
+99.8%, tightening toward the prediction as `S -> 0`: 0.007892 at the 5th percentile, 0.007963 at
+the 2nd, 0.007985 at the 1st.
+
+**Still open: the nonlinear solver remains unusable at competitive relaxation.** After the fix,
+30,000 sweeps still gives 5.02 at omega 0.8 and 23.1 at omega 1.3, and auto-omega (~1.95) diverges.
+The auto-omega formula is the optimal-SOR result for the *linear* Poisson problem and has no
+derivation behind it for a Picard-lagged nonlinear operator. Being pinned at omega 0.3 costs
+roughly 500x against optimal SOR (`rho_GS ~ 0.99984` at n=250 gives ~59,000 Gauss-Seidel sweeps
+and ~364 optimal-SOR sweeps; omega 0.3 gives ~196,000). Picard cannot fix this -- it has no
+damping on the coefficients at all, so under-relaxing `z` leaves the alpha feedback untouched.
+A Newton scheme is the intended resolution.
+
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

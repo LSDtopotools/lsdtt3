@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 #ifdef _OPENMP
@@ -44,8 +45,33 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const bool per_s = (bc.size() > 2 && bc[2] == 'p');
     const bool per_w = (bc.size() > 3 && bc[3] == 'p');
 
-    const float rhs = opts.U * h2 / opts.D;
-    const float Sc2 = opts.Sc * opts.Sc;
+    // 'o' is a DIRICHLET edge: the boundary is base level, so edge cells are held
+    // at their input elevation and contribute to their neighbours' updates exactly
+    // like channel cells.  'n' is the Neumann (zero-flux) edge.
+    //
+    // These solvers previously treated 'o' and 'n' alike, both as Neumann
+    // reflection, which disagreed with lsdtt_hillslope_implicit_cpu.cpp (which has
+    // always honoured 'o' as Dirichlet) and silently converted a fixed-elevation
+    // boundary into a no-flux one.  A run declaring 'opop' -- periodic E-W, fixed
+    // elevation N-S -- was getting no-flux N-S instead.
+    auto bc_code = [&](std::size_t i) -> char
+    {
+        return (bc.size() > i) ? bc[i] : 'n';
+    };
+    const char cN = bc_code(0), cE = bc_code(1), cS = bc_code(2), cW = bc_code(3);
+
+    auto is_o_edge = [&](int r, int c) -> bool
+    {
+        return (r == 0         && cN == 'o') || (r == nrows - 1 && cS == 'o')
+            || (c == 0         && cW == 'o') || (c == ncols - 1 && cE == 'o');
+    };
+
+    // The SOR arithmetic is carried in double (see the note on z below), so the
+    // constants it consumes are formed in double too.
+    const double hd   = static_cast<double>(h);
+    const double h2d  = static_cast<double>(h2);
+    const double Sc2d = static_cast<double>(opts.Sc) * static_cast<double>(opts.Sc);
+    const double rhs  = static_cast<double>(opts.U) * h2d / static_cast<double>(opts.D);
 
     // -------------------------------------------------------------------------
     // Determine SOR relaxation factor omega.
@@ -78,7 +104,20 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const std::vector<uint8_t>& mask = dem.get_mask();
 
     // Single elevation array - SOR updates in-place.
-    std::vector<float> z(dem.get_data());
+    //
+    // DOUBLE, not float, and deliberately so.  The convergence test is
+    // max|z_new - z_old|, an increment that shrinks toward zero while z itself
+    // stays O(100 m).  In single precision the representable step near 100 m is
+    // ~1e-5 m, and the update forms a sum of four neighbours (O(400)) before
+    // differencing it, so the increment cannot be resolved below ~2e-4 m.  The
+    // default tolerance of 1e-4 m therefore sat BELOW the arithmetic noise
+    // floor: the residual bottomed out around 2e-4 and wandered there forever,
+    // so every solve ran to max_iterations no matter how well converged the
+    // field was.  In double the floor drops by ~9 orders of magnitude and the
+    // tolerance means what it says.  The raster is converted back to float on
+    // the way out; only the iteration is carried at higher precision.
+    const std::vector<float>& z_in = dem.get_data();
+    std::vector<double> z(z_in.begin(), z_in.end());
 
     // -------------------------------------------------------------------------
     // nbr_z: elevation of the neighbour at (r+dr, c+dc) read from z.
@@ -86,7 +125,7 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     // Handles periodic wrap and Neumann (zero-flux) reflection at open
     // boundaries and masked interior neighbours.
     // -------------------------------------------------------------------------
-    auto nbr_z = [&](int r, int c, int dr, int dc) -> float
+    auto nbr_rc = [&](int r, int c, int dr, int dc) -> std::pair<int, int>
     {
         int nr = r + dr;
         int nc = c + dc;
@@ -113,17 +152,32 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
             else       nc = std::min(ncols - 1, c - dc);
         }
 
-        const size_t nidx = static_cast<size_t>(nr * ncols + nc);
-
         // Masked interior neighbour: same Neumann reflection
-        if (!mask[nidx])
+        if (!mask[static_cast<size_t>(nr * ncols + nc)])
         {
-            const int ir = std::max(0, std::min(nrows - 1, r - dr));
-            const int ic = std::max(0, std::min(ncols - 1, c - dc));
-            return z[static_cast<size_t>(ir * ncols + ic)];
+            nr = std::max(0, std::min(nrows - 1, r - dr));
+            nc = std::max(0, std::min(ncols - 1, c - dc));
         }
 
-        return z[nidx];
+        return {nr, nc};
+    };
+
+    auto nbr_z = [&](int r, int c, int dr, int dc) -> double
+    {
+        const auto rc = nbr_rc(r, c, dr, dc);
+        return z[static_cast<size_t>(rc.first * ncols + rc.second)];
+    };
+
+    // Centred tangential slopes AT AN ARBITRARY CELL.  Needed because the face
+    // coefficient must be a property of the face, not of the cell that happens
+    // to be asking (see the note on face symmetry below).
+    auto slope_x = [&](int r, int c) -> double
+    {
+        return (nbr_z(r, c, 0, +1) - nbr_z(r, c, 0, -1)) / (2.0 * hd);
+    };
+    auto slope_y = [&](int r, int c) -> double
+    {
+        return (nbr_z(r, c, +1, 0) - nbr_z(r, c, -1, 0)) / (2.0 * hd);
     };
 
     // -------------------------------------------------------------------------
@@ -139,16 +193,25 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     // underestimates alpha on any cell with a non-zero cross-slope, allowing
     // slopes to grow steeper than Sc in the cross direction.
     //
-    // cross2_over_Sc2 = (tangent_slope)^2 / Sc^2  - pre-computed per face pair:
-    //   N/S faces share the E-W tangent  -> cross2 = (zE - zW)^2 / (4h^2 Sc^2)
-    //   E/W faces share the N-S tangent  -> cross2 = (zN - zS)^2 / (4h^2 Sc^2)
+    // cross2_over_Sc2 = (tangent_slope)^2 / Sc^2, where the tangent is the
+    // E-W slope for N/S faces and the N-S slope for E/W faces.
+    //
+    // FACE SYMMETRY.  The tangent is averaged ACROSS the face, from the two
+    // cells that share it, rather than taken from the cell being updated.  This
+    // matters: alpha is a property of the face, so the N face of (r,c) and the
+    // S face of (r-1,c) are the same face and must get the same coefficient.
+    // Evaluating the tangent at the updating cell alone gave them DIFFERENT
+    // values, which makes the discrete operator non-symmetric and the scheme
+    // non-conservative -- flux leaving one cell through a face did not equal
+    // the flux entering its neighbour through that same face.  The face-normal
+    // term is already symmetric, being squared.
     // -------------------------------------------------------------------------
-    auto face_alpha = [&](float z_c, float z_nbr, float cross2_over_Sc2) -> float
+    auto face_alpha = [&](double z_c, double z_nbr, double cross2_over_Sc2) -> double
     {
-        if (!opts.nonlinear) return 1.0f;
-        const float dz_h = (z_nbr - z_c) / h;
-        const float s2   = std::min(dz_h * dz_h / Sc2 + cross2_over_Sc2, 0.9999f);
-        return 1.0f / (1.0f - s2);
+        if (!opts.nonlinear) return 1.0;
+        const double dz_h = (z_nbr - z_c) / hd;
+        const double s2   = std::min(dz_h * dz_h / Sc2d + cross2_over_Sc2, 0.9999);
+        return 1.0 / (1.0 - s2);
     };
 
     // -------------------------------------------------------------------------
@@ -167,17 +230,19 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     // for the nonlinear mode), using the freshly-updated values of already-
     // processed neighbours - i.e. Gauss-Seidel style within each pass.
     // -------------------------------------------------------------------------
-    float final_residual = opts.tolerance + 1.0f;
-    int   n_iter         = 0;
-    bool  converged      = false;
+    const double omega_d = static_cast<double>(omega);
+
+    double final_residual = static_cast<double>(opts.tolerance) + 1.0;
+    int    n_iter         = 0;
+    bool   converged      = false;
 
     for (int it = 0; it < opts.max_iterations; ++it)
     {
-        float max_delta = 0.0f;
+        double max_delta = 0.0;
 
         for (int color = 0; color <= 1; ++color)
         {
-            float pass_delta = 0.0f;
+            double pass_delta = 0.0;
 
 #ifdef _OPENMP
             #pragma omp parallel for schedule(static) reduction(max : pass_delta)
@@ -190,27 +255,50 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
 
                 if ((row + col) % 2 != color)       continue;
                 if (!mask[sidx] || is_channel[sidx]) continue;
+                if (is_o_edge(row, col))            continue;   // Dirichlet base level
 
-                const float zc = z[sidx];
+                const double zc = z[sidx];
 
-                const float zN = nbr_z(row, col, -1,  0);
-                const float zS = nbr_z(row, col, +1,  0);
-                const float zE = nbr_z(row, col,  0, +1);
-                const float zW = nbr_z(row, col,  0, -1);
+                const double zN = nbr_z(row, col, -1,  0);
+                const double zS = nbr_z(row, col, +1,  0);
+                const double zE = nbr_z(row, col,  0, +1);
+                const double zW = nbr_z(row, col,  0, -1);
 
-                const float sx2_norm = (zE - zW) * (zE - zW) / (4.0f * h2 * Sc2);
-                const float sy2_norm = (zN - zS) * (zN - zS) / (4.0f * h2 * Sc2);
+                // Face tangents, averaged across each face so that the two
+                // cells sharing a face agree on its coefficient.  Only needed
+                // in nonlinear mode; the linear path ignores them entirely.
+                double cN = 0.0, cS = 0.0, cE = 0.0, cW = 0.0;
+                if (opts.nonlinear)
+                {
+                    const double sxc = slope_x(row, col);
+                    const double syc = slope_y(row, col);
 
-                const float aN = face_alpha(zc, zN, sx2_norm);
-                const float aS = face_alpha(zc, zS, sx2_norm);
-                const float aE = face_alpha(zc, zE, sy2_norm);
-                const float aW = face_alpha(zc, zW, sy2_norm);
-                const float aT = aN + aS + aE + aW;
+                    const auto rcN = nbr_rc(row, col, -1,  0);
+                    const auto rcS = nbr_rc(row, col, +1,  0);
+                    const auto rcE = nbr_rc(row, col,  0, +1);
+                    const auto rcW = nbr_rc(row, col,  0, -1);
 
-                const float z_jac = (aN * zN + aS * zS + aE * zE + aW * zW + rhs) / aT;
-                const float z_new = (1.0f - omega) * zc + omega * z_jac;
+                    const double tN = 0.5 * (sxc + slope_x(rcN.first, rcN.second));
+                    const double tS = 0.5 * (sxc + slope_x(rcS.first, rcS.second));
+                    const double tE = 0.5 * (syc + slope_y(rcE.first, rcE.second));
+                    const double tW = 0.5 * (syc + slope_y(rcW.first, rcW.second));
 
-                const float delta = std::abs(z_new - zc);
+                    cN = tN * tN / Sc2d;
+                    cS = tS * tS / Sc2d;
+                    cE = tE * tE / Sc2d;
+                    cW = tW * tW / Sc2d;
+                }
+
+                const double aN = face_alpha(zc, zN, cN);
+                const double aS = face_alpha(zc, zS, cS);
+                const double aE = face_alpha(zc, zE, cE);
+                const double aW = face_alpha(zc, zW, cW);
+                const double aT = aN + aS + aE + aW;
+
+                const double z_jac = (aN * zN + aS * zS + aE * zE + aW * zW + rhs) / aT;
+                const double z_new = (1.0 - omega_d) * zc + omega_d * z_jac;
+
+                const double delta = std::abs(z_new - zc);
                 if (delta > pass_delta) pass_delta = delta;
 
                 z[sidx] = z_new;
@@ -229,13 +317,15 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
         }
     }
 
+    std::vector<float> z_out(z.begin(), z.end());
+
     lsdtt_hillslope_steady_state_result result;
     result.elevation      = lsdtt_raster_cpu(
-        std::move(z),
+        std::move(z_out),
         std::vector<uint8_t>(mask),
         meta);
     result.n_iterations   = n_iter;
-    result.final_residual = final_residual;
+    result.final_residual = static_cast<float>(final_residual);
     result.converged      = converged;
     return result;
 }

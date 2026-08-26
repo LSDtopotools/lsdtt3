@@ -94,6 +94,30 @@ R*   = R / (Lh S_c)
 
 `R* < 1` is a hard bound of the framework, not a fitted quantity.
 
+!!! danger "Cht is ALWAYS the Laplacian — this is not configurable"
+    `E* = 2|Cht|Lh/S_c` is defined with the Laplacian `∇²z` (Roering et al.
+    2007; Hurst et al. 2012), so that is what the tool uses. There is no
+    parameter to change it.
+
+    A `curvature_metric_choice` parameter used to exist and defaulted to
+    `mean_curvature` — lsdtt3's **differential-geometry** mean curvature,
+
+    ```
+    H = ((1+q²)r − 2pqs + (1+p²)t) / (2(1+p²+q²)^{3/2})
+    ```
+
+    which is a different quantity. It equals `∇²z/2` only where the gradient is
+    zero; at finite gradient the metric terms make the ratio slope-dependent.
+    Using it biased `E*` by about a factor of two, and biased gentle and steep
+    hilltops by different amounts.
+
+    **Nothing about the wrong answer looked wrong**: `R*` stayed below 1, the
+    cloud stayed tight, no warning was printed — the points simply sat in the
+    wrong place on the curve. On a synthetic landscape with known forcing
+    (`U/D` = 0.0080 m⁻¹), `mean_curvature` recovered 0.0035 (0.43×) and the
+    Laplacian 0.0071 (0.89×). A parameter file that still sets the old key gets
+    a note saying it was ignored.
+
 !!! warning "Curvature sign"
     lsdtt3 uses the strict mathematical convention, so a **convex-up hilltop has
     NEGATIVE curvature**. E\* uses `|Cht|`. A positive `Cht` is a concave pixel,
@@ -233,7 +257,6 @@ threshold_hilltop_gradient: 0.8
 remove_positive_curvature_hilltops: true
 
 surface_fitting_window_radius: 6.0
-curvature_metric_choice: mean_curvature
 critical_hillslope_slope: 0.8
 
 run_chi_analysis: true
@@ -320,7 +343,6 @@ prints the same information.
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `curvature_metric_choice` | string | `mean_curvature` | Which polyfit curvature supplies Cht. |
 | `surface_fitting_window_radius` | float | `0` | Polynomial surface-fitting window radius in metres. 0 = 3 * cell size. |
 
 ### Tracing

@@ -116,6 +116,120 @@ The **unconditionally stable backward-Euler solver** for the Roering law. It sol
 
 **Alternating-Direction Implicit** (ADI) method for solving the Laplacian, splitting the 2D problem into two 1D line solves and repeating. It is unconditionally stable and very fast on regular grids, but it applies only to linear diffusion (no nonlinearity). It does not require Eigen and is a useful fallback when explicit schemes bottleneck but you want to avoid a full sparse-matrix solve.
 
+### The steady-state hillslope solver: red–black SOR
+
+The five solvers above all march forward in time. When `run_steady_state: true` the hillslope
+field is instead obtained directly, by solving the **steady** equation in which uplift is
+exactly balanced by divergence of the sediment flux:
+
+    ∇·q_s = U          with    q_s = -D ∇z / (1 - |∇z|²/S_c²)
+
+with channels held as Dirichlet boundaries. Discretised on the regular grid this is a
+system of `N = n_rows × n_cols` coupled equations, and it is solved iteratively by
+**red–black successive over-relaxation (SOR)**.
+
+#### What SOR is, and why over-relaxation
+
+Take the linear case (`S_c → ∞`, so the flux law reduces to `D ∇²z = -U`). The five-point
+stencil makes each cell's elevation the average of its four neighbours plus a source term:
+
+    z_jac = (z_N + z_S + z_E + z_W + U h²/D) / 4
+
+Sweeping that assignment over the grid is **Gauss–Seidel** relaxation. It converges, but
+slowly: each sweep propagates information only one cell, so long-wavelength error decays at
+a rate set by the domain size. **Over-relaxation** deliberately overshoots the Gauss–Seidel
+update by a factor `ω`:
+
+    z_new = (1 - ω) z_old + ω z_jac
+
+For `ω = 1` this is Gauss–Seidel; for `1 < ω < 2` it extrapolates past the new estimate,
+which damps the slowest error modes far more aggressively. The optimal value follows from
+the Jacobi spectral radius `ρ_J`:
+
+    ρ_J = ½ [cos(π/(N+1)) + cos(π/(M+1))]       ω_opt = 2 / (1 + √(1 - ρ_J²))
+
+`ω > 2` diverges unconditionally. lsdtt3 computes `ω_opt` from the grid dimensions unless
+you override it with `hillslope_sor_omega`.
+
+**"Red–black"** refers to the ordering. Colour the grid like a chessboard: a cell's four
+von Neumann neighbours are always the opposite colour. So every red cell can be updated
+using only black values, and vice versa. Each iteration is therefore two colour passes, and
+within a pass every update is independent — which is what makes the sweep safe to
+parallelise with OpenMP, unlike a naive lexicographic Gauss–Seidel sweep.
+
+#### The expected cost: O(n) iterations
+
+This is the property to check a run against. For Gauss–Seidel the error per sweep decays by
+`ρ_GS ≈ 1 - O(1/n²)` on an `n × n` grid, giving **O(n²) iterations** to a fixed tolerance.
+Optimal SOR improves the decay rate to `ρ_SOR ≈ 1 - O(1/n)`, giving **O(n) iterations** —
+the square root of the Gauss–Seidel count, and the whole reason for using it.
+
+Concretely, for `n = 250`: `ρ_SOR ≈ 0.975`, so reaching a tolerance of `10⁻⁴` needs roughly
+`log(10⁻⁴)/log(0.975) ≈ 364` iterations. A 250 × 250 steady-state solve that takes a few
+hundred iterations and a couple of seconds is behaving correctly. **One that runs for tens
+of thousands of iterations is reporting a defect, not doing hard work** — either the
+relaxation factor is wrong, the problem is not the one SOR is being asked to solve, or the
+convergence test itself is broken (below).
+
+#### Picard iteration for the nonlinear law
+
+With a finite `S_c` the problem is no longer linear: the effective diffusivity at each cell
+face depends on the slope there, which depends on the very elevations being solved for. The
+face coefficient is
+
+    α_face = 1 / (1 - |∇z|²_face / S_c²)
+
+which rises steeply as the slope approaches `S_c`. lsdtt3 handles this by **Picard
+iteration** (also called successive substitution, or lagged-coefficient iteration): at each
+sweep the coefficients `α` are evaluated from the *current* elevation field, then held fixed
+while the cell is updated as if the problem were linear. The updated field then supplies new
+coefficients on the next sweep. Repeat until the field stops changing.
+
+Picard is attractive because it reuses the linear machinery unchanged and needs no Jacobian
+(unlike Newton's method, which converges quadratically but requires differentiating `α` with
+respect to every neighbouring elevation). Its weakness is that it has **no damping on the
+coefficients**. Under-relaxing `ω` damps the change in `z`, but `α` is still recomputed at
+full strength from whatever `z` currently is. On steep faces, where `dα/dS` is large, this
+permits a feedback loop: the elevation drops, the face steepens, `α` rises, the update pulls
+harder, and the cell overshoots — then the same thing happens in reverse. The result is a
+**limit cycle** rather than convergence, confined to the small fraction of cells sitting at
+high `S/S_c`. Nonlinear runs that report a residual which stops falling and simply hovers,
+while the *field* is visibly steady, are showing this signature.
+
+#### Why this solver needs double precision
+
+The SOR iteration is carried in **double precision** even though the rasters either side of
+it are single precision. This is not incidental tidiness; the solver does not work without
+it, and the reason generalises to any iterative solver judged on an increment.
+
+The convergence test is `max |z_new - z_old| < tolerance`: a quantity that by construction
+shrinks toward zero, evaluated on a field that does not. Elevations are O(100 m), and the
+spacing between representable `float` values near 100 m is about `10⁻⁵` m. Worse, the update
+forms a sum of four neighbours — O(400) in magnitude, where the spacing is ~`6 × 10⁻⁵` m —
+before differencing it back down against `z_old`. The subtraction is catastrophically
+cancelling: nearly every significant digit of the operands is common to both.
+
+So in single precision the measured increment cannot fall below roughly `2 × 10⁻⁴` m no
+matter how well converged the solution is. It bottoms out there and then **wanders**,
+driven by rounding rather than by the physics. Since the default tolerance is `10⁻⁴` m, the
+test sat permanently below the arithmetic noise floor: `converged` could never become true,
+and every solve ran to `hillslope_ss_max_iterations` regardless of its actual state. On a
+250 × 250 grid this turned a 261-iteration, ~2-second solve into a 250,000-iteration,
+13-minute one that still reported failure. The residual is not merely imprecise in this
+regime — it is *non-monotonic*, so it cannot be used to compare two runs either.
+
+Double precision moves that floor down by about nine orders of magnitude, which puts it far
+below any tolerance a user would set and restores the increment's meaning in metres. The
+memory cost is one extra array of `N` doubles, which is negligible against the iteration
+count it saves. The elevation raster is converted back to `float` on the way out; only the
+iteration is carried at the higher precision.
+
+The general lesson: **choose the precision of an iterative solve from the smallest quantity
+you intend to measure, not from the size of the field.** A tolerance is only meaningful if
+it sits above the arithmetic noise floor of the expression that computes it, and a
+convergence criterion built on a difference of large, nearly-equal numbers has a much higher
+floor than the storage format alone would suggest.
+
 ---
 
 ## Steady state versus time stepping
