@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -70,9 +71,11 @@ Raster total_curvature(const Raster& raster, double radius_metres)
     ));
 }
 
-Raster aspect(
+lsdtt::polyfit_metric_result compute_polyfit_metric_rasters(
     const Raster& raster,
+    const std::vector<lsdtt::polyfit_metric>& metrics,
     double lambda_metres,
+    double z_factor,
     int n_threads,
     double flat_slope_tolerance)
 {
@@ -83,12 +86,148 @@ Raster aspect(
         raster.native(), lambda, n_threads
     );
     lsdtt::polyfit_metric_request request;
-    request.metrics = {lsdtt::polyfit_metric::aspect_degrees};
+    request.metrics = metrics;
+    request.z_factor = z_factor;
     request.n_threads = n_threads;
     request.flat_slope_tolerance = flat_slope_tolerance;
-    return Raster(lsdtt::compute_polyfit_metrics(coefficients, request).at(
+    return lsdtt::compute_polyfit_metrics(coefficients, request);
+}
+
+Raster aspect(
+    const Raster& raster,
+    double lambda_metres,
+    int n_threads,
+    double flat_slope_tolerance)
+{
+    return Raster(compute_polyfit_metric_rasters(
+        raster,
+        {lsdtt::polyfit_metric::aspect_degrees},
+        lambda_metres,
+        1.0,
+        n_threads,
+        flat_slope_tolerance
+    ).at(
         lsdtt::polyfit_metric::aspect_degrees
     ));
+}
+
+lsdtt::polyfit_metric polyfit_metric_from_name(const std::string& name)
+{
+    static const std::map<std::string, lsdtt::polyfit_metric> metrics = {
+        {"fitted_surface", lsdtt::polyfit_metric::fitted_surface},
+        {"dzdx", lsdtt::polyfit_metric::dzdx},
+        {"dzdy", lsdtt::polyfit_metric::dzdy},
+        {"d2zdx2", lsdtt::polyfit_metric::d2zdx2},
+        {"d2zdxdy", lsdtt::polyfit_metric::d2zdxdy},
+        {"d2zdy2", lsdtt::polyfit_metric::d2zdy2},
+        {"slope", lsdtt::polyfit_metric::slope},
+        {"slope_degrees", lsdtt::polyfit_metric::slope_degrees},
+        {"aspect_radians", lsdtt::polyfit_metric::aspect_radians},
+        {"aspect_degrees", lsdtt::polyfit_metric::aspect_degrees},
+        {"laplacian", lsdtt::polyfit_metric::laplacian},
+        {"hessian_determinant", lsdtt::polyfit_metric::hessian_determinant},
+        {"mean_curvature", lsdtt::polyfit_metric::mean_curvature},
+        {"gaussian_curvature", lsdtt::polyfit_metric::gaussian_curvature},
+        {"maximum_curvature", lsdtt::polyfit_metric::maximum_curvature},
+        {"minimum_curvature", lsdtt::polyfit_metric::minimum_curvature},
+        {"curvedness", lsdtt::polyfit_metric::curvedness},
+        {"shape_index", lsdtt::polyfit_metric::shape_index},
+        {"profile_curvature", lsdtt::polyfit_metric::profile_curvature},
+        {"plan_curvature", lsdtt::polyfit_metric::plan_curvature},
+        {"tangential_curvature", lsdtt::polyfit_metric::tangential_curvature},
+        {"difference_curvature", lsdtt::polyfit_metric::difference_curvature},
+        {"horizontal_excess_curvature", lsdtt::polyfit_metric::horizontal_excess_curvature},
+        {"vertical_excess_curvature", lsdtt::polyfit_metric::vertical_excess_curvature},
+        {"accumulation_curvature", lsdtt::polyfit_metric::accumulation_curvature},
+        {"ring_curvature", lsdtt::polyfit_metric::ring_curvature},
+        {"rotor", lsdtt::polyfit_metric::rotor},
+    };
+    const auto found = metrics.find(name);
+    if (found == metrics.end()) {
+        throw std::invalid_argument("polyfit_metrics: unknown metric '" + name + "'");
+    }
+    return found->second;
+}
+
+nb::dict polyfit_metrics(
+    const Raster& raster,
+    const std::vector<std::string>& metric_names,
+    double lambda_metres,
+    double z_factor,
+    int n_threads,
+    double flat_slope_tolerance)
+{
+    if (metric_names.empty()) {
+        throw std::invalid_argument("polyfit_metrics: metrics must not be empty");
+    }
+    std::vector<lsdtt::polyfit_metric> requested_metrics;
+    requested_metrics.reserve(metric_names.size());
+    for (const auto& name : metric_names) {
+        requested_metrics.push_back(polyfit_metric_from_name(name));
+    }
+    const auto result = compute_polyfit_metric_rasters(
+        raster, requested_metrics, lambda_metres, z_factor, n_threads, flat_slope_tolerance
+    );
+    nb::dict output;
+    for (const auto& name : metric_names) {
+        output[nb::str(name.c_str())] = Raster(result.at(polyfit_metric_from_name(name)));
+    }
+    return output;
+}
+
+nb::dict surface_shape_result_to_dict(const lsdtt::surface_shape_result& result)
+{
+    nb::dict output;
+    output["shape_class"] = Raster(result.shape_class);
+    output["gaussian_curvature"] = Raster(result.gaussian_curvature);
+    output["mean_curvature"] = Raster(result.mean_curvature);
+    return output;
+}
+
+nb::dict classify_surface_shape_from_principal_curvatures(
+    const Raster& maximum_curvature,
+    const Raster& minimum_curvature,
+    double kt)
+{
+    return surface_shape_result_to_dict(lsdtt::classify_surface_shape(
+        maximum_curvature.native(), minimum_curvature.native(), kt
+    ));
+}
+
+nb::dict classify_surface_shape_from_raster(
+    const Raster& raster,
+    double lambda_metres,
+    double z_factor,
+    int n_threads,
+    double kt)
+{
+    const auto metrics = compute_polyfit_metric_rasters(
+        raster,
+        {
+            lsdtt::polyfit_metric::maximum_curvature,
+            lsdtt::polyfit_metric::minimum_curvature,
+        },
+        lambda_metres,
+        z_factor,
+        n_threads,
+        1e-12
+    );
+    return surface_shape_result_to_dict(lsdtt::classify_surface_shape(
+        metrics.at(lsdtt::polyfit_metric::maximum_curvature),
+        metrics.at(lsdtt::polyfit_metric::minimum_curvature),
+        kt
+    ));
+}
+
+nb::dict fundamental_form_principal_curvatures(const Raster& raster, int n_threads)
+{
+    const auto principal = lsdtt::fundamental_form_principal_curvatures(
+        raster.native(), n_threads
+    );
+    nb::dict output;
+    output["maximum_curvature"] = Raster(principal.maximum_curvature);
+    output["minimum_curvature"] = Raster(principal.minimum_curvature);
+    return output;
 }
 } // namespace
 
@@ -110,5 +249,40 @@ void bind_raster_surface_metrics(nb::module_& m)
         "Compute 3-by-3 plan curvature; concave-up is positive.");
     m.def("total_curvature", &total_curvature, nb::arg("raster"), nb::arg("radius_metres"),
         "Compute moving-window total curvature at radius_metres.");
+    m.def("polyfit_metrics", &polyfit_metrics, nb::arg("raster"), nb::arg("metrics"),
+        nb::arg("lambda_metres") = 0.0, nb::arg("z_factor") = 1.0,
+        nb::arg("n_threads") = 0, nb::arg("flat_slope_tolerance") = 1e-12, R"doc(
+Compute several quadratic-fit surface metrics in one shared fit.
+
+Parameters
+----------
+raster : Raster
+    Input elevation raster.
+metrics : list[str]
+    Requested metric names. See the Python documentation for valid names.
+lambda_metres : float, default=0
+    Fit scale in metres. Zero uses three raster cells.
+z_factor : float, default=1
+    Elevation scale factor applied before metric calculation.
+n_threads : int, default=0
+    OpenMP thread count; zero selects the runtime default.
+flat_slope_tolerance : float, default=1e-12
+    Directional metrics are nodata where fitted slope is below this value.
+
+Returns
+-------
+dict[str, Raster]
+    One newly allocated raster for every requested metric.
+)doc");
+    m.def("classify_surface_shape", &classify_surface_shape_from_raster,
+        nb::arg("raster"), nb::arg("lambda_metres") = 0.0,
+        nb::arg("z_factor") = 1.0, nb::arg("n_threads") = 0, nb::arg("kt") = 0.0,
+        "Compute polyfit principal curvatures, then classify surface shape.");
+    m.def("classify_surface_shape", &classify_surface_shape_from_principal_curvatures,
+        nb::arg("maximum_curvature"), nb::arg("minimum_curvature"), nb::arg("kt") = 0.0,
+        "Classify surface shape from existing principal-curvature rasters.");
+    m.def("fundamental_form_principal_curvatures", &fundamental_form_principal_curvatures,
+        nb::arg("raster"), nb::arg("n_threads") = 0,
+        "Compute differential-geometry maximum and minimum principal curvatures.");
 }
 } // namespace lsdtt3_python
