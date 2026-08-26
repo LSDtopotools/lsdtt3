@@ -1779,7 +1779,9 @@ void lsdtt_junction_network_cpu::write_channel_network_points(
     const std::string& out_path,
     point_output_format format,
     const std::string& layer_name,
-    bool spatial_index
+    bool spatial_index,
+    const std::vector<float>& elevation,
+    const std::vector<std::uint8_t>& elevation_mask
 ) const
 {
     require_built();
@@ -1883,19 +1885,38 @@ void lsdtt_junction_network_cpu::write_channel_network_points(
     // -------------------------------------------------------------------------
 
     // Declare schema (attribute types and field names)
+    // Flow distance from the outlet, computed by the router from the D8
+    // DIRECTION CODE (cardinal -> cell_size, diagonal -> cell_size*sqrt(2)),
+    // not from coordinates -- so it is already immune to the periodic-wrap
+    // error that link_length had.
+    std::vector<float> flow_distance;
+    {
+        lsdtt_raster_result fd = flow_->get_distance_from_outlet_raster();
+        flow_distance = std::move(fd.data);
+    }
+
     lsdtt_vector_schema schema;
     schema.field_names = {
         "flat", 
         "row",
         "col",
         "stream_order", 
-        "drainage_area"
+        "drainage_area",
+        // A longitudinal profile is elevation against distance ALONG THE FLOW
+        // PATH -- never against distance between vertices. Carrying both here
+        // makes a profile reconstructible from the attributes alone, and so
+        // independent of how the geometry is packaged (single part, multipart,
+        // split at a periodic wrap).
+        "flow_distance",
+        "elevation"
     };
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
         lsdtt_vector_field_type::double_type
     };
 
@@ -1927,6 +1948,20 @@ void lsdtt_junction_network_cpu::write_channel_network_points(
             const lsdtt_xy xy =
                 cell_center_from_row_col(meta_, row, col);
 
+            const std::size_t fi = static_cast<std::size_t>(flat);
+
+            const double flow_dist =
+                (fi < flow_distance.size())
+                    ? static_cast<double>(flow_distance[fi])
+                    : meta_.no_data_value;
+
+            const bool have_elev =
+                fi < elevation.size() &&
+                (elevation_mask.empty() || (fi < elevation_mask.size() &&
+                                            elevation_mask[fi] != 0));
+            const double elev = have_elev
+                ? static_cast<double>(elevation[fi])
+                : meta_.no_data_value;
 
             loader.write_point(
                 xy.x,
@@ -1938,8 +1973,9 @@ void lsdtt_junction_network_cpu::write_channel_network_points(
                     static_cast<std::int64_t>(pixel_stream_order.data()[flat]),
                     static_cast<double>(flow_->s_vector_size(flat)) *
                     flow_->cell_size() *
-                    flow_->cell_size()
-
+                    flow_->cell_size(),
+                    flow_dist,
+                    elev
                 }
             );
         }

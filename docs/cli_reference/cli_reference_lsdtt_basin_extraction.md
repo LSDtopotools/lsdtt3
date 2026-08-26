@@ -4,6 +4,11 @@ This document explains the design choices of different basin objects in `lsdtt3`
 and how to use these objects to extract basins.
 
 ---
+
+!!! note "Multipart lines and points"
+    `crossing_line_fname`, `single_channel_points_fname`, `side_tributary_points_fname` accept multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
+
+    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../vector_data.md).
 ## The `lsdtt_basin` object
 
 The `lsdtt_basin` object holds a single basin, based off an outlet node defined

@@ -1767,6 +1767,32 @@ add_test(NAME unit_hillslope_length_search
 set_tests_properties(unit_hillslope_length_search PROPERTIES
     LABELS "unit;hillslope")
 
+# Phase 5 sweep: every vector-ingesting CLI against multipart input.
+# A SCRIPT rather than a C++ test because it drives the shipped binaries -- the
+# defect it guards was invisible at the library level and only showed up in what
+# a CLI actually wrote.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/multipart_sweep_output)
+    add_test(NAME smoke_multipart_cli_sweep
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/multipart_sweep.py
+                     $<TARGET_FILE_DIR:lsdtt-linear-stats>
+                     ${CMAKE_CURRENT_BINARY_DIR}/multipart_sweep_output)
+    set_tests_properties(smoke_multipart_cli_sweep PROPERTIES
+        LABELS "smoke;cli;raster" TIMEOUT 1200)
+endif()
+
+# Longitudinal profile from the points output (plan_multilinestring... phase 4).
+add_executable(lsdtt-test-channel-profile-attributes cpp/test_channel_profile_attributes.cpp)
+target_link_libraries(lsdtt-test-channel-profile-attributes PRIVATE lsdtt3_cpu)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/profile_output)
+add_test(NAME unit_channel_profile_attributes
+         COMMAND lsdtt-test-channel-profile-attributes
+                 ${CMAKE_CURRENT_BINARY_DIR}/profile_output)
+set_tests_properties(unit_channel_profile_attributes PROPERTIES LABELS "unit;network")
+
 # link_length under periodic boundaries (plan_multilinestring... phase 2).
 add_executable(lsdtt-test-link-length-periodic cpp/test_link_length_periodic.cpp)
 target_link_libraries(lsdtt-test-link-length-periodic PRIVATE lsdtt3_cpu)

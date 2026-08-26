@@ -3898,6 +3898,125 @@ out not to be computing the same kind of quantity.
 
 ---
 
+## 10c. Multipart geometry, and a silent-drop defect (2026-08-26)
+
+### The defect
+
+`lsdtt_data_loader::read_vector_layer` dispatched on `wkbPoint`, `wkbLineString`
+and `wkbPolygon` and had **no branch for any multipart type**. An unrecognised
+geometry returned an empty variant with no throw and no warning, and every
+consumer then did
+
+```cpp
+const auto* line = std::get_if<lsdtt_line_geom>(&record.geometry);
+if (!line || line->points.size() < 2) continue;    // silently skipped
+```
+
+so the feature vanished and the tool exited **zero**. The same hole existed for
+`wkbMultiPoint`, `wkbMultiPolygon` and `wkbGeometryCollection`, and in a SECOND
+reader — `load_vector_point_layer_in_raster_crs`, which the point-sampling path
+uses instead of `read_vector_layer`.
+
+Measured on shipped binaries, with geometrically identical input in two
+encodings:
+
+| CLI | probe | before | after |
+|---|---|---:|---:|
+| `lsdtt-linear-stats` | output features | **0** (empty layer) | 2 |
+| `lsdtt-raster-preprocessing` (points) | sampled points | **0** (0-byte file) | 3 |
+| `lsdtt-stream-burning` | burned profile rows | **0** | 68 |
+| `lsdtt-channel-extraction` (`stream_vector_path`) | burned profile rows | **0** | 68 |
+| `lsdtt-swath-profile` | non-empty outputs | **0** | 2 |
+
+Every "before" run exited 0. Stream burning is the worst of these: burning that
+silently does nothing leaves a DEM that looks correct and routes wrongly.
+
+**Scope.** All-single-part files were never affected, which is why ordinary
+point layers from QGIS always worked. A file is affected only if it contains a
+multipart feature — or is in a format that promotes to multipart (below).
+
+### Format behaviour, measured
+
+| format | all single-part | already multipart | mixed content |
+|---|---|---|---|
+| Shapefile | `LineString` | `MultiLineString` | **keeps both** |
+| GeoPackage | `LineString` | `MultiLineString` | promotes all to `Multi` |
+| FlatGeobuf | `LineString` | `MultiLineString` | promotes all to `Multi` |
+| GeoJSON | `LineString` | `MultiLineString` | keeps both |
+
+Shapefile has no `LineString`/`MultiLineString` distinction in the format, so a
+multi-part PolyLine reads back as `MultiLineString` — and since most public
+hydrography and road data is distributed as shapefile, that is the commonest
+route by which multipart data arrives. GeoPackage and FlatGeobuf declare one
+geometry type per layer, so any multipart content makes the whole layer read
+back as `Multi`.
+
+### The fix
+
+Both readers explode multipart geometry into one record per part, recursing
+through nested `GeometryCollection`s, with attributes copied onto each part and
+the grouping recoverable from `lsdtt_vector_layer::source_feature_index`.
+
+`source_feature_index` is a **parallel vector, not a schema field**. It was
+written as a field first, and `unit_internal_drainage_detect` caught it: adding
+a synthetic column makes the schema stop describing the file, so every
+read-then-write round trip emits something the source did not have.
+
+Unsupported types are now reported by name and count instead of returning
+silently.
+
+### Related: `link_length` under periodic boundaries
+
+Independent of the above, and wrong in shipped output. `link_length` was
+accumulated as `sqrt(dx² + dy²)` between successive cell centres. Under periodic
+boundary conditions a receiver can be on the opposite edge of the grid — the
+flow step is one cell, the two centres are a domain apart — so every wrap added
+a spurious domain width. On a 250 × 250 periodic landscape, 3 of 97 links
+wrapped:
+
+| reported | true | error |
+|---:|---:|---:|
+| 1730.8 m | 485.8 m | 3.6× |
+| 1317.4 m | 72.4 m | 18× |
+| 1325.7 m | 80.7 m | 16× |
+
+Any drainage density, total stream length or Hack's-law result on a periodic
+domain was wrong by those factors. The length now comes from the row/column
+step: a D8 receiver is always adjacent, so the step is one cell width or
+`dx√2`, and a wrap is detectable exactly (`|Δrow| > 1 || |Δcol| > 1`) with no
+threshold heuristic.
+
+Channel links are now written as uniform `MultiLineString`, split at wraps, so
+no line is drawn across the domain. One vertex is lost per link whose *first*
+step wraps — a lone vertex cannot be a line — measured at 1 of 1819 on that
+landscape; `link_length` is unaffected because it no longer derives from
+coordinates.
+
+`*_channel_network_points` gained `flow_distance` and `elevation`, so a
+longitudinal profile can be built from attributes alone. Before this it could
+not be built from lsdtt3's channel output at all, on any domain: the points
+carried neither.
+
+### Tests
+
+| test | covers |
+|---|---|
+| `unit_multipart_geometry` | 22 checks: all four types, attributes, `source_feature_index`, single-part unchanged, GeoPackage, and a genuinely mixed shapefile |
+| `unit_link_length_periodic` | 11 checks: the length invariant, non-periodic unchanged, uniform MultiLineString, no jump inside any part |
+| `unit_channel_profile_attributes` | 10 checks: profile reconstructed from attributes on a surface whose gradient is known, recovered as 0.050000 against 0.05 |
+| `smoke_multipart_cli_sweep` | 5 shipped CLIs, single vs multipart vs mixed |
+
+**All four were verified to fail with the fix reverted** — the sweep at 0/5.
+That mattered: three of its five cases were initially probing something the
+defect did not touch (stream burning via `_vector_edges.fgb`, which a
+MultiLineString-aware code path already produced; channel extraction via a
+point count driven by the area threshold rather than the vector; and a "mixed"
+shapefile fixture whose multipart half had only one part and so round-tripped as
+a plain `LineString`). A passing check proves nothing until it has been shown to
+fail.
+
+---
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

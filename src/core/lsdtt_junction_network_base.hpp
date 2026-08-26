@@ -151,7 +151,21 @@ public:
         const std::string& out_path,
         point_output_format format,
         const std::string& layer_name = "channel_network_points",
-        bool spatial_index = true
+        bool spatial_index = true,
+
+        // Elevation, so the output can support a LONGITUDINAL PROFILE.
+        //
+        // Without it the points carry flat/row/col/stream_order/drainage_area
+        // and nothing else -- no distance and no elevation -- so a profile
+        // cannot be built from this output at all, on any domain. The flow
+        // object does not hold elevations (every elevation-consuming method
+        // takes them as an argument), so they have to be passed in.
+        //
+        // Optional: when empty, `elevation` is written as nodata rather than
+        // omitted, so the schema does not depend on what the caller happened to
+        // supply.
+        const std::vector<float>& elevation = {},
+        const std::vector<std::uint8_t>& elevation_mask = {}
     ) const = 0;
 
     virtual void write_channel_network_lines(

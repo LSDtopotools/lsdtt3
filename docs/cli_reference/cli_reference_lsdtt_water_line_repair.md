@@ -27,6 +27,11 @@ lsdtt-water-line-repair -c                       # print citation and exit
 
 ---
 
+!!! note "Multipart lines"
+    `input_vector`, `road_vector` accept multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
+
+    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../vector_data.md).
+
 ## Input / output parameters
 
 | Parameter | Type | Default | Description |
