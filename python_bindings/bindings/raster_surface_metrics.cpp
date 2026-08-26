@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -90,6 +91,78 @@ Raster aspect(
         lsdtt::polyfit_metric::aspect_degrees
     ));
 }
+
+lsdtt::polyfit_metric polyfit_metric_from_name(const std::string& name)
+{
+    static const std::map<std::string, lsdtt::polyfit_metric> metrics = {
+        {"fitted_surface", lsdtt::polyfit_metric::fitted_surface},
+        {"dzdx", lsdtt::polyfit_metric::dzdx},
+        {"dzdy", lsdtt::polyfit_metric::dzdy},
+        {"d2zdx2", lsdtt::polyfit_metric::d2zdx2},
+        {"d2zdxdy", lsdtt::polyfit_metric::d2zdxdy},
+        {"d2zdy2", lsdtt::polyfit_metric::d2zdy2},
+        {"slope", lsdtt::polyfit_metric::slope},
+        {"slope_degrees", lsdtt::polyfit_metric::slope_degrees},
+        {"aspect_radians", lsdtt::polyfit_metric::aspect_radians},
+        {"aspect_degrees", lsdtt::polyfit_metric::aspect_degrees},
+        {"laplacian", lsdtt::polyfit_metric::laplacian},
+        {"hessian_determinant", lsdtt::polyfit_metric::hessian_determinant},
+        {"mean_curvature", lsdtt::polyfit_metric::mean_curvature},
+        {"gaussian_curvature", lsdtt::polyfit_metric::gaussian_curvature},
+        {"maximum_curvature", lsdtt::polyfit_metric::maximum_curvature},
+        {"minimum_curvature", lsdtt::polyfit_metric::minimum_curvature},
+        {"curvedness", lsdtt::polyfit_metric::curvedness},
+        {"shape_index", lsdtt::polyfit_metric::shape_index},
+        {"profile_curvature", lsdtt::polyfit_metric::profile_curvature},
+        {"plan_curvature", lsdtt::polyfit_metric::plan_curvature},
+        {"tangential_curvature", lsdtt::polyfit_metric::tangential_curvature},
+        {"difference_curvature", lsdtt::polyfit_metric::difference_curvature},
+        {"horizontal_excess_curvature", lsdtt::polyfit_metric::horizontal_excess_curvature},
+        {"vertical_excess_curvature", lsdtt::polyfit_metric::vertical_excess_curvature},
+        {"accumulation_curvature", lsdtt::polyfit_metric::accumulation_curvature},
+        {"ring_curvature", lsdtt::polyfit_metric::ring_curvature},
+        {"rotor", lsdtt::polyfit_metric::rotor},
+    };
+    const auto found = metrics.find(name);
+    if (found == metrics.end()) {
+        throw std::invalid_argument("polyfit_metrics: unknown metric '" + name + "'");
+    }
+    return found->second;
+}
+
+nb::dict polyfit_metrics(
+    const Raster& raster,
+    const std::vector<std::string>& metric_names,
+    double lambda_metres,
+    double z_factor,
+    int n_threads,
+    double flat_slope_tolerance)
+{
+    if (metric_names.empty()) {
+        throw std::invalid_argument("polyfit_metrics: metrics must not be empty");
+    }
+    const double lambda = lambda_metres > 0.0
+        ? lambda_metres
+        : 3.0 * raster.native().get_meta().cell_size;
+
+    lsdtt::polyfit_metric_request request;
+    request.z_factor = z_factor;
+    request.n_threads = n_threads;
+    request.flat_slope_tolerance = flat_slope_tolerance;
+    for (const auto& name : metric_names) {
+        request.metrics.push_back(polyfit_metric_from_name(name));
+    }
+
+    const lsdtt::poly_fit_coeffs coefficients = lsdtt::direct_polyfit(
+        raster.native(), lambda, n_threads
+    );
+    const auto result = lsdtt::compute_polyfit_metrics(coefficients, request);
+    nb::dict output;
+    for (const auto& name : metric_names) {
+        output[nb::str(name.c_str())] = Raster(result.at(polyfit_metric_from_name(name)));
+    }
+    return output;
+}
 } // namespace
 
 void bind_raster_surface_metrics(nb::module_& m)
@@ -110,5 +183,30 @@ void bind_raster_surface_metrics(nb::module_& m)
         "Compute 3-by-3 plan curvature; concave-up is positive.");
     m.def("total_curvature", &total_curvature, nb::arg("raster"), nb::arg("radius_metres"),
         "Compute moving-window total curvature at radius_metres.");
+    m.def("polyfit_metrics", &polyfit_metrics, nb::arg("raster"), nb::arg("metrics"),
+        nb::arg("lambda_metres") = 0.0, nb::arg("z_factor") = 1.0,
+        nb::arg("n_threads") = 0, nb::arg("flat_slope_tolerance") = 1e-12, R"doc(
+Compute several quadratic-fit surface metrics in one shared fit.
+
+Parameters
+----------
+raster : Raster
+    Input elevation raster.
+metrics : list[str]
+    Requested metric names. See the Python documentation for valid names.
+lambda_metres : float, default=0
+    Fit scale in metres. Zero uses three raster cells.
+z_factor : float, default=1
+    Elevation scale factor applied before metric calculation.
+n_threads : int, default=0
+    OpenMP thread count; zero selects the runtime default.
+flat_slope_tolerance : float, default=1e-12
+    Directional metrics are nodata where fitted slope is below this value.
+
+Returns
+-------
+dict[str, Raster]
+    One newly allocated raster for every requested metric.
+)doc");
 }
 } // namespace lsdtt3_python

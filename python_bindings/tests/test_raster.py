@@ -99,6 +99,38 @@ class RasterTest(unittest.TestCase):
         self.assertTrue(lsdtt3.plan_curvature(plane).mask_numpy()[2, 2])
         self.assertTrue(lsdtt3.total_curvature(plane, radius_metres=1.0).mask_numpy()[2, 2])
 
+    def test_polyfit_metrics_returns_requested_rasters_from_one_fit(self):
+        metadata = lsdtt3.RasterMeta.from_shape(7, 7)
+        rows, cols = np.indices((7, 7), dtype=np.float32)
+        paraboloid = lsdtt3.Raster.from_numpy(
+            (rows - 3.0) ** 2 + (cols - 3.0) ** 2,
+            np.ones((7, 7), dtype=bool), metadata,
+        )
+        names = [
+            "fitted_surface", "dzdx", "dzdy", "d2zdx2", "d2zdxdy", "d2zdy2",
+            "slope", "slope_degrees", "aspect_radians", "aspect_degrees",
+            "laplacian", "hessian_determinant", "mean_curvature",
+            "gaussian_curvature", "maximum_curvature", "minimum_curvature",
+            "curvedness", "shape_index", "profile_curvature", "plan_curvature",
+            "tangential_curvature", "difference_curvature",
+            "horizontal_excess_curvature", "vertical_excess_curvature",
+            "accumulation_curvature", "ring_curvature", "rotor",
+        ]
+
+        metrics = lsdtt3.polyfit_metrics(paraboloid, names, lambda_metres=3.0, n_threads=1)
+
+        self.assertEqual(set(metrics), set(names))
+        self.assertTrue(all(metric.shape == paraboloid.shape for metric in metrics.values()))
+        self.assertTrue(metrics["mean_curvature"].mask_numpy()[3, 3])
+        self.assertGreater(metrics["mean_curvature"].to_numpy()[3, 3], 0.0)
+        self.assertGreater(metrics["gaussian_curvature"].to_numpy()[3, 3], 0.0)
+        self.assertEqual(
+            metrics["aspect_degrees"].to_numpy()[2, 3],
+            lsdtt3.aspect(paraboloid, lambda_metres=3.0, n_threads=1).to_numpy()[2, 3],
+        )
+        with self.assertRaisesRegex(ValueError, "unknown metric"):
+            lsdtt3.polyfit_metrics(paraboloid, ["not_a_metric"])
+
     def test_boundary_sinks_and_least_cost_breaching(self):
         metadata = lsdtt3.RasterMeta.from_shape(5, 5)
         values = np.full((5, 5), 10.0, dtype=np.float32)
