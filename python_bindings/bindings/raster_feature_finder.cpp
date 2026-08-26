@@ -66,6 +66,38 @@ private:
     lsdtt::valley_result result_;
 };
 
+class RoadResult {
+public:
+    explicit RoadResult(lsdtt::road_result result) : result_(std::move(result)) {}
+    const lsdtt::road_result& native() const noexcept { return result_; }
+private:
+    lsdtt::road_result result_;
+};
+
+class RoadFlowResult {
+public:
+    explicit RoadFlowResult(lsdtt::road_flow_result result) : result_(std::move(result)) {}
+    const lsdtt::road_flow_result& native() const noexcept { return result_; }
+private:
+    lsdtt::road_flow_result result_;
+};
+
+class RoadSmoothnessResult {
+public:
+    explicit RoadSmoothnessResult(lsdtt::road_smoothness_result result) : result_(std::move(result)) {}
+    const lsdtt::road_smoothness_result& native() const noexcept { return result_; }
+private:
+    lsdtt::road_smoothness_result result_;
+};
+
+class ThinLinesResult {
+public:
+    explicit ThinLinesResult(lsdtt::thin_lines_result result) : result_(std::move(result)) {}
+    const lsdtt::thin_lines_result& native() const noexcept { return result_; }
+private:
+    lsdtt::thin_lines_result result_;
+};
+
 ChannelCandidatesResult find_channel_candidates(
     const Raster& raster, double lambda_min_metres, double lambda_max_metres,
     int n_scales, const std::string& curvature_metric,
@@ -156,6 +188,64 @@ ValleyResult find_valleys(const Raster& raster, double smoothing_window_metres,
     return ValleyResult(lsdtt::find_valleys(raster.native(), request));
 }
 
+RoadResult find_roads(const Raster& dem, double smoothing_window_metres,
+                      double score_threshold, bool use_bench_test,
+                      double bench_half_width_metres, int n_threads)
+{
+    lsdtt::road_request request;
+    request.smoothing_window_metres = smoothing_window_metres;
+    request.score_threshold = score_threshold;
+    request.use_bench_test = use_bench_test;
+    request.bench_half_width_metres = bench_half_width_metres;
+    request.n_threads = n_threads;
+    return RoadResult(lsdtt::find_roads(dem.native(), request));
+}
+
+RoadFlowResult find_road_flow_discrimination(
+    const Raster& dem, double regional_smoothing_metres,
+    int flow_accumulation_threshold_pixels, int flow_path_half_window,
+    double intermediate_window_metres, double roughness_radius_metres,
+    bool dem_is_filled, const std::string& boundary_conditions, int n_threads)
+{
+    lsdtt::road_flow_request request;
+    request.regional_smoothing_metres = regional_smoothing_metres;
+    request.flow_accumulation_threshold_pixels = flow_accumulation_threshold_pixels;
+    request.flow_path_half_window = flow_path_half_window;
+    request.intermediate_window_metres = intermediate_window_metres;
+    request.roughness_radius_metres = roughness_radius_metres;
+    request.dem_is_filled = dem_is_filled;
+    request.boundary_conditions = boundary_conditions;
+    request.n_threads = n_threads;
+    return RoadFlowResult(lsdtt::find_road_flow_discrimination(dem.native(), request));
+}
+
+RoadSmoothnessResult extract_roads_smooth(
+    const Raster& dem, double roughness_radius_metres,
+    double smoothness_threshold, int path_min_length_pixels,
+    int min_component_pixels, int n_threads)
+{
+    lsdtt::road_smoothness_request request;
+    request.roughness_radius_metres = roughness_radius_metres;
+    request.smoothness_threshold = smoothness_threshold;
+    request.path_min_length_pixels = path_min_length_pixels;
+    request.min_component_pixels = min_component_pixels;
+    request.n_threads = n_threads;
+    return RoadSmoothnessResult(lsdtt::extract_roads_smooth(dem.native(), request));
+}
+
+ThinLinesResult extract_thin_lines(
+    const Raster& response, double threshold, int path_length_pixels,
+    int min_component_pixels, double min_elongation, int n_threads)
+{
+    lsdtt::thin_lines_request request;
+    request.threshold = threshold;
+    request.path_length_pixels = path_length_pixels;
+    request.min_component_pixels = min_component_pixels;
+    request.min_elongation = min_elongation;
+    request.n_threads = n_threads;
+    return ThinLinesResult(lsdtt::extract_thin_lines(response.native(), request));
+}
+
 template <typename Result>
 std::vector<Raster> raster_vector(const std::vector<Result>& rasters)
 {
@@ -201,6 +291,33 @@ void bind_raster_feature_finder(nb::module_& m)
         .def_prop_ro("minimum_curvature", [](const ValleyResult& r) { return Raster(r.native().minimum_curvature); })
         .def_prop_ro("gaussian_curvature", [](const ValleyResult& r) { return Raster(r.native().gaussian_curvature); })
         .def_prop_ro("mean_curvature", [](const ValleyResult& r) { return Raster(r.native().mean_curvature); });
+    nb::class_<RoadResult>(m, "RoadResult")
+        .def_prop_ro("score", [](const RoadResult& r) { return Raster(r.native().score); })
+        .def_prop_ro("mask", [](const RoadResult& r) { return Raster(r.native().mask); })
+        .def_prop_ro("contour_alignment", [](const RoadResult& r) { return Raster(r.native().contour_alignment); })
+        .def_prop_ro("hessian_elongation", [](const RoadResult& r) { return Raster(r.native().hessian_elongation); })
+        .def_prop_ro("cross_curvature", [](const RoadResult& r) { return Raster(r.native().cross_curvature); })
+        .def_prop_ro("feature_orientation_degrees", [](const RoadResult& r) { return Raster(r.native().feature_orientation_deg); })
+        .def_prop_ro("slope", [](const RoadResult& r) { return Raster(r.native().slope); });
+    nb::class_<RoadFlowResult>(m, "RoadFlowResult")
+        .def_prop_ro("regional_slope_bearing", [](const RoadFlowResult& r) { return Raster(r.native().regional_slope_bearing); })
+        .def_prop_ro("regional_slope", [](const RoadFlowResult& r) { return Raster(r.native().regional_slope); })
+        .def_prop_ro("contributing_pixels", [](const RoadFlowResult& r) { return Raster(r.native().contributing_pixels); })
+        .def_prop_ro("channel_mask", [](const RoadFlowResult& r) { return Raster(r.native().channel_mask); })
+        .def_prop_ro("flow_path_bearing", [](const RoadFlowResult& r) { return Raster(r.native().flow_path_bearing); })
+        .def_prop_ro("flow_vs_slope_angle", [](const RoadFlowResult& r) { return Raster(r.native().flow_vs_slope_angle); })
+        .def_prop_ro("flow_path_divergence", [](const RoadFlowResult& r) { return Raster(r.native().inflated_flow_path_divergence); })
+        .def_prop_ro("roughness", [](const RoadFlowResult& r) { return Raster(r.native().roughness); })
+        .def_prop_ro("valley_axis_buffer_mask", [](const RoadFlowResult& r) { return Raster(r.native().valley_axis_buffer_mask); });
+    nb::class_<RoadSmoothnessResult>(m, "RoadSmoothnessResult")
+        .def_prop_ro("roughness", [](const RoadSmoothnessResult& r) { return Raster(r.native().roughness); })
+        .def_prop_ro("smoothness", [](const RoadSmoothnessResult& r) { return Raster(r.native().smoothness); })
+        .def_prop_ro("path_opened", [](const RoadSmoothnessResult& r) { return Raster(r.native().path_opened); })
+        .def_prop_ro("road_mask", [](const RoadSmoothnessResult& r) { return Raster(r.native().road_mask); });
+    nb::class_<ThinLinesResult>(m, "ThinLinesResult")
+        .def_prop_ro("binary", [](const ThinLinesResult& r) { return Raster(r.native().binary); })
+        .def_prop_ro("blob_free", [](const ThinLinesResult& r) { return Raster(r.native().blob_free); })
+        .def_prop_ro("mask", [](const ThinLinesResult& r) { return Raster(r.native().mask); });
 
     m.def("find_channel_candidates", &find_channel_candidates, nb::arg("raster"),
         nb::arg("lambda_min_metres") = 3.0, nb::arg("lambda_max_metres") = 20.0,
@@ -234,6 +351,29 @@ void bind_raster_feature_finder(nb::module_& m)
         nb::arg("include_synformal_saddle") = true, nb::arg("include_synform") = true,
         nb::arg("n_threads") = 0,
         "Find broad concave valley forms from a smoothed surface-shape classification.");
+    m.def("find_roads", &find_roads, nb::arg("dem"),
+        nb::arg("smoothing_window_metres") = 8.0, nb::arg("score_threshold") = 0.5,
+        nb::arg("use_bench_test") = true, nb::arg("bench_half_width_metres") = 6.0,
+        nb::arg("n_threads") = 0, "Detect narrow, along-contour road benches from a DEM.");
+    m.def("find_road_flow_discrimination", &find_road_flow_discrimination,
+        nb::arg("dem"), nb::arg("regional_smoothing_metres") = 100.0,
+        nb::arg("flow_accumulation_threshold_pixels") = 1000,
+        nb::arg("flow_path_half_window") = 5,
+        nb::arg("intermediate_window_metres") = 15.0,
+        nb::arg("roughness_radius_metres") = 2.5,
+        nb::arg("dem_is_filled") = false, nb::arg("boundary_conditions") = "oooo",
+        nb::arg("n_threads") = 0,
+        "Build flow-direction and terrain diagnostics for road/channel discrimination.");
+    m.def("extract_roads_smooth", &extract_roads_smooth, nb::arg("dem"),
+        nb::arg("roughness_radius_metres") = 1.5,
+        nb::arg("smoothness_threshold") = 0.5,
+        nb::arg("path_min_length_pixels") = 40,
+        nb::arg("min_component_pixels") = 40, nb::arg("n_threads") = 0,
+        "Extract long smooth road-like ribbons from a DEM.");
+    m.def("extract_thin_lines", &extract_thin_lines, nb::arg("response"),
+        nb::arg("threshold") = 20.0, nb::arg("path_length_pixels") = 40,
+        nb::arg("min_component_pixels") = 40, nb::arg("min_elongation") = 1.0,
+        nb::arg("n_threads") = 0, "Keep thin elongated lines from a response raster.");
 }
 
 } // namespace lsdtt3_python
