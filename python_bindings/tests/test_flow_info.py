@@ -63,6 +63,18 @@ class FlowInfoTest(unittest.TestCase):
         self.assertIn("stream_order", network.junctions().columns)
         self.assertIn("length_metres", network.links().columns)
 
+    def test_fractional_flow_graphs(self):
+        for method in ("mfd", "dinf"):
+            graph = lsdtt3.FlowGraph(self.dem, method=method, boundary_conditions="nnbo")
+            self.assertEqual(graph.shape, self.dem.shape)
+            self.assertEqual(graph.drainage_area().shape, self.dem.shape)
+            routing = graph.receivers_of(0, 0)
+            self.assertGreater(len(routing["pixels"]), 0)
+            self.assertAlmostEqual(float(routing["weights"].sum()), 1.0, places=6)
+            if method == "dinf":
+                self.assertEqual(graph.slope().shape, self.dem.shape)
+                self.assertEqual(graph.direction().shape, self.dem.shape)
+
 
 if __name__ == "__main__":
     unittest.main()
