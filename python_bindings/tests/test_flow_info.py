@@ -1,6 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+import geopandas as gpd
 import numpy as np
+from shapely.geometry import box
 
 import lsdtt3
 
@@ -74,6 +78,52 @@ class FlowInfoTest(unittest.TestCase):
             if method == "dinf":
                 self.assertEqual(graph.slope().shape, self.dem.shape)
                 self.assertEqual(graph.direction().shape, self.dem.shape)
+
+    def test_wetness_connectivity_and_sti_tables(self):
+        area = self.flow.drainage_area()
+        gradient = lsdtt3.slope(self.dem)
+        twi = lsdtt3.topographic_wetness_index(area, gradient)
+        self.assertEqual(twi.shape, self.dem.shape)
+        self.assertTrue(np.all(np.isfinite(twi.to_numpy()[twi.mask_numpy()])))
+
+        connectivity = lsdtt3.sediment_connectivity_index(
+            self.flow, gradient, gradient, area, area_threshold_m2=300.0
+        )
+        self.assertEqual(connectivity.index.shape, self.dem.shape)
+        self.assertEqual(connectivity.weight.shape, self.dem.shape)
+        self.assertEqual(connectivity.upstream.shape, self.dem.shape)
+        self.assertEqual(connectivity.downstream.shape, self.dem.shape)
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            ksd = root / "ksd.csv"
+            ksd.write_text(
+                "SERIES_CODE,SSKIB_PROFILE_ID,LUSE,HORZ_TOP,HORZ_BOTTOM,COND_0_HYPRES\n"
+                "AB1,p1,CULT,0,100,2\n"
+            )
+            spr = root / "spr.csv"
+            spr.write_text("SERCDE,SPR_PRC\nAB1,20\n")
+            lnkd_table = lsdtt3.load_sti_lnkd_table(str(ksd))
+            spr_table = lsdtt3.load_sti_spr_table(str(spr))
+            self.assertEqual(lnkd_table.summary["pairs_built"], 1)
+            self.assertEqual(spr_table.summary["rows_used"], 1)
+
+            vector = root / "categories.geojson"
+            gpd.GeoDataFrame(
+                {"series": ["AB1"], "land_use": ["CULT"]},
+                geometry=[box(0.0, 0.0, 60.0, 60.0)],
+            ).to_file(vector, driver="GeoJSON")
+            series = lsdtt3.rasterize_sti_categories(
+                self.dem, str(vector), "series", "categories"
+            )
+            land_use = lsdtt3.rasterize_sti_categories(
+                self.dem, str(vector), "land_use", "categories"
+            )
+            sti = lsdtt3.soil_topographic_index(
+                twi, series, land_use, lnkd_table, spr_table
+            )
+            self.assertEqual(sti.sti.shape, self.dem.shape)
+            self.assertGreater(sti.stats["valid_output_pixels"], 0)
 
 
 if __name__ == "__main__":

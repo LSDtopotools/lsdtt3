@@ -16,6 +16,7 @@ nanobind_add_module(_core
     flow_products.cpp
     flow_network.cpp
     flow_graph.cpp
+    flow_indices.cpp
     raster_geospatial.cpp
 )
 
