@@ -1,0 +1,58 @@
+import unittest
+
+import numpy as np
+
+import lsdtt3
+
+
+class FlatSurfaceTest(unittest.TestCase):
+    def test_find_flat_surfaces_returns_diagnostics_and_labels(self):
+        metadata = lsdtt3.RasterMeta.from_shape(64, 64, cell_size=1.0)
+        rows, cols = np.indices((64, 64), dtype=np.float32)
+        dem = lsdtt3.Raster.from_numpy(
+            0.02 * rows + 0.01 * cols + 0.02 * np.sin(rows / 4.0),
+            np.ones((64, 64), dtype=bool), metadata,
+        )
+
+        result = lsdtt3.find_flat_surfaces(
+            dem,
+            use_madk2=True,
+            madk2_window_radius_metres=3.0,
+            use_residual_iqr=False,
+            use_nvd=False,
+            min_component_pixels=1,
+            relief_window_pixels=5,
+            relief_threshold_metres=1.0,
+            n_threads=1,
+        )
+
+        self.assertEqual(result.madk2_roughness.shape, dem.shape)
+        self.assertEqual(result.relief.shape, dem.shape)
+        self.assertEqual(result.combined_flat_mask.shape, dem.shape)
+        self.assertEqual(result.labelled_flat_mask.shape, dem.shape)
+
+    def test_classify_flat_surfaces_uses_hand_and_channel_ids(self):
+        metadata = lsdtt3.RasterMeta.from_shape(7, 7, cell_size=1.0)
+        valid = np.ones((7, 7), dtype=bool)
+        labels = np.zeros((7, 7), dtype=np.float32)
+        labels[2:5, 1:6] = 1.0
+        hand = np.full((7, 7), 4.0, dtype=np.float32)
+        hand[2:5, 1:6] = 0.5
+        source_ids = np.full((7, 7), -1.0, dtype=np.float32)
+        source_ids[3, 3] = 0.0
+
+        classified = lsdtt3.classify_flat_surfaces(
+            lsdtt3.Raster.from_numpy(labels, valid, metadata),
+            lsdtt3.Raster.from_numpy(hand, valid, metadata),
+            lsdtt3.Raster.from_numpy(source_ids, valid, metadata),
+            n_threads=1,
+        )
+
+        self.assertEqual(classified.surface_class.shape, (7, 7))
+        self.assertEqual(classified.floodplain_mask.shape, (7, 7))
+        self.assertEqual(classified.n_floodplain_labels, 1)
+        self.assertEqual(classified.table.loc[0, "surface_class"], "floodplain")
+
+
+if __name__ == "__main__":
+    unittest.main()
