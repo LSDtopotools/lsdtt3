@@ -23,6 +23,7 @@ _configure_bundled_geospatial_data()
 from ._core import (
     Raster,
     RasterMeta,
+    FlowInfo,
     FlatSurfaceClassification,
     FlatSurfaceResult,
     MarshPlatformResult,
@@ -112,6 +113,7 @@ from ._core import (
 __all__ = [
     "Raster",
     "RasterMeta",
+    "FlowInfo",
     "FlatSurfaceClassification",
     "FlatSurfaceResult",
     "MarshPlatformResult",
