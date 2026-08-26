@@ -12,6 +12,12 @@ nanobind_add_module(_core
     raster_marsh.cpp
     raster_ridgeline.cpp
     valley_helpers.cpp
+    flow_info.cpp
+    flow_products.cpp
+    flow_network.cpp
+    flow_graph.cpp
+    flow_indices.cpp
+    basins.cpp
     raster_geospatial.cpp
 )
 

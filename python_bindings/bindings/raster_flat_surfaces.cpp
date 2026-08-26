@@ -166,6 +166,46 @@ FlatSurfaceClassification classify_flat_surfaces(
     ));
 }
 
+FlatSurfaceClassification classify_flat_surfaces_with_scope(
+    const Raster& labelled_flat_mask, const Raster& dem, const ChannelScope& scope,
+    double floodplain_max_height_metres, double terrace_min_height_metres,
+    double channel_adjacency_radius_metres, double terrace_max_distance_to_channel_metres,
+    bool enable_leak_split, bool enable_hand_banding, int n_threads)
+{
+    require_matching_grids(labelled_flat_mask, dem,
+        "labelled_flat_mask and dem must share a grid");
+    const auto& flow = scope.flow();
+    const auto& meta = flow.meta();
+    const auto& dem_meta = dem.native().get_meta();
+    if (meta.n_rows != dem_meta.n_rows || meta.n_cols != dem_meta.n_cols ||
+        meta.x_min != dem_meta.x_min || meta.y_min != dem_meta.y_min ||
+        meta.cell_size != dem_meta.cell_size || meta.crs_wkt != dem_meta.crs_wkt)
+        throw std::invalid_argument("dem must share the ChannelScope flow grid");
+
+    const auto& scope_data = scope.native();
+    auto hand = flow.get_height_above_channel_mask_donor_raster(
+        dem.native().get_data(), dem.native().get_mask(), scope_data.channel_mask);
+    lsdtt::lsdtt_raster_cpu hand_raster(
+        std::move(hand.height.data), std::move(hand.height.mask), hand.height.meta);
+    lsdtt::flat_surface_classify_request request;
+    request.floodplain_max_height_metres = floodplain_max_height_metres;
+    request.terrace_min_height_metres = terrace_min_height_metres;
+    request.channel_adjacency_radius_metres = channel_adjacency_radius_metres;
+    request.terrace_max_distance_to_channel_metres = terrace_max_distance_to_channel_metres;
+    request.enable_leak_split = enable_leak_split;
+    request.enable_hand_banding = enable_hand_banding;
+    request.n_threads = n_threads;
+    auto flow_distance_result = flow.get_distance_from_outlet_raster();
+    lsdtt::lsdtt_raster_cpu flow_distance(
+        std::move(flow_distance_result.data), std::move(flow_distance_result.mask),
+        flow_distance_result.meta);
+    return FlatSurfaceClassification(lsdtt::classify_flat_surfaces_by_channel(
+        labelled_flat_mask.native(), hand_raster, scope_data.channel_mask,
+        scope_data.channel_source_id, request,
+        enable_hand_banding ? &hand.donor_flat : nullptr,
+        enable_hand_banding ? &flow_distance : nullptr));
+}
+
 nb::object class_table(const FlatSurfaceClassification& classification)
 {
     nb::list rows;
@@ -247,6 +287,19 @@ Classify labelled flats as floodplain or terrace from HAND and channel IDs.
 
 ``channel_source_ids`` is a co-registered Raster containing non-negative
 source IDs on in-scope channel pixels and negative values elsewhere.
+)doc");
+    m.def("classify_flat_surfaces_with_scope", &classify_flat_surfaces_with_scope,
+        nb::arg("labelled_flat_mask"), nb::arg("dem"), nb::arg("scope"),
+        nb::arg("floodplain_max_height_metres") = 1.0,
+        nb::arg("terrace_min_height_metres") = 0.0,
+        nb::arg("channel_adjacency_radius_metres") = 0.0,
+        nb::arg("terrace_max_distance_to_channel_metres") = 0.0,
+        nb::arg("enable_leak_split") = true, nb::arg("enable_hand_banding") = false,
+        nb::arg("n_threads") = 0, R"doc(
+Classify flat surfaces using a ``ChannelScope``.
+
+HAND, its nearest-channel donors, flow distance, channel mask, and source IDs
+are derived from the scope's retained D8 flow topology.
 )doc");
 }
 
