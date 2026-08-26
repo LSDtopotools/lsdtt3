@@ -163,6 +163,64 @@ nb::dict polyfit_metrics(
     }
     return output;
 }
+
+nb::dict surface_shape_result_to_dict(const lsdtt::surface_shape_result& result)
+{
+    nb::dict output;
+    output["shape_class"] = Raster(result.shape_class);
+    output["gaussian_curvature"] = Raster(result.gaussian_curvature);
+    output["mean_curvature"] = Raster(result.mean_curvature);
+    return output;
+}
+
+nb::dict classify_surface_shape_from_principal_curvatures(
+    const Raster& maximum_curvature,
+    const Raster& minimum_curvature,
+    double kt)
+{
+    return surface_shape_result_to_dict(lsdtt::classify_surface_shape(
+        maximum_curvature.native(), minimum_curvature.native(), kt
+    ));
+}
+
+nb::dict classify_surface_shape_from_raster(
+    const Raster& raster,
+    double lambda_metres,
+    double z_factor,
+    int n_threads,
+    double kt)
+{
+    const double lambda = lambda_metres > 0.0
+        ? lambda_metres
+        : 3.0 * raster.native().get_meta().cell_size;
+    const lsdtt::poly_fit_coeffs coefficients = lsdtt::direct_polyfit(
+        raster.native(), lambda, n_threads
+    );
+    lsdtt::polyfit_metric_request request;
+    request.metrics = {
+        lsdtt::polyfit_metric::maximum_curvature,
+        lsdtt::polyfit_metric::minimum_curvature,
+    };
+    request.z_factor = z_factor;
+    request.n_threads = n_threads;
+    const auto metrics = lsdtt::compute_polyfit_metrics(coefficients, request);
+    return surface_shape_result_to_dict(lsdtt::classify_surface_shape(
+        metrics.at(lsdtt::polyfit_metric::maximum_curvature),
+        metrics.at(lsdtt::polyfit_metric::minimum_curvature),
+        kt
+    ));
+}
+
+nb::dict fundamental_form_principal_curvatures(const Raster& raster, int n_threads)
+{
+    const auto principal = lsdtt::fundamental_form_principal_curvatures(
+        raster.native(), n_threads
+    );
+    nb::dict output;
+    output["maximum_curvature"] = Raster(principal.maximum_curvature);
+    output["minimum_curvature"] = Raster(principal.minimum_curvature);
+    return output;
+}
 } // namespace
 
 void bind_raster_surface_metrics(nb::module_& m)
@@ -208,5 +266,15 @@ Returns
 dict[str, Raster]
     One newly allocated raster for every requested metric.
 )doc");
+    m.def("classify_surface_shape", &classify_surface_shape_from_raster,
+        nb::arg("raster"), nb::arg("lambda_metres") = 0.0,
+        nb::arg("z_factor") = 1.0, nb::arg("n_threads") = 0, nb::arg("kt") = 0.0,
+        "Compute polyfit principal curvatures, then classify surface shape.");
+    m.def("classify_surface_shape", &classify_surface_shape_from_principal_curvatures,
+        nb::arg("maximum_curvature"), nb::arg("minimum_curvature"), nb::arg("kt") = 0.0,
+        "Classify surface shape from existing principal-curvature rasters.");
+    m.def("fundamental_form_principal_curvatures", &fundamental_form_principal_curvatures,
+        nb::arg("raster"), nb::arg("n_threads") = 0,
+        "Compute differential-geometry maximum and minimum principal curvatures.");
 }
 } // namespace lsdtt3_python

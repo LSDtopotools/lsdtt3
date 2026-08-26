@@ -131,6 +131,36 @@ class RasterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown metric"):
             lsdtt3.polyfit_metrics(paraboloid, ["not_a_metric"])
 
+    def test_surface_shape_and_fundamental_form_principal_curvatures(self):
+        metadata = lsdtt3.RasterMeta.from_shape(7, 7)
+        rows, cols = np.indices((7, 7), dtype=np.float32)
+        paraboloid = lsdtt3.Raster.from_numpy(
+            (rows - 3.0) ** 2 + (cols - 3.0) ** 2,
+            np.ones((7, 7), dtype=bool), metadata,
+        )
+
+        computed = lsdtt3.classify_surface_shape(
+            paraboloid, lambda_metres=3.0, n_threads=1
+        )
+        polyfit_principal = lsdtt3.polyfit_metrics(
+            paraboloid, ["maximum_curvature", "minimum_curvature"],
+            lambda_metres=3.0, n_threads=1,
+        )
+        reused = lsdtt3.classify_surface_shape(
+            polyfit_principal["maximum_curvature"],
+            polyfit_principal["minimum_curvature"],
+        )
+        self.assertEqual(set(computed), {"shape_class", "gaussian_curvature", "mean_curvature"})
+        np.testing.assert_array_equal(
+            computed["shape_class"].to_numpy(), reused["shape_class"].to_numpy()
+        )
+        self.assertEqual(computed["shape_class"].to_numpy()[3, 3], -3.0)
+
+        fundamental = lsdtt3.fundamental_form_principal_curvatures(paraboloid, n_threads=1)
+        self.assertEqual(set(fundamental), {"maximum_curvature", "minimum_curvature"})
+        self.assertTrue(fundamental["maximum_curvature"].mask_numpy()[3, 3])
+        self.assertGreater(fundamental["minimum_curvature"].to_numpy()[3, 3], 0.0)
+
     def test_boundary_sinks_and_least_cost_breaching(self):
         metadata = lsdtt3.RasterMeta.from_shape(5, 5)
         values = np.full((5, 5), 10.0, dtype=np.float32)
