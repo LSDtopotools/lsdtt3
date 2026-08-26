@@ -2030,6 +2030,23 @@ int main(int argc, char* argv[])
 
                 for (std::size_t i = 0; i < points.records.size(); ++i)
                 {
+                    // GUARD, not a bare std::get. These records come from a
+                    // user-supplied file, and a geometry this reader cannot
+                    // interpret arrives as an empty variant -- an unguarded get
+                    // would throw std::bad_variant_access with a message naming
+                    // neither the file nor the feature.
+                    if (!std::holds_alternative<lsdtt::lsdtt_point_geom>(
+                            points.records[i].geometry))
+                    {
+                        throw std::runtime_error(
+                            "point_data_fname: feature " + std::to_string(i) +
+                            " carries no usable POINT geometry. Multipart "
+                            "points are supported and are split automatically, "
+                            "so this is a geometry type the reader does not "
+                            "handle (a curve, or a line or polygon in a file "
+                            "expected to hold points).");
+                    }
+
                     const auto& geom =
                         std::get<lsdtt::lsdtt_point_geom>(points.records[i].geometry);
 

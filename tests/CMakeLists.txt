@@ -1767,6 +1767,16 @@ add_test(NAME unit_hillslope_length_search
 set_tests_properties(unit_hillslope_length_search PROPERTIES
     LABELS "unit;hillslope")
 
+# Multipart geometry on read (plan_multilinestring_channel_outputs.md phase 1).
+add_executable(lsdtt-test-multipart-geometry cpp/test_multipart_geometry.cpp)
+target_link_libraries(lsdtt-test-multipart-geometry PRIVATE lsdtt3_core)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/multipart_output)
+add_test(NAME unit_multipart_geometry
+         COMMAND lsdtt-test-multipart-geometry
+                 ${CMAKE_CURRENT_BINARY_DIR}/multipart_output)
+set_tests_properties(unit_multipart_geometry PROPERTIES LABELS "unit;raster")
+
 # Pathway A from the command line, while it is not yet a lsdtt-lem parameter.
 add_executable(find-threshold-for-hillslope-length cpp/find_threshold_for_hillslope_length_driver.cpp)
 target_link_libraries(find-threshold-for-hillslope-length PRIVATE lsdtt3_cpu)
@@ -3080,7 +3090,7 @@ set(LSDTT_DOMAIN_RULES
     "hillslope"              "hillslope"
     "lem"                    "lem"
     "chi|channel|drainage|basin|flow_properties"          "network"
-    "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units" "raster"
+    "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret"           "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"

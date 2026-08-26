@@ -238,6 +238,21 @@ struct lsdtt_vector_layer
 {
     lsdtt_vector_schema              schema;
     std::vector<lsdtt_vector_record> records;
+
+    // Which INPUT FEATURE each record came from, parallel to `records`.
+    //
+    // A multipart geometry is exploded into one record per part on read, so the
+    // record count no longer matches the source feature count. This recovers the
+    // grouping.
+    //
+    // It is deliberately NOT a schema field. The schema describes the columns
+    // that exist in the file, and a synthetic column would make every
+    // read-then-write round trip emit something the source did not have --
+    // caught by unit_internal_drainage_detect, which asserts that every schema
+    // field is written. Provenance is metadata about the read, not data.
+    //
+    // Empty when nothing was exploded, so a caller can ignore it entirely.
+    std::vector<std::int64_t>        source_feature_index;
  
     std::size_t size()  const noexcept { return records.size(); }
     bool        empty() const noexcept { return records.empty(); }
