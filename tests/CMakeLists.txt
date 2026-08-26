@@ -1767,6 +1767,22 @@ add_test(NAME unit_hillslope_length_search
 set_tests_properties(unit_hillslope_length_search PROPERTIES
     LABELS "unit;hillslope")
 
+# Pathway A from the command line, while it is not yet a lsdtt-lem parameter.
+add_executable(find-threshold-for-hillslope-length cpp/find_threshold_for_hillslope_length_driver.cpp)
+target_link_libraries(find-threshold-for-hillslope-length PRIVATE lsdtt3_cpu)
+
+# Phase 6: hillslope length on a COUPLED landscape, where there is no channel
+# threshold. Valleys come from the curvature inflection instead.
+add_executable(emergent-hillslope-length-driver cpp/emergent_hillslope_length_driver.cpp)
+target_link_libraries(emergent-hillslope-length-driver PRIVATE lsdtt3_cpu)
+
+# Pathway B (plan section 5): K and D from a target relief and hillslope length.
+add_executable(lsdtt-test-hillslope-peclet cpp/test_hillslope_peclet.cpp)
+target_link_libraries(lsdtt-test-hillslope-peclet PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_peclet COMMAND lsdtt-test-hillslope-peclet)
+set_tests_properties(unit_hillslope_peclet PROPERTIES LABELS "unit;hillslope")
+
 # chi at the channel head, as distinct from domain-wide MaxChi (plan 2.2a).
 add_executable(lsdtt-test-chi-channel-head cpp/test_chi_channel_head.cpp)
 target_link_libraries(lsdtt-test-chi-channel-head PRIVATE lsdtt3_cpu)
