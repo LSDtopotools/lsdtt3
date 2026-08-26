@@ -71,9 +71,11 @@ Raster total_curvature(const Raster& raster, double radius_metres)
     ));
 }
 
-Raster aspect(
+lsdtt::polyfit_metric_result compute_polyfit_metric_rasters(
     const Raster& raster,
+    const std::vector<lsdtt::polyfit_metric>& metrics,
     double lambda_metres,
+    double z_factor,
     int n_threads,
     double flat_slope_tolerance)
 {
@@ -84,10 +86,27 @@ Raster aspect(
         raster.native(), lambda, n_threads
     );
     lsdtt::polyfit_metric_request request;
-    request.metrics = {lsdtt::polyfit_metric::aspect_degrees};
+    request.metrics = metrics;
+    request.z_factor = z_factor;
     request.n_threads = n_threads;
     request.flat_slope_tolerance = flat_slope_tolerance;
-    return Raster(lsdtt::compute_polyfit_metrics(coefficients, request).at(
+    return lsdtt::compute_polyfit_metrics(coefficients, request);
+}
+
+Raster aspect(
+    const Raster& raster,
+    double lambda_metres,
+    int n_threads,
+    double flat_slope_tolerance)
+{
+    return Raster(compute_polyfit_metric_rasters(
+        raster,
+        {lsdtt::polyfit_metric::aspect_degrees},
+        lambda_metres,
+        1.0,
+        n_threads,
+        flat_slope_tolerance
+    ).at(
         lsdtt::polyfit_metric::aspect_degrees
     ));
 }
@@ -141,22 +160,14 @@ nb::dict polyfit_metrics(
     if (metric_names.empty()) {
         throw std::invalid_argument("polyfit_metrics: metrics must not be empty");
     }
-    const double lambda = lambda_metres > 0.0
-        ? lambda_metres
-        : 3.0 * raster.native().get_meta().cell_size;
-
-    lsdtt::polyfit_metric_request request;
-    request.z_factor = z_factor;
-    request.n_threads = n_threads;
-    request.flat_slope_tolerance = flat_slope_tolerance;
+    std::vector<lsdtt::polyfit_metric> requested_metrics;
+    requested_metrics.reserve(metric_names.size());
     for (const auto& name : metric_names) {
-        request.metrics.push_back(polyfit_metric_from_name(name));
+        requested_metrics.push_back(polyfit_metric_from_name(name));
     }
-
-    const lsdtt::poly_fit_coeffs coefficients = lsdtt::direct_polyfit(
-        raster.native(), lambda, n_threads
+    const auto result = compute_polyfit_metric_rasters(
+        raster, requested_metrics, lambda_metres, z_factor, n_threads, flat_slope_tolerance
     );
-    const auto result = lsdtt::compute_polyfit_metrics(coefficients, request);
     nb::dict output;
     for (const auto& name : metric_names) {
         output[nb::str(name.c_str())] = Raster(result.at(polyfit_metric_from_name(name)));
@@ -190,20 +201,17 @@ nb::dict classify_surface_shape_from_raster(
     int n_threads,
     double kt)
 {
-    const double lambda = lambda_metres > 0.0
-        ? lambda_metres
-        : 3.0 * raster.native().get_meta().cell_size;
-    const lsdtt::poly_fit_coeffs coefficients = lsdtt::direct_polyfit(
-        raster.native(), lambda, n_threads
+    const auto metrics = compute_polyfit_metric_rasters(
+        raster,
+        {
+            lsdtt::polyfit_metric::maximum_curvature,
+            lsdtt::polyfit_metric::minimum_curvature,
+        },
+        lambda_metres,
+        z_factor,
+        n_threads,
+        1e-12
     );
-    lsdtt::polyfit_metric_request request;
-    request.metrics = {
-        lsdtt::polyfit_metric::maximum_curvature,
-        lsdtt::polyfit_metric::minimum_curvature,
-    };
-    request.z_factor = z_factor;
-    request.n_threads = n_threads;
-    const auto metrics = lsdtt::compute_polyfit_metrics(coefficients, request);
     return surface_shape_result_to_dict(lsdtt::classify_surface_shape(
         metrics.at(lsdtt::polyfit_metric::maximum_curvature),
         metrics.at(lsdtt::polyfit_metric::minimum_curvature),
