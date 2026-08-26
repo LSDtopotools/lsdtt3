@@ -167,6 +167,18 @@ OGRGeometry* build_ogr_geometry(const lsdtt_geom& geom)
                     ls->setPoint(i, g.points[i].x, g.points[i].y);
                 return ls;
             }
+            else if constexpr (std::is_same_v<T, lsdtt_multiline_geom>)
+            {
+                OGRMultiLineString* mls = new OGRMultiLineString();
+                for (const auto& part : g.parts)
+                {
+                    if (part.size() < 2) continue;
+                    OGRLineString ls;
+                    for (const lsdtt_xy& p : part) ls.addPoint(p.x, p.y);
+                    mls->addGeometry(&ls);
+                }
+                return mls;
+            }
             else if constexpr (std::is_same_v<T, lsdtt_polygon_geom>)
             {
                 OGRPolygon*    poly = new OGRPolygon();
@@ -1448,6 +1460,26 @@ void lsdtt_data_loader::write_line(
         write_session_->buffer.records.push_back(std::move(record));
 }
  
+void lsdtt_data_loader::write_multiline(
+    const std::vector<std::vector<lsdtt_xy>>&    parts,
+    const std::vector<lsdtt_vector_field_value>& field_values
+)
+{
+    if (!write_session_)
+        throw std::runtime_error(
+            "lsdtt_data_loader: write_multiline() called outside a write session"
+        );
+
+    lsdtt_vector_record record;
+    record.geometry     = lsdtt_multiline_geom{ parts };
+    record.field_values = field_values;
+
+    if (!write_session_->spatial_index)
+        write_record_to_layer(record, write_session_->layer);
+    else
+        write_session_->buffer.records.push_back(std::move(record));
+}
+
 void lsdtt_data_loader::write_polygon(
     const std::vector<lsdtt_xy>&                 exterior,
     const std::vector<lsdtt_vector_field_value>& field_values
@@ -1500,6 +1532,8 @@ void lsdtt_data_loader::finish_vector_write()
                 geom_type = wkbPoint;
             else if (std::holds_alternative<lsdtt_line_geom>(first_geom))
                 geom_type = wkbLineString;
+            else if (std::holds_alternative<lsdtt_multiline_geom>(first_geom))
+                geom_type = wkbMultiLineString;
             else if (std::holds_alternative<lsdtt_polygon_geom>(first_geom))
                 geom_type = wkbPolygon;
         }

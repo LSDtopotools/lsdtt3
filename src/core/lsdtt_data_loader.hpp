@@ -169,11 +169,24 @@ struct lsdtt_polygon_geom
 };
  
 // std::monostate = null / no geometry
+// A line in several disjoint parts.
+//
+// The parts are NEVER joined. That is the whole reason the type exists: a
+// channel crossing a periodic boundary, an island, a road interrupted by a
+// bridge -- joining part N's end to part N+1's start invents a segment that is
+// not in the landscape, and on a periodic grid that segment is a whole domain
+// wide and renders as a channel straight across the map.
+struct lsdtt_multiline_geom
+{
+    std::vector<std::vector<lsdtt_xy>> parts;
+};
+
 using lsdtt_geom = std::variant<
     std::monostate,
     lsdtt_point_geom,
     lsdtt_line_geom,
-    lsdtt_polygon_geom
+    lsdtt_polygon_geom,
+    lsdtt_multiline_geom
 >;
  
 // =============================================================================
@@ -549,6 +562,16 @@ public:
  
     void write_line(
         const std::vector<lsdtt_xy>&                 points,
+        const std::vector<lsdtt_vector_field_value>& field_values
+    );
+
+    // Write a line in several disjoint parts as a single MultiLineString
+    // feature. A one-part call is written as a single-part MultiLineString --
+    // the coordinates are identical to write_line's, only the container
+    // differs, which is what lets a writer emit a uniform geometry type without
+    // changing any geometry.
+    void write_multiline(
+        const std::vector<std::vector<lsdtt_xy>>&    parts,
         const std::vector<lsdtt_vector_field_value>& field_values
     );
  

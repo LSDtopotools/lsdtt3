@@ -1767,6 +1767,16 @@ add_test(NAME unit_hillslope_length_search
 set_tests_properties(unit_hillslope_length_search PROPERTIES
     LABELS "unit;hillslope")
 
+# link_length under periodic boundaries (plan_multilinestring... phase 2).
+add_executable(lsdtt-test-link-length-periodic cpp/test_link_length_periodic.cpp)
+target_link_libraries(lsdtt-test-link-length-periodic PRIVATE lsdtt3_cpu)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/link_length_output)
+add_test(NAME unit_link_length_periodic
+         COMMAND lsdtt-test-link-length-periodic
+                 ${CMAKE_CURRENT_BINARY_DIR}/link_length_output)
+set_tests_properties(unit_link_length_periodic PROPERTIES LABELS "unit;network")
+
 # Multipart geometry on read (plan_multilinestring_channel_outputs.md phase 1).
 add_executable(lsdtt-test-multipart-geometry cpp/test_multipart_geometry.cpp)
 target_link_libraries(lsdtt-test-multipart-geometry PRIVATE lsdtt3_core)
@@ -3089,7 +3099,7 @@ set(LSDTT_DOMAIN_RULES
     "surface_metrics"        "surface_metrics"
     "hillslope"              "hillslope"
     "lem"                    "lem"
-    "chi|channel|drainage|basin|flow_properties"          "network"
+    "chi|channel|drainage|basin|flow_properties|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret"           "core"
     "depression_hierarchy"   "network"
