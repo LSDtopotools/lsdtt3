@@ -4474,6 +4474,116 @@ it is. `lsdtt-lem` prints a full, plausible configuration block before it discov
 missing. When timing a LEM run, assert on the completion line rather than the absence of an error.
 
 
+## 10j. Valley spacing, hillslope length, and coupled-timestep control (2026-08-27)
+
+Three capabilities, each added because an emergent-drainage experiment failed without it.
+
+### Hillslope length must be measured by distance transform, not row transects
+
+A row-transect measure (mean run of convex cells along rows) is **not robust to branching**, and the
+failure sharpens with the channelization index: oblique tributaries inflate every crossing by
+`1/cos(theta)`; a single row mixes short first-order hillslopes with long inter-basin divides so the
+mean describes neither; and both grow with `CI`.
+
+`compute_valley_spacing` (`src/cpu/lsdtt_valley_spacing_cpu`) measures hillslope length by a
+two-pass chamfer **distance transform** from every convex cell to the nearest concave cell. It is
+orientation-free and indifferent to branching order. On a five-point diffusivity sweep it beat the
+row measure on both criteria:
+
+| measure | exponent | R^2 | implied prefactor c |
+|---|---:|---:|---|
+| **distance transform** | **0.668** | 0.998 | **0.86** (0.78-0.93) |
+| convex run along rows | 0.612 | 1.000 | 3.84 (3.18-4.62) |
+| predicted 1/p | 0.690 | | |
+
+`c` ~ 0.86 means `L_h ~ (D/K)^(1/p)` needs essentially no fudge factor; the row measure was inflated
+~2.4x because it spans ridge-to-ridge including the valley. The `lsdtt-lem` hillslope-resolution
+warning was recalibrated from c = 4.0 to 0.86 and now predicts within 7% of measured.
+
+### Valley spacing is computed in C++ and only DRAWN in Python
+
+`lsdtt-spectral-analysis` gains `compute_valley_spacing: true`, reporting three measures side by
+side because they fail differently and their disagreement is the diagnostic:
+
+1. **Perron et al. (2008)** power-weighted mean of the spectral peaks -- weighted, not the argmax,
+   because spacing occupies a band and an argmax hops between domain harmonics;
+2. the **distance-transform hillslope length** above;
+3. the small-scale spectral exponent alpha (**Bonetti et al. 2020**, **Hooshyar et al. 2021**),
+   predicted to be `2m - 3`.
+
+Alongside the **Bonetti channelization index** `CI = K l^(m+n) / (D^n U^(1-n))`, which for n = 1 is
+independent of uplift; `CI_c ~ 32-37` marks first channelization. FFTW is optional in lsdtt3, so the
+row-averaged spectrum uses a direct real DFT -- exact on a periodic domain, where zero-padding to a
+power of two would not be. Outputs are `_valley_spacing.csv` and `_valley_spacing_spectrum.csv`.
+
+`lsdviztools3` reads those and computes nothing: `plot_valley_spectrum`, `plot_spacing_vs_ci` and
+`plot_landscape_panel` (hillshades a whole sweep with each panel's scale bar set to that landscape's
+measured length, for a visual check before any number is believed).
+
+### A coupled timestep can be badly wrong while both solvers are unconditionally stable
+
+**This is the finding most likely to bite someone else.** Backward Euler for the hillslope and an
+implicit Braun-Willett sweep for stream power at n = 1 are both unconditionally stable, so neither
+complains at a large timestep. Stability describes a single operator; the ACCURACY of an
+operator-split pair is a different question that nothing was asking.
+
+Measured on a 200x200 grid at 5 m, U = 0.4 mm/yr, from an equilibrated landscape over 500 kyr:
+
+| dt (yr) | grid-scale roughness | hillslope length | relief |
+|---:|---:|---:|---:|
+| 1,000 | 4.9 % | 34.9 m | 287.7 m |
+| 5,000 | 4.4 % | 38.3 m | 280.7 m |
+| 10,000 | 4.2 % | 37.8 m | 268.5 m |
+| **20,000** | **12.2 %** | **19.7 m** | 211.9 m |
+
+The 20,000 yr run **converged, reported ~99% of the uplift rate, and wrote a plausible landscape**
+whose hillslope length was wrong by 5.7x. "Grid-scale roughness" is the fraction of adjacent cells
+where curvature flips sign: a few per cent is normal, tens of per cent is an artefact.
+
+**The criterion**: compare uplift per step with the relief across one cell,
+`ratio = U*dt / (dx * S)`. Once one step of uplift approaches one cell's own relief, the split stops
+resolving incision against diffusion. Keep the ratio at or below ~0.7 (the break above lies between
+1.3 and 2.7).
+
+`diagnose_lem_timestep` (`src/cpu/lsdtt_lem_timestep_cpu`) reports the ratio before every LEM run
+and warns with a suggested timestep. It is silent on a flat initial surface -- no gradient means no
+reference, and a spurious warning on every diamond-square run would train users to ignore the real
+one.
+
+`adaptive_timestep: true` enables a controller keyed on the **achieved**
+`max_local_elevation_change` rather than `U*dt`, since baselevel fall, a migrating knickpoint or a
+post-parameter-change transient all move the surface too. It shrinks faster than it grows (an
+oversized step corrupts the landscape; an undersized one only costs time) and never rejects and
+re-runs a step (one oversized step does not create the artefact -- it took ~25 -- and rejecting
+would double the cost of every adjustment).
+
+**Measured, same landscape and 500 kyr, dt STARTING at the known-bad 20,000 yr:**
+
+| | roughness | hillslope length | relief |
+|---|---:|---:|---:|
+| start (clean) | 4.7 % | 36.4 m | 287.2 m |
+| dt = 20,000 fixed | 12.2 % | 19.7 m | 211.9 m |
+| **adaptive on** | **4.3 %** | **37.1 m** | 282.5 m |
+
+It recovers the clean answer from a timestep 4x too large. The controller settled at 2,880 yr; the
+static check independently suggested <= 5,232 yr. `unit_lem_timestep`, 11 checks.
+
+### The emergent-spacing result these produced
+
+600 x 600 at 5 m (3 km), OCN-seeded, swept over `CI` = 20-1000 at dt = 5,000. Grid-scale roughness
+2.6-7.6% across all seven.
+
+    CI >= 120 (channelized):  L_h ~ D^0.628,  R^2 = 0.996,  implied c = 0.74 (0.64-0.79)
+    200 x 200, independent:   L_h ~ D^0.668,               implied c = 0.86 (0.78-0.93)
+    predicted:                1/p = 0.690
+
+Runs at `CI` = 20 and 35 sit at or below `CI_c` and legitimately do not follow the law -- an
+unchannelized landscape has no spacing set by the D/K balance. `CI` = 60 is above `CI_c` and still
+deviates; that is unexplained. **Do not fit across the threshold**: all seven points give `D^0.437`
+with `R^2` = 0.88, a number that averages two regimes and means nothing. Every value is one draw
+from a band; no repeats were run.
+
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

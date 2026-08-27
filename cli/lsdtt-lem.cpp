@@ -53,6 +53,7 @@
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_peclet_cpu.hpp"
+#include "../src/cpu/lsdtt_lem_timestep_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
@@ -452,6 +453,39 @@ int main(int argc, char* argv[])
         "Use nonlinear transport (Roering 1999 or Carretier et al. 2016 depending on hillslope_model).",
         "Requires enable_hillslope_transport.",
         "Process switches", "switch", ""};
+
+    bool_default_map["adaptive_timestep"] = false;
+    help_map["adaptive_timestep"] = {"bool","false",
+        "Adapt the LEM timestep to keep the coupled solve accurate.",
+        "Both halves of a coupled run can be unconditionally STABLE and the run "
+        "still be wrong at a large timestep: stability describes one operator, "
+        "accuracy of an operator-split PAIR is a different question. The "
+        "controller keys on the achieved maximum local elevation change of each "
+        "step against the relief across one cell (dx * median gradient), holding "
+        "that ratio near timestep_target_ratio. It shrinks faster than it grows, "
+        "because an oversized step corrupts the landscape while an undersized one "
+        "only costs time. `timestep` becomes the starting value.",
+        "Timestep control", "switch", ""};
+
+    float_default_map["timestep_target_ratio"] = 0.7f;
+    help_map["timestep_target_ratio"] = {"float","0.7",
+        "Target for (elevation change per step) / (relief across one cell).",
+        "Measured on a 200x200 grid at 5 m: ratios of 0.13-0.67 gave 4-5% "
+        "grid-scale roughness and a stable hillslope length; 2.67 gave 12.2% "
+        "roughness and a hillslope length wrong by 5.7x, while still converging "
+        "and still reporting ~99% of the uplift rate. Used both by the pre-run "
+        "check and, with adaptive_timestep, by the controller.",
+        "Timestep control", "param", ""};
+
+    float_default_map["timestep_min"] = 0.0f;
+    help_map["timestep_min"] = {"float","0",
+        "Floor for the adaptive timestep (yr). 0 = timestep / 100.",
+        "", "Timestep control", "param", ""};
+
+    float_default_map["timestep_max"] = 0.0f;
+    help_map["timestep_max"] = {"float","0",
+        "Ceiling for the adaptive timestep (yr). 0 = timestep * 100.",
+        "", "Timestep control", "param", ""};
 
     bool_default_map["hillslope_force_sor"] = false;
     help_map["hillslope_force_sor"] = {"bool","false",
@@ -1639,6 +1673,24 @@ int main(int argc, char* argv[])
             std::cerr << "\nWARNING: " << hres.warning << "\n\n";
     }
 
+    // Is the timestep small enough for the COUPLED solve to be accurate? Both
+    // solvers are unconditionally stable, so neither will complain.
+    {
+        const lsdtt::lsdtt_lem_timestep_diagnosis td =
+            lsdtt::diagnose_lem_timestep(dem,
+                                         static_cast<double>(opts.uplift_rate),
+                                         static_cast<double>(opts.timestep),
+                                         static_cast<double>(ff["timestep_target_ratio"]));
+        if (td.reference_slope > 0.0)
+        {
+            std::cout << "  Timestep ratio    : " << td.ratio
+                      << "  (U*dt = " << td.uplift_per_step_m
+                      << " m vs cell relief " << td.cell_relief_m << " m)\n";
+            if (td.too_large && !bf["adaptive_timestep"])
+                std::cerr << "\nWARNING: " << td.warning << "\n\n";
+        }
+    }
+
     // Optionally pit-fill the initial surface (applied after conditioning)
     if (bf["fill_initial_surface"])
     {
@@ -2567,7 +2619,8 @@ int main(int argc, char* argv[])
     const int    n_iter          = ifs["number_of_iterations"];
     const int    write_freq      = ifs["frequency_of_output_writing"];
     const bool   steady_state    = bf["stop_at_steady_state"];
-    const float  dt              = opts.timestep;
+    // Not const: the adaptive controller rewrites it between steps.
+    float        dt              = opts.timestep;
 
     // Steady-state detection state
     int   ss_consecutive = 0;
@@ -2588,6 +2641,16 @@ int main(int argc, char* argv[])
     // the first step serves all of them. See lsdtt_hillslope_newton_workspace.
     lsdtt::lsdtt_hillslope_newton_workspace hillslope_ws;
 
+    // Adaptive outer timestep. Constructed regardless so the achieved ratio can be
+    // reported even when adaptation is off -- knowing the run sat at 2.7 is useful
+    // whether or not anything acted on it.
+    lsdtt::lsdtt_lem_timestep_controller_options tc_opts;
+    tc_opts.target_ratio = ff["timestep_target_ratio"];
+    tc_opts.dt_min_yr    = ff["timestep_min"];
+    tc_opts.dt_max_yr    = ff["timestep_max"];
+    lsdtt::lsdtt_lem_timestep_controller tstep(static_cast<double>(dt), tc_opts);
+    const bool adapt_dt = bf["adaptive_timestep"];
+
     auto do_step = [&]()
     {
         try
@@ -2607,6 +2670,19 @@ int main(int argc, char* argv[])
             last_stats = stats;
             total_time += dt;
             ++iter;
+
+            // Feed the achieved change back. The step just taken is KEPT even when
+            // it overshot: one oversized step does not create the artefact (it
+            // takes many), and rejecting would double the cost of every adjustment.
+            {
+                const double dt_next = tstep.update(
+                    static_cast<double>(stats.max_local_elevation_change), current);
+                if (adapt_dt)
+                {
+                    dt = static_cast<float>(dt_next);
+                    opts.timestep = dt;
+                }
+            }
 
             // Store stats, including the forcing actually applied this step
             stats_rows.push_back({
@@ -2749,6 +2825,21 @@ int main(int argc, char* argv[])
         {
             std::cerr << "Warning: stats CSV write failed: " << e.what() << "\n";
         }
+    }
+
+    if (tstep.last_ratio() > 0.0)
+    {
+        std::cout << "\n[timestep] final ratio " << tstep.last_ratio()
+                  << " (target " << tc_opts.target_ratio << ")";
+        if (adapt_dt)
+            std::cout << ", dt " << tstep.dt() << " yr after "
+                      << tstep.n_shrinks() << " shrinks / "
+                      << tstep.n_grows() << " grows";
+        std::cout << "\n";
+        if (!adapt_dt && tstep.last_ratio() > tc_opts.target_ratio)
+            std::cerr << "WARNING: the timestep ratio exceeded its target during "
+                         "the run; grid-scale artefacts are likely. Reduce "
+                         "timestep or set adaptive_timestep.\n";
     }
 
     if (hillslope_ws.n_solves() > 0)

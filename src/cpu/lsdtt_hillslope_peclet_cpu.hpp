@@ -147,13 +147,22 @@ struct hillslope_peclet_inversion_result
 // exponent for the erosivity convention in use (m+n for specific area, 2m+n for
 // total area).
 //
-// THE PREFACTOR IS EMPIRICAL AND ONLY LOOSELY KNOWN. c was measured as ~3.6-4.6
-// across a five-point sweep on 2026-08-27 (docs/testing_and_benchmarking.md), and
-// the spread is real rather than measurement error -- valley spacing occupies a
-// band rather than a single value (Perron et al. 2008), so any one landscape sits
-// somewhere inside it. The default below is the middle of that range. Treat the
-// result as an order-of-magnitude check for "can this grid represent a hillslope
-// at all", never as a prediction of hillslope length.
+// THE PREFACTOR IS EMPIRICAL. c was calibrated on 2026-08-27 against hillslope
+// length measured by DISTANCE TRANSFORM -- the distance from each hillslope cell
+// to the nearest valley cell, which is what hillslope length actually means and
+// is unaffected by valley orientation or branching order. That gave
+// c = 0.86 (spread 0.78-0.93) with L_h ~ D^0.668 against a predicted 1/p = 0.690.
+//
+// An earlier calibration against the mean run of convex cells along rows gave
+// c ~ 3.8, and that number is NOT comparable: a row transect measures
+// ridge-to-ridge half-spacing, which includes the valley and is inflated by
+// 1/cos(theta) wherever a valley runs oblique to the transect. It also mixes
+// first-order hillslopes with inter-basin divides once the network branches. The
+// distance transform has none of those properties and is the calibration to use.
+//
+// Even so, spacing occupies a BAND rather than a single value (Perron et al.
+// 2008), so treat the result as an order-of-magnitude check for "can this grid
+// represent a hillslope at all", never as a prediction of hillslope length.
 // -----------------------------------------------------------------------------
 struct hillslope_resolution_estimate
 {
@@ -171,7 +180,7 @@ struct hillslope_resolution_estimate
     double m,
     double n,
     bool   divide_area_by_dx,
-    double c         = 4.0,        // empirical prefactor; see the note above
+    double c         = 0.86,       // empirical prefactor; see the note above
     double min_cells = 10.0);
 
 // The Peclet exponent for a convention. Written once so it cannot drift from

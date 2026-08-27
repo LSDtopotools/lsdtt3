@@ -98,7 +98,31 @@ struct lsdtt_valley_spacing_options
 // -----------------------------------------------------------------------------
 struct lsdtt_valley_spacing_result
 {
-    // --- the three measures ---
+    // --- hillslope length: the branching-robust measure ---
+    //
+    // Distance from every convex (hillslope) cell to the nearest concave
+    // (valley) cell, by a 2-D distance transform. This is what "hillslope
+    // length" means, and unlike the convex-run measure below it does not care
+    // which way a valley runs.
+    //
+    // WHY IT IS PREFERRED AS CHANNELIZATION INCREASES. The convex-run measure
+    // samples along rows, so it is only a true width where valleys run
+    // perpendicular to them. Once the network branches, three things go wrong at
+    // once: tributaries join obliquely and inflate every run by 1/cos(theta); a
+    // single row crosses short first-order hillslopes AND long inter-basin
+    // divides, so the distribution becomes a mixture whose MEAN describes
+    // neither; and both effects grow with CI, i.e. exactly where the measurement
+    // matters most. The distance transform has none of these properties.
+    //
+    // The median is reported alongside the mean because the mixture problem does
+    // not vanish entirely -- a landscape with a few very wide interfluves still
+    // skews the mean, and a large mean/median gap is the signal that it has.
+    double hillslope_length_mean_m   = 0.0;
+    double hillslope_length_median_m = 0.0;
+    double hillslope_length_p90_m    = 0.0;
+    long   n_hillslope_cells         = 0;
+
+    // --- the three spacing measures ---
     double perron_wavelength_m   = 0.0;  // power-weighted mean of spectral peaks
     double peak_wavelength_m     = 0.0;  // single argmax, reported for contrast
     double convex_halfwidth_m    = 0.0;  // mean convex run

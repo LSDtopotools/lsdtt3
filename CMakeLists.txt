@@ -385,6 +385,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_newton_cpu.cpp
     src/cpu/lsdtt_valley_spacing_cpu.cpp
+    src/cpu/lsdtt_lem_timestep_cpu.cpp
     src/cpu/lsdtt_sediment_transport_cpu.cpp
     src/cpu/lsdtt_giuh_cpu.cpp
     src/cpu/lsdtt_side_tributary_basins_cpu.cpp

@@ -337,6 +337,10 @@ int main(int argc, char* argv[])
             lsdtt::compute_valley_spacing(dem, vopts);
 
         std::cout << "\n--- Valley spacing ---\n";
+        std::cout << "  Hillslope length        : mean " << vr.hillslope_length_mean_m
+                  << " m, median " << vr.hillslope_length_median_m
+                  << " m, p90 " << vr.hillslope_length_p90_m
+                  << " m  (" << vr.n_hillslope_cells << " cells, distance transform)\n";
         std::cout << "  Convex half-width      : " << vr.convex_halfwidth_m
                   << " m  (wavelength " << vr.convex_wavelength_m << " m, from "
                   << vr.n_convex_runs << " runs)\n";
@@ -359,6 +363,10 @@ int main(int argc, char* argv[])
         if (vf)
         {
             vf << "quantity,value,units\n"
+               << "hillslope_length_mean," << vr.hillslope_length_mean_m << ",m\n"
+               << "hillslope_length_median," << vr.hillslope_length_median_m << ",m\n"
+               << "hillslope_length_p90," << vr.hillslope_length_p90_m << ",m\n"
+               << "n_hillslope_cells," << vr.n_hillslope_cells << ",count\n"
                << "convex_halfwidth," << vr.convex_halfwidth_m << ",m\n"
                << "convex_wavelength," << vr.convex_wavelength_m << ",m\n"
                << "n_convex_runs," << vr.n_convex_runs << ",count\n"

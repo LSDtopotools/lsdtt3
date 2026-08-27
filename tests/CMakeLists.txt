@@ -1850,6 +1850,13 @@ target_link_libraries(lsdtt-test-hillslope-transport-bc PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_transport_bc COMMAND lsdtt-test-hillslope-transport-bc)
 set_tests_properties(unit_hillslope_transport_bc PROPERTIES LABELS "unit;hillslope")
 
+# Coupled-LEM timestep control: an accuracy limit that no stability check catches.
+add_executable(lsdtt-test-lem-timestep cpp/test_lem_timestep.cpp)
+target_link_libraries(lsdtt-test-lem-timestep PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_lem_timestep COMMAND lsdtt-test-lem-timestep)
+set_tests_properties(unit_lem_timestep PROPERTIES LABELS "unit;lem")
+
 # The Newton solver for the Roering nonlinear hillslope (steady + transient).
 add_executable(lsdtt-test-hillslope-newton cpp/test_hillslope_newton.cpp)
 target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)

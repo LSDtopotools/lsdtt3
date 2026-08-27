@@ -222,6 +222,91 @@ lsdtt_valley_spacing_result compute_valley_spacing(
     }
 
     // -------------------------------------------------------------------------
+    // Hillslope length by distance transform -- the branching-robust measure.
+    //
+    // Two-pass chamfer distance (3-4 weights, ~2% of true Euclidean, which is far
+    // inside the scatter of the quantity itself) seeded on the concave cells.
+    // Orientation-free, so oblique tributaries cost it nothing.
+    // -------------------------------------------------------------------------
+    {
+        constexpr double k_big = 1e30;
+        const double wa = 1.0 * dx;         // orthogonal step
+        const double wb = 1.41421356 * dx;  // diagonal step
+
+        std::vector<double> dist(static_cast<std::size_t>(nrows) * ncols, k_big);
+        std::vector<uint8_t> is_hill(dist.size(), 0);
+
+        auto curv2d = [&](int r, int c) -> double
+        {
+            const std::size_t f  = static_cast<std::size_t>(r) * ncols + c;
+            const std::size_t fn = f - ncols, fs = f + ncols, fw = f - 1, fe = f + 1;
+            if (!mask[f] || !mask[fn] || !mask[fs] || !mask[fw] || !mask[fe])
+                return 0.0;
+            return (static_cast<double>(z[fn]) + static_cast<double>(z[fs])
+                  + static_cast<double>(z[fw]) + static_cast<double>(z[fe])
+                  - 4.0 * static_cast<double>(z[f])) / (dx * dx);
+        };
+
+        for (int r = 1; r < nrows - 1; ++r)
+            for (int c = 1; c < ncols - 1; ++c)
+            {
+                const std::size_t f = static_cast<std::size_t>(r) * ncols + c;
+                if (!mask[f]) continue;
+                const double k = curv2d(r, c);
+                if (k > 0.0) dist[f] = 0.0;           // concave: a valley cell
+                else if (k < 0.0) is_hill[f] = 1;     // convex: a hillslope cell
+            }
+
+        auto relax = [&](std::size_t f, std::size_t g, double w)
+        {
+            if (dist[g] + w < dist[f]) dist[f] = dist[g] + w;
+        };
+
+        for (int r = 1; r < nrows - 1; ++r)               // forward pass
+            for (int c = 1; c < ncols - 1; ++c)
+            {
+                const std::size_t f = static_cast<std::size_t>(r) * ncols + c;
+                if (!mask[f]) continue;
+                relax(f, f - ncols, wa); relax(f, f - 1, wa);
+                relax(f, f - ncols - 1, wb); relax(f, f - ncols + 1, wb);
+            }
+        for (int r = nrows - 2; r >= 1; --r)              // backward pass
+            for (int c = ncols - 2; c >= 1; --c)
+            {
+                const std::size_t f = static_cast<std::size_t>(r) * ncols + c;
+                if (!mask[f]) continue;
+                relax(f, f + ncols, wa); relax(f, f + 1, wa);
+                relax(f, f + ncols + 1, wb); relax(f, f + ncols - 1, wb);
+            }
+
+        std::vector<double> d;
+        d.reserve(dist.size() / 2);
+        for (int r = lo; r < hi && along_rows; ++r)
+            for (int c = 1; c < ncols - 1; ++c)
+            {
+                const std::size_t f = static_cast<std::size_t>(r) * ncols + c;
+                if (is_hill[f] && dist[f] < k_big) d.push_back(dist[f]);
+            }
+        if (!along_rows)
+            for (int r = 1; r < nrows - 1; ++r)
+                for (int c = lo; c < hi; ++c)
+                {
+                    const std::size_t f = static_cast<std::size_t>(r) * ncols + c;
+                    if (is_hill[f] && dist[f] < k_big) d.push_back(dist[f]);
+                }
+
+        out.n_hillslope_cells = static_cast<long>(d.size());
+        if (!d.empty())
+        {
+            out.hillslope_length_mean_m =
+                std::accumulate(d.begin(), d.end(), 0.0) / static_cast<double>(d.size());
+            std::sort(d.begin(), d.end());
+            out.hillslope_length_median_m = d[d.size() / 2];
+            out.hillslope_length_p90_m    = d[static_cast<std::size_t>(0.9 * (d.size() - 1))];
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Spectral exponent alpha, fitted BELOW the measured valley wavelength.
     // -------------------------------------------------------------------------
     const double lam = (out.convex_wavelength_m > 0.0) ? out.convex_wavelength_m

@@ -474,10 +474,22 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
         bool solve_ok = true;
 
         // Resolve AUTO once we know the problem size.
+        //
+        // A CACHED direct factorisation changes the arithmetic completely. The
+        // threshold exists because fill-in makes a one-off factorisation
+        // expensive at large N -- but when a workspace is caching it for a linear
+        // problem, that cost is paid ONCE and then amortised over every timestep,
+        // while an iterative solve pays its full price on every call. So the
+        // direct path stays worthwhile far past the one-off threshold, and AUTO
+        // raises it (4x) when the cache can actually be used.
+        const bool cache_will_amortise = (wsp != nullptr) && !opts.nonlinear;
+        const long int direct_limit =
+            opts.direct_solve_max_unknowns * (cache_will_amortise ? 4 : 1);
+
         const bool use_iterative =
             (opts.solver_choice == 1) ||
             (opts.solver_choice < 0 &&
-             static_cast<long int>(n_dof) > opts.direct_solve_max_unknowns);
+             static_cast<long int>(n_dof) > direct_limit);
 
         if (use_iterative)
         {
