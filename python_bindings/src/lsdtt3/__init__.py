@@ -156,6 +156,14 @@ from ._core import (
     crn_apparent_erosion_rate,
     crn_burial_pair,
     crn_step_change_pair,
+    crn_production_scaling,
+    crn_pressure,
+    crn_uniform_raster,
+    crn_steady_state,
+    crn_step_change,
+    crn_accumulated_concentration,
+    crn_outlet_concentration,
+    crn_isotope_ratio,
 )
 
 __all__ = [
@@ -294,4 +302,12 @@ __all__ = [
     "crn_apparent_erosion_rate",
     "crn_burial_pair",
     "crn_step_change_pair",
+    "crn_production_scaling",
+    "crn_pressure",
+    "crn_uniform_raster",
+    "crn_steady_state",
+    "crn_step_change",
+    "crn_accumulated_concentration",
+    "crn_outlet_concentration",
+    "crn_isotope_ratio",
 ]

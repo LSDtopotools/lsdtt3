@@ -23,6 +23,7 @@ nanobind_add_module(_core
     raster_geospatial.cpp
     raster_fetch.cpp
     cosmo_column.cpp
+    cosmo_raster.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
