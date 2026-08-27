@@ -1829,6 +1829,21 @@ target_link_libraries(lsdtt-test-hillslope-peclet PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_peclet COMMAND lsdtt-test-hillslope-peclet)
 set_tests_properties(unit_hillslope_peclet PROPERTIES LABELS "unit;hillslope")
 
+# The Newton solver for the Roering nonlinear hillslope (steady + transient).
+add_executable(lsdtt-test-hillslope-newton cpp/test_hillslope_newton.cpp)
+target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_newton COMMAND lsdtt-test-hillslope-newton)
+set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "unit;hillslope")
+
+# The SOR steady-state hillslope solver: conservation, precision floor, 'o' vs 'n',
+# periodic invariance, and recovery of U/D from known forcing.
+add_executable(lsdtt-test-hillslope-steady-state cpp/test_hillslope_steady_state.cpp)
+target_link_libraries(lsdtt-test-hillslope-steady-state PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_steady_state COMMAND lsdtt-test-hillslope-steady-state)
+set_tests_properties(unit_hillslope_steady_state PROPERTIES LABELS "unit;hillslope")
+
 # chi at the channel head, as distinct from domain-wide MaxChi (plan 2.2a).
 add_executable(lsdtt-test-chi-channel-head cpp/test_chi_channel_head.cpp)
 target_link_libraries(lsdtt-test-chi-channel-head PRIVATE lsdtt3_cpu)

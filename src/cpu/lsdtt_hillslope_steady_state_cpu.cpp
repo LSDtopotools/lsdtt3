@@ -7,6 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
 #include "lsdtt_hillslope_steady_state_cpu.hpp"
+#include "lsdtt_hillslope_operator_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -38,39 +39,20 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const float   h2      = h * h;
     const int64_t n_cells = static_cast<int64_t>(nrows) * ncols;
 
-    // Boundary condition flags: boundary_conditions string is NESW order.
-    const std::string& bc = opts.boundary_conditions;
-    const bool per_n = (bc.size() > 0 && bc[0] == 'p');
-    const bool per_e = (bc.size() > 1 && bc[1] == 'p');
-    const bool per_s = (bc.size() > 2 && bc[2] == 'p');
-    const bool per_w = (bc.size() > 3 && bc[3] == 'p');
-
-    // 'o' is a DIRICHLET edge: the boundary is base level, so edge cells are held
-    // at their input elevation and contribute to their neighbours' updates exactly
-    // like channel cells.  'n' is the Neumann (zero-flux) edge.
-    //
-    // These solvers previously treated 'o' and 'n' alike, both as Neumann
-    // reflection, which disagreed with lsdtt_hillslope_implicit_cpu.cpp (which has
-    // always honoured 'o' as Dirichlet) and silently converted a fixed-elevation
-    // boundary into a no-flux one.  A run declaring 'opop' -- periodic E-W, fixed
-    // elevation N-S -- was getting no-flux N-S instead.
-    auto bc_code = [&](std::size_t i) -> char
-    {
-        return (bc.size() > i) ? bc[i] : 'n';
-    };
-    const char cN = bc_code(0), cE = bc_code(1), cS = bc_code(2), cW = bc_code(3);
-
-    auto is_o_edge = [&](int r, int c) -> bool
-    {
-        return (r == 0         && cN == 'o') || (r == nrows - 1 && cS == 'o')
-            || (c == 0         && cW == 'o') || (c == ncols - 1 && cE == 'o');
-    };
+    // The domain -- grid, mask and boundary codes -- comes from the SHARED
+    // operator (lsdtt_hillslope_operator_cpu.hpp), so this solver, the implicit
+    // solver and the explicit solvers cannot drift apart in their boundary
+    // handling again.  'p' wraps, 'o' is Dirichlet at base level, 'n' is Neumann
+    // zero-flux; a short string pads with 'o'.
+    const lsdtt_hillslope_domain dom =
+        lsdtt_hillslope_domain::make(nrows, ncols, opts.boundary_conditions,
+                                     dem.get_mask());
 
     // The SOR arithmetic is carried in double (see the note on z below), so the
     // constants it consumes are formed in double too.
     const double hd   = static_cast<double>(h);
     const double h2d  = static_cast<double>(h2);
-    const double Sc2d = static_cast<double>(opts.Sc) * static_cast<double>(opts.Sc);
+    const double Scd  = static_cast<double>(opts.Sc);
     const double rhs  = static_cast<double>(opts.U) * h2d / static_cast<double>(opts.D);
 
     // -------------------------------------------------------------------------
@@ -119,100 +101,9 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const std::vector<float>& z_in = dem.get_data();
     std::vector<double> z(z_in.begin(), z_in.end());
 
-    // -------------------------------------------------------------------------
-    // nbr_z: elevation of the neighbour at (r+dr, c+dc) read from z.
-    //
-    // Handles periodic wrap and Neumann (zero-flux) reflection at open
-    // boundaries and masked interior neighbours.
-    // -------------------------------------------------------------------------
-    auto nbr_rc = [&](int r, int c, int dr, int dc) -> std::pair<int, int>
-    {
-        int nr = r + dr;
-        int nc = c + dc;
-
-        if (nr < 0)
-        {
-            if (per_n) nr = nrows - 1;
-            else       nr = std::max(0, r - dr);   // Neumann: reflect inward
-        }
-        else if (nr >= nrows)
-        {
-            if (per_s) nr = 0;
-            else       nr = std::min(nrows - 1, r - dr);
-        }
-
-        if (nc < 0)
-        {
-            if (per_w) nc = ncols - 1;
-            else       nc = std::max(0, c - dc);
-        }
-        else if (nc >= ncols)
-        {
-            if (per_e) nc = 0;
-            else       nc = std::min(ncols - 1, c - dc);
-        }
-
-        // Masked interior neighbour: same Neumann reflection
-        if (!mask[static_cast<size_t>(nr * ncols + nc)])
-        {
-            nr = std::max(0, std::min(nrows - 1, r - dr));
-            nc = std::max(0, std::min(ncols - 1, c - dc));
-        }
-
-        return {nr, nc};
-    };
-
-    auto nbr_z = [&](int r, int c, int dr, int dc) -> double
-    {
-        const auto rc = nbr_rc(r, c, dr, dc);
-        return z[static_cast<size_t>(rc.first * ncols + rc.second)];
-    };
-
-    // Centred tangential slopes AT AN ARBITRARY CELL.  Needed because the face
-    // coefficient must be a property of the face, not of the cell that happens
-    // to be asking (see the note on face symmetry below).
-    auto slope_x = [&](int r, int c) -> double
-    {
-        return (nbr_z(r, c, 0, +1) - nbr_z(r, c, 0, -1)) / (2.0 * hd);
-    };
-    auto slope_y = [&](int r, int c) -> double
-    {
-        return (nbr_z(r, c, +1, 0) - nbr_z(r, c, -1, 0)) / (2.0 * hd);
-    };
-
-    // -------------------------------------------------------------------------
-    // face_alpha: diffusivity at the face between z_c and z_nbr.
-    //
-    // Linear: always 1.
-    //
-    // Nonlinear (Roering 1999): the flux law uses the FULL gradient magnitude:
-    //   qs = -D * gradz / (1 - |gradz|^2/Sc^2),   |gradz|^2 = (dz/dx)^2 + (dz/dy)^2
-    //
-    // Each face contributes a face-normal slope and a face-tangent slope.
-    // Using only the face-normal component (the error in the old code)
-    // underestimates alpha on any cell with a non-zero cross-slope, allowing
-    // slopes to grow steeper than Sc in the cross direction.
-    //
-    // cross2_over_Sc2 = (tangent_slope)^2 / Sc^2, where the tangent is the
-    // E-W slope for N/S faces and the N-S slope for E/W faces.
-    //
-    // FACE SYMMETRY.  The tangent is averaged ACROSS the face, from the two
-    // cells that share it, rather than taken from the cell being updated.  This
-    // matters: alpha is a property of the face, so the N face of (r,c) and the
-    // S face of (r-1,c) are the same face and must get the same coefficient.
-    // Evaluating the tangent at the updating cell alone gave them DIFFERENT
-    // values, which makes the discrete operator non-symmetric and the scheme
-    // non-conservative -- flux leaving one cell through a face did not equal
-    // the flux entering its neighbour through that same face.  The face-normal
-    // term is already symmetric, being squared.
-    // -------------------------------------------------------------------------
-    auto face_alpha = [&](double z_c, double z_nbr, double cross2_over_Sc2) -> double
-    {
-        if (!opts.nonlinear) return 1.0;
-        const double dz_h = (z_nbr - z_c) / hd;
-        const double s2   = std::min(dz_h * dz_h / Sc2d + cross2_over_Sc2, 0.9999);
-        return 1.0 / (1.0 - s2);
-    };
+    // The stencil reads z through the shared domain's boundary rules and supplies
+    // the FACE-symmetric alpha (see lsdtt_hillslope_operator_cpu.hpp).
+    lsdtt_hillslope_stencil<double> stencil(dom, z.data(), hd);
 
     // -------------------------------------------------------------------------
     // Red-Black SOR.
@@ -255,44 +146,22 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
 
                 if ((row + col) % 2 != color)       continue;
                 if (!mask[sidx] || is_channel[sidx]) continue;
-                if (is_o_edge(row, col))            continue;   // Dirichlet base level
+                if (dom.is_dirichlet_edge(row, col)) continue;   // 'o' = base level
 
                 const double zc = z[sidx];
 
-                const double zN = nbr_z(row, col, -1,  0);
-                const double zS = nbr_z(row, col, +1,  0);
-                const double zE = nbr_z(row, col,  0, +1);
-                const double zW = nbr_z(row, col,  0, -1);
+                const double zN = stencil.at(row, col, -1,  0);
+                const double zS = stencil.at(row, col, +1,  0);
+                const double zE = stencil.at(row, col,  0, +1);
+                const double zW = stencil.at(row, col,  0, -1);
 
-                // Face tangents, averaged across each face so that the two
-                // cells sharing a face agree on its coefficient.  Only needed
-                // in nonlinear mode; the linear path ignores them entirely.
-                double cN = 0.0, cS = 0.0, cE = 0.0, cW = 0.0;
-                if (opts.nonlinear)
-                {
-                    const double sxc = slope_x(row, col);
-                    const double syc = slope_y(row, col);
-
-                    const auto rcN = nbr_rc(row, col, -1,  0);
-                    const auto rcS = nbr_rc(row, col, +1,  0);
-                    const auto rcE = nbr_rc(row, col,  0, +1);
-                    const auto rcW = nbr_rc(row, col,  0, -1);
-
-                    const double tN = 0.5 * (sxc + slope_x(rcN.first, rcN.second));
-                    const double tS = 0.5 * (sxc + slope_x(rcS.first, rcS.second));
-                    const double tE = 0.5 * (syc + slope_y(rcE.first, rcE.second));
-                    const double tW = 0.5 * (syc + slope_y(rcW.first, rcW.second));
-
-                    cN = tN * tN / Sc2d;
-                    cS = tS * tS / Sc2d;
-                    cE = tE * tE / Sc2d;
-                    cW = tW * tW / Sc2d;
-                }
-
-                const double aN = face_alpha(zc, zN, cN);
-                const double aS = face_alpha(zc, zS, cS);
-                const double aE = face_alpha(zc, zE, cE);
-                const double aW = face_alpha(zc, zW, cW);
+                // Face-first coefficients: alpha belongs to the FACE, so the two
+                // cells sharing one necessarily agree and the scheme conserves.
+                // Taken four-at-a-time so the centre cell's tangential slopes are
+                // evaluated once rather than once per face.
+                double a[4];
+                stencil.face_alphas(row, col, Scd, opts.nonlinear, a);
+                const double aN = a[0], aE = a[1], aS = a[2], aW = a[3];
                 const double aT = aN + aS + aE + aW;
 
                 const double z_jac = (aN * zN + aS * zS + aE * zE + aW * zW + rhs) / aT;
