@@ -36,6 +36,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_spacing_cpu.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -160,6 +161,61 @@ int main(int argc, char* argv[])
         "beta_by_bin, r_sq_by_bin.",
         "Output toggles", "switch", ""};
 
+    bool_default_map["compute_valley_spacing"] = false;
+    help_map["compute_valley_spacing"] = {"bool","false",
+        "Measure characteristic valley spacing (Perron 2008 / Bonetti 2020).",
+        "Reports three independent measures because each fails differently: the "
+        "POWER-WEIGHTED mean of spectral peaks (Perron et al. 2008 -- weighted, "
+        "not the argmax, because spacing occupies a band); the CONVEX HALF-WIDTH, "
+        "the mean run of convex cells across the valleys, which uses thousands of "
+        "samples and so survives a domain too small for a spectral peak; and the "
+        "small-scale spectral exponent alpha, predicted to be 2m-3 (Bonetti et al. "
+        "2020, Hooshyar et al. 2021). Writes _valley_spacing.csv and, with the "
+        "spectrum, _valley_spacing_spectrum.csv.",
+        "Valley spacing", "switch", ""};
+
+    string_default_map["valley_spacing_axis"] = "rows";
+    help_map["valley_spacing_axis"] = {"string","rows",
+        "Axis the spacing is measured ALONG: rows or columns.",
+        "Valleys run in the flow direction, so a landscape draining north-south "
+        "has its spacing measured east-west, i.e. along rows.",
+        "Valley spacing", "param", ""};
+
+    int_default_map["valley_spacing_margin"] = 20;
+    help_map["valley_spacing_margin"] = {"int","20",
+        "Cells dropped at each end of the FLOW direction before measuring.",
+        "Base level pins elevation there, so those lines carry the boundary's "
+        "imprint rather than the landscape's own scale.",
+        "Valley spacing", "param", ""};
+
+    float_default_map["valley_spacing_K"] = 0.0f;
+    help_map["valley_spacing_K"] = {"float","0",
+        "Erodibility K, for the Bonetti channelization index. 0 = skip CI.",
+        "CI = K l^(m+n) / (D^n U^(1-n)); for n = 1 it is independent of U. "
+        "CI_c ~ 32-37 marks first channelization, so reporting CI beside the "
+        "measured spacing is what makes a result comparable to the literature.",
+        "Valley spacing", "param", ""};
+
+    float_default_map["valley_spacing_D"] = 0.0f;
+    help_map["valley_spacing_D"] = {"float","0",
+        "Hillslope diffusivity D, for the channelization index.",
+        "See valley_spacing_K.", "Valley spacing", "param", ""};
+
+    float_default_map["valley_spacing_U"] = 0.0f;
+    help_map["valley_spacing_U"] = {"float","0",
+        "Uplift rate U, for the channelization index (unused when n = 1).",
+        "See valley_spacing_K.", "Valley spacing", "param", ""};
+
+    float_default_map["valley_spacing_m"] = 0.45f;
+    help_map["valley_spacing_m"] = {"float","0.45",
+        "Drainage-area exponent m, for CI and for the alpha = 2m-3 prediction.",
+        "See valley_spacing_K.", "Valley spacing", "param", ""};
+
+    float_default_map["valley_spacing_n"] = 1.0f;
+    help_map["valley_spacing_n"] = {"float","1.0",
+        "Slope exponent n, for the channelization index.",
+        "See valley_spacing_K.", "Valley spacing", "param", ""};
+
     bool_default_map["write_significant_frequencies"] = true;
     help_map["write_significant_frequencies"] = {"bool","true",
         "Write a CSV of frequencies with significant spectral power.",
@@ -258,6 +314,79 @@ int main(int argc, char* argv[])
     opts.n_background_iterations = ifs["n_background_iterations"];
     opts.background_seed         = ifs["background_seed"];
     opts.n_threads               = ifs["n_threads"];
+
+    // -------------------------------------------------------------------------
+    // Valley spacing. Independent of the full spectral analysis below, and cheap,
+    // so it runs first and reports even if that fails.
+    // -------------------------------------------------------------------------
+    if (bf["compute_valley_spacing"])
+    {
+        lsdtt::lsdtt_valley_spacing_options vopts;
+        vopts.axis = (sf["valley_spacing_axis"] == "columns")
+            ? lsdtt::lsdtt_valley_spacing_options::measurement_axis::along_columns
+            : lsdtt::lsdtt_valley_spacing_options::measurement_axis::along_rows;
+        vopts.margin_cells = ifs["valley_spacing_margin"];
+        vopts.K = ff["valley_spacing_K"];
+        vopts.D = ff["valley_spacing_D"];
+        vopts.U = ff["valley_spacing_U"];
+        vopts.m = ff["valley_spacing_m"];
+        vopts.n = ff["valley_spacing_n"];
+        vopts.n_threads = ifs["n_threads"];
+
+        const lsdtt::lsdtt_valley_spacing_result vr =
+            lsdtt::compute_valley_spacing(dem, vopts);
+
+        std::cout << "\n--- Valley spacing ---\n";
+        std::cout << "  Convex half-width      : " << vr.convex_halfwidth_m
+                  << " m  (wavelength " << vr.convex_wavelength_m << " m, from "
+                  << vr.n_convex_runs << " runs)\n";
+        std::cout << "  Spectral, power-weighted: " << vr.perron_wavelength_m
+                  << " m  (" << vr.n_spectral_peaks << " peaks)\n";
+        std::cout << "  Spectral, strongest peak: " << vr.peak_wavelength_m << " m\n";
+        std::cout << "  Spectral exponent alpha : " << vr.spectral_exponent
+                  << "  (predicted 2m-3 = " << vr.spectral_exponent_predicted << ")\n";
+        std::cout << "  Valleys across domain   : " << vr.valleys_in_domain << "\n";
+        if (vr.channelization_index > 0.0)
+            std::cout << "  Channelization index CI : " << vr.channelization_index
+                      << "  (critical "
+                      << lsdtt::k_channelization_index_critical_low << "-"
+                      << lsdtt::k_channelization_index_critical_high << ")\n";
+        if (!vr.warning.empty())
+            std::cerr << "\nWARNING: " << vr.warning << "\n\n";
+
+        const std::string vpath = pp.make_output_path("_valley_spacing", ".csv");
+        std::ofstream vf(vpath);
+        if (vf)
+        {
+            vf << "quantity,value,units\n"
+               << "convex_halfwidth," << vr.convex_halfwidth_m << ",m\n"
+               << "convex_wavelength," << vr.convex_wavelength_m << ",m\n"
+               << "n_convex_runs," << vr.n_convex_runs << ",count\n"
+               << "spectral_wavelength_power_weighted," << vr.perron_wavelength_m << ",m\n"
+               << "spectral_wavelength_peak," << vr.peak_wavelength_m << ",m\n"
+               << "n_spectral_peaks," << vr.n_spectral_peaks << ",count\n"
+               << "spectral_exponent_alpha," << vr.spectral_exponent << ",-\n"
+               << "spectral_exponent_predicted," << vr.spectral_exponent_predicted << ",-\n"
+               << "channelization_index," << vr.channelization_index << ",-\n"
+               << "valleys_in_domain," << vr.valleys_in_domain << ",count\n"
+               << "domain_length," << vr.domain_length_m << ",m\n"
+               << "spectrum_under_sampled," << (vr.spectrum_under_sampled ? 1 : 0) << ",bool\n";
+            std::cout << "Wrote: " << vpath << "\n";
+        }
+
+        const std::string spath =
+            pp.make_output_path("_valley_spacing_spectrum", ".csv");
+        std::ofstream sfh(spath);
+        if (sfh)
+        {
+            sfh << "frequency_cycles_per_m,wavelength_m,power\n";
+            for (std::size_t k = 1; k < vr.frequency_cycles_per_m.size(); ++k)
+                sfh << vr.frequency_cycles_per_m[k] << ","
+                    << 1.0 / vr.frequency_cycles_per_m[k] << ","
+                    << vr.power[k] << "\n";
+            std::cout << "Wrote: " << spath << "\n";
+        }
+    }
 
     lsdtt::lsdtt_spectral_analysis_result result;
     try

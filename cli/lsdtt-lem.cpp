@@ -52,6 +52,7 @@
 #include "../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
+#include "../src/cpu/lsdtt_hillslope_peclet_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
@@ -1614,6 +1615,28 @@ int main(int argc, char* argv[])
             meta_d);
             
         enforce_baselevel(); // Re-pin boundaries to wipe off final noise layer
+    }
+
+    // Can this grid represent a hillslope at all? A coupled run whose hillslopes
+    // are only a few cells wide still converges, still reports ~100% of the uplift
+    // rate, and still writes a plausible landscape -- it is simply all channel, and
+    // nothing else in the output says so.
+    if (opts.enable_hillslope_transport)
+    {
+        const lsdtt::hillslope_resolution_estimate hres =
+            lsdtt::estimate_hillslope_resolution(
+                static_cast<double>(opts.hillslope_diffusivity),
+                static_cast<double>(opts.erodibility),
+                static_cast<double>(dem.get_meta().cell_size),
+                static_cast<double>(opts.m_exponent),
+                static_cast<double>(opts.n_exponent),
+                opts.divide_area_by_dx);
+
+        if (hres.cells > 0.0)
+            std::cout << "  Hillslope scale   : L_h ~ " << hres.L_h_m << " m ("
+                      << hres.cells << " cells across a hillslope)\n";
+        if (hres.under_resolved)
+            std::cerr << "\nWARNING: " << hres.warning << "\n\n";
     }
 
     // Optionally pit-fill the initial surface (applied after conditioning)
