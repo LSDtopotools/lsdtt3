@@ -24,6 +24,7 @@ nanobind_add_module(_core
     raster_fetch.cpp
     cosmo_column.cpp
     cosmo_raster.cpp
+    cosmo_basin.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
