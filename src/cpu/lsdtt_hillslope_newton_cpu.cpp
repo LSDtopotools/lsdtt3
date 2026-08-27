@@ -15,6 +15,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 #ifdef _OPENMP
@@ -28,6 +30,63 @@
 
 namespace lsdtt
 {
+
+// -----------------------------------------------------------------------------
+// lsdtt_hillslope_newton_workspace
+//
+// Eigen types live in `impl` so the public header stays Eigen-free.
+// -----------------------------------------------------------------------------
+struct lsdtt_hillslope_newton_workspace::impl
+{
+#ifdef LSDTT_HAS_EIGEN
+    Eigen::SparseMatrix<double>                 J;
+    Eigen::SparseLU<Eigen::SparseMatrix<double>> lu;
+#endif
+
+    // Validity key. Anything that changes the MATRIX must appear here, or a stale
+    // factorisation would be reused and silently produce a wrong answer.
+    bool          have_key         = false;
+    int           nrows = 0, ncols = 0;
+    char          bc[4]            = {0, 0, 0, 0};
+    double        D = 0.0, Sc = 0.0, inv_dt = 0.0, h = 0.0;
+    bool          nonlinear        = true;
+    long int      n_dof            = 0;
+    std::uint64_t dof_hash         = 0;   // covers mask + channels + Dirichlet edges
+
+    bool pattern_valid = false;   // analyzePattern done for this key
+    bool numeric_valid = false;   // factorize done AND the values cannot have moved
+
+    long int n_pattern_analyses = 0;
+    long int n_factorisations   = 0;
+    long int n_solves           = 0;
+
+    void invalidate() { pattern_valid = false; numeric_valid = false; }
+};
+
+lsdtt_hillslope_newton_workspace::lsdtt_hillslope_newton_workspace()
+    : p_(std::make_unique<impl>()) {}
+lsdtt_hillslope_newton_workspace::~lsdtt_hillslope_newton_workspace() = default;
+lsdtt_hillslope_newton_workspace::lsdtt_hillslope_newton_workspace(
+    lsdtt_hillslope_newton_workspace&&) noexcept = default;
+lsdtt_hillslope_newton_workspace&
+lsdtt_hillslope_newton_workspace::operator=(
+    lsdtt_hillslope_newton_workspace&&) noexcept = default;
+
+void lsdtt_hillslope_newton_workspace::reset()
+{
+    const long int a = p_->n_pattern_analyses, f = p_->n_factorisations,
+                   s = p_->n_solves;
+    p_ = std::make_unique<impl>();
+    p_->n_pattern_analyses = a; p_->n_factorisations = f; p_->n_solves = s;
+}
+
+long int lsdtt_hillslope_newton_workspace::n_pattern_analyses() const noexcept
+{ return p_->n_pattern_analyses; }
+long int lsdtt_hillslope_newton_workspace::n_factorisations() const noexcept
+{ return p_->n_factorisations; }
+long int lsdtt_hillslope_newton_workspace::n_solves() const noexcept
+{ return p_->n_solves; }
+
 
 #ifdef LSDTT_HAS_EIGEN
 
@@ -135,12 +194,13 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
     const lsdtt_raster_cpu&               dem,
     const std::vector<std::uint8_t>&      is_channel,
     const lsdtt_hillslope_newton_options& opts,
-    const std::vector<float>&             z_old)
+    const std::vector<float>&             z_old,
+    lsdtt_hillslope_newton_workspace*     ws)
 {
     lsdtt_hillslope_newton_result result;
 
 #ifndef LSDTT_HAS_EIGEN
-    (void)is_channel; (void)opts; (void)z_old;
+    (void)is_channel; (void)opts; (void)z_old; (void)ws;
     result.elevation = dem;
     result.had_eigen = false;
     result.converged = false;
@@ -261,15 +321,85 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
         return m;
     };
 
+    // -------------------------------------------------------------------------
+    // Cache validity.
+    //
+    // The key must cover everything that changes the MATRIX. The DOF hash folds in
+    // the mask, the channel set and the Dirichlet edges in one pass, which is what
+    // actually determines the structure -- cheaper than comparing arrays and it
+    // cannot miss a rearrangement that leaves n_dof the same.
+    std::uint64_t dof_hash = 1469598103934665603ull;
+    for (int d = 0; d < n_dof; ++d)
+    {
+        const std::uint64_t v =
+            static_cast<std::uint64_t>(rc_of_dof[static_cast<std::size_t>(2 * d)]) * 1000003ull
+          + static_cast<std::uint64_t>(rc_of_dof[static_cast<std::size_t>(2 * d) + 1]);
+        dof_hash = (dof_hash ^ v) * 1099511628211ull;
+    }
+
+    lsdtt_hillslope_newton_workspace::impl* wsp = ws ? ws->p_.get() : nullptr;
+
+    bool cache_ok = false;
+    if (wsp)
+    {
+        cache_ok = wsp->have_key
+                && wsp->nrows == nrows && wsp->ncols == ncols
+                && wsp->bc[0] == dom.bc_n && wsp->bc[1] == dom.bc_e
+                && wsp->bc[2] == dom.bc_s && wsp->bc[3] == dom.bc_w
+                && wsp->D == D && wsp->Sc == Sc && wsp->inv_dt == inv_dt
+                && wsp->h == h
+                && wsp->nonlinear == opts.nonlinear
+                && wsp->n_dof == static_cast<long int>(n_dof)
+                && wsp->dof_hash == dof_hash;
+
+        if (!cache_ok)
+        {
+            wsp->invalidate();
+            wsp->have_key = true;
+            wsp->nrows = nrows; wsp->ncols = ncols;
+            wsp->bc[0] = dom.bc_n; wsp->bc[1] = dom.bc_e;
+            wsp->bc[2] = dom.bc_s; wsp->bc[3] = dom.bc_w;
+            wsp->D = D; wsp->Sc = Sc; wsp->inv_dt = inv_dt; wsp->h = h;
+            wsp->nonlinear = opts.nonlinear;
+            wsp->n_dof = static_cast<long int>(n_dof);
+            wsp->dof_hash = dof_hash;
+        }
+    }
+
+    // A LINEAR problem has a constant matrix: alpha is 1 regardless of z, so once
+    // the key matches, both the pattern and the numeric factorisation stay valid
+    // across any number of calls. Only the right-hand side moves.
+    bool reuse_numeric =
+        wsp && cache_ok && !opts.nonlinear && wsp->numeric_valid;
+
     std::vector<double> F(static_cast<std::size_t>(n_dof), 0.0);
     double fnorm = residual(z, F);
 
-    Eigen::SparseMatrix<double> J(n_dof, n_dof);
+    // The matrix and its factorisation live in the workspace when one was given,
+    // so they outlive this call.
+    Eigen::SparseMatrix<double>                  J_local(n_dof, n_dof);
+    Eigen::SparseLU<Eigen::SparseMatrix<double>> lu_local;
+
+    Eigen::SparseMatrix<double>&                  J  = wsp ? wsp->J  : J_local;
+    Eigen::SparseLU<Eigen::SparseMatrix<double>>& lu = wsp ? wsp->lu : lu_local;
+
+    // A workspace-held matrix is default-constructed 0x0 on the first call, and
+    // setFromTriplets does not resize -- it would write outside the matrix. Size it
+    // here rather than at construction, because n_dof is not known until now.
+    if (J.rows() != n_dof || J.cols() != n_dof)
+    {
+        J.resize(n_dof, n_dof);
+        if (wsp) wsp->invalidate();      // any cached factorisation is meaningless
+        reuse_numeric = false;
+    }
+
     std::vector<Eigen::Triplet<double>> trips;
-    trips.reserve(static_cast<std::size_t>(n_dof) * 12);
+    if (!reuse_numeric) trips.reserve(static_cast<std::size_t>(n_dof) * 12);
 
     const double feasible_ratio = std::sqrt(opts.slope_ratio_cap);
     bool capped_anywhere = false;
+
+    long int pattern_analyses_local = 0; (void)pattern_analyses_local;
 
     int it = 0;
     for (; it < opts.max_iterations; ++it)
@@ -277,8 +407,10 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
         if (fnorm <= opts.residual_tol) { result.converged = true; break; }
 
         // ---------------------------------------------------------------------
-        // Assemble J = dF/dz.
+        // Assemble J = dF/dz -- unless a valid constant matrix is already cached.
         // ---------------------------------------------------------------------
+        if (!reuse_numeric)
+        {
         trips.clear();
         lsdtt_hillslope_stencil<double> st(dom, z.data(), h);
 
@@ -333,6 +465,7 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
         // a periodic wrap or a repeated tangential contributor needs.
         J.setFromTriplets(trips.begin(), trips.end());
         J.makeCompressed();
+        }   // end assembly
 
         Eigen::VectorXd rhs(n_dof);
         for (int d = 0; d < n_dof; ++d) rhs[d] = -F[static_cast<std::size_t>(d)];
@@ -357,17 +490,34 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
                 step = solver.solve(rhs);
                 if (solver.info() != Eigen::Success) solve_ok = false;
             }
+            if (wsp) ++wsp->n_solves;
         }
         else
         {
-            Eigen::SparseLU<Eigen::SparseMatrix<double>> solver;
-            solver.analyzePattern(J);
-            solver.factorize(J);
-            if (solver.info() != Eigen::Success) solve_ok = false;
-            else
+            // The sparsity PATTERN is fixed for a given mask / BC set, so the
+            // symbolic analysis is hoisted whenever the key matches -- true for the
+            // nonlinear case too, where only the values move. The NUMERIC
+            // factorisation is additionally reused when the matrix itself cannot
+            // have changed (linear, fixed dt).
+            if (!reuse_numeric)
             {
-                step = solver.solve(rhs);
-                if (solver.info() != Eigen::Success) solve_ok = false;
+                if (!wsp || !wsp->pattern_valid)
+                {
+                    lu.analyzePattern(J);
+                    if (wsp) { wsp->pattern_valid = true; ++wsp->n_pattern_analyses; }
+                    else     ++pattern_analyses_local;
+                }
+                lu.factorize(J);
+                if (wsp) ++wsp->n_factorisations;
+                if (lu.info() != Eigen::Success) solve_ok = false;
+                else if (wsp && !opts.nonlinear) wsp->numeric_valid = true;
+            }
+
+            if (solve_ok)
+            {
+                step = lu.solve(rhs);
+                if (lu.info() != Eigen::Success) solve_ok = false;
+                if (wsp) ++wsp->n_solves;
             }
         }
 
@@ -523,7 +673,8 @@ lsdtt_hillslope_newton_transient_result compute_hillslope_newton_transient(
     const lsdtt_raster_cpu&                         dem,
     const std::vector<std::uint8_t>&                is_channel,
     float                                           dt_total,
-    const lsdtt_hillslope_newton_transient_options& opts)
+    const lsdtt_hillslope_newton_transient_options& opts,
+    lsdtt_hillslope_newton_workspace*               ws)
 {
     lsdtt_hillslope_newton_transient_result result;
     result.elevation = dem;
@@ -561,7 +712,7 @@ lsdtt_hillslope_newton_transient_result compute_hillslope_newton_transient(
         nopts.inv_dt = 1.0 / step;
 
         const lsdtt_hillslope_newton_result r =
-            compute_hillslope_newton(current, is_channel, nopts, zn);
+            compute_hillslope_newton(current, is_channel, nopts, zn, ws);
 
         result.had_eigen = r.had_eigen;
         if (!r.had_eigen)
@@ -616,6 +767,73 @@ lsdtt_hillslope_newton_transient_result compute_hillslope_newton_transient(
     if (result.converged && result.message.empty())
         result.message = "converged";
     return result;
+}
+
+
+// -----------------------------------------------------------------------------
+// compute_hillslope_steady_state_auto
+// -----------------------------------------------------------------------------
+lsdtt_hillslope_steady_state_result compute_hillslope_steady_state_auto(
+    const lsdtt_raster_cpu&                     dem,
+    const std::vector<std::uint8_t>&            is_channel,
+    const lsdtt_hillslope_steady_state_options& opts,
+    bool                                        force_sor,
+    lsdtt_hillslope_solve_report*               report,
+    lsdtt_hillslope_newton_workspace*           ws)
+{
+    if (!force_sor)
+    {
+        lsdtt_hillslope_newton_options nopts;
+        nopts.D  = opts.D;
+        nopts.U  = opts.U;
+        nopts.Sc = opts.Sc;
+        nopts.nonlinear           = opts.nonlinear;
+        nopts.boundary_conditions = opts.boundary_conditions;
+        nopts.inv_dt              = 0.0;              // the steady problem
+        nopts.n_threads           = opts.n_threads;
+
+        const lsdtt_hillslope_newton_result nr =
+            compute_hillslope_newton(dem, is_channel, nopts,
+                                     std::vector<float>(), ws);
+
+        if (nr.converged)
+        {
+            if (report)
+            {
+                report->solver_used = nr.had_eigen ? "Newton" : "Newton (no Eigen)";
+                report->detail      = "iterations=" + std::to_string(nr.n_iterations)
+                                    + "  ||F||inf=" + std::to_string(nr.final_residual)
+                                    + " m/yr";
+                if (nr.limiter_active)
+                    report->warning =
+                        "the sub-critical limiter binds in the converged field; "
+                        "near-Sc behaviour there is set by the cap, not the flux law";
+            }
+
+            lsdtt_hillslope_steady_state_result out;
+            out.elevation      = nr.elevation;
+            out.n_iterations   = nr.n_iterations;
+            out.final_residual = static_cast<float>(nr.final_max_dz);
+            out.converged      = true;
+            return out;
+        }
+
+        if (report)
+            report->warning = "the Newton hillslope solve did not converge ("
+                            + nr.message + "); falling back to SOR with Picard "
+                              "linearisation";
+    }
+
+    const lsdtt_hillslope_steady_state_result sr =
+        compute_hillslope_steady_state(dem, is_channel, opts);
+
+    if (report)
+    {
+        report->solver_used = "SOR";
+        report->detail      = "sweeps=" + std::to_string(sr.n_iterations)
+                            + "  max|dz|=" + std::to_string(sr.final_residual) + " m";
+    }
+    return sr;
 }
 
 } // namespace lsdtt

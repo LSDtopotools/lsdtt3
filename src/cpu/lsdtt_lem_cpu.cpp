@@ -251,9 +251,10 @@ compute_lem_channel_mask(
 
 std::pair<lsdtt_raster_cpu, lsdtt_lem_step_stats>
 run_lem_step(
-    const lsdtt_raster_cpu&          dem,
-    const lsdtt_lem_options&         opts,
-    const std::vector<std::int64_t>& boundary_flats)
+    const lsdtt_raster_cpu&           dem,
+    const lsdtt_lem_options&          opts,
+    const std::vector<std::int64_t>&  boundary_flats,
+    lsdtt_hillslope_newton_workspace* hillslope_ws)
 {
     const lsdtt_raster_meta& meta = dem.get_meta();
     const std::size_t n_cells = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
@@ -402,20 +403,26 @@ run_lem_step(
                 // Unconditionally-stable backward-Euler Roering solver (Sec8).
                 std::vector<uint8_t> is_channel = build_is_channel();
 
-                // Transient-coupling rule 2 (Sec8): with no Dirichlet channel sinks the
-                // solve degenerates to sink-free diffusion toward the edges, which is
-                // meaningless - skip the hillslope step entirely.
-                const bool any_channel =
-                    std::any_of(is_channel.begin(), is_channel.end(),
-                                [](uint8_t v) { return v != 0; });
-                if (!any_channel)
-                {
-                    std::cout << "[lem] roering_implicit: no channel pixels "
-                                 "(empty is_channel) - skipping the hillslope step "
-                                 "(needs incision_threshold_area > 0 or a non-empty "
-                                 "channel_mask_fname).\n";
-                }
-                else
+                // NOTE (2026-08-27): this step used to be SKIPPED whenever the
+                // channel set was empty, on the reasoning that "without Dirichlet
+                // channel sinks the solve degenerates to sink-free diffusion
+                // toward the edges, which is meaningless".
+                //
+                // That reasoning applies to a STEADY solve with no Dirichlet data
+                // anywhere -- an elliptic problem with pure Neumann data is
+                // singular, and the field drifts without bound. It does NOT apply
+                // to a transient step, which is what the guard was blocking:
+                //
+                //   * a diffusion step over dt is well posed under any boundary
+                //     condition; mass simply redistributes;
+                //   * in the COUPLED regime the fluvial term is the sink, applied
+                //     to every cell in the same timestep;
+                //   * an 'o' edge supplies base level regardless of channels.
+                //
+                // The empty channel set is exactly what `coupling_regime ==
+                // coupled` produces on purpose, so the guard was disabling the
+                // emergent-drainage-density mode it was meant to support. The
+                // hillslope operator needs BOUNDARY CONDITIONS, not channels.
                 {
                     lsdtt_roering_implicit_options ri = opts.roering_implicit_opts;
                     ri.D  = opts.hillslope_diffusivity;
@@ -447,9 +454,14 @@ run_lem_step(
                         nt.newton.n_threads           = ri.n_threads;
                         nt.dt_init = (ri.dt_init > 0.0f) ? ri.dt_init : opts.timestep;
 
+                        // The workspace carries the factorisation between
+                        // timesteps. For a LINEAR run with a fixed dt the matrix is
+                        // identical every step, so this turns a per-step
+                        // assemble-analyse-factorise-solve into a solve.
                         const lsdtt_hillslope_newton_transient_result nr =
                             compute_hillslope_newton_transient(
-                                current, is_channel, opts.timestep, nt);
+                                current, is_channel, opts.timestep, nt,
+                                hillslope_ws);
 
                         if (nr.converged)
                         {

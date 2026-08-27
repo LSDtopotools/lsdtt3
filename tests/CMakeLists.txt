@@ -905,13 +905,27 @@ add_lsdtt_cli_smoke_test(
 # emergent-drainage-density experiment. Fatal, and the message names the four
 # that can.
 add_lsdtt_cli_smoke_test(
-    failure_lem_coupling_roering_implicit
+    failure_lem_coupling_ri_steady_no_dirichlet
     lsdtt-lem
-    lem_coupling_roering_implicit.param.in
+    lem_coupling_ri_steady_no_dirichlet.param.in
     unused_expected_output
     --expect-failure
-    --stderr-contains "roering_implicit"
-    --stderr-contains "linear, roering, cidre, adi"
+    --stderr-contains "needs Dirichlet data somewhere"
+)
+
+# The combination this replaces (coupled + roering_implicit) used to be a FATAL
+# error on the reasoning that the implicit solver needs a Dirichlet CHANNEL set.
+# It does not -- it needs boundary conditions, and in the coupled regime the
+# fluvial term is the sink. The restriction ruled the most robust solver out of
+# the emergent-drainage-density experiment it is most useful for. What remains
+# genuinely singular is a STEADY solve with no Dirichlet data anywhere, which the
+# failure test above pins; the transient case must simply RUN.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_coupling_ri_transient
+    lsdtt-lem
+    lem_coupling_ri_transient.param.in
+    tiny_coup_ri_trans_modelled_topography.tif
+    --stdout-contains "Model run complete"
 )
 
 # D8 on a diverging hillslope manufactures channel heads, so the drainage

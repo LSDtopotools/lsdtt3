@@ -465,6 +465,90 @@ int main()
               "the old-time convention biases the hillslope HIGH, as documented");
     }
 
+    // -----------------------------------------------------------------------
+    // W10: the cached workspace must never change an answer.
+    //
+    // The cache exists for speed (15x on a coupled LEM run), and a cache that
+    // changes results is worse than no cache. So this asserts BOTH halves: the
+    // fields must be bit-identical, AND the reuse must actually have happened --
+    // otherwise the test would pass trivially on a cache that silently did nothing.
+    // -----------------------------------------------------------------------
+    std::cout << "\n-- W10: the workspace caches without changing the answer --\n";
+    {
+        auto o = newton_opts();          // linear: the matrix is constant
+        const double dt = 5.0e4;
+        o.inv_dt = 1.0 / dt;
+
+        std::vector<float> zn = dem.get_data();
+        lsdtt_raster_cpu   uncached = dem;
+        lsdtt_raster_cpu   cached   = dem;
+
+        lsdtt_hillslope_newton_workspace ws;
+
+        constexpr int N_STEPS = 12;
+        bool all_conv = true;
+        for (int k = 0; k < N_STEPS; ++k)
+        {
+            const auto ru = compute_hillslope_newton(uncached, ch, o,
+                                                     uncached.get_data());
+            const auto rc = compute_hillslope_newton(cached, ch, o,
+                                                     cached.get_data(), &ws);
+            all_conv = all_conv && ru.converged && rc.converged;
+            uncached = ru.elevation;
+            cached   = rc.elevation;
+        }
+        check(all_conv, "every step converged, cached and uncached");
+
+        const double d = linf(uncached, cached);
+        std::cout << "     Linf(cached - uncached) over " << N_STEPS
+                  << " steps = " << d << " m\n";
+        std::cout << "     workspace: " << ws.n_pattern_analyses()
+                  << " pattern analyses, " << ws.n_factorisations()
+                  << " factorisations, " << ws.n_solves() << " solves\n";
+        check(d == 0.0, "the cached run is BIT-IDENTICAL to the uncached one");
+
+        // The point of the cache: one factorisation serves every step.
+        check(ws.n_factorisations() == 1,
+              "exactly one numeric factorisation for " + std::to_string(N_STEPS)
+              + " linear steps (got " + std::to_string(ws.n_factorisations()) + ")");
+        check(ws.n_pattern_analyses() == 1,
+              "and exactly one symbolic analysis");
+        check(ws.n_solves() >= N_STEPS,
+              "while every step still performed its own solve");
+    }
+
+    // -----------------------------------------------------------------------
+    // W11: the cache must NOTICE when the problem changes.
+    //
+    // A validity key that is too loose is the dangerous failure mode -- it would
+    // reuse a factorisation for a different matrix and return a confidently wrong
+    // field. Change dt (which scales the I/dt term) and require a refactorisation.
+    // -----------------------------------------------------------------------
+    std::cout << "\n-- W11: the cache invalidates when the matrix changes --\n";
+    {
+        auto o = newton_opts();
+        lsdtt_hillslope_newton_workspace ws;
+
+        o.inv_dt = 1.0 / 5.0e4;
+        const auto r1 = compute_hillslope_newton(dem, ch, o, dem.get_data(), &ws);
+        const long int f1 = ws.n_factorisations();
+
+        o.inv_dt = 1.0 / 1.0e3;          // different dt -> different matrix
+        const auto r2 = compute_hillslope_newton(dem, ch, o, dem.get_data(), &ws);
+        const long int f2 = ws.n_factorisations();
+
+        check(r1.converged && r2.converged, "both solves converged");
+        check(f2 > f1, "changing dt forced a new factorisation ("
+              + std::to_string(f1) + " -> " + std::to_string(f2) + ")");
+
+        // And the answers must differ, or the test proves nothing about staleness.
+        const auto r2_fresh = compute_hillslope_newton(dem, ch, o, dem.get_data());
+        check(linf(r2.elevation, r2_fresh.elevation) == 0.0,
+              "the post-invalidation answer matches a fresh uncached solve");
+        check(linf(r1.elevation, r2.elevation) > 1e-6,
+              "and the two dt values genuinely give different fields");
+    }
+
     std::cout << "\n=====================================================\n"
               << " " << (g_checks - g_failures) << " / " << g_checks
               << " checks passed\n"

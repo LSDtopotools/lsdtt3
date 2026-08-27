@@ -54,13 +54,86 @@
 #define LSDTT_HILLSLOPE_NEWTON_CPU_HPP
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_hillslope_steady_state_cpu.hpp"
 
 namespace lsdtt
 {
+
+struct lsdtt_hillslope_newton_options;
+struct lsdtt_hillslope_newton_result;
+
+// -----------------------------------------------------------------------------
+// lsdtt_hillslope_newton_workspace
+//
+// Cached linear-algebra state, held BY THE CALLER so it survives between solves.
+//
+// Why this exists. In a coupled LEM run the hillslope solve is called once per
+// timestep, and for a LINEAR run with a fixed dt and fixed boundary conditions the
+// matrix is *identical* every time: alpha is 1, the degree-of-freedom set is fixed,
+// and the I/dt term is fixed. Only the right-hand side changes. Rebuilding the
+// triplets, sorting them, re-running the symbolic analysis and re-factorising on
+// every step is therefore four-fifths wasted work -- and it dominated the runtime:
+// on a 200x200 emergent-drainage run the hillslope solve was 97% of wall time at
+// 0.72 s/step, against ~0.23 s for a single equivalent standalone solve.
+//
+// A cache inside the solve function would be useless, because the caller creates a
+// fresh call each timestep. So the cache lives here and the caller keeps it alive.
+//
+// What is reused depends on the problem:
+//
+//   linear, unchanged dt/BCs/mask -> matrix, symbolic AND numeric factorisation.
+//                                    The step becomes RHS assembly + a triangular
+//                                    solve.
+//   nonlinear                     -> the sparsity PATTERN only. alpha depends on z,
+//                                    so the values and the numeric factorisation
+//                                    must be rebuilt, but the pattern never changes.
+//
+// Validity is checked, not assumed: a key covering the grid, boundary codes, mask,
+// Dirichlet set, D, Sc, dt and the linear/nonlinear flag is recomputed each call and
+// the cache is dropped if anything moved. Passing a workspace can therefore never
+// change an answer -- if it did, that is a bug, and `n_factorisations` /
+// `n_pattern_analyses` are exposed so a test can prove the reuse actually happened.
+//
+// Not copyable (it owns a factorisation); movable. Passing nullptr disables caching
+// entirely, which is the behaviour of every call that does not opt in.
+// -----------------------------------------------------------------------------
+class lsdtt_hillslope_newton_workspace
+{
+public:
+    lsdtt_hillslope_newton_workspace();
+    ~lsdtt_hillslope_newton_workspace();
+
+    lsdtt_hillslope_newton_workspace(const lsdtt_hillslope_newton_workspace&) = delete;
+    lsdtt_hillslope_newton_workspace&
+        operator=(const lsdtt_hillslope_newton_workspace&) = delete;
+
+    lsdtt_hillslope_newton_workspace(lsdtt_hillslope_newton_workspace&&) noexcept;
+    lsdtt_hillslope_newton_workspace&
+        operator=(lsdtt_hillslope_newton_workspace&&) noexcept;
+
+    // Drop everything cached. Never required for correctness -- the validity key
+    // handles that -- but useful to release memory between unrelated runs.
+    void reset();
+
+    // Diagnostics: how much work the cache actually saved.
+    [[nodiscard]] long int n_pattern_analyses() const noexcept;
+    [[nodiscard]] long int n_factorisations()   const noexcept;
+    [[nodiscard]] long int n_solves()           const noexcept;
+
+    struct impl;                       // Eigen lives here, not in this header
+private:
+    std::unique_ptr<impl> p_;
+    friend lsdtt_hillslope_newton_result compute_hillslope_newton(
+        const lsdtt_raster_cpu&, const std::vector<std::uint8_t>&,
+        const lsdtt_hillslope_newton_options&, const std::vector<float>&,
+        lsdtt_hillslope_newton_workspace*);
+};
+
 
 // -----------------------------------------------------------------------------
 // lsdtt_hillslope_newton_options
@@ -207,7 +280,8 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
     const lsdtt_raster_cpu&               dem,
     const std::vector<std::uint8_t>&      is_channel,
     const lsdtt_hillslope_newton_options& opts,
-    const std::vector<float>&             z_old = std::vector<float>());
+    const std::vector<float>&             z_old = std::vector<float>(),
+    lsdtt_hillslope_newton_workspace*     ws    = nullptr);
 
 // -----------------------------------------------------------------------------
 // compute_hillslope_newton_transient
@@ -230,7 +304,40 @@ lsdtt_hillslope_newton_transient_result compute_hillslope_newton_transient(
     const lsdtt_raster_cpu&                          dem,
     const std::vector<std::uint8_t>&                 is_channel,
     float                                            dt_total,
-    const lsdtt_hillslope_newton_transient_options&  opts);
+    const lsdtt_hillslope_newton_transient_options&  opts,
+    lsdtt_hillslope_newton_workspace*                ws = nullptr);
+
+
+// -----------------------------------------------------------------------------
+// compute_hillslope_steady_state_auto
+//
+// Solve the steady hillslope problem with the best available method: Newton when
+// it is usable, SOR + Picard when it is not.
+//
+// This lives here rather than in the CLI because it is solver-selection policy, not
+// presentation. It performs no I/O; `report`, when non-null, receives the lines the
+// caller may wish to print, so the decision and the CLI's rendering of it stay
+// separate.
+//
+// force_sor skips Newton entirely (for comparison, or to reproduce an older run).
+// SOR is also used automatically when Eigen is absent or Newton fails to converge --
+// it is not merely a legacy path, it is the only steady solver in a build without
+// Eigen.
+// -----------------------------------------------------------------------------
+struct lsdtt_hillslope_solve_report
+{
+    std::string solver_used;      // "Newton" or "SOR"
+    std::string detail;           // iteration counts, residual, units
+    std::string warning;          // empty unless something needs saying
+};
+
+lsdtt_hillslope_steady_state_result compute_hillslope_steady_state_auto(
+    const lsdtt_raster_cpu&                            dem,
+    const std::vector<std::uint8_t>&                   is_channel,
+    const lsdtt_hillslope_steady_state_options&        opts,
+    bool                                               force_sor = false,
+    lsdtt_hillslope_solve_report*                      report    = nullptr,
+    lsdtt_hillslope_newton_workspace*                  ws        = nullptr);
 
 } // namespace lsdtt
 

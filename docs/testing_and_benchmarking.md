@@ -4385,6 +4385,95 @@ solver. `cidre` is also retained regardless -- it is the only model that works w
 channel network, since `roering_implicit` structurally requires imposed channels.
 
 
+## 10i. Emergent coupling unblocked, and a factorisation cache (2026-08-27)
+
+### Two guards blocked the mode they were meant to protect
+
+`lsdtt-lem` can run fluvial incision and hillslope transport on **every cell**, with no channel mask
+and no Dirichlet channel set, so that channels emerge where stream power outruns diffusion. Most of
+the wiring already existed -- `incision_threshold_area: 0` applies stream power everywhere, and
+`hillslope_channel_coupling: coupled` returns an empty channel set on purpose. Two guards blocked it:
+
+* `lsdtt_lem_cpu.cpp` skipped the transient hillslope step whenever the channel set was empty;
+* `cli/lsdtt-lem.cpp` made `coupled` + `roering_implicit` a **FATAL** error.
+
+Both rested on "without Dirichlet channel sinks the solve degenerates to sink-free diffusion toward
+the edges". That is true of a **steady** solve with no Dirichlet data anywhere -- an elliptic problem
+with pure Neumann data is singular, and `unit_hillslope_steady_state` H4 measures it directly (698 m
+of drift in 500 sweeps on `'nnnn'` with no channels). It is **not** true of a transient step, which
+is what the guards blocked: a diffusion step over `dt` is well posed under any boundary condition,
+the fluvial term is the sink in the coupled regime, and an `'o'` edge supplies base level regardless.
+The hillslope operator needs boundary conditions, not channels.
+
+Both are replaced by the narrow correct guard -- steady + coupled + no `'o'` edge is fatal.
+`failure_lem_coupling_ri_steady_no_dirichlet` pins the singular case;
+`smoke_lem_coupling_ri_transient` pins that the combination now runs. The old
+`failure_lem_coupling_roering_implicit`, which asserted the wrong restriction, is deleted.
+
+### The factorisation cache: 97% of runtime, removed
+
+The first working coupled run took 37 minutes, and profiling put **97% of it in the hillslope
+solve** -- 0.43 s for 20 steps with hillslopes off against 14.83 s with them on, i.e. 0.72 s/step on
+40,000 cells for a *linear* solve.
+
+The cause is structural. For a linear run with fixed `dt` and fixed boundary conditions, `alpha` is
+1, the degree-of-freedom set never changes and the `I/dt` term never changes, so **the matrix is
+identical at every timestep** and only the right-hand side moves. The code was rebuilding ~360k
+triplets, sorting them, re-running `analyzePattern` and re-factorising on every one of 3,000 steps.
+
+`lsdtt_hillslope_newton_workspace` (`src/cpu/lsdtt_hillslope_newton_cpu.hpp`, Eigen behind a pimpl
+so the header stays Eigen-free) holds the cached matrix and factorisation **for the caller** -- a
+cache inside the solve function would be useless, because the LEM makes a fresh call each timestep.
+`run_lem_step` accepts one optionally and the CLI owns it across the loop. Reuse depends on the
+problem: linear reuses the matrix and both factorisations; nonlinear reuses the sparsity **pattern**
+only, since `alpha` depends on `z`. A validity key (grid, boundary codes, DOF hash, `D`, `Sc`, `dt`,
+linear/nonlinear) is recomputed every call and the cache dropped if anything moved, so passing a
+workspace cannot change an answer.
+
+| 20 steps, 200x200, linear | before | after |
+|---|---:|---:|
+| wall | 14.83 s | **0.99 s** |
+
+Verified directly rather than inferred: a 400-step run reports `1 pattern analyses,
+1 factorisations, 400 solves`.
+
+**Test coverage** (`unit_hillslope_newton` W10/W11). Both halves matter. W10 asserts the cached run
+is **bit-identical** (`Linf = 0` over 12 steps) **and** that reuse actually happened (exactly 1
+factorisation, 1 symbolic analysis, 12 solves) -- without the second assertion the test would pass
+trivially on a cache that silently did nothing. W11 covers the dangerous direction: change `dt`,
+require a refactorisation, and confirm the post-invalidation answer matches a fresh uncached solve.
+
+**A bug found while building it.** A workspace-held `Eigen::SparseMatrix` is default-constructed
+**0x0**, and `setFromTriplets` does not resize -- it writes outside the matrix, segfaulting. The
+non-workspace path never hit this because `J_local(n_dof, n_dof)` is sized at construction. The
+matrix is now sized explicitly on first use, with the cache invalidated whenever dimensions change.
+
+### Solver-selection policy moved out of the CLI
+
+`run_steady_hillslope()`, added to `cli/lsdtt-lem.cpp` when Newton became the default, was
+solver-selection policy rather than presentation. It is now
+`compute_hillslope_steady_state_auto()` in `src/cpu`, performing no I/O: it fills a
+`lsdtt_hillslope_solve_report` and the CLI renders it. 65 lines removed from the CLI.
+
+### A measurement trap worth recording
+
+Per-step cost is ~5x higher during the transient than at equilibrium, and the **fluvial-only** cost
+is ~3x higher too, so it is not specific to the hillslope solve:
+
+| | fluvial only | with hillslopes | hillslope cost |
+|---|---:|---:|---:|
+| evolved landscape, 20 steps | 0.41 s | 1.39 s | 0.049 s/step |
+| flat start, 400 steps | 24.3 s | 129.4 s | 0.263 s/step |
+
+Plausibly flow routing over an unorganised surface full of pits and flats, but **not confirmed** --
+recorded rather than explained. It does not affect the cache result, which is measured directly.
+
+An earlier version of that comparison was **invalid**: the "evolved landscape" run had silently
+failed to load its DEM (missing file extension) and done no work, making it appear 30x faster than
+it is. `lsdtt-lem` prints a full, plausible configuration block before it discovers the file is
+missing. When timing a LEM run, assert on the completion line rather than the absence of an error.
+
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

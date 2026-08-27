@@ -32,6 +32,7 @@
 
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_hillslope_implicit_cpu.hpp"
+#include "lsdtt_hillslope_newton_cpu.hpp"
 
 namespace lsdtt
 {
@@ -182,9 +183,14 @@ struct lsdtt_lem_step_stats
 // Returns the updated DEM and step statistics.
 std::pair<lsdtt_raster_cpu, lsdtt_lem_step_stats>
 run_lem_step(
-    const lsdtt_raster_cpu&          dem,
-    const lsdtt_lem_options&         opts,
-    const std::vector<std::int64_t>& boundary_flats
+    const lsdtt_raster_cpu&           dem,
+    const lsdtt_lem_options&          opts,
+    const std::vector<std::int64_t>&  boundary_flats,
+    // Optional cached linear algebra, held by the caller across timesteps. For a
+    // linear hillslope run with a fixed dt the matrix is identical every step, so
+    // passing one turns per-step assemble/analyse/factorise/solve into a solve.
+    // Passing nullptr disables caching and changes nothing else.
+    lsdtt_hillslope_newton_workspace* hillslope_ws = nullptr
 );
 
 // ---------------------------------------------------------------------------

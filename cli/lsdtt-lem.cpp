@@ -262,70 +262,6 @@ static std::vector<std::int64_t> build_boundary_flats(
 // main
 // =============================================================================
 
-// -----------------------------------------------------------------------------
-// run_steady_hillslope
-//
-// Solve the steady hillslope problem, preferring NEWTON and falling back to SOR.
-//
-// Newton is the default for BOTH linear and nonlinear steady solves. For the
-// nonlinear problem the reason is robustness: Picard has no damping on the face
-// coefficients, so near Sc it limit-cycles and needs heavy under-relaxation to
-// converge at all. For the LINEAR problem the reason is simply speed and
-// accuracy -- Newton reduces to a single sparse direct solve (F is already
-// linear in z), and measured against SOR at tolerance 1e-6 it is ~21x faster at
-// 63k unknowns and ~23x at 161k, while being exact to round-off. SOR's own
-// max|Deltaz| criterion understates its solution error by the usual 1/(1-rho)
-// factor, which at n = 401 is about 1000x.
-//
-// SOR remains the fallback, and it is not optional: Newton needs Eigen, and an
-// Eigen-free build (-DLSDTT_EIGEN=OFF) has no other steady solver.
-// -----------------------------------------------------------------------------
-static lsdtt::lsdtt_hillslope_steady_state_result run_steady_hillslope(
-    const lsdtt::lsdtt_raster_cpu&                     dem,
-    const std::vector<std::uint8_t>&                   is_channel,
-    const lsdtt::lsdtt_hillslope_steady_state_options& hs_opts,
-    bool                                               force_sor)
-{
-    if (!force_sor)
-    {
-        lsdtt::lsdtt_hillslope_newton_options nopts;
-        nopts.D  = hs_opts.D;
-        nopts.U  = hs_opts.U;
-        nopts.Sc = hs_opts.Sc;
-        nopts.nonlinear           = hs_opts.nonlinear;
-        nopts.boundary_conditions = hs_opts.boundary_conditions;
-        nopts.inv_dt              = 0.0;               // the steady problem
-        nopts.n_threads           = hs_opts.n_threads;
-
-        const lsdtt::lsdtt_hillslope_newton_result nr =
-            lsdtt::compute_hillslope_newton(dem, is_channel, nopts);
-
-        if (nr.converged)
-        {
-            std::cout << "  Solver used    : Newton"
-                      << (nr.had_eigen ? "" : " (no Eigen)")
-                      << "  iterations=" << nr.n_iterations
-                      << "  ||F||inf=" << nr.final_residual << " m/yr\n";
-            if (nr.limiter_active)
-                std::cout << "  NOTE: the sub-critical limiter was active somewhere; "
-                             "near-Sc behaviour there is set by the cap, not the flux law.\n";
-
-            lsdtt::lsdtt_hillslope_steady_state_result out;
-            out.elevation      = nr.elevation;
-            out.n_iterations   = nr.n_iterations;
-            out.final_residual = static_cast<float>(nr.final_max_dz);
-            out.converged      = true;
-            return out;
-        }
-
-        std::cerr << "Warning: the Newton hillslope solve did not converge ("
-                  << nr.message << ").\n"
-                     "         Falling back to SOR with Picard linearisation.\n";
-    }
-
-    return lsdtt::compute_hillslope_steady_state(dem, is_channel, hs_opts);
-}
-
 int main(int argc, char* argv[])
 {
     print_banner();
@@ -1182,17 +1118,34 @@ int main(int argc, char* argv[])
         for (char& ch : hs_model)
             ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-        if (hs_model == "roering_implicit")
+        // NOTE (2026-08-27): `coupled` + `roering_implicit` used to be a FATAL
+        // combination, on the reasoning that the implicit solver needs a
+        // Dirichlet channel set. It does not -- it needs boundary conditions.
+        //
+        // A transient diffusion step is well posed under any boundary condition;
+        // in the coupled regime the fluvial term is the sink and it is applied to
+        // every cell in the same timestep; and an 'o' edge supplies base level
+        // regardless of channels. The restriction ruled the most robust solver out
+        // of the one experiment it is most useful for.
+        //
+        // The genuinely singular case is a STEADY solve with no Dirichlet data
+        // ANYWHERE -- no channels and no 'o' edge -- which is caught below.
+        if (hs_model == "roering_implicit" && bf["run_steady_state"])
         {
-            std::cerr << "\nFATAL: hillslope_channel_coupling: coupled cannot be "
-                         "run with hillslope_model: roering_implicit.\n"
-                         "  That solver needs a Dirichlet channel set; with none "
-                         "it degenerates to sink-free\n  diffusion toward the "
-                         "domain edges, so it skips the hillslope step entirely.\n"
-                         "  The emergent-drainage-density experiment therefore "
-                         "cannot use the most robust\n  solver. Use one of: "
-                         "linear, roering, cidre, adi.\n";
-            return 1;
+            const std::string bc = sf["boundary_conditions"];
+            if (bc.find('o') == std::string::npos)
+            {
+                std::cerr << "\nFATAL: hillslope_channel_coupling: coupled with "
+                             "run_steady_state and no 'o' edge.\n"
+                             "  The steady hillslope problem is elliptic, so it "
+                             "needs Dirichlet data somewhere.\n"
+                             "  With no channel set AND no fixed-elevation ('o') "
+                             "boundary there is none, and\n  the solution is not "
+                             "determined -- the field drifts without bound.\n"
+                             "  Give at least one 'o' edge in boundary_conditions, "
+                             "or use a channel set.\n";
+                return 1;
+            }
         }
 
         if (pp.parameter_supplied("enable_d8_fluvial_erosion") &&
@@ -1859,8 +1812,15 @@ int main(int argc, char* argv[])
                 hs_result = lsdtt::compute_cidre_hillslope_steady_state(
                     dem, is_channel, hs_opts);
             else
-                hs_result = run_steady_hillslope(dem, is_channel, hs_opts,
-                                                 bf["hillslope_force_sor"]);
+            {
+                lsdtt::lsdtt_hillslope_solve_report rep;
+                hs_result = lsdtt::compute_hillslope_steady_state_auto(
+                    dem, is_channel, hs_opts, bf["hillslope_force_sor"], &rep);
+                std::cout << "  Solver used    : " << rep.solver_used
+                          << "  " << rep.detail << "\n";
+                if (!rep.warning.empty())
+                    std::cerr << "  NOTE: " << rep.warning << "\n";
+            }
         }
         catch (const std::exception& e)
         {
@@ -2404,9 +2364,16 @@ int main(int argc, char* argv[])
                     hs_result = lsdtt::compute_cidre_hillslope_steady_state(
                         ss_result.elevation, is_channel, hs_opts);
                 else
-                    hs_result = run_steady_hillslope(ss_result.elevation,
-                                                     is_channel, hs_opts,
-                                                     bf["hillslope_force_sor"]);
+                {
+                    lsdtt::lsdtt_hillslope_solve_report rep;
+                    hs_result = lsdtt::compute_hillslope_steady_state_auto(
+                        ss_result.elevation, is_channel, hs_opts,
+                        bf["hillslope_force_sor"], &rep);
+                    std::cout << "  Solver used    : " << rep.solver_used
+                              << "  " << rep.detail << "\n";
+                    if (!rep.warning.empty())
+                        std::cerr << "  NOTE: " << rep.warning << "\n";
+                }
 
                 std::cout << "  Iterations: " << hs_result.n_iterations
                           << "  max|Deltaz|: " << hs_result.final_residual
@@ -2593,6 +2560,11 @@ int main(int argc, char* argv[])
     // Kept so the final erosion-rate raster is the rate of the last step actually run.
     lsdtt::lsdtt_lem_step_stats last_stats{};
 
+    // Held across EVERY timestep, which is the whole point: for a linear hillslope
+    // run with a fixed dt the matrix never changes, so the factorisation computed on
+    // the first step serves all of them. See lsdtt_hillslope_newton_workspace.
+    lsdtt::lsdtt_hillslope_newton_workspace hillslope_ws;
+
     auto do_step = [&]()
     {
         try
@@ -2606,7 +2578,8 @@ int main(int argc, char* argv[])
                 opts.baselevel_fall_rate = f.baselevel_fall_rate;
             }
 
-            auto [next, stats] = lsdtt::run_lem_step(current, opts, fixed_flats);
+            auto [next, stats] =
+                lsdtt::run_lem_step(current, opts, fixed_flats, &hillslope_ws);
             current    = std::move(next);
             last_stats = stats;
             total_time += dt;
@@ -2754,6 +2727,11 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: stats CSV write failed: " << e.what() << "\n";
         }
     }
+
+    if (hillslope_ws.n_solves() > 0)
+        std::cout << "\n[hillslope cache] " << hillslope_ws.n_pattern_analyses()
+                  << " pattern analyses, " << hillslope_ws.n_factorisations()
+                  << " factorisations, " << hillslope_ws.n_solves() << " solves\n";
 
     std::cout << "\nModel run complete. "
               << iter << " iterations, "
