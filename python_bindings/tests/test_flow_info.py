@@ -74,6 +74,10 @@ class FlowInfoTest(unittest.TestCase):
         self.assertGreater(chi.n_basins, 0)
         self.assertIn("chi", chi.nodes().columns)
         self.assertEqual(chi.raster().shape, self.dem.shape)
+        fit = chi.fit(self.dem)
+        self.assertIn("ksn", fit.segments.columns)
+        self.assertIn("disorder", fit.disorder().columns)
+        self.assertEqual(self.flow.chi_from_outlets().shape, self.dem.shape)
 
     def test_fractional_flow_graphs(self):
         for method in ("mfd", "dinf"):

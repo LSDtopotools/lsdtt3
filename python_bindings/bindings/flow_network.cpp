@@ -12,6 +12,8 @@
 #include "flow_products.hpp"
 #include <cpu/lsdtt_channel_network_analysis_cpu.hpp>
 #include <cpu/lsdtt_chi_extraction_cpu.hpp>
+#include <cpu/lsdtt_chi_network_analysis_cpu.hpp>
+#include <cpu/lsdtt_chi_disorder_cpu.hpp>
 
 namespace lsdtt3_python {
 namespace {
@@ -287,7 +289,12 @@ ChiCollection network_chi(const ChannelNetwork& network, nb::object outlets,
                 throw std::invalid_argument("outlets contains a pixel outside the flow grid");
             outlet_flats.push_back(network.flow().flat_index(static_cast<int>(pixels[i]), static_cast<int>(pixels[i + 1])));
         }
-    } else outlet_flats = network.flow().outlets();
+    } else {
+        for (std::int32_t j = 0; j < network.native().n_junctions(); ++j)
+            if (network.native().is_outlet_junction(j))
+                outlet_flats.push_back(network.native().flat_of_junction(j));
+    }
+    if (outlet_flats.empty()) throw std::invalid_argument("no outlet pixels were resolved on the channel network");
     lsdtt::lsdtt_chi_options options; options.m_over_n = m_over_n; options.A_0 = reference_area;
     lsdtt::lsdtt_chi_collection_result result;
     if (denominator.is_none()) result = lsdtt::get_chi_from_outlets_zero_base_junction_network(network.flow(), network.native(), outlet_flats, options);
@@ -296,6 +303,17 @@ ChiCollection network_chi(const ChannelNetwork& network, nb::object outlets,
         result = lsdtt::get_chi_from_outlets_zero_base_junction_network(network.flow(), network.native(), outlet_flats, raster, options);
     }
     return ChiCollection(std::move(result), network.shared_flow());
+}
+
+Raster full_basin_chi(const FlowInfo& flow, nb::object outlets, double m_over_n,
+                      double reference_area, nb::object denominator)
+{
+    if (m_over_n <= 0.0 || reference_area <= 0.0) throw std::invalid_argument("m_over_n and reference_area must be positive");
+    auto outlet_flats = pixels_to_flats(flow, outlets, "outlets");
+    if (outlet_flats.empty()) outlet_flats = flow.native().outlets();
+    lsdtt::lsdtt_chi_options options; options.m_over_n = m_over_n; options.A_0 = reference_area;
+    if (denominator.is_none()) return Raster(lsdtt::get_chi_raster_from_outlets_zero_base(flow.native(), outlet_flats, options));
+    return Raster(lsdtt::get_chi_raster_from_outlets_zero_base(flow.native(), outlet_flats, nb::cast<const Raster&>(denominator).native(), options));
 }
 
 nb::object chi_nodes(const ChiCollection& chi)
@@ -316,6 +334,43 @@ Raster chi_raster(const ChiCollection& chi)
     for (const auto& basin : chi.native().basins) for (std::size_t i = 0; i < basin.flats.size(); ++i) { values[basin.flats[i]] = basin.chi[i]; mask[basin.flats[i]] = 1; }
     return Raster(lsdtt::lsdtt_raster_cpu(std::move(values), std::move(mask), chi.flow().meta()));
 }
+
+ChiFit fit_chi(const ChiCollection& chi, const Raster& dem, float critical_divergence_metres, const std::string& mainstem)
+{
+    lsdtt::lsdtt_chi_network_fit_options options; options.critical_divergence_m = critical_divergence_metres;
+    if (mainstem == "max_flow_length") options.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_flow_length;
+    else if (mainstem == "max_chi") options.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_chi;
+    else throw std::invalid_argument("mainstem must be 'max_flow_length' or 'max_chi'");
+    return ChiFit(lsdtt::fit_chi_networks(chi.native(), dem.native(), options), chi.shared_flow());
+}
+
+nb::object chi_fit_nodes(const ChiFit& fit)
+{
+    const auto t = lsdtt::export_chi_network_fit_nodes(fit.native()); nb::dict d;
+    d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["flat"]=t.flat; d["receiver_flat"]=t.receiver_flat; d["chi"]=t.chi; d["observed_elevation"]=t.observed_elevation; d["fitted_elevation"]=t.fitted_elevation; d["residual_elevation"]=t.residual_elevation; d["abs_residual_elevation"]=t.abs_residual_elevation; d["branch_id"]=t.branch_id; d["is_main_stem"]=t.is_main_stem; d["is_source"]=t.is_source; d["is_junction"]=t.is_junction; d["is_split_point"]=t.is_split_point;
+    return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+nb::object chi_fit_segments(const ChiFit& fit)
+{
+    const auto t=lsdtt::export_chi_network_fit_segments(fit.native()); nb::dict d;
+    d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["segment_id"]=t.segment_id; d["parent_segment_id"]=t.parent_segment_id; d["branch_id"]=t.branch_id; d["downstream_flat"]=t.downstream_flat; d["upstream_flat"]=t.upstream_flat; d["downstream_chi"]=t.downstream_chi; d["upstream_chi"]=t.upstream_chi; d["downstream_elevation"]=t.downstream_elevation; d["upstream_elevation"]=t.upstream_elevation; d["ksn"]=t.k_sn; d["max_abs_residual"]=t.max_abs_residual; d["n_nodes"]=t.n_nodes;
+    return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+nb::object chi_fit_summary(const ChiFit& fit)
+{
+    const auto t=lsdtt::summarise_chi_ksn_by_basin(fit.native()); std::vector<std::int32_t> basin,n_segments,n_main; std::vector<std::int64_t> outlet; std::vector<double> length,mean,median,min,max,weighted,mainmean,mainmedian;
+    for(const auto& r:t.rows){basin.push_back(r.basin_index);outlet.push_back(r.outlet_flat);n_segments.push_back(r.n_segments);n_main.push_back(r.n_main_stem_segments);length.push_back(r.total_chi_length);mean.push_back(r.mean_k_sn);median.push_back(r.median_k_sn);min.push_back(r.min_k_sn);max.push_back(r.max_k_sn);weighted.push_back(r.chi_weighted_mean_k_sn);mainmean.push_back(r.main_stem_mean_k_sn);mainmedian.push_back(r.main_stem_median_k_sn);} nb::dict d;d["basin_id"]=basin;d["outlet_flat"]=outlet;d["n_segments"]=n_segments;d["n_main_stem_segments"]=n_main;d["total_chi_length"]=length;d["mean_ksn"]=mean;d["median_ksn"]=median;d["min_ksn"]=min;d["max_ksn"]=max;d["chi_weighted_mean_ksn"]=weighted;d["main_stem_mean_ksn"]=mainmean;d["main_stem_median_ksn"]=mainmedian;return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+nb::object chi_fit_disorder(const ChiFit& fit)
+{
+    const auto results=lsdtt::get_chi_disorder(fit.native()); const auto table=lsdtt::export_chi_disorder_basin_summary(fit.native(),results); nb::dict d;d["basin_id"]=table.basin_index;d["outlet_flat"]=table.outlet_flat;d["n_nodes"]=table.n_nodes;d["n_main_stem_nodes"]=table.n_main_stem_nodes;d["n_branches"]=table.n_branches;d["n_side_branches"]=table.n_side_branches;d["disorder"]=table.full_network_disorder;return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+nb::object chi_fit_jackknife(const ChiFit& fit) { const auto t=lsdtt::export_chi_disorder_jackknife(lsdtt::get_chi_disorder_jackknife(fit.native())); nb::dict d;d["basin_id"]=t.basin_index;d["full_disorder"]=t.full_network_disorder;d["replicate_id"]=t.replicate_index;d["removed_branch_id"]=t.removed_branch_id;d["disorder"]=t.leave_one_out_disorder;d["n_nodes"]=t.leave_one_out_n_nodes;d["mean"]=t.jackknife_mean;d["standard_error"]=t.jackknife_standard_error;return nb::module_::import_("pandas").attr("DataFrame")(d); }
+nb::object chi_fit_bootstrap(const ChiFit& fit, int replicates, std::uint64_t seed, bool full_count, int n_side_branches, bool replacement) { if(replicates<1) throw std::invalid_argument("replicates must be positive"); lsdtt::lsdtt_chi_disorder_bootstrap_options o;o.n_replicates=replicates;o.random_seed=seed;o.sample_full_tributary_count=full_count;o.n_side_branches_per_replicate=n_side_branches;o.sample_with_replacement=replacement;const auto t=lsdtt::export_chi_disorder_bootstrap(lsdtt::get_chi_disorder_bootstrap(fit.native(),o));nb::dict d;d["basin_id"]=t.basin_index;d["full_disorder"]=t.full_network_disorder;d["replicate_id"]=t.replicate_index;d["disorder"]=t.bootstrap_disorder;d["n_nodes"]=t.bootstrap_n_nodes;d["mean"]=t.bootstrap_mean;d["standard_deviation"]=t.bootstrap_standard_deviation;d["percentile_2p5"]=t.percentile_2p5;d["percentile_97p5"]=t.percentile_97p5;return nb::module_::import_("pandas").attr("DataFrame")(d); }
 } // namespace
 
 void bind_flow_network(nb::module_& module, nb::class_<FlowInfo>& flow)
@@ -342,9 +397,17 @@ void bind_flow_network(nb::module_& module, nb::class_<FlowInfo>& flow)
     nb::class_<ChiCollection>(module, "ChiCollection")
         .def_prop_ro("n_basins", [](const ChiCollection& c) { return c.native().basins.size(); })
         .def("nodes", &chi_nodes, "Return extracted channel chi nodes as a pandas DataFrame.")
-        .def("raster", &chi_raster, "Return chi values as a masked Raster.");
+        .def("raster", &chi_raster, "Return chi values as a masked Raster.")
+        .def("fit", &fit_chi, nb::arg("dem"), nb::arg("critical_divergence_metres") = 5.0f, nb::arg("mainstem") = "max_flow_length", "Fit piecewise-linear channel profiles in chi-elevation space.");
+    nb::class_<ChiFit>(module, "ChiFit")
+        .def_prop_ro("nodes", &chi_fit_nodes).def_prop_ro("segments", &chi_fit_segments)
+        .def_prop_ro("summary", &chi_fit_summary)
+        .def("disorder", &chi_fit_disorder, "Return full-network chi-disorder per basin.")
+        .def("disorder_jackknife", &chi_fit_jackknife, "Leave-one-side-branch-out disorder samples.")
+        .def("disorder_bootstrap", &chi_fit_bootstrap, nb::arg("replicates") = 1000, nb::arg("seed") = 5489u, nb::arg("sample_full_tributary_count") = true, nb::arg("n_side_branches") = 3, nb::arg("with_replacement") = true, "Bootstrap disorder over side branches.");
     flow.def("channel_scope", &make_scope, nb::arg("threshold_pixels"), nb::arg("sources") = nb::none(), nb::arg("outlets") = nb::none(), nb::arg("snap_sources") = true, nb::arg("source_snap_max_radius_pixels") = 25, nb::arg("outlet_snap_max_distance_metres") = 0.0, nb::arg("auto_detect_roles") = false,
         "Resolve threshold or supplied source paths into a ChannelScope.")
-        .def("channel_network", &network_from_scope, nb::arg("scope"), "Build a compact junction graph from a ChannelScope.");
+        .def("channel_network", &network_from_scope, nb::arg("scope"), "Build a compact junction graph from a ChannelScope.")
+        .def("chi_from_outlets", &full_basin_chi, nb::arg("outlets") = nb::none(), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), "Integrate zero-based chi across complete upstream raster domains.");
 }
 } // namespace lsdtt3_python
