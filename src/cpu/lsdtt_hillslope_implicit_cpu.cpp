@@ -20,6 +20,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_hillslope_implicit_cpu.hpp"
+#include "lsdtt_hillslope_operator_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -41,18 +42,24 @@
 namespace lsdtt
 {
 
-namespace
-{
 
 // Compute the maximum |gradz|/Sc over the hillslope (non-channel, valid) cells of a
 // field, using the same centred-difference full-gradient estimate as the explicit
 // solver.  Returned ratio is *not* capped, so a value > 1 flags a super-critical
 // face that the limiter would act on.  Used to populate the result diagnostic
 // max_slope_ratio in both branches.
+//
+// boundary_conditions matters here and used to be missing.  The old version
+// clamped indices at the domain edge, so at a PERIODIC seam it took a one-sided
+// (zero) difference instead of wrapping and UNDERSTATED the slope in the seam
+// rows and columns.  That is the wrong direction to err: this value feeds
+// stability reasoning and reports a domain as safer than it is, precisely where
+// near-Sc behaviour matters.  It now reads through the shared operator.
 float compute_max_slope_ratio(
     const lsdtt_raster_cpu&     dem,
     const std::vector<uint8_t>& is_channel,
-    float                       Sc)
+    float                       Sc,
+    const std::string&          boundary_conditions)
 {
     const lsdtt_raster_meta&    meta = dem.get_meta();
     const int                   nrows = meta.n_rows;
@@ -66,17 +73,9 @@ float compute_max_slope_ratio(
         return 0.0f;
     }
 
-    auto nbr_z = [&](int r, int c, int dr, int dc) -> float
-    {
-        const int nr = std::max(0, std::min(nrows - 1, r + dr));
-        const int nc = std::max(0, std::min(ncols - 1, c + dc));
-        const std::size_t nidx = static_cast<std::size_t>(nr * ncols + nc);
-        if (!mask[nidx])
-        {
-            return z[static_cast<std::size_t>(r * ncols + c)];
-        }
-        return z[nidx];
-    };
+    const lsdtt_hillslope_domain dom =
+        lsdtt_hillslope_domain::make(nrows, ncols, boundary_conditions, mask);
+    const lsdtt_hillslope_stencil<float> st(dom, z.data(), static_cast<double>(h));
 
     float max_ratio = 0.0f;
     const std::int64_t n_cells = static_cast<std::int64_t>(nrows) * ncols;
@@ -89,8 +88,8 @@ float compute_max_slope_ratio(
         }
         const int row = static_cast<int>(idx / ncols);
         const int col = static_cast<int>(idx % ncols);
-        const float gx = (nbr_z(row, col, 0, +1) - nbr_z(row, col, 0, -1)) / (2.0f * h);
-        const float gy = (nbr_z(row, col, -1, 0) - nbr_z(row, col, +1, 0)) / (2.0f * h);
+        const float gx = static_cast<float>(st.slope_x(row, col));
+        const float gy = static_cast<float>(st.slope_y(row, col));
         const float ratio = std::sqrt(gx * gx + gy * gy) / Sc;
         if (ratio > max_ratio)
         {
@@ -100,7 +99,6 @@ float compute_max_slope_ratio(
     return max_ratio;
 }
 
-} // namespace
 
 // -----------------------------------------------------------------------------
 // compute_roering_hillslope_transport_implicit
@@ -219,7 +217,8 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         result.n_rejected_substeps = 0;
         result.total_picard_iters  = 0;
         result.final_dt            = dt_total;
-        result.max_slope_ratio     = compute_max_slope_ratio(dem, is_channel, opts.Sc);
+        result.max_slope_ratio     = compute_max_slope_ratio(dem, is_channel, opts.Sc,
+                                                        opts.boundary_conditions);
         result.limiter_fired       = false;
         return result;
     }
@@ -1013,15 +1012,21 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
                  "subcycling fallback (compute_roering_hillslope_transport)."
               << std::endl;
 
+    // Pass the run's boundary conditions through. Before 2026-08-27 this fallback
+    // silently switched the domain to all-Neumann for the steps it handled, so an
+    // 'o' or 'p' run that dropped to subcycling changed boundary condition
+    // mid-run with no record in the output.
     lsdtt_raster_cpu elev = compute_roering_hillslope_transport(
-        dem, is_channel, opts.D, dt_total, opts.nonlinear, opts.Sc, opts.n_threads);
+        dem, is_channel, opts.D, dt_total, opts.nonlinear, opts.Sc,
+        opts.boundary_conditions, opts.n_threads);
 
     result.elevation           = std::move(elev);
     result.n_substeps          = 0;     // explicit fallback does not report its substep count
     result.n_rejected_substeps = 0;
     result.total_picard_iters  = 0;     // not applicable to the explicit scheme
     result.final_dt            = dt_total;
-    result.max_slope_ratio     = compute_max_slope_ratio(result.elevation, is_channel, opts.Sc);
+    result.max_slope_ratio     = compute_max_slope_ratio(result.elevation, is_channel,
+                                                        opts.Sc, opts.boundary_conditions);
     result.limiter_fired       = false;
 #endif
 

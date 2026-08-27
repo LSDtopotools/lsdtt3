@@ -7,9 +7,11 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
 #include "lsdtt_hillslope_steady_state_cpu.hpp"
+#include "lsdtt_hillslope_operator_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 #ifdef _OPENMP
@@ -37,15 +39,21 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const float   h2      = h * h;
     const int64_t n_cells = static_cast<int64_t>(nrows) * ncols;
 
-    // Boundary condition flags: boundary_conditions string is NESW order.
-    const std::string& bc = opts.boundary_conditions;
-    const bool per_n = (bc.size() > 0 && bc[0] == 'p');
-    const bool per_e = (bc.size() > 1 && bc[1] == 'p');
-    const bool per_s = (bc.size() > 2 && bc[2] == 'p');
-    const bool per_w = (bc.size() > 3 && bc[3] == 'p');
+    // The domain -- grid, mask and boundary codes -- comes from the SHARED
+    // operator (lsdtt_hillslope_operator_cpu.hpp), so this solver, the implicit
+    // solver and the explicit solvers cannot drift apart in their boundary
+    // handling again.  'p' wraps, 'o' is Dirichlet at base level, 'n' is Neumann
+    // zero-flux; a short string pads with 'o'.
+    const lsdtt_hillslope_domain dom =
+        lsdtt_hillslope_domain::make(nrows, ncols, opts.boundary_conditions,
+                                     dem.get_mask());
 
-    const float rhs = opts.U * h2 / opts.D;
-    const float Sc2 = opts.Sc * opts.Sc;
+    // The SOR arithmetic is carried in double (see the note on z below), so the
+    // constants it consumes are formed in double too.
+    const double hd   = static_cast<double>(h);
+    const double h2d  = static_cast<double>(h2);
+    const double Scd  = static_cast<double>(opts.Sc);
+    const double rhs  = static_cast<double>(opts.U) * h2d / static_cast<double>(opts.D);
 
     // -------------------------------------------------------------------------
     // Determine SOR relaxation factor omega.
@@ -78,78 +86,24 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const std::vector<uint8_t>& mask = dem.get_mask();
 
     // Single elevation array - SOR updates in-place.
-    std::vector<float> z(dem.get_data());
-
-    // -------------------------------------------------------------------------
-    // nbr_z: elevation of the neighbour at (r+dr, c+dc) read from z.
     //
-    // Handles periodic wrap and Neumann (zero-flux) reflection at open
-    // boundaries and masked interior neighbours.
-    // -------------------------------------------------------------------------
-    auto nbr_z = [&](int r, int c, int dr, int dc) -> float
-    {
-        int nr = r + dr;
-        int nc = c + dc;
+    // DOUBLE, not float, and deliberately so.  The convergence test is
+    // max|z_new - z_old|, an increment that shrinks toward zero while z itself
+    // stays O(100 m).  In single precision the representable step near 100 m is
+    // ~1e-5 m, and the update forms a sum of four neighbours (O(400)) before
+    // differencing it, so the increment cannot be resolved below ~2e-4 m.  The
+    // default tolerance of 1e-4 m therefore sat BELOW the arithmetic noise
+    // floor: the residual bottomed out around 2e-4 and wandered there forever,
+    // so every solve ran to max_iterations no matter how well converged the
+    // field was.  In double the floor drops by ~9 orders of magnitude and the
+    // tolerance means what it says.  The raster is converted back to float on
+    // the way out; only the iteration is carried at higher precision.
+    const std::vector<float>& z_in = dem.get_data();
+    std::vector<double> z(z_in.begin(), z_in.end());
 
-        if (nr < 0)
-        {
-            if (per_n) nr = nrows - 1;
-            else       nr = std::max(0, r - dr);   // Neumann: reflect inward
-        }
-        else if (nr >= nrows)
-        {
-            if (per_s) nr = 0;
-            else       nr = std::min(nrows - 1, r - dr);
-        }
-
-        if (nc < 0)
-        {
-            if (per_w) nc = ncols - 1;
-            else       nc = std::max(0, c - dc);
-        }
-        else if (nc >= ncols)
-        {
-            if (per_e) nc = 0;
-            else       nc = std::min(ncols - 1, c - dc);
-        }
-
-        const size_t nidx = static_cast<size_t>(nr * ncols + nc);
-
-        // Masked interior neighbour: same Neumann reflection
-        if (!mask[nidx])
-        {
-            const int ir = std::max(0, std::min(nrows - 1, r - dr));
-            const int ic = std::max(0, std::min(ncols - 1, c - dc));
-            return z[static_cast<size_t>(ir * ncols + ic)];
-        }
-
-        return z[nidx];
-    };
-
-    // -------------------------------------------------------------------------
-    // face_alpha: diffusivity at the face between z_c and z_nbr.
-    //
-    // Linear: always 1.
-    //
-    // Nonlinear (Roering 1999): the flux law uses the FULL gradient magnitude:
-    //   qs = -D * gradz / (1 - |gradz|^2/Sc^2),   |gradz|^2 = (dz/dx)^2 + (dz/dy)^2
-    //
-    // Each face contributes a face-normal slope and a face-tangent slope.
-    // Using only the face-normal component (the error in the old code)
-    // underestimates alpha on any cell with a non-zero cross-slope, allowing
-    // slopes to grow steeper than Sc in the cross direction.
-    //
-    // cross2_over_Sc2 = (tangent_slope)^2 / Sc^2  - pre-computed per face pair:
-    //   N/S faces share the E-W tangent  -> cross2 = (zE - zW)^2 / (4h^2 Sc^2)
-    //   E/W faces share the N-S tangent  -> cross2 = (zN - zS)^2 / (4h^2 Sc^2)
-    // -------------------------------------------------------------------------
-    auto face_alpha = [&](float z_c, float z_nbr, float cross2_over_Sc2) -> float
-    {
-        if (!opts.nonlinear) return 1.0f;
-        const float dz_h = (z_nbr - z_c) / h;
-        const float s2   = std::min(dz_h * dz_h / Sc2 + cross2_over_Sc2, 0.9999f);
-        return 1.0f / (1.0f - s2);
-    };
+    // The stencil reads z through the shared domain's boundary rules and supplies
+    // the FACE-symmetric alpha (see lsdtt_hillslope_operator_cpu.hpp).
+    lsdtt_hillslope_stencil<double> stencil(dom, z.data(), hd);
 
     // -------------------------------------------------------------------------
     // Red-Black SOR.
@@ -167,17 +121,19 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     // for the nonlinear mode), using the freshly-updated values of already-
     // processed neighbours - i.e. Gauss-Seidel style within each pass.
     // -------------------------------------------------------------------------
-    float final_residual = opts.tolerance + 1.0f;
-    int   n_iter         = 0;
-    bool  converged      = false;
+    const double omega_d = static_cast<double>(omega);
+
+    double final_residual = static_cast<double>(opts.tolerance) + 1.0;
+    int    n_iter         = 0;
+    bool   converged      = false;
 
     for (int it = 0; it < opts.max_iterations; ++it)
     {
-        float max_delta = 0.0f;
+        double max_delta = 0.0;
 
         for (int color = 0; color <= 1; ++color)
         {
-            float pass_delta = 0.0f;
+            double pass_delta = 0.0;
 
 #ifdef _OPENMP
             #pragma omp parallel for schedule(static) reduction(max : pass_delta)
@@ -190,27 +146,28 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
 
                 if ((row + col) % 2 != color)       continue;
                 if (!mask[sidx] || is_channel[sidx]) continue;
+                if (dom.is_dirichlet_edge(row, col)) continue;   // 'o' = base level
 
-                const float zc = z[sidx];
+                const double zc = z[sidx];
 
-                const float zN = nbr_z(row, col, -1,  0);
-                const float zS = nbr_z(row, col, +1,  0);
-                const float zE = nbr_z(row, col,  0, +1);
-                const float zW = nbr_z(row, col,  0, -1);
+                const double zN = stencil.at(row, col, -1,  0);
+                const double zS = stencil.at(row, col, +1,  0);
+                const double zE = stencil.at(row, col,  0, +1);
+                const double zW = stencil.at(row, col,  0, -1);
 
-                const float sx2_norm = (zE - zW) * (zE - zW) / (4.0f * h2 * Sc2);
-                const float sy2_norm = (zN - zS) * (zN - zS) / (4.0f * h2 * Sc2);
+                // Face-first coefficients: alpha belongs to the FACE, so the two
+                // cells sharing one necessarily agree and the scheme conserves.
+                // Taken four-at-a-time so the centre cell's tangential slopes are
+                // evaluated once rather than once per face.
+                double a[4];
+                stencil.face_alphas(row, col, Scd, opts.nonlinear, a);
+                const double aN = a[0], aE = a[1], aS = a[2], aW = a[3];
+                const double aT = aN + aS + aE + aW;
 
-                const float aN = face_alpha(zc, zN, sx2_norm);
-                const float aS = face_alpha(zc, zS, sx2_norm);
-                const float aE = face_alpha(zc, zE, sy2_norm);
-                const float aW = face_alpha(zc, zW, sy2_norm);
-                const float aT = aN + aS + aE + aW;
+                const double z_jac = (aN * zN + aS * zS + aE * zE + aW * zW + rhs) / aT;
+                const double z_new = (1.0 - omega_d) * zc + omega_d * z_jac;
 
-                const float z_jac = (aN * zN + aS * zS + aE * zE + aW * zW + rhs) / aT;
-                const float z_new = (1.0f - omega) * zc + omega * z_jac;
-
-                const float delta = std::abs(z_new - zc);
+                const double delta = std::abs(z_new - zc);
                 if (delta > pass_delta) pass_delta = delta;
 
                 z[sidx] = z_new;
@@ -229,13 +186,15 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
         }
     }
 
+    std::vector<float> z_out(z.begin(), z.end());
+
     lsdtt_hillslope_steady_state_result result;
     result.elevation      = lsdtt_raster_cpu(
-        std::move(z),
+        std::move(z_out),
         std::vector<uint8_t>(mask),
         meta);
     result.n_iterations   = n_iter;
-    result.final_residual = final_residual;
+    result.final_residual = static_cast<float>(final_residual);
     result.converged      = converged;
     return result;
 }

@@ -4017,6 +4017,573 @@ fail.
 
 ---
 
+## 10d. The steady-state SOR tolerance sat below the float noise floor (2026-08-26)
+
+A 250 x 250 steady-state hillslope solve at 5 m was taking ~13 minutes and reporting
+`converged: NO`. Optimal SOR needs O(n) iterations, so n = 250 should reach a 1e-4 m
+tolerance in roughly 364 sweeps. The gap between ~364 and 250,000 was the whole finding.
+
+**Measurement.** Running the LINEAR solver (which removes the Roering nonlinearity from
+suspicion) at increasing iteration caps on the `ocn` landscape:
+
+| iterations | max\|dz\| (m) |
+|---:|---:|
+| 200 | 2.5e-3 |
+| 500 | 1.98e-4 |
+| 1000 | 1.83e-4 |
+| 2000 | 1.91e-4 |
+| 5000 | 1.98e-4 |
+
+The residual falls normally to ~2e-4 by iteration 500 and then stops -- and *wanders*,
+non-monotonically. That is an arithmetic floor, not a convergence rate. Confirmed directly
+by tolerance bisection against the real binary:
+
+* tolerance 3e-4 -> converged in **243** iterations
+* tolerance 1e-4 -> ran **20,000** iterations, finishing at 2.29e-4, i.e. *worse* than it
+  had been at iteration 243.
+
+**Cause.** The working array `z` was `std::vector<float>`. The convergence test is
+`max|z_new - z_old|`, an increment tending to zero measured on a field of O(100 m), formed
+by differencing a four-neighbour sum of O(400). Float spacing at that magnitude is ~6e-5 m,
+so the increment could not be resolved below ~2e-4 m. The default tolerance of 1e-4 m was
+therefore unreachable in principle: `converged` could never be set, and every solve ran to
+`hillslope_ss_max_iterations` no matter how well converged the field was.
+
+**Fix.** `src/cpu/lsdtt_hillslope_steady_state_cpu.cpp` carries the SOR iteration, its
+constants and its residual accumulators in `double`; the raster is converted back to `float`
+on the way out. Same landscape, same parameters, after the fix:
+
+| case | before | after |
+|---|---|---|
+| linear, tol 1e-4 | 20,000 iters, not converged | **261 iters, 2.7 s, converged** |
+| linear, tol 1e-6 | unreachable at any iteration count | **350 iters, 1.8 s, converged** |
+
+261 and 350 both sit where SOR theory says they should for n = 250. See
+[Landscape evolution modelling](landscape_evolution_modelling.md) for the numerics.
+
+**Separate defect, since RESOLVED: the nonlinear solve did not converge.** Double precision did
+not change the Roering case, correctly -- its residual plateaued at ~1.3 m, nine orders above any
+precision floor, and the plateau scaled with the relaxation factor (omega 0.3 -> 1.33, 0.8 -> 4.64,
+1.3 -> 18.8, auto -> 133). The field was converged (RMS change 0.023 m between 20k and 60k sweeps)
+but **106 cells of 62,500 (0.17%)**, at median `S/Sc` 0.735 against 0.365 grid-wide, oscillated at
+~1.3 m and held the max-norm up. No cell reached the `s2` clamp.
+
+**Cause: the face coefficient was not a property of the face.** `alpha` for the N face of `(r,c)`
+used the E-W cross-slope evaluated at `(r,c)`, while `alpha` for the S face of `(r-1,c)` -- the
+same physical face -- used it at `(r-1,c)`. The two differed, making the discrete operator
+non-symmetric and the scheme non-conservative: flux leaving one cell through a face did not equal
+flux entering its neighbour through it. Non-symmetric operators admit complex eigenvalue pairs,
+i.e. modes that oscillate rather than decay.
+
+**Fix.** The tangential slope is averaged *across* the face from the two cells sharing it, which
+required splitting the `nbr_z` accessor into an index resolver plus a value read so the
+neighbour's own centred slope gets identical periodic-wrap / Neumann / masked-cell handling.
+
+| Roering nonlinear, omega 0.3 | before | after |
+|---|---|---|
+| result | 30,000 sweeps, plateau 1.33 m, not converged | **5,120 sweeps, 23 s, converged (9.99e-5)** |
+| max `S/Sc` in the solution | 0.970 | **0.882** |
+| cost per sweep | 2.8 ms | 4.6 ms (1.63x) |
+
+The over-steepening (0.970 -> 0.882) is the conservation defect appearing directly in the answer.
+**Physical validation against known forcing:** for a 1-D steady hillslope the divide curvature is
+exactly `U/D` as `S -> 0`. The converged field gives a median Laplacian over the flattest 1% of
+interior pixels of **-0.007985** against a predicted **0.008** (convex-up is negative in lsdtt3) --
+99.8%, tightening toward the prediction as `S -> 0`: 0.007892 at the 5th percentile, 0.007963 at
+the 2nd, 0.007985 at the 1st.
+
+**Still open: the nonlinear solver remains unusable at competitive relaxation.** After the fix,
+30,000 sweeps still gives 5.02 at omega 0.8 and 23.1 at omega 1.3, and auto-omega (~1.95) diverges.
+The auto-omega formula is the optimal-SOR result for the *linear* Poisson problem and has no
+derivation behind it for a Picard-lagged nonlinear operator. Being pinned at omega 0.3 costs
+roughly 500x against optimal SOR (`rho_GS ~ 0.99984` at n=250 gives ~59,000 Gauss-Seidel sweeps
+and ~364 optimal-SOR sweeps; omega 0.3 gives ~196,000). Picard cannot fix this -- it has no
+damping on the coefficients at all, so under-relaxing `z` leaves the alpha feedback untouched.
+A Newton scheme is the intended resolution.
+
+
+## 10e. `'o'` was a Neumann boundary in two solvers, and the SOR solver had no test (2026-08-26)
+
+Found while resolving a discrepancy flagged during the hillslope-numerics work: the codebase held
+**two contradictory meanings of the `'o'` boundary code**.
+
+* `lsdtt_hillslope_implicit_cpu.cpp:192` had it right -- `is_o_edge()` classifies `'o'` edge cells
+  as Dirichlet (fixed elevation at base level), alongside channel cells.
+* `compute_hillslope_steady_state` (SOR) and `compute_adi_hillslope_transport` special-cased only
+  `'p'`, and treated `'o'` **and** `'n'` alike as Neumann reflection.
+
+So the implicit solver and the SOR solver were solving *different boundary-value problems from the
+same input* -- which is why the implicit solver's "match the SOR steady state" test had to dodge
+`'o'` edges entirely to pass.
+
+**Decision (Simon): `'o'` is Dirichlet and must never be Neumann.** Both solvers now mirror the
+implicit solver's predicate -- SOR skips `'o'` edge cells in the red-black sweep exactly as it
+skips channel cells; ADI gives them the identity row in both tridiagonal sweeps.
+
+**This changed answers, and the old ones were wrong.** The hillslope test landscapes declare
+`boundary_conditions: opop` -- periodic E-W, *fixed elevation* N-S, which is what was intended --
+but were silently getting no-flux N-S. After the fix the N/S edge rows pin at 0.0 m with a proper
+gradient rising into them (row 1 spans 0.23-2.39 m). **Any landscape generated with an `'o'` edge
+before 2026-08-26 was solved with the wrong boundary condition and should be regenerated.**
+
+The default is also `boundary_conditions = "oooo"`, which previously meant Neumann on all four
+edges. With no channels that is an ill-posed problem -- no Dirichlet data anywhere -- and the field
+grows without bound. The test below measures it drifting **698 m** in 500 sweeps. The fix makes the
+default well posed.
+
+Re-validated on the OCN landscape (Roering nonlinear, omega 0.3): 4,650 sweeps (down from 5,120 --
+the extra Dirichlet constraint helps), `max S/Sc` 0.883, divide curvature **-0.007989 against a
+predicted 0.008**. Full suite 192/192.
+
+### `unit_hillslope_steady_state` -- the solver's first dedicated test
+
+`compute_hillslope_steady_state` runs every steady hillslope landscape lsdtt3 generates and, until
+2026-08-26, **had no test of its own** -- it was exercised only indirectly, as the reference the
+implicit solver is compared against. Three defects were found in it in one sitting (10d and this
+section). `tests/cpp/test_hillslope_steady_state.cpp` (17 checks, label `unit;hillslope`) pins all
+three:
+
+| | check | pins |
+|---|---|---|
+| H1 | converged field satisfies a **face-symmetric** operator written independently in the test | 10d face asymmetry |
+| H2 | linear solve gives `lap(z) = -U/D` at every interior cell | operator correctness |
+| H3 | a 1e-6 tolerance is **reachable** on O(100 m) relief | 10d precision floor |
+| H4 | `'o'` cells are held; `'n'` cells are not | this section |
+| H5 | periodic invariance: `solve(roll(z)) == roll(solve(z))` | seam handling |
+| H6 | nonlinear divide curvature recovers `-U/D` | known forcing |
+
+H1 is the important one and the reason it is written as it is. A test that recomputed the
+coefficient the way the solver does would only confirm the solver agrees with itself. Instead the
+test implements the face coefficient **face-first** -- taking the two cells that share a face and
+averaging the tangential slope across it, so `alpha(N face of P) == alpha(S face of N)` by
+construction -- then asserts the solver's converged field satisfies *those* equations. The fixture
+carries a deliberate cross-slope that varies along the face direction, because the defect is
+invisible on a field with a uniform tangent (both cells then report the same value and the
+asymmetry cancels).
+
+**Negative controls -- each fix reverted in turn, confirming the tests catch the real defects:**
+
+| reverted | result |
+|---|---|
+| `'o'` Dirichlet -> Neumann | H4 fails; edge drifts **267,657 m** |
+| face-symmetric tangent -> tangent at the updating cell | H1 fails; flux imbalance **575% of U** |
+| working array `double` -> `float` | H3 fails; 200,000 sweeps, residual floors at 1.14e-5, never converges |
+
+The 575%-of-U figure is worth keeping in mind: the non-conservative scheme was leaving a flux
+imbalance nearly six times the forcing it was supposed to be balancing.
+
+**Gate added to `unit_hillslope_implicit`.** Its test 4 compares the implicit solver against a SOR
+reference requested at `tolerance = 1e-6` -- which was **unreachable in float**, so that reference
+ran to its 200,000-iteration cap every time and was compared against unconverged. Two checks
+(`test4_linear_sor_reference_converged`, `test4_nonlinear_sor_reference_converged`) now assert
+`converged == true && final_residual <= tolerance` before any field comparison is made.
+
+
+## 10f. Newton for the nonlinear hillslope, and one shared operator (2026-08-27)
+
+Follows 10d/10e. Two additions, both driven by the same finding: Picard could not converge the
+nonlinear steady hillslope at any usable relaxation factor.
+
+### One shared operator
+
+`src/cpu/lsdtt_hillslope_operator_cpu.hpp` now holds the discrete operator every hillslope solver
+must share -- `lsdtt_hillslope_domain` (grid, mask, boundary codes, `neighbour()`,
+`is_dirichlet_edge()`) and `lsdtt_hillslope_stencil<T>` (`at`, `slope_x/y`, `face_alpha`,
+`face_alphas`). Three private copies of the neighbour accessor had grown up across the
+steady-state, transport and implicit solvers, and they had drifted in **three** ways, each a real
+defect: face symmetry (10d), the meaning of `'o'` (10e), and what a short boundary string pads
+with -- `'o'` in the implicit solver, `'n'` in the other two, so identical input meant different
+things. The shared contract pads with `'o'`.
+
+Rewiring the SOR solver onto it is **not bit-identical**, and the reason is understood: the old
+code formed `s_n^2/Sc^2 + s_t^2/Sc^2`, the shared operator forms `(s_n^2 + s_t^2)/Sc^2` --
+algebraically identical, different rounding association. On the OCN landscape that moves the solve
+from 4,653 to 4,650 sweeps and the field by at most **6.98e-4 m on 99 m relief (7e-6 relative)**,
+far inside the 1e-4 m convergence tolerance. Batching the four face coefficients so the centre
+cell's tangential slopes are evaluated once rather than once per face made the solve *faster*:
+**41.5 s -> 20.0 s**.
+
+### The Newton solver
+
+`src/cpu/lsdtt_hillslope_newton_cpu.{hpp,cpp}`, `compute_hillslope_newton`. Parameterised by
+`inv_dt`, so the steady problem (`inv_dt = 0`) and one backward-Euler step are **one
+implementation** and cannot drift apart. The Jacobian is 9-point and non-symmetric -- the
+cross-slope terms reach the diagonals, and the `d(alpha)` terms multiply `(z_nb - z_P)`, which is
+antisymmetric -- so `SimplicialLDLT` does not apply; it uses `SparseLU`, with BiCGSTAB+ILUT for
+large grids.
+
+`compute_hillslope_newton_transient` adds adaptive sub-stepping. There is deliberately **no CFL
+condition**: backward Euler is unconditionally stable, so sub-step size is chosen for accuracy and
+nonlinear solvability only.
+
+**Measured, 41x41 cross-slope fixture:**
+
+| | result |
+|---|---|
+| SOR at omega = 1.5 | fails after 4,000 sweeps, residual 26.6 m |
+| **Newton** | **converges in 42 iterations, `norm(F)_inf` = 4e-17 m/yr** |
+| outer iterations vs grid | 10 / 42 / 6 for n = 21 / 41 / 81 -- does not grow with n, against SOR's O(n) |
+| linear mode | exact in **one** step, matching SOR to 3.8e-6 m |
+| periodic invariance | **exact** (0 m) |
+| transient -> steady | 15 sub-steps, 49 Newton iterations, Linf 1.9e-6 m |
+
+Newton is judged on the **residual** `norm(F)_inf` -- an erosion-rate imbalance in m/yr -- not on
+`max|dz|`. That is a direct consequence of 10d: a criterion built on a difference of large
+nearly-equal numbers has a high noise floor, while the residual is independent of elevation
+magnitude and suffers no such cancellation. 1e-12 m/yr is comfortably reachable.
+
+**A defect found and fixed during the work: a super-critical initial field deadlocked the line
+search.** A strict "every trial step must be sub-critical" filter cannot be satisfied when the
+*starting* field is already above Sc -- backtracking drives the trial toward that same infeasible
+field, so every step is rejected and Newton gives up at iteration 0 without moving. Users supply
+arbitrary DEMs and an initial guess above Sc is ordinary. The filter is now conditional: from a
+feasible iterate it refuses to leave the feasible region; from an infeasible one it runs a
+restoration step, accepting whatever reduces the slope ratio until the field is back under Sc.
+This is why the n=41 case in `unit_hillslope_newton` W3 exists -- it was the case that failed.
+
+`unit_hillslope_newton` (28 checks, label `unit;hillslope`) covers agreement with SOR, known
+forcing, quadratic convergence, grid independence, periodic invariance, the transient limit, the
+adaptive controller, and the new-time-level Dirichlet contract. That last one (W9) pins doc A's
+warning quantitatively: with a channel lowering 50 m over one step, the new-time and old-time
+conventions differ by exactly that 50 m and the old-time convention biases the hillslope **high**
+by `O(E*dt)` -- a small, entirely plausible-looking error that would be very hard to spot in
+output.
+
+
+## 10g. `'n'` was not a zero-flux boundary, and the explicit solver had no BCs (2026-08-27)
+
+Two more boundary defects, found by writing `unit_hillslope_transport_bc` (8 checks, label
+`unit;hillslope`).
+
+### The explicit Roering solver had no boundary-condition concept at all
+
+`compute_roering_hillslope_transport` took no `boundary_conditions` parameter: it clamped indices
+unconditionally, so every edge was Neumann, a periodic domain could not be expressed, and an `'o'`
+edge was silently no-flux. It is reached from the LEM's explicit path and -- more dangerously --
+from the implicit solver's subcycling fallback, so an `'o'` or `'p'` run that dropped to
+subcycling **changed boundary condition mid-run with nothing in the output to say so**.
+
+It now takes the string, with **no default** -- a default would let a caller keep the old wrong
+behaviour without noticing -- and reads through the shared operator. Both call sites pass the
+run's BCs through.
+
+`compute_max_slope_ratio` had the same clamping problem. At a periodic seam it took a one-sided
+(zero) difference instead of wrapping and **understated** the slope. Measured on a linear ramp:
+periodic reads **4.875**, clamped reads **0.25** -- a 19x understatement, in the direction that
+reports a domain as safer than it is, exactly where near-`Sc` behaviour matters. It now takes the
+BC string too (and is declared in the header rather than living in an anonymous namespace).
+
+### `'n'` did not implement zero flux
+
+The more interesting one, and the shared operator's fourth drift. A no-flux face requires the
+ghost value to equal the cell's own, so the face-normal slope is zero. The four solvers disagreed:
+
+| solver | no-flux rule | correct? |
+|---|---|---|
+| implicit (`get_face`) | face skipped entirely | yes |
+| ADI | face conductance zeroed | yes |
+| explicit transport (old) | clamped index -> returns the cell itself | yes |
+| **SOR** | `max(0, r - dr)` -> the **opposite** neighbour | **no** |
+
+The SOR rule mirrors about the cell centre. That yields a zero *centred* slope at the boundary
+cell, which looks right, but a **non-zero face flux**: row 0 receives flux from row 1 twice, once
+through its real S face and once through its fictitious N face. The same accessor was serving both
+the centred-slope estimate and the face flux, and it cannot be correct for both.
+
+This was pre-existing (it predates the 2026-08-26 work), and rewiring the explicit solver onto the
+shared operator in N1 propagated it *into* a solver that had been correct. The conservation test
+caught that immediately, which is the point of writing it.
+
+The shared operator now resolves a no-flux neighbour -- and a masked one -- to the cell itself.
+
+**Measured, on a closed no-flux domain with no channels and no uplift, where mass must be
+conserved exactly:**
+
+| | mean elevation drift |
+|---|---|
+| mirror rule (before) | **0.278 m** |
+| cell-itself rule (after) | **7.2e-8 m** |
+
+The OCN test landscape is unaffected (4,649 sweeps, divide curvature -0.007989 against a predicted
+0.008) because `opop` contains no `'n'` edge. Runs that used `'n'` edges do change, and the new
+answers are the correct ones. Full suite 195/195.
+
+**Test coverage** (`unit_hillslope_transport_bc`): periodic invariance under a column roll (exact,
+0 m); `'o'` holds the edge while `'n'` evolves; `'p'` and `'n'` differ at the seam, so `'p'` is
+genuinely honoured; mass conservation on a closed domain (the face-symmetry and zero-flux guard);
+and `max_slope_ratio` finding a seam-crossing gradient.
+
+
+## 10h. Newton becomes the default solver; SOR vs Newton on the LINEAR problem (2026-08-27)
+
+`lsdtt-lem` steady-state runs now use Newton for **both** flux laws, and transient
+`roering_implicit` steps use the Newton backward-Euler stepper. SOR + Picard is the automatic
+fallback (used when Eigen is absent or Newton fails to converge) and can be forced with
+`hillslope_force_sor: true`. The explicit `linear` and `roering` models are no longer offered as
+user options -- they are redirected with a notice and retained for testing and Eigen-free builds.
+
+**The linear case is the surprise, and it is why the default covers linear too.** A linear steady
+solve has no critical-slope difficulty, so the natural expectation is that SOR wins. It does not:
+`F` is already linear in `z`, so the Jacobian *is* the operator and Newton reduces to one sparse
+direct solve. Measured at `tolerance = 1e-6`, single-threaded, `'nnnn'` edges with channel rows:
+
+| grid | unknowns | SOR | sweeps | Newton | speed-up | `Linf(Newton - SOR)` |
+|---:|---:|---:|---:|---:|---:|---:|
+| 41 | 1,681 | 8.0 ms | 234 | 6.2 ms | 1.3x | 2.7e-5 m |
+| 81 | 6,561 | 92.7 ms | 786 | 17.2 ms | 5.4x | 6.1e-5 m |
+| 161 | 25,921 | 1218 ms | 2,188 | 146 ms | 8.3x | 1.8e-4 m |
+| 251 | 63,001 | 8374 ms | 5,281 | 393 ms | 21x | 3.7e-4 m |
+| 401 | 160,801 | 49,290 ms | 13,322 | 2124 ms | 23x | 9.8e-4 m |
+
+Newton takes exactly **one** iteration at every size.
+
+**Two findings behind those numbers.**
+
+1. **The `omega` cap costs SOR its O(n) property.** The auto value is
+   `min(2/(1+sqrt(1-rho_J^2)), 1.95)`, and the optimum passes 1.95 at about n = 160 (1.962 at
+   n = 161, 1.975 at n = 251, 1.985 at n = 401). Above that the cap binds and the measured sweep
+   count grows with an exponent near 1.97 in n -- essentially Gauss-Seidel, not optimal SOR. The
+   cap is deliberate (it guards against the formula overestimating `omega` when channels are dense)
+   but on a sparse-channel domain it is expensive.
+2. **SOR's convergence criterion understates its own error by ~1000x.** Newton's direct solve is
+   exact to round-off, so `Linf(Newton - SOR)` is SOR's error: 9.8e-4 m at n = 401 against a
+   requested `tolerance` of 1e-6. This is the standard `error ~ step/(1-rho)` amplification, and
+   `rho -> 1` is exactly the regime. It is the same lesson as 10d from the other direction -- a
+   step-size criterion is not an error bound.
+
+**Where a direct solve stops paying.** Newton's cost is sparse-LU fill-in dominated. The time
+exponent in `N` stays near 1.5 up to a few hundred thousand unknowns, then climbs:
+
+| unknowns | 251,001 | 491,401 | 1,002,001 |
+|---|---|---|---|
+| Newton | 4.3 s | 9.5 s | 38.2 s |
+
+so `solver_choice` now defaults to AUTO: direct `SparseLU` below
+`direct_solve_max_unknowns` (250,000), BiCGSTAB + IncompleteLUT above it.
+
+**On the OCN landscape** (250x250, Roering nonlinear), Newton converges in **22 iterations to
+9.6e-16 m/yr in 23 s with no `hillslope_sor_omega` set at all** -- against SOR's 4,649 sweeps which
+required `omega = 0.3` by hand. Divide curvature -0.007965 against a predicted 0.008; max `S/Sc`
+0.882; no cell at the limiter cap.
+
+**A reporting defect fixed in passing.** `limiter_active` was set if the slope cap bound at any
+point *during* the iteration, so a solve that started super-critical, clamped during the
+restoration phase, and then converged to a field nowhere near the cap reported "limiter active".
+That is a false alarm on a correctness flag -- the flag exists to say that near-`Sc` behaviour in
+**the answer** is set by the cap rather than the flux law. It now reflects the converged field, and
+the during-iteration signal is reported in the message instead.
+
+### What could not be removed
+
+The explicit solvers and Picard are hidden from the CLI, not deleted, and the reason is structural
+rather than sentimental: **neither Newton nor the implicit Picard solver can run without Eigen.**
+SOR, ADI and the explicit solvers have no Eigen dependency, `LSDTT_EIGEN` is a supported `OFF`
+build option, and `compute_roering_hillslope_transport_implicit` already falls back to
+`compute_roering_hillslope_transport` when Eigen is missing. So the explicit Roering solver is the
+only nonlinear hillslope transport available in an Eigen-free build, and SOR is the only steady
+solver. `cidre` is also retained regardless -- it is the only model that works with an emergent
+channel network, since `roering_implicit` structurally requires imposed channels.
+
+
+## 10i. Emergent coupling unblocked, and a factorisation cache (2026-08-27)
+
+### Two guards blocked the mode they were meant to protect
+
+`lsdtt-lem` can run fluvial incision and hillslope transport on **every cell**, with no channel mask
+and no Dirichlet channel set, so that channels emerge where stream power outruns diffusion. Most of
+the wiring already existed -- `incision_threshold_area: 0` applies stream power everywhere, and
+`hillslope_channel_coupling: coupled` returns an empty channel set on purpose. Two guards blocked it:
+
+* `lsdtt_lem_cpu.cpp` skipped the transient hillslope step whenever the channel set was empty;
+* `cli/lsdtt-lem.cpp` made `coupled` + `roering_implicit` a **FATAL** error.
+
+Both rested on "without Dirichlet channel sinks the solve degenerates to sink-free diffusion toward
+the edges". That is true of a **steady** solve with no Dirichlet data anywhere -- an elliptic problem
+with pure Neumann data is singular, and `unit_hillslope_steady_state` H4 measures it directly (698 m
+of drift in 500 sweeps on `'nnnn'` with no channels). It is **not** true of a transient step, which
+is what the guards blocked: a diffusion step over `dt` is well posed under any boundary condition,
+the fluvial term is the sink in the coupled regime, and an `'o'` edge supplies base level regardless.
+The hillslope operator needs boundary conditions, not channels.
+
+Both are replaced by the narrow correct guard -- steady + coupled + no `'o'` edge is fatal.
+`failure_lem_coupling_ri_steady_no_dirichlet` pins the singular case;
+`smoke_lem_coupling_ri_transient` pins that the combination now runs. The old
+`failure_lem_coupling_roering_implicit`, which asserted the wrong restriction, is deleted.
+
+### The factorisation cache: 97% of runtime, removed
+
+The first working coupled run took 37 minutes, and profiling put **97% of it in the hillslope
+solve** -- 0.43 s for 20 steps with hillslopes off against 14.83 s with them on, i.e. 0.72 s/step on
+40,000 cells for a *linear* solve.
+
+The cause is structural. For a linear run with fixed `dt` and fixed boundary conditions, `alpha` is
+1, the degree-of-freedom set never changes and the `I/dt` term never changes, so **the matrix is
+identical at every timestep** and only the right-hand side moves. The code was rebuilding ~360k
+triplets, sorting them, re-running `analyzePattern` and re-factorising on every one of 3,000 steps.
+
+`lsdtt_hillslope_newton_workspace` (`src/cpu/lsdtt_hillslope_newton_cpu.hpp`, Eigen behind a pimpl
+so the header stays Eigen-free) holds the cached matrix and factorisation **for the caller** -- a
+cache inside the solve function would be useless, because the LEM makes a fresh call each timestep.
+`run_lem_step` accepts one optionally and the CLI owns it across the loop. Reuse depends on the
+problem: linear reuses the matrix and both factorisations; nonlinear reuses the sparsity **pattern**
+only, since `alpha` depends on `z`. A validity key (grid, boundary codes, DOF hash, `D`, `Sc`, `dt`,
+linear/nonlinear) is recomputed every call and the cache dropped if anything moved, so passing a
+workspace cannot change an answer.
+
+| 20 steps, 200x200, linear | before | after |
+|---|---:|---:|
+| wall | 14.83 s | **0.99 s** |
+
+Verified directly rather than inferred: a 400-step run reports `1 pattern analyses,
+1 factorisations, 400 solves`.
+
+**Test coverage** (`unit_hillslope_newton` W10/W11). Both halves matter. W10 asserts the cached run
+is **bit-identical** (`Linf = 0` over 12 steps) **and** that reuse actually happened (exactly 1
+factorisation, 1 symbolic analysis, 12 solves) -- without the second assertion the test would pass
+trivially on a cache that silently did nothing. W11 covers the dangerous direction: change `dt`,
+require a refactorisation, and confirm the post-invalidation answer matches a fresh uncached solve.
+
+**A bug found while building it.** A workspace-held `Eigen::SparseMatrix` is default-constructed
+**0x0**, and `setFromTriplets` does not resize -- it writes outside the matrix, segfaulting. The
+non-workspace path never hit this because `J_local(n_dof, n_dof)` is sized at construction. The
+matrix is now sized explicitly on first use, with the cache invalidated whenever dimensions change.
+
+### Solver-selection policy moved out of the CLI
+
+`run_steady_hillslope()`, added to `cli/lsdtt-lem.cpp` when Newton became the default, was
+solver-selection policy rather than presentation. It is now
+`compute_hillslope_steady_state_auto()` in `src/cpu`, performing no I/O: it fills a
+`lsdtt_hillslope_solve_report` and the CLI renders it. 65 lines removed from the CLI.
+
+### A measurement trap worth recording
+
+Per-step cost is ~5x higher during the transient than at equilibrium, and the **fluvial-only** cost
+is ~3x higher too, so it is not specific to the hillslope solve:
+
+| | fluvial only | with hillslopes | hillslope cost |
+|---|---:|---:|---:|
+| evolved landscape, 20 steps | 0.41 s | 1.39 s | 0.049 s/step |
+| flat start, 400 steps | 24.3 s | 129.4 s | 0.263 s/step |
+
+Plausibly flow routing over an unorganised surface full of pits and flats, but **not confirmed** --
+recorded rather than explained. It does not affect the cache result, which is measured directly.
+
+An earlier version of that comparison was **invalid**: the "evolved landscape" run had silently
+failed to load its DEM (missing file extension) and done no work, making it appear 30x faster than
+it is. `lsdtt-lem` prints a full, plausible configuration block before it discovers the file is
+missing. When timing a LEM run, assert on the completion line rather than the absence of an error.
+
+
+## 10j. Valley spacing, hillslope length, and coupled-timestep control (2026-08-27)
+
+Three capabilities, each added because an emergent-drainage experiment failed without it.
+
+### Hillslope length must be measured by distance transform, not row transects
+
+A row-transect measure (mean run of convex cells along rows) is **not robust to branching**, and the
+failure sharpens with the channelization index: oblique tributaries inflate every crossing by
+`1/cos(theta)`; a single row mixes short first-order hillslopes with long inter-basin divides so the
+mean describes neither; and both grow with `CI`.
+
+`compute_valley_spacing` (`src/cpu/lsdtt_valley_spacing_cpu`) measures hillslope length by a
+two-pass chamfer **distance transform** from every convex cell to the nearest concave cell. It is
+orientation-free and indifferent to branching order. On a five-point diffusivity sweep it beat the
+row measure on both criteria:
+
+| measure | exponent | R^2 | implied prefactor c |
+|---|---:|---:|---|
+| **distance transform** | **0.668** | 0.998 | **0.86** (0.78-0.93) |
+| convex run along rows | 0.612 | 1.000 | 3.84 (3.18-4.62) |
+| predicted 1/p | 0.690 | | |
+
+`c` ~ 0.86 means `L_h ~ (D/K)^(1/p)` needs essentially no fudge factor; the row measure was inflated
+~2.4x because it spans ridge-to-ridge including the valley. The `lsdtt-lem` hillslope-resolution
+warning was recalibrated from c = 4.0 to 0.86 and now predicts within 7% of measured.
+
+### Valley spacing is computed in C++ and only DRAWN in Python
+
+`lsdtt-spectral-analysis` gains `compute_valley_spacing: true`, reporting three measures side by
+side because they fail differently and their disagreement is the diagnostic:
+
+1. **Perron et al. (2008)** power-weighted mean of the spectral peaks -- weighted, not the argmax,
+   because spacing occupies a band and an argmax hops between domain harmonics;
+2. the **distance-transform hillslope length** above;
+3. the small-scale spectral exponent alpha (**Bonetti et al. 2020**, **Hooshyar et al. 2021**),
+   predicted to be `2m - 3`.
+
+Alongside the **Bonetti channelization index** `CI = K l^(m+n) / (D^n U^(1-n))`, which for n = 1 is
+independent of uplift; `CI_c ~ 32-37` marks first channelization. FFTW is optional in lsdtt3, so the
+row-averaged spectrum uses a direct real DFT -- exact on a periodic domain, where zero-padding to a
+power of two would not be. Outputs are `_valley_spacing.csv` and `_valley_spacing_spectrum.csv`.
+
+`lsdviztools3` reads those and computes nothing: `plot_valley_spectrum`, `plot_spacing_vs_ci` and
+`plot_landscape_panel` (hillshades a whole sweep with each panel's scale bar set to that landscape's
+measured length, for a visual check before any number is believed).
+
+### A coupled timestep can be badly wrong while both solvers are unconditionally stable
+
+**This is the finding most likely to bite someone else.** Backward Euler for the hillslope and an
+implicit Braun-Willett sweep for stream power at n = 1 are both unconditionally stable, so neither
+complains at a large timestep. Stability describes a single operator; the ACCURACY of an
+operator-split pair is a different question that nothing was asking.
+
+Measured on a 200x200 grid at 5 m, U = 0.4 mm/yr, from an equilibrated landscape over 500 kyr:
+
+| dt (yr) | grid-scale roughness | hillslope length | relief |
+|---:|---:|---:|---:|
+| 1,000 | 4.9 % | 34.9 m | 287.7 m |
+| 5,000 | 4.4 % | 38.3 m | 280.7 m |
+| 10,000 | 4.2 % | 37.8 m | 268.5 m |
+| **20,000** | **12.2 %** | **19.7 m** | 211.9 m |
+
+The 20,000 yr run **converged, reported ~99% of the uplift rate, and wrote a plausible landscape**
+whose hillslope length was wrong by 5.7x. "Grid-scale roughness" is the fraction of adjacent cells
+where curvature flips sign: a few per cent is normal, tens of per cent is an artefact.
+
+**The criterion**: compare uplift per step with the relief across one cell,
+`ratio = U*dt / (dx * S)`. Once one step of uplift approaches one cell's own relief, the split stops
+resolving incision against diffusion. Keep the ratio at or below ~0.7 (the break above lies between
+1.3 and 2.7).
+
+`diagnose_lem_timestep` (`src/cpu/lsdtt_lem_timestep_cpu`) reports the ratio before every LEM run
+and warns with a suggested timestep. It is silent on a flat initial surface -- no gradient means no
+reference, and a spurious warning on every diamond-square run would train users to ignore the real
+one.
+
+`adaptive_timestep: true` enables a controller keyed on the **achieved**
+`max_local_elevation_change` rather than `U*dt`, since baselevel fall, a migrating knickpoint or a
+post-parameter-change transient all move the surface too. It shrinks faster than it grows (an
+oversized step corrupts the landscape; an undersized one only costs time) and never rejects and
+re-runs a step (one oversized step does not create the artefact -- it took ~25 -- and rejecting
+would double the cost of every adjustment).
+
+**Measured, same landscape and 500 kyr, dt STARTING at the known-bad 20,000 yr:**
+
+| | roughness | hillslope length | relief |
+|---|---:|---:|---:|
+| start (clean) | 4.7 % | 36.4 m | 287.2 m |
+| dt = 20,000 fixed | 12.2 % | 19.7 m | 211.9 m |
+| **adaptive on** | **4.3 %** | **37.1 m** | 282.5 m |
+
+It recovers the clean answer from a timestep 4x too large. The controller settled at 2,880 yr; the
+static check independently suggested <= 5,232 yr. `unit_lem_timestep`, 11 checks.
+
+### The emergent-spacing result these produced
+
+600 x 600 at 5 m (3 km), OCN-seeded, swept over `CI` = 20-1000 at dt = 5,000. Grid-scale roughness
+2.6-7.6% across all seven.
+
+    CI >= 120 (channelized):  L_h ~ D^0.628,  R^2 = 0.996,  implied c = 0.74 (0.64-0.79)
+    200 x 200, independent:   L_h ~ D^0.668,               implied c = 0.86 (0.78-0.93)
+    predicted:                1/p = 0.690
+
+Runs at `CI` = 20 and 35 sit at or below `CI_c` and legitimately do not follow the law -- an
+unchannelized landscape has no spacing set by the D/K balance. `CI` = 60 is above `CI_c` and still
+deviates; that is unexplained. **Do not fit across the threshold**: all seven points give `D^0.437`
+with `R^2` = 0.88, a number that averages two regimes and means nothing. Every value is one draw
+from a band; no repeats were run.
+
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

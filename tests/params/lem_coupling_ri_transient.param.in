@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+write_path: __WRITE_PATH__
+write_fname: tiny_coup_ri_trans
+write_output_format: gtiff
+number_of_iterations: 2
+timestep: 100
+enable_hillslope_transport: true
+# Emergent drainage density: fluvial AND hillslope transport act on every cell.
+incision_threshold_area: 0
+hillslope_channel_coupling: coupled
+hillslope_model: roering_implicit
+boundary_conditions: oooo

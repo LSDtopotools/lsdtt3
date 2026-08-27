@@ -11,6 +11,7 @@
 #include "lsdtt_hillslope_peclet_cpu.hpp"
 
 #include <cmath>
+#include <iomanip>
 #include <sstream>
 
 namespace lsdtt
@@ -178,6 +179,44 @@ hillslope_peclet_inversion_result invert_for_K_and_D(
                "landscapes. Not clamped - judge them yourself.";
 
     out.message = msg.str();
+    return out;
+}
+
+
+// -----------------------------------------------------------------------------
+// estimate_hillslope_resolution
+// -----------------------------------------------------------------------------
+hillslope_resolution_estimate estimate_hillslope_resolution(
+    double D, double K, double dx, double m, double n,
+    bool divide_area_by_dx, double c, double min_cells)
+{
+    hillslope_resolution_estimate out;
+    out.p = peclet_exponent(m, n, divide_area_by_dx);
+
+    if (!(D > 0.0) || !(K > 0.0) || !(dx > 0.0) || !(out.p > 0.0))
+        return out;                       // nothing sensible to say
+
+    out.L_h_m = std::pow(c * D / K, 1.0 / out.p);
+    out.cells = out.L_h_m / dx;
+    out.under_resolved = (out.cells < min_cells);
+
+    if (out.under_resolved)
+    {
+        std::ostringstream msg;
+        msg.setf(std::ios::fixed);
+        msg << std::setprecision(1)
+            << "the equilibrium hillslope is about " << out.cells
+            << " cells wide (L_h ~ " << out.L_h_m << " m at dx = " << dx << " m). "
+            << "Below ~" << min_cells << " cells the grid cannot represent a "
+               "hillslope, and the run will still converge and still report ~100% "
+               "of the uplift rate -- it will simply be all channel. Either raise "
+               "the diffusivity, lower the erodibility, or refine the grid. "
+               "(The estimate uses an empirical prefactor c = "
+            << std::setprecision(2) << c
+            << "; hillslope length occupies a band, so treat this as an "
+               "order-of-magnitude check.)";
+        out.warning = msg.str();
+    }
     return out;
 }
 

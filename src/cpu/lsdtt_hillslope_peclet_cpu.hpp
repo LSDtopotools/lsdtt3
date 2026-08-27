@@ -130,6 +130,59 @@ struct hillslope_peclet_inversion_result
     { return outcome == peclet_inversion_outcome::solved; }
 };
 
+// -----------------------------------------------------------------------------
+// hillslope_resolution_estimate
+//
+// How many CELLS wide the equilibrium hillslope will be, from the parameters
+// alone. Cheap, and worth doing before every coupled run.
+//
+// Why this exists. A coupled run whose hillslopes are only a few cells across
+// still converges, still reports ~100% of the uplift rate, and still writes a
+// plausible-looking landscape -- it simply has no hillslopes in it, because the
+// grid cannot represent one. Measured on a 200x200 grid at 5 m: at D = 0.002 the
+// equilibrium hillslope is ~6 cells and the median gradient comes out at 1.19
+// (~50 degrees) under a LINEAR flux law, which is nonsense that nothing flags.
+//
+// The estimate inverts the Peclet balance, L_h = (c D / K)^(1/p), where p is the
+// exponent for the erosivity convention in use (m+n for specific area, 2m+n for
+// total area).
+//
+// THE PREFACTOR IS EMPIRICAL. c was calibrated on 2026-08-27 against hillslope
+// length measured by DISTANCE TRANSFORM -- the distance from each hillslope cell
+// to the nearest valley cell, which is what hillslope length actually means and
+// is unaffected by valley orientation or branching order. That gave
+// c = 0.86 (spread 0.78-0.93) with L_h ~ D^0.668 against a predicted 1/p = 0.690.
+//
+// An earlier calibration against the mean run of convex cells along rows gave
+// c ~ 3.8, and that number is NOT comparable: a row transect measures
+// ridge-to-ridge half-spacing, which includes the valley and is inflated by
+// 1/cos(theta) wherever a valley runs oblique to the transect. It also mixes
+// first-order hillslopes with inter-basin divides once the network branches. The
+// distance transform has none of those properties and is the calibration to use.
+//
+// Even so, spacing occupies a BAND rather than a single value (Perron et al.
+// 2008), so treat the result as an order-of-magnitude check for "can this grid
+// represent a hillslope at all", never as a prediction of hillslope length.
+// -----------------------------------------------------------------------------
+struct hillslope_resolution_estimate
+{
+    double L_h_m          = 0.0;   // estimated equilibrium hillslope length
+    double cells          = 0.0;   // L_h / dx -- the number that matters
+    double p              = 0.0;   // Peclet exponent actually used
+    bool   under_resolved = false; // cells < min_cells
+    std::string warning;           // empty unless under_resolved
+};
+
+[[nodiscard]] hillslope_resolution_estimate estimate_hillslope_resolution(
+    double D,
+    double K,
+    double dx,
+    double m,
+    double n,
+    bool   divide_area_by_dx,
+    double c         = 0.86,       // empirical prefactor; see the note above
+    double min_cells = 10.0);
+
 // The Peclet exponent for a convention. Written once so it cannot drift from
 // the threshold units that the same flag controls.
 [[nodiscard]] double peclet_exponent(double m, double n,
