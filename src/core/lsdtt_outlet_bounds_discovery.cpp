@@ -301,6 +301,24 @@ discover_outlet_bounds(const std::vector<lsdtt_outlet_point_wgs84>& points,
         result.message = "no valid outlet points found";
         return result;
     }
+    if (!(options.initial_radius_km > 0.0))
+    {
+        result.ok = false;
+        result.message = "initial outlet radius must be positive";
+        return result;
+    }
+    if (!(options.expand_factor > 1.0))
+    {
+        result.ok = false;
+        result.message = "outlet expansion factor must be greater than one";
+        return result;
+    }
+    if (options.max_iters < 1)
+    {
+        result.ok = false;
+        result.message = "outlet discovery must allow at least one iteration";
+        return result;
+    }
 
     double merged_w = std::numeric_limits<double>::infinity();
     double merged_s = std::numeric_limits<double>::infinity();
