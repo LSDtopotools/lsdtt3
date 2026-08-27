@@ -34,7 +34,7 @@ image = ax.imshow(elevation, extent=extent, origin="upper", cmap="terrain")
 ax.imshow(hillshade, extent=extent, origin="upper", cmap="gray", alpha=0.38)
 
 ax.set_aspect("equal")
-ax.set(title=f"Romanian Carpathians — EPSG:{meta.epsg_code}",
+ax.set(title="Romanian Carpathians — UTM zone 35N",
        xlabel="easting (m)", ylabel="northing (m)")
 fig.colorbar(image, ax=ax, label="elevation (m)")
 plt.show()
