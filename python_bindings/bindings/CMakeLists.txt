@@ -20,6 +20,7 @@ nanobind_add_module(_core
     flow_indices.cpp
     basins.cpp
     raster_geospatial.cpp
+    raster_fetch.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
