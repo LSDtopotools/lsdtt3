@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -19,6 +20,7 @@
 #include <cpu/lsdtt_raster_spectral_cpu.hpp>
 #include <cpu/lsdtt_side_tributary_basins_cpu.hpp>
 #include <utils/lsdtt_statistics.hpp>
+#include <utils/lsdtt_polygon_geometry.hpp>
 
 #include "binding_common.hpp"
 
@@ -234,13 +236,14 @@ nb::object junction_basin_table(const JunctionBasinCollection& collection)
     return nb::module_::import_("pandas").attr("DataFrame")(rows);
 }
 
-nb::object basin_statistics(const BasinCollection& collection, const Raster& dem, bool include_slope, bool include_flow_distance)
+nb::object basin_statistics(const BasinCollection& collection, const Raster& dem, bool include_slope, bool include_flow_distance,
+                            bool include_shape_metrics, double perimeter_simplify_cells)
 {
     const auto& flow = collection.flow();
     if (dem.native().get_meta().n_rows != flow.n_rows() || dem.native().get_meta().n_cols != flow.n_cols())
         throw std::invalid_argument("dem must have the same grid shape as the basin flow topology");
     const auto slope_raster = include_slope ? lsdtt::compute_gradient_magnitude_3x3_square(dem.native()) : lsdtt::lsdtt_raster_cpu();
-    const auto distance_raster = include_flow_distance ? lsdtt::lsdtt_raster_cpu(flow.get_distance_from_outlet_raster()) : lsdtt::lsdtt_raster_cpu();
+    const auto distance_raster = (include_flow_distance || include_shape_metrics) ? lsdtt::lsdtt_raster_cpu(flow.get_distance_from_outlet_raster()) : lsdtt::lsdtt_raster_cpu();
     nb::list rows;
     for (std::size_t id = 0; id < collection.size(); ++id) {
         const auto& basin = collection.basin(id); const auto z = basin.get_basin_values(dem.native()); const auto zs = lsdtt::compute_descriptive_stats(z);
@@ -248,6 +251,57 @@ nb::object basin_statistics(const BasinCollection& collection, const Raster& dem
         row["elevation_min"] = zs.min; row["elevation_max"] = zs.max; row["elevation_mean"] = zs.mean; row["elevation_median"] = zs.median; row["elevation_stddev"] = zs.stddev_population;
         if (include_slope) { const auto s = basin.get_basin_values(slope_raster); row["slope_25th"] = lsdtt::compute_percentile(s, 25.0); row["slope_50th"] = lsdtt::compute_percentile(s, 50.0); row["slope_75th"] = lsdtt::compute_percentile(s, 75.0); }
         if (include_flow_distance) { const auto d = basin.get_basin_values(distance_raster); row["flow_distance_25th"] = lsdtt::compute_percentile(d, 25.0); row["flow_distance_50th"] = lsdtt::compute_percentile(d, 50.0); row["flow_distance_75th"] = lsdtt::compute_percentile(d, 75.0); }
+        if (include_shape_metrics) {
+            const auto outline = basin.get_basin_outline(); const auto& meta = outline.divide_grid_meta(); std::vector<lsdtt::lsdtt_xy> ring; ring.reserve(outline.outline_divide_rc().size() + 1);
+            for (const auto& rc : outline.outline_divide_rc()) ring.push_back({meta.x_min + rc.col * meta.cell_size, meta.y_max() - rc.row * meta.cell_size});
+            if (!ring.empty() && (ring.front().x != ring.back().x || ring.front().y != ring.back().y)) ring.push_back(ring.front());
+            const auto d = basin.get_basin_values(distance_raster); const auto shape = lsdtt::compute_basin_shape(ring, d.empty() ? 0.0 : *std::max_element(d.begin(), d.end()), zs.min, zs.mean, zs.max, perimeter_simplify_cells * flow.cell_size());
+            double sum_x = 0.0, sum_y = 0.0; for (const auto flat : basin.get_slice()) { const auto rr = flow.row_from_flat_unchecked(flat); const auto cc = flow.col_from_flat_unchecked(flat); sum_x += flow.meta().x_min + (cc + 0.5) * flow.cell_size(); sum_y += flow.meta().y_max() - (rr + 0.5) * flow.cell_size(); }
+            const double n = static_cast<double>(basin.pixel_count()); row["centroid_x"] = sum_x / n; row["centroid_y"] = sum_y / n; row["basin_length_metres"] = shape.basin_length; row["elongation_ratio"] = shape.elongation_ratio; row["form_factor"] = shape.form_factor; row["circularity_ratio"] = shape.circularity_ratio; row["gravelius_compactness"] = shape.gravelius_compactness; row["solidity"] = shape.solidity; row["eccentricity"] = shape.eccentricity; row["orientation_degrees"] = shape.orientation_deg; row["hypsometric_integral"] = shape.hypsometric_integral;
+        }
+        rows.append(std::move(row));
+    }
+    return nb::module_::import_("pandas").attr("DataFrame")(rows);
+}
+
+nb::object basin_polygons(const BasinCollection& collection)
+{
+    const auto& flow = collection.flow(); nb::list geometry; std::vector<std::size_t> ids; std::vector<std::int64_t> outlets; nb::object polygon = nb::module_::import_("shapely.geometry").attr("Polygon");
+    for (std::size_t id = 0; id < collection.size(); ++id) { const auto outline = collection.basin(id).get_basin_outline(); const auto& meta = outline.divide_grid_meta(); nb::list coordinates; for (const auto& rc : outline.outline_divide_rc()) coordinates.append(nb::make_tuple(meta.x_min + rc.col * meta.cell_size, meta.y_max() - rc.row * meta.cell_size)); ids.push_back(id); outlets.push_back(collection.basin(id).get_basin_outlet_flat_index()); geometry.append(polygon(coordinates)); }
+    nb::dict data; data["basin_id"] = ids; data["outlet_flat"] = outlets; nb::object ctor = nb::module_::import_("geopandas").attr("GeoDataFrame"); return flow.meta().crs_wkt.empty() ? ctor(data, nb::arg("geometry") = geometry) : ctor(data, nb::arg("geometry") = geometry, nb::arg("crs") = flow.meta().crs_wkt);
+}
+
+nb::object basin_channel_lengths(const BasinCollection& collection, const ChannelNetwork& network, int max_stream_order)
+{
+    if (max_stream_order < 1) throw std::invalid_argument("max_stream_order must be positive");
+    if (&network.flow() != &collection.flow())
+        throw std::invalid_argument("network and basins must belong to the same FlowInfo");
+
+    const auto& flow = collection.flow(); const auto& native_network = network.native();
+    const auto& channel = native_network.channel_mask_array(); nb::list rows;
+    for (std::size_t id = 0; id < collection.size(); ++id) {
+        const auto& basin = collection.basin(id); std::unordered_set<std::int64_t> inside;
+        for (const auto flat : basin.get_slice()) inside.insert(flat);
+        std::vector<double> lengths(static_cast<std::size_t>(max_stream_order) + 1, 0.0);
+        for (const auto flat : basin.get_slice()) {
+            const auto index = static_cast<std::size_t>(flat);
+            if (!channel.data()[index]) continue;
+            const auto receiver = flow.receiver_of_unchecked(flat);
+            if (receiver < 0 || inside.find(receiver) == inside.end() || !channel.data()[static_cast<std::size_t>(receiver)]) continue;
+            const auto junction = native_network.junction_of_flat(flat);
+            if (junction < 0) continue;
+            const int order = native_network.stream_order_of_junction(junction);
+            if (order < 1 || order > max_stream_order) continue;
+            const int row = flow.row_from_flat_unchecked(flat), col = flow.col_from_flat_unchecked(flat);
+            const int receiver_row = flow.row_from_flat_unchecked(receiver), receiver_col = flow.col_from_flat_unchecked(receiver);
+            lengths[static_cast<std::size_t>(order)] += flow.cell_size() * std::hypot(
+                static_cast<double>(receiver_row - row), static_cast<double>(receiver_col - col));
+        }
+        nb::dict row; row["basin_id"] = id;
+        for (int order = 1; order <= max_stream_order; ++order) {
+            const auto name = "channel_length_order_" + std::to_string(order) + "_metres";
+            row[name.c_str()] = lengths[static_cast<std::size_t>(order)];
+        }
         rows.append(std::move(row));
     }
     return nb::module_::import_("pandas").attr("DataFrame")(rows);
@@ -335,7 +389,7 @@ nb::dict basin_surface_metrics(const BasinCollection& collection, const Raster& 
         {"profile_curvature", lsdtt::polyfit_metric::profile_curvature}, {"plan_curvature", lsdtt::polyfit_metric::plan_curvature},
         {"tangential_curvature", lsdtt::polyfit_metric::tangential_curvature}, {"aspect_degrees", lsdtt::polyfit_metric::aspect_degrees}};
     std::vector<lsdtt::polyfit_metric> metrics; for (const auto& name : metric_names) { const auto found = lookup.find(name); if (found == lookup.end()) throw std::invalid_argument("unsupported basin surface metric: " + name); metrics.push_back(found->second); }
-    nb::list interior_rows, outline_rows, flip_rows;
+    nb::list interior_rows, outline_rows, flip_rows, slope_area_rows, slope_area_summary_rows;
     for (const double scale : scales) {
         if (scale <= 0.0) throw std::invalid_argument("scales must be positive");
         const auto fit = lsdtt::direct_polyfit(dem.native(), scale, n_threads); lsdtt::polyfit_metric_request request; request.metrics = metrics; request.n_threads = n_threads;
@@ -351,9 +405,44 @@ nb::dict basin_surface_metrics(const BasinCollection& collection, const Raster& 
                     if (metric_names[metric_id] == "maximum_curvature") { nb::dict f; f["basin_id"] = id; f["scale_metres"] = scale; f["n_flips"] = flips; f["mean_flip_spacing_metres"] = flips > 0 ? distance / flips : std::numeric_limits<double>::quiet_NaN(); flip_rows.append(std::move(f)); }
                 }
             }
+
+            // A compact, reproducible slope--area summary.  Area is the D8
+            // contributing area at each basin pixel; the 0.1 log10(A) bins
+            // keep the returned table useful without prescribing a plot.
+            const auto slope_position = std::find(metric_names.begin(), metric_names.end(), "slope");
+            if (slope_position != metric_names.end()) {
+                const auto& slope_raster = result.at(lsdtt::polyfit_metric::slope);
+                const auto& slope_data = slope_raster.get_data();
+                const auto& slope_mask = slope_raster.get_mask();
+                std::map<std::int64_t, std::vector<float>> bins;
+                for (const auto flat : basin.get_slice()) {
+                    const auto index = static_cast<std::size_t>(flat);
+                    if (!slope_mask[index] || !std::isfinite(slope_data[index])) continue;
+                    const double area = static_cast<double>(collection.flow().s_vector_size(flat))
+                                      * collection.flow().cell_size() * collection.flow().cell_size();
+                    if (area <= 0.0) continue;
+                    bins[static_cast<std::int64_t>(std::floor(10.0 * std::log10(area)))].push_back(slope_data[index]);
+                }
+                double highest_median = -std::numeric_limits<double>::infinity();
+                double area_at_highest_median = std::numeric_limits<double>::quiet_NaN();
+                for (const auto& [bin, values] : bins) {
+                    if (values.empty()) continue;
+                    const double log10_area = (static_cast<double>(bin) + 0.5) / 10.0;
+                    const double median_slope = lsdtt::compute_median(values);
+                    nb::dict row; row["basin_id"] = id; row["scale_metres"] = scale;
+                    row["log10_area_midpoint"] = log10_area; row["area_metres2"] = std::pow(10.0, log10_area);
+                    row["n_pixels"] = values.size(); row["median_slope"] = median_slope;
+                    slope_area_rows.append(std::move(row));
+                    if (median_slope > highest_median) { highest_median = median_slope; area_at_highest_median = std::pow(10.0, log10_area); }
+                }
+                nb::dict summary; summary["basin_id"] = id; summary["scale_metres"] = scale;
+                summary["area_at_max_median_slope_metres2"] = area_at_highest_median;
+                summary["max_median_slope"] = std::isfinite(highest_median) ? highest_median : std::numeric_limits<double>::quiet_NaN();
+                slope_area_summary_rows.append(std::move(summary));
+            }
         }
     }
-    nb::dict output; const auto pandas = nb::module_::import_("pandas"); output["interior"] = pandas.attr("DataFrame")(interior_rows); output["outline"] = pandas.attr("DataFrame")(outline_rows); output["curvature_flips"] = pandas.attr("DataFrame")(flip_rows); return output;
+    nb::dict output; const auto pandas = nb::module_::import_("pandas"); output["interior"] = pandas.attr("DataFrame")(interior_rows); output["outline"] = pandas.attr("DataFrame")(outline_rows); output["curvature_flips"] = pandas.attr("DataFrame")(flip_rows); output["slope_area"] = pandas.attr("DataFrame")(slope_area_rows); output["slope_area_summary"] = pandas.attr("DataFrame")(slope_area_summary_rows); return output;
 }
 
 } // namespace
@@ -369,12 +458,14 @@ upslope slice; no raster-sized copy is retained per basin.
         .def_prop_ro("size", &BasinCollection::size)
         .def_prop_ro("labels", &basin_labels, "Basin IDs (one-based); nested basins overwrite parents.")
         .def_prop_ro("table", &basin_table)
+        .def_prop_ro("polygons", &basin_polygons, "Basin outline polygons as a GeoDataFrame.")
         .def("mask", &basin_mask, nb::arg("basin_id"))
         .def("pixels", &basin_pixels, nb::arg("basin_id"))
         .def("membership", &basin_membership, nb::arg("row"), nb::arg("col"), "Return all selected basin IDs containing this pixel.")
         .def("statistics", &basin_statistics, nb::arg("dem"), nb::arg("include_slope") = true,
              nb::arg("include_flow_distance") = true,
-             "Return per-basin elevation, slope, and flow-distance statistics.");
+             nb::arg("include_shape_metrics") = false, nb::arg("perimeter_simplify_cells") = 1.0,
+             "Return per-basin elevation, slope, flow-distance, and optional shape statistics.");
     nb::class_<JunctionBasinCollection>(module, "JunctionBasinCollection", R"doc(
 Junction-aware D8 basins selected from a ``ChannelNetwork``.
 
@@ -407,6 +498,12 @@ require outlet pixels as an N-by-2 ``(row, col)`` array.
         nb::arg("stopping_point_window_pixels") = 5);
     module.def("line_crossing_basins", &line_crossing_basins, nb::arg("network"), nb::arg("line"),
         nb::arg("minimum_contributing_pixels") = 500);
+    module.def("basin_channel_lengths", &basin_channel_lengths, nb::arg("basins"), nb::arg("network"),
+        nb::arg("max_stream_order") = 6, R"doc(
+Return total in-basin D8 channel length by Strahler stream order.
+
+``basins`` and ``network`` must have been created from the same ``FlowInfo``.
+)doc");
     module.def("basin_surface_metrics", &basin_surface_metrics, nb::arg("basins"), nb::arg("dem"),
         nb::arg("scales"), nb::arg("metrics"), nb::arg("include_outline") = true, nb::arg("n_threads") = 0);
     flow.def("basins", &make_basins, nb::arg("outlets") = nb::none(), nb::arg("min_upslope_pixels") = 0,
