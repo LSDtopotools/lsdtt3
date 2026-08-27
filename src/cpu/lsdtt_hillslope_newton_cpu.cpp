@@ -340,7 +340,13 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
         Eigen::VectorXd step(n_dof);
         bool solve_ok = true;
 
-        if (opts.solver_choice == 1)
+        // Resolve AUTO once we know the problem size.
+        const bool use_iterative =
+            (opts.solver_choice == 1) ||
+            (opts.solver_choice < 0 &&
+             static_cast<long int>(n_dof) > opts.direct_solve_max_unknowns);
+
+        if (use_iterative)
         {
             Eigen::BiCGSTAB<Eigen::SparseMatrix<double>,
                             Eigen::IncompleteLUT<double>> solver;
@@ -471,8 +477,24 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
 
     result.n_iterations   = it;
     result.final_residual = fnorm;
-    result.limiter_active = capped_anywhere;
     result.max_slope_ratio = max_ratio(z);
+
+    // Whether the cap binds in the CONVERGED FIELD -- not whether it ever bound
+    // during the iteration.
+    //
+    // The distinction matters because of what this flag is for: it tells the user
+    // that near-Sc behaviour in the answer is set by the limiter rather than by
+    // the flux law. A solve that STARTS super-critical clamps freely during the
+    // restoration phase and then converges to a field nowhere near the cap;
+    // reporting that as "limiter active" is a false alarm, and a false alarm on a
+    // correctness flag is worse than no flag. `capped_anywhere` (the
+    // during-iteration signal) is kept for the message below but does not set the
+    // flag on its own.
+    result.limiter_active = (result.max_slope_ratio >= std::sqrt(opts.slope_ratio_cap));
+
+    if (capped_anywhere && !result.limiter_active && result.converged)
+        result.message = "converged (the slope cap bound during iteration, but not "
+                         "in the converged field)";
 
     if (result.converged && result.message.empty())
         result.message = "converged";

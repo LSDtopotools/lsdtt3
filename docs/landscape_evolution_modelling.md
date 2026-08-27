@@ -82,7 +82,16 @@ This nonlinear law is physically motivated by hillslope processes: at low angles
 
 ## Numerical schemes and solvers for hillslope transport
 
-lsdtt3 offers five solvers for hillslope transport, selected via the `hillslope_model` parameter. Choose based on your process model and computational budget:
+lsdtt3 offers multiple solvers for hillslope transport. The primary choice is the **transient solver**, selected via the `hillslope_model` parameter (`linear`, `roering`, `cidre`, `roering_implicit`, or `adi`), which controls how the landscape evolves in time-stepping mode. For steady-state solves (`run_steady_state: true`), the hillslope equation is solved directly instead, by Newton's method, with red-black SOR + Picard as the fallback.
+
+> **Newton is the default steady-state solver.** Steady-state runs (`run_steady_state: true`)
+> use Newton for both linear and nonlinear flux laws, and transient `roering_implicit` steps use
+> the Newton backward-Euler stepper. No parameter is needed and `hillslope_sor_omega` no longer
+> has to be tuned. SOR with Picard linearisation remains the automatic fallback — it is used when
+> Newton is unavailable (a build without Eigen) or fails to converge, and can be forced with
+> `hillslope_force_sor: true` for comparison against an older run.
+
+**Transient solvers (selected via `hillslope_model`):**
 
 | Solver | Equation | Time stepping | Stability | Best for |
 |---|---|---|---|---|
@@ -229,6 +238,121 @@ you intend to measure, not from the size of the field.** A tolerance is only mea
 it sits above the arithmetic noise floor of the expression that computes it, and a
 convergence criterion built on a difference of large, nearly-equal numbers has a much higher
 floor than the storage format alone would suggest.
+
+### The shared discrete operator
+
+All hillslope solvers in lsdtt3 — SOR steady-state, explicit transport, ADI, implicit transient, and Newton — operate on the same **conservative cell-centred finite-volume discretisation** on a regular grid. For an interior hillslope cell P with four cardinal neighbours, the governing equation is
+
+```
+dz_P/dt = U + (1/h²) Σ_f D_eff,f (z_nb,f - z_P)
+```
+
+where U is uplift rate, h is the cell size, and the sum runs over the four faces (N, S, E, W). The effective diffusivity at each face is
+
+```
+D_eff,f = D / (1 - (S_n,f² + S_t,f²)/Sc²)
+```
+
+where S_n is the slope component normal to the face, S_t is the slope component tangential to the face, and S_c is the critical slope. In the linear case (S_c → ∞), this reduces to the standard Laplacian with scalar diffusivity D.
+
+**Critical point: face symmetry.** The face diffusivity is a property of the *face itself*, not of the cell being updated. This means the tangential slope must be **averaged across the face** from the two cells sharing it. If instead you evaluate it at only the cell being updated — say, using the E–W cross-slope at cell P for both the N face of P and the S face of its northern neighbour — the operator becomes non-symmetric: flux leaving P through a face does not equal flux entering the neighbour through it. Non-symmetric operators admit complex eigenvalue pairs, leading to oscillating rather than decaying modes, and the scheme becomes non-conservative. Measurements (see [testing_and_benchmarking.md §10e](testing_and_benchmarking.md)) show this defect caused a **575% flux imbalance** in the old asymmetric code. The correct face-symmetric form is now shared by all solvers.
+
+### Boundary conditions for hillslope solvers
+
+Boundary conditions are specified as a four-character string (`boundary_conditions` parameter), one character per cardinal direction (N, E, S, W in that order). A short string pads with `'o'` on the right. Each character takes one of three values:
+
+- **`'p'` — Periodic wrap.** The cell wraps to the opposite side, so a cell at the eastern edge has its eastern neighbour at the western edge. Used for cyclic domains to eliminate edge effects.
+- **`'o'` — Dirichlet (fixed elevation at base level).** The edge cell is held at its input elevation and is not updated; it acts as a fixed-elevation boundary condition. Channel cells are always treated as `'o'` boundaries regardless of the boundary string.
+- **`'n'` — Neumann zero-flux (reflecting).** The edge cell is reflected: the gradient normal to the boundary is set to zero by treating the edge as a mirror, so sediment flux across the boundary is zero.
+
+The default is `"oooo"` (all edges fixed at base level), which is appropriate for a confined study area. A periodic domain uses `"pppp"` or (e.g.) `"poop"` for periodic east–west with fixed north–south edges.
+
+### Newton's method for nonlinear steady-state
+
+For the nonlinear Roering law with a finite critical slope, the nonlinear SOR solver (Picard iteration) has a fundamental limitation: **it has no damping on the coefficients**. Under-relaxing the update (reducing ω) damps the change in elevation `z`, but the diffusivity coefficient α is still recomputed at full strength from the current `z`. On steep faces where `dα/dS = α²` is large, this allows a feedback loop: elevation drops → face steepens → α rises → update pulls harder → overshoot. The result is a **limit cycle** confined to cells near the critical slope, and Picard cannot escape it at any fixed relaxation factor.
+
+A nonlinear steady-state solve using Picard at optimal SOR relaxation (`ω ≈ 1.95`) or higher diverges; at `ω = 0.3` it converges in ~5,100 sweeps but is a 500× penalty against the linear optimal-SOR performance. Measurements (see [testing_and_benchmarking.md §10f](testing_and_benchmarking.md)) on a 41×41 cross-slope landscape show SOR at `ω = 1.5` failing (residual plateaus at 26.6 m), whereas **Newton converges in 42 iterations to `||F||_∞ = 4e-17` m/yr** (an erosion-rate imbalance at machine precision).
+
+**The core insight:** the steady problem and the backward-Euler transient step are the same root-find problem with one term:
+
+```
+F_P(z) = (z_P - z_P^n)/Δt - U - (D/h²) Σ_f α_f(z)(z_nb,f - z_P) = 0
+```
+
+Setting `1/Δt = 0` recovers steady-state; non-zero `1/Δt` is the transient form. A single **Newton core**, parameterised by the time-step reciprocal, handles both. This means the steady solver and the transient integrator use identical numerics and cannot drift.
+
+**The Jacobian** of this system is 9-point (the cross-slope terms in `α_f` reach the diagonal neighbours) and non-symmetric (the `∂α` terms multiply `(z_nb - z_P)`, which is antisymmetric). This rules out the symmetric SPD solver (`SimplicialLDLT`); lsdtt3 uses `SparseLU` for moderate grids or `BiCGSTAB` with `IncompleteLUT` preconditioning for large systems.
+
+**Convergence criterion:** Newton is judged on the residual **`||F||_∞`** in units of m/yr — a physically interpretable erosion-rate imbalance, independent of elevation magnitude. This avoids the catastrophic-cancellation trap that plagued the SOR solver: a criterion built on `max|Δz|` has a very high noise floor when the differences are computed from sums of O(100)-magnitude neighbours. Report both the residual norm and the max elevation change; a solve that looks good on one but not the other is hiding information.
+
+**Globalisation and feasibility:** a pure Newton step can overshoot the critical slope. Two safeguards are applied:
+
+1. **Line search on the residual norm:** if `||F(z + s)|| > ||F(z)||`, backtrack the step `s ← s/2` to satisfy descent. This ensures monotonic residual reduction.
+2. **Feasibility clip:** before testing descent, check whether the trial step would put any face slope above `r_max·Sc` (where `r_max ≈ 0.99`). If yes, shrink the step until it does not. This prevents Newton from stepping over the critical slope barrier. A subtlety: if the initial field is already super-critical, a strict "never leave the feasible region" rule deadlocks (backtracking drives the trial toward that same infeasible field). The filter is conditional: from a feasible state it refuses to leave; from an infeasible one it accepts any restoration step that reduces the slope ratio, until the field crosses back below Sc.
+
+**When the cap activates:** a run with `r_max` binding is a run where behaviour near Sc is determined by the limiter, not the flux law. This region is physically important (it is where critical-slope hillslopes regulate their form), so any run should flag and report where this occurs. On measured landscapes it is rare; the OCN test landscape reaches `max(S/Sc) = 0.882`, leaving the `r_max = 0.99` cap inactive everywhere.
+
+**Newton is faster than SOR for the LINEAR problem too, which is not obvious.** A linear steady
+solve has no critical-slope difficulty at all, so the natural expectation is that SOR wins. It does
+not: `F` is already linear in `z`, so the Jacobian *is* the operator and Newton reduces to a single
+sparse direct solve. Measured at `tolerance = 1e-6`, single-threaded:
+
+| grid | unknowns | SOR | sweeps | Newton | speed-up |
+|---:|---:|---:|---:|---:|---:|
+| 41² | 1,681 | 8 ms | 234 | 6 ms | 1.3× |
+| 81² | 6,561 | 93 ms | 786 | 17 ms | 5.4× |
+| 161² | 25,921 | 1.22 s | 2,188 | 146 ms | 8.3× |
+| 251² | 63,001 | 8.37 s | 5,281 | 393 ms | 21× |
+| 401² | 160,801 | 49.3 s | 13,322 | 2.12 s | 23× |
+
+Two things are going on. First, SOR's sweep count grows as roughly O(n²) here, not the O(n) that
+over-relaxation is supposed to deliver, because the automatic `ω` is capped at 1.95 while the
+optimum rises past it (1.962 at n = 161, 1.985 at n = 401). Above about n = 160 the cap binds and
+SOR degrades toward Gauss–Seidel. Second, and more subtly, the two solvers are not delivering the
+same accuracy: Newton's direct solve is exact to round-off, and the gap between them grows to
+9.8e-4 m at n = 401 despite SOR being asked for 1e-6. That gap *is* SOR's error — an iterative
+step-size criterion understates the true solution error by the usual `1/(1 − ρ)` factor, which is
+about 1000× here.
+
+**Where a direct solve stops paying.** Newton's cost is dominated by sparse-LU fill-in, and the
+time exponent in `N` sits near 1.5 up to a few hundred thousand unknowns before climbing: 4.3 s at
+251k, 9.5 s at 491k, 38 s at 1M. Above `direct_solve_max_unknowns` (default 250,000) the solver
+therefore switches automatically to BiCGSTAB with an incomplete-LU preconditioner, which trades the
+factorisation for iterations and keeps memory bounded.
+
+**Measurements (41×41 cross-slope fixture):** outer-iteration counts of 10 / 42 / 6 for n = 21 / 41 / 81 — the point being that the count does **not grow with the grid**, unlike SOR's O(n). It is not monotonic in n either: the count depends on how far each initial guess sits above `S_c`, because the restoration phase pays for that (the n = 41 case spends 89 line-search backtracks getting back under `S_c`). Linear mode solves in exactly one iteration and matches SOR to 3.8e-6 m; the transient form relaxes to the steady state in 15 sub-steps (49 Newton iterations) to within 1.9e-6 m.
+
+### Stability: explicit versus implicit schemes
+
+**Explicit (forward Euler) schemes are CFL-limited.** For the linear Laplacian, the stability condition is `Δt ≤ h²/(4D)`. For the nonlinear Roering law, the limit depends on the **tangent modulus** `dq/dS = D(1+r²)/(1-r²)²`, not the secant effective diffusivity `D_eff = D/(1-r²)`. This distinction matters: on a slope at `r = 0.93` (close to critical), the tangent modulus is ~13× larger than the secant, so the true CFL limit is ~13× more stringent than using `D_eff` in the formula would suggest. A solver that computes the CFL limit from `D_eff` rather than the tangent modulus reports a maximum stable timestep far larger than the scheme can actually tolerate.
+
+The explicit Roering solver (`roering`) handles this by **auto-subcycling**: cells near `Sc` are sub-stepped during the global timestep to remain stable. This is reliable but computationally expensive on fine grids where many cells are steep.
+
+**Implicit (backward-Euler) schemes are unconditionally stable.** There is **no CFL condition**. The timestep is chosen for *accuracy* and *nonlinear solvability*, not for stability. In a transient Newton solver with adaptive sub-stepping, a rejected sub-step means the nonlinear system was too hard to solve at that size or an accuracy gate fired — it never means the scheme went unstable. This is why implicit schemes are strongly preferred for long, fine-grid runs: they trade dense matrix solves for the freedom to take large timesteps without numerical instability. The cost-benefit depends on the problem; on short runs or coarse grids explicit schemes may be faster, but on geological timescales or sub-metre resolution the unconditional stability of implicit schemes is essential.
+
+**Practical guidance:** choose `roering_implicit` when you have an imposed channel network — steady-state solves use Newton, transient steps use the Newton backward-Euler stepper, and Picard is the fallback. Choose `cidre` when you want the drainage network to emerge. The explicit `linear` and `roering` solvers are no longer offered as user options: they are CFL-limited and less stable, and are retained only for testing and for builds without Eigen. Newton is recommended for all nonlinear steady-state work because Picard's limit cycle is unavoidable.
+
+---
+
+## Comparison table: all hillslope solvers
+
+Here is a comprehensive view of all available options, with the trade-offs that guide solver choice:
+
+| Solver | Equation | When to use | Stability | Cost model | Notes |
+|---|---|---|---|---|---|
+| `linear` (explicit) | D·∇²z | Transient, thick diffusivities, if CFL is not limiting | CFL: Δt ≤ h²/(4D) | ~1 ms per cell per step | Simplest, well-tested; use if explicit schemes are fast enough |
+| `roering` (explicit) | Roering with auto-subcycling | Transient, nonlinear dynamics, modest grids | CFL: Δt ≤ h²/(4D_tangent) near Sc | ~10 ms per cell per step; auto-subcycling adds cost near Sc | Captures nonlinear threshold; no matrix solves; expensive on fine grids |
+| `cidre` (explicit FV) | Roering on D-infinity flow net | Emergent drainage density, coupled fluvial–hillslope | CFL-limited | ~100 ms per sweep (D-infinity routing cost) | Most realistic for channelization studies; requires empty channel set |
+| `adi` (implicit) | Laplacian only | Long linear runs on regular grids | Unconditionally stable | ~10 ms per line solve (1D subproblems) | Very fast; no sparse matrix fill; linear only |
+| `roering_implicit` (backward-Euler + Picard) | Roering nonlinear law | Long runs with imposed channels; relief targeting | Unconditionally stable | ~20–40 s per steady solve (62.5k unknowns); transient uses similar per step | Robust but limited to ω ≤ 0.5 on nonlinear; Picard limit-cycles at high ω |
+| **Newton** (backward-Euler + Newton) *(default for steady state)* | Roering nonlinear law | Nonlinear steady-state and transient, especially near critical slopes | Unconditionally stable | ~10–30 s per steady solve (62.5k unknowns); O(1) iterations independent of grid | Converges where Picard cannot; 9-point Jacobian costs more per iteration but far fewer iterations; use SparseLU for grids <10⁶, BiCGSTAB/ILUT for larger |
+| SOR steady-state (Picard) | Roering nonlinear law | Linear steady-state, or nonlinear at low ω (legacy) | N/A (steady-state only) | ~5–10 s per solve; O(n) iteration count scales with grid | Same operator as above; serves as fallback/predictor for Newton; documented here for completeness |
+
+**Choosing a steady-state approach:**
+
+- **Linear hillslopes:** use SOR (`run_steady_state: true`, `enable_nonlinear_hillslopes: false`). It is fast and exact.
+- **Nonlinear hillslopes, imposed channels:** `run_steady_state: true`, `enable_nonlinear_hillslopes: true`. Newton is used automatically and needs no relaxation factor.
+- **Legacy code or special cases:** the Picard solver within `roering_implicit` is still available as a fallback, but it should not be a first choice for nonlinear work.
 
 ---
 
@@ -378,17 +502,21 @@ lsdtt3 supports both. If you want to model long-lived landscape evolution on a k
 
 Here is a decision tree:
 
-1. **Do you want to see transient dynamics** (response to climate change, base-level fall, etc.)? → **Time stepping** (`run_steady_state: false`) with one of the explicit solvers (`linear`, `roering`, or `cidre`).
+1. **Do you want to see transient dynamics** (response to climate change, base-level fall, etc.)? → **Time stepping** (`run_steady_state: false`) with one of the explicit solvers (`linear`, `roering`, or `cidre`), or `roering_implicit` for unconditional stability on fine grids.
 
-2. **Do you want a landscape in steady state quickly** (with known boundary conditions)? → **Analytical steady state** (`run_steady_state: true`) with optional snapping (`steady_state_n_cycles > 1` or `use_landscape_equilibration_cycle: true`).
+2. **Do you want a landscape in steady state quickly?** → **Analytical steady state** (`run_steady_state: true`):
+   - **Linear hillslopes:** use the SOR solver (fast, exact).
+   - **Nonlinear hillslopes:** Newton is the default and needs no relaxation factor. (If you force SOR with `hillslope_force_sor`, set `hillslope_sor_omega` to 0.3–0.5 — the auto value is the linear optimum and diverges for the nonlinear operator.)
+   - Optional: add snapping (`steady_state_n_cycles > 1`) or the equilibration cycle (`use_landscape_equilibration_cycle: true`) to let drainage divides migrate.
 
-3. **Do you have a field-mapped channel network**? → Impose it with `incision_threshold_area > 0` (converted to the right units: specific area or map area). Use D8 routing. Choose `roering_implicit` if you want unconditional stability, otherwise `roering` or `linear`.
+3. **Do you have a field-mapped channel network with imposed drainage?** → Set `incision_threshold_area > 0`. Use D8 routing, with `roering_implicit` for transient runs.
 
-4. **Do you want to ask "what network emerges?"** → Set `incision_threshold_area: 0`, use D-infinity and Cidre, accept the longer run times.
+4. **Do you want the drainage network to emerge from the landscape dynamics?** → Set `incision_threshold_area: 0`, use D-infinity and Cidre (coupled routing). This cannot be combined with `roering_implicit`, but works with `linear`, `roering` and `adi`.
 
-5. **How long is your run?** 
-   - Short (synthetic, < 1 My) with explicit scheme: fine either way.  
-   - Long (realistic timescale, > 10 My): consider `roering_implicit` (if you have an imposed network) or `adi` for linear diffusion.
+5. **How long is your run?**
+   - Short transient (synthetic, < 1 My) with explicit scheme: any solver is fine.
+   - Long transient (realistic timescale, > 10 My): use `roering_implicit` or `adi` for unconditional stability.
+   - Steady-state: Newton is now the recommended solver for nonlinear work (fast, robust); SOR for linear work.
 
 ---
 

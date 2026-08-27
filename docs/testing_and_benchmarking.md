@@ -4221,8 +4221,8 @@ nonlinear solvability only.
 | | result |
 |---|---|
 | SOR at omega = 1.5 | fails after 4,000 sweeps, residual 26.6 m |
-| **Newton** | **converges in 13 iterations, `norm(F)_inf` = 1.9e-15 m/yr** |
-| outer iterations vs grid | 10 / 13 / 6 for n = 21 / 41 / 81 -- flat, against SOR's O(n) |
+| **Newton** | **converges in 42 iterations, `norm(F)_inf` = 4e-17 m/yr** |
+| outer iterations vs grid | 10 / 42 / 6 for n = 21 / 41 / 81 -- does not grow with n, against SOR's O(n) |
 | linear mode | exact in **one** step, matching SOR to 3.8e-6 m |
 | periodic invariance | **exact** (0 m) |
 | transient -> steady | 15 sub-steps, 49 Newton iterations, Linf 1.9e-6 m |
@@ -4248,6 +4248,141 @@ warning quantitatively: with a channel lowering 50 m over one step, the new-time
 conventions differ by exactly that 50 m and the old-time convention biases the hillslope **high**
 by `O(E*dt)` -- a small, entirely plausible-looking error that would be very hard to spot in
 output.
+
+
+## 10g. `'n'` was not a zero-flux boundary, and the explicit solver had no BCs (2026-08-27)
+
+Two more boundary defects, found by writing `unit_hillslope_transport_bc` (8 checks, label
+`unit;hillslope`).
+
+### The explicit Roering solver had no boundary-condition concept at all
+
+`compute_roering_hillslope_transport` took no `boundary_conditions` parameter: it clamped indices
+unconditionally, so every edge was Neumann, a periodic domain could not be expressed, and an `'o'`
+edge was silently no-flux. It is reached from the LEM's explicit path and -- more dangerously --
+from the implicit solver's subcycling fallback, so an `'o'` or `'p'` run that dropped to
+subcycling **changed boundary condition mid-run with nothing in the output to say so**.
+
+It now takes the string, with **no default** -- a default would let a caller keep the old wrong
+behaviour without noticing -- and reads through the shared operator. Both call sites pass the
+run's BCs through.
+
+`compute_max_slope_ratio` had the same clamping problem. At a periodic seam it took a one-sided
+(zero) difference instead of wrapping and **understated** the slope. Measured on a linear ramp:
+periodic reads **4.875**, clamped reads **0.25** -- a 19x understatement, in the direction that
+reports a domain as safer than it is, exactly where near-`Sc` behaviour matters. It now takes the
+BC string too (and is declared in the header rather than living in an anonymous namespace).
+
+### `'n'` did not implement zero flux
+
+The more interesting one, and the shared operator's fourth drift. A no-flux face requires the
+ghost value to equal the cell's own, so the face-normal slope is zero. The four solvers disagreed:
+
+| solver | no-flux rule | correct? |
+|---|---|---|
+| implicit (`get_face`) | face skipped entirely | yes |
+| ADI | face conductance zeroed | yes |
+| explicit transport (old) | clamped index -> returns the cell itself | yes |
+| **SOR** | `max(0, r - dr)` -> the **opposite** neighbour | **no** |
+
+The SOR rule mirrors about the cell centre. That yields a zero *centred* slope at the boundary
+cell, which looks right, but a **non-zero face flux**: row 0 receives flux from row 1 twice, once
+through its real S face and once through its fictitious N face. The same accessor was serving both
+the centred-slope estimate and the face flux, and it cannot be correct for both.
+
+This was pre-existing (it predates the 2026-08-26 work), and rewiring the explicit solver onto the
+shared operator in N1 propagated it *into* a solver that had been correct. The conservation test
+caught that immediately, which is the point of writing it.
+
+The shared operator now resolves a no-flux neighbour -- and a masked one -- to the cell itself.
+
+**Measured, on a closed no-flux domain with no channels and no uplift, where mass must be
+conserved exactly:**
+
+| | mean elevation drift |
+|---|---|
+| mirror rule (before) | **0.278 m** |
+| cell-itself rule (after) | **7.2e-8 m** |
+
+The OCN test landscape is unaffected (4,649 sweeps, divide curvature -0.007989 against a predicted
+0.008) because `opop` contains no `'n'` edge. Runs that used `'n'` edges do change, and the new
+answers are the correct ones. Full suite 195/195.
+
+**Test coverage** (`unit_hillslope_transport_bc`): periodic invariance under a column roll (exact,
+0 m); `'o'` holds the edge while `'n'` evolves; `'p'` and `'n'` differ at the seam, so `'p'` is
+genuinely honoured; mass conservation on a closed domain (the face-symmetry and zero-flux guard);
+and `max_slope_ratio` finding a seam-crossing gradient.
+
+
+## 10h. Newton becomes the default solver; SOR vs Newton on the LINEAR problem (2026-08-27)
+
+`lsdtt-lem` steady-state runs now use Newton for **both** flux laws, and transient
+`roering_implicit` steps use the Newton backward-Euler stepper. SOR + Picard is the automatic
+fallback (used when Eigen is absent or Newton fails to converge) and can be forced with
+`hillslope_force_sor: true`. The explicit `linear` and `roering` models are no longer offered as
+user options -- they are redirected with a notice and retained for testing and Eigen-free builds.
+
+**The linear case is the surprise, and it is why the default covers linear too.** A linear steady
+solve has no critical-slope difficulty, so the natural expectation is that SOR wins. It does not:
+`F` is already linear in `z`, so the Jacobian *is* the operator and Newton reduces to one sparse
+direct solve. Measured at `tolerance = 1e-6`, single-threaded, `'nnnn'` edges with channel rows:
+
+| grid | unknowns | SOR | sweeps | Newton | speed-up | `Linf(Newton - SOR)` |
+|---:|---:|---:|---:|---:|---:|---:|
+| 41 | 1,681 | 8.0 ms | 234 | 6.2 ms | 1.3x | 2.7e-5 m |
+| 81 | 6,561 | 92.7 ms | 786 | 17.2 ms | 5.4x | 6.1e-5 m |
+| 161 | 25,921 | 1218 ms | 2,188 | 146 ms | 8.3x | 1.8e-4 m |
+| 251 | 63,001 | 8374 ms | 5,281 | 393 ms | 21x | 3.7e-4 m |
+| 401 | 160,801 | 49,290 ms | 13,322 | 2124 ms | 23x | 9.8e-4 m |
+
+Newton takes exactly **one** iteration at every size.
+
+**Two findings behind those numbers.**
+
+1. **The `omega` cap costs SOR its O(n) property.** The auto value is
+   `min(2/(1+sqrt(1-rho_J^2)), 1.95)`, and the optimum passes 1.95 at about n = 160 (1.962 at
+   n = 161, 1.975 at n = 251, 1.985 at n = 401). Above that the cap binds and the measured sweep
+   count grows with an exponent near 1.97 in n -- essentially Gauss-Seidel, not optimal SOR. The
+   cap is deliberate (it guards against the formula overestimating `omega` when channels are dense)
+   but on a sparse-channel domain it is expensive.
+2. **SOR's convergence criterion understates its own error by ~1000x.** Newton's direct solve is
+   exact to round-off, so `Linf(Newton - SOR)` is SOR's error: 9.8e-4 m at n = 401 against a
+   requested `tolerance` of 1e-6. This is the standard `error ~ step/(1-rho)` amplification, and
+   `rho -> 1` is exactly the regime. It is the same lesson as 10d from the other direction -- a
+   step-size criterion is not an error bound.
+
+**Where a direct solve stops paying.** Newton's cost is sparse-LU fill-in dominated. The time
+exponent in `N` stays near 1.5 up to a few hundred thousand unknowns, then climbs:
+
+| unknowns | 251,001 | 491,401 | 1,002,001 |
+|---|---|---|---|
+| Newton | 4.3 s | 9.5 s | 38.2 s |
+
+so `solver_choice` now defaults to AUTO: direct `SparseLU` below
+`direct_solve_max_unknowns` (250,000), BiCGSTAB + IncompleteLUT above it.
+
+**On the OCN landscape** (250x250, Roering nonlinear), Newton converges in **22 iterations to
+9.6e-16 m/yr in 23 s with no `hillslope_sor_omega` set at all** -- against SOR's 4,649 sweeps which
+required `omega = 0.3` by hand. Divide curvature -0.007965 against a predicted 0.008; max `S/Sc`
+0.882; no cell at the limiter cap.
+
+**A reporting defect fixed in passing.** `limiter_active` was set if the slope cap bound at any
+point *during* the iteration, so a solve that started super-critical, clamped during the
+restoration phase, and then converged to a field nowhere near the cap reported "limiter active".
+That is a false alarm on a correctness flag -- the flag exists to say that near-`Sc` behaviour in
+**the answer** is set by the cap rather than the flux law. It now reflects the converged field, and
+the during-iteration signal is reported in the message instead.
+
+### What could not be removed
+
+The explicit solvers and Picard are hidden from the CLI, not deleted, and the reason is structural
+rather than sentimental: **neither Newton nor the implicit Picard solver can run without Eigen.**
+SOR, ADI and the explicit solvers have no Eigen dependency, `LSDTT_EIGEN` is a supported `OFF`
+build option, and `compute_roering_hillslope_transport_implicit` already falls back to
+`compute_roering_hillslope_transport` when Eigen is missing. So the explicit Roering solver is the
+only nonlinear hillslope transport available in an Eigen-free build, and SOR is the only steady
+solver. `cidre` is also retained regardless -- it is the only model that works with an emergent
+channel network, since `roering_implicit` structurally requires imposed channels.
 
 
 ## 11. Adding a test

@@ -1829,6 +1829,13 @@ target_link_libraries(lsdtt-test-hillslope-peclet PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_peclet COMMAND lsdtt-test-hillslope-peclet)
 set_tests_properties(unit_hillslope_peclet PROPERTIES LABELS "unit;hillslope")
 
+# Boundary conditions for the explicit Roering transport solver (periodic + 'o').
+add_executable(lsdtt-test-hillslope-transport-bc cpp/test_hillslope_transport_bc.cpp)
+target_link_libraries(lsdtt-test-hillslope-transport-bc PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_transport_bc COMMAND lsdtt-test-hillslope-transport-bc)
+set_tests_properties(unit_hillslope_transport_bc PROPERTIES LABELS "unit;hillslope")
+
 # The Newton solver for the Roering nonlinear hillslope (steady + transient).
 add_executable(lsdtt-test-hillslope-newton cpp/test_hillslope_newton.cpp)
 target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)

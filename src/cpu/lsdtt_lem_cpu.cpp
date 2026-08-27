@@ -20,6 +20,7 @@
 
 #include "lsdtt_flowgraph_cpu.hpp"
 #include "lsdtt_hillslope_implicit_cpu.hpp"
+#include "lsdtt_hillslope_newton_cpu.hpp"
 #include "lsdtt_hillslope_transport_cpu.hpp"
 #include "lsdtt_stream_power_cpu.hpp"
 #include <iostream>
@@ -392,6 +393,7 @@ run_lem_step(
                     opts.timestep,
                     nl,
                     opts.critical_hillslope_slope,
+                    opts.boundary_conditions,
                     opts.n_threads
                 );
             }
@@ -425,10 +427,50 @@ run_lem_step(
 
                     // Transient-coupling rule 1 (Sec8): integrate exactly one LEM step
                     // (dt_total = opts.timestep), so channels are re-incised each step.
-                    lsdtt_roering_implicit_result ri_res =
-                        compute_roering_hillslope_transport_implicit(
-                            current, is_channel, opts.timestep, ri);
-                    current = std::move(ri_res.elevation);
+                    //
+                    // NEWTON FIRST. The Picard path lags the face coefficients, so
+                    // near Sc it limit-cycles and needs heavy under-relaxation;
+                    // Newton differentiates alpha and converges in an iteration
+                    // count that does not grow with the grid. Picard is kept as the
+                    // automatic fallback -- it is the only option in an Eigen-free
+                    // build, and a step Newton cannot take is worth retrying with a
+                    // damped method rather than failing the run.
+                    bool done = false;
+                    if (!opts.hillslope_force_picard)
+                    {
+                        lsdtt_hillslope_newton_transient_options nt;
+                        nt.newton.D  = ri.D;
+                        nt.newton.U  = ri.U;
+                        nt.newton.Sc = ri.Sc;
+                        nt.newton.nonlinear           = ri.nonlinear;
+                        nt.newton.boundary_conditions = ri.boundary_conditions;
+                        nt.newton.n_threads           = ri.n_threads;
+                        nt.dt_init = (ri.dt_init > 0.0f) ? ri.dt_init : opts.timestep;
+
+                        const lsdtt_hillslope_newton_transient_result nr =
+                            compute_hillslope_newton_transient(
+                                current, is_channel, opts.timestep, nt);
+
+                        if (nr.converged)
+                        {
+                            current = nr.elevation;
+                            done    = true;
+                        }
+                        else
+                        {
+                            std::cerr << "[lem] Newton hillslope step did not "
+                                         "converge (" << nr.message
+                                      << "); falling back to Picard.\n";
+                        }
+                    }
+
+                    if (!done)
+                    {
+                        lsdtt_roering_implicit_result ri_res =
+                            compute_roering_hillslope_transport_implicit(
+                                current, is_channel, opts.timestep, ri);
+                        current = std::move(ri_res.elevation);
+                    }
                 }
             }
             else  // "cidre"

@@ -102,9 +102,17 @@ struct lsdtt_hillslope_newton_options
     int    max_line_search  = 30;
     bool   enable_line_search = true;
 
-    // 0 = SparseLU (direct; the right default at these sizes),
-    // 1 = BiCGSTAB + IncompleteLUT (for grids too large to factorise).
-    int    solver_choice = 0;
+    // Linear backend: 0 = SparseLU (direct), 1 = BiCGSTAB + IncompleteLUT,
+    // -1 = AUTO (the default): direct below `direct_solve_max_unknowns`, iterative
+    // above it.
+    //
+    // The threshold exists because a direct factorisation of this 9-point operator
+    // is superb until fill-in takes over. Measured on the linear problem, the
+    // time exponent in N sits near 1.5 up to ~500k unknowns and climbs to ~1.95
+    // by 1M (9.5 s -> 38 s), which is where a direct solve stops paying. 250k is
+    // set comfortably inside the well-behaved range.
+    int      solver_choice = -1;
+    long int direct_solve_max_unknowns = 250000;
 
     int    n_threads = 0;
 };

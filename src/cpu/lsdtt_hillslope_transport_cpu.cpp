@@ -7,6 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
 #include "lsdtt_hillslope_transport_cpu.hpp"
+#include "lsdtt_hillslope_operator_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -192,6 +193,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
     float dt_total,
     bool  nonlinear,
     float S_c,
+    const std::string&              boundary_conditions,
     int   n_threads)
 {
 #ifdef _OPENMP
@@ -214,19 +216,21 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
     // Working elevation array - updated in-place across sub-steps.
     std::vector<float> z(dem.get_data());
 
-    // Read neighbour elevation with Neumann zero-flux at domain edges and
-    // at masked interior cells (reflect the donor cell back).
-    auto nbr_z = [&](int r, int c, int dr, int dc) -> float
+    // Boundary handling comes from the SHARED operator
+    // (lsdtt_hillslope_operator_cpu.hpp): 'p' wraps, 'o' is Dirichlet at base
+    // level, 'n' is Neumann zero-flux, and a masked interior neighbour reflects.
+    //
+    // This solver previously had NO boundary-condition concept at all -- it
+    // clamped indices unconditionally, so every edge was Neumann, a periodic
+    // domain could not be expressed, and an 'o' edge was silently no-flux. That
+    // mattered most through the implicit solver's subcycling fallback, which
+    // could switch boundary condition mid-run without any record in the output.
+    const lsdtt_hillslope_domain dom =
+        lsdtt_hillslope_domain::make(nrows, ncols, boundary_conditions, mask);
+
+    auto is_fixed = [&](std::size_t sidx, int row, int col) -> bool
     {
-        int nr = std::max(0, std::min(nrows - 1, r + dr));
-        int nc = std::max(0, std::min(ncols - 1, c + dc));
-        const std::size_t nidx = static_cast<std::size_t>(nr * ncols + nc);
-        if (!mask[nidx])
-        {
-            // masked neighbour: reflect back to (r,c)
-            return z[static_cast<std::size_t>(r * ncols + c)];
-        }
-        return z[nidx];
+        return !mask[sidx] || is_channel[sidx] || dom.is_dirichlet_edge(row, col);
     };
 
     float dt_remaining = dt_total;
@@ -260,25 +264,24 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
         else
         {
             float tangent_max = 1.0f;
+            const lsdtt_hillslope_stencil<float> cfl_st(dom, z.data(),
+                                                        static_cast<double>(h));
 #ifdef _OPENMP
             #pragma omp parallel for schedule(static) reduction(max : tangent_max)
 #endif
             for (std::int64_t idx = 0; idx < n_cells; ++idx)
             {
                 const std::size_t sidx = static_cast<std::size_t>(idx);
-                if (!mask[sidx] || is_channel[sidx]) continue;
-
                 const int row = static_cast<int>(idx / ncols);
                 const int col = static_cast<int>(idx % ncols);
+                if (is_fixed(sidx, row, col)) continue;
 
-                const float zN = nbr_z(row, col, -1,  0);
-                const float zS = nbr_z(row, col, +1,  0);
-                const float zE = nbr_z(row, col,  0, +1);
-                const float zW = nbr_z(row, col,  0, -1);
-
-                // Full gradient magnitude squared / Sc^2 at this cell centre
-                const float gx = (zE - zW) / (2.0f * h);
-                const float gy = (zN - zS) / (2.0f * h);
+                // Gradient magnitude at the cell centre, wrapping at a periodic
+                // seam rather than reflecting -- a clamped read there returns a
+                // one-sided (zero) difference and UNDERSTATES the slope, which is
+                // the wrong direction to err in a stability estimate.
+                const float gx = static_cast<float>(cfl_st.slope_x(row, col));
+                const float gy = static_cast<float>(cfl_st.slope_y(row, col));
                 const float r2 = std::min((gx*gx + gy*gy) / Sc2, 0.9999f);
 
                 const float one_minus = 1.0f - r2;
@@ -304,51 +307,32 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
         // -----------------------------------------------------------------
         std::vector<float> z_new(z);  // copy: update into z_new, read from z
 
+        const lsdtt_hillslope_stencil<float> st(dom, z.data(),
+                                                static_cast<double>(h));
+
 #ifdef _OPENMP
         #pragma omp parallel for schedule(static)
 #endif
         for (std::int64_t idx = 0; idx < n_cells; ++idx)
         {
             const std::size_t sidx = static_cast<std::size_t>(idx);
-            if (!mask[sidx] || is_channel[sidx]) continue;
-
             const int row = static_cast<int>(idx / ncols);
             const int col = static_cast<int>(idx % ncols);
-            const float zc = z[sidx];
+            if (is_fixed(sidx, row, col)) continue;
 
-            const float zN = nbr_z(row, col, -1,  0);
-            const float zS = nbr_z(row, col, +1,  0);
-            const float zE = nbr_z(row, col,  0, +1);
-            const float zW = nbr_z(row, col,  0, -1);
+            // Face-symmetric coefficients and face-normal slopes, four at a time.
+            // alpha is a property of the FACE, so the tangential slope is averaged
+            // across it; taking it at the updating cell (which this solver used to
+            // do) gives the two cells sharing a face different diffusivities and
+            // makes the scheme non-conservative.
+            double a[4], sn[4];
+            st.face_alphas(row, col, static_cast<double>(S_c), nonlinear, a, sn);
 
-            float aN = 1.0f, aS = 1.0f, aE = 1.0f, aW = 1.0f;
-            if (nonlinear)
-            {
-                // N/S faces: face-normal slope + E-W cross-slope
-                const float sx = (zE - zW) / (2.0f * h);
-                const float cross_ns = sx * sx / Sc2;
+            // sum_f alpha_f (z_nb - z_c) == h * sum_f alpha_f * S_n,f
+            double laplacian = 0.0;
+            for (int k = 0; k < 4; ++k) laplacian += a[k] * sn[k] * static_cast<double>(h);
 
-                auto alpha_face = [&](float z_nbr, float cross2) -> float
-                {
-                    const float dz_h = (z_nbr - zc) / h;
-                    const float s2 = std::min(dz_h * dz_h / Sc2 + cross2, 0.9999f);
-                    return 1.0f / (1.0f - s2);
-                };
-
-                // E/W faces: face-normal slope + N-S cross-slope
-                const float sy = (zN - zS) / (2.0f * h);
-                const float cross_ew = sy * sy / Sc2;
-
-                aN = alpha_face(zN, cross_ns);
-                aS = alpha_face(zS, cross_ns);
-                aE = alpha_face(zE, cross_ew);
-                aW = alpha_face(zW, cross_ew);
-            }
-
-            // dz/dt = D/h^2 * [alphaN*(zN-zc) + alphaS*(zS-zc) + alphaE*(zE-zc) + alphaW*(zW-zc)]
-            const float laplacian = aN * (zN - zc) + aS * (zS - zc)
-                                  + aE * (zE - zc) + aW * (zW - zc);
-            z_new[sidx] = zc + kdt_over_h2 * laplacian;
+            z_new[sidx] = z[sidx] + kdt_over_h2 * static_cast<float>(laplacian);
         }
 
         z.swap(z_new);

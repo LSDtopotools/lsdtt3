@@ -51,6 +51,7 @@
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
+#include "../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
@@ -260,6 +261,71 @@ static std::vector<std::int64_t> build_boundary_flats(
 // =============================================================================
 // main
 // =============================================================================
+
+// -----------------------------------------------------------------------------
+// run_steady_hillslope
+//
+// Solve the steady hillslope problem, preferring NEWTON and falling back to SOR.
+//
+// Newton is the default for BOTH linear and nonlinear steady solves. For the
+// nonlinear problem the reason is robustness: Picard has no damping on the face
+// coefficients, so near Sc it limit-cycles and needs heavy under-relaxation to
+// converge at all. For the LINEAR problem the reason is simply speed and
+// accuracy -- Newton reduces to a single sparse direct solve (F is already
+// linear in z), and measured against SOR at tolerance 1e-6 it is ~21x faster at
+// 63k unknowns and ~23x at 161k, while being exact to round-off. SOR's own
+// max|Deltaz| criterion understates its solution error by the usual 1/(1-rho)
+// factor, which at n = 401 is about 1000x.
+//
+// SOR remains the fallback, and it is not optional: Newton needs Eigen, and an
+// Eigen-free build (-DLSDTT_EIGEN=OFF) has no other steady solver.
+// -----------------------------------------------------------------------------
+static lsdtt::lsdtt_hillslope_steady_state_result run_steady_hillslope(
+    const lsdtt::lsdtt_raster_cpu&                     dem,
+    const std::vector<std::uint8_t>&                   is_channel,
+    const lsdtt::lsdtt_hillslope_steady_state_options& hs_opts,
+    bool                                               force_sor)
+{
+    if (!force_sor)
+    {
+        lsdtt::lsdtt_hillslope_newton_options nopts;
+        nopts.D  = hs_opts.D;
+        nopts.U  = hs_opts.U;
+        nopts.Sc = hs_opts.Sc;
+        nopts.nonlinear           = hs_opts.nonlinear;
+        nopts.boundary_conditions = hs_opts.boundary_conditions;
+        nopts.inv_dt              = 0.0;               // the steady problem
+        nopts.n_threads           = hs_opts.n_threads;
+
+        const lsdtt::lsdtt_hillslope_newton_result nr =
+            lsdtt::compute_hillslope_newton(dem, is_channel, nopts);
+
+        if (nr.converged)
+        {
+            std::cout << "  Solver used    : Newton"
+                      << (nr.had_eigen ? "" : " (no Eigen)")
+                      << "  iterations=" << nr.n_iterations
+                      << "  ||F||inf=" << nr.final_residual << " m/yr\n";
+            if (nr.limiter_active)
+                std::cout << "  NOTE: the sub-critical limiter was active somewhere; "
+                             "near-Sc behaviour there is set by the cap, not the flux law.\n";
+
+            lsdtt::lsdtt_hillslope_steady_state_result out;
+            out.elevation      = nr.elevation;
+            out.n_iterations   = nr.n_iterations;
+            out.final_residual = static_cast<float>(nr.final_max_dz);
+            out.converged      = true;
+            return out;
+        }
+
+        std::cerr << "Warning: the Newton hillslope solve did not converge ("
+                  << nr.message << ").\n"
+                     "         Falling back to SOR with Picard linearisation.\n";
+    }
+
+    return lsdtt::compute_hillslope_steady_state(dem, is_channel, hs_opts);
+}
+
 int main(int argc, char* argv[])
 {
     print_banner();
@@ -450,22 +516,34 @@ int main(int argc, char* argv[])
         "Requires enable_hillslope_transport.",
         "Process switches", "switch", ""};
 
+    bool_default_map["hillslope_force_sor"] = false;
+    help_map["hillslope_force_sor"] = {"bool","false",
+        "Force the legacy SOR + Picard steady-state solver instead of Newton.",
+        "Steady-state hillslope solves default to Newton, which is faster and more "
+        "accurate for the linear problem and converges near Sc where Picard "
+        "limit-cycles. SOR is still used automatically when Newton is unavailable "
+        "(a build without Eigen) or fails to converge; this switch forces it for "
+        "comparison or reproduction of an older run. With SOR the nonlinear "
+        "operator needs hillslope_sor_omega set low (0.3-0.5); the auto value is "
+        "the LINEAR optimum and diverges.",
+        "Process switches", "switch", ""};
+
     string_default_map["hillslope_model"] = "cidre";
     help_map["hillslope_model"] = {"string","cidre",
-        "Hillslope transport model: linear, roering, roering_implicit, cidre, or adi.",
-        "linear: explicit FD of D*grad^2z on the regular 4-connected grid (stable at any "
-        "typical LEM dt; no flow graph needed beyond channel ID). "
-        "roering: explicit FD of the Roering (1999) nonlinear law D*grad*[gradz/(1-(|gradz|/Sc)^2)]; "
-        "auto-subcycles when near Sc (dt <= h^2/(4*D*alpha_max)); enable_nonlinear_hillslopes "
-        "must be true or it reduces to linear FD. "
-        "roering_implicit: unconditionally-stable backward-Euler solver for the same "
-        "Roering law (Eigen sparse Cholesky / CG; adaptive sub-stepping; sub-critical "
-        "limiter). Channels are Dirichlet sinks from the area threshold or "
-        "channel_mask_fname; needs a non-empty channel set or the step is skipped. "
-        "Set enable_nonlinear_hillslopes false for linear backward-Euler diffusion. "
+        "Hillslope transport model: roering_implicit, cidre, or adi.",
+        "roering_implicit: unconditionally-stable implicit solver for the Roering (1999) "
+        "nonlinear law. Steady-state runs use Newton; transient runs use backward Euler "
+        "with adaptive sub-stepping. Channels are Dirichlet sinks from the area threshold "
+        "or channel_mask_fname; needs a non-empty channel set or the step is skipped. "
+        "Set enable_nonlinear_hillslopes false for linear diffusion. "
         "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
-        "unconditionally stable near Sc via slope-restoration. "
-        "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps."
+        "unconditionally stable near Sc via slope-restoration. The ONLY model that works "
+        "with an emergent channel network (incision_threshold_area = 0). "
+        "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps "
+        "(transient only; steady-state runs use Newton regardless). "
+        "NOTE: 'linear' and 'roering' select EXPLICIT solvers. They are CFL-limited and "
+        "less stable than the implicit path, and are retained only for testing and for "
+        "builds without Eigen; both are redirected to roering_implicit with a warning. "
         "Requires enable_hillslope_transport.",
         "Process switches", "param", ""};
 
@@ -1040,6 +1118,7 @@ int main(int argc, char* argv[])
 
     // roering_implicit solver knobs (D/U/Sc/nonlinear/BC/threads are set in the LEM
     // step from the options above; these fill the rest of the implicit options).
+    opts.hillslope_force_picard = bf["hillslope_force_sor"];
     opts.roering_implicit_opts.relaxation_omega = ff["hillslope_implicit_relaxation_omega"];
     opts.roering_implicit_opts.picard_tol       = ff["hillslope_implicit_picard_tol"];
     opts.roering_implicit_opts.picard_max_iter  = ifs["hillslope_implicit_picard_max_iter"];
@@ -1753,6 +1832,18 @@ int main(int argc, char* argv[])
         else if (hs_solver == "linear")  hs_opts.nonlinear = false;
         else                             hs_opts.nonlinear = bf["enable_nonlinear_hillslopes"];
 
+        // 'linear' and 'roering' name the EXPLICIT solvers, which are retained for
+        // testing and for Eigen-free builds but are not offered as user options:
+        // they are CFL-limited and less stable than the implicit path. In a
+        // steady-state run they never had any effect anyway -- every value except
+        // 'cidre' routed to the same solver -- so this only makes that visible.
+        if (hs_solver == "linear" || hs_solver == "roering")
+            std::cout << "\nNOTE: hillslope_model '" << hs_solver
+                      << "' selects an explicit solver, which is retained for testing\n"
+                         "      and for builds without Eigen. Using the implicit "
+                         "(Newton) steady-state\n      solver instead; set "
+                         "enable_nonlinear_hillslopes to choose the flux law.\n";
+
         std::cout << "  Solver         : " << hs_solver
                   << " (" << (hs_opts.nonlinear ? "nonlinear" : "linear") << ")\n"
                   << "  D=" << hs_opts.D << "  U=" << hs_opts.U;
@@ -1768,8 +1859,8 @@ int main(int argc, char* argv[])
                 hs_result = lsdtt::compute_cidre_hillslope_steady_state(
                     dem, is_channel, hs_opts);
             else
-                hs_result = lsdtt::compute_hillslope_steady_state(
-                    dem, is_channel, hs_opts);
+                hs_result = run_steady_hillslope(dem, is_channel, hs_opts,
+                                                 bf["hillslope_force_sor"]);
         }
         catch (const std::exception& e)
         {
@@ -2312,9 +2403,10 @@ int main(int argc, char* argv[])
                 if (hs_solver == "cidre")
                     hs_result = lsdtt::compute_cidre_hillslope_steady_state(
                         ss_result.elevation, is_channel, hs_opts);
-                else  // "linear" or "roering" - both use the SOR solver
-                    hs_result = lsdtt::compute_hillslope_steady_state(
-                        ss_result.elevation, is_channel, hs_opts);
+                else
+                    hs_result = run_steady_hillslope(ss_result.elevation,
+                                                     is_channel, hs_opts,
+                                                     bf["hillslope_force_sor"]);
 
                 std::cout << "  Iterations: " << hs_result.n_iterations
                           << "  max|Deltaz|: " << hs_result.final_residual

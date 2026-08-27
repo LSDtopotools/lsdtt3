@@ -120,6 +120,11 @@ struct lsdtt_lem_options
     // options at call time; the remaining fields are taken from here.
     lsdtt_roering_implicit_options roering_implicit_opts;
 
+    // Force the legacy Picard path for transient roering_implicit steps. The
+    // default is Newton, which converges near Sc where Picard limit-cycles.
+    // Picard remains the automatic fallback when Newton fails or Eigen is absent.
+    bool hillslope_force_picard = false;
+
     // Optional explicit channel (Dirichlet) mask for the hillslope step: cell != 0
     // marks a fixed-elevation channel pixel.  Empty (default) = derive is_channel
     // from the drainage-area threshold.  Overrides the area-derived set for all

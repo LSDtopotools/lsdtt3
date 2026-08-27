@@ -140,9 +140,24 @@ struct lsdtt_hillslope_domain
     // -------------------------------------------------------------------------
     // neighbour: resolve (r+dr, c+dc) to a real cell.
     //
-    // Periodic edges wrap; every other edge reflects the donor cell back
-    // (Neumann zero-flux). A masked interior neighbour reflects the same way, so
-    // nodata behaves like a no-flux internal boundary.
+    // Periodic edges wrap. Every other edge, and every masked interior
+    // neighbour, resolves to the CELL ITSELF -- which is what makes the face a
+    // genuine no-flux boundary, because the face-normal slope
+    // (z_ghost - z_P)/h is then exactly zero.
+    //
+    // THIS IS NOT WHAT THE SOR SOLVER USED TO DO, and the difference is a real
+    // defect rather than a stylistic choice. It resolved a no-flux neighbour as
+    // `max(0, r - dr)` -- the OPPOSITE neighbour, mirroring about the cell
+    // centre. That gives a zero CENTRED slope at the boundary cell, which looks
+    // right, but a NON-ZERO face flux: row 0 then receives flux from row 1
+    // twice, once through its real S face and once through its fictitious N
+    // face. Mass is not conserved on a closed domain, which is exactly what
+    // `unit_hillslope_transport_bc` T4 measures.
+    //
+    // The other three solvers already had it right in their own ways -- the
+    // implicit solver skips a no-flux face outright, ADI zeroes its conductance,
+    // and the explicit transport solver clamped (which returns the cell itself).
+    // The mirror was the outlier, and this is the rule they now all share.
     //
     // Returning the INDEX rather than the value is what makes face-symmetric
     // coefficients possible: the caller can evaluate the neighbour's own centred
@@ -153,18 +168,14 @@ struct lsdtt_hillslope_domain
         nr = r + dr;
         nc = c + dc;
 
-        if (nr < 0)             nr = (bc_n == 'p') ? n_rows - 1 : std::max(0, r - dr);
-        else if (nr >= n_rows)  nr = (bc_s == 'p') ? 0          : std::min(n_rows - 1, r - dr);
+        if (nr < 0)             nr = (bc_n == 'p') ? n_rows - 1 : r;
+        else if (nr >= n_rows)  nr = (bc_s == 'p') ? 0          : r;
 
-        if (nc < 0)             nc = (bc_w == 'p') ? n_cols - 1 : std::max(0, c - dc);
-        else if (nc >= n_cols)  nc = (bc_e == 'p') ? 0          : std::min(n_cols - 1, c - dc);
+        if (nc < 0)             nc = (bc_w == 'p') ? n_cols - 1 : c;
+        else if (nc >= n_cols)  nc = (bc_e == 'p') ? 0          : c;
 
-        // Masked interior neighbour: reflect, as at a no-flux boundary.
-        if (!valid(nr, nc))
-        {
-            nr = std::max(0, std::min(n_rows - 1, r - dr));
-            nc = std::max(0, std::min(n_cols - 1, c - dc));
-        }
+        // Masked interior neighbour: the same no-flux treatment.
+        if (!valid(nr, nc)) { nr = r; nc = c; }
     }
 };
 
