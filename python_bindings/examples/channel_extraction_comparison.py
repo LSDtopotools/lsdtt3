@@ -1,11 +1,15 @@
 """Compare threshold and Wiener channel-head extraction on Green River."""
 
 import matplotlib.pyplot as plt
+import numpy as np
 import lsdtt3
 
 dem = lsdtt3.fill_pits(lsdtt3.Raster.read("perso_tests/dem/green_river_1.tif"))
 flow = lsdtt3.FlowInfo(dem)
-hillshade = lsdtt3.multidirectional_hillshade(dem).to_numpy(nodata_to_nan=True)
+hillshade_raster = lsdtt3.multidirectional_hillshade(dem)
+hillshade = np.where(
+    hillshade_raster.mask_numpy(), hillshade_raster.to_numpy(), np.nan
+)
 
 methods = [
     ("Threshold: 100 pixels", dict(method="threshold", threshold_pixels=100)),
