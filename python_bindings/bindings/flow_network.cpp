@@ -122,6 +122,98 @@ Raster network_mask(const ChannelNetwork& network)
     return Raster(lsdtt::lsdtt_raster_cpu(std::move(values), std::move(mask), flow.meta()));
 }
 
+nb::object geodataframe(nb::object data, nb::list geometry, const lsdtt::lsdtt_raster_meta& meta)
+{
+    nb::object constructor = nb::module_::import_("geopandas").attr("GeoDataFrame");
+    if (meta.crs_wkt.empty()) return constructor(data, nb::arg("geometry") = geometry);
+    return constructor(data, nb::arg("geometry") = geometry, nb::arg("crs") = meta.crs_wkt);
+}
+
+nb::tuple point_geometry(const lsdtt::lsdtt_raster_meta& meta, int row, int col)
+{
+    return nb::make_tuple(meta.x_min + (static_cast<double>(col) + 0.5) * meta.cell_size,
+                          meta.y_max() - (static_cast<double>(row) + 0.5) * meta.cell_size);
+}
+
+nb::object network_points_geodataframe(const ChannelNetwork& network)
+{
+    const auto& flow = network.flow(); const auto& n = network.native();
+    std::vector<std::int64_t> flat, row, col; std::vector<std::int32_t> junction;
+    std::vector<double> area, distance; std::vector<bool> is_junction;
+    nb::list geometry; const auto flow_distance = flow.get_distance_from_outlet_raster();
+    nb::object point = nb::module_::import_("shapely.geometry").attr("Point");
+    for (std::size_t i = 0; i < flow.full_grid_size(); ++i) {
+        if (!n.channel_mask_array().data()[i]) continue;
+        const auto f = static_cast<std::int64_t>(i); const int r = flow.row_from_flat_unchecked(f); const int c = flow.col_from_flat_unchecked(f);
+        flat.push_back(f); row.push_back(r); col.push_back(c); junction.push_back(n.junction_of_flat(f));
+        is_junction.push_back(n.is_junction_flat(f));
+        area.push_back(static_cast<double>(flow.s_vector_size(f)) * flow.cell_size() * flow.cell_size());
+        distance.push_back(flow_distance.data[i]);
+        geometry.append(point(point_geometry(flow.meta(), r, c)));
+    }
+    nb::dict data; data["flat"] = flat; data["row"] = row; data["col"] = col;
+    data["junction_id"] = junction; data["is_junction"] = is_junction;
+    data["drainage_area"] = area; data["flow_distance_to_outlet"] = distance;
+    return geodataframe(data, geometry, flow.meta());
+}
+
+nb::object network_lines_geodataframe(const ChannelNetwork& network)
+{
+    const auto& flow = network.flow(); const auto& n = network.native();
+    std::vector<std::int32_t> upstream, downstream, order; std::vector<double> length, area;
+    nb::list geometry; nb::object line_string = nb::module_::import_("shapely.geometry").attr("LineString");
+    for (std::int32_t j = 0; j < n.n_junctions(); ++j) {
+        if (n.is_outlet_junction(j)) continue;
+        const auto link = lsdtt::trace_channel_link_between_junctions(flow, n, j);
+        nb::list coordinates;
+        for (const auto& xy : link.xy) coordinates.append(nb::make_tuple(xy.x, xy.y));
+        upstream.push_back(j); downstream.push_back(link.downstream_junction); order.push_back(n.stream_order_of_junction(j));
+        length.push_back(link.total_length_metres);
+        area.push_back(static_cast<double>(flow.s_vector_size(link.upstream_flat)) * flow.cell_size() * flow.cell_size());
+        geometry.append(line_string(coordinates));
+    }
+    nb::dict data; data["upstream_junction"] = upstream; data["downstream_junction"] = downstream;
+    data["stream_order"] = order; data["length_metres"] = length; data["drainage_area"] = area;
+    return geodataframe(data, geometry, flow.meta());
+}
+
+nb::object network_junctions_geodataframe(const ChannelNetwork& network)
+{
+    const auto& n = network.native(); const auto& flow = network.flow();
+    std::vector<std::int32_t> id, receiver, donors, order; std::vector<std::int64_t> flat, row, col; std::vector<bool> outlet;
+    nb::list geometry; nb::object point = nb::module_::import_("shapely.geometry").attr("Point");
+    for (std::int32_t j = 0; j < n.n_junctions(); ++j) {
+        const auto f = n.flat_of_junction(j); const int r = n.row_of_junction(j); const int c = n.col_of_junction(j);
+        id.push_back(j); flat.push_back(f); row.push_back(r); col.push_back(c); receiver.push_back(n.receiver_of_junction(j));
+        donors.push_back(n.donor_count_of_junction(j)); order.push_back(n.stream_order_of_junction(j)); outlet.push_back(n.is_outlet_junction(j));
+        geometry.append(point(point_geometry(flow.meta(), r, c)));
+    }
+    nb::dict data; data["junction_id"] = id; data["flat"] = flat; data["row"] = row; data["col"] = col;
+    data["receiver_junction"] = receiver; data["donor_count"] = donors; data["stream_order"] = order; data["is_outlet"] = outlet;
+    return geodataframe(data, geometry, flow.meta());
+}
+
+nb::object flow_lines_geodataframe(const FlowInfo& flow_info)
+{
+    const auto& flow = flow_info.native();
+    std::vector<std::int64_t> flat, receiver_flat, row, col, receiver_row, receiver_col;
+    std::vector<double> length; nb::list geometry;
+    nb::object line_string = nb::module_::import_("shapely.geometry").attr("LineString");
+    for (std::size_t i = 0; i < flow.full_grid_size(); ++i) {
+        const auto f = static_cast<std::int64_t>(i); if (!flow.is_valid_cell(f)) continue;
+        const auto receiver = flow.receiver_of_unchecked(f); if (receiver < 0) continue;
+        const int r = flow.row_from_flat_unchecked(f), c = flow.col_from_flat_unchecked(f);
+        const int rr = flow.row_from_flat_unchecked(receiver), cc = flow.col_from_flat_unchecked(receiver);
+        flat.push_back(f); receiver_flat.push_back(receiver); row.push_back(r); col.push_back(c); receiver_row.push_back(rr); receiver_col.push_back(cc);
+        length.push_back(flow.cell_size() * std::sqrt(static_cast<double>((rr-r)*(rr-r) + (cc-c)*(cc-c))));
+        nb::list coordinates; coordinates.append(point_geometry(flow.meta(), r, c)); coordinates.append(point_geometry(flow.meta(), rr, cc));
+        geometry.append(line_string(coordinates));
+    }
+    nb::dict data; data["flat"] = flat; data["receiver_flat"] = receiver_flat;
+    data["row"] = row; data["col"] = col; data["receiver_row"] = receiver_row; data["receiver_col"] = receiver_col; data["length_metres"] = length;
+    return geodataframe(data, geometry, flow.meta());
+}
+
 nb::object network_junction_id(const ChannelNetwork& network)
 {
     nb::object numpy = nb::module_::import_("numpy"); const auto& n = network.native();
@@ -417,6 +509,9 @@ void bind_flow_network(nb::module_& module, nb::class_<FlowInfo>& flow)
         .def_prop_ro("channel_mask", &network_mask).def_prop_ro("junction_id", &network_junction_id)
         .def("junctions", &network_junctions, "Return junction topology as a pandas DataFrame.")
         .def("links", &network_links, "Return junction-to-junction links as a pandas DataFrame.")
+        .def("points_geodataframe", &network_points_geodataframe, "Return channel pixels as a GeoPandas point layer.")
+        .def("lines_geodataframe", &network_lines_geodataframe, "Return compact non-outlet channel links as a GeoPandas line layer.")
+        .def("junctions_geodataframe", &network_junctions_geodataframe, "Return channel junctions as a GeoPandas point layer.")
         .def("link_profiles", &network_link_profiles, nb::arg("values"), nb::arg("junctions") = nb::none(), "Sample a raster along compact downstream channel links.")
         .def("link_bearings", &network_link_bearings, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("anchor") = "upstream", nb::arg("min_nodes") = 2, "Fit compass bearings to compact channel links.")
         .def("junction_angles", &network_junction_angles, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("min_nodes") = 2, "Measure two-donor confluence angles in compass degrees.")
@@ -441,6 +536,7 @@ void bind_flow_network(nb::module_& module, nb::class_<FlowInfo>& flow)
     flow.def("channel_scope", &make_scope, nb::arg("threshold_pixels"), nb::arg("sources") = nb::none(), nb::arg("outlets") = nb::none(), nb::arg("snap_sources") = true, nb::arg("source_snap_max_radius_pixels") = 25, nb::arg("outlet_snap_max_distance_metres") = 0.0, nb::arg("auto_detect_roles") = false,
         "Resolve threshold or supplied source paths into a ChannelScope.")
         .def("channel_network", &network_from_scope, nb::arg("scope"), "Build a compact junction graph from a ChannelScope.")
+        .def("flow_lines_geodataframe", &flow_lines_geodataframe, "Return all D8 receiver edges as a GeoPandas line layer.")
         .def("chi_from_outlets", &full_basin_chi, nb::arg("outlets") = nb::none(), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), "Integrate zero-based chi across complete upstream raster domains.");
     flow.def("chi_from_outlets_inherited", &inherited_basin_chi, nb::arg("outlets"), nb::arg("seed_chi"), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), "Integrate chi from supplied outlets using seed-raster base values.");
 }

@@ -165,5 +165,6 @@ are an N by 2 array of ``(row, col)`` surface-flow terminations.)doc")
     bind_flow_products(flow);
     bind_flow_network(module, flow);
     bind_basins(module, flow);
+    bind_channel_heads(module, flow);
 }
 } // namespace lsdtt3_python

@@ -19,12 +19,16 @@ struct wiener_source_extraction_params
     bool write_filtered_dem = false;
     bool write_tangential_curvature = false;
     bool write_qq_table = false;
+    bool write_channel_mask = false;
+    bool write_skeleton = false;
 };
 
 struct wiener_source_extraction_diagnostics
 {
     std::optional<lsdtt_raster_cpu> filtered_dem;
     std::optional<lsdtt_raster_cpu> tangential_curvature;
+    std::optional<lsdtt_raster_cpu> channel_mask;
+    std::optional<lsdtt_raster_cpu> skeleton;
     lsdtt_qq_data                   qq_data;
 };
 
