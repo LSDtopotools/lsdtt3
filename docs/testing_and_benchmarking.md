@@ -4584,6 +4584,90 @@ with `R^2` = 0.88, a number that averages two regimes and means nothing. Every v
 from a band; no repeats were run.
 
 
+## 10k. A boundary-bookkeeping bug poisoned every LEM convergence statistic (2026-08-28)
+
+**The most consequential defect found in this work, and the hardest to see.**
+
+`run_lem_step` computed its step statistics BEFORE restoring the pinned base-level
+boundaries. Base-level cells receive uplift like every other cell and are then reset to their
+pinned value, so they never actually move -- but with the restore happening after the statistics,
+every one of them contributed a spurious `|dz|` of exactly `U*dt`.
+
+On a 200 x 200 grid with two base-level rows that is 400 cells, **1% of the domain**. Consequences:
+
+* `max_local_elevation_change` sat at **exactly `U*dt`** for entire runs -- 0.4 m for 6 Myr;
+* switching the convergence test to the 99.9th percentile changed **nothing**, because 1% is larger
+  than 0.1% and the percentile was still inside the poisoned set;
+* meanwhile a direct raster comparison of the same run showed the true p99.9 was **0.028 m** with
+  **zero** cells anywhere moving by `U*dt`.
+
+So no steady-state test built on either statistic could ever succeed, and the adaptive timestep
+controller -- which keys on the same maximum -- was reacting to boundary bookkeeping rather than to
+the landscape (223 timestep adjustments in one 600 x 600 run).
+
+**Fix:** restore the boundaries before computing statistics (`lsdtt_lem_cpu.cpp`).
+
+**Everything measured before this fix is suspect**, including equilibration assessments across the
+emergent-spacing sweeps and the `mean_erosion` overshoots recorded in section 10j.
+
+**The tell, in hindsight:** a convergence statistic that lands on `U*dt` to full floating-point
+precision is describing bookkeeping, not physics. That should prompt a search for an exact
+mechanism before any physical story is entertained -- I reached first for an explanation involving a
+channel reach near base level, which was wrong.
+
+### Steady state must be expressed as a RATE
+
+With the bug fixed, the same relaxed landscape gives:
+
+| dt (yr) | p99.9 per step | as a rate | % of U |
+|---:|---:|---:|---:|
+| 250 | 0.0063 m | 2.50e-5 m/yr | 6.3 % |
+| 500 | 0.0103 m | 2.07e-5 m/yr | 5.2 % |
+| 1000 | 0.0281 m | 2.81e-5 m/yr | 7.0 % |
+| 2000 | 0.0290 m | 1.45e-5 m/yr | 3.6 % |
+
+The per-step value scales with dt; the rate does not. **A per-step tolerance can therefore be
+satisfied by shrinking the timestep** without the landscape being any steadier, which makes it
+unusable as a convergence test whenever dt adapts. `steady_state_rate_tolerance` (m/yr) is
+dt-independent and is the criterion to use; the per-step form is retained because it is what users
+naturally specify, and both must be met when both are set.
+
+**There is a floor.** The residual sits at **3.6-7.0% of the uplift rate**, independent of timestep
+across a factor of eight, set by continual reorganisation of the drainage network. No tolerance
+below that can be met however long a run goes.
+
+### Run control added alongside
+
+* `run_until_time` -- a fixed ITERATION count does not cover a fixed model time once dt adapts.
+  Measured: a seven-run sweep intended to cover 6 Myr each reached 1.26, 1.12 and 0.70 Myr, because
+  one run's dt fell from 5,000 to 326 yr. Runs in a sweep ended at different model times, which is
+  an uncontrolled variable.
+* `p999_local_elevation_change` in `lsdtt_lem_step_stats` -- a max-norm is hostage to a handful of
+  cells (the same lesson as the SOR max-norm in 10d). The steady-state test uses the percentile; the
+  TIMESTEP controller keeps the maximum, because an oversized step is a safety question and the
+  worst cell is the right thing to be safe about.
+* dt-collapse guard -- convergence is refused while dt is below a fraction of its initial value, so
+  a shrinking timestep cannot manufacture a small per-step change.
+* stall and oscillation detection (`lsdtt_lem_convergence_monitor`) -- distinguishes "converged"
+  from "stopped improving", and flags sign-alternation as a period-2 cycle, which points at the
+  numerics rather than at needing more model time. A stall WARNS rather than stops: detection is
+  heuristic, a false positive discards a healthy run, a false negative only costs time. An earlier
+  200-step window with a 10% decay threshold did stop a run that was converging perfectly well.
+
+### Adaptive timestepping destroys a dt-keyed factorisation cache
+
+The Newton workspace (10i) keys its cached factorisation on `inv_dt`, so every timestep adjustment
+invalidated it: **28 factorisations over 60 steps against 1 with a fixed step**. Fixed by quantising
+dt to a geometric ladder with ASYMMETRIC hysteresis -- descend a rung promptly when the achieved
+ratio breaches target, ascend only after a full rung of travel.
+
+Two failed attempts are recorded in the code because both are easy to repeat: applying the growth
+factor to the QUANTISED value meant dt could never climb a 2x rung (54 consecutive grow decisions
+with dt pinned and the ratio at 0.197 against a target of 0.7); and symmetric full-rung hysteresis
+parked dt one rung too high, running at ratio 0.93 -- saving a refactorisation is not worth running
+outside the criterion the controller exists to enforce.
+
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

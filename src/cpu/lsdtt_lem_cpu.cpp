@@ -523,10 +523,35 @@ run_lem_step(
     //    full-domain change)
     // -------------------------------------------------------------------------
     lsdtt_lem_step_stats stats{};
+    // -------------------------------------------------------------------------
+    // Restore the fixed-elevation boundaries BEFORE computing statistics.
+    //
+    // The order matters and used to be wrong. Base-level cells receive uplift like
+    // everything else and are then reset to their pinned value, so they never
+    // actually move -- but with the restore happening after the statistics, every
+    // one of them contributed a spurious |dz| of exactly U*dt.
+    //
+    // On a 200 x 200 grid with two base-level rows that is 400 cells, a full 1% of
+    // the domain, which pinned max|dz| AND the 99.9th percentile at U*dt for the
+    // entire run. A steady-state test built on either could never be satisfied: a
+    // 6 Myr run sat at "max|dz| = 0.4 m" while the landscape's real p99.9 was
+    // 0.028 m and no cell anywhere moved by U*dt.
+    // -------------------------------------------------------------------------
+    const float baselevel_dz = opts.baselevel_fall_rate * opts.timestep;
+
+    for (std::size_t i = 0; i < boundary_flats.size(); ++i)
+    {
+        const auto flat = static_cast<std::size_t>(boundary_flats[i]);
+        if (flat < n_cells)
+            z[flat] = boundary_elev[i] - baselevel_dz;
+    }
+
     {
         double sum_before = 0.0, sum_after = 0.0;
         double max_before = -1e30, max_after = -1e30;
         double max_local  = 0.0;
+        std::vector<float> local_changes;
+        local_changes.reserve(n_cells);
         double sum_erosion = 0.0;
         double max_erosion = 0.0;
         std::int64_t n_valid = 0;
@@ -550,6 +575,7 @@ run_lem_step(
 
             const double local_change = std::abs(za - zb);
             max_local = std::max(max_local, local_change);
+            local_changes.push_back(static_cast<float>(local_change));
 
             // Erosion = how much lower the surface is now (before uplift, but
             // we already applied uplift, so we back it out for the rate)
@@ -577,6 +603,18 @@ run_lem_step(
         stats.delta_mean_elevation       = static_cast<float>(
             std::abs((sum_after - sum_before) * inv_n));
         stats.max_local_elevation_change = static_cast<float>(max_local);
+
+        // p99.9 by partial sort: the whole array is never needed in order.
+        if (!local_changes.empty())
+        {
+            const std::size_t k = static_cast<std::size_t>(
+                0.999 * static_cast<double>(local_changes.size() - 1));
+            std::nth_element(local_changes.begin(),
+                             local_changes.begin() + static_cast<std::ptrdiff_t>(k),
+                             local_changes.end());
+            stats.p999_local_elevation_change = local_changes[k];
+        }
+        else stats.p999_local_elevation_change = 0.0f;
         stats.mean_erosion_rate          = static_cast<float>(sum_erosion * inv_n * inv_dt);
         stats.max_erosion_rate           = static_cast<float>(max_erosion * inv_dt);
     }
@@ -588,15 +626,6 @@ run_lem_step(
     //    elevation but lowered by fall_rate * dt, so base level drops away from
     //    the domain and a wave of incision propagates up the channel network.
     // -------------------------------------------------------------------------
-    const float baselevel_dz = opts.baselevel_fall_rate * opts.timestep;
-
-    for (std::size_t i = 0; i < boundary_flats.size(); ++i)
-    {
-        const auto flat = static_cast<std::size_t>(boundary_flats[i]);
-        if (flat < n_cells)
-            z[flat] = boundary_elev[i] - baselevel_dz;
-    }
-
     return {std::move(current), stats};
 }
 

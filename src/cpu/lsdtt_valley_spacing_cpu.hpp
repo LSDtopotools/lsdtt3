@@ -114,12 +114,24 @@ struct lsdtt_valley_spacing_result
     // neither; and both effects grow with CI, i.e. exactly where the measurement
     // matters most. The distance transform has none of these properties.
     //
-    // The median is reported alongside the mean because the mixture problem does
-    // not vanish entirely -- a landscape with a few very wide interfluves still
-    // skews the mean, and a large mean/median gap is the signal that it has.
-    double hillslope_length_mean_m   = 0.0;
+    // WHICH STATISTIC IS "THE" HILLSLOPE LENGTH: the p90, not the mean.
+    //
+    // On a hillslope of length L the cells sit roughly uniformly at 0..L from the
+    // valley, so the MEAN distance is L/2 -- reporting it as the hillslope length
+    // understates it about twofold, by construction rather than by any measurement
+    // error. Measured on the 600 x 600 sweep, p90/mean sits at 1.82-1.91 for the
+    // channelized runs against the ideal-uniform value of 1.8, i.e. the geometry
+    // really is close to that idealisation. p90 rather than the maximum because
+    // the maximum is a single cell somewhere on the broadest interfluve in the
+    // domain and is not robust.
+    //
+    // The choice does not affect any SCALING result: mean, median, p90 and p99 all
+    // give exponents of 0.58-0.64 with R^2 ~ 0.996 against diffusivity. It affects
+    // the prefactor, and therefore any absolute comparison with theory, which is
+    // why the length reported by default is the one that means what its name says.
+    double hillslope_length_p90_m    = 0.0;   // <- the reported hillslope length
+    double hillslope_length_mean_m   = 0.0;   // ~ L/2; a distribution statistic
     double hillslope_length_median_m = 0.0;
-    double hillslope_length_p90_m    = 0.0;
     long   n_hillslope_cells         = 0;
 
     // --- the three spacing measures ---
