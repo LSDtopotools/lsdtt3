@@ -105,7 +105,10 @@ void write_wkt_layer(const std::string& file,
         OGRGeometry* g = nullptr;
         OGRGeometryFactory::createFromWkt(wkts[i].c_str(), &srs, &g);
         f->SetGeometry(g);
-        lyr->CreateFeature(f);
+        // Checked, not ignored: a fixture that silently fails to write a
+        // feature would make every assertion below vacuous.
+        if (lyr->CreateFeature(f) != OGRERR_NONE)
+            check(false, "wrote feature to " + file);
         OGRGeometryFactory::destroyGeometry(g);
         OGRFeature::DestroyFeature(f);
     }

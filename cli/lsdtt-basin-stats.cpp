@@ -1284,7 +1284,7 @@ int main(int argc, char* argv[])
                     }
                     else
                     {
-                        fields.push_back(field.substr(first, last - first + 1));
+                        fields.emplace_back(field.substr(first, last - first + 1));
                     }
                 }
                 return fields;

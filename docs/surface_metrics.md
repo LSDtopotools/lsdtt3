@@ -1,6 +1,6 @@
 # Surface Metrics in lsdtt3
 
-This page documents how `lsdtt3` computes surface metrics, what sign
+This page documents how `lsdtt3` computes surface metrics (i.e. gradient, aspect, curvature, etc), what sign
 conventions it uses, and what benchmark evidence currently exists for method
 cost.
 
@@ -9,8 +9,12 @@ cost.
 ## Scope
 
 `lsdtt3` surface metrics are built around local derivatives of elevation and
-local texture metrics:
+local texture metrics. Unlike some GIS tools, we do not use a fixed 4 point or 8 point stencil, 
+instead we use the elevation values in a window and fit a differentiable surface using either 
+a polynomial fit or wavelets. Hurst at al. 2012 and the Roering et al. papers referenced therein give
+the rationale for this approach. Also see comments in this document below.
 
+Surface metrics include:
 - Local derivatives/curvatures from a quadratic surface fit.
 - Hillshade and moving-window statistics.
 - Roughness/texture metrics (MADk2, residual IQR, NVD).
@@ -54,7 +58,8 @@ fitted surface.
 
 `lsdtt3` docs explicitly note this differs from legacy GIS usage that follows
 the Zevenbergen and Thorne (1987) sign choice for some reported curvature
-products.
+products. The authors of lsdtt3 (well, Simon) have remained flummoxed why Zeverbergen and Thorne (1987)
+flipped the sign of a standard mathematical quantity.
 
 References:
 

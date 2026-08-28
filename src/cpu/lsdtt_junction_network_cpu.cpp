@@ -2106,7 +2106,7 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
                         flow_->cell_size() * flow_->cell_size()
                 };
                 if (has_source_id)
-                    vals.push_back(
+                    vals.emplace_back(
                         static_cast<std::int64_t>(channel_source_id[
                             static_cast<std::size_t>(start_flat)])
                     );
@@ -2245,7 +2245,7 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
                     flow_->cell_size() * flow_->cell_size()
             };
             if (has_source_id)
-                vals.push_back(
+                vals.emplace_back(
                     static_cast<std::int64_t>(channel_source_id[
                         static_cast<std::size_t>(start_flat)])
                 );

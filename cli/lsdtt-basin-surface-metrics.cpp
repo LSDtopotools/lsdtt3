@@ -1018,8 +1018,8 @@ int main(int argc, char* argv[])
             const auto& poly = std::get<lsdtt::lsdtt_polygon_geom>(rec.geometry);
 
             std::vector<lsdtt::lsdtt_vector_field_value> vals;
-            vals.push_back(static_cast<std::int64_t>(bd.outlet_flat));
-            vals.push_back(static_cast<std::int64_t>(bd.junction_number));
+            vals.emplace_back(static_cast<std::int64_t>(bd.outlet_flat));
+            vals.emplace_back(static_cast<std::int64_t>(bd.junction_number));
 
             for (double l : lambda_scales) {
                 double fdist = bd.flip_dist_per_lambda.count(l) ? 
@@ -1030,11 +1030,11 @@ int main(int argc, char* argv[])
                                std::numeric_limits<double>::quiet_NaN();
 
                 // FGB/GeoPackage handles NULL via std::monostate
-                if (std::isfinite(fdist)) vals.push_back(fdist);
-                else vals.push_back(std::monostate{});
+                if (std::isfinite(fdist)) vals.emplace_back(fdist);
+                else vals.emplace_back(std::monostate{});
 
-                if (std::isfinite(amax)) vals.push_back(amax);
-                else vals.push_back(std::monostate{});
+                if (std::isfinite(amax)) vals.emplace_back(amax);
+                else vals.emplace_back(std::monostate{});
             }
             loader.write_polygon(poly.exterior, vals);
         }

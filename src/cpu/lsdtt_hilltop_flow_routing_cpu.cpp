@@ -117,7 +117,6 @@ std::vector<lsdtt_hilltop_pixel> filter_hilltop_pixels(
 {
     const int nr = dem_meta.n_rows;
     const int nc = dem_meta.n_cols;
-    const std::size_t ncell = static_cast<std::size_t>(nr) * nc;
 
     auto check_size = [&](const lsdtt_raster_cpu* r, const char* what) {
         if (r && (r->get_meta().n_rows != nr || r->get_meta().n_cols != nc))

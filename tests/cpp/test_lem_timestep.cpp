@@ -129,10 +129,28 @@ int main()
               + std::to_string(dt1) + " yr)");
         check(tc.last_ratio() > o.target_ratio, "and records the overshoot");
 
-        // Drive it in until it is inside target, then confirm it settles.
+        // Drive it the way a real run does: movement is PROPORTIONAL to the step,
+        // so the achieved ratio rises as dt grows and the loop has a fixed point.
+        // Feeding a constant movement instead (as an earlier version of this test
+        // did) is unphysical -- the ratio can then never rise to meet the target,
+        // and the controller walks to the floor with nothing to pull it back.
+        //
+        // c is chosen so that the ORIGINAL dt of 20000 yr sits at ratio 0.5,
+        // inside the dead band, and the post-overshoot dt of 10000 sits at 0.25,
+        // below the grow threshold. The controller should therefore climb back.
+        const double cell_relief = 3.0;
+        const double c = 0.5 * cell_relief / 20000.0;
         double dt = dt1;
-        for (int i = 0; i < 40; ++i) dt = tc.update(0.4 * 3.0, dem);   // ratio 0.4
+        for (int i = 0; i < 200; ++i) dt = tc.update(c * dt, dem);
         check(tc.n_shrinks() >= 1, "shrank at least once");
+        check(dt > dt1, "grows back once steps are comfortable again ("
+              + std::to_string(dt1) + " -> " + std::to_string(dt) + " yr)");
+        check(tc.last_ratio() <= o.target_ratio,
+              "and settles without violating the criterion (ratio "
+              + std::to_string(tc.last_ratio()) + ")");
+        const double settled = tc.update(c * dt, dem);
+        check(settled == dt, "holds a steady step once converged ("
+              + std::to_string(settled) + " yr)");
 
         // D5: asymmetry. One overshoot must undo more than one growth step adds.
         lsdtt_lem_timestep_controller a(1000.0, o), b(1000.0, o);

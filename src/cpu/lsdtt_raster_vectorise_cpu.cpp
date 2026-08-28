@@ -256,7 +256,7 @@ void trace_labelled_polygons(
                 (lbl_idx < label_source_id.size())
                 ? static_cast<std::int64_t>(label_source_id[lbl_idx])
                 : std::int64_t{-1};
-            attrs.push_back(src_id);
+            attrs.emplace_back(src_id);
         }
 
         loader.write_polygon(ring, attrs);

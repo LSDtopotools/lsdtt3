@@ -202,7 +202,7 @@ static std::vector<std::string> load_cluster_values_from_csv(
         const std::vector<std::string> cols = split_csv_row_simple(row);
         if (cluster_col < static_cast<int>(cols.size()))
         {
-            values.push_back(cols[static_cast<std::size_t>(cluster_col)]);
+            values.emplace_back(cols[static_cast<std::size_t>(cluster_col)]);
         }
         else
         {
@@ -270,7 +270,7 @@ static std::vector<std::string> load_cluster_values_from_vector(
             values.emplace_back("");
             continue;
         }
-        values.push_back(vector_field_value_to_string(rec.field_values[static_cast<std::size_t>(idx)]));
+        values.emplace_back(vector_field_value_to_string(rec.field_values[static_cast<std::size_t>(idx)]));
     }
     return values;
 }
