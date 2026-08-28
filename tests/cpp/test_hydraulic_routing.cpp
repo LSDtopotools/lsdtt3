@@ -17,6 +17,8 @@
 #include "lsdtt_array2d.hpp"
 #include "lsdtt_flowgraph_cpu.hpp"
 #include "lsdtt_hydraulic_graph_cpu.hpp"
+#include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 
 namespace
 {
@@ -433,6 +435,99 @@ void test_dynamic_mode_sets_dynamic_routing_flag()
           ", dynamic flag=" + std::to_string(dynamic_solver.routing_is_dynamic()));
 }
 
+void test_hydraulic_surface_outlet_rules()
+{
+    const auto meta = make_meta_3x3();
+    lsdtt::lsdtt_array2d_f data(3, 3, 10.0f);
+    data(1, 1) = 0.0f;
+    lsdtt::lsdtt_array2d_u8 mask(3, 3, uint8_t{1});
+    lsdtt::lsdtt_raster_cpu surface(std::move(data), std::move(mask), meta);
+
+    lsdtt::lsdtt_array2d_u8 states(3, 3, uint8_t{1});
+    states(2, 1) = 3;
+    const auto filled = lsdtt::fill_hydraulic_surface(
+        surface, states, "oooo", 0.0f, true);
+
+    const bool pit_filled = std::abs(
+        static_cast<double>(filled.filled_surface.get_data_array()(1, 1)) - 10.0) < 1.0e-6;
+    check("H7 hydraulic fill uses selected outlet", pit_filled,
+          "centre hydraulic surface should fill to selected outlet spill level");
+
+    bool rejected_closed_outlet = false;
+    try
+    {
+        (void)lsdtt::fill_hydraulic_surface(surface, states, "nnnn", 0.0f, true);
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected_closed_outlet = true;
+    }
+    check("H7 closed boundary cannot drain", rejected_closed_outlet);
+
+    states(2, 1) = 1;
+    bool rejected_missing_outlet = false;
+    try
+    {
+        (void)lsdtt::fill_hydraulic_surface(surface, states, "oooo", 0.0f, true);
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected_missing_outlet = true;
+    }
+    check("H7 active component requires selected outlet", rejected_missing_outlet);
+}
+
+void test_explicit_flowgraph_outlet_mask()
+{
+    const auto meta = make_meta_3x3();
+    lsdtt::lsdtt_array2d_f data(3, 3, 0.0f);
+    lsdtt::lsdtt_array2d_u8 mask(3, 3, uint8_t{1});
+    for (int row = 0; row < 3; ++row)
+    for (int col = 0; col < 3; ++col)
+        data(row, col) = static_cast<float>(10 - row - col);
+
+    lsdtt::lsdtt_flowgraph_options options;
+    options.boundary_conditions = "oooo";
+    options.method = lsdtt::lsdtt_flowgraph_method::mfd;
+    options.forced_outlet_mask.assign(9, uint8_t{0});
+    options.forced_outlet_mask[4] = 1;
+
+    const lsdtt::lsdtt_flowgraph_cpu graph(data, mask, meta, options);
+    const auto& offsets = graph.receiver_offsets();
+    const bool centre_has_no_receivers = offsets[4] == offsets[5];
+    check("H8 explicit flowgraph outlet has no receivers", centre_has_no_receivers);
+}
+
+void test_hydraulic_domain_constructor_and_fields()
+{
+    const auto meta = make_meta_3x3();
+    lsdtt::lsdtt_array2d_f data(3, 3, 0.0f);
+    lsdtt::lsdtt_array2d_u8 mask(3, 3, uint8_t{1});
+    for (int row = 0; row < 3; ++row)
+    for (int col = 0; col < 3; ++col)
+        data(row, col) = static_cast<float>(10 - row - col);
+    lsdtt::lsdtt_raster_cpu bed(std::move(data), std::move(mask), meta);
+
+    lsdtt::lsdtt_array2d_u8 states(3, 3, uint8_t{1});
+    states(2, 2) = 3;
+    lsdtt::lsdtt_flowgraph_options graph_options;
+    graph_options.boundary_conditions = "oooo";
+    graph_options.method = lsdtt::lsdtt_flowgraph_method::mfd;
+
+    auto options = make_options(0.0, 0.1);
+    lsdtt::lsdtt_hydraulic_graph_cpu solver(
+        bed, states, graph_options, options, 1.0e-8f, true);
+    solver.set_rainfall_rate_field(std::vector<double>(9, 1.0e-4));
+    solver.set_friction_coefficient_field(std::vector<double>(9, 1.0 / 0.033));
+    solver.run_n_steps(2);
+
+    const auto qout = solver.get_qout_raster();
+    const bool outlet_is_the_only_drain =
+        qout.data[8] >= 0.0f && solver.routing_is_dynamic();
+    check("H9 hydraulic domain uses dynamic selected-outlet routing",
+          outlet_is_the_only_drain);
+}
+
 } // namespace
 
 int main()
@@ -443,6 +538,9 @@ int main()
     test_rainfall_balance_with_outlet_export();
     test_determinism_same_inputs_same_outputs();
     test_dynamic_mode_sets_dynamic_routing_flag();
+    test_hydraulic_surface_outlet_rules();
+    test_explicit_flowgraph_outlet_mask();
+    test_hydraulic_domain_constructor_and_fields();
 
     if (g_n_failed == 0)
     {

@@ -205,6 +205,37 @@ lsdtt_raster_cpu fill_pits_with_sinks(
 );
 
 // -----------------------------------------------------------------------------
+// hydraulic_surface_fill_result / fill_hydraulic_surface
+//
+// A priority-flood projection of a hydraulic water surface.  `node_state`
+// uses 0 = nodata/outside, 1 = active, and 3 = selected outlet.  A selected
+// outlet drains only when it lies on an `o` (open) edge of the NESW boundary
+// string.  `n` edges are closed and `p` edges wrap periodically.
+//
+// Unlike the historic terrain-fill helpers, nodata does NOT create drainage
+// exits here: it is an impermeable excluded cell.  This distinction is needed
+// by hydraulic models with holes, walls, or deliberately selected outlets.
+//
+// The returned added-depth field is `filled_surface - surface` on active
+// cells.  Calling code that writes this into water depth must account for the
+// resulting projection volume explicitly; the operation is not conservative.
+// -----------------------------------------------------------------------------
+struct hydraulic_surface_fill_result
+{
+    lsdtt_raster_cpu filled_surface;
+    lsdtt_raster_cpu added_depth;
+    double           added_volume_m3 = 0.0;
+};
+
+[[nodiscard]] hydraulic_surface_fill_result fill_hydraulic_surface(
+    const lsdtt_raster_cpu& surface,
+    const lsdtt_array2d_u8& node_state,
+    const std::string&      boundary_conditions,
+    float                   fill_slope_epsilon = 1.0e-8f,
+    bool                    check_valid_outlet = true
+);
+
+// -----------------------------------------------------------------------------
 // fill_pits_reconstruction
 //
 // Alternative depression-filling backend: grayscale morphological

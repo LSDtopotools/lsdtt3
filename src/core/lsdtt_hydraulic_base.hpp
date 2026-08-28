@@ -83,6 +83,13 @@ struct lsdtt_hydraulic_options
     double receiver_width        = -1.0;
     double max_dh_rate           = 1.0;
 
+    // Generic wide-flow resistance: q / width = coefficient * h^a * S^b.
+    // Manning is represented by coefficient = 1 / n, a = 5/3, b = 1/2.
+    // Keeping the law in this form makes Chézy and future resistance laws
+    // pluggable without changing the hydraulic balance loop.
+    double friction_depth_exponent = 5.0 / 3.0;
+    double friction_slope_exponent = 0.5;
+
     bool   adaptive_dt_enabled            = false;
     double adaptive_dt_min                = 1.0e-4;
     double adaptive_dt_max                = 1.0;
@@ -157,6 +164,13 @@ public:
     virtual void set_water_depth(const std::vector<double>& water_depth) = 0;
 
     virtual void reset_water_depth(double value = 0.0) = 0;
+
+    // Per-cell forcings. Arrays use row-major raster order and must have one
+    // value per cell. Invalid/nodata cells are ignored by implementations.
+    virtual void set_rainfall_rate_field(
+        const std::vector<double>& rainfall_rate_m_per_s) = 0;
+    virtual void set_friction_coefficient_field(
+        const std::vector<double>& coefficient) = 0;
 
     // -------------------------------------------------------------------------
     // Routing refresh
