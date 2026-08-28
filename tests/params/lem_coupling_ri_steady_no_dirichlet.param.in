@@ -2,10 +2,13 @@ read_path: __READ_PATH__
 read_fname: tiny_dem.asc
 read_initial_dem: true
 write_path: __WRITE_PATH__
-write_fname: tiny_coup_ri
+write_fname: tiny_coup_ri_nodir
 write_output_format: gtiff
-n_timesteps: 1
 enable_hillslope_transport: true
 incision_threshold_area: 5
 hillslope_channel_coupling: coupled
 hillslope_model: roering_implicit
+# No channel set (coupled) AND no 'o' edge: the steady elliptic problem has no
+# Dirichlet data anywhere, so the solution is not determined.
+boundary_conditions: nnnn
+run_steady_state: true

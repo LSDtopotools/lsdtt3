@@ -317,12 +317,6 @@ int main(int argc, char* argv[])
         "quoted without its window is not reproducible.",
         "Surface metrics", "param", ""};
 
-    string_default_map["curvature_metric_choice"] = "mean_curvature";
-    help_map["curvature_metric_choice"] = {"string", "mean_curvature",
-        "Which polyfit curvature supplies Cht.",
-        "mean_curvature, profile_curvature, tangential_curvature or laplacian.",
-        "Surface metrics", "param", ""};
-
     // ---- floodplain ----------------------------------------------------------
     string_default_map["floodplain_mask_file"] = "";
     help_map["floodplain_mask_file"] = {"string", "",
@@ -864,16 +858,49 @@ int main(int argc, char* argv[])
             : 3.0 * cell;
         std::cout << "Polynomial window radius: " << window << " m\n";
 
-        const std::map<std::string, lsdtt::polyfit_metric> curv_choices = {
-            {"mean_curvature",       lsdtt::polyfit_metric::mean_curvature},
-            {"profile_curvature",    lsdtt::polyfit_metric::profile_curvature},
-            {"tangential_curvature", lsdtt::polyfit_metric::tangential_curvature},
-            {"laplacian",            lsdtt::polyfit_metric::laplacian}};
-        const auto curv_it = curv_choices.find(lower(sf.at("curvature_metric_choice")));
-        if (curv_it == curv_choices.end())
-            throw std::invalid_argument(
-                "curvature_metric_choice must be mean_curvature, profile_curvature, "
-                "tangential_curvature or laplacian");
+        // -------------------------------------------------------------------
+        // Cht IS THE LAPLACIAN. This is not a choice, and it used to be one.
+        //
+        // E* = 2|Cht|Lh/S_c is defined with the Laplacian in Roering et al.
+        // (2007) and Hurst et al. (2012). lsdtt3's `mean_curvature` is the
+        // DIFFERENTIAL-GEOMETRY mean curvature,
+        //
+        //     H = ((1+q^2)r - 2pqs + (1+p^2)t) / (2 (1+p^2+q^2)^(3/2))
+        //
+        // which is a different quantity: it reduces to grad^2(z)/2 only where
+        // p = q = 0, and at finite gradient the metric terms make the ratio
+        // slope-dependent. Feeding it to E* therefore biases the result by
+        // about a factor of two AND biases gentle and steep hilltops
+        // differently.
+        //
+        // Measured on a synthetic landscape with KNOWN forcing (U = 4e-4 m/yr,
+        // D = 0.05 m^2/yr, so the divide curvature must be U/D = 0.0080 1/m):
+        // mean_curvature gave 0.0035 (0.43x) and the Laplacian gave 0.0071
+        // (0.89x, the remainder being a hillslope solve short of steady state).
+        // Nothing about the wrong answer looked wrong -- R* stayed below 1, the
+        // cloud was tight, no warning was printed. It simply sat in the wrong
+        // place on the curve.
+        //
+        // Offering the choice invited exactly that, so it is gone.
+        // -------------------------------------------------------------------
+        constexpr lsdtt::polyfit_metric k_hilltop_curvature =
+            lsdtt::polyfit_metric::laplacian;
+
+        // The parameter parser does not report unrecognised keys, so a
+        // parameter file written against the old CLI would have its setting
+        // dropped without a word -- and silently getting a DIFFERENT answer
+        // than the file asks for is the failure mode this change exists to
+        // remove. Say so.
+        if (pp.parameter_supplied("curvature_metric_choice"))
+            std::cout << "\nNOTE: curvature_metric_choice is no longer a "
+                         "parameter and has been ignored.\n"
+                         "      Hilltop curvature is always the LAPLACIAN, "
+                         "which is what E* is defined with.\n"
+                         "      mean_curvature is the differential-geometry "
+                         "mean curvature, a different\n      quantity: it "
+                         "biases E* by roughly a factor of two, and by a "
+                         "slope-dependent\n      amount, without anything in "
+                         "the output looking wrong.\n\n";
 
         const std::string trace_surface = lower(sf.at("trace_surface_choice"));
         if (trace_surface != "raw" && trace_surface != "fitted")
@@ -885,7 +912,7 @@ int main(int argc, char* argv[])
             const auto coeffs = lsdtt::direct_polyfit(dem_raw, window, n_threads);
             lsdtt::polyfit_metric_request req;
             req.metrics = std::vector<lsdtt::polyfit_metric>{
-                curv_it->second,
+                k_hilltop_curvature,
                 lsdtt::polyfit_metric::slope,
                 lsdtt::polyfit_metric::plan_curvature,
                 lsdtt::polyfit_metric::fitted_surface};
@@ -893,7 +920,7 @@ int main(int argc, char* argv[])
             const auto m = lsdtt::compute_polyfit_metrics(coeffs, req);
 
             curv_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(
-                m.rasters.at(curv_it->second));
+                m.rasters.at(k_hilltop_curvature));
             grad_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(
                 m.rasters.at(lsdtt::polyfit_metric::slope));
             plan_r = std::make_unique<lsdtt::lsdtt_raster_cpu>(

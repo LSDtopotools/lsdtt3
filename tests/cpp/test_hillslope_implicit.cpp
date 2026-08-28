@@ -715,11 +715,12 @@ int main(int argc, char** argv)
     // on the SAME DEM + is_channel.  Both must agree to solver tolerance because they
     // assemble the SAME shared discretization operator (plan section 3).
     //
-    // OPTION (a) of the plan section 3 caveat is used: the comparison is restricted to
-    // 'n'/'p' edges with is_channel supplying the Dirichlet sinks, so NO change to the
-    // SOR solver is required.  The new 'o' = fixed-elevation BC of the implicit solver
-    // is deliberately NOT exercised here (the existing SOR/explicit solvers treat 'o'
-    // AND 'n' as Neumann, so an 'o' edge would make the two operators disagree).
+    // The comparison uses 'n'/'p' edges with is_channel supplying the Dirichlet sinks.
+    //
+    // It no longer HAS to: as of 2026-08-26 'o' means Dirichlet base level in the SOR
+    // and ADI solvers too, matching what this implicit solver always did, so an 'o'
+    // edge would no longer make the two operators disagree.  Extending this comparison
+    // to an 'o' edge is worth doing and is not done here.
     //
     // Domain: a hillslope strip (channels on the top/bottom rows via the geometry
     // channel_mask, NOT the 'o' code), PERIODIC column edges ('p'), no-flux 'n' on the
@@ -773,6 +774,15 @@ int main(int argc, char** argv)
             std::cout << "  linear   : Linf(implicit-SOR)=" << diff << "  peak=" << peak
                       << "  rel=" << rel << "  (SOR iters=" << sr.n_iterations
                       << ", res=" << sr.final_residual << ")\n";
+            // GATE (plan section 8 item 1): never compare against an unconverged
+            // reference. At tolerance 1e-6 this solve used to run to the 200,000
+            // iteration cap every time -- the criterion sat below the float noise
+            // floor -- so this comparison was silently made against a field that
+            // had not converged. The SOR solver now iterates in double.
+            check("test4_linear_sor_reference_converged",
+                  sr.converged && sr.final_residual <= sopts.tolerance,
+                  "SOR reference converged in " + fmt((double)sr.n_iterations)
+                  + " iterations at residual " + fmt((double)sr.final_residual));
             check("test4_linear_implicit_matches_sor_steady_state",
                   rel <= 1.0e-3,
                   "Linf(implicit-SOR)=" + fmt(diff) + " (rel=" + fmt(rel)
@@ -797,6 +807,12 @@ int main(int argc, char** argv)
             sopts.Sc = static_cast<float>(Sc); sopts.nonlinear = true;
             sopts.boundary_conditions = bc;
             sopts.tolerance = 1.0e-6f; sopts.max_iterations = 200000;
+            // Pin omega. The default (0 = auto) is the optimal-SOR value for the
+            // LINEAR Poisson problem and DIVERGES on the Picard-lagged nonlinear
+            // operator, so this reference silently ran to the 200,000-iteration cap
+            // and was compared against unconverged. The nonlinear solver needs heavy
+            // under-relaxation until the Newton scheme replaces it.
+            sopts.sor_omega = 0.3f;
             const lsdtt::lsdtt_hillslope_steady_state_result sr =
                 lsdtt::compute_hillslope_steady_state(dem, is_channel, sopts);
 
@@ -819,6 +835,11 @@ int main(int argc, char** argv)
             }
             write_profile_csv(plot_data_dir + "test4_sor_match_profile.csv",
                               ir.elevation, sor_midcol);
+            // GATE (plan section 8 item 1) -- see the linear branch above.
+            check("test4_nonlinear_sor_reference_converged",
+                  sr.converged && sr.final_residual <= sopts.tolerance,
+                  "SOR reference converged in " + fmt((double)sr.n_iterations)
+                  + " iterations at residual " + fmt((double)sr.final_residual));
             check("test4_nonlinear_implicit_matches_sor_steady_state",
                   rel <= 5.0e-3,
                   "Linf(implicit-SOR)=" + fmt(diff) + " (rel=" + fmt(rel)
