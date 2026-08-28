@@ -1,8 +1,10 @@
 # Python API reference
 
-These pages are rendered from the installed `lsdtt3` Python API and its
-NumPy-style docstrings. The reference describes individual callables; use the
-[Python guides](../python/index.md) for workflow context and complete scripts.
+These pages are rendered from a Python-only documentation façade for the
+public `lsdtt3` API. It gives native nanobind callables readable Python
+signatures and NumPy-style descriptions without changing their C++
+implementation or runtime behaviour. Use the [Python guides](../python/index.md)
+for workflow context and complete scripts.
 
 ## Groups
 
@@ -13,6 +15,6 @@ NumPy-style docstrings. The reference describes individual callables; use the
 - [Cosmogenic nuclides](cosmogenic.md)
 - [GraphFlood](graphflood.md)
 
-Every API entry identifies its public arguments, result type, notes, and
-author. The bindings preserve generated nanobind signatures for exact default
-values and supported overloads.
+Each documented entry identifies its public arguments, result type, notes, and
+author. Native overloads remain authoritative at runtime; the façade describes
+their supported public calling patterns.

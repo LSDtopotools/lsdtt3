@@ -39,10 +39,25 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths:
-            - python_bindings/src
           options:
+            # Public native objects are documented through a source-only
+            # Python façade. This retains accurate Python signatures and
+            # NumPy-style prose without importing or altering the extension.
+            paths:
+              - python_bindings/src
+            force_inspection: false
             docstring_style: numpy
+            docstring_options:
+              # Nanobind exposes rendered signatures dynamically. Griffe can
+              # read the docstrings but not every parameter name, so this
+              # structural check would otherwise produce false warnings.
+              warn_unknown_params: false
+            # API pages are written around the public ``lsdtt3`` namespace;
+            # hide the implementation-only ``_core`` collector path.
+            filters:
+              - "!^__.*"
+            show_root_full_path: false
+            show_signature_annotations: false
             show_source: false
 
 # Working documents that live under docs/ for convenience but are not part of

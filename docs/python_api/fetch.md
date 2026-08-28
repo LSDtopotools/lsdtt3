@@ -2,18 +2,22 @@
 
 ## DEM retrieval
 
-::: lsdtt3.fetch_dem
+::: lsdtt3._api_docs.fetch_dem
 
-::: lsdtt3.fetch_dem_for_outlets
+::: lsdtt3._api_docs.fetch_dem_for_outlets
 
-::: lsdtt3.OutletFetchResult
+::: lsdtt3._api_docs.OutletFetchResult
+    options:
+      members: false
 
 ## Bounds and catalogue helpers
 
-::: lsdtt3.bounds_from_vector
+::: lsdtt3._api_docs.bounds_from_vector
 
-::: lsdtt3.VectorBounds
+::: lsdtt3._api_docs.VectorBounds
+    options:
+      members: false
 
-::: lsdtt3.opentopography_datasets
+::: lsdtt3._api_docs.opentopography_datasets
 
-::: lsdtt3.utm_epsg_for_point
+::: lsdtt3._api_docs.utm_epsg_for_point
