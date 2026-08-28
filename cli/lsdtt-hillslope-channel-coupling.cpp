@@ -159,10 +159,14 @@ double northing_of(const lsdtt::lsdtt_raster_meta& m, int row)
 
 // A field value that is EMPTY when the quantity is undefined. Writing a NaN or
 // a magic number here is how a sentinel ends up being read as data.
-lsdtt::lsdtt_vector_field_value opt_double(double v)
+// Appends rather than returning a variant by value. Returning one and pushing it
+// move-constructs the variant at every call site, which is both a needless copy
+// of the discriminated union and the pattern GCC 13 reports as a possibly
+// uninitialised index. Emplacing from the ALTERNATIVE type builds it in place.
+void push_opt_double(std::vector<lsdtt::lsdtt_vector_field_value>& out, double v)
 {
-    if (std::isnan(v)) return lsdtt::lsdtt_vector_field_value{std::monostate{}};
-    return lsdtt::lsdtt_vector_field_value{v};
+    if (std::isnan(v)) out.emplace_back(std::monostate{});
+    else               out.emplace_back(v);
 }
 
 } // namespace
@@ -1416,16 +1420,16 @@ int main(int argc, char* argv[])
                 std::vector<lsdtt::lsdtt_vector_field_value> v;
                 v.emplace_back(static_cast<std::int64_t>(r.ridge.row));
                 v.emplace_back(static_cast<std::int64_t>(r.ridge.col));
-                v.push_back(opt_double(r.hilltop_curvature));
-                v.push_back(opt_double(r.hilltop_gradient));
-                v.push_back(opt_double(r.mean_path_gradient));
-                v.push_back(opt_double(r.relief_m));
-                v.push_back(opt_double(r.hillslope_length_m));
-                v.push_back(opt_double(r.euclidean_distance_m));
+                push_opt_double(v, r.hilltop_curvature);
+                push_opt_double(v, r.hilltop_gradient);
+                push_opt_double(v, r.mean_path_gradient);
+                push_opt_double(v, r.relief_m);
+                push_opt_double(v, r.hillslope_length_m);
+                push_opt_double(v, r.euclidean_distance_m);
                 v.emplace_back(static_cast<std::int64_t>(r.channel_row));
                 v.emplace_back(static_cast<std::int64_t>(r.channel_col));
-                v.push_back(opt_double(r.E_star));
-                v.push_back(opt_double(r.R_star));
+                push_opt_double(v, r.E_star);
+                push_opt_double(v, r.R_star);
                 v.emplace_back(static_cast<std::int64_t>(r.ridge.ridgeline_id));
                 v.emplace_back(static_cast<std::int64_t>(r.ridge.ridgeline_node_index));
                 v.emplace_back(r.ridge.distance_along_ridgeline_m);
@@ -1434,11 +1438,11 @@ int main(int argc, char* argv[])
                 v.emplace_back(static_cast<std::int64_t>(r.divergent_count));
                 v.emplace_back(static_cast<std::int64_t>(r.planar_count));
                 v.emplace_back(static_cast<std::int64_t>(r.status));
-                v.push_back(opt_double(r.channel_k_sn));
-                v.push_back(opt_double(r.channel_chi));
-                v.push_back(opt_double(r.channel_elevation));
-                v.push_back(opt_double(r.channel_flow_distance_m));
-                v.push_back(opt_double(r.channel_drainage_area_m2));
+                push_opt_double(v, r.channel_k_sn);
+                push_opt_double(v, r.channel_chi);
+                push_opt_double(v, r.channel_elevation);
+                push_opt_double(v, r.channel_flow_distance_m);
+                push_opt_double(v, r.channel_drainage_area_m2);
                 v.emplace_back(static_cast<std::int64_t>(r.channel_basin_index));
                 v.emplace_back(static_cast<std::int64_t>(r.channel_segment_id));
                 loader.write_point(easting_of(meta, r.ridge.col),

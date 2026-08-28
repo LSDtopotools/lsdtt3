@@ -1222,7 +1222,7 @@ lsdtt_vector_layer lsdtt_data_loader::read_vector_layer(
         std::vector<lsdtt_vector_field_value> fields;
         fields.reserve(n_fields);
         for (int f = 0; f < n_fields; ++f)
-            fields.push_back(
+            fields.emplace_back(
                 get_typed_field_value(raw_feat, f, result.schema.field_types[f])
             );
 

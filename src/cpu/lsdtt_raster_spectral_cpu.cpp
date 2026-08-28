@@ -2102,6 +2102,20 @@ poly_fit_coeffs wavelet_quadratic_fit(
         );
     }
 
+    // meta.is_valid() above already guarantees nrows and ncols are positive, but
+    // that check is behind a throw in another translation unit, so the optimiser
+    // cannot see it here. Without a LOCAL guard it must assume a negative int
+    // could be cast to a huge std::size_t, and warns that the subsequent
+    // vector::assign might memset an impossible number of bytes. Restating the
+    // invariant locally is cheap and makes the reasoning available where it is
+    // needed.
+    if (nrows <= 0 || ncols <= 0)
+    {
+        throw std::runtime_error(
+            "lsdtt::wavelet_quadratic_fit: raster dimensions must be positive"
+        );
+    }
+
     const std::size_t n_pixels = checked_mul(
         static_cast<std::size_t>(nrows),
         static_cast<std::size_t>(ncols),
