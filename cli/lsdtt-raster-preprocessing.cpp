@@ -206,17 +206,17 @@ sample_raster_to_vector_points(
             pt.flat < 0 ||
             pt.flat >= static_cast<std::int64_t>(tile.data.size()))
         {
-            sampled.push_back(std::monostate{});
+            sampled.emplace_back(std::monostate{});
             continue;
         }
 
         if (tile.mask[static_cast<std::size_t>(pt.flat)] == 0)
         {
-            sampled.push_back(std::monostate{});
+            sampled.emplace_back(std::monostate{});
             continue;
         }
 
-        sampled.push_back(
+        sampled.emplace_back(
             static_cast<double>(tile.data[static_cast<std::size_t>(pt.flat)])
         );
     }
@@ -1975,7 +1975,7 @@ int main(int argc, char* argv[])
                     std::cout << "Sampling raster: " << req.raster_path
                             << " -> attribute: " << req.attribute_name << "\n";
 
-                    sampled_columns.push_back(
+                    sampled_columns.emplace_back(
                         sample_raster_to_vector_points(
                             req.raster_path, point_path, use_layer
                         )
@@ -2055,7 +2055,7 @@ int main(int argc, char* argv[])
 
                     for (std::size_t j = 0; j < sampled_columns.size(); ++j)
                     {
-                        out_fields.push_back(sampled_columns[j][i]);
+                        out_fields.emplace_back(sampled_columns[j][i]);
                     }
 
                     point_loader.write_point(geom.x, geom.y, out_fields);

@@ -445,7 +445,7 @@ static channel_output_result write_sink_channels(
                 static_cast<double>(distance.data[index]), link.total_length_metres
             };
             if (chi != nullptr)
-                fields.push_back(static_cast<double>(chi->get_data()[index]));
+                fields.emplace_back(static_cast<double>(chi->get_data()[index]));
             loader.write_line(link.xy, fields);
             output.length_by_order[static_cast<std::size_t>(routing_id)][order] +=
                 link.total_length_metres;
