@@ -34,6 +34,17 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - python_bindings/src
+          options:
+            docstring_style: numpy
+            show_source: false
+
 # Working documents that live under docs/ for convenience but are not part of
 # the published site. Without this they would build as orphan pages: internal
 # planning notes and LaTeX sources are not user documentation.
@@ -53,6 +64,24 @@ nav:
     - Vector data: vector_data.md
   - Installation:
     - Install lsdtt3: install_lsdtt3.md
+  - Python:
+    - Overview: python/index.md
+    - Guides:
+      - Load, inspect, and save a DEM: python/getting_started.md
+      - Fetch a DEM: python/fetching.md
+      - Flow, channels, and basins: python/flow_networks.md
+      - Chi and ksn: python/chi_ksn.md
+      - Channel-head extraction: python/channel_extraction.md
+      - Cosmogenic erosion: python/cosmogenic.md
+      - GraphFlood: python/graphflood.md
+    - API reference:
+      - Overview: python_api/index.md
+      - Raster and terrain: python_api/raster.md
+      - Flow, channels, and basins: python_api/flow.md
+      - Chi and ksn: python_api/chi.md
+      - Fetching and vectors: python_api/fetch.md
+      - Cosmogenic nuclides: python_api/cosmogenic.md
+      - GraphFlood: python_api/graphflood.md
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
