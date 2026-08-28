@@ -32,6 +32,7 @@
 
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_hillslope_implicit_cpu.hpp"
+#include "lsdtt_hillslope_newton_cpu.hpp"
 
 namespace lsdtt
 {
@@ -120,6 +121,11 @@ struct lsdtt_lem_options
     // options at call time; the remaining fields are taken from here.
     lsdtt_roering_implicit_options roering_implicit_opts;
 
+    // Force the legacy Picard path for transient roering_implicit steps. The
+    // default is Newton, which converges near Sc where Picard limit-cycles.
+    // Picard remains the automatic fallback when Newton fails or Eigen is absent.
+    bool hillslope_force_picard = false;
+
     // Optional explicit channel (Dirichlet) mask for the hillslope step: cell != 0
     // marks a fixed-elevation channel pixel.  Empty (default) = derive is_channel
     // from the drainage-area threshold.  Overrides the area-derived set for all
@@ -177,9 +183,14 @@ struct lsdtt_lem_step_stats
 // Returns the updated DEM and step statistics.
 std::pair<lsdtt_raster_cpu, lsdtt_lem_step_stats>
 run_lem_step(
-    const lsdtt_raster_cpu&          dem,
-    const lsdtt_lem_options&         opts,
-    const std::vector<std::int64_t>& boundary_flats
+    const lsdtt_raster_cpu&           dem,
+    const lsdtt_lem_options&          opts,
+    const std::vector<std::int64_t>&  boundary_flats,
+    // Optional cached linear algebra, held by the caller across timesteps. For a
+    // linear hillslope run with a fixed dt the matrix is identical every step, so
+    // passing one turns per-step assemble/analyse/factorise/solve into a solve.
+    // Passing nullptr disables caching and changes nothing else.
+    lsdtt_hillslope_newton_workspace* hillslope_ws = nullptr
 );
 
 // ---------------------------------------------------------------------------

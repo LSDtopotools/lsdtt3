@@ -111,6 +111,22 @@ struct lsdtt_roering_implicit_result
 };
 
 // -----------------------------------------------------------------------------
+// compute_max_slope_ratio
+//
+// Maximum |gradz|/Sc over the valid, non-channel cells of a field, from a centred
+// full-gradient estimate. NOT capped, so a value > 1 flags a super-critical face.
+//
+// boundary_conditions is required: at a periodic seam the gradient must WRAP.
+// Reading a clamped (one-sided) difference there understates the slope, which
+// reports a domain as safer than it is.
+// -----------------------------------------------------------------------------
+float compute_max_slope_ratio(
+    const lsdtt_raster_cpu&          dem,
+    const std::vector<uint8_t>&      is_channel,
+    float                            Sc,
+    const std::string&               boundary_conditions);
+
+// -----------------------------------------------------------------------------
 // compute_roering_hillslope_transport_implicit
 //
 // Integrate the Roering nonlinear hillslope law over dt_total with channels as

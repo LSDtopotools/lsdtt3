@@ -48,6 +48,7 @@
 
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "lsdtt_flowgraph_cpu.hpp"
@@ -92,10 +93,18 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
 //
 // Linear mode (nonlinear == false) uses the standard Laplacian (D * grad^2z).
 //
-// Boundary conditions:
+// Boundary conditions (NESW string, as everywhere else in lsdtt3):
+//   - 'p' periodic wrap, 'o' DIRICHLET at base level, 'n' Neumann zero-flux.
+//     A short string pads with 'o'.
 //   - Channel pixels (is_channel[i]==1) are fixed Dirichlet nodes.
-//   - Domain-edge pixels: Neumann zero-flux (face gradient = 0 at edge).
-//   - Masked (nodata) cells: unchanged.
+//   - Masked (nodata) cells: unchanged; a masked neighbour reflects (no flux).
+//
+// boundary_conditions has NO default, deliberately. Until 2026-08-27 this
+// function had no boundary-condition parameter at all: it clamped indices
+// unconditionally, so every edge was Neumann, a periodic domain could not be
+// expressed, and an 'o' edge was silently converted to no-flux. Giving the new
+// parameter a default would let a caller keep the old, wrong behaviour without
+// noticing, so every caller must state its intent.
 //
 // Stability:
 //   The explicit scheme requires dt <= h^2/(4*D*alpha_max).  For the linear case
@@ -123,6 +132,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
     float dt_total,
     bool  nonlinear,
     float S_c,
+    const std::string&              boundary_conditions,
     int   n_threads = 0
 );
 

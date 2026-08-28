@@ -905,13 +905,27 @@ add_lsdtt_cli_smoke_test(
 # emergent-drainage-density experiment. Fatal, and the message names the four
 # that can.
 add_lsdtt_cli_smoke_test(
-    failure_lem_coupling_roering_implicit
+    failure_lem_coupling_ri_steady_no_dirichlet
     lsdtt-lem
-    lem_coupling_roering_implicit.param.in
+    lem_coupling_ri_steady_no_dirichlet.param.in
     unused_expected_output
     --expect-failure
-    --stderr-contains "roering_implicit"
-    --stderr-contains "linear, roering, cidre, adi"
+    --stderr-contains "needs Dirichlet data somewhere"
+)
+
+# The combination this replaces (coupled + roering_implicit) used to be a FATAL
+# error on the reasoning that the implicit solver needs a Dirichlet CHANNEL set.
+# It does not -- it needs boundary conditions, and in the coupled regime the
+# fluvial term is the sink. The restriction ruled the most robust solver out of
+# the emergent-drainage-density experiment it is most useful for. What remains
+# genuinely singular is a STEADY solve with no Dirichlet data anywhere, which the
+# failure test above pins; the transient case must simply RUN.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_coupling_ri_transient
+    lsdtt-lem
+    lem_coupling_ri_transient.param.in
+    tiny_coup_ri_trans_modelled_topography.tif
+    --stdout-contains "Model run complete"
 )
 
 # D8 on a diverging hillslope manufactures channel heads, so the drainage
@@ -1828,6 +1842,35 @@ target_link_libraries(lsdtt-test-hillslope-peclet PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hillslope_peclet COMMAND lsdtt-test-hillslope-peclet)
 set_tests_properties(unit_hillslope_peclet PROPERTIES LABELS "unit;hillslope")
+
+# Boundary conditions for the explicit Roering transport solver (periodic + 'o').
+add_executable(lsdtt-test-hillslope-transport-bc cpp/test_hillslope_transport_bc.cpp)
+target_link_libraries(lsdtt-test-hillslope-transport-bc PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_transport_bc COMMAND lsdtt-test-hillslope-transport-bc)
+set_tests_properties(unit_hillslope_transport_bc PROPERTIES LABELS "unit;hillslope")
+
+# Coupled-LEM timestep control: an accuracy limit that no stability check catches.
+add_executable(lsdtt-test-lem-timestep cpp/test_lem_timestep.cpp)
+target_link_libraries(lsdtt-test-lem-timestep PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_lem_timestep COMMAND lsdtt-test-lem-timestep)
+set_tests_properties(unit_lem_timestep PROPERTIES LABELS "unit;lem")
+
+# The Newton solver for the Roering nonlinear hillslope (steady + transient).
+add_executable(lsdtt-test-hillslope-newton cpp/test_hillslope_newton.cpp)
+target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_newton COMMAND lsdtt-test-hillslope-newton)
+set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "unit;hillslope")
+
+# The SOR steady-state hillslope solver: conservation, precision floor, 'o' vs 'n',
+# periodic invariance, and recovery of U/D from known forcing.
+add_executable(lsdtt-test-hillslope-steady-state cpp/test_hillslope_steady_state.cpp)
+target_link_libraries(lsdtt-test-hillslope-steady-state PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_steady_state COMMAND lsdtt-test-hillslope-steady-state)
+set_tests_properties(unit_hillslope_steady_state PROPERTIES LABELS "unit;hillslope")
 
 # chi at the channel head, as distinct from domain-wide MaxChi (plan 2.2a).
 add_executable(lsdtt-test-chi-channel-head cpp/test_chi_channel_head.cpp)

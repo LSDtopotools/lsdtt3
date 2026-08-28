@@ -51,6 +51,9 @@
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
+#include "../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
+#include "../src/cpu/lsdtt_hillslope_peclet_cpu.hpp"
+#include "../src/cpu/lsdtt_lem_timestep_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
@@ -260,6 +263,7 @@ static std::vector<std::int64_t> build_boundary_flats(
 // =============================================================================
 // main
 // =============================================================================
+
 int main(int argc, char* argv[])
 {
     print_banner();
@@ -450,22 +454,67 @@ int main(int argc, char* argv[])
         "Requires enable_hillslope_transport.",
         "Process switches", "switch", ""};
 
+    bool_default_map["adaptive_timestep"] = false;
+    help_map["adaptive_timestep"] = {"bool","false",
+        "Adapt the LEM timestep to keep the coupled solve accurate.",
+        "Both halves of a coupled run can be unconditionally STABLE and the run "
+        "still be wrong at a large timestep: stability describes one operator, "
+        "accuracy of an operator-split PAIR is a different question. The "
+        "controller keys on the achieved maximum local elevation change of each "
+        "step against the relief across one cell (dx * median gradient), holding "
+        "that ratio near timestep_target_ratio. It shrinks faster than it grows, "
+        "because an oversized step corrupts the landscape while an undersized one "
+        "only costs time. `timestep` becomes the starting value.",
+        "Timestep control", "switch", ""};
+
+    float_default_map["timestep_target_ratio"] = 0.7f;
+    help_map["timestep_target_ratio"] = {"float","0.7",
+        "Target for (elevation change per step) / (relief across one cell).",
+        "Measured on a 200x200 grid at 5 m: ratios of 0.13-0.67 gave 4-5% "
+        "grid-scale roughness and a stable hillslope length; 2.67 gave 12.2% "
+        "roughness and a hillslope length wrong by 5.7x, while still converging "
+        "and still reporting ~99% of the uplift rate. Used both by the pre-run "
+        "check and, with adaptive_timestep, by the controller.",
+        "Timestep control", "param", ""};
+
+    float_default_map["timestep_min"] = 0.0f;
+    help_map["timestep_min"] = {"float","0",
+        "Floor for the adaptive timestep (yr). 0 = timestep / 100.",
+        "", "Timestep control", "param", ""};
+
+    float_default_map["timestep_max"] = 0.0f;
+    help_map["timestep_max"] = {"float","0",
+        "Ceiling for the adaptive timestep (yr). 0 = timestep * 100.",
+        "", "Timestep control", "param", ""};
+
+    bool_default_map["hillslope_force_sor"] = false;
+    help_map["hillslope_force_sor"] = {"bool","false",
+        "Force the legacy SOR + Picard steady-state solver instead of Newton.",
+        "Steady-state hillslope solves default to Newton, which is faster and more "
+        "accurate for the linear problem and converges near Sc where Picard "
+        "limit-cycles. SOR is still used automatically when Newton is unavailable "
+        "(a build without Eigen) or fails to converge; this switch forces it for "
+        "comparison or reproduction of an older run. With SOR the nonlinear "
+        "operator needs hillslope_sor_omega set low (0.3-0.5); the auto value is "
+        "the LINEAR optimum and diverges.",
+        "Process switches", "switch", ""};
+
     string_default_map["hillslope_model"] = "cidre";
     help_map["hillslope_model"] = {"string","cidre",
-        "Hillslope transport model: linear, roering, roering_implicit, cidre, or adi.",
-        "linear: explicit FD of D*grad^2z on the regular 4-connected grid (stable at any "
-        "typical LEM dt; no flow graph needed beyond channel ID). "
-        "roering: explicit FD of the Roering (1999) nonlinear law D*grad*[gradz/(1-(|gradz|/Sc)^2)]; "
-        "auto-subcycles when near Sc (dt <= h^2/(4*D*alpha_max)); enable_nonlinear_hillslopes "
-        "must be true or it reduces to linear FD. "
-        "roering_implicit: unconditionally-stable backward-Euler solver for the same "
-        "Roering law (Eigen sparse Cholesky / CG; adaptive sub-stepping; sub-critical "
-        "limiter). Channels are Dirichlet sinks from the area threshold or "
-        "channel_mask_fname; needs a non-empty channel set or the step is skipped. "
-        "Set enable_nonlinear_hillslopes false for linear backward-Euler diffusion. "
+        "Hillslope transport model: roering_implicit, cidre, or adi.",
+        "roering_implicit: unconditionally-stable implicit solver for the Roering (1999) "
+        "nonlinear law. Steady-state runs use Newton; transient runs use backward Euler "
+        "with adaptive sub-stepping. Channels are Dirichlet sinks from the area threshold "
+        "or channel_mask_fname; needs a non-empty channel set or the step is skipped. "
+        "Set enable_nonlinear_hillslopes false for linear diffusion. "
         "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
-        "unconditionally stable near Sc via slope-restoration. "
-        "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps."
+        "unconditionally stable near Sc via slope-restoration. The ONLY model that works "
+        "with an emergent channel network (incision_threshold_area = 0). "
+        "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps "
+        "(transient only; steady-state runs use Newton regardless). "
+        "NOTE: 'linear' and 'roering' select EXPLICIT solvers. They are CFL-limited and "
+        "less stable than the implicit path, and are retained only for testing and for "
+        "builds without Eigen; both are redirected to roering_implicit with a warning. "
         "Requires enable_hillslope_transport.",
         "Process switches", "param", ""};
 
@@ -1040,6 +1089,7 @@ int main(int argc, char* argv[])
 
     // roering_implicit solver knobs (D/U/Sc/nonlinear/BC/threads are set in the LEM
     // step from the options above; these fill the rest of the implicit options).
+    opts.hillslope_force_picard = bf["hillslope_force_sor"];
     opts.roering_implicit_opts.relaxation_omega = ff["hillslope_implicit_relaxation_omega"];
     opts.roering_implicit_opts.picard_tol       = ff["hillslope_implicit_picard_tol"];
     opts.roering_implicit_opts.picard_max_iter  = ifs["hillslope_implicit_picard_max_iter"];
@@ -1103,17 +1153,34 @@ int main(int argc, char* argv[])
         for (char& ch : hs_model)
             ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-        if (hs_model == "roering_implicit")
+        // NOTE (2026-08-27): `coupled` + `roering_implicit` used to be a FATAL
+        // combination, on the reasoning that the implicit solver needs a
+        // Dirichlet channel set. It does not -- it needs boundary conditions.
+        //
+        // A transient diffusion step is well posed under any boundary condition;
+        // in the coupled regime the fluvial term is the sink and it is applied to
+        // every cell in the same timestep; and an 'o' edge supplies base level
+        // regardless of channels. The restriction ruled the most robust solver out
+        // of the one experiment it is most useful for.
+        //
+        // The genuinely singular case is a STEADY solve with no Dirichlet data
+        // ANYWHERE -- no channels and no 'o' edge -- which is caught below.
+        if (hs_model == "roering_implicit" && bf["run_steady_state"])
         {
-            std::cerr << "\nFATAL: hillslope_channel_coupling: coupled cannot be "
-                         "run with hillslope_model: roering_implicit.\n"
-                         "  That solver needs a Dirichlet channel set; with none "
-                         "it degenerates to sink-free\n  diffusion toward the "
-                         "domain edges, so it skips the hillslope step entirely.\n"
-                         "  The emergent-drainage-density experiment therefore "
-                         "cannot use the most robust\n  solver. Use one of: "
-                         "linear, roering, cidre, adi.\n";
-            return 1;
+            const std::string bc = sf["boundary_conditions"];
+            if (bc.find('o') == std::string::npos)
+            {
+                std::cerr << "\nFATAL: hillslope_channel_coupling: coupled with "
+                             "run_steady_state and no 'o' edge.\n"
+                             "  The steady hillslope problem is elliptic, so it "
+                             "needs Dirichlet data somewhere.\n"
+                             "  With no channel set AND no fixed-elevation ('o') "
+                             "boundary there is none, and\n  the solution is not "
+                             "determined -- the field drifts without bound.\n"
+                             "  Give at least one 'o' edge in boundary_conditions, "
+                             "or use a channel set.\n";
+                return 1;
+            }
         }
 
         if (pp.parameter_supplied("enable_d8_fluvial_erosion") &&
@@ -1584,6 +1651,46 @@ int main(int argc, char* argv[])
         enforce_baselevel(); // Re-pin boundaries to wipe off final noise layer
     }
 
+    // Can this grid represent a hillslope at all? A coupled run whose hillslopes
+    // are only a few cells wide still converges, still reports ~100% of the uplift
+    // rate, and still writes a plausible landscape -- it is simply all channel, and
+    // nothing else in the output says so.
+    if (opts.enable_hillslope_transport)
+    {
+        const lsdtt::hillslope_resolution_estimate hres =
+            lsdtt::estimate_hillslope_resolution(
+                static_cast<double>(opts.hillslope_diffusivity),
+                static_cast<double>(opts.erodibility),
+                static_cast<double>(dem.get_meta().cell_size),
+                static_cast<double>(opts.m_exponent),
+                static_cast<double>(opts.n_exponent),
+                opts.divide_area_by_dx);
+
+        if (hres.cells > 0.0)
+            std::cout << "  Hillslope scale   : L_h ~ " << hres.L_h_m << " m ("
+                      << hres.cells << " cells across a hillslope)\n";
+        if (hres.under_resolved)
+            std::cerr << "\nWARNING: " << hres.warning << "\n\n";
+    }
+
+    // Is the timestep small enough for the COUPLED solve to be accurate? Both
+    // solvers are unconditionally stable, so neither will complain.
+    {
+        const lsdtt::lsdtt_lem_timestep_diagnosis td =
+            lsdtt::diagnose_lem_timestep(dem,
+                                         static_cast<double>(opts.uplift_rate),
+                                         static_cast<double>(opts.timestep),
+                                         static_cast<double>(ff["timestep_target_ratio"]));
+        if (td.reference_slope > 0.0)
+        {
+            std::cout << "  Timestep ratio    : " << td.ratio
+                      << "  (U*dt = " << td.uplift_per_step_m
+                      << " m vs cell relief " << td.cell_relief_m << " m)\n";
+            if (td.too_large && !bf["adaptive_timestep"])
+                std::cerr << "\nWARNING: " << td.warning << "\n\n";
+        }
+    }
+
     // Optionally pit-fill the initial surface (applied after conditioning)
     if (bf["fill_initial_surface"])
     {
@@ -1753,6 +1860,18 @@ int main(int argc, char* argv[])
         else if (hs_solver == "linear")  hs_opts.nonlinear = false;
         else                             hs_opts.nonlinear = bf["enable_nonlinear_hillslopes"];
 
+        // 'linear' and 'roering' name the EXPLICIT solvers, which are retained for
+        // testing and for Eigen-free builds but are not offered as user options:
+        // they are CFL-limited and less stable than the implicit path. In a
+        // steady-state run they never had any effect anyway -- every value except
+        // 'cidre' routed to the same solver -- so this only makes that visible.
+        if (hs_solver == "linear" || hs_solver == "roering")
+            std::cout << "\nNOTE: hillslope_model '" << hs_solver
+                      << "' selects an explicit solver, which is retained for testing\n"
+                         "      and for builds without Eigen. Using the implicit "
+                         "(Newton) steady-state\n      solver instead; set "
+                         "enable_nonlinear_hillslopes to choose the flux law.\n";
+
         std::cout << "  Solver         : " << hs_solver
                   << " (" << (hs_opts.nonlinear ? "nonlinear" : "linear") << ")\n"
                   << "  D=" << hs_opts.D << "  U=" << hs_opts.U;
@@ -1768,8 +1887,15 @@ int main(int argc, char* argv[])
                 hs_result = lsdtt::compute_cidre_hillslope_steady_state(
                     dem, is_channel, hs_opts);
             else
-                hs_result = lsdtt::compute_hillslope_steady_state(
-                    dem, is_channel, hs_opts);
+            {
+                lsdtt::lsdtt_hillslope_solve_report rep;
+                hs_result = lsdtt::compute_hillslope_steady_state_auto(
+                    dem, is_channel, hs_opts, bf["hillslope_force_sor"], &rep);
+                std::cout << "  Solver used    : " << rep.solver_used
+                          << "  " << rep.detail << "\n";
+                if (!rep.warning.empty())
+                    std::cerr << "  NOTE: " << rep.warning << "\n";
+            }
         }
         catch (const std::exception& e)
         {
@@ -2312,9 +2438,17 @@ int main(int argc, char* argv[])
                 if (hs_solver == "cidre")
                     hs_result = lsdtt::compute_cidre_hillslope_steady_state(
                         ss_result.elevation, is_channel, hs_opts);
-                else  // "linear" or "roering" - both use the SOR solver
-                    hs_result = lsdtt::compute_hillslope_steady_state(
-                        ss_result.elevation, is_channel, hs_opts);
+                else
+                {
+                    lsdtt::lsdtt_hillslope_solve_report rep;
+                    hs_result = lsdtt::compute_hillslope_steady_state_auto(
+                        ss_result.elevation, is_channel, hs_opts,
+                        bf["hillslope_force_sor"], &rep);
+                    std::cout << "  Solver used    : " << rep.solver_used
+                              << "  " << rep.detail << "\n";
+                    if (!rep.warning.empty())
+                        std::cerr << "  NOTE: " << rep.warning << "\n";
+                }
 
                 std::cout << "  Iterations: " << hs_result.n_iterations
                           << "  max|Deltaz|: " << hs_result.final_residual
@@ -2485,7 +2619,8 @@ int main(int argc, char* argv[])
     const int    n_iter          = ifs["number_of_iterations"];
     const int    write_freq      = ifs["frequency_of_output_writing"];
     const bool   steady_state    = bf["stop_at_steady_state"];
-    const float  dt              = opts.timestep;
+    // Not const: the adaptive controller rewrites it between steps.
+    float        dt              = opts.timestep;
 
     // Steady-state detection state
     int   ss_consecutive = 0;
@@ -2501,6 +2636,21 @@ int main(int argc, char* argv[])
     // Kept so the final erosion-rate raster is the rate of the last step actually run.
     lsdtt::lsdtt_lem_step_stats last_stats{};
 
+    // Held across EVERY timestep, which is the whole point: for a linear hillslope
+    // run with a fixed dt the matrix never changes, so the factorisation computed on
+    // the first step serves all of them. See lsdtt_hillslope_newton_workspace.
+    lsdtt::lsdtt_hillslope_newton_workspace hillslope_ws;
+
+    // Adaptive outer timestep. Constructed regardless so the achieved ratio can be
+    // reported even when adaptation is off -- knowing the run sat at 2.7 is useful
+    // whether or not anything acted on it.
+    lsdtt::lsdtt_lem_timestep_controller_options tc_opts;
+    tc_opts.target_ratio = ff["timestep_target_ratio"];
+    tc_opts.dt_min_yr    = ff["timestep_min"];
+    tc_opts.dt_max_yr    = ff["timestep_max"];
+    lsdtt::lsdtt_lem_timestep_controller tstep(static_cast<double>(dt), tc_opts);
+    const bool adapt_dt = bf["adaptive_timestep"];
+
     auto do_step = [&]()
     {
         try
@@ -2514,11 +2664,25 @@ int main(int argc, char* argv[])
                 opts.baselevel_fall_rate = f.baselevel_fall_rate;
             }
 
-            auto [next, stats] = lsdtt::run_lem_step(current, opts, fixed_flats);
+            auto [next, stats] =
+                lsdtt::run_lem_step(current, opts, fixed_flats, &hillslope_ws);
             current    = std::move(next);
             last_stats = stats;
             total_time += dt;
             ++iter;
+
+            // Feed the achieved change back. The step just taken is KEPT even when
+            // it overshot: one oversized step does not create the artefact (it
+            // takes many), and rejecting would double the cost of every adjustment.
+            {
+                const double dt_next = tstep.update(
+                    static_cast<double>(stats.max_local_elevation_change), current);
+                if (adapt_dt)
+                {
+                    dt = static_cast<float>(dt_next);
+                    opts.timestep = dt;
+                }
+            }
 
             // Store stats, including the forcing actually applied this step
             stats_rows.push_back({
@@ -2662,6 +2826,26 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: stats CSV write failed: " << e.what() << "\n";
         }
     }
+
+    if (tstep.last_ratio() > 0.0)
+    {
+        std::cout << "\n[timestep] final ratio " << tstep.last_ratio()
+                  << " (target " << tc_opts.target_ratio << ")";
+        if (adapt_dt)
+            std::cout << ", dt " << tstep.dt() << " yr after "
+                      << tstep.n_shrinks() << " shrinks / "
+                      << tstep.n_grows() << " grows";
+        std::cout << "\n";
+        if (!adapt_dt && tstep.last_ratio() > tc_opts.target_ratio)
+            std::cerr << "WARNING: the timestep ratio exceeded its target during "
+                         "the run; grid-scale artefacts are likely. Reduce "
+                         "timestep or set adaptive_timestep.\n";
+    }
+
+    if (hillslope_ws.n_solves() > 0)
+        std::cout << "\n[hillslope cache] " << hillslope_ws.n_pattern_analyses()
+                  << " pattern analyses, " << hillslope_ws.n_factorisations()
+                  << " factorisations, " << hillslope_ws.n_solves() << " solves\n";
 
     std::cout << "\nModel run complete. "
               << iter << " iterations, "
