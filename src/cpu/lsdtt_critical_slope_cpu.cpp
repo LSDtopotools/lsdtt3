@@ -305,7 +305,13 @@ lsdtt_critical_slope_result impose_critical_slope_hillslopes(
 
             if (apply_cell)
             {
-                out_data[s] = static_cast<float>(rec_elev + dx * slope);
+                const double target = rec_elev + dx * slope;
+                // clamp_only: lower a cell to the target only if it is above it,
+                // so admissible topography is left exactly as it was.
+                out_data[s] = opts.clamp_only
+                    ? static_cast<float>(std::min(static_cast<double>(out_data[s]),
+                                                  target))
+                    : static_cast<float>(target);
                 out_mask[s] = 1;
             }
 

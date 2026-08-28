@@ -51,6 +51,7 @@
 #define LSDTT_LEM_TIMESTEP_CPU_HPP
 
 #include <string>
+#include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
 
@@ -124,6 +125,29 @@ struct lsdtt_lem_timestep_controller_options
     // scan is a full pass over the grid, so there is no reason to do it every
     // step.
     int slope_refresh_interval = 25;
+
+    // Quantise dt to a geometric ladder, dt = dt_initial * ladder_ratio^k.
+    //
+    // THIS IS NOT COSMETIC. Downstream solvers cache factorisations keyed on dt
+    // (see lsdtt_hillslope_newton_workspace): for a linear problem the matrix is
+    // constant only while dt is, so every distinct dt costs a fresh symbolic
+    // analysis and numeric factorisation. A continuously-varying dt therefore
+    // silently destroys that cache -- measured at 28 factorisations over 60 steps
+    // against 1 with a fixed step, and roughly a 2x wall-clock penalty on a
+    // 600 x 600 grid.
+    //
+    // Snapping to a coarse ladder fixes it twice over: the controller only moves
+    // when the required change exceeds a whole rung (which is hysteresis, and
+    // stops the oscillation that produced 121 adjustments in one run), and when it
+    // does move it lands on a value it may have used before. Set to 1.0 to
+    // disable quantisation.
+    double ladder_ratio = 2.0;
+
+    // Weight of the newest sample in the exponential moving average used for
+    // DECISIONS. The achieved ratio is a maximum over the grid and is jumpy even
+    // in a steady run; reacting to that jitter makes the controller cross a ladder
+    // rung repeatedly and pay a refactorisation each time.
+    double ratio_smoothing = 0.15;
 };
 
 
@@ -148,16 +172,144 @@ public:
     [[nodiscard]] long   n_shrinks()        const noexcept { return n_shrinks_; }
     [[nodiscard]] long   n_grows()          const noexcept { return n_grows_; }
 
+    // How many times dt ACTUALLY changed after quantisation. This is the number
+    // that costs downstream refactorisations, so it is the one to watch.
+    [[nodiscard]] long   n_changes()         const noexcept { return n_changes_; }
+
 private:
     lsdtt_lem_timestep_controller_options opts_;
-    double dt_          = 0.0;
+    double dt_          = 0.0;   // quantised: what the caller uses
+    double dt_raw_      = 0.0;   // continuous: what the controller accumulates on
+    double dt_initial_  = 0.0;
     double dt_min_      = 0.0;
     double dt_max_      = 0.0;
     double slope_       = 0.0;
-    double last_ratio_  = 0.0;
+    double last_ratio_  = 0.0;   // raw, as reported
+    double ratio_ema_   = 0.0;   // smoothed, as used for decisions
     long   n_steps_     = 0;
     long   n_shrinks_   = 0;
     long   n_grows_     = 0;
+    long   n_changes_   = 0;
+    int    rung_             = 0;   // current ladder rung, with hysteresis
+    int    lowest_rung_seen_ = 0;   // guards against runaway descent
+};
+
+
+// -----------------------------------------------------------------------------
+// lsdtt_lem_convergence_monitor
+//
+// Decides when a transient LEM run has reached steady state, and -- separately --
+// when it has stopped making progress without reaching it.
+//
+// THE TWO OUTCOMES ARE NOT THE SAME, and conflating them is how a limit cycle gets
+// reported as a converged landscape. A run can sit at a fixed max|dz| forever:
+// the nonlinear hillslope solver limit-cycled exactly this way before the Newton
+// work, and a coupled run whose timestep is too large reaches a noisy balance
+// rather than a steady state. Both look "settled" to anything that only watches
+// whether the number is small.
+//
+// CONVERGED: max|dz| per step below tolerance for `patience` consecutive steps.
+//
+//   A per-STEP threshold is what a user naturally asks for, but it is dt-dependent
+//   -- halve the timestep and every change halves with it. So convergence
+//   additionally requires that the timestep has NOT collapsed (dt >= a fraction of
+//   its initial value). Without that guard, a controller shrinking dt toward zero
+//   would satisfy any absolute per-step tolerance while the landscape was still
+//   evolving as fast as ever.
+//
+// STALLED: over a window of recent steps, max|dz| has stopped falling while still
+// above tolerance. Reported with a flag for ALTERNATION -- the signature of a
+// period-2 oscillation, where successive steps push the surface back and forth --
+// because that points at the numerics rather than at needing more time.
+// -----------------------------------------------------------------------------
+struct lsdtt_lem_convergence_options
+{
+    // Steady state: no cell (bar the top 0.1%) moves more than this in one step.
+    //
+    // A per-STEP tolerance is what a user naturally asks for, and it is what this
+    // is -- but be aware it is dt-dependent, and halving the timestep halves every
+    // change without the landscape being any steadier. The same relaxed landscape
+    // measured 0.006 m/step at dt = 250 and 0.029 m/step at dt = 2000.
+    double dz_tolerance_m = 1.0e-4;
+
+    // Steady state as a RATE (m/yr), which is dt-independent and is therefore the
+    // criterion that means the same thing at any timestep. Zero disables it and
+    // falls back to the per-step tolerance alone.
+    //
+    // Measured floor for a coupled run on a relaxed landscape: 1.4e-5 to 2.8e-5
+    // m/yr, i.e. 3.6-7.0% of the uplift rate, INDEPENDENT of timestep across a
+    // factor of eight. That is the model's residual, driven by continual small
+    // reorganisation of the drainage network, so a rate tolerance below it cannot
+    // be met however long the run goes. Express the tolerance as a fraction of U
+    // and it becomes portable between experiments.
+    double dz_rate_tolerance_m_per_yr = 0.0;
+
+    // Consecutive steps below tolerance before declaring convergence. One step can
+    // be quiet by accident.
+    int    patience_steps = 5;
+
+    // Convergence is refused while dt is below this fraction of its initial value,
+    // so a collapsing timestep cannot manufacture a small per-step change.
+    double min_dt_fraction = 0.25;
+
+    // Stall detection window. Deliberately long: a genuinely converging run can
+    // improve by only a few per cent over a couple of hundred steps, and calling
+    // that a stall would abandon a healthy run. Set from the observed failure --
+    // a 200-step window with a 10% decay threshold stopped a run that was
+    // converging perfectly well.
+    int    stall_window = 1000;
+
+    // Declared stalled when max|dz| over the window has fallen by less than this
+    // factor. 0.99 means "essentially no progress at all", not "slow progress".
+    double stall_decay_threshold = 0.99;
+
+    // A stall is a WARNING, not a stopping condition, by default. Detection is
+    // heuristic and a false positive throws away a good run, whereas a false
+    // negative only costs the time the run was going to take anyway. Convergence,
+    // which is a definite test, does stop the run.
+    bool   stop_on_stall = false;
+
+    // Fraction of the window whose step-to-step changes must alternate in sign
+    // before the stall is labelled oscillatory rather than merely slow.
+    double oscillation_alternation_fraction = 0.70;
+};
+
+enum class lem_convergence_state
+{
+    running,
+    converged,      // steady state reached
+    stalled,        // progress has ceased, tolerance NOT met
+};
+
+class lsdtt_lem_convergence_monitor
+{
+public:
+    explicit lsdtt_lem_convergence_monitor(
+        double dt_initial_yr,
+        const lsdtt_lem_convergence_options& opts =
+            lsdtt_lem_convergence_options());
+
+    // Report one completed step. Returns the state after it.
+    lem_convergence_state update(double max_local_dz_m, double dt_used_yr);
+
+    [[nodiscard]] lem_convergence_state state()  const noexcept { return state_; }
+    [[nodiscard]] bool   oscillating()           const noexcept { return oscillating_; }
+    [[nodiscard]] long   n_steps()               const noexcept { return n_steps_; }
+    [[nodiscard]] double last_dz()               const noexcept { return last_dz_; }
+    [[nodiscard]] double window_decay()          const noexcept { return decay_; }
+    [[nodiscard]] const std::string& message()   const noexcept { return message_; }
+
+private:
+    lsdtt_lem_convergence_options opts_;
+    double dt_initial_ = 0.0;
+    double last_dz_    = 0.0;
+    double decay_      = 1.0;
+    long   n_steps_    = 0;
+    int    n_below_    = 0;
+    bool   oscillating_ = false;
+    lem_convergence_state state_ = lem_convergence_state::running;
+    std::string message_;
+    std::vector<double> history_;
 };
 
 

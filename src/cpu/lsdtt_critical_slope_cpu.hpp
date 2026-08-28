@@ -63,6 +63,36 @@ struct lsdtt_critical_slope_options
     // Optional full-grid mask (size n_rows*n_cols). Empty means apply on all
     // valid cells. Non-zero = apply, zero = leave input elevation unchanged.
     std::vector<std::uint8_t> restrict_mask;
+
+    // CLAMP rather than IMPOSE.
+    //
+    // The default behaviour SETS every hillslope cell to exactly
+    // z_receiver + dx*S_c, which manufactures a landscape of uniform critical
+    // slopes. That is what the step-change generator wants, and it destroys any
+    // form the input already had.
+    //
+    // With clamp_only, a cell is LOWERED to that elevation only if it currently
+    // sits above it; cells already below the target keep their elevation. The
+    // input landscape is preserved wherever it is admissible, and only the
+    // super-critical parts are cut back.
+    //
+    // The use this was added for: handing an equilibrated LINEAR landscape to the
+    // Roering solver. Linear diffusion has no critical slope, so its steady state
+    // routinely carries gradients above S_c, where the Roering flux law is
+    // singular. Clamping produces a feasible starting field without flattening
+    // everything else.
+    //
+    // Two properties make the sweep safe, and both come from processing in
+    // receiver-before-donor order and only ever lowering: no cell is pushed below
+    // its own receiver, so drainage directions are preserved; and no new
+    // depressions are created, because a cell can only move down toward a
+    // receiver that has already been fixed.
+    //
+    // WHAT IT DOES NOT DO: it limits the gradient ALONG THE FLOW PATH, which is
+    // not the same as the full gradient magnitude |grad z| that the Roering flux
+    // law actually uses. Cross-slope can still push a cell above S_c. Check the
+    // full gradient afterwards and clamp to a lower target if it matters.
+    bool clamp_only = false;
 };
 
 struct lsdtt_critical_slope_result

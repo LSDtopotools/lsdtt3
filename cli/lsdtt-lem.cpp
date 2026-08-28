@@ -454,6 +454,32 @@ int main(int argc, char* argv[])
         "Requires enable_hillslope_transport.",
         "Process switches", "switch", ""};
 
+    bool_default_map["critical_slope_clamp_only"] = false;
+    help_map["critical_slope_clamp_only"] = {"bool","false",
+        "With hillslope_ss_model: critical_slope, LOWER cells above the target "
+        "gradient instead of imposing it everywhere.",
+        "The default imposes z = z_receiver + dx*S_c on every hillslope cell, "
+        "manufacturing a landscape of uniform critical slopes and destroying "
+        "whatever form the input had. Clamping preserves the input wherever it is "
+        "already admissible and cuts back only the super-critical parts. "
+        "Intended for handing an equilibrated LINEAR landscape to a Roering run: "
+        "linear diffusion has no critical slope, so its steady state routinely "
+        "carries gradients above S_c where the Roering flux law is singular. "
+        "NOTE this limits the gradient ALONG THE FLOW PATH, not the full gradient "
+        "magnitude the flux law uses -- cross-slope can still exceed S_c, so use "
+        "critical_slope_clamp_fraction to leave headroom.",
+        "Process switches", "switch", ""};
+
+    float_default_map["critical_slope_clamp_fraction"] = 0.0f;
+    help_map["critical_slope_clamp_fraction"] = {"float","0",
+        "Multiply S_c by this before clamping. 0 = use S_c unchanged.",
+        "Clamping to exactly S_c leaves the Roering flux law at its singularity, "
+        "where alpha = 1/(1-(S/S_c)^2) diverges. Clamping to 0.9 S_c gives "
+        "alpha ~ 5, and 0.8 gives alpha ~ 2.8 -- both comfortably solvable. It "
+        "also leaves headroom for the cross-slope component that the along-flow "
+        "clamp does not control.",
+        "Process switches", "param", ""};
+
     bool_default_map["adaptive_timestep"] = false;
     help_map["adaptive_timestep"] = {"bool","false",
         "Adapt the LEM timestep to keep the coupled solve accurate.",
@@ -475,6 +501,77 @@ int main(int argc, char* argv[])
         "roughness and a hillslope length wrong by 5.7x, while still converging "
         "and still reporting ~99% of the uplift rate. Used both by the pre-run "
         "check and, with adaptive_timestep, by the controller.",
+        "Timestep control", "param", ""};
+
+    float_default_map["steady_state_dz_tolerance"] = 1.0e-4f;
+    help_map["steady_state_dz_tolerance"] = {"float","0.0001",
+        "Stop early when no cell moves more than this in one step (m).",
+        "The run ends at whichever comes first: this steady-state criterion or "
+        "run_until_time / number_of_iterations. Convergence is REFUSED while the "
+        "timestep is below steady_state_min_dt_fraction of its initial value, "
+        "because an absolute per-step tolerance is trivially met by a collapsing "
+        "timestep while the landscape is still evolving as fast as ever. Set 0 to "
+        "disable early stopping.",
+        "Timestep control", "param", ""};
+
+    float_default_map["steady_state_rate_tolerance"] = 0.0f;
+    help_map["steady_state_rate_tolerance"] = {"float","0",
+        "Steady state as a RATE (m/yr), dt-independent. 0 = use the per-step "
+        "tolerance alone.",
+        "The per-step tolerance is dt-dependent: halving the timestep halves every "
+        "change without the landscape being any steadier (the same relaxed "
+        "landscape measured 0.006 m/step at dt = 250 and 0.029 m/step at dt = "
+        "2000). A rate means the same thing at any timestep. The measured floor "
+        "for a coupled run is 1.4e-5 to 2.8e-5 m/yr -- 3.6-7.0% of the uplift rate "
+        "-- set by continual reorganisation of the drainage network, so a tolerance "
+        "below that cannot be met however long the run goes. A sensible choice is "
+        "a small fraction of uplift_rate.",
+        "Timestep control", "param", ""};
+
+    int_default_map["steady_state_patience"] = 5;
+    help_map["steady_state_patience"] = {"int","5",
+        "Consecutive steps below tolerance before declaring steady state.",
+        "One quiet step can happen by accident.",
+        "Timestep control", "param", ""};
+
+    float_default_map["steady_state_min_dt_fraction"] = 0.25f;
+    help_map["steady_state_min_dt_fraction"] = {"float","0.25",
+        "Refuse to declare steady state while dt is below this fraction of its "
+        "initial value.",
+        "Guards against a collapsing adaptive timestep faking convergence.",
+        "Timestep control", "param", ""};
+
+    bool_default_map["stop_on_stall"] = false;
+    help_map["stop_on_stall"] = {"bool","false",
+        "End the run when a stall or oscillation is detected, rather than warning.",
+        "Off by default: stall detection is heuristic, and a false positive throws "
+        "away a healthy run while a false negative only costs the time the run was "
+        "going to take anyway. Convergence is a definite test and always stops the "
+        "run; a stall only warns unless this is set.",
+        "Timestep control", "switch", ""};
+
+    int_default_map["stall_window"] = 1000;
+    help_map["stall_window"] = {"int","1000",
+        "Steps over which a lack of progress is judged (0 disables).",
+        "If max|dz| has not fallen over this window while still above tolerance, "
+        "the run is reported as STALLED, and as OSCILLATING when the step-to-step "
+        "changes alternate in sign -- a period-2 cycle, which points at the "
+        "numerics (timestep too large, or a limit cycle in the nonlinear solve) "
+        "rather than at needing more model time. A stalled run is NOT a converged "
+        "one and must not be reported as steady state.",
+        "Timestep control", "param", ""};
+
+    float_default_map["run_until_time"] = 0.0f;
+    help_map["run_until_time"] = {"float","0",
+        "Run until this much model time has elapsed (yr). 0 = use "
+        "number_of_iterations instead.",
+        "With a FIXED timestep the two are equivalent, but with adaptive_timestep "
+        "they are not: if the controller shrinks dt, a fixed iteration count "
+        "covers proportionally less model time, and different runs in a sweep end "
+        "at different times. Measured on a 7-run sweep intended to cover 6 Myr "
+        "each: the runs actually reached 0.70, 1.12 and 1.26 Myr because dt fell "
+        "by up to 15x. Set this instead of number_of_iterations whenever the "
+        "timestep adapts. number_of_iterations then acts as a safety cap.",
         "Timestep control", "param", ""};
 
     float_default_map["timestep_min"] = 0.0f;
@@ -1806,6 +1903,9 @@ int main(int argc, char* argv[])
             cs_opts.mode                = lsdtt::critical_slope_mode::fixed_gradient;
             cs_opts.S_c                 = static_cast<double>(ff["critical_hillslope_slope"]);
             cs_opts.is_channel_override = is_channel;
+            cs_opts.clamp_only          = bf["critical_slope_clamp_only"];
+            if (ff["critical_slope_clamp_fraction"] > 0.0f)
+                cs_opts.S_c *= static_cast<double>(ff["critical_slope_clamp_fraction"]);
 
             lsdtt::lsdtt_critical_slope_result cs_result;
             try
@@ -2651,6 +2751,17 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_lem_timestep_controller tstep(static_cast<double>(dt), tc_opts);
     const bool adapt_dt = bf["adaptive_timestep"];
 
+    lsdtt::lsdtt_lem_convergence_options cv_opts;
+    cv_opts.dz_tolerance_m   = ff["steady_state_dz_tolerance"];
+    cv_opts.patience_steps   = ifs["steady_state_patience"];
+    cv_opts.dz_rate_tolerance_m_per_yr = ff["steady_state_rate_tolerance"];
+    cv_opts.min_dt_fraction  = ff["steady_state_min_dt_fraction"];
+    cv_opts.stall_window     = ifs["stall_window"];
+    cv_opts.stop_on_stall    = bf["stop_on_stall"];
+    lsdtt::lsdtt_lem_convergence_monitor cmon(static_cast<double>(dt), cv_opts);
+    const bool watch_steady = (ff["steady_state_dz_tolerance"] > 0.0f);
+    bool stop_early = false;
+
     auto do_step = [&]()
     {
         try
@@ -2675,8 +2786,32 @@ int main(int argc, char* argv[])
             // it overshot: one oversized step does not create the artefact (it
             // takes many), and rejecting would double the cost of every adjustment.
             {
-                const double dt_next = tstep.update(
-                    static_cast<double>(stats.max_local_elevation_change), current);
+                const double dz_max = static_cast<double>(stats.max_local_elevation_change);
+
+                // Judge steady state on the p99.9, not the maximum: the maximum is
+                // held up indefinitely by a handful of cells and would veto
+                // convergence for an otherwise steady landscape.
+                const double dz_step =
+                    static_cast<double>(stats.p999_local_elevation_change);
+                (void)dz_max;
+
+                // Steady-state / stall check BEFORE adapting dt, so the state is
+                // judged against the step that was actually taken.
+                if (watch_steady || cv_opts.stall_window > 0)
+                {
+                    const lsdtt::lem_convergence_state st =
+                        cmon.update(dz_step, static_cast<double>(dt));
+                    if (st == lsdtt::lem_convergence_state::converged && watch_steady)
+                        stop_early = true;
+                    else if (st == lsdtt::lem_convergence_state::stalled &&
+                             cv_opts.stop_on_stall)
+                        stop_early = true;
+                }
+
+                // The TIMESTEP controller keeps using the maximum: an oversized
+                // step is a safety question, and the worst cell is the right thing
+                // to be safe about.
+                const double dt_next = tstep.update(dz_max, current);
                 if (adapt_dt)
                 {
                     dt = static_cast<float>(dt_next);
@@ -2786,9 +2921,29 @@ int main(int argc, char* argv[])
             }
         }
     }
+    else if (ff["run_until_time"] > 0.0f)
+    {
+        // Time-bounded: the only correct form when dt adapts, because a fixed
+        // iteration count would end each run of a sweep at a different model time.
+        // number_of_iterations becomes a safety cap so a collapsing dt cannot spin
+        // forever.
+        const float  t_end   = ff["run_until_time"];
+        const int    cap     = std::max(n_iter, 1000000);
+        int          guard   = 0;
+        while (total_time < t_end && guard < cap && !stop_early)
+        {
+            do_step();
+            ++guard;
+        }
+        if (total_time < t_end)
+            std::cerr << "\nWARNING: hit the iteration cap (" << cap
+                      << ") at t = " << total_time << " yr, short of the requested "
+                      << t_end << " yr. The timestep has collapsed; check the "
+                         "[timestep] line.\n";
+    }
     else
     {
-        for (int i = 0; i < n_iter; ++i)
+        for (int i = 0; i < n_iter && !stop_early; ++i)
             do_step();
     }
 
@@ -2825,6 +2980,17 @@ int main(int argc, char* argv[])
         {
             std::cerr << "Warning: stats CSV write failed: " << e.what() << "\n";
         }
+    }
+
+    if (cmon.n_steps() > 0 && !cmon.message().empty())
+    {
+        if (cmon.state() == lsdtt::lem_convergence_state::converged)
+            std::cout << "\n[steady state] " << cmon.message() << " at t = "
+                      << total_time << " yr (" << iter << " steps)\n";
+        else
+            std::cerr << "\n[NOT CONVERGED] " << cmon.message()
+                      << ". p99.9|dz| = " << cmon.last_dz() << " m at t = "
+                      << total_time << " yr.\n";
     }
 
     if (tstep.last_ratio() > 0.0)

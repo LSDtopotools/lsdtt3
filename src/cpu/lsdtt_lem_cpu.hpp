@@ -163,6 +163,18 @@ struct lsdtt_lem_step_stats
     float delta_max_elevation;        // |max(z_new) - max(z_old)|
     float delta_mean_elevation;       // |mean(z_new) - mean(z_old)|
     float max_local_elevation_change; // max|z_new[i] - z_old[i]|
+
+    // 99.9th percentile of |z_new - z_old|.
+    //
+    // Reported alongside the maximum because the maximum is not a usable
+    // convergence measure on its own: it is a max over the whole grid, so a
+    // handful of cells anywhere can hold it up indefinitely while the landscape
+    // is otherwise steady. Measured on a coupled run held at 6 Myr, forty cells
+    // (0.1% of the domain) in one four-column-wide channel reach sat at 0.15-0.37
+    // m per step while the median cell moved 0.004 m -- the same failure mode as
+    // the SOR max-norm criterion, where a measure-zero set vetoed convergence for
+    // everything. Use this for steady-state tests and the maximum for diagnosis.
+    float p999_local_elevation_change;
     float mean_erosion_rate;          // mean erosion (m/yr), before uplift, valid pixels only
     float max_erosion_rate;           // max erosion (m/yr), before uplift, valid pixels only
 
