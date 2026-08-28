@@ -19,8 +19,12 @@ nanobind_add_module(_core
     flow_graph.cpp
     flow_indices.cpp
     basins.cpp
+    divide_migration.cpp
     raster_geospatial.cpp
     raster_fetch.cpp
+    cosmo_column.cpp
+    cosmo_raster.cpp
+    cosmo_basin.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
