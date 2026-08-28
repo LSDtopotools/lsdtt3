@@ -165,6 +165,7 @@ from ._core import (
     crn_outlet_concentration,
     crn_isotope_ratio,
     crn_invert_basin_erosion,
+    crn_pair_diagnostics,
 )
 
 __all__ = [
@@ -312,4 +313,5 @@ __all__ = [
     "crn_outlet_concentration",
     "crn_isotope_ratio",
     "crn_invert_basin_erosion",
+    "crn_pair_diagnostics",
 ]

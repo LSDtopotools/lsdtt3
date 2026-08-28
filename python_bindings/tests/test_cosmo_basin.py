@@ -24,3 +24,19 @@ def test_basin_inversion_returns_annotated_geodataframe():
     assert result.loc[0, "basin_pixels"] >= 1
     assert result.loc[0, "erosion_rate_g_cm2_yr"] > 0
     assert result.loc[0, "predicted_concentration_atoms_g"] > 0
+
+
+def test_pair_diagnostics_returns_annotated_geodataframe():
+    column = lsdtt3.CRNColumn()
+    steady = column.steady_state(
+        effective_erosion_rate_g_cm2_yr=0.01,
+        production_scaling=1.0,
+    )
+    samples = gpd.GeoDataFrame(
+        {"Al26_CONC": [steady.concentration_al26], "Be10_CONC": [steady.concentration_be10]},
+        geometry=[Point(0.0, 0.0)],
+    )
+    result = lsdtt3.crn_pair_diagnostics(samples, mode="burial")
+    assert result.loc[0, "crn_pair_status"] == "Converged"
+    assert result.loc[0, "crn_pair_erosion_rate_g_cm2_yr"] > 0
+    assert result.loc[0, "crn_pair_time_yr"] >= 0
