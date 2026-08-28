@@ -331,7 +331,7 @@ def run_lsdtt(
 
     if proc.returncode != 0:
         raise RuntimeError(
-            f"lsdtt-hydraulic-routing failed (exit {proc.returncode})\n"
+            f"lsdtt-graphflood failed (exit {proc.returncode})\n"
             f"--- stdout ---\n{proc.stdout[-2000:]}\n"
             f"--- stderr ---\n{proc.stderr[-2000:]}"
         )
@@ -432,7 +432,7 @@ def run_dagger_reference(
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--exe", required=True,
-                    help="path to lsdtt-hydraulic-routing executable")
+                    help="path to lsdtt-graphflood executable")
     ap.add_argument("--dagger-root", required=True,
                     help="path to DAGGER repository root")
     ap.add_argument("--dagger-ref", required=True,
