@@ -36,7 +36,12 @@ This writes the complete static site to `site/` — plain HTML, CSS and
 JavaScript, no server-side anything. You can open `site/index.html` directly in
 a browser to check it.
 
-The task runs `mkdocs build --strict`, which **turns warnings into errors**.
+Both documentation tasks first install the local Python bindings into the
+isolated docs environment, then serve or build MkDocs. This allows the Python
+API reference to be rendered from the installed public API and its docstrings.
+The native extension is built locally; this does not modify source files.
+
+`--strict` **turns warnings into errors**.
 That is deliberate: without it, a link to a page you renamed or deleted still
 "builds successfully" and simply 404s for the reader. If the build fails,
 the message names the file and the bad link.

@@ -1,4 +1,4 @@
-// lsdtt-hydraulic-routing.cpp
+// lsdtt-graphflood.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -7,7 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// lsdtt-hydraulic-routing
+// lsdtt-graphflood
 //
 // Stationary graph-based hydraulic routing on an evolving hydraulic surface.
 //
@@ -45,7 +45,7 @@
 
 static const std::string k_version  = "0.1.1";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
-static const std::string k_tool_name = "lsdtt-hydraulic-routing";
+static const std::string k_tool_name = "lsdtt-graphflood";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -54,7 +54,7 @@ static void print_banner()
 {
     std::cout
         << "=========================================================\n"
-        << "|| Welcome to lsdtt-hydraulic-routing                  ||\n"
+        << "|| Welcome to lsdtt-graphflood                         ||\n"
         << "|| Stationary hydraulic routing for lsdtt3             ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
@@ -863,6 +863,6 @@ int main(int argc, char* argv[])
                   k_version, k_citation);
     pp.print_parameters();
 
-    std::cout << "\nlsdtt-hydraulic-routing: done.\n";
+    std::cout << "\nlsdtt-graphflood: done.\n";
     return 0;
 }

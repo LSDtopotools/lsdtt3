@@ -17,6 +17,7 @@ nanobind_add_module(_core
     channel_heads.cpp
     flow_network.cpp
     flow_graph.cpp
+    hydraulic_routing.cpp
     flow_indices.cpp
     basins.cpp
     divide_migration.cpp

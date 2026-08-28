@@ -1,11 +1,30 @@
-"""Python bindings for LSDTopoTools3."""
+"""Python bindings for LSDTopoTools3.
 
+Authors
+-------
+B. Gailleton
+"""
+
+from functools import wraps
 import os
 from pathlib import Path
 
 
 def _configure_bundled_geospatial_data() -> None:
-    """Point GDAL and PROJ at data shipped in a standalone wheel."""
+    """Configure bundled GDAL and PROJ data for a standalone wheel.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Authors
+    -------
+    B. Gailleton
+    """
     package_dir = Path(__file__).resolve().parent
     gdal_data = package_dir / "gdal_data"
     proj_data = package_dir / "proj_data"
@@ -27,6 +46,8 @@ from ._core import (
     OutletFetchResult,
     FlowInfo,
     FlowGraph,
+    HydraulicSurfaceFill,
+    HydraulicResult,
     ChannelHeads,
     ChannelScope,
     ChannelNetwork,
@@ -83,6 +104,7 @@ from ._core import (
     extract_valley_cross_sections,
     extract_channel_heads,
     fill_depth,
+    fill_hydraulic_surface,
     fill_pits,
     fill_pits_boundary_aware,
     fill_pits_with_outlets,
@@ -107,6 +129,7 @@ from ._core import (
     fit_valley_baseline,
     frangi_filter,
     hillshade,
+    run_graphflood,
     highpass_filter,
     invert_binary_mask,
     least_cost_carve_depth,
@@ -175,6 +198,8 @@ __all__ = [
     "OutletFetchResult",
     "FlowInfo",
     "FlowGraph",
+    "HydraulicSurfaceFill",
+    "HydraulicResult",
     "ChannelHeads",
     "ChannelScope",
     "ChannelNetwork",
@@ -231,6 +256,7 @@ __all__ = [
     "extract_valley_cross_sections",
     "extract_channel_heads",
     "fill_depth",
+    "fill_hydraulic_surface",
     "fill_pits",
     "fill_pits_boundary_aware",
     "fill_pits_with_outlets",
@@ -255,6 +281,7 @@ __all__ = [
     "fit_valley_baseline",
     "frangi_filter",
     "hillshade",
+    "run_graphflood",
     "highpass_filter",
     "invert_binary_mask",
     "least_cost_carve_depth",
@@ -315,3 +342,67 @@ __all__ = [
     "crn_invert_basin_erosion",
     "crn_pair_diagnostics",
 ]
+
+
+def _numpy_style_docstring(function):
+    """Give an exported binding a consistent public Python docstring.
+
+    The low-level nanobind signature remains available through
+    ``__wrapped__``.  The original binding documentation is retained in the
+    Notes section so this normalisation does not discard operation-specific
+    guidance while the C++ bindings are progressively documented in place.
+
+    Parameters
+    ----------
+    function : callable
+        Low-level function exported by :mod:`lsdtt3._core`.
+
+    Returns
+    -------
+    callable
+        A forwarding public function with a NumPy-style docstring.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    original_doc = function.__doc__ or "No additional binding notes are available."
+    summary = original_doc.strip().split("\n", maxsplit=1)[0].strip()
+    if not summary:
+        summary = f"Run :func:`lsdtt3.{function.__name__}`."
+
+    @wraps(function)
+    def documented(*args, **kwargs):
+        return function(*args, **kwargs)
+
+    documented.__doc__ = f"""{summary}
+
+    Parameters
+    ----------
+    *args
+        Positional arguments described by the generated binding signature.
+    **kwargs
+        Keyword arguments described by the generated binding signature.
+
+    Returns
+    -------
+    object
+        Result described by the generated binding signature.
+
+    Notes
+    -----
+    {original_doc.strip()}
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    return documented
+
+
+for _public_name in __all__:
+    _public_value = globals()[_public_name]
+    if callable(_public_value) and not isinstance(_public_value, type):
+        globals()[_public_name] = _numpy_style_docstring(_public_value)
+
+del _public_name, _public_value
