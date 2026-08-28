@@ -10,6 +10,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <cpu/lsdtt_cosmo_raster_cpu.hpp>
+#include <cpu/lsdtt_crn_diagnostics.hpp>
 #include <cpu/lsdtt_flow_snapping_cpu.hpp>
 
 #include "binding_common.hpp"
@@ -121,6 +122,78 @@ nb::object crn_invert_basin_erosion(
     return result;
 }
 
+nb::object crn_pair_diagnostics(
+    nb::object samples, const std::string& mode, const std::string& nuclide_fast,
+    const std::string& nuclide_slow, const std::string& concentration_fast_column,
+    const std::string& concentration_slow_column, double total_scaling,
+    const std::string& muon_scheme, double effective_erosion_rate_old_g_cm2_yr)
+{
+    if (mode != "burial" && mode != "step_change")
+        throw std::invalid_argument("mode must be 'burial' or 'step_change'");
+    if (total_scaling <= 0.0 || (mode == "step_change" && effective_erosion_rate_old_g_cm2_yr <= 0.0))
+        throw std::invalid_argument("total_scaling and effective_erosion_rate_old_g_cm2_yr must be positive");
+    nb::object geopandas = nb::module_::import_("geopandas");
+    if (!nb::isinstance(samples, geopandas.attr("GeoDataFrame")))
+        throw std::invalid_argument("samples must be a GeoDataFrame");
+    nb::object result = samples.attr("copy")();
+    const auto has_column = [&result](const std::string& column) {
+        return nb::cast<bool>(result.attr("columns").attr("__contains__")(column));
+    };
+    if (!has_column(concentration_fast_column) || !has_column(concentration_slow_column))
+        throw std::invalid_argument("samples is missing one or both concentration columns");
+
+    const std::size_t n = nb::cast<std::size_t>(result.attr("shape")[0]);
+    nb::object fast_values = result.attr("__getitem__")(concentration_fast_column);
+    nb::object slow_values = result.attr("__getitem__")(concentration_slow_column);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    std::vector<std::string> status(n);
+    std::vector<double> fast(n, nan), slow(n, nan), rate(n, nan), age(n, nan);
+    std::vector<double> predicted_fast(n, nan), predicted_slow(n, nan), measured_ratio(n, nan), steady_ratio(n, nan);
+    std::vector<bool> burial_required(n, false);
+    std::vector<int> n_brackets(n, 0);
+
+    for (std::size_t i = 0; i < n; ++i) {
+        fast[i] = nb::cast<double>(fast_values[static_cast<int>(i)]);
+        slow[i] = nb::cast<double>(slow_values[static_cast<int>(i)]);
+        if (!std::isfinite(fast[i]) || !std::isfinite(slow[i]) || fast[i] <= 0.0 || slow[i] <= 0.0) {
+            status[i] = "invalid_concentration";
+            continue;
+        }
+        if (mode == "burial") {
+            const auto diagnostic = lsdtt::crn_burial_diagnostics_pair(
+                nuclide_fast, nuclide_slow, fast[i], slow[i], total_scaling, muon_scheme);
+            status[i] = lsdtt::crn_solve_status_token(diagnostic.status);
+            rate[i] = diagnostic.erate_preburial_g_cm2_yr;
+            age[i] = diagnostic.burial_age_yr;
+            measured_ratio[i] = diagnostic.ratio_measured;
+            steady_ratio[i] = diagnostic.ratio_ss_at_solution;
+            burial_required[i] = diagnostic.burial_required;
+        } else {
+            const auto diagnostic = lsdtt::crn_invert_step_change_pair(
+                nuclide_fast, nuclide_slow, fast[i], slow[i],
+                effective_erosion_rate_old_g_cm2_yr, total_scaling, muon_scheme);
+            status[i] = lsdtt::crn_solve_status_token(diagnostic.status);
+            rate[i] = diagnostic.erate_new_g_cm2_yr;
+            age[i] = diagnostic.time_since_change_yr;
+            predicted_fast[i] = diagnostic.conc_fast_predicted;
+            predicted_slow[i] = diagnostic.conc_slow_predicted;
+            n_brackets[i] = diagnostic.n_brackets;
+        }
+    }
+
+    const auto assign = [&result](const char* name, const auto& values) { result.attr("__setitem__")(name, nb::cast(values)); };
+    assign("crn_pair_status", status); assign("crn_fast_concentration_atoms_g", fast); assign("crn_slow_concentration_atoms_g", slow);
+    assign("crn_pair_erosion_rate_g_cm2_yr", rate); assign("crn_pair_time_yr", age);
+    if (mode == "burial") {
+        assign("crn_pair_measured_ratio", measured_ratio); assign("crn_pair_steady_state_ratio", steady_ratio);
+        assign("crn_pair_burial_required", burial_required);
+    } else {
+        assign("crn_pair_fast_predicted_atoms_g", predicted_fast); assign("crn_pair_slow_predicted_atoms_g", predicted_slow);
+        assign("crn_pair_n_brackets", n_brackets);
+    }
+    return result;
+}
+
 } // namespace
 
 void bind_cosmo_basin(nb::module_& module)
@@ -136,6 +209,17 @@ Points are projected to the flow-grid CRS, snapped to the nearest D8 channel
 meeting ``channel_threshold_pixels``, then inverted with the native CAIRN
 solver over each snapped outlet's exact upslope pixel set. Failed rows remain
 in the returned GeoDataFrame and are identified by ``crn_status``.)doc");
+    module.def("crn_pair_diagnostics", &crn_pair_diagnostics,
+        nb::arg("samples"), nb::arg("mode") = "burial", nb::arg("nuclide_fast") = "Al26",
+        nb::arg("nuclide_slow") = "Be10", nb::arg("concentration_fast_column") = "Al26_CONC",
+        nb::arg("concentration_slow_column") = "Be10_CONC", nb::arg("total_scaling") = 1.0,
+        nb::arg("muon_scheme") = "BraucherBorchers", nb::arg("effective_erosion_rate_old_g_cm2_yr") = 0.01,
+        R"doc(Apply native two-nuclide burial or step-change diagnostics to GeoDataFrame rows.
+
+``mode='burial'`` reports pre-burial erosion, burial age and ratio diagnostics.
+``mode='step_change'`` reports the new erosion rate, time since change, and
+forward-predicted pair concentrations. Invalid rows remain in place and carry
+``crn_pair_status='invalid_concentration'``.)doc");
 }
 
 } // namespace lsdtt3_python
