@@ -70,6 +70,16 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
         throw std::invalid_argument("cellular hillslope r_match must be in (0, 1)");
     if (!(options.cfl_safety > 0.0 && options.cfl_safety <= 1.0))
         throw std::invalid_argument("cellular hillslope cfl_safety must be in (0, 1]");
+    if (!(options.nonlocal_fraction >= 0.0 && options.nonlocal_fraction <= 1.0))
+        throw std::invalid_argument("cellular hillslope nonlocal_fraction must be in [0, 1]");
+    if (!(options.nonlocal_activation_ratio >= 0.0
+          && options.nonlocal_activation_ratio < 1.0))
+        throw std::invalid_argument("cellular hillslope nonlocal activation must be in [0, 1)");
+    if (!(options.nonlocal_deposition_probability > 0.0
+          && options.nonlocal_deposition_probability <= 1.0))
+        throw std::invalid_argument("cellular hillslope deposition probability must be in (0, 1]");
+    if (options.nonlocal_fraction > 0.0 && options.nonlocal_max_hops < 2)
+        throw std::invalid_argument("cellular hillslope nonlocal_max_hops must be >= 2");
     if (!(dt_total >= 0.0) || !std::isfinite(dt_total))
         throw std::invalid_argument("cellular hillslope dt_total must be finite and >= 0");
     if (options.max_substeps <= 0)
@@ -106,6 +116,12 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     ws.elevation_new.resize(n);
     ws.q_east.resize(n);
     ws.q_south.resize(n);
+    const bool nonlocal_enabled = options.nonlocal_fraction > 0.0;
+    if (nonlocal_enabled)
+    {
+        ws.q_nonlocal_east.resize(n);
+        ws.q_nonlocal_south.resize(n);
+    }
 
     auto fixed = [&](std::size_t i, int r, int c) -> bool
     {
@@ -131,7 +147,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
             const std::size_t i = static_cast<std::size_t>(flat);
             const int r = static_cast<int>(flat / nc);
             const int c = static_cast<int>(flat % nc);
-            double qe = 0.0, qs = 0.0;
+            double qe = 0.0, qs = 0.0, qne = 0.0, qns = 0.0;
 
             if (dem.get_mask()[i])
             {
@@ -147,7 +163,27 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
                         const double sn = (st.at(er, ec) - st.at(r, c)) / meta.cell_size;
                         const double stg = 0.5 * (st.slope_y(r, c) + st.slope_y(er, ec));
                         const double ratio = std::sqrt(sn * sn + stg * stg) / options.Sc;
-                        qe = -options.D * mobility(ratio, options.r_match) * sn;
+                        const double total_q =
+                            -options.D * mobility(ratio, options.r_match) * sn;
+                        if (nonlocal_enabled
+                            && ratio > options.nonlocal_activation_ratio)
+                        {
+                            const std::size_t source = total_q >= 0.0 ? i : ei;
+                            const int source_r = total_q >= 0.0 ? r : er;
+                            const int source_c = total_q >= 0.0 ? c : ec;
+                            if (!fixed(source, source_r, source_c))
+                            {
+                                const double ramp = std::min(1.0,
+                                    (ratio - options.nonlocal_activation_ratio)
+                                    / (1.0 - options.nonlocal_activation_ratio));
+                                const double excess = mobility(ratio, options.r_match)
+                                    - mobility(options.nonlocal_activation_ratio,
+                                               options.r_match);
+                                qne = -options.D * options.nonlocal_fraction * ramp
+                                    * excess * sn;
+                            }
+                        }
+                        qe = total_q - qne;
                         if (collect_diagnostics)
                         {
                             ++active;
@@ -174,7 +210,27 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
                         const double sn = (st.at(sr, sc) - st.at(r, c)) / meta.cell_size;
                         const double stg = 0.5 * (st.slope_x(r, c) + st.slope_x(sr, sc));
                         const double ratio = std::sqrt(sn * sn + stg * stg) / options.Sc;
-                        qs = -options.D * mobility(ratio, options.r_match) * sn;
+                        const double total_q =
+                            -options.D * mobility(ratio, options.r_match) * sn;
+                        if (nonlocal_enabled
+                            && ratio > options.nonlocal_activation_ratio)
+                        {
+                            const std::size_t source = total_q >= 0.0 ? i : si;
+                            const int source_r = total_q >= 0.0 ? r : sr;
+                            const int source_c = total_q >= 0.0 ? c : sc;
+                            if (!fixed(source, source_r, source_c))
+                            {
+                                const double ramp = std::min(1.0,
+                                    (ratio - options.nonlocal_activation_ratio)
+                                    / (1.0 - options.nonlocal_activation_ratio));
+                                const double excess = mobility(ratio, options.r_match)
+                                    - mobility(options.nonlocal_activation_ratio,
+                                               options.r_match);
+                                qns = -options.D * options.nonlocal_fraction * ramp
+                                    * excess * sn;
+                            }
+                        }
+                        qs = total_q - qns;
                         if (collect_diagnostics)
                         {
                             ++active;
@@ -193,6 +249,11 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
             {
                 ws.q_east[i] = qe;
                 ws.q_south[i] = qs;
+                if (nonlocal_enabled)
+                {
+                    ws.q_nonlocal_east[i] = qne;
+                    ws.q_nonlocal_south[i] = qns;
+                }
             }
         }
         return {active, r70, r80, r85, r100, max_r, max_tangent};
@@ -251,6 +312,130 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
             exported_height_sum += ws.elevation[i] + options.U * dt
                                  - ws.elevation_new[i];
         }
+
+        // Route only the split excess flux nonlocally. Routing reads the old
+        // substep field and applies transfers to elevation_new in stable flat
+        // face order, so stochastic/atomic accumulation cannot change the
+        // topography with thread count.
+        if (nonlocal_enabled)
+        {
+            auto route = [&](std::size_t a, int ar, int ac,
+                             std::size_t b, int br, int bc, double signed_q,
+                             int preferred_dr, int preferred_dc)
+            {
+                if (signed_q == 0.0) return;
+                const bool forward = signed_q > 0.0;
+                const std::size_t source = forward ? a : b;
+                int cr = forward ? br : ar;
+                int cc = forward ? bc : ac;
+                const double amount = std::fabs(signed_q) * dt / meta.cell_size;
+                const double volume = amount * meta.cell_size * meta.cell_size;
+                ws.elevation_new[source] -= amount;
+                ++result.nonlocal_face_events;
+                result.nonlocal_routed_volume += volume;
+
+                double remaining_amount = amount;
+                int hops = 1;
+                while (remaining_amount > 0.0)
+                {
+                    const std::size_t current = dom.index(cr, cc);
+                    if (fixed(current, cr, cc))
+                    {
+                        const double exported = remaining_amount
+                            * meta.cell_size * meta.cell_size;
+                        result.nonlocal_export_volume += exported;
+                        result.net_dirichlet_export_volume += exported;
+                        result.nonlocal_mean_hops += exported * hops;
+                        break;
+                    }
+
+                    if (hops >= options.nonlocal_max_hops)
+                    {
+                        ws.elevation_new[current] += remaining_amount;
+                        result.nonlocal_mean_hops += remaining_amount
+                            * meta.cell_size * meta.cell_size * hops;
+                        break;
+                    }
+
+                    // No deposition in the adjacent cell. From hop two onward,
+                    // geometric deposition gives a deterministic expected kernel.
+                    if (hops >= 2)
+                    {
+                        const double deposited = remaining_amount
+                            * options.nonlocal_deposition_probability;
+                        ws.elevation_new[current] += deposited;
+                        result.nonlocal_mean_hops += deposited
+                            * meta.cell_size * meta.cell_size * hops;
+                        remaining_amount -= deposited;
+                    }
+
+                    static constexpr int dr[4] = {-1, 0, 1, 0};
+                    static constexpr int dc[4] = {0, 1, 0, -1};
+                    int next_r = cr, next_c = cc;
+                    double next_z = ws.elevation[current];
+
+                    // Continue in the originating face direction while it is
+                    // downhill. This avoids an arbitrary E-before-S tie bias on
+                    // planar diagonal slopes. Turn only when the preferred path
+                    // is blocked or ceases to descend.
+                    int pr = cr, pc = cc;
+                    dom.neighbour(cr, cc, preferred_dr, preferred_dc, pr, pc);
+                    const std::size_t preferred = dom.index(pr, pc);
+                    if (preferred != current && dem.get_mask()[preferred]
+                        && ws.elevation[preferred] < next_z)
+                    {
+                        next_z = ws.elevation[preferred];
+                        next_r = pr;
+                        next_c = pc;
+                    }
+                    else for (int k = 0; k < 4; ++k)
+                    {
+                        int rr = cr, rc = cc;
+                        dom.neighbour(cr, cc, dr[k], dc[k], rr, rc);
+                        const std::size_t candidate = dom.index(rr, rc);
+                        if (candidate == current || !dem.get_mask()[candidate]) continue;
+                        if (ws.elevation[candidate] < next_z)
+                        {
+                            next_z = ws.elevation[candidate];
+                            next_r = rr;
+                            next_c = rc;
+                        }
+                    }
+                    if (next_r == cr && next_c == cc)
+                    {
+                        ws.elevation_new[current] += remaining_amount;
+                        result.nonlocal_mean_hops += remaining_amount
+                            * meta.cell_size * meta.cell_size * hops;
+                        break;
+                    }
+                    cr = next_r;
+                    cc = next_c;
+                    ++hops;
+                }
+            };
+
+            for (int r = 0; r < nr; ++r)
+                for (int c = 0; c < nc; ++c)
+                {
+                    const std::size_t i = dom.index(r, c);
+                    if (ws.q_nonlocal_east[i] != 0.0)
+                    {
+                        int er = r, ec = c;
+                        dom.neighbour(r, c, 0, 1, er, ec);
+                        route(i, r, c, dom.index(er, ec), er, ec,
+                              ws.q_nonlocal_east[i], 0,
+                              ws.q_nonlocal_east[i] > 0.0 ? 1 : -1);
+                    }
+                    if (ws.q_nonlocal_south[i] != 0.0)
+                    {
+                        int sr = r, sc = c;
+                        dom.neighbour(r, c, 1, 0, sr, sc);
+                        route(i, r, c, dom.index(sr, sc), sr, sc,
+                              ws.q_nonlocal_south[i],
+                              ws.q_nonlocal_south[i] > 0.0 ? 1 : -1, 0);
+                    }
+                }
+        }
         result.net_dirichlet_export_volume +=
             exported_height_sum * meta.cell_size * meta.cell_size;
         ws.elevation.swap(ws.elevation_new);
@@ -263,6 +448,8 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     result.final_max_slope_ratio = final_scan.max_r;
     result.completed = remaining == 0.0;
     result.message = result.completed ? "completed" : "maximum substeps reached";
+    if (result.nonlocal_routed_volume > 0.0)
+        result.nonlocal_mean_hops /= result.nonlocal_routed_volume;
 
     std::vector<float> output(n);
 #ifdef _OPENMP
@@ -287,6 +474,8 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport_multirate(
         throw std::invalid_argument("cellular multirate D must be finite and > 0");
     if (options.U != 0.0)
         throw std::invalid_argument("cellular multirate requires U=0; uplift is a separate LEM process");
+    if (options.nonlocal_fraction != 0.0)
+        throw std::invalid_argument("cellular multirate does not support nonlocal transport");
     if (!(options.Sc > 0.0) || !std::isfinite(options.Sc))
         throw std::invalid_argument("cellular multirate Sc must be finite and > 0");
     if (!(options.r_match > 0.0 && options.r_match < 1.0))

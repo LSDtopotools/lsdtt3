@@ -1936,6 +1936,14 @@ add_executable(cellular-hillslope-grid-scaling
                cpp/cellular_hillslope_grid_scaling.cpp)
 target_link_libraries(cellular-hillslope-grid-scaling PRIVATE lsdtt3_cpu)
 
+add_executable(cellular-hillslope-nonlocal-benchmark
+               cpp/cellular_hillslope_nonlocal_benchmark.cpp)
+target_link_libraries(cellular-hillslope-nonlocal-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-nonlocal-lem-benchmark
+               cpp/cellular_hillslope_nonlocal_lem_benchmark.cpp)
+target_link_libraries(cellular-hillslope-nonlocal-lem-benchmark PRIVATE lsdtt3_cpu)
+
 add_test(NAME unit_cellular_hillslope_common_limit
          COMMAND cellular-hillslope-common-limit)
 set_tests_properties(unit_cellular_hillslope_common_limit PROPERTIES

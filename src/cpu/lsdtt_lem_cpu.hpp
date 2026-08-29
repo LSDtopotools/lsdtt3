@@ -130,6 +130,10 @@ struct lsdtt_lem_options
     // Internal experimental cellular path. Ignored by every other model.
     double cellular_r_match = 0.85;
     double cellular_cfl_safety = 0.8;
+    double cellular_nonlocal_fraction = 0.0;
+    double cellular_nonlocal_activation_ratio = 0.8;
+    double cellular_nonlocal_deposition_probability = 0.5;
+    int cellular_nonlocal_max_hops = 4;
 
     // Optional explicit channel (Dirichlet) mask for the hillslope step: cell != 0
     // marks a fixed-elevation channel pixel.  Empty (default) = derive is_channel

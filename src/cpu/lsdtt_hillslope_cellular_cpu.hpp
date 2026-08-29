@@ -25,6 +25,13 @@ struct lsdtt_hillslope_cellular_options
     double Sc = 0.8;
     double r_match = 0.85;
     double cfl_safety = 0.9;
+
+    // Optional deterministic nonlocal split of near-critical excess flux.
+    // Zero fraction preserves the local solver bit-for-bit.
+    double nonlocal_fraction = 0.0;
+    double nonlocal_activation_ratio = 0.8;
+    double nonlocal_deposition_probability = 0.5;
+    int nonlocal_max_hops = 4;
     std::string boundary_conditions = "oooo";
     long max_substeps = 1000000;
     int max_multirate_level = 20;
@@ -37,6 +44,8 @@ struct lsdtt_hillslope_cellular_workspace
     std::vector<double> elevation_new;
     std::vector<double> q_east;
     std::vector<double> q_south;
+    std::vector<double> q_nonlocal_east;
+    std::vector<double> q_nonlocal_south;
 
     // Multirate edge schedule, retained to avoid repeated allocations.
     std::vector<std::size_t> edge_a;
@@ -72,6 +81,10 @@ struct lsdtt_hillslope_cellular_result
     // Positive means net volume left solved cells through a channel or 'o' cell.
     // On a closed domain this should be zero to round-off.
     double net_dirichlet_export_volume = 0.0;
+    long long nonlocal_face_events = 0;
+    double nonlocal_routed_volume = 0.0;
+    double nonlocal_export_volume = 0.0;
+    double nonlocal_mean_hops = 0.0;
 
     bool completed = false;
     std::string message;

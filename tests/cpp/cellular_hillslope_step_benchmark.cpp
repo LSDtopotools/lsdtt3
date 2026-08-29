@@ -49,9 +49,9 @@ void differences(const lsdtt::lsdtt_raster_cpu& a,
 
 int main(int argc, char** argv)
 {
-    if (argc < 2 || argc > 8)
+    if (argc < 2 || argc > 10)
     {
-        std::cerr << "usage: cellular-hillslope-step-benchmark DEM [D] [Sc] [dt] [threads] [cfl_safety] [newton_dt_max]\n";
+        std::cerr << "usage: cellular-hillslope-step-benchmark DEM [D] [Sc] [dt] [threads] [cfl_safety] [newton_dt_max] [nonlocal_fraction] [nonlocal_max_hops]\n";
         return 2;
     }
 
@@ -61,6 +61,8 @@ int main(int argc, char** argv)
     const int threads = argc > 5 ? std::stoi(argv[5]) : 4;
     const double safety = argc > 6 ? std::stod(argv[6]) : 0.8;
     const double newton_dt_max = argc > 7 ? std::stod(argv[7]) : dt;
+    const double nonlocal_fraction = argc > 8 ? std::stod(argv[8]) : 0.0;
+    const int nonlocal_max_hops = argc > 9 ? std::stoi(argv[9]) : 4;
 
     lsdtt::lsdtt_data_loader loader;
     try { loader.open_raster(argv[1]); }
@@ -79,6 +81,8 @@ int main(int argc, char** argv)
     co.cfl_safety = safety;
     co.boundary_conditions = "opop";
     co.n_threads = threads;
+    co.nonlocal_fraction = nonlocal_fraction;
+    co.nonlocal_max_hops = nonlocal_max_hops;
     lsdtt::lsdtt_hillslope_cellular_workspace cws;
 
     const auto cellular_start = clock_type::now();
@@ -86,11 +90,16 @@ int main(int argc, char** argv)
         dem, no_channels, dt, co, &cws);
     const double cellular_ms = elapsed_ms(cellular_start);
 
-    lsdtt::lsdtt_hillslope_cellular_workspace mws;
-    const auto multirate_start = clock_type::now();
-    const auto multirate = lsdtt::compute_hillslope_cellular_transport_multirate(
-        dem, no_channels, dt, co, &mws);
-    const double multirate_ms = elapsed_ms(multirate_start);
+    lsdtt::lsdtt_hillslope_cellular_result multirate;
+    double multirate_ms = -1.0;
+    if (nonlocal_fraction == 0.0)
+    {
+        lsdtt::lsdtt_hillslope_cellular_workspace mws;
+        const auto multirate_start = clock_type::now();
+        multirate = lsdtt::compute_hillslope_cellular_transport_multirate(
+            dem, no_channels, dt, co, &mws);
+        multirate_ms = elapsed_ms(multirate_start);
+    }
 
     lsdtt::lsdtt_hillslope_newton_transient_options no;
     no.newton.D = static_cast<float>(D);
@@ -115,10 +124,13 @@ int main(int argc, char** argv)
     double multirate_linf = 0.0, multirate_rms = 0.0;
     double multirate_global_linf = 0.0, multirate_global_rms = 0.0;
     differences(cellular.elevation, newton.elevation, linf, rms);
-    differences(multirate.elevation, newton.elevation,
-                multirate_linf, multirate_rms);
-    differences(multirate.elevation, cellular.elevation,
-                multirate_global_linf, multirate_global_rms);
+    if (nonlocal_fraction == 0.0)
+    {
+        differences(multirate.elevation, newton.elevation,
+                    multirate_linf, multirate_rms);
+        differences(multirate.elevation, cellular.elevation,
+                    multirate_global_linf, multirate_global_rms);
+    }
 
     std::cout << "cells," << dem.get_data().size() << '\n'
               << "D," << D << '\n'
@@ -127,10 +139,16 @@ int main(int argc, char** argv)
               << "threads," << threads << '\n'
               << "cfl_safety," << safety << '\n'
               << "newton_dt_max," << newton_dt_max << '\n'
+              << "nonlocal_fraction," << nonlocal_fraction << '\n'
+              << "nonlocal_max_hops," << nonlocal_max_hops << '\n'
               << "cellular_completed," << (cellular.completed ? 1 : 0) << '\n'
               << "cellular_ms," << cellular_ms << '\n'
               << "cellular_substeps," << cellular.n_substeps << '\n'
               << "cellular_face_evaluations," << cellular.n_face_evaluations << '\n'
+              << "nonlocal_face_events," << cellular.nonlocal_face_events << '\n'
+              << "nonlocal_routed_volume," << cellular.nonlocal_routed_volume << '\n'
+              << "nonlocal_export_volume," << cellular.nonlocal_export_volume << '\n'
+              << "nonlocal_mean_hops," << cellular.nonlocal_mean_hops << '\n'
               << "multirate_completed," << (multirate.completed ? 1 : 0) << '\n'
               << "multirate_ms," << multirate_ms << '\n'
               << "multirate_max_level," << multirate.max_multirate_level << '\n'
@@ -145,15 +163,20 @@ int main(int argc, char** argv)
               << "newton_substeps," << newton.n_substeps << '\n'
               << "newton_iterations," << newton.total_newton_iters << '\n'
               << "speedup_newton_over_cellular," << newton_ms / cellular_ms << '\n'
-              << "speedup_newton_over_multirate," << newton_ms / multirate_ms << '\n'
+              << "speedup_newton_over_multirate,"
+              << (multirate_ms > 0.0 ? newton_ms / multirate_ms : -1.0) << '\n'
               << "event_reduction_global_over_multirate,"
-              << static_cast<double>(cellular.n_face_evaluations)
-                    / static_cast<double>(multirate.n_face_events) << '\n'
+              << (multirate.n_face_events > 0
+                    ? static_cast<double>(cellular.n_face_evaluations)
+                        / static_cast<double>(multirate.n_face_events)
+                    : -1.0) << '\n'
               << "linf_cellular_minus_newton_m," << linf << '\n'
               << "rms_cellular_minus_newton_m," << rms << '\n'
               << "linf_multirate_minus_newton_m," << multirate_linf << '\n'
               << "rms_multirate_minus_newton_m," << multirate_rms << '\n'
               << "linf_multirate_minus_global_m," << multirate_global_linf << '\n'
               << "rms_multirate_minus_global_m," << multirate_global_rms << '\n';
-    return cellular.completed && multirate.completed && newton.converged ? 0 : 1;
+    return cellular.completed
+        && (nonlocal_fraction != 0.0 || multirate.completed)
+        && newton.converged ? 0 : 1;
 }

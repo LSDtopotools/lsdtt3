@@ -58,6 +58,14 @@ double linf(const lsdtt::lsdtt_raster_cpu& a, const lsdtt::lsdtt_raster_cpu& b)
     return out;
 }
 
+double elevation_sum(const lsdtt::lsdtt_raster_cpu& dem)
+{
+    double out = 0.0;
+    for (std::size_t i = 0; i < dem.get_data().size(); ++i)
+        if (dem.get_mask()[i]) out += dem.get_data()[i];
+    return out;
+}
+
 std::vector<std::uint8_t> strip_channels(
     const lsdtt::lsdtt_raster_cpu& channel_raster)
 {
@@ -432,12 +440,48 @@ int main()
 
         const auto coupled_result = run_lem_step(
             slope_dem, coupled, fixed_bottom, nullptr, &lem_ws);
-        auto no_hillslope = coupled;
-        no_hillslope.enable_hillslope_transport = false;
-        const auto fluvial_only = run_lem_step(
-            slope_dem, no_hillslope, fixed_bottom);
-        check(linf(coupled_result.first, fluvial_only.first) > 0.0,
+
+        // Rebuild the orchestrated result process by process. This both pins
+        // ordering and exposes a separate volume budget for each process.
+        auto fluvial_options = coupled;
+        fluvial_options.enable_hillslope_transport = false;
+        fluvial_options.enable_uplift = false;
+        const auto fluvial = run_lem_step(
+            slope_dem, fluvial_options, {});
+
+        auto coupled_cellular_options = cellular_options("nnnn");
+        coupled_cellular_options.D = coupled.hillslope_diffusivity;
+        coupled_cellular_options.Sc = coupled.critical_hillslope_slope;
+        coupled_cellular_options.r_match = coupled.cellular_r_match;
+        coupled_cellular_options.cfl_safety = coupled.cellular_cfl_safety;
+        coupled_cellular_options.n_threads = coupled.n_threads;
+        const auto hillslope = compute_hillslope_cellular_transport(
+            fluvial.first, {}, coupled.timestep, coupled_cellular_options);
+
+        lsdtt_raster_cpu manual = hillslope.elevation;
+        for (std::size_t i = 0; i < manual.get_data().size(); ++i)
+            if (manual.get_mask()[i])
+                manual.get_data()[i] += coupled.uplift_rate * coupled.timestep;
+        for (std::int64_t i : fixed_bottom)
+            manual.get_data()[static_cast<std::size_t>(i)] =
+                slope_dem.get_data()[static_cast<std::size_t>(i)];
+
+        check(linf(coupled_result.first, fluvial.first) > 0.0,
               "cellular transport acts after fluvial incision in coupled mode");
+        check(linf(coupled_result.first, manual) == 0.0,
+              "manual fluvial-cellular-uplift-restore sequence equals run_lem_step");
+
+        const double cell_area = DX * DX;
+        const double fluvial_removed =
+            (elevation_sum(slope_dem) - elevation_sum(fluvial.first)) * cell_area;
+        const double hillslope_export =
+            (elevation_sum(fluvial.first) - elevation_sum(hillslope.elevation)) * cell_area;
+        check(fluvial_removed > 0.0,
+              "coupled process budget records positive fluvial removal");
+        check(std::fabs(hillslope_export) < 1e-3,
+              "coupled closed hillslope redistribution conserves volume");
+        check(std::fabs(hillslope.net_dirichlet_export_volume) < 1e-9,
+              "cellular internal export diagnostic closes the hillslope budget");
         bool bottom_restored = true;
         for (std::int64_t i : fixed_bottom)
             if (coupled_result.first.get_data()[static_cast<std::size_t>(i)]
@@ -447,6 +491,130 @@ int main()
               "fixed base-level row is restored after fluvial, cellular and uplift processes");
         check(std::isfinite(coupled_result.second.mean_erosion_rate),
               "coupled cellular LEM reports finite erosion statistics");
+    }
+
+    // C8: deterministic bounded nonlocal transport preserves the local law
+    // below activation, conserves mass, and terminates at fixed channels.
+    {
+        const lsdtt_raster_cpu low = periodic_dem(13, 17);
+        auto local_options = cellular_options("pppp");
+        auto nonlocal_options = local_options;
+        nonlocal_options.nonlocal_fraction = 0.75;
+        nonlocal_options.nonlocal_activation_ratio = 0.8;
+        nonlocal_options.nonlocal_deposition_probability = 0.5;
+        nonlocal_options.nonlocal_max_hops = 4;
+        const auto local_low = compute_hillslope_cellular_transport(
+            low, {}, 20.0, local_options);
+        const auto nonlocal_low = compute_hillslope_cellular_transport(
+            low, {}, 20.0, nonlocal_options);
+        check(nonlocal_low.nonlocal_face_events == 0,
+              "nonlocal transport is inactive below its slope threshold");
+        check(linf(local_low.elevation, nonlocal_low.elevation) == 0.0,
+              "nonlocal mode leaves low-slope topography bit-identical");
+
+        constexpr int nr = 17, nc = 33;
+        std::vector<float> peak_z(static_cast<std::size_t>(nr) * nc, 0.0f);
+        std::vector<std::uint8_t> peak_mask(peak_z.size(), 1u);
+        peak_z[static_cast<std::size_t>(nr / 2) * nc + nc / 2] = 6.0f;
+        const lsdtt_raster_cpu peak(
+            std::move(peak_z), std::move(peak_mask), meta(nr, nc));
+        auto nl_one_options = cellular_options("nnnn");
+        nl_one_options.nonlocal_fraction = 0.75;
+        nl_one_options.nonlocal_activation_ratio = 0.8;
+        nl_one_options.nonlocal_deposition_probability = 0.5;
+        nl_one_options.nonlocal_max_hops = 4;
+        nl_one_options.n_threads = 1;
+        auto nl_four_options = nl_one_options;
+        nl_four_options.n_threads = 4;
+        const auto peak_local = compute_hillslope_cellular_transport(
+            peak, {}, 0.1, cellular_options("nnnn"));
+        const auto peak_one = compute_hillslope_cellular_transport(
+            peak, {}, 0.1, nl_one_options);
+        const auto peak_four = compute_hillslope_cellular_transport(
+            peak, {}, 0.1, nl_four_options);
+        check(peak_one.completed && peak_one.nonlocal_face_events > 0
+              && peak_one.nonlocal_routed_volume > 0.0,
+              "supercritical patch activates nonlocal routing");
+        check(std::fabs(peak_one.net_dirichlet_export_volume) < 1e-9
+              && peak_one.nonlocal_export_volume == 0.0,
+              "closed nonlocal routing conserves volume");
+        check(peak_one.nonlocal_mean_hops >= 1.0
+              && peak_one.nonlocal_mean_hops <= nl_one_options.nonlocal_max_hops,
+              "nonlocal mean hop count remains within configured bounds");
+        check(linf(peak_one.elevation, peak_four.elevation) == 0.0,
+              "nonlocal topography is deterministic across thread counts");
+
+        constexpr int rr = 5, cc = 9;
+        std::vector<float> ramp_z(static_cast<std::size_t>(rr) * cc, 0.0f);
+        std::vector<std::uint8_t> ramp_mask(ramp_z.size(), 1u);
+        std::vector<std::uint8_t> ramp_channel(ramp_z.size(), 0u);
+        for (int r = 0; r < rr; ++r)
+            for (int c = 0; c < cc; ++c)
+            {
+                ramp_z[static_cast<std::size_t>(r) * cc + c] =
+                    static_cast<float>(4.5 * (cc - 1 - c));
+                if (c == cc - 1)
+                    ramp_channel[static_cast<std::size_t>(r) * cc + c] = 1u;
+            }
+        const lsdtt_raster_cpu ramp(
+            std::move(ramp_z), std::move(ramp_mask), meta(rr, cc));
+        auto ramp_options = cellular_options("nnnn");
+        ramp_options.nonlocal_fraction = 1.0;
+        ramp_options.nonlocal_activation_ratio = 0.7;
+        ramp_options.nonlocal_deposition_probability = 0.1;
+        ramp_options.nonlocal_max_hops = 8;
+        const auto routed = compute_hillslope_cellular_transport(
+            ramp, ramp_channel, 0.01, ramp_options);
+        auto hop2_options = ramp_options;
+        hop2_options.nonlocal_max_hops = 2;
+        auto hop4_options = ramp_options;
+        hop4_options.nonlocal_max_hops = 4;
+        const auto hop2 = compute_hillslope_cellular_transport(
+            ramp, ramp_channel, 0.01, hop2_options);
+        const auto hop4 = compute_hillslope_cellular_transport(
+            ramp, ramp_channel, 0.01, hop4_options);
+        auto ramp_local_options = cellular_options("nnnn");
+        const auto ramp_local = compute_hillslope_cellular_transport(
+            ramp, ramp_channel, 0.01, ramp_local_options);
+        check(linf(routed.elevation, ramp_local.elevation) > 0.0,
+              "nonlocal routing changes deposition along a continuing slope");
+        check(routed.nonlocal_export_volume > 0.0,
+              "nonlocal paths stop and export at the first fixed channel");
+        check(hop2.nonlocal_mean_hops <= hop4.nonlocal_mean_hops
+              && hop4.nonlocal_mean_hops <= routed.nonlocal_mean_hops,
+              "mean travel distance increases with the bounded hop scale");
+        bool channel_held = true;
+        for (std::size_t i = 0; i < ramp_channel.size(); ++i)
+            if (ramp_channel[i] && routed.elevation.get_data()[i] != ramp.get_data()[i])
+                channel_held = false;
+        check(channel_held, "nonlocal interception does not alter fixed channel cells");
+
+        constexpr int dn = 9;
+        std::vector<float> diagonal_z(static_cast<std::size_t>(dn) * dn, 0.0f);
+        std::vector<std::uint8_t> diagonal_mask(diagonal_z.size(), 1u);
+        std::vector<std::uint8_t> diagonal_channels(diagonal_z.size(), 0u);
+        for (int r = 0; r < dn; ++r)
+            for (int c = 0; c < dn; ++c)
+            {
+                diagonal_z[static_cast<std::size_t>(r) * dn + c] =
+                    static_cast<float>(3.2 * (2 * dn - 2 - r - c));
+                if (r == dn - 1 || c == dn - 1)
+                    diagonal_channels[static_cast<std::size_t>(r) * dn + c] = 1u;
+            }
+        const lsdtt_raster_cpu diagonal(
+            std::move(diagonal_z), std::move(diagonal_mask), meta(dn, dn));
+        const auto diagonal_result = compute_hillslope_cellular_transport(
+            diagonal, diagonal_channels, 0.01, ramp_options);
+        double transpose_error = 0.0;
+        for (int r = 0; r < dn; ++r)
+            for (int c = 0; c < dn; ++c)
+                transpose_error = std::max(transpose_error, std::fabs(
+                    static_cast<double>(diagonal_result.elevation.get_data()[
+                        static_cast<std::size_t>(r) * dn + c])
+                    - diagonal_result.elevation.get_data()[
+                        static_cast<std::size_t>(c) * dn + r]));
+        check(transpose_error < 1e-6,
+              "nonlocal routing preserves transpose symmetry on a diagonal slope");
     }
 
     std::cout << "\n" << (g_checks - g_failures) << " / " << g_checks

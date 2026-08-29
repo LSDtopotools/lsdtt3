@@ -393,6 +393,14 @@ run_lem_step(
                 cellular_options.Sc = opts.critical_hillslope_slope;
                 cellular_options.r_match = opts.cellular_r_match;
                 cellular_options.cfl_safety = opts.cellular_cfl_safety;
+                cellular_options.nonlocal_fraction =
+                    opts.cellular_nonlocal_fraction;
+                cellular_options.nonlocal_activation_ratio =
+                    opts.cellular_nonlocal_activation_ratio;
+                cellular_options.nonlocal_deposition_probability =
+                    opts.cellular_nonlocal_deposition_probability;
+                cellular_options.nonlocal_max_hops =
+                    opts.cellular_nonlocal_max_hops;
                 cellular_options.boundary_conditions = opts.boundary_conditions;
                 cellular_options.n_threads = opts.n_threads;
                 const lsdtt_hillslope_cellular_result cellular =
