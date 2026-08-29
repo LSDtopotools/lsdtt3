@@ -212,7 +212,8 @@ run_lem_step(
     // passing one turns per-step assemble/analyse/factorise/solve into a solve.
     // Passing nullptr disables caching and changes nothing else.
     lsdtt_hillslope_newton_workspace* hillslope_ws = nullptr,
-    lsdtt_hillslope_cellular_workspace* cellular_ws = nullptr
+    lsdtt_hillslope_cellular_workspace* cellular_ws = nullptr,
+    lsdtt_hillslope_particle_tracker* particle_tracker = nullptr
 );
 
 // ---------------------------------------------------------------------------

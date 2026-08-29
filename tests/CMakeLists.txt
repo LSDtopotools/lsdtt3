@@ -743,6 +743,52 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_lem_hillslope_on_loaded_dem_cs_coupled PROPERTIES
     LABELS "smoke;cli;hillslope")
 
+add_lsdtt_cli_smoke_test(
+    smoke_lem_cellular_particles
+    lsdtt-lem
+    lem_cellular_particles.param.in
+    cellular_modelled_topography.tif
+    --expect cellular_cellular_particles.csv
+    --expect-file-contains "cellular_cellular_particles.csv:id,cell,weight,source_id,age_yr,distance_cells,status,mixing_depth,seed,substep_index"
+    --stdout-contains "Hillslope transp. : on  (model=cellular"
+    --stdout-contains "Writing cellular particles:"
+)
+set_tests_properties(smoke_lem_cellular_particles PROPERTIES
+    LABELS "smoke;cli;hillslope;cellular"
+    FIXTURES_SETUP cellular_particle_fixture)
+
+add_test(
+    NAME smoke_lem_cellular_particles_restart
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+            --exe "$<TARGET_FILE:lsdtt-lem>"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/lem_cellular_particles_restart.param.in"
+            --read-path "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_cellular_particles/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_cellular_particles_restart"
+            --expect cellularrestart_modelled_topography.tif
+            --expect cellularrestart_cellular_particles.csv
+            --stdout-contains "Loading cellular particles:"
+)
+set_tests_properties(smoke_lem_cellular_particles_restart PROPERTIES
+    LABELS "smoke;cli;hillslope;cellular"
+    FIXTURES_REQUIRED cellular_particle_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_lem_cellular_particles_wrong_model
+    lsdtt-lem
+    lem_cellular_particles_wrong_model.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "enable_cellular_particles requires hillslope_model: cellular"
+)
+add_lsdtt_cli_smoke_test(
+    failure_lem_unknown_hillslope_model
+    lsdtt-lem
+    lem_unknown_hillslope_model.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "unknown hillslope_model 'typo_cellular'"
+)
+
 # The mode selects WHICH surface the solve runs on; it does not switch the solve
 # on. Asking for one without the other is a configuration error, not a silent
 # no-op.
@@ -1943,6 +1989,19 @@ target_link_libraries(cellular-hillslope-nonlocal-benchmark PRIVATE lsdtt3_cpu)
 add_executable(cellular-hillslope-nonlocal-lem-benchmark
                cpp/cellular_hillslope_nonlocal_lem_benchmark.cpp)
 target_link_libraries(cellular-hillslope-nonlocal-lem-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-particle-benchmark
+               cpp/cellular_hillslope_particle_benchmark.cpp)
+target_link_libraries(cellular-hillslope-particle-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(lsdtt-test-hillslope-particle-io
+               cpp/test_hillslope_particle_io.cpp)
+target_link_libraries(lsdtt-test-hillslope-particle-io PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hillslope_particle_io
+         COMMAND lsdtt-test-hillslope-particle-io
+                 ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+set_tests_properties(unit_hillslope_particle_io PROPERTIES
+                     LABELS "unit;hillslope;cellular")
 
 add_test(NAME unit_cellular_hillslope_common_limit
          COMMAND cellular-hillslope-common-limit)

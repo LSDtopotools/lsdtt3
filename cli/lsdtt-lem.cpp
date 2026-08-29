@@ -52,6 +52,7 @@
 #include "../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
+#include "../src/cpu/lsdtt_hillslope_particle_io.hpp"
 #include "../src/cpu/lsdtt_hillslope_peclet_cpu.hpp"
 #include "../src/cpu/lsdtt_lem_timestep_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
@@ -598,7 +599,10 @@ int main(int argc, char* argv[])
 
     string_default_map["hillslope_model"] = "cidre";
     help_map["hillslope_model"] = {"string","cidre",
-        "Hillslope transport model: roering_implicit, cidre, or adi.",
+        "Hillslope transport model: cellular, roering_implicit, cidre, or adi.",
+        "cellular: conservative soft-critical face transfers with optional bounded "
+        "nonlocal transport and sparse Lagrangian tracing; permits finite-lived "
+        "slopes above Sc and is the recommended fast nonlinear transient model. "
         "roering_implicit: unconditionally-stable implicit solver for the Roering (1999) "
         "nonlinear law. Steady-state runs use Newton; transient runs use backward Euler "
         "with adaptive sub-stepping. Channels are Dirichlet sinks from the area threshold "
@@ -614,6 +618,56 @@ int main(int argc, char* argv[])
         "builds without Eigen; both are redirected to roering_implicit with a warning. "
         "Requires enable_hillslope_transport.",
         "Process switches", "param", ""};
+
+    float_default_map["cellular_r_match"] = 0.85f;
+    help_map["cellular_r_match"] = {"float","0.85",
+        "Slope ratio below which cellular transport exactly follows Roering.",
+        "Above this ratio the mobility follows a finite tangent continuation.",
+        "Cellular hillslopes", "param", "hillslope_model=cellular"};
+    float_default_map["cellular_cfl_safety"] = 0.8f;
+    help_map["cellular_cfl_safety"] = {"float","0.8",
+        "Explicit cellular stability safety factor in (0,1].", "",
+        "Cellular hillslopes", "param", "hillslope_model=cellular"};
+    float_default_map["cellular_nonlocal_fraction"] = 0.0f;
+    help_map["cellular_nonlocal_fraction"] = {"float","0",
+        "Fraction [0,1] of near-critical excess flux routed nonlocally.",
+        "Zero gives local soft-critical transport.",
+        "Cellular hillslopes", "param", "hillslope_model=cellular"};
+    float_default_map["cellular_nonlocal_activation_ratio"] = 0.8f;
+    help_map["cellular_nonlocal_activation_ratio"] = {"float","0.8",
+        "Slope ratio at which nonlocal routing begins.", "",
+        "Cellular hillslopes", "param", "cellular_nonlocal_fraction>0"};
+    float_default_map["cellular_nonlocal_deposition_probability"] = 0.5f;
+    help_map["cellular_nonlocal_deposition_probability"] = {"float","0.5",
+        "Per-cell geometric deposition probability for nonlocal volume.", "",
+        "Cellular hillslopes", "param", "cellular_nonlocal_fraction>0"};
+    int_default_map["cellular_nonlocal_max_hops"] = 4;
+    help_map["cellular_nonlocal_max_hops"] = {"int","4",
+        "Maximum nonlocal travel distance in cells (>=2).", "",
+        "Cellular hillslopes", "param", "cellular_nonlocal_fraction>0"};
+    bool_default_map["enable_cellular_particles"] = false;
+    help_map["enable_cellular_particles"] = {"bool","false",
+        "Track sparse Lagrangian sediment superparticles.",
+        "Only valid with hillslope_model=cellular.",
+        "Cellular particle tracing", "switch", "hillslope_model=cellular"};
+    int_default_map["cellular_particle_inverse_density"] = 100;
+    help_map["cellular_particle_inverse_density"] = {"int","100",
+        "Active cells represented per seeded superparticle.",
+        "100 is the validated standard; smaller values seed more particles.",
+        "Cellular particle tracing", "param", "enable_cellular_particles"};
+    float_default_map["cellular_particle_mixing_depth"] = 1.0f;
+    help_map["cellular_particle_mixing_depth"] = {"float","1",
+        "Well-mixed active-layer depth represented by particles (m).", "",
+        "Cellular particle tracing", "param", "enable_cellular_particles"};
+    int_default_map["cellular_particle_seed"] = 1;
+    help_map["cellular_particle_seed"] = {"int","1",
+        "Deterministic particle sampling seed.", "",
+        "Cellular particle tracing", "param", "enable_cellular_particles"};
+    string_default_map["cellular_particle_restart_fname"] = "";
+    help_map["cellular_particle_restart_fname"] = {"string","",
+        "Particle CSV to restart from, relative to read_path.",
+        "Empty seeds a new population.",
+        "Cellular particle tracing", "file", "enable_cellular_particles"};
 
     // --- roering_implicit solver knobs (used only when hillslope_model = roering_implicit) ---
     float_default_map["hillslope_implicit_relaxation_omega"] = 0.7f;
@@ -1183,6 +1237,58 @@ int main(int argc, char* argv[])
     opts.enable_uplift                   = bf["enable_uplift"];
     opts.boundary_conditions             = sf["boundary_conditions"];
     opts.n_threads                       = ifs["n_threads"];
+    opts.cellular_r_match                = ff["cellular_r_match"];
+    opts.cellular_cfl_safety             = ff["cellular_cfl_safety"];
+    opts.cellular_nonlocal_fraction      = ff["cellular_nonlocal_fraction"];
+    opts.cellular_nonlocal_activation_ratio =
+        ff["cellular_nonlocal_activation_ratio"];
+    opts.cellular_nonlocal_deposition_probability =
+        ff["cellular_nonlocal_deposition_probability"];
+    opts.cellular_nonlocal_max_hops      = ifs["cellular_nonlocal_max_hops"];
+
+    const std::vector<std::string> valid_hillslope_models = {
+        "cellular", "roering_implicit", "cidre", "adi", "linear", "roering"};
+    if (std::find(valid_hillslope_models.begin(), valid_hillslope_models.end(),
+                  opts.hillslope_transport_model) == valid_hillslope_models.end())
+    {
+        std::cerr << "FATAL: unknown hillslope_model '"
+                  << opts.hillslope_transport_model << "'.\n";
+        return 1;
+    }
+    if (bf["enable_cellular_particles"]
+        && opts.hillslope_transport_model != "cellular")
+    {
+        std::cerr << "FATAL: enable_cellular_particles requires "
+                     "hillslope_model: cellular.\n";
+        return 1;
+    }
+    if (bf["enable_cellular_particles"]
+        && (!opts.enable_hillslope_transport
+            || ifs["cellular_particle_inverse_density"] <= 0
+            || ff["cellular_particle_mixing_depth"] <= 0.0f
+            || ifs["cellular_particle_seed"] < 0))
+    {
+        std::cerr << "FATAL: cellular particles require enabled hillslope transport, "
+                     "positive inverse density/mixing depth, and a non-negative seed.\n";
+        return 1;
+    }
+    if (opts.hillslope_transport_model == "cellular"
+        && (!(opts.cellular_r_match > 0.0 && opts.cellular_r_match < 1.0)
+            || !(opts.cellular_cfl_safety > 0.0 && opts.cellular_cfl_safety <= 1.0)
+            || !(opts.cellular_nonlocal_fraction >= 0.0
+                 && opts.cellular_nonlocal_fraction <= 1.0)
+            || !(opts.cellular_nonlocal_activation_ratio >= 0.0
+                 && opts.cellular_nonlocal_activation_ratio < 1.0)
+            || !(opts.cellular_nonlocal_deposition_probability > 0.0
+                 && opts.cellular_nonlocal_deposition_probability <= 1.0)
+            || (opts.cellular_nonlocal_fraction > 0.0
+                && opts.cellular_nonlocal_max_hops < 2)))
+    {
+        std::cerr << "FATAL: invalid cellular hillslope parameters; require "
+                     "0<r_match<1, 0<cfl_safety<=1, fractions/probabilities in "
+                     "range, and max_hops>=2 when nonlocal transport is enabled.\n";
+        return 1;
+    }
 
     // roering_implicit solver knobs (D/U/Sc/nonlinear/BC/threads are set in the LEM
     // step from the options above; these fill the rest of the implicit options).
@@ -2694,6 +2800,48 @@ int main(int argc, char* argv[])
                   << fixed_flats.size() << "\n";
     }
 
+    lsdtt::lsdtt_hillslope_particle_tracker particle_tracker;
+    lsdtt::lsdtt_hillslope_particle_tracker* particle_tracker_ptr = nullptr;
+    if (bf["enable_cellular_particles"])
+    {
+        try
+        {
+            if (!sf["cellular_particle_restart_fname"].empty())
+            {
+                const std::string restart_path = pp.get_read_path()
+                    + sf["cellular_particle_restart_fname"];
+                std::cout << "Loading cellular particles: " << restart_path << "\n";
+                particle_tracker =
+                    lsdtt::load_hillslope_particles_csv(restart_path);
+            }
+            else
+            {
+                std::vector<std::uint8_t> excluded(dem.get_data().size(), 0u);
+                const std::vector<std::uint8_t> channels =
+                    lsdtt::compute_lem_channel_mask(dem, opts);
+                for (std::size_t i = 0; i < excluded.size(); ++i)
+                    excluded[i] = channels[i];
+                for (std::int64_t flat : fixed_flats)
+                    if (flat >= 0 && static_cast<std::size_t>(flat) < excluded.size())
+                        excluded[static_cast<std::size_t>(flat)] = 1u;
+                particle_tracker = lsdtt::seed_sparse_hillslope_particles(
+                    dem,
+                    static_cast<std::size_t>(ifs["cellular_particle_inverse_density"]),
+                    ff["cellular_particle_mixing_depth"],
+                    static_cast<std::uint64_t>(ifs["cellular_particle_seed"]),
+                    excluded);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: cellular particle setup failed: " << e.what() << "\n";
+            return 1;
+        }
+        particle_tracker_ptr = &particle_tracker;
+        std::cout << "Cellular particles: " << particle_tracker.size()
+                  << " (mixing depth " << particle_tracker.mixing_depth << " m)\n";
+    }
+
     // -------------------------------------------------------------------------
     // Optional time-varying forcing (uplift rate and/or base-level fall as step
     // functions of model time -- e.g. a pulse of incision).  When absent the
@@ -2808,7 +2956,8 @@ int main(int argc, char* argv[])
             }
 
             auto [next, stats] = lsdtt::run_lem_step(
-                current, opts, fixed_flats, &hillslope_ws, &cellular_ws);
+                current, opts, fixed_flats, &hillslope_ws, &cellular_ws,
+                particle_tracker_ptr);
             current    = std::move(next);
             last_stats = stats;
             total_time += dt;
@@ -2997,6 +3146,20 @@ int main(int argc, char* argv[])
 
     write_erosion_rate(last_stats.erosion_rate, current, "_erosion_rate");
     write_channel_mask(current, "_channel_mask");
+
+    if (particle_tracker_ptr)
+    {
+        const std::string particle_path =
+            pp.make_output_path("_cellular_particles", ".csv");
+        std::cout << "Writing cellular particles: " << particle_path << "\n";
+        try { lsdtt::write_hillslope_particles_csv(particle_path, particle_tracker); }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing cellular particles failed: "
+                      << e.what() << "\n";
+            return 1;
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Write stats CSV

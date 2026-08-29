@@ -255,7 +255,8 @@ run_lem_step(
     const lsdtt_lem_options&          opts,
     const std::vector<std::int64_t>&  boundary_flats,
     lsdtt_hillslope_newton_workspace* hillslope_ws,
-    lsdtt_hillslope_cellular_workspace* cellular_ws)
+    lsdtt_hillslope_cellular_workspace* cellular_ws,
+    lsdtt_hillslope_particle_tracker* particle_tracker)
 {
     const lsdtt_raster_meta& meta = dem.get_meta();
     const std::size_t n_cells = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
@@ -366,7 +367,7 @@ run_lem_step(
                 opts.explicit_channel_mask.size() == n_cells;
             const bool is_cidre = (opts.hillslope_transport_model == "cidre");
             const bool is_cellular =
-                (opts.hillslope_transport_model == "cellular_experimental");
+                (opts.hillslope_transport_model == "cellular");
             const bool coupled = resolve_hillslope_coupling_regime(
                 opts.coupling_regime, opts.incision_threshold_area,
                 have_explicit_mask) == hillslope_coupling_regime::coupled;
@@ -406,7 +407,7 @@ run_lem_step(
                 const lsdtt_hillslope_cellular_result cellular =
                     compute_hillslope_cellular_transport(
                         current, is_channel, opts.timestep,
-                        cellular_options, cellular_ws);
+                        cellular_options, cellular_ws, particle_tracker);
                 if (!cellular.completed)
                     throw std::runtime_error(
                         "experimental cellular hillslope step failed: "
@@ -520,7 +521,7 @@ run_lem_step(
                     }
                 }
             }
-            else  // "cidre"
+            else if (opts.hillslope_transport_model == "cidre")
             {
                 current = compute_cidre_hillslope_transport(
                     current, *flow_hillslope,
@@ -534,6 +535,10 @@ run_lem_step(
                     opts.n_threads
                 );
             }
+            else
+                throw std::invalid_argument(
+                    "unknown hillslope transport model '"
+                    + opts.hillslope_transport_model + "'");
         }
     }
 

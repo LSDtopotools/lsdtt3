@@ -4780,6 +4780,24 @@ one that leaves no runtime trace, which makes "the environment must be active to
 wrong inference. The runtime dependencies are GDAL, PROJ, FFTW and the C++/OpenMP runtimes.
 
 
+## 10m. Cellular soft-critical hillslopes and sparse tracing
+
+Validated 2026-08-29 against Newton-Roering. On the `7 x 257` near-critical strip, where both
+methods use the identical Roering branch, cellular differs from a Newton `dt=0.25 yr` reference by
+`4.58e-5 m` Linf and `2.28e-5 m` RMS and is 12.6x faster. Closed volume mismatch is
+`7.1e-11 m3`; ridgetop curvature recovers `-U/D` within 2%.
+
+Generated near-critical one-step timings (cellular/Newton) are 0.0626/3.285 s at 250x250,
+0.2649/36.133 s at 500x500, and 1.3466/25.825 s at 1000x1000. Four-core cellular speedup is
+2.50x, 2.33x and 2.03x. These are thermally limited WSL2 laptop timings, not a native-server ceiling.
+A coupled ten-step 250-grid run takes 1.91 s cellular versus 32.08 s Newton.
+
+With 50% nonlocal excess flux, four-hop and eight-hop coupled runs take 2.06 and 2.24 s. Sparse
+tracking leaves topography bit-identical. One particle per 100 active cells adds no measurable cost;
+one per 10 adds 13% and remains 10.8x faster than bare Newton. Export probability is pinned against
+topographic exported thickness, trajectories are exact across one/four threads, and particle CSV
+restart round trips preserve all state exactly.
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

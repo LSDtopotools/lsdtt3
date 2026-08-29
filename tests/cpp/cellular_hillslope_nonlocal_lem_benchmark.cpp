@@ -81,7 +81,7 @@ int main(int argc, char** argv)
         o.coupling_regime = lsdtt::hillslope_coupling_regime::coupled;
         o.hillslope_diffusivity = 0.0334694388f;
         o.critical_hillslope_slope = 0.8f;
-        o.hillslope_transport_model = "cellular_experimental";
+        o.hillslope_transport_model = "cellular";
         o.cellular_r_match = 0.85; o.cellular_cfl_safety = 0.8;
         o.cellular_nonlocal_fraction = c.fraction;
         o.cellular_nonlocal_activation_ratio = 0.8;

@@ -383,7 +383,7 @@ int main()
         imposed.enable_dinf_fluvial_erosion = false;
         imposed.enable_hillslope_transport = true;
         imposed.enable_uplift = false;
-        imposed.hillslope_transport_model = "cellular_experimental";
+        imposed.hillslope_transport_model = "cellular";
         imposed.hillslope_diffusivity = static_cast<float>(D);
         imposed.critical_hillslope_slope = static_cast<float>(SC);
         imposed.cellular_r_match = 0.85;
@@ -615,6 +615,170 @@ int main()
                         static_cast<std::size_t>(c) * dn + r]));
         check(transpose_error < 1e-6,
               "nonlocal routing preserves transpose symmetry on a diagonal slope");
+    }
+
+    // C9: sparse Lagrangian particles sample accepted flux without changing
+    // topography, provenance, or thread determinism.
+    {
+        const lsdtt_raster_cpu density_dem = periodic_dem(100, 100);
+        const auto d1000 = seed_sparse_hillslope_particles(
+            density_dem, 1000, 1.0, 17);
+        const auto d100 = seed_sparse_hillslope_particles(
+            density_dem, 100, 1.0, 17);
+        const auto d10 = seed_sparse_hillslope_particles(
+            density_dem, 10, 1.0, 17);
+        check(d1000.size() == 10 && d100.size() == 100 && d10.size() == 1000,
+              "systematic seeding produces 1:1000, 1:100 and 1:10 densities");
+        double seeded_weight = 0.0;
+        for (double w : d100.weight) seeded_weight += w;
+        check(std::fabs(seeded_weight - 10000.0 * DX * DX) < 1e-8,
+              "particle weights exactly represent valid active-layer volume");
+
+        constexpr int nr = 9, nc = 33;
+        std::vector<float> z(static_cast<std::size_t>(nr) * nc, 0.0f);
+        std::vector<std::uint8_t> mask(z.size(), 1u);
+        std::vector<std::uint8_t> channels(z.size(), 0u);
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+            {
+                z[static_cast<std::size_t>(r) * nc + c] =
+                    static_cast<float>(4.5 * (nc - 1 - c));
+                if (c == nc - 1) channels[static_cast<std::size_t>(r) * nc + c] = 1u;
+            }
+        const lsdtt_raster_cpu ramp(
+            std::move(z), std::move(mask), meta(nr, nc));
+        auto particles = seed_sparse_hillslope_particles(
+            ramp, 1, 0.001, 29, channels);
+        for (std::size_t p = 0; p < particles.size(); ++p)
+        {
+            const int c = static_cast<int>(particles.cell[p] % nc);
+            particles.source_id[p] = c < nc / 2 ? 1u : 2u;
+        }
+        const auto initial_particles = particles;
+        auto particles_four = particles;
+
+        auto options = cellular_options("nnnn");
+        options.nonlocal_fraction = 1.0;
+        options.nonlocal_activation_ratio = 0.7;
+        options.nonlocal_deposition_probability = 0.5;
+        options.nonlocal_max_hops = 8;
+        options.n_threads = 1;
+        const auto untraced = compute_hillslope_cellular_transport(
+            ramp, channels, 0.01, options);
+        const auto traced = compute_hillslope_cellular_transport(
+            ramp, channels, 0.01, options, nullptr, &particles);
+        auto options_four = options;
+        options_four.n_threads = 4;
+        const auto traced_four = compute_hillslope_cellular_transport(
+            ramp, channels, 0.01, options_four, nullptr, &particles_four);
+
+        check(linf(untraced.elevation, traced.elevation) == 0.0,
+              "enabling sparse particles does not change topography");
+        check(linf(traced.elevation, traced_four.elevation) == 0.0,
+              "traced topography is thread deterministic");
+        check(particles.cell == particles_four.cell
+              && particles.status == particles_four.status
+              && particles.distance_cells == particles_four.distance_cells,
+              "particle trajectories are thread deterministic");
+        check(traced.tracker_moves > 0 && traced.tracker_exports > 0,
+              "particles move and export through the fixed channel");
+        check(*std::max_element(particles.distance_cells.begin(),
+                                particles.distance_cells.end()) > 1.0,
+              "particles sample nonlocal paths longer than one cell");
+        check(particles.source_id == initial_particles.source_id,
+              "one- and two-source provenance IDs survive transport unchanged");
+        double source1_before = 0.0, source1_after = 0.0;
+        double source2_before = 0.0, source2_after = 0.0;
+        for (std::size_t p = 0; p < particles.size(); ++p)
+        {
+            if (initial_particles.source_id[p] == 1u)
+                source1_before += initial_particles.weight[p];
+            else source2_before += initial_particles.weight[p];
+            if (particles.source_id[p] == 1u) source1_after += particles.weight[p];
+            else source2_after += particles.weight[p];
+        }
+        check(source1_before == source1_after && source2_before == source2_after,
+              "weighted two-source provenance budget closes exactly");
+
+        lsdtt_lem_options lem;
+        lem.timestep = 0.01f;
+        lem.enable_d8_fluvial_erosion = false;
+        lem.enable_dinf_fluvial_erosion = false;
+        lem.enable_hillslope_transport = true;
+        lem.enable_uplift = false;
+        lem.hillslope_transport_model = "cellular";
+        lem.hillslope_diffusivity = static_cast<float>(D);
+        lem.critical_hillslope_slope = static_cast<float>(SC);
+        lem.cellular_nonlocal_fraction = 1.0;
+        lem.cellular_nonlocal_activation_ratio = 0.7;
+        lem.cellular_nonlocal_deposition_probability = 0.5;
+        lem.cellular_nonlocal_max_hops = 8;
+        lem.coupling_regime = hillslope_coupling_regime::channels_as_boundaries;
+        lem.explicit_channel_mask = channels;
+        lem.boundary_conditions = "nnnn";
+        lem.n_threads = 1;
+        auto lem_particles = initial_particles;
+        lsdtt_hillslope_cellular_workspace lem_ws;
+        const auto lem_result = run_lem_step(
+            ramp, lem, {}, nullptr, &lem_ws, &lem_particles);
+        check(linf(lem_result.first, traced.elevation) == 0.0
+              && lem_particles.cell == particles.cell
+              && lem_particles.status == particles.status,
+              "LEM forwards the identical sparse-particle transport step");
+
+        // Exact Eulerian/Lagrangian export check: one active cell surrounded
+        // by fixed sinks. The topographic export thickness determines the
+        // well-mixed active-layer survival probability analytically.
+        constexpr int en = 3;
+        std::vector<float> export_z(en * en, 0.0f);
+        std::vector<std::uint8_t> export_mask(en * en, 1u);
+        std::vector<std::uint8_t> export_channels(en * en, 1u);
+        const std::size_t centre = 4;
+        export_z[centre] = 1.0f;
+        export_channels[centre] = 0u;
+        const lsdtt_raster_cpu export_dem(
+            std::move(export_z), std::move(export_mask), meta(en, en));
+
+        constexpr std::size_t np = 20000;
+        lsdtt_hillslope_particle_tracker export_particles;
+        export_particles.mixing_depth = 0.001;
+        export_particles.seed = 73;
+        export_particles.id.resize(np);
+        export_particles.cell.assign(np, static_cast<std::int64_t>(centre));
+        export_particles.weight.assign(np, DX * DX * export_particles.mixing_depth / np);
+        export_particles.source_id.resize(np);
+        export_particles.age.assign(np, 0.0);
+        export_particles.distance_cells.assign(np, 0.0);
+        export_particles.status.assign(np, static_cast<std::uint8_t>(
+            lsdtt_hillslope_particle_status::active));
+        for (std::size_t p = 0; p < np; ++p)
+        {
+            export_particles.id[p] = p;
+            export_particles.source_id[p] = p < np / 2 ? 1u : 2u;
+        }
+        const auto export_result = compute_hillslope_cellular_transport(
+            export_dem, export_channels, 0.05, cellular_options("nnnn"),
+            nullptr, &export_particles);
+        const double exported_thickness =
+            export_result.net_dirichlet_export_volume / (DX * DX);
+        const double expected_fraction = 1.0 - std::exp(
+            -exported_thickness / export_particles.mixing_depth);
+        const double observed_fraction =
+            static_cast<double>(export_result.tracker_exports) / np;
+        const double sigma = std::sqrt(expected_fraction
+            * (1.0 - expected_fraction) / np);
+        check(std::fabs(observed_fraction - expected_fraction) < 6.0 * sigma,
+              "particle export agrees with the Eulerian active-layer budget");
+        double exported_weight = 0.0;
+        for (std::size_t p = 0; p < np; ++p)
+            if (export_particles.status[p] == static_cast<std::uint8_t>(
+                    lsdtt_hillslope_particle_status::exported))
+                exported_weight += export_particles.weight[p];
+        const double expected_weight = DX * DX * export_particles.mixing_depth
+                                     * expected_fraction;
+        check(std::fabs(exported_weight - expected_weight)
+              < 6.0 * sigma * DX * DX * export_particles.mixing_depth,
+              "weighted particle export closes against expected exported inventory");
     }
 
     std::cout << "\n" << (g_checks - g_failures) << " / " << g_checks

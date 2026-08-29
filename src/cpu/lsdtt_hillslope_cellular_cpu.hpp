@@ -18,6 +18,41 @@
 namespace lsdtt
 {
 
+enum class lsdtt_hillslope_particle_status : std::uint8_t
+{
+    active = 0,
+    exported = 1
+};
+
+// Sparse Lagrangian superparticles. Structure-of-arrays storage keeps the hot
+// particle loop contiguous and permits independent parallel updates.
+struct lsdtt_hillslope_particle_tracker
+{
+    std::vector<std::uint64_t> id;
+    std::vector<std::int64_t> cell;
+    std::vector<double> weight;
+    std::vector<std::uint32_t> source_id;
+    std::vector<double> age;
+    std::vector<double> distance_cells;
+    std::vector<std::uint8_t> status;
+
+    double mixing_depth = 1.0;
+    std::uint64_t seed = 1;
+    std::uint64_t substep_index = 0;
+
+    [[nodiscard]] std::size_t size() const noexcept { return id.size(); }
+};
+
+// Deterministic volume-weighted systematic seeding. inverse_density=100 means
+// approximately one particle per 100 valid cells. Every particle receives equal
+// weight and the weights sum to valid_area * mixing_depth.
+lsdtt_hillslope_particle_tracker seed_sparse_hillslope_particles(
+    const lsdtt_raster_cpu& dem,
+    std::size_t inverse_density,
+    double mixing_depth,
+    std::uint64_t seed = 1,
+    const std::vector<std::uint8_t>& exclude = {});
+
 struct lsdtt_hillslope_cellular_options
 {
     double D = 1e-3;
@@ -85,6 +120,9 @@ struct lsdtt_hillslope_cellular_result
     double nonlocal_routed_volume = 0.0;
     double nonlocal_export_volume = 0.0;
     double nonlocal_mean_hops = 0.0;
+    long long tracker_moves = 0;
+    long long tracker_exports = 0;
+    long long tracker_active = 0;
 
     bool completed = false;
     std::string message;
@@ -98,7 +136,8 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     const std::vector<std::uint8_t>& is_channel,
     double dt_total,
     const lsdtt_hillslope_cellular_options& options,
-    lsdtt_hillslope_cellular_workspace* workspace = nullptr);
+    lsdtt_hillslope_cellular_workspace* workspace = nullptr,
+    lsdtt_hillslope_particle_tracker* tracker = nullptr);
 
 // Experimental local-time-step form. Each face is assigned a power-of-two
 // update level from its local tangent modulus. Transfers due at one fine tick

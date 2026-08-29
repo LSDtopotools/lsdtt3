@@ -51,14 +51,82 @@ struct face_scan
     double max_tangent = 1.0;
 };
 
+std::uint64_t splitmix64(std::uint64_t x)
+{
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+double particle_uniform(std::uint64_t seed, std::uint64_t id,
+                        std::uint64_t step, std::uint64_t draw)
+{
+    const std::uint64_t bits = splitmix64(seed
+        ^ splitmix64(id + 0x632be59bd9b4e019ULL)
+        ^ splitmix64(step + 0x8cb92baa3f3d8dd7ULL)
+        ^ splitmix64(draw + 0xdb4f0b9175ae2165ULL));
+    return static_cast<double>(bits >> 11) * (1.0 / 9007199254740992.0);
+}
+
 } // namespace
+
+lsdtt_hillslope_particle_tracker seed_sparse_hillslope_particles(
+    const lsdtt_raster_cpu& dem,
+    std::size_t inverse_density,
+    double mixing_depth,
+    std::uint64_t seed,
+    const std::vector<std::uint8_t>& exclude)
+{
+    if (inverse_density == 0)
+        throw std::invalid_argument("particle inverse density must be > 0");
+    if (!(mixing_depth > 0.0) || !std::isfinite(mixing_depth))
+        throw std::invalid_argument("particle mixing depth must be finite and > 0");
+    if (!exclude.empty() && exclude.size() != dem.get_data().size())
+        throw std::invalid_argument("particle exclusion mask size mismatch");
+
+    std::vector<std::int64_t> valid;
+    valid.reserve(dem.get_data().size());
+    for (std::size_t i = 0; i < dem.get_mask().size(); ++i)
+        if (dem.get_mask()[i] && (exclude.empty() || exclude[i] == 0u))
+            valid.push_back(static_cast<std::int64_t>(i));
+
+    lsdtt_hillslope_particle_tracker out;
+    out.mixing_depth = mixing_depth;
+    out.seed = seed;
+    if (valid.empty()) return out;
+    const std::size_t count = std::max<std::size_t>(
+        1, (valid.size() + inverse_density - 1) / inverse_density);
+    const double cell_area = dem.get_meta().cell_size * dem.get_meta().cell_size;
+    const double particle_weight =
+        static_cast<double>(valid.size()) * cell_area * mixing_depth / count;
+    out.id.resize(count);
+    out.cell.resize(count);
+    out.weight.assign(count, particle_weight);
+    out.source_id.resize(count);
+    out.age.assign(count, 0.0);
+    out.distance_cells.assign(count, 0.0);
+    out.status.assign(count,
+        static_cast<std::uint8_t>(lsdtt_hillslope_particle_status::active));
+    for (std::size_t p = 0; p < count; ++p)
+    {
+        const std::size_t rank = std::min(valid.size() - 1,
+            static_cast<std::size_t>((static_cast<double>(p) + 0.5)
+                * static_cast<double>(valid.size()) / count));
+        out.id[p] = p;
+        out.cell[p] = valid[rank];
+        out.source_id[p] = static_cast<std::uint32_t>(valid[rank]);
+    }
+    return out;
+}
 
 lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     const lsdtt_raster_cpu& dem,
     const std::vector<std::uint8_t>& is_channel,
     double dt_total,
     const lsdtt_hillslope_cellular_options& options,
-    lsdtt_hillslope_cellular_workspace* workspace)
+    lsdtt_hillslope_cellular_workspace* workspace,
+    lsdtt_hillslope_particle_tracker* tracker)
 {
     if (!(options.D > 0.0) || !std::isfinite(options.D))
         throw std::invalid_argument("cellular hillslope D must be finite and > 0");
@@ -84,6 +152,19 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
         throw std::invalid_argument("cellular hillslope dt_total must be finite and >= 0");
     if (options.max_substeps <= 0)
         throw std::invalid_argument("cellular hillslope max_substeps must be > 0");
+    if (tracker)
+    {
+        const std::size_t np = tracker->size();
+        if (tracker->cell.size() != np || tracker->weight.size() != np
+            || tracker->source_id.size() != np || tracker->age.size() != np
+            || tracker->distance_cells.size() != np || tracker->status.size() != np)
+            throw std::invalid_argument("cellular particle tracker array size mismatch");
+        if (!(tracker->mixing_depth > 0.0) || !std::isfinite(tracker->mixing_depth))
+            throw std::invalid_argument("cellular particle mixing depth must be finite and > 0");
+        for (std::int64_t cell : tracker->cell)
+            if (cell < 0 || static_cast<std::size_t>(cell) >= dem.get_data().size())
+                throw std::invalid_argument("cellular particle cell index out of range");
+    }
 
     const lsdtt_raster_meta& meta = dem.get_meta();
     const int nr = meta.n_rows;
@@ -436,6 +517,185 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
                     }
                 }
         }
+
+        if (tracker && tracker->size() > 0)
+        {
+            long long moved = 0, exported = 0;
+            const std::uint64_t particle_step = tracker->substep_index;
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) reduction(+:moved,exported)
+#endif
+            for (long long pp = 0;
+                 pp < static_cast<long long>(tracker->size()); ++pp)
+            {
+                const std::size_t p = static_cast<std::size_t>(pp);
+                if (tracker->status[p] != static_cast<std::uint8_t>(
+                        lsdtt_hillslope_particle_status::active))
+                    continue;
+
+                const std::size_t cell = static_cast<std::size_t>(tracker->cell[p]);
+                const int r = static_cast<int>(cell / static_cast<std::size_t>(nc));
+                const int c = static_cast<int>(cell % static_cast<std::size_t>(nc));
+                tracker->age[p] += dt;
+                if (cell >= n || fixed(cell, r, c))
+                {
+                    tracker->status[p] = static_cast<std::uint8_t>(
+                        lsdtt_hillslope_particle_status::exported);
+                    ++exported;
+                    continue;
+                }
+
+                struct particle_event
+                {
+                    double rate;
+                    int dr;
+                    int dc;
+                    bool nonlocal;
+                };
+                particle_event events[8];
+                int event_count = 0;
+                double total_rate = 0.0;
+                auto add_event = [&](double rate, int dr, int dc, bool is_nonlocal)
+                {
+                    if (!(rate > 0.0)) return;
+                    events[event_count++] = {rate, dr, dc, is_nonlocal};
+                    total_rate += rate;
+                };
+
+                // East and south faces are stored at this cell; west and north
+                // faces are stored at the neighbouring cell with opposite sign.
+                if (ws.q_east[cell] > 0.0)
+                    add_event(ws.q_east[cell], 0, 1, false);
+                if (ws.q_south[cell] > 0.0)
+                    add_event(ws.q_south[cell], 1, 0, false);
+                if (c > 0 || periodic_ew)
+                {
+                    const std::size_t west = c > 0
+                        ? cell - 1
+                        : static_cast<std::size_t>(r) * nc + nc - 1;
+                    if (ws.q_east[west] < 0.0)
+                        add_event(-ws.q_east[west], 0, -1, false);
+                }
+                if (r > 0 || periodic_ns)
+                {
+                    const std::size_t north = r > 0
+                        ? cell - static_cast<std::size_t>(nc)
+                        : static_cast<std::size_t>(nr - 1) * nc + c;
+                    if (ws.q_south[north] < 0.0)
+                        add_event(-ws.q_south[north], -1, 0, false);
+                }
+                if (nonlocal_enabled)
+                {
+                    if (ws.q_nonlocal_east[cell] > 0.0)
+                        add_event(ws.q_nonlocal_east[cell], 0, 1, true);
+                    if (ws.q_nonlocal_south[cell] > 0.0)
+                        add_event(ws.q_nonlocal_south[cell], 1, 0, true);
+                    if (c > 0 || periodic_ew)
+                    {
+                        const std::size_t west = c > 0
+                            ? cell - 1
+                            : static_cast<std::size_t>(r) * nc + nc - 1;
+                        if (ws.q_nonlocal_east[west] < 0.0)
+                            add_event(-ws.q_nonlocal_east[west], 0, -1, true);
+                    }
+                    if (r > 0 || periodic_ns)
+                    {
+                        const std::size_t north = r > 0
+                            ? cell - static_cast<std::size_t>(nc)
+                            : static_cast<std::size_t>(nr - 1) * nc + c;
+                        if (ws.q_nonlocal_south[north] < 0.0)
+                            add_event(-ws.q_nonlocal_south[north], -1, 0, true);
+                    }
+                }
+                if (!(total_rate > 0.0)) continue;
+
+                std::uint64_t draw = 0;
+                const double exported_thickness =
+                    total_rate * dt / meta.cell_size;
+                const double move_probability = 1.0 - std::exp(
+                    -exported_thickness / tracker->mixing_depth);
+                if (particle_uniform(tracker->seed, tracker->id[p],
+                                     particle_step, draw++) >= move_probability)
+                    continue;
+
+                double pick = particle_uniform(tracker->seed, tracker->id[p],
+                                               particle_step, draw++) * total_rate;
+                int chosen = event_count - 1;
+                for (int e = 0; e < event_count; ++e)
+                {
+                    pick -= events[e].rate;
+                    if (pick <= 0.0) { chosen = e; break; }
+                }
+                const particle_event event = events[chosen];
+                int cr = r, cc = c;
+                dom.neighbour(r, c, event.dr, event.dc, cr, cc);
+                int hops = 1;
+
+                if (event.nonlocal)
+                {
+                    while (true)
+                    {
+                        const std::size_t current = dom.index(cr, cc);
+                        if (fixed(current, cr, cc)) break;
+                        if (hops >= options.nonlocal_max_hops) break;
+                        if (hops >= 2
+                            && particle_uniform(tracker->seed, tracker->id[p],
+                                                particle_step, draw++)
+                               < options.nonlocal_deposition_probability)
+                            break;
+
+                        int next_r = cr, next_c = cc;
+                        double next_z = ws.elevation[current];
+                        int pr = cr, pc = cc;
+                        dom.neighbour(cr, cc, event.dr, event.dc, pr, pc);
+                        const std::size_t preferred = dom.index(pr, pc);
+                        if (preferred != current && dem.get_mask()[preferred]
+                            && ws.elevation[preferred] < next_z)
+                        {
+                            next_z = ws.elevation[preferred];
+                            next_r = pr;
+                            next_c = pc;
+                        }
+                        else
+                        {
+                            static constexpr int dr[4] = {-1, 0, 1, 0};
+                            static constexpr int dc[4] = {0, 1, 0, -1};
+                            for (int k = 0; k < 4; ++k)
+                            {
+                                int rr = cr, rc = cc;
+                                dom.neighbour(cr, cc, dr[k], dc[k], rr, rc);
+                                const std::size_t candidate = dom.index(rr, rc);
+                                if (candidate != current && dem.get_mask()[candidate]
+                                    && ws.elevation[candidate] < next_z)
+                                {
+                                    next_z = ws.elevation[candidate];
+                                    next_r = rr;
+                                    next_c = rc;
+                                }
+                            }
+                        }
+                        if (next_r == cr && next_c == cc) break;
+                        cr = next_r;
+                        cc = next_c;
+                        ++hops;
+                    }
+                }
+
+                const std::size_t destination = dom.index(cr, cc);
+                tracker->cell[p] = static_cast<std::int64_t>(destination);
+                tracker->distance_cells[p] += hops;
+                ++moved;
+                if (fixed(destination, cr, cc))
+                {
+                    tracker->status[p] = static_cast<std::uint8_t>(
+                        lsdtt_hillslope_particle_status::exported);
+                    ++exported;
+                }
+            }
+            result.tracker_moves += moved;
+            result.tracker_exports += exported;
+            ++tracker->substep_index;
+        }
         result.net_dirichlet_export_volume +=
             exported_height_sum * meta.cell_size * meta.cell_size;
         ws.elevation.swap(ws.elevation_new);
@@ -450,6 +710,11 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     result.message = result.completed ? "completed" : "maximum substeps reached";
     if (result.nonlocal_routed_volume > 0.0)
         result.nonlocal_mean_hops /= result.nonlocal_routed_volume;
+    if (tracker)
+        for (std::uint8_t s : tracker->status)
+            if (s == static_cast<std::uint8_t>(
+                    lsdtt_hillslope_particle_status::active))
+                ++result.tracker_active;
 
     std::vector<float> output(n);
 #ifdef _OPENMP
