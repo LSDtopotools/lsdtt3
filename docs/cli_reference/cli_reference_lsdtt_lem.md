@@ -138,10 +138,29 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `hillslope_model` | string | `cidre` | Hillslope transport model for the time-stepping LEM. `linear`: explicit FD of D·∇²z (no flow graph, stable at any typical LEM timestep). `roering`: explicit FD of the Roering (1999) nonlinear law; auto-subcycles when near Sc. `cidre`: Carretier et al. (2016) finite-volume forward sweep with D-infinity routing. `roering_implicit`: implicit (unconditionally stable) backward-Euler / TR-BDF2 solver for the Roering law with channels as Dirichlet sinks — no CFL collapse on fine, near-critical grids (requires Eigen; falls back to explicit `roering` if Eigen is absent). Requires `enable_hillslope_transport: true`. |
+| `hillslope_model` | string | `cidre` | `cellular`: fast conservative soft-critical face transfers with optional nonlocal transport/tracing. `cidre`: graph-routed Carretier transport. `roering_implicit`: Newton backward Euler. `adi`: linear ADI. |
 | `hillslope_diffusivity` | float | `1e-3` | Hillslope diffusivity κ (m² yr⁻¹). |
 | `critical_hillslope_slope` | float | `0.8` | Critical slope Sc (m/m) for nonlinear hillslope transport. |
 | `channel_mask_fname` | string | `` | Optional raster (in `read_path`) whose cells > 0.5 are fixed-elevation channel pixels for the hillslope Dirichlet set, overriding the drainage-area threshold. Must match the DEM grid. Empty = derive channels from drainage area. |
+
+### `cellular` transport and tracing
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `cellular_r_match` | float | `0.85` | Roering/finite-continuation matching slope ratio. |
+| `cellular_cfl_safety` | float | `0.8` | Explicit stability safety factor `(0,1]`. |
+| `cellular_nonlocal_fraction` | float | `0` | Fraction `[0,1]` of near-critical excess flux routed nonlocally. |
+| `cellular_nonlocal_activation_ratio` | float | `0.8` | Slope ratio where nonlocal routing begins. |
+| `cellular_nonlocal_deposition_probability` | float | `0.5` | Geometric deposition probability per cell. |
+| `cellular_nonlocal_max_hops` | int | `4` | Maximum nonlocal distance in cells, at least 2 when enabled. |
+| `enable_cellular_particles` | bool | `false` | Enable sparse Lagrangian superparticles. |
+| `cellular_particle_inverse_density` | int | `100` | Active cells per seeded particle. |
+| `cellular_particle_mixing_depth` | float | `1` | Well-mixed active-layer depth (m). |
+| `cellular_particle_seed` | int | `1` | Deterministic sampling seed. |
+| `cellular_particle_restart_fname` | string | `` | Restart CSV in `read_path`; empty seeds new particles. |
+
+Tracing writes `<write_fname>_cellular_particles.csv`. Reusing it as a restart preserves the RNG
+substep counter, provenance, ages and distances.
 
 ### `roering_implicit` solver knobs
 

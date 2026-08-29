@@ -1,0 +1,7 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+write_path: __WRITE_PATH__
+write_fname: badmodel
+enable_hillslope_transport: true
+hillslope_model: typo_cellular

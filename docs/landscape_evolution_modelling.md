@@ -82,7 +82,7 @@ This nonlinear law is physically motivated by hillslope processes: at low angles
 
 ## Numerical schemes and solvers for hillslope transport
 
-lsdtt3 offers multiple solvers for hillslope transport. The primary choice is the **transient solver**, selected via the `hillslope_model` parameter (`linear`, `roering`, `cidre`, `roering_implicit`, or `adi`), which controls how the landscape evolves in time-stepping mode. For steady-state solves (`run_steady_state: true`), the hillslope equation is solved directly instead, by Newton's method, with red-black SOR + Picard as the fallback.
+lsdtt3 offers multiple solvers for hillslope transport. The primary choice is the **transient solver**, selected via `hillslope_model` (`cellular`, `cidre`, `roering_implicit`, or `adi`; legacy explicit names remain internal). For steady-state solves, Newton is used with SOR/Picard fallback.
 
 > **Newton is the default steady-state solver.** Steady-state runs (`run_steady_state: true`)
 > use Newton for both linear and nonlinear flux laws, and transient `roering_implicit` steps use
@@ -100,6 +100,7 @@ lsdtt3 offers multiple solvers for hillslope transport. The primary choice is th
 | `cidre` | Carretier et al. (2016) finite-volume | explicit FV + D-infinity routing | CFL-limited | Coupled fluvial–hillslope on emergent network (D-infinity). Note that this does not have significant time savings over roering for test cases.|
 | `roering_implicit` | Roering nonlinear law | implicit backward-Euler or TR-BDF2 | unconditionally stable | Long, fine-grid runs; relief-targeting studies; see caveat below |
 | `adi` | Laplacian | alternating-direction implicit | unconditionally stable | Regular grids; when explicit schemes bottleneck |
+| `cellular` | Roering below `r_match`, finite tangent continuation above | conservative face transfers with automatic subcycling | CFL controlled, finite above S_c | Fast nonlinear coupling, nonlocal transport and tracing |
 
 ### Linear diffusion solver (`linear`)
 
@@ -111,7 +112,7 @@ Solves the nonlinear Roering law using an **explicit finite-difference stencil**
 
 ### Cidre solver (`cidre`)
 
-**Cidre** (from Carretier et al. 2016) is a **finite-volume forward sweep** along a D-infinity flow graph. Instead of solving a stencil equation, it: (1) traces each cell's neighbors along a D-infinity flow net, (2) sweeps in topological order (headwaters to outlet), and (3) at each cell computes erosion and routes sediment downslope weighted by the flow partition. It naturally couples fluvial and hillslope transport — channels emerge without being pre-defined — and because it already routes on D-infinity it is the **most natural** choice for a fully coupled landscape where drainage density is an emergent property. It is not the only one that *can* run there: `linear`, `roering` and `adi` all work with an empty channel set. `roering_implicit` is the sole exception, and the reason is structural rather than incidental (below). See [Imposed versus emergent drainage density](#imposed-versus-emergent-drainage-density) below.
+**Cidre** (from Carretier et al. 2016) is a **finite-volume forward sweep** along a D-infinity flow graph. It sweeps headwaters to outlet and routes sediment using receiver weights. It supports emergent drainage, but rebuilding/routing the graph can be expensive; `cellular` and transient `roering_implicit` also support an empty channel set.
 
 It uses D-infinity routing (Tarboton 1997), so it is more expensive than a regular-grid stencil, but it scales well on distributed networks.
 
@@ -119,7 +120,17 @@ It uses D-infinity routing (Tarboton 1997), so it is more expensive than a regul
 
 The **unconditionally stable backward-Euler solver** for the Roering law. It solves an implicit nonlinear equation (using Picard iteration + a sparse linear solver from Eigen3) and is the most robust for long runs on fine grids. It is the **only solver that eliminates CFL limitation**, allowing arbitrarily small time steps or large grids without risking instability.
 
-**Important caveat:** `roering_implicit` **cannot run in the emergent-drainage-density regime** (see below). It requires `incision_threshold_area > 0`, i.e., channels must be pre-defined as Dirichlet boundary conditions. If the channel set is empty, the solver skips the hillslope step entirely and continues the run. This is by design: without Dirichlet sinks, the solve degenerates to diffusion to the edges, which is meaningless. This is **a real and non-obvious constraint on experimental design**: if you want the most numerically robust hillslope solver, you cannot also have the most physically interesting coupled regime.
+Transient `roering_implicit` can run in the emergent-drainage regime: transient diffusion is well posed without channel Dirichlet nodes and distributed fluvial incision supplies the sink. Only a purely steady elliptic solve without any Dirichlet boundary is singular.
+
+### Cellular soft-critical solver (`cellular`)
+
+`cellular` computes one conservative flux per raster face. It follows Roering exactly below
+`cellular_r_match` (default 0.85), then continues mobility with a finite tangent, allowing temporary
+slopes above `S_c`. Near ridgetops it retains linear flux and the steady `U/D` curvature relation.
+Optional nonlocal transport splits near-critical excess flux into a bounded geometric downhill
+kernel; channels/open boundaries intercept it. Sparse Lagrangian superparticles sample the same
+accepted fluxes without changing topography. Particle CSVs preserve provenance, age, distance,
+random seed and substep index for deterministic restart.
 
 ### ADI solver (`adi`)
 
@@ -330,7 +341,7 @@ The explicit Roering solver (`roering`) handles this by **auto-subcycling**: cel
 
 **Implicit (backward-Euler) schemes are unconditionally stable.** There is **no CFL condition**. The timestep is chosen for *accuracy* and *nonlinear solvability*, not for stability. In a transient Newton solver with adaptive sub-stepping, a rejected sub-step means the nonlinear system was too hard to solve at that size or an accuracy gate fired — it never means the scheme went unstable. This is why implicit schemes are strongly preferred for long, fine-grid runs: they trade dense matrix solves for the freedom to take large timesteps without numerical instability. The cost-benefit depends on the problem; on short runs or coarse grids explicit schemes may be faster, but on geological timescales or sub-metre resolution the unconditional stability of implicit schemes is essential.
 
-**Practical guidance:** choose `roering_implicit` when you have an imposed channel network — steady-state solves use Newton, transient steps use the Newton backward-Euler stepper, and Picard is the fallback. Choose `cidre` when you want the drainage network to emerge. The explicit `linear` and `roering` solvers are no longer offered as user options: they are CFL-limited and less stable, and are retained only for testing and for builds without Eigen. Newton is recommended for all nonlinear steady-state work because Picard's limit cycle is unavoidable.
+**Practical guidance:** choose `cellular` for fast nonlinear transient runs, emergent drainage, nonlocal transport or tracing. Choose `roering_implicit` when exact Roering behavior near its subcritical barrier is required and sparse-solve cost is acceptable. Newton remains recommended for nonlinear steady-state work.
 
 ---
 
@@ -346,6 +357,7 @@ Here is a comprehensive view of all available options, with the trade-offs that 
 | `adi` (implicit) | Laplacian only | Long linear runs on regular grids | Unconditionally stable | ~10 ms per line solve (1D subproblems) | Very fast; no sparse matrix fill; linear only |
 | `roering_implicit` (backward-Euler + Picard) | Roering nonlinear law | Long runs with imposed channels; relief targeting | Unconditionally stable | ~20–40 s per steady solve (62.5k unknowns); transient uses similar per step | Robust but limited to ω ≤ 0.5 on nonlinear; Picard limit-cycles at high ω |
 | **Newton** (backward-Euler + Newton) *(default for steady state)* | Roering nonlinear law | Nonlinear steady-state and transient, especially near critical slopes | Unconditionally stable | ~10–30 s per steady solve (62.5k unknowns); O(1) iterations independent of grid | Converges where Picard cannot; 9-point Jacobian costs more per iteration but far fewer iterations; use SparseLU for grids <10⁶, BiCGSTAB/ILUT for larger |
+| `cellular` | Soft-critical conservative flux, optional nonlocal split | Fast transient coupling and tracing | Explicit tangent-based subcycling | 19–136x faster than Newton in tested one-step grids | Exact Roering below `r_match`; finite above; deterministic topography |
 | SOR steady-state (Picard) | Roering nonlinear law | Linear steady-state, or nonlinear at low ω (legacy) | N/A (steady-state only) | ~5–10 s per solve; O(n) iteration count scales with grid | Same operator as above; serves as fallback/predictor for Newton; documented here for completeness |
 
 **Choosing a steady-state approach:**
