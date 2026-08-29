@@ -2102,13 +2102,9 @@ poly_fit_coeffs wavelet_quadratic_fit(
         );
     }
 
-    // meta.is_valid() above already guarantees nrows and ncols are positive, but
-    // that check is behind a throw in another translation unit, so the optimiser
-    // cannot see it here. Without a LOCAL guard it must assume a negative int
-    // could be cast to a huge std::size_t, and warns that the subsequent
-    // vector::assign might memset an impossible number of bytes. Restating the
-    // invariant locally is cheap and makes the reasoning available where it is
-    // needed.
+    // meta.is_valid() already guarantees these are positive, but that check lives
+    // behind a throw in another translation unit. Restating it locally is cheap
+    // and keeps a negative int from being cast to a huge std::size_t below.
     if (nrows <= 0 || ncols <= 0)
     {
         throw std::runtime_error(
@@ -2367,6 +2363,23 @@ poly_fit_coeffs wavelet_quadratic_fit(
         }
 
         std::cout << " done.\n" << std::flush;
+    }
+
+    // Bound n_pixels HERE, at the allocation.
+    //
+    // checked_mul only rules out size_t OVERFLOW, so its result is provably no
+    // tighter than [0, SIZE_MAX] -- and the dimension guard at the top of the
+    // function is several hundred lines and an entire FFTW section away, so no
+    // range information survives to this point. Without a local bound GCC 13
+    // concludes these assigns might memset up to SIZE_MAX bytes and reports
+    // -Wstringop-overflow. The cap is far above any raster that could be held in
+    // memory, so it only ever fires on a corrupt pixel count.
+    constexpr std::size_t k_max_raster_pixels = std::size_t{1} << 42;
+    if (n_pixels > k_max_raster_pixels)
+    {
+        throw std::runtime_error(
+            "lsdtt::wavelet_quadratic_fit: implausible pixel count"
+        );
     }
 
     std::array<std::vector<float>, 6>   coeff_data;
