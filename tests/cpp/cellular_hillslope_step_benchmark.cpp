@@ -49,9 +49,9 @@ void differences(const lsdtt::lsdtt_raster_cpu& a,
 
 int main(int argc, char** argv)
 {
-    if (argc < 2 || argc > 7)
+    if (argc < 2 || argc > 8)
     {
-        std::cerr << "usage: cellular-hillslope-step-benchmark DEM [D] [Sc] [dt] [threads] [cfl_safety]\n";
+        std::cerr << "usage: cellular-hillslope-step-benchmark DEM [D] [Sc] [dt] [threads] [cfl_safety] [newton_dt_max]\n";
         return 2;
     }
 
@@ -60,6 +60,7 @@ int main(int argc, char** argv)
     const double dt = argc > 4 ? std::stod(argv[4]) : 500.0;
     const int threads = argc > 5 ? std::stoi(argv[5]) : 4;
     const double safety = argc > 6 ? std::stod(argv[6]) : 0.8;
+    const double newton_dt_max = argc > 7 ? std::stod(argv[7]) : dt;
 
     lsdtt::lsdtt_data_loader loader;
     try { loader.open_raster(argv[1]); }
@@ -85,6 +86,12 @@ int main(int argc, char** argv)
         dem, no_channels, dt, co, &cws);
     const double cellular_ms = elapsed_ms(cellular_start);
 
+    lsdtt::lsdtt_hillslope_cellular_workspace mws;
+    const auto multirate_start = clock_type::now();
+    const auto multirate = lsdtt::compute_hillslope_cellular_transport_multirate(
+        dem, no_channels, dt, co, &mws);
+    const double multirate_ms = elapsed_ms(multirate_start);
+
     lsdtt::lsdtt_hillslope_newton_transient_options no;
     no.newton.D = static_cast<float>(D);
     no.newton.U = 0.0f;
@@ -95,8 +102,8 @@ int main(int argc, char** argv)
     no.newton.max_iterations = 60;
     no.newton.solver_choice = 0;
     no.newton.n_threads = threads;
-    no.dt_init = static_cast<float>(dt);
-    no.dt_max = static_cast<float>(dt);
+    no.dt_init = static_cast<float>(newton_dt_max);
+    no.dt_max = static_cast<float>(newton_dt_max);
     lsdtt::lsdtt_hillslope_newton_workspace nws;
 
     const auto newton_start = clock_type::now();
@@ -105,7 +112,13 @@ int main(int argc, char** argv)
     const double newton_ms = elapsed_ms(newton_start);
 
     double linf = 0.0, rms = 0.0;
+    double multirate_linf = 0.0, multirate_rms = 0.0;
+    double multirate_global_linf = 0.0, multirate_global_rms = 0.0;
     differences(cellular.elevation, newton.elevation, linf, rms);
+    differences(multirate.elevation, newton.elevation,
+                multirate_linf, multirate_rms);
+    differences(multirate.elevation, cellular.elevation,
+                multirate_global_linf, multirate_global_rms);
 
     std::cout << "cells," << dem.get_data().size() << '\n'
               << "D," << D << '\n'
@@ -113,10 +126,16 @@ int main(int argc, char** argv)
               << "dt," << dt << '\n'
               << "threads," << threads << '\n'
               << "cfl_safety," << safety << '\n'
+              << "newton_dt_max," << newton_dt_max << '\n'
               << "cellular_completed," << (cellular.completed ? 1 : 0) << '\n'
               << "cellular_ms," << cellular_ms << '\n'
               << "cellular_substeps," << cellular.n_substeps << '\n'
               << "cellular_face_evaluations," << cellular.n_face_evaluations << '\n'
+              << "multirate_completed," << (multirate.completed ? 1 : 0) << '\n'
+              << "multirate_ms," << multirate_ms << '\n'
+              << "multirate_max_level," << multirate.max_multirate_level << '\n'
+              << "multirate_face_events," << multirate.n_face_events << '\n'
+              << "multirate_bin_violations," << multirate.stability_bin_violations << '\n'
               << "initial_max_slope_ratio," << cellular.initial_max_slope_ratio << '\n'
               << "initial_faces_r70," << cellular.initial_faces_r70 << '\n'
               << "initial_faces_r80," << cellular.initial_faces_r80 << '\n'
@@ -126,7 +145,15 @@ int main(int argc, char** argv)
               << "newton_substeps," << newton.n_substeps << '\n'
               << "newton_iterations," << newton.total_newton_iters << '\n'
               << "speedup_newton_over_cellular," << newton_ms / cellular_ms << '\n'
+              << "speedup_newton_over_multirate," << newton_ms / multirate_ms << '\n'
+              << "event_reduction_global_over_multirate,"
+              << static_cast<double>(cellular.n_face_evaluations)
+                    / static_cast<double>(multirate.n_face_events) << '\n'
               << "linf_cellular_minus_newton_m," << linf << '\n'
-              << "rms_cellular_minus_newton_m," << rms << '\n';
-    return cellular.completed && newton.converged ? 0 : 1;
+              << "rms_cellular_minus_newton_m," << rms << '\n'
+              << "linf_multirate_minus_newton_m," << multirate_linf << '\n'
+              << "rms_multirate_minus_newton_m," << multirate_rms << '\n'
+              << "linf_multirate_minus_global_m," << multirate_global_linf << '\n'
+              << "rms_multirate_minus_global_m," << multirate_global_rms << '\n';
+    return cellular.completed && multirate.completed && newton.converged ? 0 : 1;
 }

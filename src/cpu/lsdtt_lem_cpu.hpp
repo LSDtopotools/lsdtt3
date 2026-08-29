@@ -33,6 +33,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_hillslope_implicit_cpu.hpp"
 #include "lsdtt_hillslope_newton_cpu.hpp"
+#include "lsdtt_hillslope_cellular_cpu.hpp"
 
 namespace lsdtt
 {
@@ -126,6 +127,10 @@ struct lsdtt_lem_options
     // Picard remains the automatic fallback when Newton fails or Eigen is absent.
     bool hillslope_force_picard = false;
 
+    // Internal experimental cellular path. Ignored by every other model.
+    double cellular_r_match = 0.85;
+    double cellular_cfl_safety = 0.8;
+
     // Optional explicit channel (Dirichlet) mask for the hillslope step: cell != 0
     // marks a fixed-elevation channel pixel.  Empty (default) = derive is_channel
     // from the drainage-area threshold.  Overrides the area-derived set for all
@@ -202,7 +207,8 @@ run_lem_step(
     // linear hillslope run with a fixed dt the matrix is identical every step, so
     // passing one turns per-step assemble/analyse/factorise/solve into a solve.
     // Passing nullptr disables caching and changes nothing else.
-    lsdtt_hillslope_newton_workspace* hillslope_ws = nullptr
+    lsdtt_hillslope_newton_workspace* hillslope_ws = nullptr,
+    lsdtt_hillslope_cellular_workspace* cellular_ws = nullptr
 );
 
 // ---------------------------------------------------------------------------

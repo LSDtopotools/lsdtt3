@@ -1920,6 +1920,14 @@ add_executable(cellular-hillslope-step-benchmark
                cpp/cellular_hillslope_step_benchmark.cpp)
 target_link_libraries(cellular-hillslope-step-benchmark PRIVATE lsdtt3_cpu)
 
+add_executable(cellular-hillslope-kernel-benchmark
+               cpp/cellular_hillslope_kernel_benchmark.cpp)
+target_link_libraries(cellular-hillslope-kernel-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-raster-compare
+               cpp/cellular_hillslope_raster_compare.cpp)
+target_link_libraries(cellular-hillslope-raster-compare PRIVATE lsdtt3_cpu)
+
 add_test(NAME unit_cellular_hillslope_solver
          COMMAND lsdtt-test-cellular-hillslope-solver)
 set_tests_properties(unit_cellular_hillslope_solver PROPERTIES

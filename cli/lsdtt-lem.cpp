@@ -2771,6 +2771,7 @@ int main(int argc, char* argv[])
     // run with a fixed dt the matrix never changes, so the factorisation computed on
     // the first step serves all of them. See lsdtt_hillslope_newton_workspace.
     lsdtt::lsdtt_hillslope_newton_workspace hillslope_ws;
+    lsdtt::lsdtt_hillslope_cellular_workspace cellular_ws;
 
     // Adaptive outer timestep. Constructed regardless so the achieved ratio can be
     // reported even when adaptation is off -- knowing the run sat at 2.7 is useful
@@ -2806,8 +2807,8 @@ int main(int argc, char* argv[])
                 opts.baselevel_fall_rate = f.baselevel_fall_rate;
             }
 
-            auto [next, stats] =
-                lsdtt::run_lem_step(current, opts, fixed_flats, &hillslope_ws);
+            auto [next, stats] = lsdtt::run_lem_step(
+                current, opts, fixed_flats, &hillslope_ws, &cellular_ws);
             current    = std::move(next);
             last_stats = stats;
             total_time += dt;

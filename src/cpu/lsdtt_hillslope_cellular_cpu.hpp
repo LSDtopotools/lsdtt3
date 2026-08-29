@@ -27,6 +27,7 @@ struct lsdtt_hillslope_cellular_options
     double cfl_safety = 0.9;
     std::string boundary_conditions = "oooo";
     long max_substeps = 1000000;
+    int max_multirate_level = 20;
     int n_threads = 0;
 };
 
@@ -36,6 +37,16 @@ struct lsdtt_hillslope_cellular_workspace
     std::vector<double> elevation_new;
     std::vector<double> q_east;
     std::vector<double> q_south;
+
+    // Multirate edge schedule, retained to avoid repeated allocations.
+    std::vector<std::size_t> edge_a;
+    std::vector<std::size_t> edge_b;
+    std::vector<int> edge_row;
+    std::vector<int> edge_col;
+    std::vector<std::uint8_t> edge_direction; // 0 east, 1 south
+    std::vector<std::uint8_t> edge_colour;
+    std::vector<std::uint8_t> edge_level;
+    std::vector<double> edge_transfer;
 };
 
 struct lsdtt_hillslope_cellular_result
@@ -44,6 +55,9 @@ struct lsdtt_hillslope_cellular_result
 
     long n_substeps = 0;
     long long n_face_evaluations = 0;
+    long long n_face_events = 0;
+    int max_multirate_level = 0;
+    long stability_bin_violations = 0;
     double min_substep = 0.0;
     double max_substep = 0.0;
 
@@ -67,6 +81,18 @@ struct lsdtt_hillslope_cellular_result
 // cells are fixed. is_channel may be empty (no channel Dirichlet set) or have
 // one byte per raster cell.
 lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
+    const lsdtt_raster_cpu& dem,
+    const std::vector<std::uint8_t>& is_channel,
+    double dt_total,
+    const lsdtt_hillslope_cellular_options& options,
+    lsdtt_hillslope_cellular_workspace* workspace = nullptr);
+
+// Experimental local-time-step form. Each face is assigned a power-of-two
+// update level from its local tangent modulus. Transfers due at one fine tick
+// are computed from the same frozen field, then applied in deterministic,
+// conflict-free edge colours. U must be zero: uplift remains the separate LEM
+// process and is not locally subcycled.
+lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport_multirate(
     const lsdtt_raster_cpu& dem,
     const std::vector<std::uint8_t>& is_channel,
     double dt_total,

@@ -12,6 +12,7 @@
 
 #include "../../src/cpu/lsdtt_hillslope_cellular_cpu.hpp"
 #include "../../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
+#include "../../src/cpu/lsdtt_lem_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "../../src/cpu/lsdtt_synthetic_network_cpu.hpp"
 
@@ -167,6 +168,14 @@ int main()
         parallel_options.n_threads = 4;
         const auto parallel = compute_hillslope_cellular_transport(
             dem, {}, 20.0, parallel_options);
+        auto multirate_one_options = cellular_options("pppp");
+        multirate_one_options.n_threads = 1;
+        auto multirate_four_options = multirate_one_options;
+        multirate_four_options.n_threads = 4;
+        const auto multirate_one = compute_hillslope_cellular_transport_multirate(
+            dem, {}, 20.0, multirate_one_options);
+        const auto multirate_four = compute_hillslope_cellular_transport_multirate(
+            dem, {}, 20.0, multirate_four_options);
         double worst = 0.0;
         for (int r = 0; r < nr; ++r)
             for (int c = 0; c < nc; ++c)
@@ -176,6 +185,12 @@ int main()
         check(worst < 1e-7, "periodic transport is translation invariant");
         check(linf(a.elevation, parallel.elevation) == 0.0,
               "topography is deterministic across one and four threads");
+        check(multirate_one.completed && multirate_four.completed,
+              "periodic multirate transport completed");
+        check(linf(multirate_one.elevation, multirate_four.elevation) == 0.0,
+              "multirate topography is deterministic across one and four threads");
+        check(std::fabs(multirate_one.net_dirichlet_export_volume) < 1e-9,
+              "closed periodic multirate transport conserves volume");
     }
 
     // C3: at small dt, forward cellular and backward-Euler Newton converge.
@@ -187,6 +202,8 @@ int main()
 
         const auto cellular = compute_hillslope_cellular_transport(
             dem, channels, dt, cellular_options());
+        const auto multirate = compute_hillslope_cellular_transport_multirate(
+            dem, channels, dt, cellular_options());
         auto no = newton_options();
         no.inv_dt = 1.0 / dt;
         const auto newton = compute_hillslope_newton(
@@ -196,6 +213,9 @@ int main()
               "small-dt comparison stays on the exact Roering branch");
         check(linf(cellular.elevation, newton.elevation) < 1e-6,
               "cellular transient converges to Newton as dt approaches zero");
+        check(multirate.completed
+              && linf(multirate.elevation, cellular.elevation) < 1e-6,
+              "one-level multirate update agrees with the global oracle");
     }
 
     // C4: a narrow pseudo-1D strip relaxes to Newton steady state and U/D
@@ -265,11 +285,17 @@ int main()
             dem, channels, 100.0, medium_options);
         const auto fine = compute_hillslope_cellular_transport(
             dem, channels, 100.0, fine_options);
+        const auto multirate = compute_hillslope_cellular_transport_multirate(
+            dem, channels, 100.0, coarse_options);
         check(coarse.completed && medium.completed && fine.completed,
               "supercritical timestep-refinement runs completed");
         check(linf(medium.elevation, fine.elevation)
               < linf(coarse.elevation, medium.elevation),
               "supercritical relaxation converges under timestep refinement");
+        check(multirate.completed,
+              "localized supercritical multirate update completes without bin violation");
+        check(multirate.n_face_events < coarse.n_face_evaluations,
+              "multirate scheduler evaluates fewer faces than global subcycling");
     }
 
     // C6: the small deterministic OCN supports imposed and empty channel sets.
@@ -335,6 +361,92 @@ int main()
               "imposed OCN channels receive cellular hillslope export");
         check(std::fabs(cellular_coupled.net_dirichlet_export_volume) < 1e-8,
               "empty-channel closed OCN conserves cellular hillslope volume");
+    }
+
+    // C7: LEM orchestration preserves both coupling regimes and process order.
+    {
+        constexpr int nr = 13, nc = 17;
+        const lsdtt_raster_cpu dem = periodic_dem(nr, nc);
+        const auto channels = edge_channels(nr, nc);
+
+        lsdtt_lem_options imposed;
+        imposed.timestep = 20.0f;
+        imposed.enable_d8_fluvial_erosion = false;
+        imposed.enable_dinf_fluvial_erosion = false;
+        imposed.enable_hillslope_transport = true;
+        imposed.enable_uplift = false;
+        imposed.hillslope_transport_model = "cellular_experimental";
+        imposed.hillslope_diffusivity = static_cast<float>(D);
+        imposed.critical_hillslope_slope = static_cast<float>(SC);
+        imposed.cellular_r_match = 0.85;
+        imposed.cellular_cfl_safety = 0.8;
+        imposed.coupling_regime = hillslope_coupling_regime::channels_as_boundaries;
+        imposed.explicit_channel_mask = channels;
+        imposed.boundary_conditions = "nnnn";
+        imposed.n_threads = 2;
+
+        lsdtt_hillslope_cellular_workspace lem_ws;
+        const auto lem_result = run_lem_step(dem, imposed, {}, nullptr, &lem_ws);
+        auto direct_options = cellular_options("nnnn");
+        direct_options.D = imposed.hillslope_diffusivity;
+        direct_options.Sc = imposed.critical_hillslope_slope;
+        direct_options.r_match = imposed.cellular_r_match;
+        direct_options.cfl_safety = imposed.cellular_cfl_safety;
+        direct_options.n_threads = 2;
+        const auto direct = compute_hillslope_cellular_transport(
+            dem, channels, imposed.timestep, direct_options);
+        check(linf(lem_result.first, direct.elevation) == 0.0,
+              "imposed-channel LEM path equals the direct cellular step");
+        bool held = true;
+        for (std::size_t i = 0; i < channels.size(); ++i)
+            if (channels[i] && lem_result.first.get_data()[i] != dem.get_data()[i]) held = false;
+        check(held, "imposed-channel LEM path holds channel elevations fixed");
+
+        std::vector<float> slope_z(static_cast<std::size_t>(nr) * nc, 0.0f);
+        std::vector<std::uint8_t> slope_mask(slope_z.size(), 1u);
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+                slope_z[static_cast<std::size_t>(r) * nc + c] =
+                    static_cast<float>(0.15 * (nr - 1 - r)
+                        + 0.05 * std::sin(2.0 * PI * c / nc));
+        const lsdtt_raster_cpu slope_dem(
+            std::move(slope_z), std::move(slope_mask), meta(nr, nc));
+
+        lsdtt_lem_options coupled = imposed;
+        coupled.timestep = 10.0f;
+        coupled.enable_d8_fluvial_erosion = true;
+        coupled.enable_uplift = true;
+        coupled.uplift_rate = static_cast<float>(U);
+        coupled.erodibility = 1e-5f;
+        coupled.incision_threshold_area = 0.0f;
+        coupled.divide_area_by_dx = false;
+        coupled.coupling_regime = hillslope_coupling_regime::coupled;
+        coupled.explicit_channel_mask.clear();
+
+        std::vector<std::int64_t> fixed_bottom;
+        for (int c = 0; c < nc; ++c)
+            fixed_bottom.push_back(static_cast<std::int64_t>(nr - 1) * nc + c);
+        const auto empty_channels = compute_lem_channel_mask(slope_dem, coupled);
+        check(std::count(empty_channels.begin(), empty_channels.end(), 1u) == 0,
+              "everywhere-acting cellular LEM has an empty channel set");
+
+        const auto coupled_result = run_lem_step(
+            slope_dem, coupled, fixed_bottom, nullptr, &lem_ws);
+        auto no_hillslope = coupled;
+        no_hillslope.enable_hillslope_transport = false;
+        const auto fluvial_only = run_lem_step(
+            slope_dem, no_hillslope, fixed_bottom);
+        check(linf(coupled_result.first, fluvial_only.first) > 0.0,
+              "cellular transport acts after fluvial incision in coupled mode");
+        bool bottom_restored = true;
+        for (std::int64_t i : fixed_bottom)
+            if (coupled_result.first.get_data()[static_cast<std::size_t>(i)]
+                != slope_dem.get_data()[static_cast<std::size_t>(i)])
+                bottom_restored = false;
+        check(bottom_restored,
+              "fixed base-level row is restored after fluvial, cellular and uplift processes");
+        check(std::isfinite(coupled_result.second.mean_erosion_rate),
+              "coupled cellular LEM reports finite erosion statistics");
     }
 
     std::cout << "\n" << (g_checks - g_failures) << " / " << g_checks

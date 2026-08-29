@@ -254,7 +254,8 @@ run_lem_step(
     const lsdtt_raster_cpu&           dem,
     const lsdtt_lem_options&          opts,
     const std::vector<std::int64_t>&  boundary_flats,
-    lsdtt_hillslope_newton_workspace* hillslope_ws)
+    lsdtt_hillslope_newton_workspace* hillslope_ws,
+    lsdtt_hillslope_cellular_workspace* cellular_ws)
 {
     const lsdtt_raster_meta& meta = dem.get_meta();
     const std::size_t n_cells = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
@@ -364,9 +365,14 @@ run_lem_step(
             const bool have_explicit_mask =
                 opts.explicit_channel_mask.size() == n_cells;
             const bool is_cidre = (opts.hillslope_transport_model == "cidre");
+            const bool is_cellular =
+                (opts.hillslope_transport_model == "cellular_experimental");
+            const bool coupled = resolve_hillslope_coupling_regime(
+                opts.coupling_regime, opts.incision_threshold_area,
+                have_explicit_mask) == hillslope_coupling_regime::coupled;
 
             std::optional<lsdtt_flowgraph_cpu> flow_hillslope;
-            if (is_cidre || !have_explicit_mask)
+            if (is_cidre || (!have_explicit_mask && !(is_cellular && coupled)))
                 flow_hillslope.emplace(build_hillslope_flowgraph(current, opts));
 
             // Build the Dirichlet channel mask once for the channel-using explicit
@@ -378,7 +384,28 @@ run_lem_step(
                     flow_hillslope ? &*flow_hillslope : nullptr, meta, opts);
             };
 
-            if (opts.hillslope_transport_model == "linear" ||
+            if (is_cellular)
+            {
+                std::vector<uint8_t> is_channel = build_is_channel();
+                lsdtt_hillslope_cellular_options cellular_options;
+                cellular_options.D = opts.hillslope_diffusivity;
+                cellular_options.U = 0.0;
+                cellular_options.Sc = opts.critical_hillslope_slope;
+                cellular_options.r_match = opts.cellular_r_match;
+                cellular_options.cfl_safety = opts.cellular_cfl_safety;
+                cellular_options.boundary_conditions = opts.boundary_conditions;
+                cellular_options.n_threads = opts.n_threads;
+                const lsdtt_hillslope_cellular_result cellular =
+                    compute_hillslope_cellular_transport(
+                        current, is_channel, opts.timestep,
+                        cellular_options, cellular_ws);
+                if (!cellular.completed)
+                    throw std::runtime_error(
+                        "experimental cellular hillslope step failed: "
+                        + cellular.message);
+                current = cellular.elevation;
+            }
+            else if (opts.hillslope_transport_model == "linear" ||
                 opts.hillslope_transport_model == "roering")
             {
                 // Explicit FD on the regular grid - flow graph used only for channel ID.
