@@ -1828,8 +1828,11 @@ int main(int argc, char* argv[])
             return 1;
         }
 
+        const std::string hs_solver = sf["hillslope_ss_model"];
+        const bool is_critical_slope =
+            hs_solver == "critical_slope" || hs_solver == "critical-slope";
         const float thresh = ff["incision_threshold_area"];
-        if (thresh <= 0.0f)
+        if (thresh <= 0.0f && !is_critical_slope)
         {
             std::cerr << "FATAL: run_hillslope_on_loaded_dem requires "
                          "incision_threshold_area > 0; the channel pixels are "
@@ -1865,20 +1868,50 @@ int main(int argc, char* argv[])
 
         std::vector<uint8_t> is_channel(static_cast<size_t>(nh), 0);
         int64_t n_chan = 0;
-        for (int64_t flat = 0; flat < nh; ++flat)
+        if (thresh > 0.0f)
         {
-            if (!hmask[static_cast<size_t>(flat)]) continue;
-            double A = hs_area[static_cast<size_t>(flat)];
-            if (bf["divide_area_by_dx"]) A /= static_cast<double>(dxh);
-            if (A >= static_cast<double>(thresh))
+            for (int64_t flat = 0; flat < nh; ++flat)
             {
-                is_channel[static_cast<size_t>(flat)] = 1;
-                ++n_chan;
+                if (!hmask[static_cast<size_t>(flat)]) continue;
+                double A = hs_area[static_cast<size_t>(flat)];
+                if (bf["divide_area_by_dx"]) A /= static_cast<double>(dxh);
+                if (A >= static_cast<double>(thresh))
+                {
+                    is_channel[static_cast<size_t>(flat)] = 1;
+                    ++n_chan;
+                }
             }
+            std::cout << "  Channel pixels (A >= " << thresh << "): " << n_chan
+                      << "  Hillslope pixels: " << (nh - n_chan) << "\n";
         }
-
-        std::cout << "  Channel pixels (A >= " << thresh << "): " << n_chan
-                  << "  Hillslope pixels: " << (nh - n_chan) << "\n";
+        else
+        {
+            // A coupled E2 landscape has no imposed channel set. The
+            // critical-slope preconditioner is not an elliptic solve and only
+            // needs seeds from which to integrate the limiting gradient, so its
+            // declared open boundaries are sufficient anchors. This exception
+            // is deliberately unavailable to the linear/Roering steady solves,
+            // which remain singular without Dirichlet channels or boundaries.
+            const std::string& bc = sf["boundary_conditions"];
+            auto bc_at = [&](std::size_t i) -> char
+            { return bc.size() > i ? bc[i] : 'o'; };
+            const char bn = bc_at(0), be = bc_at(1);
+            const char bs = bc_at(2), bw = bc_at(3);
+            for (int r = 0; r < hm.n_rows; ++r)
+                for (int c = 0; c < hm.n_cols; ++c)
+                {
+                    const std::size_t flat = static_cast<std::size_t>(r) * hm.n_cols + c;
+                    if (!hmask[flat]) continue;
+                    if ((r == 0 && bn == 'o') || (c == hm.n_cols - 1 && be == 'o')
+                        || (r == hm.n_rows - 1 && bs == 'o') || (c == 0 && bw == 'o'))
+                    {
+                        is_channel[flat] = 1;
+                        ++n_chan;
+                    }
+                }
+            std::cout << "  Open-boundary anchor pixels: " << n_chan
+                      << "  Interior pixels: " << (nh - n_chan) << "\n";
+        }
 
         if (n_chan == 0)
         {
@@ -1887,8 +1920,6 @@ int main(int argc, char* argv[])
                          "Dirichlet set. Lower the threshold.\n";
             return 1;
         }
-
-        const std::string hs_solver = sf["hillslope_ss_model"];
 
         // critical_slope is not an elliptic solve: it imposes S_c by upslope
         // integration from the channels, so there is no iteration, tolerance or

@@ -728,6 +728,21 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_lem_hillslope_on_loaded_dem_critical_slope PROPERTIES
     LABELS "smoke;cli;hillslope")
 
+# E2's coupled landscape has no threshold-defined channels. The critical-slope
+# clamp is path integration rather than an elliptic solve, so open boundaries are
+# valid anchors; this must not weaken the channel requirement for other solvers.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_hillslope_on_loaded_dem_cs_coupled
+    lsdtt-lem
+    lem_hillslope_on_loaded_dem_cs_coupled.param.in
+    tinyhscscoupled_hillslope_on_loaded_dem.tif
+    --expect-raster-size tinyhscscoupled_hillslope_on_loaded_dem.tif:5x5
+    --stdout-contains "Open-boundary anchor pixels"
+    --stdout-contains "critical_slope (imposed by upslope integration, not iterated)"
+)
+set_tests_properties(smoke_lem_hillslope_on_loaded_dem_cs_coupled PROPERTIES
+    LABELS "smoke;cli;hillslope")
+
 # The mode selects WHICH surface the solve runs on; it does not switch the solve
 # on. Asking for one without the other is a configuration error, not a silent
 # no-op.
@@ -1887,6 +1902,27 @@ add_test(NAME unit_cellular_hillslope_constitutive
          COMMAND lsdtt-test-cellular-hillslope-constitutive
                  ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
 set_tests_properties(unit_cellular_hillslope_constitutive PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+
+# P2 global deterministic cellular oracle: Newton agreement, conservation,
+# periodicity, ridgetop curvature, supercritical relaxation and small-OCN modes.
+add_executable(lsdtt-test-cellular-hillslope-solver
+               cpp/test_cellular_hillslope_solver.cpp)
+target_link_libraries(lsdtt-test-cellular-hillslope-solver PRIVATE lsdtt3_cpu)
+
+# Research-only E2 diagnostic, built but not registered with CTest because it
+# consumes user-supplied rasters rather than a committed fixture.
+add_executable(cellular-hillslope-face-stats
+               cpp/cellular_hillslope_face_stats.cpp)
+target_link_libraries(cellular-hillslope-face-stats PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-step-benchmark
+               cpp/cellular_hillslope_step_benchmark.cpp)
+target_link_libraries(cellular-hillslope-step-benchmark PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_cellular_hillslope_solver
+         COMMAND lsdtt-test-cellular-hillslope-solver)
+set_tests_properties(unit_cellular_hillslope_solver PROPERTIES
                      LABELS "unit;hillslope;cellular")
 
 # The SOR steady-state hillslope solver: conservation, precision floor, 'o' vs 'n',
