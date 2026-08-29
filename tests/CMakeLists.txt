@@ -1864,6 +1864,31 @@ target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_newton COMMAND lsdtt-test-hillslope-newton)
 set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "unit;hillslope")
 
+# Small Newton-only references for the cellular hillslope investigation. The
+# normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
+# performance fixtures and deliberately do not run here.
+add_executable(lsdtt-test-cellular-hillslope-references
+               cpp/test_cellular_hillslope_references.cpp)
+target_link_libraries(lsdtt-test-cellular-hillslope-references PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_cellular_hillslope_references
+         COMMAND lsdtt-test-cellular-hillslope-references
+                 ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+set_tests_properties(unit_cellular_hillslope_references PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+
+# Soft-critical constitutive law and whole-grid pass-cost envelope. This is P1:
+# test-local mathematics only, before a raster transport solver exists.
+add_executable(lsdtt-test-cellular-hillslope-constitutive
+               cpp/test_cellular_hillslope_constitutive.cpp)
+
+add_test(NAME unit_cellular_hillslope_constitutive
+         COMMAND lsdtt-test-cellular-hillslope-constitutive
+                 ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+set_tests_properties(unit_cellular_hillslope_constitutive PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+
 # The SOR steady-state hillslope solver: conservation, precision floor, 'o' vs 'n',
 # periodic invariance, and recovery of U/D from known forcing.
 add_executable(lsdtt-test-hillslope-steady-state cpp/test_hillslope_steady_state.cpp)
