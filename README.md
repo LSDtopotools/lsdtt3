@@ -6,15 +6,15 @@ A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) wit
 
 **Copyright:** Simon M. Mudd  
 **Licence:** GPL-3.0  
-**Additional developers:** Rutger Vervoordeldonk
+**Additional developers:** Rutger Vervoordeldonk, Boris Gailleton
 
-**Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Boris Gailleton, Martin Hurst, Declan Valters 
+**Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Martin Hurst, Declan Valters 
 
 ---
 
 ## Overview
 
-lsdtt3 is a C++ library and set of command-line tools for topographic analysis of digital elevation models (DEMs). It is a ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2), retaining the core algorithms and scientific functionality while rebuilding the architecture for modern C++17, optional GPU support, and easier incremental development.
+lsdtt3 is a C++ library and set of command-line tools for topographic analysis, and various geomorphic and hydrologic analyses. It follows on from [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) but has been rewritten from the ground up, while retaining the core scientific functionality of LSDTopoTools2. `lsdtt3` has updated architecture more suited to modern C++17, optional GPU support, and easier incremental development.
 
 If you use this software for research, please also cite the original LSDTopoTools2:
 
@@ -28,21 +28,22 @@ If you use this software for research, please also cite the original LSDTopoTool
 Key improvements over LSDTopoTools2:
 
 - Reads any GDAL-supported format (GeoTIFF, COG, VRT, BIL, ASC, …). VRT is especially useful for large tiled datasets.
+- A command line interface for downloading data from OpenTopography.org. No additional sofware is needed to get datasets for analysis. 
 - Writes vector outputs (GeoPackage, FlatGeobuf, CSV) with correct georeferencing via GDAL/OGR.
 - Automatic projection handling: If input data is not projected, converts to UTM below ±75°, polar stereographic at high latitude, optional Lambert LAEA for wide-extent rasters spanning more than two UTM zones.
 - If input raster is projected, keeps the projection. So regional projections (e.g., British National Grid) can be retained for both input and output. Can also ingest projected coordinates from other planets (e.g., Mars or Titan)
 - Cloud Optimised GeoTIFF (COG) output by default. Calculates internally time savings of COG format so small rasters are output as standard GeoTIFF.
-- 64-bit pixel indexing — can process DEMs larger than 40,000 × 40,000 pixels. Elswhere data types are used to reduce memory consumption (8 bit, and 32 bit data used where approriate).
-- D8 and DAG (D-infinity / MFD) flow routing. D8 uses the s-vector for O(1) upslope-set queries.
-- CPU and GPU backends behind a shared abstract interface (GPU is a placeholder for now).
-- Analysis routines as stateless free functions — editing one analysis file no longer triggers a full rebuild. Analyses are also clustered by task so (hopefully) it is easier to find the functions you want (although a side effect of this is that there are many more command line interfaces than previously). 
-- OpenMP multithreading for selected routines; many operations are substantially faster than the equivalent LSDTopoTools2 code.
+- 64-bit pixel indexing — can process DEMs larger than 40,000 × 40,000 pixels. You will need a very high memory compute node for this! But the authors wanted to retain the ability to analyse the largest drainage basins on Earth at high resolution without resorting to tiling. Elswhere data types are used to reduce memory consumption (8 bit, and 32 bit data used where approriate).
+- D8 and DAG (D-infinity / MFD) flow routing. D8 retains the relationships between pixels and their upslope neigbours through an object called the s-vector for O(1) upslope-set queries. 
+- CPU and GPU backends behind a shared abstract interface (GPU functionality is significantly reduced compared to CPU, however).
+- Analysis routines as stateless free functions as opposed to objects. The reason this was done was to reduce the amount of spaghetti code in the package, and in addition reduce the chances of needing a full rebuild any time a small modification is made, problems both present in LSDTopoTools2. Analyses are also clustered by task so (hopefully) it is easier to find the functions you want (although a side effect of this is that there are many more command line interfaces than previously). In other words, we have not thrown the kitchen sink at something called lsdtt-basic-metrics this time (it no longer exists). The names of the CLI tools should give users a reasonable idea of what they are meant to do. 
+- OpenMP multithreading for selected routines; many operations are substantially faster than the equivalent LSDTopoTools2 code. We have a testing and benchmarking document that has some concrete numbers attached to this statement, see it in the `/docs` directory. 
 - Many algorithms made more robust and/or faster (e.g., Spectral analysis, proximity tools, metrics based on moving windows). 
 - Overall, users should have more flexibility/ease for file I/O, should see less memory consumption (and as a result be able to process bigger datasets and have fewer segmentation faults), and should see speedup of a number of key algorithms.
 
 ## LLM Usage:
 
-Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, Claude Haiku, Sonnet, and Opus) and to port legacy code and write new routines, with testing against baselines (e.g., lsdtt2 outputs, previous iterations of algorithms) and regular code review. 
+Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra and Luna, Claude Haiku, Sonnet, and Opus) and to port legacy code and write new routines, with testing against baselines (e.g., lsdtt2 outputs, previous iterations of algorithms) and regular code review. 
 
 ---
 

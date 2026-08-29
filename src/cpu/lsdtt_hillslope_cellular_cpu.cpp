@@ -96,7 +96,13 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
 
     lsdtt_hillslope_cellular_workspace local;
     lsdtt_hillslope_cellular_workspace& ws = workspace ? *workspace : local;
-    ws.elevation.assign(dem.get_data().begin(), dem.get_data().end());
+    ws.elevation.resize(n);
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (long long i = 0; i < static_cast<long long>(n); ++i)
+        ws.elevation[static_cast<std::size_t>(i)] =
+            static_cast<double>(dem.get_data()[static_cast<std::size_t>(i)]);
     ws.elevation_new.resize(n);
     ws.q_east.resize(n);
     ws.q_south.resize(n);
@@ -111,7 +117,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     const bool periodic_ew = dom.bc_e == 'p' && dom.bc_w == 'p';
     const bool periodic_ns = dom.bc_n == 'p' && dom.bc_s == 'p';
 
-    auto compute_faces = [&](bool write_flux) -> face_scan
+    auto compute_faces = [&](bool write_flux, bool collect_diagnostics) -> face_scan
     {
         long active = 0, r70 = 0, r80 = 0, r85 = 0, r100 = 0;
         double max_r = 0.0, max_tangent = 1.0;
@@ -142,12 +148,15 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
                         const double stg = 0.5 * (st.slope_y(r, c) + st.slope_y(er, ec));
                         const double ratio = std::sqrt(sn * sn + stg * stg) / options.Sc;
                         qe = -options.D * mobility(ratio, options.r_match) * sn;
-                        ++active;
-                        if (ratio >= 0.70) ++r70;
-                        if (ratio >= 0.80) ++r80;
-                        if (ratio >= 0.85) ++r85;
-                        if (ratio >= 1.00) ++r100;
-                        max_r = std::max(max_r, ratio);
+                        if (collect_diagnostics)
+                        {
+                            ++active;
+                            if (ratio >= 0.70) ++r70;
+                            if (ratio >= 0.80) ++r80;
+                            if (ratio >= 0.85) ++r85;
+                            if (ratio >= 1.00) ++r100;
+                            max_r = std::max(max_r, ratio);
+                        }
                         max_tangent = std::max(max_tangent,
                                                flux_tangent(ratio, options.r_match));
                     }
@@ -166,12 +175,15 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
                         const double stg = 0.5 * (st.slope_x(r, c) + st.slope_x(sr, sc));
                         const double ratio = std::sqrt(sn * sn + stg * stg) / options.Sc;
                         qs = -options.D * mobility(ratio, options.r_match) * sn;
-                        ++active;
-                        if (ratio >= 0.70) ++r70;
-                        if (ratio >= 0.80) ++r80;
-                        if (ratio >= 0.85) ++r85;
-                        if (ratio >= 1.00) ++r100;
-                        max_r = std::max(max_r, ratio);
+                        if (collect_diagnostics)
+                        {
+                            ++active;
+                            if (ratio >= 0.70) ++r70;
+                            if (ratio >= 0.80) ++r80;
+                            if (ratio >= 0.85) ++r85;
+                            if (ratio >= 1.00) ++r100;
+                            max_r = std::max(max_r, ratio);
+                        }
                         max_tangent = std::max(max_tangent,
                                                flux_tangent(ratio, options.r_match));
                     }
@@ -190,7 +202,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     result.min_substep = dt_total > 0.0
         ? std::numeric_limits<double>::infinity() : 0.0;
 
-    const face_scan initial = compute_faces(dt_total > 0.0);
+    const face_scan initial = compute_faces(dt_total > 0.0, true);
     result.initial_active_faces = initial.active;
     result.initial_faces_r70 = initial.r70;
     result.initial_faces_r80 = initial.r80;
@@ -202,8 +214,8 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
     face_scan scan = initial;
     while (remaining > 0.0 && result.n_substeps < options.max_substeps)
     {
-        if (result.n_substeps > 0) scan = compute_faces(true);
-        result.n_face_evaluations += scan.active;
+        if (result.n_substeps > 0) scan = compute_faces(true, false);
+        result.n_face_evaluations += initial.active;
 
         const double stable_dt = options.cfl_safety * meta.cell_size * meta.cell_size
                                / (4.0 * options.D * scan.max_tangent);
@@ -247,7 +259,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
         else remaining -= dt;
     }
 
-    const face_scan final_scan = compute_faces(false);
+    const face_scan final_scan = compute_faces(false, true);
     result.final_max_slope_ratio = final_scan.max_r;
     result.completed = remaining == 0.0;
     result.message = result.completed ? "completed" : "maximum substeps reached";

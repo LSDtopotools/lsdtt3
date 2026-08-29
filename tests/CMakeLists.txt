@@ -1928,6 +1928,19 @@ add_executable(cellular-hillslope-raster-compare
                cpp/cellular_hillslope_raster_compare.cpp)
 target_link_libraries(cellular-hillslope-raster-compare PRIVATE lsdtt3_cpu)
 
+add_executable(cellular-hillslope-common-limit
+               cpp/cellular_hillslope_common_limit.cpp)
+target_link_libraries(cellular-hillslope-common-limit PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-grid-scaling
+               cpp/cellular_hillslope_grid_scaling.cpp)
+target_link_libraries(cellular-hillslope-grid-scaling PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_cellular_hillslope_common_limit
+         COMMAND cellular-hillslope-common-limit)
+set_tests_properties(unit_cellular_hillslope_common_limit PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+
 add_test(NAME unit_cellular_hillslope_solver
          COMMAND lsdtt-test-cellular-hillslope-solver)
 set_tests_properties(unit_cellular_hillslope_solver PROPERTIES
