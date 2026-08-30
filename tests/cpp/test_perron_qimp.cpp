@@ -24,6 +24,19 @@ double rstar(double e)
     const double s = std::sqrt(1.0 + e * e);
     return (s - std::log((1.0 + s) / 2.0) - 1.0) / e;
 }
+
+double axisymmetric_solution(double radius, double fixed_radius,
+                             double K, double Sc, double effective_uplift)
+{
+    const double L = K * Sc / (2.0 * effective_uplift);
+    auto raw = [&](double r) {
+        const double ratio = r / (2.0 * L);
+        const double s = std::sqrt(1.0 + ratio * ratio);
+        return 2.0 * L * Sc
+             * (1.0 - std::log(2.0) - s + std::log(1.0 + s));
+    };
+    return raw(radius) - raw(fixed_radius);
+}
 } // namespace
 
 int main()
@@ -155,6 +168,73 @@ int main()
                   << "; max error=" << max_error << " m; theory R*="
                   << rstar(e_star) << "\n";
         check(rmse / relief < 5e-4, "B1 equilibrium RMSE/relief < 5e-4");
+    }
+
+    std::cout << "\n-- Appendix B7 100x100 axisymmetric equilibrium --\n";
+    {
+        o.K = 0.0035; o.Sc = 1.25; o.U = 2.0e-4;
+        o.dx = 2.0; o.dy = 2.0; o.dt = 1.0e4;
+        constexpr int nr = 100, nc = 100;
+        constexpr double center = 99.0, fixed_radius = 99.0;
+        std::vector<double> exact(nr * nc), z(nr * nc);
+        std::vector<std::uint8_t> fixed(nr * nc, 0);
+        double relief = 0.0;
+        int fixed_count = 0;
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+            {
+                const double radius = std::hypot(c * o.dx - center,
+                                                 r * o.dy - center);
+                const std::size_t i = static_cast<std::size_t>(r * nc + c);
+                exact[i] = axisymmetric_solution(
+                    radius, fixed_radius, o.K, o.Sc, o.U);
+                relief = std::max(relief, exact[i]);
+                z[i] = exact[i] > 0.0 ? 0.0 : exact[i];
+                if (z[i] != 0.0) { fixed[i] = 1; ++fixed_count; }
+            }
+
+        const std::vector<double> fixed_values = z;
+        bool completed = true;
+        double worst_linear_residual = 0.0;
+        for (int step = 0; step < 300; ++step)
+        {
+            const auto result = compute_perron_qimp_step_2d(
+                z, nr, nc, fixed, fixed_values, o);
+            completed = completed && result.completed;
+            worst_linear_residual = std::max(
+                worst_linear_residual, result.linear_residual_inf);
+            if (!result.completed)
+            {
+                std::cout << "  stopped: " << result.message << "\n";
+                break;
+            }
+            z = result.elevation;
+        }
+        check(completed, "3 Myr canonical axisymmetric integration completed");
+        double active_sum2 = 0.0, all_sum2 = 0.0, max_error = 0.0;
+        int active_count = 0;
+        for (std::size_t i = 0; i < z.size(); ++i)
+        {
+            const double error = z[i] - exact[i];
+            all_sum2 += error * error;
+            max_error = std::max(max_error, std::fabs(error));
+            if (!fixed[i]) { active_sum2 += error * error; ++active_count; }
+        }
+        const double active_rmse = std::sqrt(active_sum2 / active_count);
+        const double all_rmse = std::sqrt(all_sum2 / z.size());
+        std::cout << "  evolving nodes=" << active_count
+                  << "; fixed nodes=" << fixed_count
+                  << "; evolving-node RMSE=" << active_rmse
+                  << " m; all-node RMSE=" << all_rmse
+                  << " m; RMSE/relief=" << active_rmse / relief
+                  << "; max error=" << max_error
+                  << " m; worst linear residual=" << worst_linear_residual << "\n";
+        check(fixed_count == 2332, "canonical exterior mask has 2,332 fixed nodes");
+        check(active_rmse / relief < 5e-4,
+              "B7 evolving-node RMSE/relief < 5e-4");
+        check(max_error < 0.1, "B7 maximum absolute error < 0.1 m");
+        check(worst_linear_residual < 1e-9,
+              "every B7 sparse solve has a small linear residual");
     }
 
     std::cout << "\n" << checks - failures << " / " << checks << " checks passed\n";

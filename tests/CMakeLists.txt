@@ -1941,6 +1941,10 @@ add_test(NAME unit_hillslope_ren_modular_implicit
 set_tests_properties(unit_hillslope_ren_modular_implicit PROPERTIES
                      LABELS "unit;hillslope")
 
+# Heavy P1/P2 literature comparison driver; run explicitly with an output path.
+add_executable(lsdtt-perron-ren-p1-p2 cpp/perron_ren_p1_p2_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p1-p2 PRIVATE lsdtt3_cpu)
+
 # Small Newton-only references for the cellular hillslope investigation. The
 # normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
 # performance fixtures and deliberately do not run here.
