@@ -1945,6 +1945,14 @@ set_tests_properties(unit_hillslope_ren_modular_implicit PROPERTIES
 add_executable(lsdtt-perron-ren-p1-p2 cpp/perron_ren_p1_p2_driver.cpp)
 target_link_libraries(lsdtt-perron-ren-p1-p2 PRIVATE lsdtt3_cpu)
 
+# Heavy P3 equilibrium timestep sweep; run explicitly with an output CSV.
+add_executable(lsdtt-perron-ren-p3 cpp/perron_ren_p3_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p3 PRIVATE lsdtt3_cpu)
+
+# Heavy P4 transient timestep sweep; `full-p2` enables the multi-hour 1 yr 2-D reference.
+add_executable(lsdtt-perron-ren-p4 cpp/perron_ren_p4_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p4 PRIVATE lsdtt3_cpu)
+
 # Small Newton-only references for the cellular hillslope investigation. The
 # normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
 # performance fixtures and deliberately do not run here.
