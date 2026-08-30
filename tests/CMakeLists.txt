@@ -1925,6 +1925,13 @@ target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_newton COMMAND lsdtt-test-hillslope-newton)
 set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "unit;hillslope")
 
+# Independent equation-faithful Perron (2011) Q-imp reference solver.
+add_executable(lsdtt-test-perron-qimp cpp/test_perron_qimp.cpp)
+target_link_libraries(lsdtt-test-perron-qimp PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_perron_qimp COMMAND lsdtt-test-perron-qimp)
+set_tests_properties(unit_hillslope_perron_qimp PROPERTIES LABELS "unit;hillslope")
+
 # Small Newton-only references for the cellular hillslope investigation. The
 # normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
 # performance fixtures and deliberately do not run here.
