@@ -364,6 +364,14 @@ int main(int argc, char* argv[])
         "internal basins. Set > 0 to enable; typical values 2-5x the noise relief.",
         "Initial conditions", "param", ""};
 
+    float_default_map["initial_surface_slope"] = 0.0001f;
+    help_map["initial_surface_slope"] = {"float","0.0001",
+        "Small regional slope added to generated surfaces toward the nearest "
+        "declared open boundary. Prevents unresolved flats and gives initial flow "
+        "a boundary-consistent direction. Set to 0 to disable.",
+        "",
+        "Initial conditions", "param", ""};
+
     float_default_map["post_breach_noise_relief"] = 0.0f;
     help_map["post_breach_noise_relief"] = {"float","0",
         "Half-amplitude (m) of uniform noise added after breaching the initial surface.",
@@ -1624,6 +1632,19 @@ int main(int argc, char* argv[])
             dem = lsdtt::lsdtt_raster_cpu(
                 std::move(data), std::move(mask), syn_meta);
         }
+
+        if (ff["initial_surface_slope"] < 0.0f)
+        {
+            std::cerr << "FATAL: initial_surface_slope must be non-negative.\n";
+            return 1;
+        }
+        if (ff["initial_surface_slope"] > 0.0f)
+        {
+            std::cout << "Adding " << ff["initial_surface_slope"]
+                      << " slope toward declared open boundaries.\n";
+            dem = lsdtt::superimpose_open_boundary_gradient(
+                dem, sf["boundary_conditions"], ff["initial_surface_slope"]);
+        }
     }
 
 
@@ -1938,11 +1959,12 @@ int main(int argc, char* argv[])
         const bool is_critical_slope =
             hs_solver == "critical_slope" || hs_solver == "critical-slope";
         const float thresh = ff["incision_threshold_area"];
-        if (thresh <= 0.0f && !is_critical_slope)
+        if (thresh <= 0.0f && opts.explicit_channel_mask.empty() && !is_critical_slope)
         {
             std::cerr << "FATAL: run_hillslope_on_loaded_dem requires "
-                         "incision_threshold_area > 0; the channel pixels are "
-                         "the Dirichlet set that pins the solve.\n";
+                         "incision_threshold_area > 0 or channel_mask_fname; "
+                         "the channel pixels are the Dirichlet set that pins "
+                         "the solve.\n";
             return 1;
         }
 
@@ -1955,16 +1977,19 @@ int main(int argc, char* argv[])
         hs_fi_opts.n_threads           = ifs["n_threads"];
 
         std::vector<double> hs_area;
-        try
+        if (opts.explicit_channel_mask.empty())
         {
-            lsdtt::lsdtt_flowinfo flow(dem.get_data_array(), dem.get_mask_array(),
-                                       dem.get_meta(), hs_fi_opts);
-            hs_area = flow.accumulate();
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: flow routing failed: " << e.what() << "\n";
-            return 1;
+            try
+            {
+                lsdtt::lsdtt_flowinfo flow(dem.get_data_array(), dem.get_mask_array(),
+                                           dem.get_meta(), hs_fi_opts);
+                hs_area = flow.accumulate();
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: flow routing failed: " << e.what() << "\n";
+                return 1;
+            }
         }
 
         const lsdtt::lsdtt_raster_meta& hm = dem.get_meta();
@@ -1974,7 +1999,15 @@ int main(int argc, char* argv[])
 
         std::vector<uint8_t> is_channel(static_cast<size_t>(nh), 0);
         int64_t n_chan = 0;
-        if (thresh > 0.0f)
+        if (!opts.explicit_channel_mask.empty())
+        {
+            is_channel = opts.explicit_channel_mask;
+            n_chan = static_cast<int64_t>(std::count(
+                is_channel.begin(), is_channel.end(), uint8_t{1}));
+            std::cout << "  Channel pixels (explicit mask): " << n_chan
+                      << "  Hillslope pixels: " << (nh - n_chan) << "\n";
+        }
+        else if (thresh > 0.0f)
         {
             for (int64_t flat = 0; flat < nh; ++flat)
             {

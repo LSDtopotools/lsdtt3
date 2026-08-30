@@ -102,6 +102,7 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `initial_surface_slope` | float | `0.0001` | Regional slope added toward the nearest declared open (`o`/`b`) edge. Prevents unresolved synthetic flats and gives initial flow a boundary-consistent direction. Set to `0` to disable. Closed and periodic domains are unchanged. |
 | `parabola_relief` | float | `0` | Peak elevation (m) of a north–south parabola added to the initial surface. Biases drainage toward north and south boundaries. Set `> 0` to enable. |
 | `post_breach_noise_relief` | float | `0` | Half-amplitude (m) of uniform noise added after depression breaching. Breaks up post-breach flats. Set `> 0` to enable. |
 | `fill_initial_surface` | bool | `false` | Apply pit-filling to the initial surface. Applied after breaching and post-breach noise. |
