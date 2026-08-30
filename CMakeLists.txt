@@ -385,6 +385,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_newton_cpu.cpp
     src/cpu/lsdtt_perron_qimp_cpu.cpp
+    src/cpu/lsdtt_ren_modular_implicit_cpu.cpp
     src/cpu/lsdtt_hillslope_cellular_cpu.cpp
     src/cpu/lsdtt_hillslope_particle_io.cpp
     src/cpu/lsdtt_valley_spacing_cpu.cpp

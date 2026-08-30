@@ -1932,6 +1932,15 @@ target_link_libraries(lsdtt-test-perron-qimp PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_perron_qimp COMMAND lsdtt-test-perron-qimp)
 set_tests_properties(unit_hillslope_perron_qimp PROPERTIES LABELS "unit;hillslope")
 
+# Independent C++ port of Ren et al. (2026) modular implicit method.
+add_executable(lsdtt-test-ren-modular-implicit cpp/test_ren_modular_implicit.cpp)
+target_link_libraries(lsdtt-test-ren-modular-implicit PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_ren_modular_implicit
+         COMMAND lsdtt-test-ren-modular-implicit)
+set_tests_properties(unit_hillslope_ren_modular_implicit PROPERTIES
+                     LABELS "unit;hillslope")
+
 # Small Newton-only references for the cellular hillslope investigation. The
 # normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
 # performance fixtures and deliberately do not run here.
