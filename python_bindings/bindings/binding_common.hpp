@@ -33,4 +33,5 @@ void bind_raster_types(nb::module_&); void bind_raster_basic_ops(nb::module_&); 
 void bind_cosmo_column(nb::module_&);
 void bind_cosmo_raster(nb::module_&);
 void bind_cosmo_basin(nb::module_&);
+void bind_statistical_comparison(nb::module_&);
 } // namespace lsdtt3_python
