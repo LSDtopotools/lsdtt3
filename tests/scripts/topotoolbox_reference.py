@@ -37,7 +37,19 @@ ships wheels for cp311-cp313 only. Run under:
 Routine -> TopoToolbox mapping:
 
   Flow routing (docs/testing_and_benchmarking.md, flow plan):
-    fill               GridObject.fillsinks()   plain fill, no epsilon
+    fill               GridObject.fillsinks(hybrid=True)   DEFAULT
+                       Vincent-style grayscale reconstruction: forward and
+                       backward raster scans plus a FIFO queue. O(N), almost
+                       entirely sequential memory access.
+    fill_priority_flood  GridObject.fillsinks(hybrid=False)
+                       The heap-based flood. Same result, O(N log N).
+
+    BOTH exist here so the benchmark can compare ALGORITHM AGAINST ALGORITHM.
+    lsdtt3 has both too (`fill_algorithm_choice` vincent1993 / barnes2014), and
+    an earlier version of the suite compared lsdtt3's heap against this
+    reconstruction and reported lsdtt3 2.9x slower -- which measured the
+    algorithm choice, not the implementations. See
+    docs/testing_and_benchmarking.md.
     accum_d8           FlowObject(method='d8').flow_accumulation()
 
   Surface metrics (surface-metrics plan Tier B -- SPEED ONLY):
@@ -99,7 +111,7 @@ import statistics
 import sys
 import time
 
-FLOW_ROUTINES = ("fill", "accum_d8")
+FLOW_ROUTINES = ("fill", "fill_priority_flood", "accum_d8")
 
 # Surface-metric routines. Each is timed best-of-N after a discarded warm-up
 # (see --repeats); the flow routines are single-shot because they are the
@@ -331,14 +343,20 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         info["dem_dtype"] = str(np.asarray(dem.z).dtype)
         info["cellsize"] = float(dem.cellsize)
 
-    elif routine == "fill":
+    elif routine in ("fill", "fill_priority_flood"):
+        # hybrid=True is TopoToolbox's default and is the reconstruction
+        # algorithm; hybrid=False is the heap. Pair each against the matching
+        # lsdtt3 backend, never across.
+        hybrid = (routine == "fill")
         # repeats=1 reproduces the historical single-shot behaviour exactly, so
         # run_flow_benchmark.py's pinned tolerances and cached numbers are
         # untouched. repeats>1 adds a discarded warm-up and reports best-of-N,
         # which is what run_benchmark_suite.py asks for so that this reference
         # is timed on the same basis as the other two rather than being
         # single-shot against their best-of-N.
-        info.update(_repeat_time(lambda: dem.fillsinks(), repeats))
+        info.update(_repeat_time(lambda: dem.fillsinks(hybrid=hybrid),
+                                 repeats))
+        info["hybrid"] = hybrid
         result = info.pop("_result")
 
     elif routine == "accum_d8":

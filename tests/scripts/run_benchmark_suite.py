@@ -204,23 +204,50 @@ REFERENCE_SCRIPTS = {
 # -----------------------------------------------------------------------------
 CASES: dict[str, dict[str, Any]] = {
     # -- suite: flow -------------------------------------------------------
+    # -- fill: TWO cases, because there are two algorithm families ---------
+    #
+    # Every tool here implements both a grayscale-reconstruction fill (raster
+    # scans + FIFO queue, O(N), sequential access) and a priority-flood fill
+    # (binary heap, O(N log N)). They produce the SAME surface and differ only
+    # in cost, so a fill benchmark must pair like with like.
+    #
+    # An earlier version of this table did not. It ran lsdtt3's DEFAULT
+    # (`barnes2014`, the heap) against TopoToolbox's DEFAULT (`hybrid=True`,
+    # the reconstruction) and reported lsdtt3 2.9x slower. Measured on
+    # alpine_1000 with fill_min_slope 0, bit-identical output:
+    #
+    #     lsdtt3 barnes2014    0.1282 s    7.80 Mcells/s
+    #     lsdtt3 vincent1993   0.0446 s   22.42 Mcells/s   <- 2.87x
+    #     topotoolbox hybrid                22.84 Mcells/s
+    #
+    # Matched, lsdtt3 is within 2% of TopoToolbox. The 2.9x was the algorithm
+    # choice, not the implementation. See docs/testing_and_benchmarking.md.
     "fill": {
         "suite": "flow",
-        "note": "depression fill, Barnes (2014) lineage, true flats",
-        "engines": {"richdem": "fill", "topotoolbox": "fill",
-                    "whitebox": "fill"},
+        "note": ("RECONSTRUCTION family: grayscale reconstruction by erosion "
+                 "(Vincent 1993 hybrid -- raster scans + FIFO queue, O(N)). "
+                 "lsdtt3 vincent1993 vs TopoToolbox hybrid=True"),
+        "engines": {"topotoolbox": "fill", "whitebox": "fill"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
-                             "fill_min_slope": "0"},
+                             "fill_min_slope": "0",
+                             # NOT the CLI default. Reconstruction is what
+                             # TopoToolbox's default runs, and it cannot impose
+                             # a gradient, hence min_slope 0.
+                             "fill_algorithm_choice": "vincent1993"},
                   "output": "_fill.tif"},
     },
-    "fill_epsilon": {
+    "fill_priority_flood": {
         "suite": "flow",
-        "note": "fill with a gradient imposed across flats",
-        "engines": {"richdem": "fill_epsilon", "whitebox": "fill_epsilon"},
+        "note": ("PRIORITY-FLOOD family: heap-based flood, O(N log N). "
+                 "lsdtt3 barnes2014 vs TopoToolbox hybrid=False vs RichDEM "
+                 "(Zhou 2016). Same surface as the reconstruction case, "
+                 "roughly 2-3x the cost in every implementation"),
+        "engines": {"richdem": "fill", "topotoolbox": "fill_priority_flood"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
-                             "fill_min_slope": "0.0001"},
+                             "fill_min_slope": "0",
+                             "fill_algorithm_choice": "barnes2014"},
                   "output": "_fill.tif"},
     },
     "breach": {
@@ -235,7 +262,11 @@ CASES: dict[str, dict[str, Any]] = {
     "accum_d8": {
         "needs_filled": True,
         "suite": "flow",
-        "note": "D8 accumulation, O'Callaghan & Mark (1984)",
+        "note": ("D8 accumulation, O'Callaghan & Mark (1984). NOT fully "
+                 "like-for-like: lsdtt3 also builds an S-vector the references "
+                 "do not build (~57% of its build time), retained by design "
+                 "because downstream analyses depend on it -- see the note in "
+                 "CASES and docs/testing_and_benchmarking.md"),
         "engines": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
                     "whitebox": "accum_d8"},
         "lsdtt": {"exe": "lsdtt-drainage-analysis",
@@ -287,27 +318,49 @@ CASES: dict[str, dict[str, Any]] = {
     #   Whitebox    runs 3x3 finite-difference operators in Rust, and likewise
     #               recomputes per curvature type.
     #
-    # Two consequences, both stated in the summary rather than corrected for:
+    # Measured decomposition of lsdtt3's cost on alpine_1000 -- the shared fit
+    # is paid ONCE and the per-metric work is what scales:
     #
-    # 1. The window sizes differ. lsdtt3's default lambda of 70 m is ~2x the
-    #    30 m grid spacing, a wider window than the references' fixed 3x3, so
-    #    lsdtt3 is doing MORE work per cell. Its surface numbers are therefore
-    #    conservative. Lambda is pinned below rather than left at the default
-    #    so this is a stated parameter, not an inherited one.
-    # 2. `polyfit_all` is the case where lsdtt3's one-fit-many-metrics design
-    #    actually pays, and `slope_only` is the case where it does not. Both
-    #    are measured; quoting only the first would be cherry-picking.
+    #     shared `direct` fit      82.5 ms
+    #     + slope                  28.0 ms
+    #     + aspect_degrees         44.3 ms
+    #     + profile_curvature      22.3 ms
+    #     + plan_curvature         20.4 ms
+    #
+    # Three consequences, all stated in the summary rather than corrected for:
+    #
+    # 1. Window size does NOT tilt this comparison. An earlier version of this
+    #    comment claimed lsdtt3's 70 m lambda was a wider window than the
+    #    references' 3x3 and that its numbers were therefore "conservative".
+    #    That was WRONG: `direct` is a separable rolling-moment fit whose cost
+    #    is independent of window size -- measured flat from lambda 35 m to
+    #    280 m (0.0191 to 0.0193 s), a 729x range of window cells. Lambda is
+    #    pinned so it is a stated parameter, not because it matters to cost.
+    # 2. `polyfit_all` is where lsdtt3's one-fit-many-metrics design starts to
+    #    pay and `slope_only` is where it does not -- there the full quadratic
+    #    fit produces a single number. Both are measured; quoting only the
+    #    first would be cherry-picking. `polyfit_many` shows the amortisation.
+    # 3. The metric SETS differ between tools, so even `polyfit_all` is not
+    #    like-for-like in what it produces. Hence report_only throughout.
     #
     # Values are never compared: the curvature definitions and aspect
     # handedness genuinely differ between the three.
     "slope_only": {
         "suite": "surface",
-        "note": ("slope alone. lsdtt3 pays for a full quadratic fit to produce "
-                 "one metric, so this is its WORST surface case. TIMING ONLY"),
+        "note": ("slope alone. lsdtt3 pays the FULL 6-coefficient quadratic "
+                 "fit (~82 ms of ~110 ms on 1000^2) to produce one metric, "
+                 "where TopoToolbox runs 2 convolutions. This is lsdtt3's "
+                 "WORST surface case by construction. TIMING ONLY"),
         "engines": {"topotoolbox": "evansslope", "whitebox": "slope"},
         "lsdtt": {"exe": "lsdtt-surface-metrics",
                   "params": {"polyfit_metrics": "slope",
                              "polyfit_method": "direct",
+                             # Window size is FREE for the `direct` method --
+                             # measured flat from lambda 35 m to 280 m (0.0191
+                             # to 0.0193 s), because it is a separable
+                             # rolling-moment fit. So this value does not tilt
+                             # the comparison either way, contrary to what an
+                             # earlier version of this file claimed.
                              "polyfit_lambda_metres": "70.0"},
                   "output": "_direct_polyfit_slope.tif"},
         "report_only": True,
@@ -315,14 +368,42 @@ CASES: dict[str, dict[str, Any]] = {
     "polyfit_all": {
         "suite": "surface",
         "note": ("slope + aspect + profile + plan curvature. lsdtt3 derives "
-                 "all four from ONE fit; the references recompute their "
-                 "derivatives per metric. TIMING ONLY"),
+                 "all four from ONE shared fit; the references recompute per "
+                 "metric. NOT like-for-like in two ways: the metric SETS "
+                 "differ (lsdtt3 slope+aspect+2 curvatures vs TopoToolbox 4 "
+                 "curvatures), and lsdtt3's fixed fit cost has not yet "
+                 "amortised at 4 metrics. TIMING ONLY"),
         "engines": {"topotoolbox": "curvature_all4",
                     "whitebox": "curvature_all2"},
         "lsdtt": {"exe": "lsdtt-surface-metrics",
                   "params": {"polyfit_metrics":
                              "slope,aspect_degrees,profile_curvature,"
                              "plan_curvature",
+                             "polyfit_method": "direct",
+                             "polyfit_lambda_metres": "70.0"},
+                  "output": "_direct_polyfit_slope.tif"},
+        "report_only": True,
+    },
+    # The case that shows what the shared fit is FOR. lsdtt3 derives eight
+    # metrics from the same single fit; the fixed cost is paid once and the
+    # marginal cost is ~20-25 ms per metric, so lsdtt3's position improves with
+    # every metric added. There is no matching reference routine -- neither
+    # TopoToolbox nor Whitebox exposes an eight-metric call -- so this is an
+    # lsdtt3-only row, recorded to show the amortisation rather than to score a
+    # comparison.
+    "polyfit_many": {
+        "suite": "surface",
+        "note": ("eight metrics from ONE lsdtt3 fit. lsdtt3-only: no "
+                 "reference exposes an equivalent call. Compare its cost "
+                 "against `slope_only` and `polyfit_all` to see the shared "
+                 "fit amortising. TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-surface-metrics",
+                  "params": {"polyfit_metrics":
+                             "slope,aspect_degrees,profile_curvature,"
+                             "plan_curvature,mean_curvature,"
+                             "gaussian_curvature,tangential_curvature,"
+                             "laplacian",
                              "polyfit_method": "direct",
                              "polyfit_lambda_metres": "70.0"},
                   "output": "_direct_polyfit_slope.tif"},

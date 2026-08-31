@@ -1056,6 +1056,164 @@ flagged `overhead_dominated` if it is within 3x of it. The `laptop` profile
 proves the pipeline works; the `server` profile, with the large fixtures,
 produces the numbers.
 
+### Two like-for-like failures found on the first server campaign (2026-08-31)
+
+The first `laptop`-profile campaign on forth03 reported lsdtt3 **slower than
+TopoToolbox on every single-core comparison** — 20 of 20, with fill 2.9× behind.
+Investigating against the TopoToolbox source showed **both headline losses were
+the benchmark comparing unlike things**, not lsdtt3 being slow. Recorded here
+because the corrected cases are only meaningful alongside what they replaced.
+
+#### 1. `fill` compared two different algorithms
+
+Both tools implement both algorithm families, and both default to a *different*
+one:
+
+| | reconstruction (O(N), FIFO queue) | priority-flood (O(N log N), heap) |
+|---|---|---|
+| lsdtt3 | `vincent1993` | `barnes2014` ← **CLI default** |
+| TopoToolbox | `hybrid=True` ← **default** | `hybrid=False` |
+
+The suite used both defaults, so it ran lsdtt3's heap against TopoToolbox's
+reconstruction. On alpine_1000 at `fill_min_slope: 0`, output **bit-identical**
+(0 differing cells of 1,000,000):
+
+| | compute | throughput |
+|---|---|---|
+| lsdtt3 `barnes2014` | 0.1282 s | 7.80 Mcells/s |
+| lsdtt3 `vincent1993` | 0.0446 s | **22.42 Mcells/s** |
+| TopoToolbox `hybrid=True` | — | 22.84 Mcells/s |
+
+**Matched, lsdtt3 is within 2% of TopoToolbox.** The reported 2.9× gap was
+entirely the algorithm choice.
+
+**Fix:** the `fill` case now pins `fill_algorithm_choice: vincent1993` against
+`hybrid=True`, and a new `fill_priority_flood` case pins `barnes2014` against
+`hybrid=False` and RichDEM (Zhou 2016). `topotoolbox_reference.py` gained a
+`fill_priority_flood` routine to expose the non-hybrid path. Both families are
+now measured; neither is compared across.
+
+`fill_epsilon` has no reconstruction row, and cannot: reconstruction fills to
+exactly the spill level and has no mechanism for a gradient across flats.
+
+#### 2. `accum_d8` charges lsdtt3 for the S-vector
+
+lsdtt3's D8 build produces an S-vector the references do not build. Measured on
+a 1000² filled tile, single-threaded:
+
+| configuration | build |
+|---|---|
+| all on (what the CLIs request) | 186.4 ms |
+| without the acyclicity check | 190.0 ms (free) |
+| without the topological order | 178.3 ms |
+| **without the S-vector** | **80.1 ms** |
+| receivers only | 52.4 ms |
+
+The S-vector is **~106 ms of the 186 ms**. `get_drainage_area_raster()` then
+just reads its precomputed subtree sizes, which is why the accumulation phase
+measures 1.4 ms — the work was already done. Accumulating over the topological
+order gives the identical raster (0 differing cells of 1,000,000) for
+0.1341 s against 0.1951 s, **1.45× faster**.
+
+**This is deliberately NOT changed**, and the CLI keeps building the S-vector.
+It is what makes `is_upslope_of` an O(1) interval test, and chi analysis, basin
+summaries, source finding and the cosmogenic routines all depend on it. See
+`docs/flow_routing.md`.
+
+**Fix:** the `accum_d8` case note now states that lsdtt3 performs work the
+references do not, and quantifies it. The asymmetry is recorded rather than
+engineered away — but do not quote that row as a like-for-like accumulation
+comparison.
+
+### Surface metrics: what the shared fit costs and when it pays
+
+lsdtt3 fits one 6-coefficient quadratic and derives every metric from it;
+TopoToolbox and Whitebox recompute their derivatives per metric. The suite runs
+`polyfit_method: direct` throughout. Measured on alpine_1000:
+
+| phase | time |
+|---|---|
+| shared `direct` fit | **82.5 ms** |
+| + slope | 28.0 ms |
+| + aspect_degrees | 44.3 ms |
+| + profile_curvature | 22.3 ms |
+| + plan_curvature | 20.4 ms |
+
+The fit is ~40–55% of the total at four metrics and is paid **once**, so
+lsdtt3's position improves with every metric added. End to end on one machine:
+
+| metrics | lsdtt3 | if each were computed independently |
+|---|---|---|
+| 1 (`slope_only`) | 93.7 ms | 93.7 ms |
+| 4 (`polyfit_all`) | ~199 ms | ~375 ms |
+| 8 (`polyfit_many`) | 275.5 ms | ~749 ms |
+
+lsdtt3 exposes ~25 metrics from the same fit.
+
+#### Marginal cost, and where lsdtt3 becomes cheaper
+
+Measured as a series rather than extrapolated from two points, **curvatures
+only** on alpine_1000, single-threaded, best of 3–4. Matching the metric family
+matters — mixing slope and aspect in distorts both sides (see the correction
+below).
+
+| | fixed | per metric |
+|---|---|---|
+| **lsdtt3** | 50.6 ms (the quadratic fit) | **24.3 ms** |
+| **TopoToolbox** | 8.0 ms | **50.2 ms** (5 convolutions each) |
+
+TopoToolbox's marginal cost is **2.1×** lsdtt3's, and it carries almost no fixed
+cost because it has no shared fit to amortise.
+
+| N curvatures | lsdtt3 | TopoToolbox | winner |
+|---|---|---|---|
+| 1 | 79.5 ms | 62.4 ms | TopoToolbox |
+| **2** | **98.6 ms** | **102.7 ms** | **lsdtt3** |
+| 3 | 117.2 ms | 157.0 ms | lsdtt3 |
+| 4 | 151.6 ms | 211.6 ms | lsdtt3 |
+| 5 | 162.2 ms | [258.8 ms] | lsdtt3 |
+| 6 | 204.5 ms | [309.0 ms] | lsdtt3 |
+
+`[]` extrapolated; TopoToolbox exposes only four curvature types. Crossover is
+at **N = 1.65**, so **lsdtt3 is cheaper from two metrics onward** — and N = 2, 3
+and 4 are directly measured rather than fitted. By four metrics lsdtt3 is 1.4×
+ahead, and the gap widens linearly.
+
+!!! warning "Correction: an earlier estimate of ~6 metrics was wrong"
+    This document previously put the crossover at "roughly six metrics onward",
+    from a two-point extrapolation over a MIXED metric set (slope + aspect + 2
+    curvatures). Mixing families distorts both sides: TopoToolbox's
+    `evansslope` is 2 convolutions rather than 5 — and much of its 68 ms is a
+    `distance_transform_edt` NaN infill that lsdtt3 does not perform — while
+    `aspect_degrees` is lsdtt3's *dearest* derivation at 44 ms, roughly double
+    its other metrics. Compare curvature against curvature.
+
+**The crossover depends on which metrics you want.** Two is the figure for
+curvatures. An aspect-heavy set moves it right, because aspect is lsdtt3's most
+expensive per-metric operation. Quote the metric family alongside the number.
+
+**Three reasons the surface rows are `report_only`:**
+
+1. **`slope_only` is lsdtt3's worst case by construction.** It pays the full
+   quadratic fit to produce one number, where TopoToolbox runs 2 convolutions.
+   Reported because it is the honest counterweight to `polyfit_all`; quoting
+   only the favourable case would be cherry-picking.
+2. **The metric sets differ.** `polyfit_all` yields slope + aspect + 2
+   curvatures; TopoToolbox's `curvature_all4` yields 4 curvatures. Not the same
+   products.
+3. **`polyfit_many` has no counterpart at all** — no reference exposes an
+   eight-metric call. It is an lsdtt3-only row, included to show the fit
+   amortising, not to score a comparison.
+
+!!! warning "Correction: window size is free, contrary to an earlier claim"
+    This document previously stated that lsdtt3's default
+    `polyfit_lambda_metres: 70` is a wider window than the references' fixed
+    3×3, so lsdtt3 does more work per cell and its surface numbers are
+    "conservative". **That is wrong.** The `direct` method is a separable
+    rolling-moment fit whose cost is independent of window size — measured flat
+    from lambda 35 m to 280 m (0.0191 s to 0.0193 s on 1000², a 729× range of
+    window cells). Lambda does not tilt the comparison in either direction.
+
 ### What is compared, and what must never be
 
 | Suite | Cases | Status |
@@ -1071,10 +1229,9 @@ Two of these deserve their reasoning stated wherever they are quoted:
 quadratic and derives every metric from it; TopoToolbox and Whitebox recompute
 their derivatives per metric. `polyfit_all` is therefore where lsdtt3's design
 pays, and `slope_only` is where it does not -- lsdtt3 pays for a full fit to
-produce a single number. Quoting only the first would be cherry-picking. Note
-also that lsdtt3's default `polyfit_lambda_metres` of 70 m is a **wider window**
-than the references' fixed 3×3, so lsdtt3 is doing more work per cell and its
-surface numbers are conservative.
+produce a single number. Quoting only the first would be cherry-picking. Note that the
+window size does NOT tilt this: the `direct` fit's cost is independent of
+`polyfit_lambda_metres` (measured flat over a 729× range of window cells).
 
 `fill_spill_merge` compares lsdtt3's nested depression hierarchy (Barnes 2020)
 plus Fill-Spill-Merge (Barnes 2021) against the cheapest thing the other tools
