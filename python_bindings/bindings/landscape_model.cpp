@@ -1,0 +1,392 @@
+#include <algorithm>
+#include <cstdint>
+#include <cmath>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+
+#include <cpu/lsdtt_lem_cpu.hpp>
+
+#include "binding_common.hpp"
+
+namespace lsdtt3_python {
+namespace {
+
+std::string boundaries(const std::string& value)
+{
+    if (value.size() != 4)
+        throw std::invalid_argument("boundary_conditions must contain four NESW codes");
+    for (const char code : value)
+        if (code != 'o' && code != 'n' && code != 'p' && code != 'b')
+            throw std::invalid_argument("boundary_conditions use only 'o', 'n', 'p', or 'b'");
+    if ((value[0] == 'p') != (value[2] == 'p') ||
+        (value[1] == 'p') != (value[3] == 'p'))
+        throw std::invalid_argument("periodic boundaries must occur in opposite pairs");
+    return value;
+}
+
+void require_same_grid(const Raster& a, const Raster& b, const char* name)
+{
+    const auto& am = a.native().get_meta();
+    const auto& bm = b.native().get_meta();
+    if (am.n_rows != bm.n_rows || am.n_cols != bm.n_cols ||
+        am.x_min != bm.x_min || am.y_min != bm.y_min ||
+        am.cell_size != bm.cell_size || am.crs_wkt != bm.crs_wkt)
+        throw std::invalid_argument(std::string(name) + " must share the initial DEM grid");
+}
+
+std::vector<std::int64_t> pixels_from_object(const Raster& dem, nb::object pixels,
+                                              const char* name)
+{
+    if (pixels.is_none()) return {};
+    nb::object numpy = nb::module_::import_("numpy");
+    nb::object array = numpy.attr("asarray")(pixels, nb::arg("dtype") = "int64");
+    if (nb::cast<std::size_t>(array.attr("size")) == 0) return {};
+    if (nb::cast<int>(array.attr("ndim")) != 2)
+        throw std::invalid_argument(std::string(name) + " must be an N x 2 array of (row, col)");
+    const nb::tuple shape = nb::cast<nb::tuple>(array.attr("shape"));
+    if (nb::cast<int>(shape[1]) != 2)
+        throw std::invalid_argument(std::string(name) + " must be an N x 2 array of (row, col)");
+    const auto& meta = dem.native().get_meta();
+    const auto& mask = dem.native().get_mask();
+    const auto values = nb::cast<std::vector<std::int64_t>>(array.attr("ravel")());
+    std::vector<std::int64_t> result;
+    result.reserve(values.size() / 2);
+    for (std::size_t i = 0; i < values.size(); i += 2)
+    {
+        const auto row = values[i], col = values[i + 1];
+        if (row < 0 || row >= meta.n_rows || col < 0 || col >= meta.n_cols)
+            throw std::invalid_argument(std::string(name) + " contains a pixel outside the raster");
+        const auto flat = row * static_cast<std::int64_t>(meta.n_cols) + col;
+        if (!mask[static_cast<std::size_t>(flat)])
+            throw std::invalid_argument(std::string(name) + " contains a nodata pixel");
+        result.push_back(flat);
+    }
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
+std::vector<std::int64_t> default_fixed_pixels(const Raster& dem, const std::string& bc)
+{
+    const auto& meta = dem.native().get_meta();
+    const auto& mask = dem.native().get_mask();
+    const bool fix_n = bc[0] == 'o' || bc[0] == 'b';
+    const bool fix_e = bc[1] == 'o' || bc[1] == 'b';
+    const bool fix_s = bc[2] == 'o' || bc[2] == 'b';
+    const bool fix_w = bc[3] == 'o' || bc[3] == 'b';
+    std::vector<std::int64_t> result;
+    for (int row = 0; row < meta.n_rows; ++row)
+        for (int col = 0; col < meta.n_cols; ++col)
+        {
+            const auto flat = static_cast<std::int64_t>(row) * meta.n_cols + col;
+            if (!mask[static_cast<std::size_t>(flat)]) continue;
+            bool fixed = false;
+            for (int dr = -1; dr <= 1 && !fixed; ++dr)
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    if (dr == 0 && dc == 0) continue;
+                    const int rr = row + dr, cc = col + dc;
+                    if (rr < 0) fixed = fix_n;
+                    else if (rr >= meta.n_rows) fixed = fix_s;
+                    else if (cc < 0) fixed = fix_w;
+                    else if (cc >= meta.n_cols) fixed = fix_e;
+                    else if (!mask[static_cast<std::size_t>(rr) * meta.n_cols + cc])
+                    {
+                        if (dr < 0) fixed = fix_n;
+                        else if (dr > 0) fixed = fix_s;
+                        if (dc < 0) fixed = fixed || fix_w;
+                        else if (dc > 0) fixed = fixed || fix_e;
+                    }
+                    if (fixed) break;
+                }
+            if (fixed) result.push_back(flat);
+        }
+    return result;
+}
+
+std::vector<std::uint8_t> binary_channel_mask(const Raster& dem, const Raster& channels)
+{
+    require_same_grid(dem, channels, "channel_mask");
+    const auto& data = channels.native().get_data();
+    const auto& valid = channels.native().get_mask();
+    std::vector<std::uint8_t> result(data.size(), 0);
+    for (std::size_t i = 0; i < data.size(); ++i)
+    {
+        if (!valid[i]) continue;
+        if (!std::isfinite(data[i]) || (data[i] != 0.0f && data[i] != 1.0f))
+            throw std::invalid_argument("channel_mask valid values must be exactly 0 or 1");
+        result[i] = static_cast<std::uint8_t>(data[i]);
+    }
+    return result;
+}
+
+class LandscapeStepResult
+{
+public:
+    LandscapeStepResult(lsdtt::lsdtt_raster_cpu elevation, lsdtt::lsdtt_lem_step_stats stats,
+                        int iteration, float time_years)
+        : elevation_(std::move(elevation)), stats_(std::move(stats)), iteration_(iteration),
+          time_years_(time_years) {}
+
+    Raster elevation() const { return Raster(elevation_); }
+    int iteration() const noexcept { return iteration_; }
+    float time_years() const noexcept { return time_years_; }
+    float delta_max_elevation() const noexcept { return stats_.delta_max_elevation; }
+    float delta_mean_elevation() const noexcept { return stats_.delta_mean_elevation; }
+    float max_local_elevation_change() const noexcept { return stats_.max_local_elevation_change; }
+    float p999_local_elevation_change() const noexcept { return stats_.p999_local_elevation_change; }
+    float mean_erosion_rate() const noexcept { return stats_.mean_erosion_rate; }
+    float max_erosion_rate() const noexcept { return stats_.max_erosion_rate; }
+    nb::object erosion_rate() const
+    {
+        if (stats_.erosion_rate.empty()) return nb::none();
+        return nb::cast(Raster(lsdtt::lsdtt_raster_cpu(
+            std::vector<float>(stats_.erosion_rate),
+            std::vector<std::uint8_t>(elevation_.get_mask()), elevation_.get_meta())));
+    }
+private:
+    lsdtt::lsdtt_raster_cpu elevation_;
+    lsdtt::lsdtt_lem_step_stats stats_;
+    int iteration_;
+    float time_years_;
+};
+
+class LandscapeModel
+{
+public:
+    LandscapeModel(const Raster& dem, float timestep, float erodibility, float m_exponent,
+                   float n_exponent, float uplift_rate, float hillslope_diffusivity,
+                   const std::string& hillslope_model, bool nonlinear_hillslopes,
+                   float critical_hillslope_slope, float incision_threshold_area,
+                   const std::string& coupling_regime, const std::string& boundary_conditions,
+                   const std::string& fluvial_method, nb::object channel_mask,
+                   bool hold_channel_mask_fixed, nb::object fixed_pixels, int n_threads)
+        : elevation_(dem.native())
+    {
+        if (timestep <= 0.0f || erodibility < 0.0f || uplift_rate < 0.0f ||
+            hillslope_diffusivity < 0.0f || critical_hillslope_slope <= 0.0f ||
+            incision_threshold_area < 0.0f)
+            throw std::invalid_argument("timestep, critical_hillslope_slope must be positive; rates must be non-negative");
+        const std::string bc = boundaries(boundary_conditions);
+        if (fluvial_method != "d8" && fluvial_method != "dinf" && fluvial_method != "none")
+            throw std::invalid_argument("fluvial_method must be 'd8', 'dinf', or 'none'");
+        if (hillslope_model != "none" && hillslope_model != "linear" &&
+            hillslope_model != "roering" && hillslope_model != "roering_implicit" &&
+            hillslope_model != "cidre" && hillslope_model != "adi")
+            throw std::invalid_argument("hillslope_model must be 'none', 'linear', 'roering', 'roering_implicit', 'cidre', or 'adi'");
+        options_.timestep = timestep;
+        options_.erodibility = erodibility;
+        options_.m_exponent = m_exponent;
+        options_.n_exponent = n_exponent;
+        options_.uplift_rate = uplift_rate;
+        options_.hillslope_diffusivity = hillslope_diffusivity;
+        options_.hillslope_transport_model = hillslope_model;
+        options_.enable_nonlinear_hillslopes = nonlinear_hillslopes;
+        options_.critical_hillslope_slope = critical_hillslope_slope;
+        options_.incision_threshold_area = incision_threshold_area;
+        options_.coupling_regime = lsdtt::parse_hillslope_coupling_regime(coupling_regime);
+        options_.boundary_conditions = bc;
+        options_.enable_d8_fluvial_erosion = fluvial_method == "d8";
+        options_.enable_dinf_fluvial_erosion = fluvial_method == "dinf";
+        options_.enable_hillslope_transport = hillslope_model != "none";
+        options_.enable_uplift = uplift_rate != 0.0f;
+        options_.n_threads = n_threads;
+        if (!channel_mask.is_none())
+        {
+            const auto& channels = nb::cast<const Raster&>(channel_mask);
+            options_.explicit_channel_mask = binary_channel_mask(dem, channels);
+        }
+        fixed_ = fixed_pixels.is_none() ? default_fixed_pixels(dem, bc)
+                                        : pixels_from_object(dem, fixed_pixels, "fixed_pixels");
+        if (hold_channel_mask_fixed)
+            for (std::size_t i = 0; i < options_.explicit_channel_mask.size(); ++i)
+                if (options_.explicit_channel_mask[i]) fixed_.push_back(static_cast<std::int64_t>(i));
+        std::sort(fixed_.begin(), fixed_.end());
+        fixed_.erase(std::unique(fixed_.begin(), fixed_.end()), fixed_.end());
+    }
+
+    Raster elevation() const { return Raster(elevation_); }
+    int iteration() const noexcept { return iteration_; }
+    float time_years() const noexcept { return time_years_; }
+    Raster channel_mask() const
+    {
+        auto mask = lsdtt::compute_lem_channel_mask(elevation_, options_);
+        std::vector<float> values(mask.begin(), mask.end());
+        return Raster(lsdtt::lsdtt_raster_cpu(std::move(values),
+            std::vector<std::uint8_t>(elevation_.get_mask()), elevation_.get_meta()));
+    }
+    LandscapeStepResult step(bool compute_erosion_rate = false)
+    {
+        options_.compute_erosion_rate_field = compute_erosion_rate;
+        auto [next, stats] = lsdtt::run_lem_step(elevation_, options_, fixed_, &hillslope_ws_, &cellular_ws_);
+        elevation_ = std::move(next);
+        ++iteration_;
+        time_years_ += options_.timestep;
+        return LandscapeStepResult(elevation_, std::move(stats), iteration_, time_years_);
+    }
+    LandscapeStepResult run(int n_steps, bool compute_erosion_rate = false)
+    {
+        if (n_steps <= 0) throw std::invalid_argument("n_steps must be positive");
+        LandscapeStepResult result = step(compute_erosion_rate);
+        for (int i = 1; i < n_steps; ++i) result = step(compute_erosion_rate);
+        return result;
+    }
+private:
+    lsdtt::lsdtt_raster_cpu elevation_;
+    lsdtt::lsdtt_lem_options options_;
+    std::vector<std::int64_t> fixed_;
+    lsdtt::lsdtt_hillslope_newton_workspace hillslope_ws_;
+    lsdtt::lsdtt_hillslope_cellular_workspace cellular_ws_;
+    int iteration_ = 0;
+    float time_years_ = 0.0f;
+};
+
+} // namespace
+
+void bind_landscape_model(nb::module_& module)
+{
+    nb::class_<LandscapeStepResult>(module, "LandscapeStepResult", R"doc(
+Diagnostics and surface produced by one or more landscape-evolution steps.
+
+Authors
+-------
+B. Gailleton
+)doc")
+        .def_prop_ro("elevation", &LandscapeStepResult::elevation)
+        .def_prop_ro("iteration", &LandscapeStepResult::iteration)
+        .def_prop_ro("time_years", &LandscapeStepResult::time_years)
+        .def_prop_ro("delta_max_elevation", &LandscapeStepResult::delta_max_elevation)
+        .def_prop_ro("delta_mean_elevation", &LandscapeStepResult::delta_mean_elevation)
+        .def_prop_ro("max_local_elevation_change", &LandscapeStepResult::max_local_elevation_change)
+        .def_prop_ro("p999_local_elevation_change", &LandscapeStepResult::p999_local_elevation_change)
+        .def_prop_ro("mean_erosion_rate", &LandscapeStepResult::mean_erosion_rate)
+        .def_prop_ro("max_erosion_rate", &LandscapeStepResult::max_erosion_rate)
+        .def_prop_ro("erosion_rate", &LandscapeStepResult::erosion_rate);
+
+    nb::class_<LandscapeModel>(module, "LandscapeModel", R"doc(
+Stateful coupled fluvial-incision and hillslope-transport landscape model.
+
+The model owns its evolving elevation raster and reuses native hillslope solver
+workspaces between calls to ``step`` or ``run``.
+
+Authors
+-------
+B. Gailleton
+)doc")
+        .def(nb::init<const Raster&, float, float, float, float, float, float,
+                      const std::string&, bool, float, float, const std::string&,
+                      const std::string&, const std::string&, nb::object, bool,
+                      nb::object, int>(),
+             nb::arg("dem"), nb::arg("timestep_years") = 100.0f,
+             nb::arg("erodibility") = 1.0e-3f, nb::arg("m_exponent") = 0.45f,
+             nb::arg("n_exponent") = 1.0f, nb::arg("uplift_rate") = 1.0e-4f,
+             nb::arg("hillslope_diffusivity") = 1.0e-3f,
+             nb::arg("hillslope_model") = "cidre", nb::arg("nonlinear_hillslopes") = false,
+             nb::arg("critical_hillslope_slope") = 0.6f,
+             nb::arg("incision_threshold_area") = 0.0f,
+             nb::arg("coupling_regime") = "automatic", nb::arg("boundary_conditions") = "oooo",
+             nb::arg("fluvial_method") = "d8", nb::arg("channel_mask") = nb::none(),
+             nb::arg("hold_channel_mask_fixed") = false, nb::arg("fixed_pixels") = nb::none(),
+             nb::arg("n_threads") = 0, R"doc(
+Create a coupled landscape-evolution model from an in-memory DEM.
+
+Parameters
+----------
+dem : Raster
+    Initial, depression-conditioned elevation surface.
+timestep_years : float, optional
+    Duration of each call to ``step``.
+erodibility, m_exponent, n_exponent : float, optional
+    Stream-power incision parameters.
+uplift_rate, hillslope_diffusivity : float, optional
+    Uniform uplift in m yr⁻¹ and hillslope diffusivity in m² yr⁻¹.
+hillslope_model : {"none", "linear", "roering", "roering_implicit", "cidre", "adi"}, optional
+    Hillslope process model. ``none`` disables hillslope transport.
+nonlinear_hillslopes, critical_hillslope_slope : bool, float, optional
+    Roering nonlinear-flux controls.
+incision_threshold_area : float, optional
+    Channel threshold in drainage-area units; zero supports fully coupled runs.
+coupling_regime : {"automatic", "coupled", "channels_as_boundaries"}, optional
+    Whether hillslope channels emerge or are imposed.
+boundary_conditions : str, optional
+    Four NESW open, no-flux, periodic, or base-level codes.
+fluvial_method : {"d8", "dinf", "none"}, optional
+    Fluvial incision routing method, or ``none`` for hillslope-only evolution.
+channel_mask : Raster, optional
+    Same-grid binary imposed channel raster.
+hold_channel_mask_fixed : bool, optional
+    Add imposed channel pixels to the fixed-elevation set.
+fixed_pixels : array-like of int, optional
+    Explicit N-by-2 ``(row, col)`` fixed-elevation cells. Defaults to open/base-level edges.
+n_threads : int, optional
+    OpenMP thread count; zero uses the runtime default.
+
+Returns
+-------
+LandscapeModel
+    Ready-to-step evolving model.
+
+Authors
+-------
+B. Gailleton
+)doc")
+        .def_prop_ro("elevation", &LandscapeModel::elevation)
+        .def_prop_ro("iteration", &LandscapeModel::iteration)
+        .def_prop_ro("time_years", &LandscapeModel::time_years)
+        .def("channel_mask", &LandscapeModel::channel_mask, R"doc(
+Return the imposed or currently threshold-derived channel mask.
+
+Returns
+-------
+Raster
+    Binary channel raster on the current model grid.
+
+Authors
+-------
+B. Gailleton
+)doc")
+        .def("step", &LandscapeModel::step, nb::arg("compute_erosion_rate") = false, R"doc(
+Advance the coupled model by one configured timestep.
+
+Parameters
+----------
+compute_erosion_rate : bool, optional
+    Include a per-pixel, signed erosion-rate raster in the result.
+
+Returns
+-------
+LandscapeStepResult
+    Updated surface and diagnostics.
+
+Authors
+-------
+B. Gailleton
+)doc")
+        .def("run", &LandscapeModel::run, nb::arg("n_steps"),
+             nb::arg("compute_erosion_rate") = false, R"doc(
+Advance the coupled model repeatedly and return the final step result.
+
+Parameters
+----------
+n_steps : int
+    Number of timesteps to execute.
+compute_erosion_rate : bool, optional
+    Include a per-pixel, signed erosion-rate raster for the final step.
+
+Returns
+-------
+LandscapeStepResult
+    Final surface and diagnostics.
+
+Authors
+-------
+B. Gailleton
+)doc");
+}
+
+} // namespace lsdtt3_python

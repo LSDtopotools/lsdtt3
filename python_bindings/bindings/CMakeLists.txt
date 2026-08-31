@@ -30,6 +30,7 @@ nanobind_add_module(_core
     vector_hydrology.cpp
     internal_drainage.cpp
     hillslope_transport.cpp
+    landscape_model.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
