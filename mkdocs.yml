@@ -53,6 +53,8 @@ nav:
     - Vector data: vector_data.md
   - Installation:
     - Install lsdtt3: install_lsdtt3.md
+  - Benchmarking:
+    - Running benchmarks on your own system: running_benchmarks.md
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
