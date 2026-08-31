@@ -36,4 +36,5 @@ void bind_cosmo_basin(nb::module_&);
 void bind_statistical_comparison(nb::module_&);
 void bind_vector_hydrology(nb::module_&);
 void bind_internal_drainage(nb::module_&);
+void bind_hillslope_transport(nb::module_&);
 } // namespace lsdtt3_python
