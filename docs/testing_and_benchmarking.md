@@ -4668,6 +4668,136 @@ parked dt one rung too high, running at ratio 0.93 -- saving a refactorisation i
 outside the criterion the controller exists to enforce.
 
 
+## 10l. Compiler warnings, a warning that was load-bearing, and where threading actually is (2026-08-28)
+
+### The build produced thousands of warnings; all were fixable at source
+
+Suppressing them wholesale was rejected: `-Wmaybe-uninitialized` catches real defects elsewhere, and
+a warning class turned off globally is one nobody ever turns back on. **The tree now builds with 0
+warnings and 197/197 tests pass** (`ctest -LE heavy`).
+
+Four causes, each fixed rather than silenced:
+
+| Warning | Cause | Fix |
+|---|---|---|
+| `-Wmaybe-uninitialized` (the bulk) | `push_back(v)` on a `std::vector<lsdtt_vector_field_value>` builds a temporary variant and move-constructs it; GCC 13 cannot prove the discriminant is set through that move | `emplace_back` from the *alternative* type (`double`, `int64_t`, `monostate`) -- no variant temporary exists |
+| `-Wstringop-overflow` | `checked_mul` only rules out `size_t` OVERFLOW, so its result is provably no tighter than `[0, SIZE_MAX]` | bound `n_pixels` at the allocation |
+| `-Wunused-result` | `OGRLayer::CreateFeature` return ignored in a test fixture | checked -- a fixture that silently fails to write a feature makes every assertion below it vacuous |
+| `-Wunused-variable` | dead local | removed |
+
+Two details worth keeping, because both cost time:
+
+**`emplace_back` is not automatically the fix.** It helps only when the argument is an *alternative*
+of the variant. Where a helper returned `lsdtt_vector_field_value` by value, `emplace_back` would
+still move-construct and change nothing; that case needed the helper rewritten to append in place.
+Check what is being constructed, not which method is called.
+
+**A guard the optimiser cannot see is not a guard.** The first attempt at the `-Wstringop-overflow`
+fix asserted `nrows > 0 && ncols > 0` at the top of the function. It did not work, and the reported
+bound (`0xE000000000000000`-`0xFFFFFFFFFFFFFFFF`) said why: the complaint was never about the
+dimensions but about `n_pixels`, several hundred lines and an entire FFTW section away, where no
+range information survived. Restate the invariant where it is needed.
+
+### A warning was hiding a missing assertion
+
+`-Wunused-but-set-variable` fired on `dt` in `tests/cpp/test_lem_timestep.cpp`. The comment said
+"drive it in until it is inside target, then confirm it settles", but the only assertion was
+`n_shrinks() >= 1`, which was already true before the loop ran. **The computed `dt` was never
+checked** -- the test asserted nothing about the behaviour it claimed to cover.
+
+Adding the assertion made it fail, and the test was wrong, not the controller: it fed a CONSTANT
+movement regardless of step size. No real run does that -- movement scales with `dt` -- so the
+achieved ratio could never rise to meet the target, and the EMA decaying from the initial overshoot
+walked `dt` to the floor with nothing to pull it back. Driving it with movement proportional to `dt`
+gives the loop a fixed point; it now recovers to exactly its starting step and holds.
+
+**A `set but not used` on a value a test computed is worth reading as a missing assertion**, not as
+lint. Deleting the variable would have silenced the warning and preserved the hole.
+
+### `wavelet_quadratic_fit` has no ctest coverage
+
+The 197/197 pass says nothing about it. Verified instead through the CLI's own oracles: on the
+global quadratic -- the EXACT oracle for this fit -- all six coefficients recover to RMSE ~1e-10,
+i.e. float round-off, with the periodic-wave approximate oracle giving the expected small errors.
+
+That the check had to be run by hand is the finding. `lsdtt-raster-synthetic-tests` already carries
+`test_wavelet_on_global_quadratic` with an exact analytic answer; it is not wired into CTest, so
+nothing guards this function against regression.
+
+### Where threading is, and where it is not
+
+Established by inspection, not timing, and it bounds what any tuning can achieve:
+
+* `lsdtt_hillslope_newton_cpu.cpp` -- **0** OpenMP pragmas;
+* `lsdtt_lem_cpu.cpp` -- **0**;
+* nothing anywhere calls `Eigen::setNbThreads` or `initParallel`;
+* the Newton path factorises with `Eigen::SparseLU`, which is **sequential**;
+* `opts.n_threads` reaches that file only as `omp_set_num_threads` -- setting a count for pragmas
+  that are not there.
+
+The coupled transient step routes through `compute_hillslope_newton_transient` for BOTH the linear
+and nonlinear cases (the threaded SOR solver is the steady-state one, which a transient sweep does
+not use). **So the dominant cost of a coupled run is single-threaded by construction.** Raising the
+thread count helps flow routing (`lsdtt_flowinfo_cpu.cpp`, 10 pragmas) and little else. Where runs
+are independent -- a parameter sweep -- process-level parallelism is the lever, not threads.
+
+### Two ways to measure nothing
+
+Both were hit while trying to answer "does this scale?", and both produce a plausible number.
+
+**Comparing two machines at the same thread count is not a scaling measurement.** A laptop-to-server
+comparison of the same run gave 1.54x, which was read as poor scaling. Both ran at 8 threads:
+the ratio is per-core speed and memory bandwidth, and thread count was the one variable that did not
+change. It is not evidence about scaling in either direction.
+
+**`nproc` is not the machine's core count.** It reports the CPUs available to the calling process --
+affinity mask plus cgroup quota. On a cluster login node it read **2 while `nproc --all` read 192**,
+a factor of 96. Every timing taken in that shell, including the server half of the 1.54x above, was
+measured on 2 CPUs. Check `nproc` against `nproc --all` before believing any wall-clock number, and
+treat a large discrepancy as an instruction to use the scheduler.
+
+### Reproducibility of the sweep harness
+
+Three defects were found in the harness itself, all of the same kind -- a failure that looks like
+success:
+
+* **Hand-maintained parameter files silently lost a case.** One `CI` value's files went missing and
+  the sweep died at its first step; the only surviving record was an *ingested-parameter dump*,
+  which is a CLI output rather than an input. The files are now GENERATED from a single table, with
+  a `--check` mode that verifies on-disk files against it. Only `K` is a free input per `CI`: `D`
+  follows exactly from `D = K*l^(m+n)/CI`, which reproduces all published values to six significant
+  figures.
+* **A `.t_*` cleanup glob raced under a job array.** Six tasks share one directory; a task finishing
+  early deleted another's in-flight timing file, making it report a spurious failure. Cleanup is now
+  scoped to the values that invocation handled.
+* **Checking a binary is executable does not establish that it runs.** A binary can be present and
+  executable and still fail to load its shared libraries. The preflight now EXECUTES each one
+  (`-v`).
+
+On the last point: Eigen is **header-only**, so it is a compile-time dependency that never appears in
+`ldd` and cannot cause a runtime failure -- the library most obviously "in the environment" is the
+one that leaves no runtime trace, which makes "the environment must be active to run" a natural but
+wrong inference. The runtime dependencies are GDAL, PROJ, FFTW and the C++/OpenMP runtimes.
+
+
+## 10m. Cellular soft-critical hillslopes and sparse tracing
+
+Validated 2026-08-29 against Newton-Roering. On the `7 x 257` near-critical strip, where both
+methods use the identical Roering branch, cellular differs from a Newton `dt=0.25 yr` reference by
+`4.58e-5 m` Linf and `2.28e-5 m` RMS and is 12.6x faster. Closed volume mismatch is
+`7.1e-11 m3`; ridgetop curvature recovers `-U/D` within 2%.
+
+Generated near-critical one-step timings (cellular/Newton) are 0.0626/3.285 s at 250x250,
+0.2649/36.133 s at 500x500, and 1.3466/25.825 s at 1000x1000. Four-core cellular speedup is
+2.50x, 2.33x and 2.03x. These are thermally limited WSL2 laptop timings, not a native-server ceiling.
+A coupled ten-step 250-grid run takes 1.91 s cellular versus 32.08 s Newton.
+
+With 50% nonlocal excess flux, four-hop and eight-hop coupled runs take 2.06 and 2.24 s. Sparse
+tracking leaves topography bit-identical. One particle per 100 active cells adds no measurable cost;
+one per 10 adds 13% and remains 10.8x faster than bare Newton. Export probability is pinned against
+topographic exported thickness, trajectories are exact across one/four threads, and particle CSV
+restart round trips preserve all state exactly.
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

@@ -41,6 +41,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "../core/lsdtt_raster_meta.hpp"
@@ -68,6 +69,15 @@ namespace lsdtt
 lsdtt_raster_cpu superimpose_ns_parabola(
     const lsdtt_raster_cpu& dem,
     float peak_elevation
+);
+
+// Add a regional slope that rises away from the nearest declared open edge.
+// Boundary codes are NESW; 'o' and 'b' are open/base-level edges. Closed and
+// periodic domains are returned unchanged because they have no outlet direction.
+lsdtt_raster_cpu superimpose_open_boundary_gradient(
+    const lsdtt_raster_cpu& dem,
+    const std::string& boundary_conditions,
+    float slope
 );
 
 // -----------------------------------------------------------------------------

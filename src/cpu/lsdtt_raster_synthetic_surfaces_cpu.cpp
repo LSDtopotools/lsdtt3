@@ -359,6 +359,50 @@ lsdtt_raster_cpu superimpose_ns_parabola(
 }
 
 // -----------------------------------------------------------------------------
+// superimpose_open_boundary_gradient
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu superimpose_open_boundary_gradient(
+    const lsdtt_raster_cpu& dem,
+    const std::string& boundary_conditions,
+    float slope)
+{
+    if (slope < 0.0f)
+        throw std::invalid_argument("open-boundary gradient slope must be non-negative");
+    if (boundary_conditions.size() != 4)
+        throw std::invalid_argument("boundary_conditions must contain four NESW codes");
+
+    auto is_open = [](char bc) { return bc == 'o' || bc == 'b'; };
+    const bool open_n = is_open(boundary_conditions[0]);
+    const bool open_e = is_open(boundary_conditions[1]);
+    const bool open_s = is_open(boundary_conditions[2]);
+    const bool open_w = is_open(boundary_conditions[3]);
+    if (slope == 0.0f || !(open_n || open_e || open_s || open_w)) return dem;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const float dx = static_cast<float>(meta.cell_size);
+    std::vector<float> data = dem.get_data();
+    const std::vector<uint8_t>& mask = dem.get_mask();
+
+    for (int row = 0; row < nrows; ++row)
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t idx = flat_index(row, col, ncols);
+            if (!mask[idx]) continue;
+
+            int distance_cells = nrows + ncols;
+            if (open_n) distance_cells = std::min(distance_cells, row);
+            if (open_e) distance_cells = std::min(distance_cells, ncols - 1 - col);
+            if (open_s) distance_cells = std::min(distance_cells, nrows - 1 - row);
+            if (open_w) distance_cells = std::min(distance_cells, col);
+            data[idx] += slope * dx * static_cast<float>(distance_cells);
+        }
+
+    return lsdtt_raster_cpu(std::move(data), std::vector<uint8_t>(mask), meta);
+}
+
+// -----------------------------------------------------------------------------
 // generate_uniform_random_noise_surface
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu generate_uniform_random_noise_surface(

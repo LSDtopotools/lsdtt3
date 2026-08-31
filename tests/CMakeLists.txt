@@ -728,6 +728,67 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_lem_hillslope_on_loaded_dem_critical_slope PROPERTIES
     LABELS "smoke;cli;hillslope")
 
+# E2's coupled landscape has no threshold-defined channels. The critical-slope
+# clamp is path integration rather than an elliptic solve, so open boundaries are
+# valid anchors; this must not weaken the channel requirement for other solvers.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_hillslope_on_loaded_dem_cs_coupled
+    lsdtt-lem
+    lem_hillslope_on_loaded_dem_cs_coupled.param.in
+    tinyhscscoupled_hillslope_on_loaded_dem.tif
+    --expect-raster-size tinyhscscoupled_hillslope_on_loaded_dem.tif:5x5
+    --stdout-contains "Open-boundary anchor pixels"
+    --stdout-contains "critical_slope (imposed by upslope integration, not iterated)"
+)
+set_tests_properties(smoke_lem_hillslope_on_loaded_dem_cs_coupled PROPERTIES
+    LABELS "smoke;cli;hillslope")
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_cellular_particles
+    lsdtt-lem
+    lem_cellular_particles.param.in
+    cellular_modelled_topography.tif
+    --expect cellular_cellular_particles.csv
+    --expect-file-contains "cellular_cellular_particles.csv:id,cell,weight,source_id,age_yr,distance_cells,status,mixing_depth,seed,substep_index"
+    --stdout-contains "Hillslope transp. : on  (model=cellular"
+    --stdout-contains "Writing cellular particles:"
+)
+set_tests_properties(smoke_lem_cellular_particles PROPERTIES
+    LABELS "smoke;cli;hillslope;cellular"
+    FIXTURES_SETUP cellular_particle_fixture)
+
+add_test(
+    NAME smoke_lem_cellular_particles_restart
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+            --exe "$<TARGET_FILE:lsdtt-lem>"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/lem_cellular_particles_restart.param.in"
+            --read-path "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_cellular_particles/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_cellular_particles_restart"
+            --expect cellularrestart_modelled_topography.tif
+            --expect cellularrestart_cellular_particles.csv
+            --stdout-contains "Loading cellular particles:"
+)
+set_tests_properties(smoke_lem_cellular_particles_restart PROPERTIES
+    LABELS "smoke;cli;hillslope;cellular"
+    FIXTURES_REQUIRED cellular_particle_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_lem_cellular_particles_wrong_model
+    lsdtt-lem
+    lem_cellular_particles_wrong_model.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "enable_cellular_particles requires hillslope_model: cellular"
+)
+add_lsdtt_cli_smoke_test(
+    failure_lem_unknown_hillslope_model
+    lsdtt-lem
+    lem_unknown_hillslope_model.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "unknown hillslope_model 'typo_cellular'"
+)
+
 # The mode selects WHICH surface the solve runs on; it does not switch the solve
 # on. Asking for one without the other is a configuration error, not a silent
 # no-op.
@@ -1863,6 +1924,94 @@ target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hillslope_newton COMMAND lsdtt-test-hillslope-newton)
 set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "unit;hillslope")
+
+# Small Newton-only references for the cellular hillslope investigation. The
+# normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
+# performance fixtures and deliberately do not run here.
+add_executable(lsdtt-test-cellular-hillslope-references
+               cpp/test_cellular_hillslope_references.cpp)
+target_link_libraries(lsdtt-test-cellular-hillslope-references PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_cellular_hillslope_references
+         COMMAND lsdtt-test-cellular-hillslope-references
+                 ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+set_tests_properties(unit_cellular_hillslope_references PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+
+# Soft-critical constitutive law and whole-grid pass-cost envelope. This is P1:
+# test-local mathematics only, before a raster transport solver exists.
+add_executable(lsdtt-test-cellular-hillslope-constitutive
+               cpp/test_cellular_hillslope_constitutive.cpp)
+
+add_test(NAME unit_cellular_hillslope_constitutive
+         COMMAND lsdtt-test-cellular-hillslope-constitutive
+                 ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+set_tests_properties(unit_cellular_hillslope_constitutive PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+
+# P2 global deterministic cellular oracle: Newton agreement, conservation,
+# periodicity, ridgetop curvature, supercritical relaxation and small-OCN modes.
+add_executable(lsdtt-test-cellular-hillslope-solver
+               cpp/test_cellular_hillslope_solver.cpp)
+target_link_libraries(lsdtt-test-cellular-hillslope-solver PRIVATE lsdtt3_cpu)
+
+# Research-only E2 diagnostic, built but not registered with CTest because it
+# consumes user-supplied rasters rather than a committed fixture.
+add_executable(cellular-hillslope-face-stats
+               cpp/cellular_hillslope_face_stats.cpp)
+target_link_libraries(cellular-hillslope-face-stats PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-step-benchmark
+               cpp/cellular_hillslope_step_benchmark.cpp)
+target_link_libraries(cellular-hillslope-step-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-kernel-benchmark
+               cpp/cellular_hillslope_kernel_benchmark.cpp)
+target_link_libraries(cellular-hillslope-kernel-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-raster-compare
+               cpp/cellular_hillslope_raster_compare.cpp)
+target_link_libraries(cellular-hillslope-raster-compare PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-common-limit
+               cpp/cellular_hillslope_common_limit.cpp)
+target_link_libraries(cellular-hillslope-common-limit PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-grid-scaling
+               cpp/cellular_hillslope_grid_scaling.cpp)
+target_link_libraries(cellular-hillslope-grid-scaling PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-nonlocal-benchmark
+               cpp/cellular_hillslope_nonlocal_benchmark.cpp)
+target_link_libraries(cellular-hillslope-nonlocal-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-nonlocal-lem-benchmark
+               cpp/cellular_hillslope_nonlocal_lem_benchmark.cpp)
+target_link_libraries(cellular-hillslope-nonlocal-lem-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(cellular-hillslope-particle-benchmark
+               cpp/cellular_hillslope_particle_benchmark.cpp)
+target_link_libraries(cellular-hillslope-particle-benchmark PRIVATE lsdtt3_cpu)
+
+add_executable(lsdtt-test-hillslope-particle-io
+               cpp/test_hillslope_particle_io.cpp)
+target_link_libraries(lsdtt-test-hillslope-particle-io PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hillslope_particle_io
+         COMMAND lsdtt-test-hillslope-particle-io
+                 ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
+set_tests_properties(unit_hillslope_particle_io PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+
+add_test(NAME unit_cellular_hillslope_common_limit
+         COMMAND cellular-hillslope-common-limit)
+set_tests_properties(unit_cellular_hillslope_common_limit PROPERTIES
+                     LABELS "unit;hillslope;cellular")
+
+add_test(NAME unit_cellular_hillslope_solver
+         COMMAND lsdtt-test-cellular-hillslope-solver)
+set_tests_properties(unit_cellular_hillslope_solver PROPERTIES
+                     LABELS "unit;hillslope;cellular")
 
 # The SOR steady-state hillslope solver: conservation, precision floor, 'o' vs 'n',
 # periodic invariance, and recovery of U/D from known forcing.

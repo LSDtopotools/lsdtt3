@@ -158,6 +158,9 @@ lsdtt3/
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp             — transient hillslope transport (cidre, roering, linear, adi)
 │   │   ├── lsdtt_hillslope_implicit_cpu.hpp/.cpp              — implicit transient Roering solver (Eigen; backward-Euler/TR-BDF2 + damped Picard, channels as Dirichlet sinks)
 │   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp          — steady-state hillslope solver (SOR + pseudo-transient Cidre)
+│   │   ├── lsdtt_hillslope_newton_cpu.hpp/.cpp                — steady/transient Newton Roering solver
+│   │   ├── lsdtt_hillslope_cellular_cpu.hpp/.cpp              — soft-critical face transport, nonlocal routing, sparse particles
+│   │   ├── lsdtt_hillslope_particle_io.hpp/.cpp               — particle CSV restart/output
 │   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp                — Verlet cloth drape: upper envelope surface and incision depth
 │   │   ├── lsdtt_landscape_equilibration_cpu.hpp/.cpp        — divide equilibration and landscape relaxation
 │   │   ├── lsdtt_flat_surface_finder.hpp/.cpp                — flat surface identification (MADk2, residual IQR, NVD)
@@ -2378,8 +2381,9 @@ Per-step sequence:
 1. **Fluvial** — D8 (`compute_d8_stream_power_incision`) or D-inf
    (`compute_dinf_stream_power_incision`); D-inf takes priority and the CLI forces
    D8 off if D-inf is requested.
-2. **Hillslope** (optional) — `adi` runs without a flow graph; `linear` / `roering` /
-   `roering_implicit` need a D-inf graph only for channel identification, and skip
+2. **Hillslope** (optional) — `adi` runs without a flow graph; `cellular` uses conservative
+   soft-critical face transfers with optional nonlocal routing and sparse particles;
+   `linear` / `roering` / `roering_implicit` need a D-inf graph only for channel identification, and skip
    building one entirely when an explicit channel mask is supplied (it is otherwise
    rebuilt every step, which dominates a long fixed-network run); `cidre` always
    builds one, because it routes sediment on the D-inf topological forward sweep.

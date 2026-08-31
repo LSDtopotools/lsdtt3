@@ -1,0 +1,19 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+read_initial_dem: true
+
+write_path: __WRITE_PATH__
+write_fname: tinyhscscoupled
+write_output_format: gtiff
+
+# Coupled E2 clamp: there is deliberately no threshold-defined channel set.
+# Critical-slope integration uses the declared open edges as anchors.
+run_hillslope_on_loaded_dem: true
+run_hillslope_steady_state: true
+hillslope_ss_model: critical_slope
+critical_slope_clamp_only: true
+critical_slope_clamp_fraction: 0.85
+incision_threshold_area: 0
+hillslope_channel_coupling: coupled
+critical_hillslope_slope: 0.8
+boundary_conditions: oooo

@@ -660,6 +660,9 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
 
     if (result.converged && result.message.empty())
         result.message = "converged";
+    else if (!result.converged && result.message.empty())
+        result.message = "maximum Newton iterations reached; ||F||inf="
+                       + std::to_string(result.final_residual) + " m/yr";
 
     std::vector<float> z_out(z.begin(), z.end());
     result.elevation = lsdtt_raster_cpu(std::move(z_out),
@@ -795,6 +798,8 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state_auto(
 {
     if (!force_sor)
     {
+        lsdtt_hillslope_newton_workspace local_ws;
+        lsdtt_hillslope_newton_workspace* active_ws = ws ? ws : &local_ws;
         lsdtt_hillslope_newton_options nopts;
         nopts.D  = opts.D;
         nopts.U  = opts.U;
@@ -803,10 +808,54 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state_auto(
         nopts.boundary_conditions = opts.boundary_conditions;
         nopts.inv_dt              = 0.0;              // the steady problem
         nopts.n_threads           = opts.n_threads;
+        nopts.max_iterations      = std::min(opts.max_iterations, 50);
 
-        const lsdtt_hillslope_newton_result nr =
+        lsdtt_hillslope_newton_result nr =
             compute_hillslope_newton(dem, is_channel, nopts,
-                                     std::vector<float>(), ws);
+                                     std::vector<float>(), active_ws);
+
+        int continuation_iterations = 0;
+        if (!nr.converged && nr.had_eigen && opts.nonlinear)
+        {
+            // A nearly flat initial field can have a steady Newton direction far
+            // outside the sub-critical region. Backtracking that one direction
+            // makes negligible progress. Pseudo-time continuation supplies the
+            // missing globalization: easy backward-Euler solves approach the
+            // steady basin before one final exact solve.
+            lsdtt_raster_cpu current = dem;
+            const double h = dem.get_meta().cell_size;
+            double dt = h * h / std::max(static_cast<double>(opts.D), 1e-12);
+            bool continuation_ok = true;
+
+            for (int stage = 0; stage < 12; ++stage)
+            {
+                nopts.inv_dt = 1.0 / dt;
+                nopts.max_iterations = 50;
+                const std::vector<float> z_old = current.get_data();
+                const lsdtt_hillslope_newton_result step =
+                    compute_hillslope_newton(current, is_channel, nopts,
+                                             z_old, active_ws);
+                continuation_iterations += step.n_iterations;
+                if (!step.converged)
+                {
+                    continuation_ok = false;
+                    break;
+                }
+                current = step.elevation;
+                dt *= 4.0;
+            }
+
+            if (continuation_ok)
+            {
+                nopts.inv_dt = 0.0;
+                nopts.max_iterations = opts.max_iterations;
+                nr = compute_hillslope_newton(current, is_channel, nopts,
+                                              std::vector<float>(), active_ws);
+                nr.n_iterations += continuation_iterations;
+                if (nr.converged)
+                    nr.message = "converged after pseudo-time continuation";
+            }
+        }
 
         if (nr.converged)
         {
@@ -815,7 +864,7 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state_auto(
                 report->solver_used = nr.had_eigen ? "Newton" : "Newton (no Eigen)";
                 report->detail      = "iterations=" + std::to_string(nr.n_iterations)
                                     + "  ||F||inf=" + std::to_string(nr.final_residual)
-                                    + " m/yr";
+                                    + " m/yr  " + nr.message;
                 if (nr.limiter_active)
                     report->warning =
                         "the sub-critical limiter binds in the converged field; "

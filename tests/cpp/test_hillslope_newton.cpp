@@ -44,6 +44,7 @@
 #include "../../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
 #include "../../src/cpu/lsdtt_hillslope_steady_state_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
 namespace
 {
@@ -406,7 +407,64 @@ int main()
     }
 
     // -----------------------------------------------------------------------
-    // W9: Dirichlet values are at the NEW time level.
+    // W9: generated surfaces slope toward declared open boundaries.
+    // -----------------------------------------------------------------------
+    std::cout << "\n-- W9: synthetic open-boundary gradient --\n";
+    {
+        constexpr int nr = 5, nc = 7;
+        lsdtt_raster_meta meta = make_meta(nr, nc);
+        std::vector<float> z(static_cast<std::size_t>(nr) * nc, 0.0f);
+        std::vector<uint8_t> mask(z.size(), 1);
+        const lsdtt_raster_cpu flat(std::move(z), std::move(mask), meta);
+
+        const auto south = superimpose_open_boundary_gradient(flat, "nnon", 0.01f);
+        const auto& zs = south.get_data();
+        check(std::fabs(zs[3] - 0.2f) < 1e-7f,
+              "north row is raised by slope times distance to south outlet");
+        check(zs[static_cast<std::size_t>(nr - 1) * nc + 3] == 0.0f,
+              "the declared open edge is unchanged");
+        check(zs[static_cast<std::size_t>(2) * nc] ==
+              zs[static_cast<std::size_t>(2) * nc + nc - 1],
+              "closed side boundaries do not attract the regional gradient");
+
+        const auto closed = superimpose_open_boundary_gradient(flat, "nnnn", 0.01f);
+        check(linf(flat, closed) == 0.0,
+              "a fully closed domain receives no arbitrary tilt");
+    }
+
+    // -----------------------------------------------------------------------
+    // W10: steady auto solve globalizes a flat imposed-channel problem.
+    // -----------------------------------------------------------------------
+    std::cout << "\n-- W10: pseudo-time continuation from a flat surface --\n";
+    {
+        constexpr int nr = 61, nc = 61;
+        lsdtt_raster_meta meta = make_meta(nr, nc);
+        std::vector<float> z(static_cast<std::size_t>(nr) * nc, 0.0f);
+        std::vector<uint8_t> mask(z.size(), 1);
+        const lsdtt_raster_cpu flat(std::move(z), std::move(mask), meta);
+        std::vector<uint8_t> channels(static_cast<std::size_t>(nr) * nc, 0);
+        for (int r = 36; r < nr; ++r)
+            channels[static_cast<std::size_t>(r) * nc + nc / 2] = 1;
+
+        lsdtt_hillslope_steady_state_options o;
+        o.D = 1.0f; o.U = 4.0e-4f; o.Sc = 0.8f;
+        o.nonlinear = true; o.boundary_conditions = "nnon";
+        o.max_iterations = 200;
+        lsdtt_hillslope_solve_report report;
+        const auto result = compute_hillslope_steady_state_auto(
+            flat, channels, o, false, &report);
+        check(result.converged, "flat imposed-channel steady solve converged");
+        check(report.solver_used == "Newton", "the robust path did not fall back to SOR");
+        const auto& out = result.elevation.get_data();
+        bool channels_fixed = true;
+        for (int r = 36; r < nr; ++r)
+            channels_fixed = channels_fixed &&
+                out[static_cast<std::size_t>(r) * nc + nc / 2] == 0.0f;
+        check(channels_fixed, "continuation preserved every Dirichlet channel value");
+    }
+
+    // -----------------------------------------------------------------------
+    // W11: Dirichlet values are at the NEW time level.
     //
     // Backward Euler solves for t^{n+1}, so the channel elevation it is given must
     // be the post-lowering value. Supplying the OLD value instead lags the
@@ -415,7 +473,7 @@ int main()
     // conventions give measurably different answers on a lowering channel, and
     // that the new-time convention is the one that tracks the steady state.
     // -----------------------------------------------------------------------
-    std::cout << "\n-- W9: a lowering channel -- new-time vs old-time Dirichlet --\n";
+    std::cout << "\n-- W11: a lowering channel -- new-time vs old-time Dirichlet --\n";
     {
         auto o = newton_opts();
         o.nonlinear = false;              // isolate the time-level effect
