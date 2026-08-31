@@ -86,6 +86,8 @@ from ._core import (
     InternalDrainageResult,
     HillslopeSteadyStateResult,
     HillslopeTransportResult,
+    LandscapeModel,
+    LandscapeStepResult,
     CRNColumn,
     CRNColumnSample,
     CRNBurialResult,
