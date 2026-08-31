@@ -28,6 +28,7 @@
 #include <cpu/lsdtt_raster_surface_metrics_cpu.hpp>
 #include <cpu/lsdtt_raster_mosaic_cpu.hpp>
 #include <cpu/lsdtt_vector_rasterise_cpu.hpp>
+#include <utils/lsdtt_statistics.hpp>
 
 
 #include "binding_common.hpp"
@@ -254,6 +255,137 @@ nb::object sample_points(const Raster& raster, nb::object points, const std::str
     output.attr("__setitem__")(column, values);
     return output;
 }
+
+std::vector<std::vector<lsdtt::lsdtt_xy>> line_parts(nb::handle geometry)
+{
+    const std::string type = nb::cast<std::string>(geometry.attr("geom_type"));
+    nb::list geometries;
+    if (type == "LineString") {
+        geometries.append(nb::borrow<nb::object>(geometry));
+    } else if (type == "MultiLineString") {
+        geometries = nb::cast<nb::list>(
+            nb::module_::import_("builtins").attr("list")(geometry.attr("geoms")));
+    } else {
+        throw std::invalid_argument("lines must contain only LineString or MultiLineString geometries");
+    }
+
+    std::vector<std::vector<lsdtt::lsdtt_xy>> parts;
+    parts.reserve(nb::len(geometries));
+    for (nb::handle part : geometries) {
+        const auto coordinates = nb::cast<std::vector<std::vector<double>>>(
+            nb::module_::import_("builtins").attr("list")(
+                nb::borrow<nb::object>(part).attr("coords")));
+        if (coordinates.size() < 2)
+            throw std::invalid_argument("each line part must contain at least two coordinates");
+        std::vector<lsdtt::lsdtt_xy> points;
+        points.reserve(coordinates.size());
+        for (const auto& coordinate : coordinates) {
+            if (coordinate.size() < 2)
+                throw std::invalid_argument("line coordinates must contain x and y values");
+            points.push_back({coordinate[0], coordinate[1]});
+        }
+        parts.push_back(std::move(points));
+    }
+    return parts;
+}
+
+double line_length(const std::vector<lsdtt::lsdtt_xy>& points)
+{
+    double length = 0.0;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        const double dx = points[i].x - points[i - 1].x;
+        const double dy = points[i].y - points[i - 1].y;
+        length += std::hypot(dx, dy);
+    }
+    return length;
+}
+
+lsdtt::lsdtt_xy point_along_line(const std::vector<lsdtt::lsdtt_xy>& points, double distance)
+{
+    double remaining = distance;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        const auto& a = points[i - 1];
+        const auto& b = points[i];
+        const double segment = std::hypot(b.x - a.x, b.y - a.y);
+        if (segment == 0.0) continue;
+        if (remaining <= segment) {
+            const double t = remaining / segment;
+            return {a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)};
+        }
+        remaining -= segment;
+    }
+    return points.back();
+}
+
+void append_line_samples(const Raster& raster, const std::vector<lsdtt::lsdtt_xy>& points,
+                         double spacing_metres, std::vector<double>& values)
+{
+    const auto& source = raster.native();
+    const auto& meta = source.get_meta();
+    const double length = line_length(points);
+    for (double distance = 0.0; distance < length; distance += spacing_metres) {
+        const auto point = point_along_line(points, distance);
+        if (!lsdtt::point_within_raster(meta, point.x, point.y)) continue;
+        const int row = lsdtt::row_from_y(meta, point.y);
+        const int col = lsdtt::col_from_x(meta, point.x);
+        const std::size_t flat = static_cast<std::size_t>(row) * meta.n_cols + col;
+        if (source.get_mask()[flat]) values.push_back(source.get_data()[flat]);
+    }
+    const auto endpoint = points.back();
+    if (lsdtt::point_within_raster(meta, endpoint.x, endpoint.y)) {
+        const int row = lsdtt::row_from_y(meta, endpoint.y);
+        const int col = lsdtt::col_from_x(meta, endpoint.x);
+        const std::size_t flat = static_cast<std::size_t>(row) * meta.n_cols + col;
+        if (source.get_mask()[flat]) values.push_back(source.get_data()[flat]);
+    }
+}
+
+nb::object linear_stats(const Raster& raster, nb::object lines, double spacing_metres)
+{
+    if (!(spacing_metres > 0.0))
+        throw std::invalid_argument("spacing_metres must be positive");
+    const std::string path = geodataframe_geojson(raster, lines);
+    VSIUnlink(path.c_str()); // CRS validation only; geometries remain Python-owned below.
+
+    const nb::list geometries = nb::cast<nb::list>(lines.attr("geometry").attr("tolist")());
+    nb::list lengths, n_values, minima, maxima, ranges, sums, means, medians;
+    nb::list variance_population, variance_sample, stddev_population, stddev_sample;
+    nb::list mean_absolute_deviation, median_absolute_deviation, mad_normal_scaled, q25, q75, iqr;
+    for (nb::handle geometry : geometries) {
+        if (geometry.is_none()) throw std::invalid_argument("lines must not contain null geometries");
+        const auto parts = line_parts(geometry);
+        double length = 0.0;
+        std::vector<double> values;
+        for (const auto& part : parts) {
+            length += line_length(part);
+            append_line_samples(raster, part, spacing_metres, values);
+        }
+        const auto stats = lsdtt::compute_descriptive_stats(values);
+        lengths.append(length); n_values.append(stats.n_values);
+        minima.append(stats.min); maxima.append(stats.max); ranges.append(stats.range); sums.append(stats.sum);
+        means.append(stats.mean); medians.append(stats.median);
+        variance_population.append(stats.variance_population); variance_sample.append(stats.variance_sample);
+        stddev_population.append(stats.stddev_population); stddev_sample.append(stats.stddev_sample);
+        mean_absolute_deviation.append(stats.mean_absolute_deviation);
+        median_absolute_deviation.append(stats.median_absolute_deviation);
+        mad_normal_scaled.append(stats.mad_normal_scaled); q25.append(stats.q25); q75.append(stats.q75); iqr.append(stats.iqr);
+    }
+    nb::object output = lines.attr("copy")();
+    output.attr("__setitem__")("length_metres", lengths);
+    output.attr("__setitem__")("n_values", n_values);
+    output.attr("__setitem__")("min", minima); output.attr("__setitem__")("max", maxima);
+    output.attr("__setitem__")("range", ranges); output.attr("__setitem__")("sum", sums);
+    output.attr("__setitem__")("mean", means); output.attr("__setitem__")("median", medians);
+    output.attr("__setitem__")("variance_population", variance_population);
+    output.attr("__setitem__")("variance_sample", variance_sample);
+    output.attr("__setitem__")("stddev_population", stddev_population);
+    output.attr("__setitem__")("stddev_sample", stddev_sample);
+    output.attr("__setitem__")("mean_absolute_deviation", mean_absolute_deviation);
+    output.attr("__setitem__")("median_absolute_deviation", median_absolute_deviation);
+    output.attr("__setitem__")("mad_normal_scaled", mad_normal_scaled);
+    output.attr("__setitem__")("q25", q25); output.attr("__setitem__")("q75", q75); output.attr("__setitem__")("iqr", iqr);
+    return output;
+}
 } // namespace
 
 void bind_raster_geospatial(nb::module_& m)
@@ -351,6 +483,29 @@ Returns
 -------
 geopandas.GeoDataFrame
     Copy of points with sampled values. Outside or nodata samples are None.
+)doc");
+    m.def("linear_stats", &linear_stats, nb::arg("raster"), nb::arg("lines"),
+        nb::arg("spacing_metres") = 10.0, R"doc(
+Sample a raster along line geometries and append descriptive statistics.
+
+Parameters
+----------
+raster : Raster
+    Raster to sample.
+lines : geopandas.GeoDataFrame
+    LineString or MultiLineString geometries in the raster CRS.
+spacing_metres : float, default=10
+    Spacing between samples along each line part.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    Copy of ``lines`` with length, sample-count, and descriptive-statistic
+    columns. Samples outside the grid or on nodata are ignored.
+
+Authors
+-------
+B. Gailleton
 )doc");
 }
 } // namespace lsdtt3_python

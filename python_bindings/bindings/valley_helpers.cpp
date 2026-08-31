@@ -152,7 +152,22 @@ ValleyCrossSections extract_cross_sections(const Raster& dem, const ValleyCentre
                                            double min_half_length_metres, double max_half_length_metres,
                                            int tangent_window_nodes, double sample_step_metres,
                                            bool curved_sections, nb::object curvature,
-                                           nb::object hillshade, nb::object channel_mask)
+                                           nb::object hillshade, nb::object channel_mask,
+                                           int side_gap_tolerance_steps,
+                                           double feature_peak_min_prominence_fraction,
+                                           int feature_peak_edge_margin_samples,
+                                           bool clip_overlapping_sections,
+                                           int neighbour_clip_window,
+                                           double min_section_reach_fraction,
+                                           double curved_wall_clearance_fraction,
+                                           int curved_streamwise_smoothing_passes,
+                                           double curved_coarse_spacing_metres,
+                                           double hydraulic_stage_step_metres,
+                                           double hydraulic_min_step_height_metres,
+                                           int hydraulic_min_step_width_pixels,
+                                           int hydraulic_midpoint_search_samples,
+                                           int hydraulic_min_crossings_preferred,
+                                           bool compute_hydraulic_depth)
 {
     if (spacing_metres <= 0.0 || half_length_multiplier <= 0.0)
         throw std::invalid_argument("spacing_metres and half_length_multiplier must be positive");
@@ -161,6 +176,21 @@ ValleyCrossSections extract_cross_sections(const Raster& dem, const ValleyCentre
     request.min_half_length_metres = min_half_length_metres; request.max_half_length_metres = max_half_length_metres;
     request.tangent_window_nodes = tangent_window_nodes; request.sample_step_metres = sample_step_metres;
     request.curved_sections = curved_sections;
+    request.side_gap_tolerance_steps = side_gap_tolerance_steps;
+    request.feature_peak_min_prominence_fraction = feature_peak_min_prominence_fraction;
+    request.feature_peak_edge_margin_samples = feature_peak_edge_margin_samples;
+    request.clip_overlapping_sections = clip_overlapping_sections;
+    request.neighbour_clip_window = neighbour_clip_window;
+    request.min_section_reach_fraction = min_section_reach_fraction;
+    request.curved_wall_clearance_fraction = curved_wall_clearance_fraction;
+    request.curved_streamwise_smoothing_passes = curved_streamwise_smoothing_passes;
+    request.curved_coarse_spacing_metres = curved_coarse_spacing_metres;
+    request.hydraulic_stage_step_metres = hydraulic_stage_step_metres;
+    request.hydraulic_min_step_height_metres = hydraulic_min_step_height_metres;
+    request.hydraulic_min_step_width_pixels = hydraulic_min_step_width_pixels;
+    request.hydraulic_midpoint_search_samples = hydraulic_midpoint_search_samples;
+    request.hydraulic_min_crossings_preferred = hydraulic_min_crossings_preferred;
+    request.compute_hydraulic_depth = compute_hydraulic_depth;
     const auto optional_raster = [](nb::object value) -> const lsdtt::lsdtt_raster_cpu* {
         return value.is_none() ? nullptr : &nb::cast<const Raster&>(value).native();
     };
@@ -180,11 +210,84 @@ nb::object cross_section_stations(const ValleyCrossSections& sections)
 
 nb::object cross_section_samples(const ValleyCrossSections& sections)
 {
-    std::vector<std::int32_t> source, station; std::vector<double> offset, x, y; std::vector<float> elevation;
-    std::vector<bool> valid, in_valley;
-    for (const auto& section : sections.native().sections) for (const auto& sample : section.samples) { source.push_back(section.source_id); station.push_back(section.station_seq); offset.push_back(sample.offset_metres); x.push_back(sample.x); y.push_back(sample.y); elevation.push_back(sample.elevation); valid.push_back(sample.elevation_valid); in_valley.push_back(sample.in_valley); }
-    nb::dict data; data["source_id"] = source; data["station_id"] = station; data["offset_metres"] = offset; data["x"] = x; data["y"] = y; data["elevation"] = elevation; data["elevation_valid"] = valid; data["in_valley"] = in_valley;
+    std::vector<std::int32_t> source, station; std::vector<double> offset, x, y; std::vector<float> elevation, curvature, hillshade;
+    std::vector<bool> valid, in_valley, curvature_valid, hillshade_valid, is_channel;
+    for (const auto& section : sections.native().sections) for (const auto& sample : section.samples) {
+        source.push_back(section.source_id); station.push_back(section.station_seq); offset.push_back(sample.offset_metres);
+        x.push_back(sample.x); y.push_back(sample.y); elevation.push_back(sample.elevation); valid.push_back(sample.elevation_valid);
+        in_valley.push_back(sample.in_valley); curvature.push_back(sample.curvature); curvature_valid.push_back(sample.curvature_valid);
+        hillshade.push_back(sample.hillshade); hillshade_valid.push_back(sample.hillshade_valid); is_channel.push_back(sample.is_channel);
+    }
+    nb::dict data; data["source_id"] = source; data["station_id"] = station; data["offset_metres"] = offset; data["x"] = x; data["y"] = y; data["elevation"] = elevation; data["elevation_valid"] = valid; data["in_valley"] = in_valley; data["curvature"] = curvature; data["curvature_valid"] = curvature_valid; data["hillshade"] = hillshade; data["hillshade_valid"] = hillshade_valid; data["is_channel"] = is_channel;
     return nb::module_::import_("pandas").attr("DataFrame")(data);
+}
+
+nb::object cross_section_features(const ValleyCrossSections& sections)
+{
+    std::vector<std::int32_t> source, station; std::vector<std::string> kind; std::vector<double> offset;
+    for (const auto& section : sections.native().sections) {
+        const auto append = [&](const char* feature, const std::vector<double>& offsets) {
+            for (const double value : offsets) {
+                source.push_back(section.source_id); station.push_back(section.station_seq);
+                kind.emplace_back(feature); offset.push_back(value);
+            }
+        };
+        append("channel_crossing", section.channel_crossing_offsets);
+        append("curvature_peak", section.curvature_peak_offsets);
+        append("hillshade_peak", section.hillshade_peak_offsets);
+    }
+    nb::dict data; data["source_id"] = source; data["station_id"] = station;
+    data["feature"] = kind; data["offset_metres"] = offset;
+    return nb::module_::import_("pandas").attr("DataFrame")(data);
+}
+
+nb::object cross_section_hydraulic_edges(const ValleyCrossSections& sections)
+{
+    std::vector<std::int32_t> source, station, step; std::vector<double> stage, offset;
+    for (const auto& section : sections.native().sections) for (const auto& edge : section.hydraulic_edges) {
+        source.push_back(section.source_id); station.push_back(section.station_seq); step.push_back(edge.step);
+        stage.push_back(edge.stage_metres); offset.push_back(edge.offset_metres);
+    }
+    nb::dict data; data["source_id"] = source; data["station_id"] = station; data["step"] = step;
+    data["stage_metres"] = stage; data["offset_metres"] = offset;
+    return nb::module_::import_("pandas").attr("DataFrame")(data);
+}
+
+nb::object cross_section_hydraulic_breaks(const ValleyCrossSections& sections)
+{
+    std::vector<std::int32_t> source, station, break_id; std::vector<double> stage, depth;
+    for (const auto& section : sections.native().sections) {
+        if (section.hydraulic_break_stages.empty()) continue;
+        const double thalweg = section.hydraulic_break_stages.front();
+        for (std::size_t i = 0; i < section.hydraulic_break_stages.size(); ++i) {
+            source.push_back(section.source_id); station.push_back(section.station_seq); break_id.push_back(static_cast<std::int32_t>(i));
+            stage.push_back(section.hydraulic_break_stages[i]); depth.push_back(section.hydraulic_break_stages[i] - thalweg);
+        }
+    }
+    nb::dict data; data["source_id"] = source; data["station_id"] = station; data["break_id"] = break_id;
+    data["stage_metres"] = stage; data["depth_above_thalweg_metres"] = depth;
+    return nb::module_::import_("pandas").attr("DataFrame")(data);
+}
+
+nb::object cross_section_hydraulic_curve(const ValleyCrossSections& sections)
+{
+    std::vector<std::int32_t> source, station; std::vector<double> stage, depth, width, area, perimeter, hydraulic_depth;
+    for (const auto& section : sections.native().sections) for (const auto& sample : section.hydraulic_curve) {
+        source.push_back(section.source_id); station.push_back(section.station_seq); stage.push_back(sample.stage_metres);
+        depth.push_back(sample.depth_above_thalweg_metres); width.push_back(sample.width_metres); area.push_back(sample.area_metres2);
+        perimeter.push_back(sample.wetted_perimeter_metres); hydraulic_depth.push_back(sample.hydraulic_depth_metres);
+    }
+    nb::dict data; data["source_id"] = source; data["station_id"] = station; data["stage_metres"] = stage;
+    data["depth_above_thalweg_metres"] = depth; data["width_metres"] = width; data["area_metres2"] = area;
+    data["wetted_perimeter_metres"] = perimeter; data["hydraulic_depth_metres"] = hydraulic_depth;
+    return nb::module_::import_("pandas").attr("DataFrame")(data);
+}
+
+Raster cross_section_valley_mask(const Raster& dem, const ValleyCentrelineResult& centrelines,
+                                 const ValleyCrossSections& sections)
+{
+    return Raster(lsdtt::cross_section_informed_valley_mask(
+        dem.native(), centrelines.native(), sections.native()).valley_mask);
 }
 
 } // namespace
@@ -206,7 +309,15 @@ Valley masks and centreline diagnostics for supplied channel paths.
     nb::class_<ValleyCrossSections>(m, "ValleyCrossSections")
         .def_prop_ro("n_sections", [](const ValleyCrossSections& s) { return s.native().sections.size(); })
         .def_prop_ro("stations", &cross_section_stations)
-        .def_prop_ro("samples", &cross_section_samples);
+        .def_prop_ro("samples", &cross_section_samples)
+        .def_prop_ro("features", &cross_section_features,
+            "Return detected channel crossings, curvature peaks, and hillshade peaks.")
+        .def_prop_ro("hydraulic_edges", &cross_section_hydraulic_edges,
+            "Return hydraulic step-boundary picks for every cross section.")
+        .def_prop_ro("hydraulic_breaks", &cross_section_hydraulic_breaks,
+            "Return hydraulic break stages and local heights above the thalweg.")
+        .def_prop_ro("hydraulic_curve", &cross_section_hydraulic_curve,
+            "Return optional BankfullMapper-style hydraulic geometry curves.");
     m.def("extract_valley_centrelines", &extract_valley_centrelines_from_scope,
         nb::arg("dem"), nb::arg("scope"),
         nb::arg("corridor_width_metres") = 5000.0,
@@ -233,7 +344,32 @@ Identify valley floors and route centrelines from ordered channel paths.
         nb::arg("max_half_length_metres") = 5000.0, nb::arg("tangent_window_nodes") = 8,
         nb::arg("sample_step_metres") = 0.0, nb::arg("curved_sections") = false,
         nb::arg("curvature") = nb::none(), nb::arg("hillshade") = nb::none(),
-        nb::arg("channel_mask") = nb::none(), "Extract regular cross-sections orthogonal to valley centrelines.");
+        nb::arg("channel_mask") = nb::none(), nb::arg("side_gap_tolerance_steps") = 1,
+        nb::arg("feature_peak_min_prominence_fraction") = 0.15,
+        nb::arg("feature_peak_edge_margin_samples") = 2,
+        nb::arg("clip_overlapping_sections") = true, nb::arg("neighbour_clip_window") = 2,
+        nb::arg("min_section_reach_fraction") = 0.35,
+        nb::arg("curved_wall_clearance_fraction") = 0.10,
+        nb::arg("curved_streamwise_smoothing_passes") = 40,
+        nb::arg("curved_coarse_spacing_metres") = 700.0,
+        nb::arg("hydraulic_stage_step_metres") = 0.1,
+        nb::arg("hydraulic_min_step_height_metres") = 2.0,
+        nb::arg("hydraulic_min_step_width_pixels") = 3,
+        nb::arg("hydraulic_midpoint_search_samples") = 81,
+        nb::arg("hydraulic_min_crossings_preferred") = 2,
+        nb::arg("compute_hydraulic_depth") = false, R"doc(
+Extract straight or boundary-fitted valley cross sections.
+
+Optional curvature, hillshade, and channel-mask rasters enable feature picks.
+Hydraulic break picks are always available; set ``compute_hydraulic_depth`` to
+retain the full per-stage hydraulic-geometry curve.
+)doc");
+    m.def("valley_mask_from_cross_sections", &cross_section_valley_mask,
+        nb::arg("dem"), nb::arg("centrelines"), nb::arg("sections"), R"doc(
+Build a valley-floor mask from the median lowest hydraulic break per channel.
+
+This complements the corridor/HAND mask returned by ``extract_valley_centrelines``.
+)doc");
 }
 
 } // namespace lsdtt3_python

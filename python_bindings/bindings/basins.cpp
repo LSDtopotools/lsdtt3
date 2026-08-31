@@ -271,6 +271,70 @@ nb::object basin_polygons(const BasinCollection& collection)
     nb::dict data; data["basin_id"] = ids; data["outlet_flat"] = outlets; nb::object ctor = nb::module_::import_("geopandas").attr("GeoDataFrame"); return flow.meta().crs_wkt.empty() ? ctor(data, nb::arg("geometry") = geometry) : ctor(data, nb::arg("geometry") = geometry, nb::arg("crs") = flow.meta().crs_wkt);
 }
 
+nb::object basin_outline_ridgelines(const BasinCollection& collection, const Raster& dem,
+                                    const std::string& split_method)
+{
+    const auto& flow = collection.flow();
+    const auto& meta = dem.native().get_meta();
+    if (meta.n_rows != flow.n_rows() || meta.n_cols != flow.n_cols() ||
+        meta.x_min != flow.meta().x_min || meta.y_min != flow.meta().y_min ||
+        meta.cell_size != flow.meta().cell_size || meta.crs_wkt != flow.meta().crs_wkt)
+        throw std::invalid_argument("dem must share the BasinCollection flow grid");
+    if (split_method != "longest_channel" && split_method != "maximum_elevation" &&
+        split_method != "equal_length")
+        throw std::invalid_argument(
+            "split_method must be 'longest_channel', 'maximum_elevation', or 'equal_length'");
+
+    auto distance_result = flow.get_distance_from_outlet_raster();
+    const lsdtt::lsdtt_raster_cpu distance(
+        std::move(distance_result.data), std::move(distance_result.mask),
+        std::move(distance_result.meta));
+    nb::object line_string = nb::module_::import_("shapely.geometry").attr("LineString");
+    nb::list geometry;
+    std::vector<std::int32_t> basin_id, ridgeline_id, n_nodes;
+    std::vector<std::int64_t> outlet_flat;
+    std::vector<double> length_metres;
+    std::vector<float> elevation_min, elevation_max;
+
+    for (std::size_t basin = 0; basin < collection.size(); ++basin) {
+        const auto outline = collection.basin(basin).get_basin_outline();
+        std::vector<lsdtt::lsdtt_ridgeline_cpu> ridges;
+        if (split_method == "longest_channel")
+            ridges = outline.split_outline_into_ridgelines_by_longest_channel(distance);
+        else if (split_method == "maximum_elevation")
+            ridges = outline.split_outline_into_ridgelines_by_max_elevation(dem.native());
+        else
+            ridges = outline.split_outline_into_ridgelines_by_equal_length();
+
+        for (std::size_t ridge = 0; ridge < ridges.size(); ++ridge) {
+            auto& native = ridges[ridge];
+            native.fill_elevation(dem.native());
+            nb::list coordinates;
+            for (const auto& xy : native.positions())
+                coordinates.append(nb::make_tuple(xy.x, xy.y));
+            if (nb::len(coordinates) < 2) continue;
+            const auto& elevation = native.elevations();
+            basin_id.push_back(static_cast<std::int32_t>(basin));
+            ridgeline_id.push_back(static_cast<std::int32_t>(ridge));
+            outlet_flat.push_back(collection.basin(basin).get_basin_outlet_flat_index());
+            n_nodes.push_back(static_cast<std::int32_t>(native.size()));
+            length_metres.push_back(native.total_length());
+            const auto finite = std::minmax_element(elevation.begin(), elevation.end());
+            elevation_min.push_back(elevation.empty() ? std::numeric_limits<float>::quiet_NaN() : *finite.first);
+            elevation_max.push_back(elevation.empty() ? std::numeric_limits<float>::quiet_NaN() : *finite.second);
+            geometry.append(line_string(coordinates));
+        }
+    }
+    nb::dict data;
+    data["basin_id"] = basin_id; data["ridgeline_id"] = ridgeline_id;
+    data["outlet_flat"] = outlet_flat; data["n_nodes"] = n_nodes;
+    data["length_metres"] = length_metres; data["elevation_min"] = elevation_min;
+    data["elevation_max"] = elevation_max;
+    nb::object ctor = nb::module_::import_("geopandas").attr("GeoDataFrame");
+    return flow.meta().crs_wkt.empty() ? ctor(data, nb::arg("geometry") = geometry)
+                                      : ctor(data, nb::arg("geometry") = geometry, nb::arg("crs") = flow.meta().crs_wkt);
+}
+
 nb::object basin_channel_lengths(const BasinCollection& collection, const ChannelNetwork& network, int max_stream_order)
 {
     if (max_stream_order < 1) throw std::invalid_argument("max_stream_order must be positive");
@@ -459,6 +523,13 @@ upslope slice; no raster-sized copy is retained per basin.
         .def_prop_ro("labels", &basin_labels, "Basin IDs (one-based); nested basins overwrite parents.")
         .def_prop_ro("table", &basin_table)
         .def_prop_ro("polygons", &basin_polygons, "Basin outline polygons as a GeoDataFrame.")
+        .def("outline_ridgelines", &basin_outline_ridgelines, nb::arg("dem"),
+             nb::arg("split_method") = "longest_channel", R"doc(
+Split every selected basin outline into two ridgelines.
+
+Returns a GeoDataFrame of left/right ridge lines. ``split_method`` is
+``"longest_channel"``, ``"maximum_elevation"``, or ``"equal_length"``.
+)doc")
         .def("mask", &basin_mask, nb::arg("basin_id"))
         .def("pixels", &basin_pixels, nb::arg("basin_id"))
         .def("membership", &basin_membership, nb::arg("row"), nb::arg("col"), "Return all selected basin IDs containing this pixel.")
