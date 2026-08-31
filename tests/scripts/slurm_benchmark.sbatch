@@ -61,8 +61,17 @@
 #          /path/to/lsdtt3/tests/scripts/slurm_benchmark.sbatch --threads 1,2,4,8,16,32
 #
 #SBATCH --job-name=lsdtt3-bench
-#SBATCH --output=slurm_logs/lsdtt3-bench-%j.out
-#SBATCH --error=slurm_logs/lsdtt3-bench-%j.err
+#
+# Logs go in the SUBMIT DIRECTORY ITSELF, not a subdirectory of it.
+#
+# Slurm resolves a relative --output against the submit directory and opens the
+# file BEFORE the job script runs. A path like `slurm_logs/...` therefore fails
+# instantly, and silently, whenever that directory does not already exist --
+# the job dies before it can create it, and the error has nowhere to be
+# written. Submitting from a fresh data directory is exactly when that
+# happens. Keep these paths free of any directory component.
+#SBATCH --output=lsdtt3-bench-%j.out
+#SBATCH --error=lsdtt3-bench-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #
@@ -84,7 +93,6 @@
 set -euo pipefail
 
 SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
-mkdir -p "${SUBMIT_DIR}/slurm_logs"
 cd "${SUBMIT_DIR}"
 
 echo "=== lsdtt3 benchmark campaign ==="
@@ -163,6 +171,25 @@ if [ ! -x "${BENCH_BUILD_DIR}/lsdtt-raster-preprocessing" ]; then
     echo "       Export BENCH_BUILD_DIR=/path/to/your/build and resubmit." >&2
     exit 1
 fi
+
+# Submitting from inside the checkout dumps the campaign AND the fixture cache
+# into the source tree -- ~512 MB of DEMs under, say, tests/scripts/. It is
+# allowed, because someone may genuinely want it, but it is almost never what
+# was intended and it is invisible until the repository grows.
+_repo_real="$(cd "${BENCH_REPO}" && pwd -P)"
+_submit_real="$(cd "${SUBMIT_DIR}" && pwd -P)"
+case "${_submit_real}/" in
+    "${_repo_real}"/*)
+        echo "WARNING: submitted from inside the lsdtt3 checkout." >&2
+        echo "         Campaign output and ~512 MB of cached DEMs will be" >&2
+        echo "         written into the source tree:" >&2
+        echo "           ${BENCH_OUT_DIR}" >&2
+        echo "           ${BENCH_FIXTURE_DIR}" >&2
+        echo "         Submit from a data directory instead, or set" >&2
+        echo "         BENCH_OUT_DIR and BENCH_FIXTURE_DIR explicitly." >&2
+        echo >&2
+        ;;
+esac
 
 echo "repository      : ${BENCH_REPO}"
 echo "binaries        : ${BENCH_BUILD_DIR}"
