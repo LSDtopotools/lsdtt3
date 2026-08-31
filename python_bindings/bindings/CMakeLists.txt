@@ -31,6 +31,7 @@ nanobind_add_module(_core
     internal_drainage.cpp
     hillslope_transport.cpp
     landscape_model.cpp
+    sediment_routing.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
