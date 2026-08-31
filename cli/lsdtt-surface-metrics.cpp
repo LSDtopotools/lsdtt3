@@ -1222,6 +1222,11 @@ int main(int argc, char* argv[])
                 ff["hillshade_z_factor"]
             );
             const auto hs_t1 = std::chrono::steady_clock::now();
+            // Wording is load-bearing: run_surface_benchmark.py's
+            // FIT_TIMING_RE parses this exact phrasing and raises rather than
+            // silently falling back to wall time if it stops matching. Do not
+            // "tidy" it. run_benchmark_suite.py reads the same line through
+            // its own pattern.
             std::cout << "  Computed hillshade... done ("
                       << std::chrono::duration<double>(hs_t1 - hs_t0).count()
                       << " s)\n";

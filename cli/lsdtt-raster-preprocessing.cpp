@@ -83,6 +83,7 @@
 #include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 
+#include <chrono>
 #include <filesystem>
 
 
@@ -1481,6 +1482,11 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Depression breaching ---\n";
         std::string algo = sf["breach_algorithm_choice"];
 
+        // See the note on the pit-filling timer below: this separates the
+        // breach itself from process startup and I/O so a benchmark can quote
+        // it against an in-process reference timing.
+        const auto breach_compute_t0 = std::chrono::steady_clock::now();
+
         try
         {
             lsdtt::lsdtt_raster_cpu breached;
@@ -1507,12 +1513,24 @@ int main(int argc, char* argv[])
                                                      n_threads);
             }
 
+            const auto breach_compute_t1 = std::chrono::steady_clock::now();
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(
+                             breach_compute_t1 - breach_compute_t0).count()
+                      << " s\n";
+
             if (bf["write_breached_raster"])
             {
                 std::string o = pp.make_output_path( "_breached.tif");
                 std::cout << "Writing: " << o << "\n";
+                const auto breach_write_t0 = std::chrono::steady_clock::now();
                 loader.write_full(breached.get_data(),
                                   breached.get_meta(), o, out_fmt);
+                const auto breach_write_t1 = std::chrono::steady_clock::now();
+                std::cout << "  Write time: "
+                          << std::chrono::duration<double>(
+                                 breach_write_t1 - breach_write_t0).count()
+                          << " s\n";
             }
 
             if (bf["write_carve_diff_raster"])
@@ -1559,6 +1577,15 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Pit filling ---\n";
         std::string algo = sf["fill_algorithm_choice"];
+
+        // Timed so the cost of the fill itself can be separated from process
+        // startup, GDAL raster I/O and every other stage this CLI runs. The
+        // "Compute time:"/"Write time:" wording matches lsdtt-surface-metrics
+        // and is what tests/scripts/run_benchmark_suite.py parses; without it
+        // the only figure available to a benchmark is whole-process wall clock,
+        // which on a small raster is mostly process startup and is not
+        // comparable with an in-process reference timing.
+        const auto fill_compute_t0 = std::chrono::steady_clock::now();
 
         try
         {
@@ -1640,12 +1667,24 @@ int main(int argc, char* argv[])
                 filled_dem = working_dem;
             }
 
+            const auto fill_compute_t1 = std::chrono::steady_clock::now();
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(
+                             fill_compute_t1 - fill_compute_t0).count()
+                      << " s\n";
+
             if (bf["write_fill_raster"])
             {
                 std::string o = pp.make_output_path( "_fill.tif");
                 std::cout << "Writing: " << o << "\n";
+                const auto fill_write_t0 = std::chrono::steady_clock::now();
                 loader.write_full(filled_dem.get_data(),
                                   filled_dem.get_meta(), o, out_fmt);
+                const auto fill_write_t1 = std::chrono::steady_clock::now();
+                std::cout << "  Write time: "
+                          << std::chrono::duration<double>(
+                                 fill_write_t1 - fill_write_t0).count()
+                          << " s\n";
             }
 
             if (bf["write_fill_diff_raster"])

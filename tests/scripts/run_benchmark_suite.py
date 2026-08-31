@@ -75,30 +75,58 @@ WHAT MAKES THIS DEFENSIBLE (and where it still is not)
 
 OVERHEAD -- WHY SMALL FIXTURES LIE, MEASURED NOT ASSUMED
 
-  Two fixed costs dominate small grids and neither is an algorithm:
+  A fixed per-call cost is measured for EVERY engine, on an 8x8 crop (64 cells)
+  where the algorithm itself is microseconds.  Do not assume an engine has none
+  because it is "timed in-process" -- that was assumed once here and it was
+  wrong.  Measured on crops of alpine_small, median of 7, fill:
 
-  1. lsdtt3 CLI process startup (fork, dynamic linking, GDAL driver
-     registration).  Measured per campaign by `--calibrate` and written to the
-     manifest as `lsdtt_startup_seconds`.
+      grid     richdem   topotoolbox   whitebox(1t)
+      8^2       9.83 ms      0.036 ms       0.038 ms
+      256^2    13.73 ms      1.966 ms       1.440 ms
 
-  2. Whitebox tool-handle resolution.  `wbe.hydrology.sink` is not an attribute
-     read; it is a registry resolution through the Rust layer costing ~190 ms
-     PER ACCESS on the development machine.  whitebox_reference.py binds the
-     handle once, outside the timing loop, which took fill on 256^2 from
-     0.207 s to 0.019 s -- a 10.9x artefact that had flattered lsdtt3.  If a
-     Whitebox row ever comes back suspiciously flat at ~0.2 s regardless of
-     grid size, that regression is back.
+  TopoToolbox and Whitebox have no meaningful fixed cost.  **RichDEM has
+  ~10 ms**, which on a 256^2 grid is most of its measured time: its own
+  internal timer reports the 8x8 fill as 1.2e-05 s, so ~99.8% of what a caller
+  measures there is the Python binding -- a per-call rdarray construction plus
+  the citation block it formats and prints on every invocation.
 
-  Consequently any row whose median is within MIN_TRUSTWORTHY_FACTOR of the
-  measured fixed overhead is marked `overhead_dominated` in the CSV and is
-  excluded from the summary's ratio table.  On the laptop profile that will be
-  most of the small-fixture rows.  This is the intended behaviour: the laptop
-  profile proves the pipeline works, the server profile produces the numbers.
+  lsdtt3 CLI process startup (fork, dynamic linking, GDAL driver registration)
+  is measured separately as `lsdtt3_startup_seconds`.  It applies only to rows
+  with no CLI-reported compute time; see TIMING SCOPE below.
+
+  Whitebox tool-handle resolution is a THIRD, historical trap.
+  `wbe.hydrology.sink` is a registry resolution through the Rust layer costing
+  ~190 ms PER ACCESS.  whitebox_reference.py binds the handle once, outside the
+  timing loop, which took fill on 256^2 from 0.207 s to 0.019 s -- a 10.9x
+  artefact that had flattered lsdtt3.  `whitebox_dispatch_seconds` is the
+  tripwire that catches it coming back.
+
+  Any row whose median is below MIN_TRUSTWORTHY_FACTOR times ITS OWN engine's
+  floor is marked `overhead_dominated` and excluded from the summary's ratio
+  table.
+
+
+TIMING SCOPE -- CHECK THIS BEFORE QUOTING A RATIO
+
+  Rows are only ever compared with others measured the same way:
+
+    cli_reported_compute  the compute time an lsdtt3 CLI printed itself,
+                          excluding process startup and I/O
+    in_process_routine    a reference script timing the routine in-process
+    whole_process         wall clock for an entire lsdtt3 CLI run
+
+  lsdtt-surface-metrics, lsdtt-raster-preprocessing and lsdtt-drainage-analysis
+  all print "Compute time:" lines, which this driver parses and sums, so the
+  flow, surface and depression suites are like-for-like.  A CLI that prints
+  none falls back to whole_process, and those rows are tabled separately and
+  never enter a ratio -- on a small raster they are mostly process startup
+  (lsdtt3's fill measured 7.6 ms of compute inside a 279 ms process).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import datetime as dt
 import hashlib
@@ -293,14 +321,23 @@ CASES: dict[str, dict[str, Any]] = {
     # compare lsdtt3 against the cheapest thing the other tools offer and the
     # ratio necessarily flatters them. Recorded because the ABSOLUTE cost of
     # the hierarchy is a number users ask for.
-    "depression_hierarchy": {
+    "fill_spill_merge": {
         "suite": "depression",
-        "note": ("lsdtt3 builds a nested depression tree; the references only "
+        "note": ("lsdtt3 builds a nested depression hierarchy (Barnes 2020) "
+                 "then Fill-Spill-Merge (Barnes 2021); the references only "
                  "label or fill. TIMING ONLY, and NOT a fair ratio"),
         "engines": {"whitebox": "depression_sink"},
+        # The depression hierarchy is not separately switchable: it is built as
+        # the first half of the barnesetal2021 fill, which is the only CLI path
+        # that reaches it. An earlier version of this table asked for
+        # `write_depression_hierarchy_raster`, which does not exist -- the CLI
+        # ignored it, did no work, and the case happily reported a timing for
+        # a run that had computed nothing.
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
-                  "params": {"write_depression_hierarchy_raster": "true"},
-                  "output": "_depression_labels.tif"},
+                  "params": {"write_fill_raster": "true",
+                             "fill_algorithm_choice": "barnesetal2021",
+                             "fill_min_slope": "0"},
+                  "output": "_fill.tif"},
         "report_only": True,
     },
     "fill_wang_liu": {
@@ -320,25 +357,28 @@ CASES: dict[str, dict[str, Any]] = {
 # -----------------------------------------------------------------------------
 PROFILES: dict[str, dict[str, Any]] = {
     "laptop": {
-        "description": ("reduced fixtures and threads; a real baseline for a "
+        "description": ("reduced ladder and threads; a real baseline for a "
                         "laptop and the smoke test before a server campaign"),
-        "fixtures": ["alpine_small", "lakeland_small"],
+        "regions": ["alpine", "lakeland"],
+        # Small rungs, so the one-off source download is a few MB rather than
+        # a few hundred: the source is fetched at the LARGEST rung.
+        "ladder": [500, 1000],
         "threads": [1, 2, 4],
         "repeats": 3,
         "suites": ["flow", "surface", "mfd", "depression"],
-        # A laptop should not silently start a multi-gigabyte download.
         "allow_fetch": True,
-        "max_fixture_px": 720,
     },
     "server": {
         "description": "full ladder and thread sweep; the quotable profile",
-        "fixtures": ["alpine_small", "alpine_medium", "alpine_large",
-                     "lakeland_small", "lakeland_medium"],
+        "regions": ["alpine", "lakeland"],
+        # 8000 px at 30 m is a 240 km box, ~256 MB per region, fetched ONCE and
+        # cropped into every rung. 64M cells is enough work that a 32-thread
+        # run has something to do; the current 2400 px fixture was not.
+        "ladder": [1000, 2000, 4000, 8000],
         "threads": [1, 2, 4, 8],
         "repeats": 5,
         "suites": ["flow", "surface", "mfd", "depression"],
         "allow_fetch": True,
-        "max_fixture_px": 2400,
     },
 }
 
@@ -386,7 +426,8 @@ def system_env(threads: int) -> dict[str, str]:
 
 
 def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
-                    cwd: pathlib.Path | None = None) -> dict[str, Any]:
+                    cwd: pathlib.Path | None = None,
+                    timeout: float | None = None) -> dict[str, Any]:
     """Run a command, returning output, wall time and the child's peak RSS.
 
     Uses wait4(2) so the memory figure is the kernel's accounting for the whole
@@ -400,29 +441,67 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
     temp file rather than a second pipe: reading two pipes sequentially
     deadlocks the moment the unread one fills its buffer.
 
+    `timeout` kills the child after that many seconds and returns
+    timed_out=True.  A server campaign runs unattended for hours and the
+    engines are not uniformly fast -- Whitebox's breach on low-relief terrain
+    measured ~300x slower than lsdtt3's -- so without a per-measurement
+    deadline one pathological cell can stall a whole campaign.  A killed
+    measurement becomes a `timeout` row and the campaign continues.
+
     Falls back to subprocess.run with peak_rss_mb=None where wait4 is
     unavailable (Windows).  A missing memory column is better than a wrong one.
     """
     import tempfile
+    import threading
 
     if not hasattr(os, "wait4"):
         t0 = time.perf_counter()
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              env=env, cwd=str(cwd) if cwd else None)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  env=env, cwd=str(cwd) if cwd else None,
+                                  timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return {"returncode": None, "stdout": "", "stderr": "",
+                    "wall_seconds": time.perf_counter() - t0,
+                    "peak_rss_mb": None, "timed_out": True}
         return {"returncode": proc.returncode, "stdout": proc.stdout,
                 "stderr": proc.stderr,
                 "wall_seconds": time.perf_counter() - t0,
-                "peak_rss_mb": None}
+                "peak_rss_mb": None, "timed_out": False}
+
+    timed_out = False
 
     with tempfile.TemporaryFile(mode="w+") as errf:
         t0 = time.perf_counter()
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                 text=True, env=env,
                                 cwd=str(cwd) if cwd else None)
-        stdout = proc.stdout.read() if proc.stdout else ""
-        if proc.stdout:
-            proc.stdout.close()
-        pid, status, ru = os.wait4(proc.pid, 0)
+
+        # A watchdog thread rather than Popen.communicate(timeout=...):
+        # communicate() reaps the child, which consumes the rusage before
+        # wait4 can read it, and the memory column is the whole reason this
+        # function exists.
+        timer = None
+        if timeout is not None:
+            def _kill():
+                nonlocal timed_out
+                timed_out = True
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            timer = threading.Timer(timeout, _kill)
+            timer.start()
+
+        try:
+            stdout = proc.stdout.read() if proc.stdout else ""
+            if proc.stdout:
+                proc.stdout.close()
+            pid, status, ru = os.wait4(proc.pid, 0)
+        finally:
+            if timer is not None:
+                timer.cancel()
+
         wall = time.perf_counter() - t0
         # Tell Popen the child is already reaped so its destructor does not
         # warn about an abandoned process.
@@ -435,6 +514,7 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
         "stdout": stdout,
         "stderr": stderr,
         "wall_seconds": wall,
+        "timed_out": timed_out,
         # ru_maxrss is kibibytes on Linux, bytes on macOS. Linux is where the
         # server campaign runs; on macOS this reads ~1024x high, which is
         # obvious rather than subtle.
@@ -443,40 +523,382 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
 
 
 # -----------------------------------------------------------------------------
-# Fixtures
+# Fixtures: fetch one large raster per region, then crop the size ladder
+#
+# WHY CROP RATHER THAN FETCH EACH SIZE
+#
+# A size ladder built from independent downloads confounds size with terrain.
+# At 30 m, 2400 px is a 72 km box and 8000 px is 240 km: scale the box up and
+# an "alpine" fixture stops being alpine, so a scaling curve measured across
+# them is partly measuring the landscape changing. Cropping every rung from ONE
+# source keeps the terrain as constant as it can be and needs one download per
+# region instead of one per rung.
+#
+# WHY NOT SYNTHETIC
+#
+# lsdtt-raster-synthetic-tests can generate a diamond-square surface of any
+# size in ~1.3 s with no network, which is tempting. It is not usable here.
+# Measured depression density (fraction of cells a no-epsilon fill raises,
+# RichDEM, 256^2):
+#
+#     REAL alpine  (Italian Alps)       0.94 %
+#     REAL lakeland (Finland)           1.29 %
+#     SYNTH diamond-square, no noise   11.54 %
+#     SYNTH roughness 0.70 + noise     34.24 %
+#
+# 10-30x more depressions than real terrain, at 1 m cell size with a few metres
+# of relief. Since depression structure is the single largest driver of the
+# fill and breach timings -- Whitebox measured 265x slower on low-relief real
+# terrain than on high-relief -- a fractal surface would inflate every
+# depression-handling measurement for every engine. Synthetic surfaces are for
+# the analytic oracles in the CTest suite, not for this.
+#
+# THE CONFOUND THAT REMAINS, AND HOW IT IS MADE VISIBLE
+#
+# Centred crops of increasing size progressively reach further from the centre,
+# so terrain character still drifts up the ladder -- a 240 km box centred in the
+# Himalaya necessarily includes both the Gangetic plain and the Tibetan
+# plateau. This cannot be engineered away with real terrain. It is instead
+# MEASURED: `describe_fixture()` records relief and depression density for
+# every rung into the run manifest, so a reader can see whether a scaling curve
+# is confounded rather than having to assume it is not.
 # -----------------------------------------------------------------------------
-def ensure_fixture(key: str, fetch_exe: pathlib.Path | None,
-                   allow_fetch: bool) -> pathlib.Path | None:
-    """Return the fixture path, fetching it if allowed and missing.
 
-    Fetching is delegated to run_flow_benchmark.ensure_fixture rather than
-    reimplemented: it already encodes the bounding-box maths, the COP30 source
-    and the reprojection settings, and a second copy of that would drift and
-    silently benchmark a different raster.
+# Region centres and their UTM zones. Both are deliberate end-members.
+REGIONS = {
+    "alpine": {
+        "centre": (86.9, 27.9),
+        "epsg": 32645,                 # UTM 45N
+        "description": "High Himalaya, Khumbu/Makalu region, Nepal",
+    },
+    "lakeland": {
+        "centre": (-92.0864236880431, 50.57343374931578),
+        "epsg": 32615,                 # UTM 15N
+        "description": ("Canadian Shield lakeland, northwestern Ontario -- "
+                        "lake-covered, and by far the harder depression test"),
+    },
+}
+
+GRID_SPACING_M = 30.0
+
+# Measured on a 256^2 probe of each region, RichDEM no-epsilon fill:
+#
+#     alpine   (Himalaya)  relief 1662 m   6.40 % depression cells
+#     lakeland (Ontario)   relief   94 m  18.51 % depression cells
+#
+# For comparison the previous fixtures (Italian Alps / Finland) were 0.94 % and
+# 1.29 %. These regions are 7x and 14x more depression-rich, which is the point
+# -- but expect the depression-handling cases to be far slower here, and expect
+# Whitebox's breach on lakeland to hit --timeout-seconds at the larger rungs.
+
+
+def source_raster_path(region: str, source_px: int) -> pathlib.Path:
+    return FIXTURE_DIR / f"{region}_src{source_px}.tif"
+
+
+def ensure_source_raster(region: str, source_px: int,
+                         fetch_exe: pathlib.Path | None,
+                         allow_fetch: bool) -> pathlib.Path | None:
+    """Fetch the one large source raster for a region, if not already cached.
+
+    The bounding box is widened by 25% so the exact centre crop cannot run off
+    the edge onto nodata after reprojection -- the same margin
+    run_flow_benchmark.py uses, for the same reason.
+
+    Fetching goes through the lsdtt3 CLI (`lsdtt-fetch-raster`), not a Python
+    helper, so the suite depends on no extra download stack.
     """
-    path = FIXTURE_DIR / f"{key}.tif"
-    if path.exists():
-        return path
+    import math
+
+    out = source_raster_path(region, source_px)
+    if out.exists():
+        return out
     if not allow_fetch or fetch_exe is None or not fetch_exe.exists():
         return None
+    if region not in REGIONS:
+        return None
 
-    sys.path.insert(0, str(SCRIPT_DIR))
-    try:
-        import run_flow_benchmark as rfb
-    except ImportError:
+    lon, lat = REGIONS[region]["centre"]
+    epsg = REGIONS[region]["epsg"]
+    half_m = 0.5 * source_px * GRID_SPACING_M * 1.25
+    dlat = half_m / 111_320.0
+    dlon = dlat / max(math.cos(math.radians(lat)), 1e-6)
+
+    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    param_dir = FIXTURE_DIR / "_fetch_params"
+    param_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{region}_src{source_px}"
+    param_path = param_dir / f"{stem}.param"
+    param_path.write_text(
+        f"write_path: {FIXTURE_DIR}\n"
+        f"write_fname: {stem}_raw\n"
+        f"west: {lon - dlon:.10f}\n"
+        f"south: {lat - dlat:.10f}\n"
+        f"east: {lon + dlon:.10f}\n"
+        f"north: {lat + dlat:.10f}\n"
+        f"dem_source: cop30_aws\n"
+        f"target_epsg: {epsg}\n"
+        f"grid_spacing: {GRID_SPACING_M}\n"
+        f"size_pixels: {source_px}\n"
+    )
+
+    km = source_px * GRID_SPACING_M / 1000.0
+    print(f"  fetching {region} source {source_px}px (~{km:.0f} km box, "
+          f"{REGIONS[region]['description']})")
+    print(f"    this is a one-off download of roughly "
+          f"{source_px * source_px * 4 / 1e6:.0f} MB; every ladder rung is "
+          f"cropped from it")
+
+    proc = subprocess.run([str(fetch_exe), str(param_dir), param_path.name],
+                          capture_output=True, text=True, env=system_env(1))
+    if proc.returncode != 0:
+        print(f"    fetch failed:\n{proc.stdout[-1200:]}\n{proc.stderr[-1200:]}",
+              file=sys.stderr)
         return None
-    try:
-        return rfb.ensure_fixture(key, fetch_exe)
-    except SystemExit:
-        # ensure_fixture calls die_skip (SystemExit 77) when a source is
-        # unreachable. A fixture we cannot fetch is a smaller campaign, not a
-        # failed one.
+
+    written = FIXTURE_DIR / f"{stem}_raw_DEM.tif"
+    if not written.exists():
+        print(f"    fetch reported success but {written} is missing",
+              file=sys.stderr)
         return None
+    written.rename(out)
+    return out
+
+
+def crop_ladder_rung(source: pathlib.Path, region: str,
+                     size_px: int) -> pathlib.Path | None:
+    """A centred square crop of `size_px` from the region's source raster.
+
+    Centred so that every rung shares the same midpoint and the ladder grows
+    outward symmetrically. Written uncompressed GeoTIFF so that read time is
+    the filesystem's, not the decompressor's -- the engines are being compared
+    on their algorithms, and a compressed fixture would tax whichever of them
+    reads through a slower GDAL path.
+    """
+    out = FIXTURE_DIR / f"{region}_{size_px}.tif"
+    if out.exists():
+        return out
+    try:
+        from osgeo import gdal
+        gdal.UseExceptions()
+        ds = gdal.Open(str(source))
+        w, h = ds.RasterXSize, ds.RasterYSize
+        if size_px > w or size_px > h:
+            return None
+        x0 = (w - size_px) // 2
+        y0 = (h - size_px) // 2
+        # `ds`, not `str(ds)`: stringifying a Dataset yields its repr, which
+        # GDAL then tries to open as a filename and fails with a bare
+        # "No such file or directory" naming the repr.
+        gdal.Translate(str(out), ds, srcWin=[x0, y0, size_px, size_px],
+                       creationOptions=["TILED=NO", "COMPRESS=NONE"])
+    except Exception as exc:
+        print(f"    crop {region}_{size_px} failed: {exc}", file=sys.stderr)
+        return None
+    return out if out.exists() else None
+
+
+@contextlib.contextmanager
+def suppress_fds():
+    """Silence a C/Rust library writing straight to the process's stdout.
+
+    RichDEM prints multi-kilobyte ANSI progress bars and a citation block from
+    the C++ layer, which writes past any Python-level capture. Redirect the
+    file descriptors themselves.
+    """
+    saved = os.dup(1), os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved[0], 1)
+        os.dup2(saved[1], 2)
+        os.close(devnull)
+        os.close(saved[0])
+        os.close(saved[1])
+
+
+def describe_fixture(path: pathlib.Path) -> dict[str, Any]:
+    """Relief and TRUE depression density for one fixture.
+
+    Recorded per rung so that terrain drift up the ladder is visible in the
+    manifest. A scaling curve across rungs whose depression density doubles is
+    not a clean scaling curve, and the reader should be able to see that
+    without re-deriving it. Depression density is the right statistic to track
+    because it is the single largest driver of the fill and breach timings.
+
+    Uses RichDEM's priority-flood fill and counts cells the fill actually
+    raised. An earlier version used a 5x5 `scipy.ndimage.grey_closing` as a
+    cheap proxy and it was badly wrong -- it flags any local concavity rather
+    than a closed basin, and reported 29-55% where the true figures are 6.4%
+    (Himalaya) and 18.5% (Ontario). A statistic that is off by 3x is worse than
+    no statistic, because it looks authoritative in the manifest.
+
+    RichDEM is already a hard dependency of the benchmark environment. The cost
+    is one fill per rung per campaign -- tens of seconds at the 8000px rung,
+    against a campaign measured in hours. Returns what it can and never raises;
+    a missing description is a cosmetic loss, not a failed campaign.
+    """
+    try:
+        from osgeo import gdal
+        import numpy as np
+        gdal.UseExceptions()
+        ds = gdal.Open(str(path))
+        band = ds.GetRasterBand(1)
+        arr = band.ReadAsArray().astype("float64")
+        nodata = band.GetNoDataValue()
+        mask = np.isfinite(arr)
+        if nodata is not None:
+            mask &= (arr != nodata)
+        if not mask.any():
+            return {"error": "no valid cells"}
+
+        valid = arr[mask]
+        out: dict[str, Any] = {
+            "relief_m": float(valid.max() - valid.min()),
+            "mean_elev_m": float(valid.mean()),
+            "nodata_fraction": float(1.0 - mask.mean()),
+        }
+
+        try:
+            import richdem as rd
+            with suppress_fds():
+                dem = rd.LoadGDAL(str(path))
+                filled = rd.FillDepressions(dem, epsilon=False, in_place=False)
+            a = np.asarray(dem, dtype="float64")
+            b = np.asarray(filled, dtype="float64")
+            raised = (b > a + 1e-6) & mask
+            out["depression_fraction"] = float(raised.sum() / mask.sum())
+            out["depression_volume_m3_per_cell"] = float(
+                (b - a)[raised].sum() / mask.sum()) if raised.any() else 0.0
+            out["depression_method"] = "richdem priority-flood, epsilon=False"
+        except Exception as exc:
+            out["depression_error"] = str(exc)[:200]
+
+        return out
+    except Exception as exc:
+        return {"error": str(exc)[:200]}
+
+
+def resolve_fixtures(profile: dict, fetch_exe: pathlib.Path | None,
+                     explicit: list[str] | None) -> dict[str, pathlib.Path]:
+    """Build the fixture set for a profile: fetch each source, crop each rung.
+
+    The source is fetched at the profile's LARGEST rung, not at a fixed size,
+    so the laptop profile needs a few MB rather than the server profile's few
+    hundred. A rung cropped from a 1000px source is not byte-identical to the
+    same rung cropped from an 8000px source -- different reprojection extent --
+    which is why every fixture's SHA is recorded and why the manifest names the
+    source each rung came from.
+    """
+    fixtures: dict[str, pathlib.Path] = {}
+
+    if explicit:
+        # An explicit --fixtures list bypasses the ladder entirely and is taken
+        # as literal names in the cache. This is the escape hatch for the
+        # pre-existing fixtures and for anything hand-placed.
+        for key in explicit:
+            path = FIXTURE_DIR / f"{key}.tif"
+            if path.exists():
+                fixtures[key] = path
+            else:
+                print(f"  fixture {key}: not in {FIXTURE_DIR}, skipping")
+        return fixtures
+
+    rungs = profile["ladder"]
+    source_px = max(rungs)
+    for region in profile["regions"]:
+        source = ensure_source_raster(region, source_px, fetch_exe,
+                                      profile["allow_fetch"])
+        if source is None:
+            print(f"  region {region}: source raster unavailable, skipping "
+                  f"(build lsdtt-fetch-raster, or pass --no-fetch off)")
+            continue
+        for size_px in rungs:
+            rung = crop_ladder_rung(source, region, size_px)
+            if rung is None:
+                print(f"  {region}_{size_px}: crop failed, skipping")
+                continue
+            fixtures[f"{region}_{size_px}"] = rung
+            print(f"  fixture {region}_{size_px}: {rung}")
+    return fixtures
 
 
 # -----------------------------------------------------------------------------
 # Measurement
 # -----------------------------------------------------------------------------
+# Filesystem types that are far slower than local disk for the many small
+# reads and writes some engines perform inside a timed call. Measured on this
+# repository's own WSL2 checkout (/mnt/c, 9p): Whitebox's fill on a 256^2
+# raster took 16.4 ms with the fixture on 9p and 2.6 ms on local ext4 -- a 6x
+# penalty attributable entirely to the filesystem, because Whitebox touches its
+# working directory inside the tool call. RichDEM (11.0 vs 12.5 ms) and
+# TopoToolbox (1.96 vs 2.15 ms) were unaffected.
+#
+# A campaign run straight off such a mount would report that lsdtt3 comfortably
+# beats Whitebox when the real difference is the filesystem. Fixtures are
+# therefore STAGED to local storage before anything is measured.
+SLOW_FILESYSTEMS = {
+    "9p", "v9fs",       # WSL2 /mnt/c
+    "drvfs", "9pfs",    # WSL1/WSL2 Windows drive mounts
+    "cifs", "smb2",     # network shares
+    "nfs", "nfs4",      # network filesystems
+    "fuseblk",          # ntfs-3g
+    "overlayfs",        # some container layers
+}
+
+
+def filesystem_type(path: pathlib.Path) -> str:
+    """Filesystem type for a path, or "unknown".
+
+    `stat -f` is used rather than parsing /proc/mounts because it resolves the
+    mount for the path directly, including bind mounts, and it works on macOS.
+    """
+    try:
+        r = subprocess.run(["stat", "-f", "-c", "%T", str(path)],
+                           capture_output=True, text=True, check=False)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except (FileNotFoundError, PermissionError):
+        pass
+    return "unknown"
+
+
+def choose_scratch_root(explicit: str | None) -> pathlib.Path:
+    """Where to stage fixtures so measurements are not filesystem-bound.
+
+    Order: an explicit --scratch-dir, then $TMPDIR / the system temp directory.
+    The system temp directory is local disk on essentially every machine this
+    will run on, including cluster nodes, where it is usually node-local and
+    therefore the right place anyway.
+    """
+    import tempfile
+
+    if explicit:
+        root = pathlib.Path(explicit).expanduser()
+    else:
+        root = pathlib.Path(tempfile.gettempdir()) / "lsdtt3_benchmark_fixtures"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def stage_fixture(src: pathlib.Path, scratch_root: pathlib.Path) -> pathlib.Path:
+    """Copy a fixture to local storage, unless it is already there.
+
+    Cached by name and size so repeated campaigns do not re-copy a 20 MB
+    raster. Content is not hashed for the cache check: the campaign records the
+    SHA of the STAGED file it actually measured, so a stale copy would be
+    visible as a hash change rather than passing silently.
+    """
+    dst = scratch_root / src.name
+    if dst.exists() and dst.stat().st_size == src.stat().st_size:
+        return dst
+    shutil.copy2(src, dst)
+    return dst
+
+
 def prepare_filled_fixture(fixture: pathlib.Path, work_dir: pathlib.Path,
                            build_dir: pathlib.Path) -> pathlib.Path | None:
     """Produce the filled DEM that every accumulation case is measured on.
@@ -563,17 +985,34 @@ def parse_reported_times(stdout: str) -> dict[str, float | None]:
 
     global COMPUTE_TIME_RE
     if COMPUTE_TIME_RE is None:
+        # Two shapes, because the lsdtt3 CLIs print two.
+        #
+        #   "  Compute time: 0.0026 s"        the common form
+        #   "  Write time: 0.0090 s"
+        #   "  Computed hillshade... done (0.0035 s)"   surface-metrics only
+        #   "  Running direct fit... done (0.0041 s)"
+        #
+        # The "... done (X s)" phrasing is NOT tidied away in the CLI, because
+        # run_surface_benchmark.py's FIT_TIMING_RE parses that exact wording
+        # and deliberately raises rather than falling back to wall time if it
+        # stops matching. Changing the CLI to suit this parser broke that
+        # driver; the parser accommodates the CLI instead.
         COMPUTE_TIME_RE = re.compile(
-            r"^\s*(Compute|Write) time:\s*([0-9.eE+-]+)\s*s\s*$",
+            r"^\s*(?:(Compute|Write) time:\s*([0-9.eE+-]+)\s*s"
+            r"|(?:Running \w+ fit|Computed \w+)\.\.\. done "
+            r"\(([0-9.eE+-]+) s\))\s*$",
             re.MULTILINE)
 
     compute, write = [], []
-    for kind, value in COMPUTE_TIME_RE.findall(stdout):
+    for kind, value, done_value in COMPUTE_TIME_RE.findall(stdout):
+        raw = value or done_value
         try:
-            v = float(value)
+            v = float(raw)
         except ValueError:
             continue
-        (compute if kind == "Compute" else write).append(v)
+        # A "... done (X s)" line is always a compute time; only the explicit
+        # "Write time:" form is a write.
+        (write if kind == "Write" else compute).append(v)
 
     return {
         "compute": sum(compute) if compute else None,
@@ -583,7 +1022,8 @@ def parse_reported_times(stdout: str) -> dict[str, float | None]:
 
 def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
                   work_dir: pathlib.Path, threads: int, repeats: int,
-                  build_dir: pathlib.Path) -> dict[str, Any] | None:
+                  build_dir: pathlib.Path,
+                  timeout: float | None = None) -> dict[str, Any] | None:
     """Time the lsdtt3 CLI for one case.
 
     Whole-process wall time, repeated.  See the module docstring: this includes
@@ -617,14 +1057,18 @@ def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
     # The CLI takes <directory> <filename>, not a single path.
     cmd = [str(exe), str(out_dir), param_path.name]
 
-    r = run_with_rusage(cmd, env=env)          # warm-up, discarded
+    r = run_with_rusage(cmd, env=env, timeout=timeout)   # warm-up, discarded
+    if r.get("timed_out"):
+        return {"timed_out": True, "timeout_seconds": timeout}
     if r["returncode"] != 0:
         return {"error": f"exit {r['returncode']}",
                 "stderr": r["stderr"][-1500:], "stdout": r["stdout"][-1500:]}
 
     timings, rss, computes, writes = [], [], [], []
     for _ in range(max(1, repeats)):
-        r = run_with_rusage(cmd, env=env)
+        r = run_with_rusage(cmd, env=env, timeout=timeout)
+        if r.get("timed_out"):
+            return {"timed_out": True, "timeout_seconds": timeout}
         if r["returncode"] != 0:
             return {"error": f"exit {r['returncode']}",
                     "stderr": r["stderr"][-1500:]}
@@ -674,9 +1118,32 @@ def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
     return info
 
 
+def reference_env(threads: int) -> dict[str, str]:
+    """Environment for a reference subprocess, with thread counts pinned.
+
+    NOT system_env(): that strips LD_LIBRARY_PATH and CONDA_PREFIX so the C++
+    binaries find the system GDAL, and the reference scripts are Python running
+    inside the pixi environment -- stripping those would break their imports.
+    The two need opposite treatment and must stay separate functions.
+
+    What this shares with system_env() is the thread pinning, which is the
+    point. Whitebox is pinned through `WbEnvironment.max_procs` via --threads,
+    but RichDEM and TopoToolbox sit on numpy/scipy, and an OpenBLAS or MKL
+    pulled in transitively will happily spin up a pool sized to the machine.
+    Without these variables a "1 thread" reference row is not one thread, and
+    the campaign silently compares a pinned lsdtt3 against an unpinned
+    reference.
+    """
+    env = dict(os.environ)
+    for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+        env[key] = str(threads)
+    return env
+
+
 def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
-                      threads: int, repeats: int,
-                      python_exe: str) -> dict[str, Any] | None:
+                      threads: int, repeats: int, python_exe: str,
+                      timeout: float | None = None) -> dict[str, Any] | None:
     """Time one reference implementation via its standalone script.
 
     Each reference is a subprocess so that a missing optional package is a
@@ -694,7 +1161,9 @@ def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
     if engine == "whitebox":
         cmd += ["--threads", str(threads)]
 
-    r = run_with_rusage(cmd, env=dict(os.environ))
+    r = run_with_rusage(cmd, env=reference_env(threads), timeout=timeout)
+    if r.get("timed_out"):
+        return {"timed_out": True, "timeout_seconds": timeout}
     if r["returncode"] == SKIP_EXIT:
         return {"skipped": True, "reason": r["stderr"].strip()[-400:]}
     if r["returncode"] != 0:
@@ -716,37 +1185,85 @@ def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
     return info
 
 
+def make_tiny_grid(fixture: pathlib.Path, work_dir: pathlib.Path,
+                   size: int = 8) -> pathlib.Path | None:
+    """An 8x8 crop of a real fixture, for measuring fixed per-call cost.
+
+    8x8 is 64 cells: small enough that the algorithm itself is microseconds, so
+    whatever a routine costs on it is essentially all fixed overhead.  A real
+    crop rather than a synthetic surface, so the nodata mask, dtype and
+    georeferencing are exactly what the engines see on the full fixtures.
+    """
+    out = work_dir / f"calib_{size}.tif"
+    if out.exists():
+        return out
+    try:
+        from osgeo import gdal
+        gdal.UseExceptions()
+        work_dir.mkdir(parents=True, exist_ok=True)
+        gdal.Translate(str(out), str(fixture), srcWin=[0, 0, size, size])
+    except Exception:
+        return None
+    return out if out.exists() else None
+
+
 def calibrate_overheads(build_dir: pathlib.Path, fixture: pathlib.Path,
+                        work_dir: pathlib.Path,
                         python_exe: str) -> dict[str, Any]:
-    """Measure the fixed costs that make small-fixture rows untrustworthy.
+    """Measure the fixed per-call cost of EVERY engine, not just lsdtt3.
 
-    Two numbers, both measured rather than assumed:
+    WHY THIS EXISTS IN THIS FORM
 
-      lsdtt_startup_seconds  -- an lsdtt3 CLI invoked with no work to do. This
-                                is process start, dynamic linking and GDAL
-                                driver registration, which every lsdtt3 row
-                                pays and no reference row does.
+    An earlier version of this suite measured a startup cost for lsdtt3 only,
+    on the assumption that the three reference scripts time the routine
+    in-process and therefore carry no comparable fixed cost.  That assumption
+    was checked and is FALSE for one of them.  Measured on crops of
+    alpine_small, median of 7, fill:
 
-      whitebox_dispatch_seconds -- one Whitebox routine on the smallest
-                                fixture. If whitebox_reference.py ever
-                                regresses to resolving tool handles inside the
-                                timing loop this jumps to ~0.2 s and every
-                                Whitebox row becomes meaningless; recording it
-                                makes that regression visible in the manifest
-                                rather than silent in the data.
+        grid     richdem   topotoolbox   whitebox(1t)
+        8^2       9.83 ms      0.036 ms       0.038 ms
+        16^2     11.56 ms      0.029 ms       0.032 ms
+        64^2     10.19 ms      0.111 ms       0.126 ms
+        256^2    13.73 ms      1.966 ms       1.440 ms
+
+    TopoToolbox and Whitebox extrapolate to ~0.03 ms at zero cells -- no
+    meaningful fixed cost.  RichDEM extrapolates to ~10 ms.  Its own internal
+    timer prints "Zhou2016 wall-time = 1.2e-05 s" for the 8x8 fill, so ~99.8%
+    of what a caller measures on a small grid is RichDEM's Python binding
+    overhead: the per-call rdarray construction and the citation block it
+    formats and prints on every single invocation.  On alpine_small that is
+    roughly half of RichDEM's reported fill time.
+
+    So a floor is measured for every engine, from the same 8x8 grid, and the
+    `overhead_dominated` flag uses the engine's own floor.  Doing this for
+    lsdtt3 alone would have quietly held RichDEM to a standard it does not
+    meet, and RichDEM is the reference lsdtt3 is most often compared against.
+
+    Also returns `whitebox_dispatch_seconds` as a REGRESSION TRIPWIRE for the
+    tool-handle bug; see whitebox_reference.py's `_make_call`.
     """
     out: dict[str, Any] = {}
 
     exe = build_dir / "lsdtt-raster-preprocessing"
     if exe.exists():
-        # No parameter file: the CLI prints usage and exits. That is exactly
-        # the fixed cost we want, with none of the work.
+        # No parameter file: the CLI prints usage and exits. Process start,
+        # dynamic linking and GDAL driver registration, with none of the work.
+        # This still matters for any row that has no CLI-reported compute time.
         times = []
         for _ in range(5):
             r = run_with_rusage([str(exe)], env=system_env(1))
             times.append(r["wall_seconds"])
-        out["lsdtt_startup_seconds"] = min(times)
-        out["lsdtt_startup_median"] = statistics.median(times)
+        out["lsdtt3_startup_seconds"] = min(times)
+
+    tiny = make_tiny_grid(fixture, work_dir)
+    if tiny is None:
+        return out
+
+    # One routine every engine implements, on 64 cells.
+    for engine in ("richdem", "topotoolbox", "whitebox"):
+        info = measure_reference(engine, "fill", tiny, 1, 7, python_exe)
+        if info and info.get("seconds_median") is not None:
+            out[f"{engine}_fixed_seconds"] = info["seconds_median"]
 
     info = measure_reference("whitebox", "depression_sink", fixture, 1, 3,
                              python_exe)
@@ -955,6 +1472,14 @@ def build_row(suite, case_name, engine, fixture_key, fixture_sha, n_cells,
         row["status"] = "skipped"
         row["note"] = info.get("reason", "")[:200]
         return row
+    if info.get("timed_out"):
+        # A distinct status from "error": the engine was working, it was just
+        # too slow for the deadline. Reading it as a crash would hide a real
+        # and quotable performance fact.
+        row["status"] = "timeout"
+        row["note"] = (f"exceeded --timeout-seconds "
+                       f"({info.get('timeout_seconds')})")
+        return row
     if info.get("error"):
         row["status"] = "error"
         row["note"] = str(info.get("error"))[:200]
@@ -985,24 +1510,21 @@ def build_row(suite, case_name, engine, fixture_key, fixture_sha, n_cells,
 
     # Mark, do not drop. A row excluded from the ratio table is still evidence
     # that the pipeline ran; deleting it would hide a working measurement.
-    # The overhead floor applies to exactly one thing: an lsdtt3 row whose
-    # time is whole-process wall clock, and therefore genuinely contains ~80 ms
-    # of process startup that no reference row pays.
+    # Each engine is held to ITS OWN measured fixed per-call cost.
     #
-    # It deliberately does NOT apply to:
-    #   - lsdtt3 rows timed by the CLI's own reported compute time, which
-    #     exclude startup already;
-    #   - whitebox rows. `whitebox_dispatch_seconds` is a REGRESSION TRIPWIRE
-    #     for the tool-handle bug, not a fixed cost: it is measured by running
-    #     a real routine on a real grid, so most of it is genuine work. Using
-    #     it as a floor flagged every Whitebox row as overhead-dominated and
-    #     emptied the ratio table.
-    #   - richdem and topotoolbox rows, which are timed in-process with no
-    #     comparable fixed floor measured for them.
-    if engine == "lsdtt3" and info.get("timing_scope") == "whole_process":
-        floor = overhead.get("lsdtt_startup_seconds")
+    # For lsdtt3 the floor applies only to a row timed as whole-process wall
+    # clock, which genuinely contains process startup; a row timed by the CLI's
+    # own reported compute time already excludes it.
+    #
+    # For the references the floor is the measured 8x8 cost. It is ~0 for
+    # TopoToolbox and Whitebox and ~10 ms for RichDEM, whose Python binding
+    # rebuilds an rdarray and reprints its citation block on every call. See
+    # calibrate_overheads().
+    if engine == "lsdtt3":
+        floor = (None if info.get("timing_scope") == "cli_reported_compute"
+                 else overhead.get("lsdtt3_startup_seconds"))
     else:
-        floor = None
+        floor = overhead.get(f"{engine}_fixed_seconds")
     if floor and median:
         row["overhead_dominated"] = bool(median < MIN_TRUSTWORTHY_FACTOR * floor)
     else:
@@ -1050,6 +1572,23 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append(f"- started: {manifest['created_at']}")
     L.append("")
 
+    fs = manifest.get("filesystems", {})
+    if fs:
+        L.append(f"- measured on: `{fs['measured_on']['type']}` at "
+                 f"`{fs['measured_on']['path']}` "
+                 f"({'staged from ' + fs['fixture_source']['type'] if fs.get('staged') else 'not staged'})")
+        L.append("")
+        if fs.get("slow"):
+            L.append(f"> **Measurements were taken on a "
+                     f"`{fs['measured_on']['type']}` filesystem.** Engines that "
+                     "touch the filesystem inside a timed call are inflated "
+                     "several-fold there -- Whitebox's 256² fill measured "
+                     "16.4 ms on 9p against 2.6 ms on local ext4, a 6x penalty "
+                     "that is the filesystem, not the algorithm. **Do not "
+                     "quote this campaign.** Re-run with `--scratch-dir` "
+                     "pointing at local storage.")
+            L.append("")
+
     gov = cpu.get("governors", {})
     if gov.get("available") and set(gov.get("counts", {})) - {"performance"}:
         L.append(f"> **CPU governor is not uniformly `performance`** "
@@ -1062,13 +1601,23 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
         if isinstance(v, float):
             L.append(f"- `{k}`: {v * 1000:.1f} ms")
     L.append("")
-    L.append("`lsdtt_startup_seconds` is process start, dynamic linking and "
-             "GDAL driver registration. An lsdtt3 row whose time is "
-             "whole-process wall clock and below "
-             f"{MIN_TRUSTWORTHY_FACTOR:g}x that figure is flagged "
-             "`overhead_dominated` and excluded from the ratio table. Rows "
-             "timed by the CLI's own reported compute time already exclude "
-             "startup and are never flagged.")
+    L.append("`*_fixed_seconds` is each engine's per-call cost measured on an "
+             "8x8 crop (64 cells), where the algorithm itself is microseconds. "
+             "`lsdtt3_startup_seconds` is process start, dynamic linking and "
+             "GDAL driver registration, and applies only to rows with no "
+             "CLI-reported compute time. A row below "
+             f"{MIN_TRUSTWORTHY_FACTOR:g}x **its own engine's** floor is "
+             "flagged `overhead_dominated` and excluded from the ratio table.")
+    L.append("")
+    rd_fixed = overhead.get("richdem_fixed_seconds")
+    if rd_fixed and rd_fixed > 0.002:
+        L.append(f"> **RichDEM carries {rd_fixed * 1000:.1f} ms of fixed "
+                 "per-call cost** -- a per-call `rdarray` construction plus the "
+                 "citation block it prints on every invocation. Its own timer "
+                 "reports the 8x8 fill as ~1.2e-05 s. On a small grid most of "
+                 "a RichDEM measurement is its Python binding, not its "
+                 "algorithm; subtract this figure before reading a RichDEM row "
+                 "as an algorithm cost.")
     L.append("")
     wb = overhead.get("whitebox_dispatch_seconds")
     if wb is not None and wb > 0.1:
@@ -1110,16 +1659,13 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
         L.append("")
         L.append(f"### Whole-process rows ({len(whole)}), not comparable above")
         L.append("")
-        L.append("`lsdtt-raster-preprocessing` and `lsdtt-drainage-analysis` "
-                 "do not print their own compute times, so the only figure "
-                 "available for them is whole-process wall clock: process "
-                 "start, GDAL read, the routine, the write and teardown. "
-                 "Against a reference timed in-process that is not a "
-                 "comparison, so these rows are reported alone. Subtract "
-                 "roughly `lsdtt_startup_seconds` above to estimate the "
-                 "routine, and treat the result as an estimate. The clean fix "
-                 "is for those CLIs to print `Compute time:` the way "
-                 "`lsdtt-surface-metrics` already does.")
+        L.append("These rows come from a CLI that printed no `Compute time:` "
+                 "line, so the only figure available is whole-process wall "
+                 "clock: process start, GDAL read, the routine, the write and "
+                 "teardown. Against a reference timed in-process that is not a "
+                 "comparison, so they are reported alone. Subtract roughly "
+                 "`lsdtt3_startup_seconds` above to estimate the routine, and "
+                 "treat the result as an estimate.")
         L.append("")
         _plain_table(L, whole)
 
@@ -1155,7 +1701,8 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append("")
     _memory_table(L, ok)
 
-    bad = [r for r in rows if r["status"] in ("error", "skipped", "unavailable")]
+    bad = [r for r in rows
+           if r["status"] in ("error", "skipped", "unavailable", "timeout")]
     if bad:
         L.append("")
         L.append(f"## Not measured ({len(bad)} rows)")
@@ -1326,12 +1873,38 @@ def main() -> int:
                     help="comma-separated subset of suites (default: profile)")
     ap.add_argument("--cases", default="",
                     help="comma-separated subset of case names")
+    ap.add_argument("--regions", default="",
+                    help=f"comma-separated regions, overriding the profile "
+                         f"(available: {', '.join(sorted(REGIONS))})")
+    ap.add_argument("--ladder", default="",
+                    help="comma-separated crop sizes in pixels, overriding the "
+                         "profile. The source raster is fetched at the largest "
+                         "of these.")
     ap.add_argument("--fixtures", default="",
-                    help="comma-separated fixture keys, overriding the profile")
+                    help="bypass the region/ladder system entirely and use "
+                         "these raster names from the fixture cache verbatim. "
+                         "The escape hatch for hand-placed or legacy rasters.")
     ap.add_argument("--threads", default="",
                     help="comma-separated thread counts, overriding the profile")
     ap.add_argument("--repeats", type=int, default=0,
                     help="timed repeats, overriding the profile")
+    ap.add_argument("--timeout-seconds", type=float, default=1800.0,
+                    help="kill any single measurement that exceeds this and "
+                         "record it as a `timeout` row. Default 1800. The "
+                         "engines are not uniformly fast -- Whitebox's breach "
+                         "on low-relief terrain measured ~300x slower than "
+                         "lsdtt3's -- so an unattended campaign needs a "
+                         "deadline. Set 0 to disable.")
+    ap.add_argument("--scratch-dir", default="",
+                    help="local directory to stage fixtures and intermediate "
+                         "rasters into. Defaults to a subdirectory of the "
+                         "system temp directory. Set this if your temp "
+                         "directory is not local disk.")
+    ap.add_argument("--no-stage", action="store_true",
+                    help="measure fixtures where they lie instead of staging "
+                         "them to local storage. Only for checking what "
+                         "staging is worth: on a slow mount it inflates some "
+                         "engines several-fold (see SLOW_FILESYSTEMS).")
     ap.add_argument("--no-fetch", action="store_true",
                     help="never download a missing fixture; skip it instead")
     ap.add_argument("--dry-run", action="store_true",
@@ -1345,9 +1918,14 @@ def main() -> int:
         return 0
 
     profile = dict(PROFILES[args.profile])
-    if args.fixtures:
-        profile["fixtures"] = [s.strip() for s in args.fixtures.split(",")
-                               if s.strip()]
+    explicit_fixtures = ([f.strip() for f in args.fixtures.split(",")
+                          if f.strip()] if args.fixtures else None)
+    if args.regions:
+        profile["regions"] = [r.strip() for r in args.regions.split(",")
+                              if r.strip()]
+    if args.ladder:
+        profile["ladder"] = [int(v) for v in args.ladder.split(",")
+                             if v.strip()]
     if args.threads:
         profile["threads"] = [int(s) for s in args.threads.split(",")
                               if s.strip()]
@@ -1366,8 +1944,29 @@ def main() -> int:
              {s.strip() for s in args.cases.split(",")})
     }
     if not selected_cases:
-        print("ERROR: no cases selected", file=sys.stderr)
+        # Name the valid values. A bare "no cases selected" gives a user who
+        # mistyped a case or a suite nothing to correct against, and the case
+        # names are not guessable from the docs alone.
+        print("ERROR: no cases selected.", file=sys.stderr)
+        print(f"  suites: {sorted({c['suite'] for c in CASES.values()})}",
+              file=sys.stderr)
+        print(f"  cases:  {sorted(CASES)}", file=sys.stderr)
+        print("  (--cases names must also lie within the selected suites)",
+              file=sys.stderr)
         return 2
+
+    # An "8 thread" row on a 4-core machine is not a slow result, it is a
+    # mislabelled one, and it is indistinguishable from a genuine scaling
+    # ceiling. The Slurm wrapper enforces this for its allocation; enforce it
+    # here too, because most runs will not go through Slurm.
+    cores = os.cpu_count() or 1
+    if max(profile["threads"]) > cores:
+        print(f"WARNING: --threads goes up to {max(profile['threads'])} but "
+              f"this machine reports {cores} logical cores.\n"
+              f"         Rows above {cores} threads will be oversubscribed and "
+              f"their scaling figures are not meaningful.\n"
+              f"         Pass --threads with a smaller list to avoid this.",
+              file=sys.stderr)
 
     build_dir = pathlib.Path(args.build_dir)
     if not build_dir.is_absolute():
@@ -1384,17 +1983,28 @@ def main() -> int:
     if args.dry_run:
         n = 0
         print(f"profile: {args.profile} - {profile['description']}")
-        print(f"fixtures: {profile['fixtures']}")
+        if explicit_fixtures:
+            print(f"fixtures: {explicit_fixtures} (explicit, ladder bypassed)")
+        else:
+            src = max(profile["ladder"])
+            print(f"regions:  {profile['regions']}")
+            print(f"ladder:   {profile['ladder']} px "
+                  f"(source fetched at {src} px, "
+                  f"~{src * GRID_SPACING_M / 1000:.0f} km box, "
+                  f"~{src * src * 4 / 1e6:.0f} MB per region)")
         print(f"threads:  {profile['threads']}   repeats: {profile['repeats']}")
         print(f"build:    {build_dir}")
         print("")
+        # Counted, not fetched: --dry-run must never touch the network.
+        n_fixtures = (len(explicit_fixtures) if explicit_fixtures
+                      else len(profile["regions"]) * len(profile["ladder"]))
         for name, case in sorted(selected_cases.items()):
             engines = ["lsdtt3"] + sorted(case["engines"])
             per_engine = []
             for e in engines:
                 t = 1 if e in SERIAL_REFERENCES else len(profile["threads"])
                 per_engine.append(f"{e}x{t}")
-                n += t * len(profile["fixtures"])
+                n += t * n_fixtures
             print(f"  {case['suite']:11s} {name:22s} {' '.join(per_engine)}")
         print(f"\n{n} measurements, each "
               f"{profile['repeats']} repeats + 1 warm-up")
@@ -1418,46 +2028,89 @@ def main() -> int:
 
     # Resolve fixtures up front so a download does not interrupt the timings.
     fetch_exe = build_dir / "lsdtt-fetch-raster"
-    fixtures: dict[str, pathlib.Path] = {}
-    for key in profile["fixtures"]:
-        path = ensure_fixture(key, fetch_exe, profile["allow_fetch"])
-        if path is None:
-            print(f"  fixture {key}: unavailable, skipping")
-            continue
-        fixtures[key] = path
-        print(f"  fixture {key}: {path}")
+    fixtures = resolve_fixtures(profile, fetch_exe, explicit_fixtures)
     if not fixtures:
-        print("ERROR: no fixtures available. Build lsdtt-fetch-raster to let "
-              "the suite download them, or place them in "
-              f"{FIXTURE_DIR}.", file=sys.stderr)
+        print("ERROR: no fixtures available. Build lsdtt-fetch-raster so the "
+              "suite can fetch the region sources, or pass --fixtures naming "
+              f"rasters already in {FIXTURE_DIR}.", file=sys.stderr)
         return 2
 
+    # Stage onto local disk BEFORE any measurement. See SLOW_FILESYSTEMS.
+    source_fs = filesystem_type(FIXTURE_DIR)
+    scratch_root = choose_scratch_root(args.scratch_dir or None)
+    scratch_fs = filesystem_type(scratch_root)
+
+    if args.no_stage:
+        print(f"  staging disabled; measuring on {source_fs}")
+    else:
+        print(f"  staging fixtures: {source_fs} -> {scratch_root} "
+              f"({scratch_fs})")
+        for key in list(fixtures):
+            fixtures[key] = stage_fixture(fixtures[key], scratch_root)
+        # The work directory holds the filled DEMs the accumulation cases read,
+        # so it has to be local too or the staging is undone for those cases.
+        work_dir = scratch_root / f"work_{stamp}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+    filesystems = {
+        "fixture_source": {"path": str(FIXTURE_DIR), "type": source_fs},
+        "measured_on": {"path": str(fixtures[next(iter(fixtures))].parent),
+                        "type": filesystem_type(
+                            fixtures[next(iter(fixtures))].parent)},
+        "staged": not args.no_stage,
+        "slow": filesystem_type(
+            fixtures[next(iter(fixtures))].parent) in SLOW_FILESYSTEMS,
+    }
+    if filesystems["slow"]:
+        print(f"  WARNING: measuring on {filesystems['measured_on']['type']}, "
+              f"which is slow for engines that touch the filesystem inside a "
+              f"timed call. Pass --scratch-dir to point at local storage.")
+
+    # `terrain` is what makes a ladder honest: centred crops of increasing size
+    # reach into different landscape, so relief and depression density are
+    # recorded per rung and a reader can see whether a scaling curve is
+    # confounded instead of assuming it is not.
     fixture_meta = {k: {"sha256_12": sha_prefix(p), "n_cells": n_cells_of(p),
-                        "path": str(p)}
+                        "path": str(p), "terrain": describe_fixture(p)}
                     for k, p in fixtures.items()}
 
     print("calibrating fixed overhead...")
     smallest = min(fixtures.values(),
                    key=lambda p: n_cells_of(p) or (1 << 62))
-    overhead = calibrate_overheads(build_dir, smallest, args.python_exe)
+    overhead = calibrate_overheads(build_dir, smallest, work_dir,
+                                   args.python_exe)
     for k, v in overhead.items():
         if isinstance(v, float):
             print(f"  {k}: {v * 1000:.1f} ms")
 
     manifest = {
         "created_at": dt.datetime.now().isoformat(timespec="seconds"),
+        # The exact invocation. A campaign is only reproducible if a reader can
+        # see what was actually asked for -- every profile setting can be
+        # overridden from the command line, so `profile_settings` alone does
+        # not say whether a value came from the profile or from a flag.
+        "invocation": {
+            "argv": sys.argv,
+            "cwd": os.getcwd(),
+            "python": sys.executable,
+        },
         "profile": args.profile,
         "profile_settings": profile,
         "build_dir": str(build_dir),
         "fixtures": fixture_meta,
         "overhead": overhead,
         "hardware": hardware,
+        "filesystems": filesystems,
         "min_trustworthy_factor": MIN_TRUSTWORTHY_FACTOR,
+        "logical_cores": cores,
+        "oversubscribed": max(profile["threads"]) > cores,
     }
 
     rows: list[dict[str, Any]] = []
     # Matches --dry-run exactly: lsdtt3 runs at every thread count, a serial
     # reference runs once, a parallel reference runs at every thread count.
+    baseline_threads = min(profile["threads"])
+    measurement_timeout = args.timeout_seconds if args.timeout_seconds > 0 else None
     n_threads = len(profile["threads"])
     total = sum(
         len(fixtures) * (n_threads + sum(1 if e in SERIAL_REFERENCES
@@ -1477,21 +2130,27 @@ def main() -> int:
             if case.get("needs_filled"):
                 filled = prepare_filled_fixture(fx_path, work_dir, build_dir)
                 if filled is None:
-                    rows.append(build_row(
-                        case["suite"], case_name, "lsdtt3", fx_key,
-                        meta["sha256_12"], meta["n_cells"],
-                        profile["threads"][0],
-                        {"error": "could not prepare filled DEM "
-                                  "(lsdtt-raster-preprocessing missing "
-                                  "or failed)"},
-                        case, overhead))
+                    # Record the failure for EVERY engine, not just lsdtt3.
+                    # All of them accumulate over this shared raster, so none
+                    # of them can run; emitting one lsdtt3 row made the
+                    # reference engines disappear from the case with no
+                    # explanation anywhere in the CSV.
+                    err = {"error": "could not prepare filled DEM "
+                                    "(lsdtt-raster-preprocessing missing "
+                                    "or failed)"}
+                    for eng in ["lsdtt3"] + sorted(case["engines"]):
+                        rows.append(build_row(
+                            case["suite"], case_name, eng, fx_key,
+                            meta["sha256_12"], meta["n_cells"],
+                            baseline_threads, err, case, overhead))
                     continue
                 in_path = filled
 
             for threads in profile["threads"]:
                 # lsdtt3
                 info = measure_lsdtt(case_name, case, in_path, work_dir,
-                                     threads, profile["repeats"], build_dir)
+                                     threads, profile["repeats"], build_dir,
+                                     timeout=measurement_timeout)
                 rows.append(build_row(case["suite"], case_name, "lsdtt3",
                                       fx_key, meta["sha256_12"],
                                       meta["n_cells"], threads, info, case,
@@ -1501,14 +2160,21 @@ def main() -> int:
                           rows[-1])
 
                 for engine, routine in sorted(case["engines"].items()):
-                    # A serial reference is measured once, at 1 thread. Running
-                    # it again at 2/4/8 would record the same number under a
-                    # different label and imply it had been tested there.
-                    if engine in SERIAL_REFERENCES and threads != 1:
+                    # A serial reference is measured ONCE, at the baseline
+                    # thread count. Running it again at 2/4/8 would record the
+                    # same number under a different label and imply it had been
+                    # tested there.
+                    #
+                    # Against `baseline_threads`, not a hard-coded 1: with
+                    # `--threads 2,4` the old test never fired, so RichDEM and
+                    # TopoToolbox produced NO rows at all and vanished from the
+                    # campaign without a word.
+                    if engine in SERIAL_REFERENCES and threads != baseline_threads:
                         continue
                     info = measure_reference(engine, routine, in_path,
                                              threads, profile["repeats"],
-                                             args.python_exe)
+                                             args.python_exe,
+                                             timeout=measurement_timeout)
                     rows.append(build_row(case["suite"], case_name, engine,
                                           fx_key, meta["sha256_12"],
                                           meta["n_cells"], threads, info, case,
@@ -1529,7 +2195,13 @@ def main() -> int:
 
     # The per-case output rasters are large and are not evidence: nothing in
     # this campaign compares values. Keeping them would make a campaign
-    # directory too big to send.
+    # directory too big to send. The work directory may have been relocated to
+    # local scratch by the staging step, so remove whichever one was used.
+    #
+    # The STAGED FIXTURES are deliberately left in place: they are the
+    # expensive part to recreate, they are cached across campaigns by name and
+    # size, and they live under the system temp directory, which the OS clears
+    # on its own schedule.
     shutil.rmtree(work_dir, ignore_errors=True)
 
     n_ok = sum(1 for r in rows if r["status"] == "ok")

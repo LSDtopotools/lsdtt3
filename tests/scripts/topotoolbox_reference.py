@@ -365,6 +365,13 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         info["seconds_median"] = build["seconds_median"] + accum["seconds_median"]
         info["seconds_all"] = [b + a for b, a
                                in zip(build["seconds_all"], accum["seconds_all"])]
+        # Computed from the summed per-repeat totals, not by adding the two
+        # phases' standard deviations -- that would assume the phases vary
+        # independently and overstate the spread. Without this the field was
+        # absent entirely and every consumer silently defaulted it to 0.0,
+        # making a noisy measurement look perfectly repeatable.
+        info["seconds_stdev"] = (statistics.stdev(info["seconds_all"])
+                                 if len(info["seconds_all"]) > 1 else 0.0)
         info["repeats"] = accum["repeats"]
         info["seconds_build_only"] = build["seconds"]
         info["seconds_accumulate_only"] = accum["seconds"]
@@ -373,8 +380,13 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         raise ValueError(f"unknown routine {routine!r}")
 
     if out_path:
+        # Timed like the other two references so `seconds_write` means the same
+        # thing across all three. It was the only one leaving the field unset,
+        # which read as "no write happened" rather than "not measured".
+        t_write = time.perf_counter()
         with suppressed_output():
             ttb.write_tif(result, out_path)
+        info["seconds_write"] = time.perf_counter() - t_write
 
     arr = np.asarray(result.z)
     finite = arr[np.isfinite(arr)]
