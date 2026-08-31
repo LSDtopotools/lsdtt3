@@ -1925,6 +1925,42 @@ target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_newton COMMAND lsdtt-test-hillslope-newton)
 set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "unit;hillslope")
 
+# Independent equation-faithful Perron (2011) Q-imp reference solver.
+add_executable(lsdtt-test-perron-qimp cpp/test_perron_qimp.cpp)
+target_link_libraries(lsdtt-test-perron-qimp PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_perron_qimp COMMAND lsdtt-test-perron-qimp)
+set_tests_properties(unit_hillslope_perron_qimp PROPERTIES LABELS "unit;hillslope")
+
+# Independent C++ port of Ren et al. (2026) modular implicit method.
+add_executable(lsdtt-test-ren-modular-implicit cpp/test_ren_modular_implicit.cpp)
+target_link_libraries(lsdtt-test-ren-modular-implicit PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_hillslope_ren_modular_implicit
+         COMMAND lsdtt-test-ren-modular-implicit)
+set_tests_properties(unit_hillslope_ren_modular_implicit PROPERTIES
+                     LABELS "unit;hillslope")
+
+# Heavy P1/P2 literature comparison driver; run explicitly with an output path.
+add_executable(lsdtt-perron-ren-p1-p2 cpp/perron_ren_p1_p2_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p1-p2 PRIVATE lsdtt3_cpu)
+
+# Heavy P3 equilibrium timestep sweep; run explicitly with an output CSV.
+add_executable(lsdtt-perron-ren-p3 cpp/perron_ren_p3_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p3 PRIVATE lsdtt3_cpu)
+
+# Heavy P4 transient timestep sweep; `full-p2` enables the multi-hour 1 yr 2-D reference.
+add_executable(lsdtt-perron-ren-p4 cpp/perron_ren_p4_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p4 PRIVATE lsdtt3_cpu)
+
+# P5 one-step stability/robustness envelope across reference and production solvers.
+add_executable(lsdtt-perron-ren-p5 cpp/perron_ren_p5_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p5 PRIVATE lsdtt3_cpu)
+
+# Heavy P6 spatial refinement; cellular canonical runs stop at 100x100 by design.
+add_executable(lsdtt-perron-ren-p6 cpp/perron_ren_p6_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p6 PRIVATE lsdtt3_cpu)
+
 # Small Newton-only references for the cellular hillslope investigation. The
 # normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
 # performance fixtures and deliberately do not run here.
