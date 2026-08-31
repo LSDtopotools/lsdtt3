@@ -713,6 +713,94 @@ to start if `--cpus-per-task` is below the largest thread count in the sweep --
 an "8 thread" row on a 4-core allocation is not a slow result, it is a wrong
 one, and it is indistinguishable from a genuine scaling ceiling.
 
+### Where things are written, and how to run from a data directory
+
+Three locations, with three different lifetimes:
+
+| what | default | override | notes |
+|---|---|---|---|
+| campaign output | `./benchmark_campaigns/` | `--out-dir` | small; the thing you keep and send |
+| fixture cache | `<repo>/tests/data/dem_cache/` | `--fixture-dir` | ~512 MB for `server`; reused by every later campaign |
+| staged fixtures + intermediates | `$TMPDIR` | `--scratch-dir` | node-local, disposable, must be fast — measurements happen here |
+
+A relative `--out-dir` resolves against the **current directory**, so running
+from a data directory puts the campaign in that data directory.
+
+**The one trap:** `pixi run` sets the working directory to the manifest root,
+so `pixi run bench-server --out-dir results` lands in the repo regardless of
+where you invoked it. To collect results elsewhere, pass an **absolute** path,
+or call the script directly:
+
+```sh
+cd /path/to/my/data
+pixi run --manifest-path /path/to/lsdtt3/pixi.toml bench-server \
+    --out-dir "$PWD" --fixture-dir /scratch/$USER/lsdtt3_fixtures
+```
+
+**On a cluster, move the fixture cache off the repo.** It defaults inside the
+repository, which usually sits on a quota'd home filesystem, and the `server`
+profile stores ~512 MB of region sources there. Point `--fixture-dir` at
+project or scratch storage — somewhere persistent and shared, because it is
+reused by every later campaign and re-downloading it is the slowest part of a
+cold run.
+
+### Running under Slurm without editing anything
+
+`slurm_benchmark.sbatch` needs **no edits**. Everything site-specific is an
+sbatch flag or an environment variable, so the file can stay exactly as
+committed.
+
+**Slurm's own settings** go to `sbatch`, which overrides the `#SBATCH` lines,
+or through Slurm's native `SBATCH_*` variables. There is deliberately **no
+`#SBATCH --account` line** — a placeholder would silently become the default
+the one time you forgot to override it.
+
+```sh
+sbatch --account=PROJECT --partition=compute --cpus-per-task=32 \
+       tests/scripts/slurm_benchmark.sbatch
+export SBATCH_ACCOUNT=PROJECT SBATCH_PARTITION=compute   # same effect
+```
+
+**The script's settings** are environment variables:
+
+| variable | purpose |
+|---|---|
+| `BENCH_SETUP_CMD` | shell eval'd first — where `module load` / `conda activate` go |
+| `BENCH_SETUP_SCRIPT` | a file to source instead (both run if both are set) |
+| `BENCH_RUNNER` | `pixi` (default) or `python` |
+| `BENCH_PYTHON` | interpreter for `BENCH_RUNNER=python` |
+| `BENCH_BUILD_DIR` | where the `lsdtt-*` binaries are; default `<repo>/build` |
+| `BENCH_REPO` | the checkout; default derived from the script's own path |
+| `BENCH_OUT_DIR` | campaign output; default `<submit dir>/benchmark_campaigns` |
+| `BENCH_FIXTURE_DIR` | fixture cache; default `<submit dir>/benchmark_fixtures` |
+| `BENCH_PROFILE` | `server` (default) or `laptop` for a shakedown |
+
+Arguments after the script name reach the suite unchanged. A full conda
+example, with results in the directory you submit from and fixtures on scratch:
+
+```sh
+cd /path/to/my/data
+export BENCH_SETUP_CMD="module load anaconda; conda activate lsdtt3"
+export BENCH_RUNNER=python
+export BENCH_BUILD_DIR=/path/to/lsdtt3/build
+export BENCH_FIXTURE_DIR=/scratch/$USER/lsdtt3_fixtures
+sbatch --account=PROJECT --cpus-per-task=32 \
+       /path/to/lsdtt3/tests/scripts/slurm_benchmark.sbatch --threads 1,2,4,8,16,32
+```
+
+**`conda activate`, not a bare interpreter path.** Pointing `BENCH_PYTHON` at
+an environment's `python` binary without activating gives you GDAL with no
+`PROJ_DATA`, and GDAL then falls back to CRS parameters from the GeoTIFF keys
+rather than the EPSG registry. The script checks and says so before starting.
+
+**A missing reference is silent.** The suite skips any reference it cannot
+import (exit 77) rather than failing, so an environment without RichDEM,
+TopoToolbox or Whitebox produces a campaign that completes "successfully" with
+lsdtt3-only rows. This is not hypothetical: an early version of the sbatch ran
+`pixi run` without `-e benchmark`, landed in the default environment, and
+skipped all three. Both runners now print what is importable before the
+campaign starts — **read that list before trusting the tables.**
+
 ### What each campaign writes
 
 One self-contained, tar-and-send directory per run, under
