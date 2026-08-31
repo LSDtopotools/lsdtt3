@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -911,6 +912,14 @@ int main(int argc, char* argv[])
         fi_opts.build_s_vector            = true;
         fi_opts.n_threads                 = ifs["n_threads"];
 
+        // Timed so the routing build can be separated from process startup
+        // and GDAL I/O. The "Compute time:" wording matches
+        // lsdtt-surface-metrics and is what
+        // tests/scripts/run_benchmark_suite.py parses; the build and the
+        // accumulation are reported separately because they are separately
+        // meaningful and the reference implementations split them the same
+        // way.
+        const auto d8_build_t0 = std::chrono::steady_clock::now();
         try
         {
             d8_flow = lsdtt::make_flow_base(
@@ -925,6 +934,11 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: D8 flow routing failed: " << e.what() << "\n";
             return 1;
         }
+        const auto d8_build_t1 = std::chrono::steady_clock::now();
+        std::cout << "  Compute time: "
+                  << std::chrono::duration<double>(
+                         d8_build_t1 - d8_build_t0).count()
+                  << " s\n";
     }
 
     // -------------------------------------------------------------------------
@@ -944,6 +958,7 @@ int main(int argc, char* argv[])
         fg_opts.method                    = lsdtt::lsdtt_flowgraph_method::d_infinity;
         fg_opts.n_threads                 = ifs["n_threads"];
 
+        const auto dinf_build_t0 = std::chrono::steady_clock::now();
         try
         {
             dinf_graph = std::make_unique<lsdtt::lsdtt_flowgraph_cpu>(
@@ -956,6 +971,11 @@ int main(int argc, char* argv[])
                       << e.what() << "\n";
             return 1;
         }
+        const auto dinf_build_t1 = std::chrono::steady_clock::now();
+        std::cout << "  Compute time: "
+                  << std::chrono::duration<double>(
+                         dinf_build_t1 - dinf_build_t0).count()
+                  << " s\n";
     }
 
     // -------------------------------------------------------------------------
@@ -977,6 +997,7 @@ int main(int argc, char* argv[])
         fg_opts.mfd_exponent              = ff["mfd_exponent"];
         fg_opts.n_threads                 = ifs["n_threads"];
 
+        const auto mfd_build_t0 = std::chrono::steady_clock::now();
         try
         {
             mfd_graph = std::make_unique<lsdtt::lsdtt_flowgraph_cpu>(
@@ -989,6 +1010,11 @@ int main(int argc, char* argv[])
                       << e.what() << "\n";
             return 1;
         }
+        const auto mfd_build_t1 = std::chrono::steady_clock::now();
+        std::cout << "  Compute time: "
+                  << std::chrono::duration<double>(
+                         mfd_build_t1 - mfd_build_t0).count()
+                  << " s\n";
     }
 
     // -------------------------------------------------------------------------
@@ -1109,8 +1135,18 @@ int main(int argc, char* argv[])
 
         try
         {
+            const auto acc_t0 = std::chrono::steady_clock::now();
             lsdtt::lsdtt_raster_result area = d8_flow->get_drainage_area_raster();
+            const auto acc_t1 = std::chrono::steady_clock::now();
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(acc_t1 - acc_t0).count()
+                      << " s\n";
+
             loader.write_full(area, out_file, out_fmt);
+            const auto acc_t2 = std::chrono::steady_clock::now();
+            std::cout << "  Write time: "
+                      << std::chrono::duration<double>(acc_t2 - acc_t1).count()
+                      << " s\n";
         }
         catch (const std::exception& e)
         {
@@ -1131,8 +1167,18 @@ int main(int argc, char* argv[])
 
         try
         {
+            const auto acc_t0 = std::chrono::steady_clock::now();
             lsdtt::lsdtt_raster_result area = dinf_graph->accumulate_raster();
+            const auto acc_t1 = std::chrono::steady_clock::now();
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(acc_t1 - acc_t0).count()
+                      << " s\n";
+
             loader.write_full(area, out_file, out_fmt);
+            const auto acc_t2 = std::chrono::steady_clock::now();
+            std::cout << "  Write time: "
+                      << std::chrono::duration<double>(acc_t2 - acc_t1).count()
+                      << " s\n";
         }
         catch (const std::exception& e)
         {
@@ -1153,8 +1199,18 @@ int main(int argc, char* argv[])
 
         try
         {
+            const auto acc_t0 = std::chrono::steady_clock::now();
             lsdtt::lsdtt_raster_result area = mfd_graph->accumulate_raster();
+            const auto acc_t1 = std::chrono::steady_clock::now();
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(acc_t1 - acc_t0).count()
+                      << " s\n";
+
             loader.write_full(area, out_file, out_fmt);
+            const auto acc_t2 = std::chrono::steady_clock::now();
+            std::cout << "  Write time: "
+                      << std::chrono::duration<double>(acc_t2 - acc_t1).count()
+                      << " s\n";
         }
         catch (const std::exception& e)
         {

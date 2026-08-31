@@ -120,3 +120,17 @@ tests/data/dem_cache/
 # pixi environments (pixi.toml and pixi.lock ARE tracked)
 # -----------------------------------------------------------------------------
 .pixi/
+
+# -----------------------------------------------------------------------------
+# Benchmark campaign output (tests/scripts/run_benchmark_suite.py)
+#
+# Each run writes a self-contained, timestamped directory. These are machine-
+# and moment-specific measurements, not source: committing them would grow the
+# repository without making any result more reproducible, since the campaign
+# already records the git SHA, hardware and fixture hashes needed to repeat it.
+# Tar the directory and attach it to wherever the numbers are published.
+# -----------------------------------------------------------------------------
+benchmark_campaigns/
+
+# Slurm job logs written by tests/scripts/slurm_benchmark.sbatch.
+slurm_logs/

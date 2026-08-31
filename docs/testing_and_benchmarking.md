@@ -668,6 +668,385 @@ a latent risk if that guard is ever weakened, not a live defect.
 
 ---
 
+## 5b. The standalone benchmark suite (cross-implementation)
+
+Everything else in this document is testing: it runs under CTest, it asserts,
+and it can fail a build. **The benchmark suite is not.** It asserts nothing,
+CTest never invokes it, and its only product is a measurement of how lsdtt3
+compares against other implementations on the machine it is run on. It exists
+so that a user, or a reviewer, can reproduce a published comparison without
+knowing anything about our test wiring.
+
+```sh
+pixi run bench-laptop            # reduced fixtures, minutes
+pixi run bench-server            # the peer-review run
+pixi run bench-laptop --dry-run  # print the plan, measure nothing
+```
+
+Driver: `tests/scripts/run_benchmark_suite.py`. Read its module docstring
+before quoting any number from it -- it states what each measurement means and
+where the comparison is still not apples to apples.
+
+### The two profiles
+
+| Profile | Fixtures | Threads | Repeats | Purpose |
+|---|---|---|---|---|
+| `laptop` | `*_small` | 1, 2, 4 | 3 | a real baseline on a laptop, **and** the smoke test before dispatching a server campaign |
+| `server` | small + medium + large | 1, 2, 4, 8 | 5 | the profile whose output is quotable |
+
+Run `bench-laptop` before `bench-server`. It exercises every code path in a few
+minutes, so a broken executable path or a missing fixture surfaces immediately
+rather than after a queue wait.
+
+### Slurm is deliberately outside the benchmark
+
+`tests/scripts/slurm_benchmark.sbatch` contains **no measurement logic**. It
+arranges for a scheduler node to run `pixi run bench-server`, the identical
+command a laptop runs, and nothing in the suite knows Slurm exists. Sites with
+PBS, LSF, SGE or no scheduler at all run the command directly and get an
+identical campaign directory. Keep it that way: put logic in the sbatch file
+and Slurm sites stop being comparable with everyone else.
+
+The one thing it does enforce is `--exclusive`. A benchmark sharing a node is
+measuring the co-tenant's memory bandwidth as much as its own, and it refuses
+to start if `--cpus-per-task` is below the largest thread count in the sweep --
+an "8 thread" row on a 4-core allocation is not a slow result, it is a wrong
+one, and it is indistinguishable from a genuine scaling ceiling.
+
+### What each campaign writes
+
+One self-contained, tar-and-send directory per run, under
+`benchmark_campaigns/<profile>_<host>_<timestamp>/`:
+
+| File | Contents |
+|---|---|
+| `benchmark_raw.csv` | one row per measurement, every column below |
+| `SUMMARY.md` | rendered tables, medians, scaling and memory |
+| `hardware_manifest.json` | CPU, cores, RAM, governors, compiler, git SHA, reference versions |
+| `run_manifest.json` | profile settings, fixture hashes, measured overheads |
+
+### Why the numbers are defensible
+
+- **Threads are pinned for every engine.** Whitebox's `max_procs` defaults to
+  `-1` (all cores) and lsdtt3 takes every OpenMP thread it can; an unpinned
+  comparison measures core count. `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and
+  `MKL_NUM_THREADS` are all set, the last two because a transitively-loaded
+  BLAS will otherwise spin up its own pool and the "1 thread" row is not one
+  thread.
+- **Reference subprocesses are pinned too**, via `reference_env()`, which sets
+  the same variables without stripping the pixi paths the Python references
+  need to import at all. `system_env()` (for the C++ CLIs) and
+  `reference_env()` (for the Python references) need opposite treatment of
+  `LD_LIBRARY_PATH` and must stay separate.
+- **RichDEM and TopoToolbox are serial** for these routines. They are measured
+  once, at the **baseline** (lowest) thread count in the sweep, and flagged
+  `serial_reference`. A flat scaling curve for them is not a finding, and
+  re-running them at 8 threads would record the same number under a label
+  implying it had been tested there. (Baseline, not a hard-coded 1: with
+  `--threads 2,4` an earlier version produced no reference rows at all and they
+  vanished from the campaign silently.)
+- **Every measurement has a deadline**, `--timeout-seconds` (default 1800). A
+  killed measurement becomes a `timeout` row -- a distinct status from `error`,
+  because the engine was working, just too slow -- and the campaign carries on.
+  This is not hypothetical: Whitebox's breach on low-relief terrain measured
+  ~300x slower than lsdtt3's, and one such cell would otherwise stall an
+  unattended server campaign for hours.
+- **Oversubscription is refused, not measured.** The runner warns when the
+  thread sweep exceeds the machine's logical cores, and the Slurm wrapper
+  refuses to start when `--cpus-per-task` is below the sweep. An "8 thread" row
+  on 4 cores is a mislabelled result indistinguishable from a real scaling
+  ceiling.
+- **The exact invocation is recorded** in `run_manifest.json` (`argv`, cwd,
+  interpreter). Every profile setting is overridable from the command line, so
+  the profile name alone does not say what was actually run.
+- **Repeats, not single shots**: a discarded warm-up then N timed repeats, with
+  best, median, stdev and the full list all in the CSV. `SUMMARY.md` quotes the
+  **median** -- best-of-N answers "how fast can this go" and a user wants "what
+  will I get".
+- **I/O is separated from compute.** The engines have very different I/O layers
+  and a bundled number compares file formats.
+- **Memory** is child-process peak RSS via `wait4(2)`, so it sees the C++ and
+  Rust allocation a Python-level probe cannot.
+- **Fixture identity is hashed** into every row. Two campaigns on differently
+  built fixtures are comparing different rasters.
+- **A non-Release build is called out** in `SUMMARY.md`, as is a CPU governor
+  that is not uniformly `performance`.
+
+### Timing scope: the thing to check before quoting a ratio
+
+Rows are only ever compared with others measured the same way, recorded in the
+`timing_scope` column:
+
+| Scope | Meaning |
+|---|---|
+| `cli_reported_compute` | the compute time the lsdtt3 CLI printed itself; excludes startup and I/O |
+| `in_process_routine` | a reference script timing the routine in-process |
+| `whole_process` | wall clock for an entire lsdtt3 CLI run |
+
+`lsdtt-surface-metrics`, `lsdtt-raster-preprocessing` and
+`lsdtt-drainage-analysis` all print `Compute time:` (and `Write time:`) lines,
+which the driver parses and sums, so the flow, surface and depression suites are
+like-for-like. The drainage CLI prints the routing build and the accumulation
+separately, matching how TopoToolbox splits the same work; the driver sums them.
+
+That printing was added *for* this suite, and it matters more than it sounds:
+lsdtt3's fill on `alpine_small` is **7.6 ms of compute inside a 279 ms
+process**. Whole-process wall clock was 97% startup and I/O. Any CLI that
+prints no timing falls back to `whole_process`, and those rows are tabled
+separately in `SUMMARY.md` and never enter a ratio.
+
+### Fixed per-call cost is measured for every engine
+
+Do **not** assume an engine has no fixed overhead because it is "timed
+in-process". That was assumed here once and it was wrong. Each campaign
+measures every engine's per-call cost on an 8×8 crop (64 cells), where the
+algorithm itself is microseconds. Median of 7, `fill`, on crops of
+`alpine_small`:
+
+| grid | richdem | topotoolbox | whitebox (1t) |
+|---|---|---|---|
+| 8² | **9.83 ms** | 0.036 ms | 0.038 ms |
+| 16² | **11.56 ms** | 0.029 ms | 0.032 ms |
+| 64² | **10.19 ms** | 0.111 ms | 0.126 ms |
+| 256² | **13.73 ms** | 1.966 ms | 1.440 ms |
+
+TopoToolbox and Whitebox extrapolate to ~0.03 ms at zero cells. **RichDEM
+extrapolates to ~10 ms.** Its own internal timer prints
+`Zhou2016 wall-time = 1.2e-05 s` for the 8×8 fill, so ~99.8% of what a caller
+measures there is RichDEM's Python binding: a per-call `rdarray` construction
+plus the citation block it formats and prints on *every* invocation. On
+`alpine_small` that is roughly half of RichDEM's reported fill time.
+
+`overhead_dominated` therefore compares each row against **its own engine's**
+floor. Holding lsdtt3 alone to a startup floor would have quietly let RichDEM
+off, and RichDEM is the reference lsdtt3 is most often compared against.
+
+### Compute-time printing is a parsed interface, not a log message
+
+`lsdtt-surface-metrics`, `lsdtt-raster-preprocessing` and
+`lsdtt-drainage-analysis` print their own compute times, and **two scripts parse
+those lines**: `run_surface_benchmark.py` (`FIT_TIMING_RE`) and
+`run_benchmark_suite.py` (`parse_reported_times`). Two phrasings exist:
+
+```
+  Compute time: 0.0026 s                      the common form
+  Write time: 0.0090 s
+  Computed hillshade... done (0.0035 s)       surface-metrics only
+  Running direct fit... done (0.0041 s)
+```
+
+The `... done (X s)` phrasing looks like something to tidy up. **It is not.**
+Normalising hillshade to `Compute time:` while building this suite broke
+`run_surface_benchmark.py`, which raises rather than silently falling back to
+wall time when its pattern stops matching -- a good guard that caught it
+immediately. The CLI wording was restored and the new parser taught to accept
+both forms. When a CLI's output is parsed, the parser accommodates the CLI, not
+the other way round.
+
+### Fixtures: one download per region, then crop the ladder
+
+The suite fetches **one large real DEM per region** with `lsdtt-fetch-raster`
+(COP30) and crops every rung of the size ladder out of it.
+
+| profile | regions | ladder (px) | source fetched at | download |
+|---|---|---|---|---|
+| `laptop` | alpine, lakeland | 500, 1000 | 1000 px (30 km) | ~4 MB/region |
+| `server` | alpine, lakeland | 1000, 2000, 4000, 8000 | 8000 px (240 km) | ~256 MB/region |
+
+| region | centre | UTM | terrain |
+|---|---|---|---|
+| `alpine` | 86.9 E, 27.9 N | 32645 | High Himalaya, Khumbu/Makalu |
+| `lakeland` | 92.0864 W, 50.5734 N | 32615 | Canadian Shield, NW Ontario |
+
+**Why crop rather than fetch each rung.** A ladder built from independent
+downloads confounds size with terrain: at 30 m, 2400 px is a 72 km box and
+8000 px is 240 km, so scaling the box up means "alpine" stops being alpine.
+Cropping every rung from one source keeps terrain as constant as it can be and
+needs one download per region instead of one per rung.
+
+**Why not synthetic.** `lsdtt-raster-synthetic-tests` generates a
+diamond-square surface of any size in ~1.3 s with no network, which is
+tempting, and it is not usable here. Depression density (fraction of cells a
+no-epsilon RichDEM fill raises, 256²):
+
+| surface | relief | depression cells |
+|---|---|---|
+| REAL alpine (Italian Alps) | 1976 m | **0.94 %** |
+| REAL lakeland (Finland) | 51 m | **1.29 %** |
+| SYNTH diamond-square, no noise | 4.3 m | 11.54 % |
+| SYNTH roughness 0.70 + noise | 6.8 m | 34.24 % |
+| SYNTH roughness 0.80 + noise 10 | 15.4 m | 37.44 % |
+
+10–30× more depressions than real terrain, at 1 m cell size with a few metres
+of relief. Since depression structure is the largest single driver of the fill
+and breach timings, a fractal surface would inflate every depression-handling
+measurement for every engine. Synthetic surfaces belong to the analytic oracles
+in the CTest suite, not here.
+
+**The confound that remains, and how it is exposed.** Centred crops of
+increasing size necessarily reach into different landscape — a 240 km box in
+the Himalaya includes both the Gangetic plain and the Tibetan plateau. This
+cannot be engineered away with real terrain, so it is *measured*:
+`describe_fixture()` records relief and true depression density (RichDEM
+priority-flood) for every rung into `run_manifest.json`. A scaling curve across
+rungs whose depression density doubles is not a clean scaling curve, and the
+reader can see that rather than having to assume otherwise.
+
+Do not substitute a cheap proxy for that number. An earlier version used a 5×5
+`grey_closing` and reported 29–55% where the true figures were 6.4% and 18.5% —
+it flags any local concavity, not a closed basin. A statistic wrong by 3× is
+worse than no statistic, because it looks authoritative in the manifest.
+
+**These regions are much harder than the ones they replace**, which is the
+point:
+
+| region | relief | depression cells |
+|---|---|---|
+| Himalaya (new alpine) | 1662 m | **6.40 %** |
+| Ontario (new lakeland) | 94 m | **18.51 %** |
+| Italian Alps (old) | 1976 m | 0.94 % |
+| Finland (old) | 51 m | 1.29 % |
+
+`--regions` and `--ladder` override the profile. `--fixtures` bypasses the
+system entirely and takes raster names from the cache verbatim — the escape
+hatch for legacy or hand-placed fixtures.
+
+### Fixtures are staged to local disk, and this is not optional
+
+**The single largest measurement error found while building this suite.**
+Whitebox touches its working directory inside a tool call, so the filesystem
+the fixture sits on lands inside the timed region. Same 256² raster, same
+routine, `fill`:
+
+| filesystem | whitebox | richdem | topotoolbox |
+|---|---|---|---|
+| `9p` (WSL2 `/mnt/c`) | **16.4 ms** | 11.0 ms | 1.96 ms |
+| local `ext4` | **2.6 ms** | 12.5 ms | 2.15 ms |
+
+A **6x penalty on Whitebox alone**, entirely attributable to the filesystem.
+RichDEM and TopoToolbox are unaffected. A campaign run straight off `/mnt/c`
+reported that lsdtt3 beat Whitebox on fill and breach; after staging, Whitebox
+is several times *faster* on both. The conclusion had inverted.
+
+The suite now copies every fixture, and the shared filled DEM, to local storage
+before measuring anything. `--scratch-dir` chooses where (default: a
+subdirectory of the system temp directory, which is node-local on a cluster and
+therefore the right place anyway). The campaign records the filesystem it
+measured on, and `SUMMARY.md` refuses to endorse the run if that filesystem is
+one of `SLOW_FILESYSTEMS` (9p, drvfs, cifs, nfs, fuseblk, overlayfs).
+`--no-stage` exists only to demonstrate what staging is worth.
+
+**If you take one thing from this section:** check the "measured on" line at
+the top of any `SUMMARY.md` before quoting a number from it.
+
+### Two measurement artefacts found while building this
+
+Both are recorded because they are the kind of thing that silently produces a
+wrong published table.
+
+**Whitebox tool-handle resolution cost ~190 ms per attribute access.**
+`wbe.hydrology.sink` is not an attribute read; it is a registry resolution
+through the Rust layer. 1000 accesses took 191.4 s, while 1000 accesses of the
+namespace `wbe.hydrology` took 0.8 ms. Resolving the handle inside the timing
+lambda charged every Whitebox measurement a fixed ~190 ms:
+
+| fill on `alpine_small` (256²) | seconds |
+|---|---|
+| handle resolved inside the timing loop | 0.207 |
+| handle bound once, outside it | 0.019 |
+
+That is a **10.9x artefact, and it flattered lsdtt3.**
+`whitebox_reference.py` now binds every handle before timing. Each campaign
+re-measures the cost as `whitebox_dispatch_seconds` and `SUMMARY.md` prints a
+warning refusing to endorse the Whitebox rows if it exceeds 100 ms, so the
+regression cannot come back quietly.
+
+**Small fixtures are dominated by fixed cost.** Whitebox's fill is 0.29 µs/cell
+on 256² and 0.09 µs/cell on 2400²; the difference is overhead amortising, not
+an algorithm. Every row is checked against its own engine's measured floor and
+flagged `overhead_dominated` if it is within 3x of it. The `laptop` profile
+proves the pipeline works; the `server` profile, with the large fixtures,
+produces the numbers.
+
+### What is compared, and what must never be
+
+| Suite | Cases | Status |
+|---|---|---|
+| `flow` | fill, fill_epsilon, breach, accum_d8 | timing; values asserted separately in §4-5 |
+| `mfd` | accum_dinf, accum_mfd | **timing only** -- Tarboton vs Quinn vs Freeman proportioning genuinely differ |
+| `surface` | slope_only, polyfit_all, hillshade | **timing only** -- curvature definitions and aspect handedness differ |
+| `depression` | fill_spill_merge, fill_wang_liu | **timing only**, and the depression hierarchy has no counterpart at all |
+
+Two of these deserve their reasoning stated wherever they are quoted:
+
+`polyfit_all` vs `slope_only` are both reported on purpose. lsdtt3 fits one
+quadratic and derives every metric from it; TopoToolbox and Whitebox recompute
+their derivatives per metric. `polyfit_all` is therefore where lsdtt3's design
+pays, and `slope_only` is where it does not -- lsdtt3 pays for a full fit to
+produce a single number. Quoting only the first would be cherry-picking. Note
+also that lsdtt3's default `polyfit_lambda_metres` of 70 m is a **wider window**
+than the references' fixed 3×3, so lsdtt3 is doing more work per cell and its
+surface numbers are conservative.
+
+`fill_spill_merge` compares lsdtt3's nested depression hierarchy (Barnes 2020)
+plus Fill-Spill-Merge (Barnes 2021) against the cheapest thing the other tools
+offer. The ratio necessarily flatters them; it is recorded only because the
+absolute cost of the hierarchy is a number users ask for. Note the hierarchy is
+not separately switchable -- it is built as the first half of the
+`barnesetal2021` fill, which is the only CLI path that reaches it.
+
+### Accumulation runs on a shared, pre-filled DEM
+
+Flow accumulation cannot run on a raw DEM -- `lsdtt-drainage-analysis` aborts
+with *"could not assign a receiver ... unresolved sink or flat"*, and each other
+engine would silently apply its **own** depression handling first, turning an
+accumulation comparison into a comparison of fills. The suite therefore fills
+once and every engine accumulates over the identical raster.
+
+lsdtt3's fill is the shared input, which needs justifying since lsdtt3 is one of
+the tools under test: it is bit-exact against both RichDEM's Barnes 2014 fill
+and TopoToolbox's `fillsinks` (§4), so it favours nobody. The fill uses
+`fill_min_slope: 0.0001`, not `0` -- a fill with true flats is unroutable,
+because a flat cell has no downslope neighbour for D8 to pick.
+
+### A Whitebox fill result we could not explain
+
+On `alpine_small` (256², no nodata) the raw minimum 1177.1334 sits at row 254,
+an **interior** cell, and the minimum along the border is 1178.3820. A
+depression fill should therefore bring the global minimum to the border
+minimum. RichDEM and Whitebox's `fill_depressions_wang_and_liu` both return
+exactly 1178.3820. Whitebox's `fill_depressions` -- its Barnes tool -- returns
+**1184.8361**, 6.45 m higher, and the two Whitebox fills differ by up to 9.78 m.
+
+lsdtt3 is bit-exact against RichDEM and TopoToolbox on this operation, so the
+odd one out is Whitebox's Barnes tool, most likely a boundary convention
+(edge cells treated as closed). Until that is understood, `fill@whitebox` is a
+**timing** row and `depression_fill_wl` carries the Whitebox value comparison.
+
+### Whitebox licensing
+
+The suite constructs `wb.WbEnvironment()`, the **open tier**, which needs no
+licence key. 733 of Whitebox's 775 tools are open tier and every routine used
+here is one of them (verified against 2.0.6). Never add a routine requiring a
+Pro entitlement, and never call `from_floating_license_id` or
+`from_signed_entitlement_*`: a benchmark a reviewer cannot run without buying a
+licence is not a benchmark.
+
+Whitebox is a ~22 MB wheel, ~60 MB installed, with **zero Python
+dependencies**, so it cannot perturb the numpy/GDAL solve. It has **no osx-64
+wheel**, which is why the `whitebox` feature declares only
+`linux-64, osx-arm64, win-64` and the `benchmark-lite` environment exists as the
+Intel-Mac route:
+
+```sh
+pixi run -e benchmark-lite python tests/scripts/run_benchmark_suite.py --profile laptop
+```
+
+Drivers skip any reference they cannot import, so `benchmark-lite` simply
+produces fewer rows.
+
+---
+
 ## 6. Performance
 
 Timed **in-process**: raster already in memory, nothing written to disk, best of

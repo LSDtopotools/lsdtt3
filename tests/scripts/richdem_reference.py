@@ -33,6 +33,8 @@ import contextlib
 import io
 import json
 import os
+import resource
+import statistics
 import sys
 import time
 
@@ -62,44 +64,106 @@ def suppressed_output():
         os.close(saved[1])
 
 
-def run(routine: str, in_path: str, out_path: str, mfd_exponent: float):
-    import numpy as np
+def peak_rss_mb() -> float:
+    """Peak resident set size of this process, in MiB.
+
+    ru_maxrss is kibibytes on Linux and bytes on macOS; the Linux reading is
+    used because that is where the benchmark runs.  Matches the identical
+    helper in topotoolbox_reference.py and whitebox_reference.py so the three
+    references report memory on the same basis.
+    """
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+
+
+def _call_for(routine: str, dem, mfd_exponent: float):
+    """Zero-argument callable for one routine, built outside the timing loop."""
     import richdem as rd
 
-    with suppressed_output():
-        dem = rd.LoadGDAL(in_path)
+    if routine == "fill":
+        return lambda: rd.FillDepressions(dem, epsilon=False, in_place=False)
+    if routine == "fill_epsilon":
+        return lambda: rd.FillDepressions(dem, epsilon=True, in_place=False)
+    if routine == "breach":
+        return lambda: rd.BreachDepressions(dem, in_place=False)
+    if routine == "accum_d8":
+        return lambda: rd.FlowAccumulation(dem, method="D8")
+    if routine == "accum_dinf":
+        return lambda: rd.FlowAccumulation(dem, method="Dinf")
+    if routine == "accum_mfd":
+        return lambda: rd.FlowAccumulation(dem, method="Freeman",
+                                           exponent=mfd_exponent)
+    raise ValueError(f"unknown routine {routine!r}")
+
+
+def run(routine: str, in_path: str, out_path, mfd_exponent: float,
+        repeats: int = 1):
+    """Time one RichDEM routine.
+
+    repeats=1 is the historical behaviour EXACTLY: one timed call, no warm-up,
+    so run_flow_benchmark.py's numbers and cached JSON are unchanged.  Only
+    when repeats > 1 is a warm-up discarded and a best-of-N taken -- which is
+    what run_benchmark_suite.py asks for, so that RichDEM rows are produced on
+    the same statistical basis as the Whitebox and TopoToolbox rows rather than
+    being single-shot against their best-of-N.
+
+    I/O is deliberately outside the timed region: the load happens before the
+    loop and the save after it, so `seconds` is the algorithm.
+    """
+    import numpy as np
 
     t0 = time.perf_counter()
     with suppressed_output():
-        if routine == "fill":
-            result = rd.FillDepressions(dem, epsilon=False, in_place=False)
-        elif routine == "fill_epsilon":
-            result = rd.FillDepressions(dem, epsilon=True, in_place=False)
-        elif routine == "breach":
-            result = rd.BreachDepressions(dem, in_place=False)
-        elif routine == "accum_d8":
-            result = rd.FlowAccumulation(dem, method="D8")
-        elif routine == "accum_dinf":
-            result = rd.FlowAccumulation(dem, method="Dinf")
-        elif routine == "accum_mfd":
-            result = rd.FlowAccumulation(dem, method="Freeman",
-                                         exponent=mfd_exponent)
-        else:
-            raise ValueError(f"unknown routine {routine!r}")
-    elapsed = time.perf_counter() - t0
+        dem = rd_load(in_path)
+    seconds_read = time.perf_counter() - t0
 
-    with suppressed_output():
-        rd.SaveGDAL(out_path, result)
+    call = _call_for(routine, dem, mfd_exponent)
+
+    if repeats > 1:
+        with suppressed_output():
+            call()                       # warm-up, discarded
+
+    timings = []
+    for _ in range(max(1, repeats)):
+        t0 = time.perf_counter()
+        with suppressed_output():
+            result = call()
+        timings.append(time.perf_counter() - t0)
+
+    seconds_write = None
+    if out_path:
+        import richdem as rd
+        t0 = time.perf_counter()
+        with suppressed_output():
+            rd.SaveGDAL(out_path, result)
+        seconds_write = time.perf_counter() - t0
 
     arr = np.asarray(result)
     finite = arr[np.isfinite(arr)]
     return {
+        "reference": "richdem",
         "routine": routine,
-        "seconds": elapsed,
+        "seconds": min(timings),
+        "seconds_median": statistics.median(timings),
+        "seconds_all": timings,
+        "seconds_stdev": statistics.stdev(timings) if len(timings) > 1 else 0.0,
+        "repeats": len(timings),
+        # RichDEM's FillDepressions/BreachDepressions/FlowAccumulation are
+        # serial for these routines, so the thread count is 1 whatever the
+        # caller asked for. Stated rather than omitted so a campaign cannot
+        # silently attribute a thread count to it.
+        "threads": 1,
+        "seconds_read": seconds_read,
+        "seconds_write": seconds_write,
+        "peak_rss_mb": peak_rss_mb(),
         "shape": list(arr.shape),
         "min": float(finite.min()) if finite.size else None,
         "max": float(finite.max()) if finite.size else None,
     }
+
+
+def rd_load(in_path: str):
+    import richdem as rd
+    return rd.LoadGDAL(in_path)
 
 
 def main() -> int:
@@ -107,8 +171,15 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--routine", required=True, choices=ROUTINES)
     ap.add_argument("--in", dest="in_path", required=True)
-    ap.add_argument("--out", dest="out_path", required=True)
+    ap.add_argument("--out", dest="out_path", default=None,
+                    help="optional output raster. Omit for a timing-only run: "
+                         "run_benchmark_suite.py never compares reference "
+                         "values, so writing them would be pure I/O cost.")
     ap.add_argument("--mfd-exponent", type=float, default=1.0)
+    ap.add_argument("--repeats", type=int, default=1,
+                    help="timed repeats. 1 (the default) reproduces the "
+                         "historical single-shot behaviour exactly; >1 adds a "
+                         "discarded warm-up and reports best-of-N.")
     args = ap.parse_args()
 
     try:
@@ -120,7 +191,8 @@ def main() -> int:
               file=sys.stderr)
         return 77
 
-    info = run(args.routine, args.in_path, args.out_path, args.mfd_exponent)
+    info = run(args.routine, args.in_path, args.out_path,
+               args.mfd_exponent, args.repeats)
     # Single JSON line on stdout: the driver parses this, and suppressed_output()
     # guarantees RichDEM has not polluted the stream.
     print(json.dumps(info))

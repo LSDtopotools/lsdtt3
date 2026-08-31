@@ -87,6 +87,61 @@ xtensor-python = ">=0.29.0,<0.30"
 [feature.reference.pypi-dependencies]
 topotoolbox = "==0.0.12"
 
+# Whitebox Workflows for Python -- the third external reference implementation,
+# alongside RichDEM and TopoToolbox.  Kept in its OWN feature rather than folded
+# into `reference` so it can be dropped from the solve independently: it is the
+# only reference that is a large prebuilt binary, and a benchmark comparing only
+# the other two must stay possible.
+#
+# Facts checked against whitebox-workflows 2.0.6 (2026-08-31), which is what the
+# pin below allows:
+#   - PyPI only; not on conda-forge.  ~22 MB wheel, ~60 MB installed, of which
+#     56.8 MB is a single Rust-built `whitebox_workflows.abi3.so`.
+#   - ZERO Python dependencies, so it cannot perturb the numpy/GDAL solve that
+#     the rest of this environment depends on.
+#   - cp39-abi3 wheels for linux-64 / osx-arm64 / win-64, so it is compatible
+#     with any Python the `reference` feature's >=3.11,<3.14 pin resolves to.
+#   - MIT OR Apache-2.0.
+#   - Licensing: `wb.WbEnvironment()` is "open tier" and needs NO licence key.
+#     733 of its 775 tools are open tier; every tool the benchmarks use --
+#     fill_depressions, breach_depressions_least_cost, d8_pointer,
+#     d8_flow_accum, dinf_flow_accum, fd8_flow_accum, slope, aspect,
+#     plan/profile_curvature, hillshade -- is open.  A benchmark driver must
+#     never construct a Pro/entitlement environment: a benchmark that needs a
+#     paid key is not reproducible by a reviewer.
+#
+# Pinned to a minor range because the 2.x API is explicitly described upstream
+# as "in active modernization"; unpinned it would silently change what the
+# published timings mean.
+# Upstream ships no osx-64 wheel (Intel Mac), only linux-64, osx-arm64 and
+# win-64, so the feature declares those three.  A workspace platform absent here
+# is dropped from any environment including this feature, which is why the
+# `benchmark-lite` environment exists: it is the osx-64 route.
+[feature.whitebox]
+platforms = ["linux-64", "osx-arm64", "win-64"]
+
+[feature.whitebox.pypi-dependencies]
+whitebox-workflows = "~=2.0.6"
+
+# Benchmark entry points.
+#
+# Defined on the `whitebox` feature, not on `reference`, so the names resolve
+# to EXACTLY ONE environment (`benchmark`).  Putting them on `reference` would
+# make them ambiguous between `benchmark` and `benchmark-lite` and pixi would
+# stop to ask which one every time.  A benchmark-lite user runs the script
+# directly:
+#
+#     pixi run -e benchmark-lite python tests/scripts/run_benchmark_suite.py \
+#         --profile laptop
+#
+# These are the ONLY benchmark entry points. The suite is not wired into CTest
+# and `ctest` will never run it: it asserts nothing and cannot fail a build.
+# Extra flags pass straight through, so `pixi run bench-laptop --dry-run` and
+# `pixi run bench-laptop --cases fill` both work.
+[feature.whitebox.tasks]
+bench-laptop = """python tests/scripts/run_benchmark_suite.py --profile laptop"""
+bench-server = """python tests/scripts/run_benchmark_suite.py --profile server"""
+
 # Documentation site (mkdocs.yml at the repo root).  Kept out of the default
 # environment because nobody building or running lsdtt3 needs it -- only whoever
 # is publishing the site.
@@ -120,7 +175,15 @@ snakemake = "*"
 
 [environments]
 osm = ["osm"]
-benchmark = ["reference"]
+# The peer-review benchmark environment: all three external reference
+# implementations in one place, so a reviewer runs one `pixi install -e
+# benchmark` and can reproduce every published comparison.
+benchmark = ["reference", "whitebox"]
+# The same environment minus Whitebox, for a machine where the 60 MB binary
+# wheel is unwanted or has no wheel for the platform.  Benchmark drivers skip
+# any reference they cannot import, so this environment simply produces fewer
+# rows.
+benchmark-lite = ["reference"]
 docs = ["docs"]
 workflows = ["workflows"]
 

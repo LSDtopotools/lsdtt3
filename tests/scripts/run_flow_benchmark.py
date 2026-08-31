@@ -825,8 +825,20 @@ def main() -> int:
 
     csv_path = work_dir / "benchmark_results.csv"
     write_header = not csv_path.exists()
+    # Union of every row's keys, in first-seen order -- NOT rows[0].keys().
+    # Elevation comparisons (fill, breach) and accumulation comparisons
+    # (accum_*) emit different metric sets, so taking the header from the first
+    # row alone made any run containing both abort at the very end with
+    # "dict contains fields not in fieldnames: rank_correlation, ...", after
+    # all the work was done and the results printed. restval fills the gaps for
+    # rows that lack a column.
+    fieldnames: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
     with open(csv_path, "a", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        w = csv.DictWriter(fh, fieldnames=fieldnames, restval="")
         if write_header:
             w.writeheader()
         w.writerows(rows)
