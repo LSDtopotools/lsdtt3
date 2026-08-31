@@ -34,6 +34,32 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            # Public native objects are documented through a source-only
+            # Python façade. This retains accurate Python signatures and
+            # NumPy-style prose without importing or altering the extension.
+            paths:
+              - python_bindings/src
+            force_inspection: false
+            docstring_style: numpy
+            docstring_options:
+              # Nanobind exposes rendered signatures dynamically. Griffe can
+              # read the docstrings but not every parameter name, so this
+              # structural check would otherwise produce false warnings.
+              warn_unknown_params: false
+            # API pages are written around the public ``lsdtt3`` namespace;
+            # hide the implementation-only ``_core`` collector path.
+            filters:
+              - "!^__.*"
+            show_root_full_path: false
+            show_signature_annotations: false
+            show_source: false
+
 # Working documents that live under docs/ for convenience but are not part of
 # the published site. Without this they would build as orphan pages: internal
 # planning notes and LaTeX sources are not user documentation.
@@ -48,9 +74,7 @@ nav:
     - Overview: overview.md
     - Workflows: workflows.md
     - Flow routing: flow_routing.md
-    - Worked example - internal drainage: internal_drainage_workflow.md
     - Surface metrics: surface_metrics.md
-    - Vector data: vector_data.md
   - Installation:
     - Install lsdtt3: install_lsdtt3.md
   - Benchmarking:
@@ -90,6 +114,24 @@ nav:
       - Modelling choices: landscape_evolution_modelling.md
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
       - Cosmo landslides: cli_reference/cli_reference_lsdtt_cosmo_landslides.md
+  - Python:
+    - Overview: python/index.md
+    - Guides:
+      - Load, inspect, and save a DEM: python/getting_started.md
+      - Fetch a DEM: python/fetching.md
+      - Flow, channels, and basins: python/flow_networks.md
+      - Chi and ksn: python/chi_ksn.md
+      - Channel-head extraction: python/channel_extraction.md
+      - Cosmogenic erosion: python/cosmogenic.md
+      - GraphFlood: python/graphflood.md
+    - API reference:
+      - Overview: python_api/index.md
+      - Raster and terrain: python_api/raster.md
+      - Flow, channels, and basins: python_api/flow.md
+      - Chi and ksn: python_api/chi.md
+      - Fetching and vectors: python_api/fetch.md
+      - Cosmogenic nuclides: python_api/cosmogenic.md
+      - GraphFlood: python_api/graphflood.md
   - Developer notes:
     - Developer onboarding: developer_notes/developer_onboarding.md
     - Git from the command line: developer_notes/git_notes.md

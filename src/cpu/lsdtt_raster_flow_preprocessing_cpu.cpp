@@ -28,6 +28,7 @@
 #include "../core/lsdtt_data_loader.hpp" 
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -676,6 +677,180 @@ lsdtt_raster_cpu fill_pits_with_sinks(
         std::move(mask_arr.get_vector()),
         meta
     );
+}
+
+// -----------------------------------------------------------------------------
+// fill_hydraulic_surface
+// -----------------------------------------------------------------------------
+hydraulic_surface_fill_result fill_hydraulic_surface(
+    const lsdtt_raster_cpu& surface,
+    const lsdtt_array2d_u8& node_state,
+    const std::string&      boundary_conditions,
+    float                   fill_slope_epsilon,
+    bool                    check_valid_outlet)
+{
+    const lsdtt_raster_meta& meta = surface.get_meta();
+    if (!meta.is_valid())
+        throw std::invalid_argument("fill_hydraulic_surface: invalid raster metadata");
+    if (node_state.n_rows() != meta.n_rows || node_state.n_cols() != meta.n_cols)
+        throw std::invalid_argument(
+            "fill_hydraulic_surface: node_state dimensions must match surface");
+    if (!std::isfinite(fill_slope_epsilon) || fill_slope_epsilon < 0.0f)
+        throw std::invalid_argument(
+            "fill_hydraulic_surface: fill_slope_epsilon must be finite and >= 0");
+    if (boundary_conditions.size() != 4)
+        throw std::invalid_argument(
+            "fill_hydraulic_surface: boundary_conditions must contain NESW codes");
+
+    const auto normalise_bc = [](char c) -> char
+    {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    };
+    const char bn = normalise_bc(boundary_conditions[0]);
+    const char be = normalise_bc(boundary_conditions[1]);
+    const char bs = normalise_bc(boundary_conditions[2]);
+    const char bw = normalise_bc(boundary_conditions[3]);
+    for (const char b : {bn, be, bs, bw})
+    {
+        if (b != 'o' && b != 'n' && b != 'p')
+            throw std::invalid_argument(
+                "fill_hydraulic_surface: hydraulic boundaries allow only o, n, or p");
+    }
+    if ((bn == 'p') != (bs == 'p') || (be == 'p') != (bw == 'p'))
+        throw std::invalid_argument(
+            "fill_hydraulic_surface: periodic boundaries must occur in opposite pairs");
+
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    const bool per_ns = bn == 'p';
+    const bool per_ew = be == 'p';
+    const float nodata = static_cast<float>(meta.no_data_value);
+    const auto& input = surface.get_data_array();
+
+    lsdtt_array2d<float> filled(nrows, ncols, nodata);
+    lsdtt_array2d<uint8_t> output_mask(nrows, ncols, uint8_t{0});
+    lsdtt_array2d<int> idx(nrows, ncols, k_nodata);
+    pf_heap pq;
+
+    const auto is_open_outlet_location = [&](int row, int col)
+    {
+        return (row == 0         && bn == 'o') ||
+               (row == nrows - 1 && bs == 'o') ||
+               (col == 0         && bw == 'o') ||
+               (col == ncols - 1 && be == 'o');
+    };
+
+    std::int64_t outlet_count = 0;
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            const uint8_t state = node_state(row, col);
+            if (state != 0 && state != 1 && state != 3)
+                throw std::invalid_argument(
+                    "fill_hydraulic_surface: node_state values must be 0, 1, or 3");
+            if (state == 0) continue;
+            if (!std::isfinite(input(row, col)) || input(row, col) == nodata)
+                throw std::invalid_argument(
+                    "fill_hydraulic_surface: active node_state cell has invalid surface value");
+
+            filled(row, col) = input(row, col);
+            output_mask(row, col) = uint8_t{1};
+            idx(row, col) = k_open;
+
+            if (state == 3)
+            {
+                if (!is_open_outlet_location(row, col))
+                    throw std::invalid_argument(
+                        "fill_hydraulic_surface: code-3 outlet must lie on an open ('o') boundary");
+                try_seed(filled, idx, pq, row, col);
+                ++outlet_count;
+            }
+        }
+    }
+
+    // Check each connected active component has an explicitly selected outlet.
+    // This is intentionally based on the hydraulic domain, not raster nodata:
+    // nodata is a wall/exclusion, never an implicit drain.
+    if (check_valid_outlet)
+    {
+        std::vector<uint8_t> visited(
+            static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols), 0);
+        std::deque<std::pair<int, int>> queue;
+        for (int r0 = 0; r0 < nrows; ++r0)
+        {
+            for (int c0 = 0; c0 < ncols; ++c0)
+            {
+                const std::size_t start = static_cast<std::size_t>(r0) * ncols + c0;
+                if (node_state(r0, c0) == 0 || visited[start] != 0) continue;
+
+                bool has_outlet = false;
+                visited[start] = 1;
+                queue.emplace_back(r0, c0);
+                while (!queue.empty())
+                {
+                    const auto [row, col] = queue.front();
+                    queue.pop_front();
+                    has_outlet = has_outlet || node_state(row, col) == 3;
+
+                    for (int k = 0; k < 8; ++k)
+                    {
+                        int nr = row + k_dr[k];
+                        int nc = col + k_dc[k];
+                        if (per_ns)
+                        {
+                            if (nr < 0) nr += nrows;
+                            else if (nr >= nrows) nr -= nrows;
+                        }
+                        if (per_ew)
+                        {
+                            if (nc < 0) nc += ncols;
+                            else if (nc >= ncols) nc -= ncols;
+                        }
+                        if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols ||
+                            node_state(nr, nc) == 0)
+                            continue;
+                        const std::size_t next = static_cast<std::size_t>(nr) * ncols + nc;
+                        if (visited[next] == 0)
+                        {
+                            visited[next] = 1;
+                            queue.emplace_back(nr, nc);
+                        }
+                    }
+                }
+                if (!has_outlet)
+                    throw std::invalid_argument(
+                        "fill_hydraulic_surface: an active connected component has no code-3 outlet");
+            }
+        }
+    }
+
+    if (outlet_count > 0)
+        priority_flood_core(filled, idx, pq, meta, fill_slope_epsilon,
+                            0, nrows, 0, ncols, per_ns, per_ew);
+
+    lsdtt_array2d<float> added(nrows, ncols, nodata);
+    double added_volume_m3 = 0.0;
+    const double cell_area = meta.cell_size * meta.cell_size;
+    for (int row = 0; row < nrows; ++row)
+    {
+        for (int col = 0; col < ncols; ++col)
+        {
+            if (node_state(row, col) == 0) continue;
+            const float dh = std::max(0.0f, filled(row, col) - input(row, col));
+            added(row, col) = dh;
+            added_volume_m3 += static_cast<double>(dh) * cell_area;
+        }
+    }
+
+    hydraulic_surface_fill_result result;
+    result.filled_surface = lsdtt_raster_cpu(
+        std::move(filled.get_vector()), std::move(output_mask.get_vector()), meta);
+    std::vector<uint8_t> added_mask = result.filled_surface.get_mask();
+    result.added_depth = lsdtt_raster_cpu(
+        std::move(added.get_vector()), std::move(added_mask), meta);
+    result.added_volume_m3 = added_volume_m3;
+    return result;
 }
 
 // -----------------------------------------------------------------------------

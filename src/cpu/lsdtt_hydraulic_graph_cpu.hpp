@@ -45,6 +45,7 @@
 #include "../core/lsdtt_raster_result.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 #include "lsdtt_flowgraph_cpu.hpp"
+#include "lsdtt_raster_cpu.hpp"
 
 enum class lsdtt_hydraulic_run_mode
 {
@@ -80,6 +81,19 @@ public:
         const lsdtt_flowgraph_cpu&    flowgraph,
         const lsdtt_array2d_f&        bed,
         const lsdtt_hydraulic_options& options = {}
+    );
+
+    // Builds the routing graph from the evolving hydraulic surface. node_state
+    // uses 0 = nodata/impermeable, 1 = active interior, 3 = explicit outlet.
+    // An explicit outlet must lie on an "o" boundary edge. Other boundaries
+    // are closed ("n") or periodic ("p") and never drain merely by location.
+    explicit lsdtt_hydraulic_graph_cpu(
+        const lsdtt_raster_cpu&       bed,
+        const lsdtt_array2d_u8&       node_state,
+        const lsdtt_flowgraph_options& flowgraph_options,
+        const lsdtt_hydraulic_options& options = {},
+        float fill_slope_epsilon = 1.0e-8f,
+        bool check_valid_outlet = true
     );
 
     ~lsdtt_hydraulic_graph_cpu() override = default;
@@ -150,6 +164,17 @@ public:
 
     void set_receiver_width(double receiver_width_m) override;
     [[nodiscard]] double receiver_width() const noexcept override;
+
+    void set_rainfall_rate_field(
+        const std::vector<double>& rainfall_rate_m_per_s) override;
+    void set_friction_coefficient_field(
+        const std::vector<double>& coefficient) override;
+    void set_friction_power_exponents(
+        double depth_exponent,
+        double slope_exponent);
+    [[nodiscard]] double friction_depth_exponent() const noexcept;
+    [[nodiscard]] double friction_slope_exponent() const noexcept;
+    [[nodiscard]] double cumulative_surface_projection_volume() const noexcept;
 
     // -------------------------------------------------------------------------
     // External forcing
@@ -238,6 +263,7 @@ private:
 
     // for routing that responds to the water surface
     void rebuild_routing_from_current_water_surface();
+    void apply_hydraulic_surface_projection();
     [[nodiscard]] lsdtt_array2d_f make_water_surface_array() const;
     void build_mask_array_from_snapshot();
 
@@ -260,6 +286,12 @@ private:
 
     lsdtt::lsdtt_flowgraph_options flowgraph_options_;
     lsdtt_array2d<std::uint8_t> routing_mask_;
+    bool has_hydraulic_domain_ = false;
+    lsdtt_array2d_u8 hydraulic_node_state_;
+    lsdtt_array2d_u8 hydraulic_domain_mask_;
+    float fill_slope_epsilon_ = 1.0e-8f;
+    bool check_valid_outlet_ = true;
+    double cumulative_surface_projection_volume_m3_ = 0.0;
 
     int reroute_every_ = 1;
 
@@ -286,6 +318,8 @@ private:
     double uniform_rainfall_rate_ = 0.0;
     double receiver_width_        = -1.0;
     double max_dh_rate_           = 1.0;
+    double friction_depth_exponent_ = 5.0 / 3.0;
+    double friction_slope_exponent_ = 0.5;
     bool   print_startup_message_ = true;
 
     // adaptive timesteps
@@ -326,6 +360,8 @@ private:
     std::vector<double> qout_;
     std::vector<double> dhw_;
     std::vector<double> point_inflow_;
+    std::vector<double> rainfall_rate_field_;
+    std::vector<double> friction_coefficient_;
 
     // helpers for steady flow
     void perform_one_transient_iteration_fixed_graph();
@@ -356,6 +392,10 @@ private:
         std::int64_t donor_flat,
         double hydraulic_slope,
         double effective_width) const noexcept;
+    [[nodiscard]] double friction_specific_discharge(
+        double water_depth,
+        double hydraulic_slope,
+        double coefficient) const noexcept;
 
     struct convergence_stats
     {

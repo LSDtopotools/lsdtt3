@@ -126,6 +126,16 @@ struct lsdtt_flowgraph_options
     // rather than forcing flow to divert around the hole.
     bool                   interior_nodata_is_outlet = true;
 
+    // Optional per-cell outlet mask. A non-zero entry marks a VALID cell as
+    // an outlet: it may receive flow, but it is assigned no receivers of its
+    // own.  An empty vector preserves the historic behaviour exactly.
+    //
+    // This deliberately has outlet semantics rather than mask semantics:
+    // callers still provide the valid/nodata mask to the constructor.  It is
+    // primarily useful for models with explicitly selected drainage nodes
+    // (for example hydraulic routing), but is generic flowgraph machinery.
+    std::vector<std::uint8_t> forced_outlet_mask;
+
     lsdtt_flowgraph_method method       = lsdtt_flowgraph_method::mfd;
     float                  mfd_exponent = 1.0f;  // slope weighting power
     int                    n_threads    = 0;     // 0 = OMP default
@@ -413,6 +423,7 @@ private:
 
     // Returns true if the cell should be forced to a sink ('b' boundary).
     [[nodiscard]] bool is_forced_outlet(int row, int col) const noexcept;
+    [[nodiscard]] bool is_explicit_outlet(std::int64_t flat) const noexcept;
 
     // Returns the effective neighbor (row, col) after applying periodic
     // wrapping.  Returns {-1, -1} when the neighbor is out of bounds for

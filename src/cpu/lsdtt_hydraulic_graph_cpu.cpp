@@ -7,6 +7,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
 #include "lsdtt_hydraulic_graph_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -54,7 +55,10 @@ lsdtt_hydraulic_graph_cpu::make_water_surface_array() const
             const std::int64_t flat =
                 static_cast<std::int64_t>(row) * n_cols_ + col;
 
-            if (!is_valid_flat(flat)) continue;
+            const bool active = has_hydraulic_domain_
+                ? hydraulic_domain_mask_(row, col) != 0
+                : is_valid_flat(flat);
+            if (!active) continue;
 
             out(row, col) = static_cast<float>(water_surface_[flat]);
         }
@@ -94,6 +98,8 @@ lsdtt_hydraulic_graph_cpu::lsdtt_hydraulic_graph_cpu(
     qout_.resize(n_cells_, 0.0);
     dhw_.resize(n_cells_, 0.0);
     point_inflow_.resize(n_cells_, 0.0);
+    rainfall_rate_field_.resize(n_cells_, uniform_rainfall_rate_);
+    friction_coefficient_.resize(n_cells_, 1.0 / mannings_n_);
 
     source_q_.resize(n_cells_, 0.0);
     hydraulic_slope_.resize(n_cells_, 0.0);
@@ -115,6 +121,97 @@ lsdtt_hydraulic_graph_cpu::lsdtt_hydraulic_graph_cpu(
 
     update_surface_from_bed_and_water();
     copy_routing_snapshot_from_flowgraph(flowgraph);
+}
+
+lsdtt_hydraulic_graph_cpu::lsdtt_hydraulic_graph_cpu(
+    const lsdtt_raster_cpu&        bed,
+    const lsdtt_array2d_u8&        node_state,
+    const lsdtt_flowgraph_options& flowgraph_options,
+    const lsdtt_hydraulic_options& options,
+    float fill_slope_epsilon,
+    bool check_valid_outlet)
+    : flowgraph_options_(flowgraph_options),
+      has_hydraulic_domain_(true),
+      hydraulic_node_state_(node_state),
+      fill_slope_epsilon_(fill_slope_epsilon),
+      check_valid_outlet_(check_valid_outlet),
+      meta_(bed.get_meta())
+{
+    if (bed.empty())
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: hydraulic bed raster is empty");
+    }
+    if (node_state.n_rows() != meta_.n_rows || node_state.n_cols() != meta_.n_cols)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: node_state dimensions do not match bed");
+    }
+    if (!std::isfinite(fill_slope_epsilon_) || fill_slope_epsilon_ < 0.0f)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu: fill_slope_epsilon must be finite and >= 0");
+    }
+
+    n_rows_ = meta_.n_rows;
+    n_cols_ = meta_.n_cols;
+    n_cells_ = static_cast<std::int64_t>(n_rows_) * n_cols_;
+    set_options_from_struct(options);
+
+    hydraulic_domain_mask_ = lsdtt_array2d_u8(n_rows_, n_cols_, 0);
+    flowgraph_options_.interior_nodata_is_outlet = false;
+    flowgraph_options_.forced_outlet_mask.assign(
+        static_cast<std::size_t>(n_cells_), 0);
+
+    bed_.resize(n_cells_, 0.0);
+    water_depth_.resize(n_cells_, 0.0);
+    water_surface_.resize(n_cells_, 0.0);
+    qin_.resize(n_cells_, 0.0);
+    qout_.resize(n_cells_, 0.0);
+    dhw_.resize(n_cells_, 0.0);
+    point_inflow_.resize(n_cells_, 0.0);
+    rainfall_rate_field_.resize(n_cells_, uniform_rainfall_rate_);
+    friction_coefficient_.resize(n_cells_, 1.0 / mannings_n_);
+    source_q_.resize(n_cells_, 0.0);
+    hydraulic_slope_.resize(n_cells_, 0.0);
+    specific_discharge_.resize(n_cells_, 0.0);
+    total_discharge_.resize(n_cells_, 0.0);
+    donor_max_receiver_width_.resize(n_cells_, meta_.cell_size);
+    stationary_qin_cache_.resize(n_cells_, 0.0);
+
+    const auto& bed_data = bed.get_data_array();
+    const auto& bed_mask = bed.get_mask_array();
+    for (int row = 0; row < n_rows_; ++row)
+    {
+        for (int col = 0; col < n_cols_; ++col)
+        {
+            const auto flat = static_cast<std::int64_t>(row) * n_cols_ + col;
+            const std::uint8_t state = node_state(row, col);
+            if (state != 0 && state != 1 && state != 3)
+            {
+                throw std::invalid_argument(
+                    "lsdtt_hydraulic_graph_cpu: node_state values must be 0, 1, or 3");
+            }
+            if (state != 0 && (bed_mask(row, col) == 0 ||
+                !std::isfinite(static_cast<double>(bed_data(row, col)))))
+            {
+                throw std::invalid_argument(
+                    "lsdtt_hydraulic_graph_cpu: active hydraulic cells require finite valid bed elevations");
+            }
+            if (state == 0) continue;
+
+            hydraulic_domain_mask_(row, col) = 1;
+            bed_[flat] = static_cast<double>(bed_data(row, col));
+            if (state == 3)
+            {
+                flowgraph_options_.forced_outlet_mask[static_cast<std::size_t>(flat)] = 1;
+            }
+        }
+    }
+
+    update_surface_from_bed_and_water();
+    run_mode_ = lsdtt_hydraulic_run_mode::stationary_dynamic_graph;
+    rebuild_routing_from_current_water_surface();
 }
 
 
@@ -198,6 +295,11 @@ void lsdtt_hydraulic_graph_cpu::set_mannings_n(double mannings_n)
     }
 
     mannings_n_ = mannings_n;
+    if (!friction_coefficient_.empty())
+    {
+        std::fill(friction_coefficient_.begin(), friction_coefficient_.end(),
+                  1.0 / mannings_n_);
+    }
 }
 
 double lsdtt_hydraulic_graph_cpu::mannings_n() const noexcept
@@ -249,6 +351,11 @@ void lsdtt_hydraulic_graph_cpu::set_uniform_rainfall_rate(
 
 
     uniform_rainfall_rate_ = rainfall_rate_m_per_s;
+    if (!rainfall_rate_field_.empty())
+    {
+        std::fill(rainfall_rate_field_.begin(), rainfall_rate_field_.end(),
+                  uniform_rainfall_rate_);
+    }
     invalidate_stationary_qin_cache();
 }
 
@@ -272,6 +379,76 @@ void lsdtt_hydraulic_graph_cpu::set_receiver_width(double receiver_width_m)
 double lsdtt_hydraulic_graph_cpu::receiver_width() const noexcept
 {
     return receiver_width_;
+}
+
+void lsdtt_hydraulic_graph_cpu::set_rainfall_rate_field(
+    const std::vector<double>& rainfall_rate_m_per_s)
+{
+    if (static_cast<std::int64_t>(rainfall_rate_m_per_s.size()) != n_cells_)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::set_rainfall_rate_field: input size does not match n_rows * n_cols");
+    }
+    for (std::int64_t flat : valid_flats_)
+    {
+        const double value = rainfall_rate_m_per_s[flat];
+        if (!std::isfinite(value) || value < 0.0)
+        {
+            throw std::invalid_argument(
+                "lsdtt_hydraulic_graph_cpu::set_rainfall_rate_field: active values must be finite and >= 0");
+        }
+    }
+    rainfall_rate_field_ = rainfall_rate_m_per_s;
+    invalidate_stationary_qin_cache();
+}
+
+void lsdtt_hydraulic_graph_cpu::set_friction_coefficient_field(
+    const std::vector<double>& coefficient)
+{
+    if (static_cast<std::int64_t>(coefficient.size()) != n_cells_)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::set_friction_coefficient_field: input size does not match n_rows * n_cols");
+    }
+    for (std::int64_t flat : valid_flats_)
+    {
+        const double value = coefficient[flat];
+        if (!std::isfinite(value) || value <= 0.0)
+        {
+            throw std::invalid_argument(
+                "lsdtt_hydraulic_graph_cpu::set_friction_coefficient_field: active values must be finite and > 0");
+        }
+    }
+    friction_coefficient_ = coefficient;
+}
+
+void lsdtt_hydraulic_graph_cpu::set_friction_power_exponents(
+    double depth_exponent,
+    double slope_exponent)
+{
+    if (!std::isfinite(depth_exponent) || depth_exponent <= 0.0 ||
+        !std::isfinite(slope_exponent) || slope_exponent <= 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt_hydraulic_graph_cpu::set_friction_power_exponents: exponents must be finite and > 0");
+    }
+    friction_depth_exponent_ = depth_exponent;
+    friction_slope_exponent_ = slope_exponent;
+}
+
+double lsdtt_hydraulic_graph_cpu::friction_depth_exponent() const noexcept
+{
+    return friction_depth_exponent_;
+}
+
+double lsdtt_hydraulic_graph_cpu::friction_slope_exponent() const noexcept
+{
+    return friction_slope_exponent_;
+}
+
+double lsdtt_hydraulic_graph_cpu::cumulative_surface_projection_volume() const noexcept
+{
+    return cumulative_surface_projection_volume_m3_;
 }
 
 
@@ -401,6 +578,12 @@ lsdtt_hydraulic_graph_cpu::run_mode() const noexcept
 
 void lsdtt_hydraulic_graph_cpu::refresh_routing()
 {
+    if (has_hydraulic_domain_)
+    {
+        rebuild_routing_from_current_water_surface();
+        return;
+    }
+
     if (source_flowgraph_ == nullptr)
     {
         throw std::runtime_error(
@@ -412,17 +595,68 @@ void lsdtt_hydraulic_graph_cpu::refresh_routing()
 
 void lsdtt_hydraulic_graph_cpu::rebuild_routing_from_current_water_surface()
 {
+    if (has_hydraulic_domain_)
+    {
+        apply_hydraulic_surface_projection();
+    }
+
     const lsdtt_array2d_f ws = make_water_surface_array();
+
+    const auto& mask = has_hydraulic_domain_
+        ? hydraulic_domain_mask_
+        : routing_mask_;
 
     lsdtt::lsdtt_flowgraph_cpu updated_flowgraph(
         ws,
-        routing_mask_,
+        mask,
         meta_,
         flowgraph_options_
     );
 
     copy_routing_snapshot_from_flowgraph(updated_flowgraph);
     routing_.is_dynamic = true;
+}
+
+void lsdtt_hydraulic_graph_cpu::apply_hydraulic_surface_projection()
+{
+    if (!has_hydraulic_domain_) return;
+
+    std::vector<float> surface_data(static_cast<std::size_t>(n_cells_),
+                                    static_cast<float>(meta_.no_data_value));
+    for (std::int64_t flat = 0; flat < n_cells_; ++flat)
+    {
+        const int row = static_cast<int>(flat / n_cols_);
+        const int col = static_cast<int>(flat % n_cols_);
+        if (hydraulic_domain_mask_(row, col) != 0)
+        {
+            surface_data[static_cast<std::size_t>(flat)] =
+                static_cast<float>(water_surface_[flat]);
+        }
+    }
+
+    std::vector<std::uint8_t> surface_mask = hydraulic_domain_mask_.get_vector();
+    lsdtt_raster_cpu surface(
+        std::move(surface_data),
+        std::move(surface_mask),
+        meta_);
+    const hydraulic_surface_fill_result projection = fill_hydraulic_surface(
+        surface,
+        hydraulic_node_state_,
+        flowgraph_options_.boundary_conditions,
+        fill_slope_epsilon_,
+        check_valid_outlet_);
+
+    const auto& filled = projection.filled_surface.get_data();
+    for (std::int64_t flat = 0; flat < n_cells_; ++flat)
+    {
+        const int row = static_cast<int>(flat / n_cols_);
+        const int col = static_cast<int>(flat % n_cols_);
+        if (hydraulic_domain_mask_(row, col) == 0) continue;
+
+        water_surface_[flat] = static_cast<double>(filled[static_cast<std::size_t>(flat)]);
+        water_depth_[flat] = std::max(0.0, water_surface_[flat] - bed_[flat]);
+    }
+    cumulative_surface_projection_volume_m3_ += projection.added_volume_m3;
 }
 
 
@@ -445,7 +679,7 @@ void lsdtt_hydraulic_graph_cpu::build_mask_array_from_snapshot()
 
 void lsdtt_hydraulic_graph_cpu::perform_one_stationary_iteration_dynamic_graph()
 {
-    if (step_count_ == 0 ||
+    if (has_hydraulic_domain_ || step_count_ == 0 ||
         (step_count_ % static_cast<std::int64_t>(reroute_every_) == 0))
     {
         rebuild_routing_from_current_water_surface();
@@ -622,6 +856,9 @@ void lsdtt_hydraulic_graph_cpu::set_options_from_struct(
 
     receiver_width_ = options.receiver_width;
     set_max_dh_rate(options.max_dh_rate);
+    set_friction_power_exponents(
+        options.friction_depth_exponent,
+        options.friction_slope_exponent);
 
     if (!std::isfinite(options.adaptive_dt_min) || options.adaptive_dt_min <= 0.0)
     {
@@ -867,11 +1104,11 @@ void lsdtt_hydraulic_graph_cpu::reset_flux_fields()
 void lsdtt_hydraulic_graph_cpu::build_source_q()
 {
     const double cell_area = meta_.cell_size * meta_.cell_size;
-    const double rainfall_q = uniform_rainfall_rate_ * cell_area;
 
     for (std::int64_t flat : valid_flats_)
     {
-        source_q_[flat] = rainfall_q + point_inflow_[flat];
+        source_q_[flat] = rainfall_rate_field_[flat] * cell_area +
+                          point_inflow_[flat];
     }
 }
 
@@ -888,8 +1125,18 @@ double lsdtt_hydraulic_graph_cpu::local_outflow_capacity(
     const std::int64_t begin = routing_.receiver_offsets[donor_flat];
     const std::int64_t end   = routing_.receiver_offsets[donor_flat + 1];
 
-    // Outlet / no receiver: allow full discharge to leave the domain.
-    if (begin == end) return qin_[donor_flat];
+    // In the hydraulic-domain path only an explicitly selected code-3 node
+    // may drain. A residual un-routed local minimum therefore ponds rather
+    // than silently becoming an outlet (important when outlet validation was
+    // deliberately disabled). Legacy flowgraph construction preserves its
+    // historical no-receiver-is-outlet behaviour.
+    if (begin == end)
+    {
+        const bool explicit_outlet = has_hydraulic_domain_ &&
+            !flowgraph_options_.forced_outlet_mask.empty() &&
+            flowgraph_options_.forced_outlet_mask[static_cast<std::size_t>(donor_flat)] != 0;
+        return (!has_hydraulic_domain_ || explicit_outlet) ? qin_[donor_flat] : 0.0;
+    }
 
     const double h = water_depth_[donor_flat];
     if (h <= 0.0) return 0.0;
@@ -897,9 +1144,23 @@ double lsdtt_hydraulic_graph_cpu::local_outflow_capacity(
     const double width =
         (effective_width > 0.0) ? effective_width : meta_.cell_size;
 
-    return (width / mannings_n_) *
-           std::pow(h, 5.0 / 3.0) *
-           std::sqrt(hydraulic_slope);
+    return width * friction_specific_discharge(
+        h, hydraulic_slope, friction_coefficient_[donor_flat]);
+}
+
+double lsdtt_hydraulic_graph_cpu::friction_specific_discharge(
+    double water_depth,
+    double hydraulic_slope,
+    double coefficient) const noexcept
+{
+    // Current generic power-law representation:
+    // q / width = coefficient * h^a * S^b.
+    // Manning: coefficient = 1/n, a = 5/3, b = 1/2.
+    // Chézy:   coefficient = C,   a = 3/2, b = 1/2.
+    // Keeping all resistance evaluation here makes a richer Ferguson-style
+    // law a local extension rather than a change to the routing balance loop.
+    return coefficient * std::pow(water_depth, friction_depth_exponent_) *
+           std::pow(hydraulic_slope, friction_slope_exponent_);
 }
 
 
@@ -1002,7 +1263,7 @@ void lsdtt_hydraulic_graph_cpu::perform_one_transient_iteration_fixed_graph()
 
 void lsdtt_hydraulic_graph_cpu::perform_one_transient_iteration_dynamic_graph()
 {
-    if (step_count_ == 0 ||
+    if (has_hydraulic_domain_ || step_count_ == 0 ||
         (step_count_ % static_cast<std::int64_t>(reroute_every_) == 0))
     {
         rebuild_routing_from_current_water_surface();

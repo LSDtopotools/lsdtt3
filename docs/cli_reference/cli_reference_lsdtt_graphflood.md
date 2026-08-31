@@ -1,15 +1,15 @@
-# CLI reference: lsdtt-hydraulic-routing
+# CLI reference: lsdtt-graphflood
 
 Performs graph-based hydraulic routing on a DEM using D-infinity or MFD flow routing. Computes water depth, water-surface elevation, and discharge flux through time. Implements Gailleton et al. (2024) hydraulic algorithm.
 
 ## Usage
 
 ```
-lsdtt-hydraulic-routing  <path> <parameter_file>
-lsdtt-hydraulic-routing  <parameter_file>        # path defaults to ./
-lsdtt-hydraulic-routing  -h                      # print help and exit
-lsdtt-hydraulic-routing  -v                      # print version and exit
-lsdtt-hydraulic-routing  -c                      # print citation and exit
+lsdtt-graphflood  <path> <parameter_file>
+lsdtt-graphflood  <parameter_file>        # path defaults to ./
+lsdtt-graphflood  -h                      # print help and exit
+lsdtt-graphflood  -v                      # print version and exit
+lsdtt-graphflood  -c                      # print citation and exit
 ```
 
 ## Parameter file format

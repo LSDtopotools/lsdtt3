@@ -403,7 +403,7 @@ add_lsdtt_cli_smoke_test(
 
 add_lsdtt_cli_smoke_test(
     smoke_hydraulic_routing
-    lsdtt-hydraulic-routing
+    lsdtt-graphflood
     hydraulic_routing_smoke.param.in
     tiny_hydraulic_water_depth.tif
     --expect tiny_hydraulic_water_surface.tif
@@ -1054,7 +1054,7 @@ add_lsdtt_cli_smoke_test(
 
 add_lsdtt_cli_smoke_test(
     failure_hydraulic_routing_invalid_mode
-    lsdtt-hydraulic-routing
+    lsdtt-graphflood
     hydraulic_routing_invalid_mode.param.in
     unused_expected_output
     --expect-failure
@@ -1198,7 +1198,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
                 NAME benchmark_hydraulic_dagger_${hyd_scenario}_${hyd_fixture}
                 COMMAND ${LSDTT_HYDRAULIC_BENCHMARK_LAUNCHER}
                         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_hydraulic_dagger_benchmark.py"
-                        --exe "$<TARGET_FILE:lsdtt-hydraulic-routing>"
+                        --exe "$<TARGET_FILE:lsdtt-graphflood>"
                         --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>"
                         --dagger-root "${LSDTT_DAGGER_ROOT_DEFAULT}"
                         --dagger-ref "${LSDTT_DAGGER_REF_DEFAULT}"

@@ -149,14 +149,19 @@ bench-server = """python tests/scripts/run_benchmark_suite.py --profile server""
 mkdocs = "*"
 mkdocs-material = "*"
 
+[feature.docs.pypi-dependencies]
+mkdocstrings-python = ">=1.18"
+nanobind = ">=2.0"
+scikit-build-core = ">=0.10"
+
 # Tasks live on the feature, so they run in the docs environment automatically:
 # `pixi run docs-build`, not `pixi run -e docs ...`.
 #
 # --strict turns broken internal links and pages missing from the nav into
 # errors. A docs build that "succeeds" with dangling links is how a site rots.
 [feature.docs.tasks]
-docs-serve = "mkdocs serve"
-docs-build = "mkdocs build --strict"
+docs-serve = "python -m pip install --no-deps --no-build-isolation --editable ./python_bindings && mkdocs serve"
+docs-build = "python -m pip install --no-deps --no-build-isolation --editable ./python_bindings && mkdocs build --strict"
 
 # Workflow orchestration tools (Snakemake + helpers), kept out of the default
 # env because workflow execution is optional and can pull a larger solve.

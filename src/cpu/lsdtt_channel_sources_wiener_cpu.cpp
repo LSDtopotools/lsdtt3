@@ -204,6 +204,8 @@ wiener_source_extraction_result extract_channel_sources_wiener(
         if (params.write_filtered_dem) out.diagnostics.filtered_dem = filtered_dem;
         if (params.write_tangential_curvature)
             out.diagnostics.tangential_curvature = tangential_curvature;
+        if (params.write_channel_mask) out.diagnostics.channel_mask = channel_mask;
+        if (params.write_skeleton) out.diagnostics.skeleton = skeleton;
         if (params.write_qq_table) out.diagnostics.qq_data = qq_data;
         return out;
     }
@@ -309,6 +311,8 @@ wiener_source_extraction_result extract_channel_sources_wiener(
     {
         out.diagnostics.tangential_curvature = tangential_curvature;
     }
+    if (params.write_channel_mask) out.diagnostics.channel_mask = channel_mask;
+    if (params.write_skeleton) out.diagnostics.skeleton = skeleton;
     if (params.write_qq_table) out.diagnostics.qq_data = qq_data;
 
     return out;

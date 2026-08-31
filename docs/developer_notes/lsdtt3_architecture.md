@@ -47,7 +47,7 @@ lsdtt3/
 │   ├── lsdtt-feature-finder.cpp
 │   ├── lsdtt-fetch-raster.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
-│   ├── lsdtt-hydraulic-routing.cpp
+│   ├── lsdtt-graphflood.cpp
 │   ├── lsdtt-internal-drainage.cpp
 │   ├── lsdtt-lem.cpp
 │   ├── lsdtt-linear-stats.cpp
@@ -701,7 +701,7 @@ Current CLI programs are:
   metrics. Outputs per-metric texture rasters, binary masks, and a combined mask.
   Thresholds are set by percentile; masks can be combined with AND or OR logic.
 
-- **`lsdtt-hydraulic-routing.cpp`**  
+- **`lsdtt-graphflood.cpp`**
   Graph-based hydraulic routing on a fixed D-inf or MFD flow graph. Constructs
   `lsdtt_hydraulic_graph_cpu`, runs N timesteps, and writes water-depth,
   water-surface, and flux rasters (Gailleton et al. 2024).

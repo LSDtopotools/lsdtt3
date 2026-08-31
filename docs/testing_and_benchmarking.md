@@ -267,7 +267,7 @@ Hydraulic parity runs also go through the same pixi benchmark environment
 
 ```sh
 pixi run -e benchmark python tests/scripts/run_hydraulic_dagger_benchmark.py \
-    --exe build/lsdtt-hydraulic-routing \
+    --exe build/lsdtt-graphflood \
     --dagger-root ../DAGGER \
     --dagger-ref tests/scripts/dagger_graphflood_reference.py \
     --scenario stationary_fixed \
@@ -286,7 +286,7 @@ harness. Pass `--fetch-exe` so the driver can fetch on demand with
 
 ```sh
 pixi run -e benchmark python tests/scripts/run_hydraulic_dagger_benchmark.py \
-    --exe build/lsdtt-hydraulic-routing \
+    --exe build/lsdtt-graphflood \
     --fetch-exe build/lsdtt-fetch-raster \
     --dagger-root ../DAGGER \
     --dagger-ref tests/scripts/dagger_graphflood_reference.py \
@@ -598,7 +598,7 @@ The change is a no-op for every non-periodic run, which is why the whole suite
 is unchanged at 134/134. **Still unwired**, because their call sites did not
 match the mechanical pattern and each needs a look: `lsdtt-cosmo-landslides`,
 `lsdtt-cosmo-prediction`, `lsdtt-cosmo-tool`, `lsdtt-flat-surface-finder`,
-`lsdtt-hydraulic-routing`, `lsdtt-sediment-routing`,
+`lsdtt-graphflood`, `lsdtt-sediment-routing`,
 `lsdtt-stream-burning`. Those will still fail on a periodic run.
 `lsdtt-basin-stats`, `lsdtt-feature-finder` and `lsdtt-mountain-front` do not
 expose `boundary_conditions` at all, so they cannot route periodically anyway.

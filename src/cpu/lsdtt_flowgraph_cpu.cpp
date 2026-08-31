@@ -101,6 +101,13 @@ lsdtt_flowgraph_cpu::lsdtt_flowgraph_cpu(
     if (mask.n_rows() != n_rows_ || mask.n_cols() != n_cols_)
         throw std::invalid_argument(
             "lsdtt_flowgraph_cpu: mask dimensions do not match meta");
+    if (!options_.forced_outlet_mask.empty() &&
+        static_cast<std::int64_t>(options_.forced_outlet_mask.size()) != n_cells_)
+    {
+        throw std::invalid_argument(
+            "lsdtt_flowgraph_cpu: forced_outlet_mask must be empty or have "
+            "one entry per raster cell");
+    }
 
     // Build validity vector from both mask and DEM validity
     valid_.assign(n_cells_, 0);
@@ -123,6 +130,19 @@ lsdtt_flowgraph_cpu::lsdtt_flowgraph_cpu(
             {
                 valid_[flat] = 1;
                 ++n_valid_cells_;
+            }
+        }
+    }
+
+    if (!options_.forced_outlet_mask.empty())
+    {
+        for (std::int64_t flat = 0; flat < n_cells_; ++flat)
+        {
+            if (options_.forced_outlet_mask[static_cast<std::size_t>(flat)] != 0 &&
+                valid_[flat] == 0)
+            {
+                throw std::invalid_argument(
+                    "lsdtt_flowgraph_cpu: forced outlet must be a valid raster cell");
             }
         }
     }
@@ -303,6 +323,13 @@ bool lsdtt_flowgraph_cpu::is_forced_outlet(int row, int col) const noexcept
     return false;
 }
 
+bool lsdtt_flowgraph_cpu::is_explicit_outlet(std::int64_t flat) const noexcept
+{
+    return !options_.forced_outlet_mask.empty() &&
+           flat >= 0 && flat < n_cells_ &&
+           options_.forced_outlet_mask[static_cast<std::size_t>(flat)] != 0;
+}
+
 // =============================================================================
 // touches_interior_nodata
 // =============================================================================
@@ -433,7 +460,8 @@ void lsdtt_flowgraph_cpu::build_dinf(
             const std::int64_t flat = static_cast<std::int64_t>(row) * n_cols_ + col;
 
             if (valid_[flat] == 0) continue;
-            if (is_forced_outlet(row, col)) continue;  // forced outlet: no receivers
+            if (is_forced_outlet(row, col) || is_explicit_outlet(flat))
+                continue;  // forced outlet: no receivers
 
             if (options_.interior_nodata_is_outlet &&
                 touches_interior_nodata(row, col))
@@ -656,7 +684,8 @@ void lsdtt_flowgraph_cpu::build_mfd(
             const std::int64_t flat = static_cast<std::int64_t>(row) * n_cols_ + col;
 
             if (valid_[flat] == 0) continue;
-            if (is_forced_outlet(row, col)) continue;
+            if (is_forced_outlet(row, col) || is_explicit_outlet(flat))
+                continue;
 
             if (options_.interior_nodata_is_outlet &&
                 touches_interior_nodata(row, col))

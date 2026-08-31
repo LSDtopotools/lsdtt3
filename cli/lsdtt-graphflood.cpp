@@ -1,4 +1,4 @@
-// lsdtt-hydraulic-routing.cpp
+// lsdtt-graphflood.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -7,27 +7,28 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// lsdtt-hydraulic-routing
+// lsdtt-graphflood
 //
-// Simple graph-based hydraulic routing on a fixed flow graph.
+// Stationary graph-based hydraulic routing on an evolving hydraulic surface.
 //
 // Workflow:
 //   1. Load DEM
-//   2. Optionally fill pits
-//   3. Build lsdtt_flowgraph_cpu (D-infinity or MFD)
-//   4. Construct lsdtt_hydraulic_graph_cpu
-//   5. Run N fixed-routing hydraulic timesteps
-//   6. Write requested rasters
+//   2. Load hydraulic node states (0 = outside, 1 = active, 3 = outlet)
+//   3. Optionally condition the bed using those explicit outlets
+//   4. Repeatedly fill z+h, rebuild routing, and update h
+//   5. Write requested rasters
 //
 // Notes:
-//   - Routing is fixed during the hydraulic run.
-//   - Future versions may refresh routing from the evolving water surface.
+//   - Only code-3 cells on an open boundary may drain.
+//   - Nodata and closed boundaries are impermeable; periodic boundaries wrap.
 //   - The hydraulic engine itself prints at run start that it is based on
 //     Gailleton et al. (2024).
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -44,7 +45,7 @@
 
 static const std::string k_version  = "0.1.1";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
-static const std::string k_tool_name = "lsdtt-hydraulic-routing";
+static const std::string k_tool_name = "lsdtt-graphflood";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -53,8 +54,8 @@ static void print_banner()
 {
     std::cout
         << "=========================================================\n"
-        << "|| Welcome to lsdtt-hydraulic-routing                  ||\n"
-        << "|| Fixed-graph hydraulic routing for lsdtt3            ||\n"
+        << "|| Welcome to lsdtt-graphflood                         ||\n"
+        << "|| Stationary hydraulic routing for lsdtt3             ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
         << "|| CLI version: " << k_version  << "\n"
@@ -86,25 +87,45 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string>              string_default_map;
     lsdtt::lsdtt_help_registry help_map;
 
-    // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input DEM is already pit-filled.",
-        "If false, fill_pits() is run before flowgraph construction.",
-        "DEM preparation", "param", ""};
+    // --- Hydraulic domain and bed preparation ---
+    string_default_map["hydraulic_node_state_fname"] = "";
+    help_map["hydraulic_node_state_fname"] = {"string","",
+        "Raster defining hydraulic nodes: 0 = outside, 1 = active, 3 = outlet.",
+        "Required. Every active connected component needs code 3 by default; "
+        "code 3 must lie on an open boundary edge.",
+        "Hydraulic domain", "io", ""};
+
+    bool_default_map["check_valid_outlet"] = true;
+    help_map["check_valid_outlet"] = {"bool","true",
+        "Require every active connected component to contain a code-3 outlet.",
+        "Disable only for deliberate experimental no-drain configurations.",
+        "Hydraulic domain", "switch", ""};
+
+    string_default_map["bed_preprocessing"] = "none";
+    help_map["bed_preprocessing"] = {"string","none",
+        "Optional conditioning of the bed before hydraulic routing.",
+        "Allowed values: none or fill. Fill honours node states and boundary conditions.",
+        "Hydraulic domain", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum slope imposed by pit filling.",
-        "Used only when raster_is_filled is false.",
-        "DEM preparation", "param", ""};
+        "Used only for bed_preprocessing = fill.",
+        "Hydraulic domain", "param", ""};
+
+    float_default_map["hydraulic_fill_slope_epsilon"] = 1.0e-8f;
+    help_map["hydraulic_fill_slope_epsilon"] = {"float","1e-8",
+        "Minimum slope imposed when filling the evolving z+h hydraulic surface.",
+        "A small positive value removes routing flats while avoiding artificial hydraulic gradients.",
+        "Hydraulic domain", "param", ""};
 
     // --- Flowgraph routing ---
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
         "Boundary conditions for flow routing.",
         "Four-character string for north, east, south, west. "
-        "o = open, n = no-flux, p = periodic, b = forced outlet.",
+        "o = potentially draining open edge, n = closed edge, p = periodic edge. "
+        "Only selected code-3 cells drain through an o edge.",
         "Flowgraph routing", "param", ""};
 
     string_default_map["flow_routing_method"] = "mfd";
@@ -138,6 +159,21 @@ int main(int argc, char* argv[])
         "Uniform Manning's n for the hydraulic solver.",
         "Hydraulic parameters", "param", ""};
 
+    string_default_map["friction_coefficient_fname"] = "";
+    help_map["friction_coefficient_fname"] = {"string","",
+        "Optional raster of wide-flow friction coefficient.",
+        "For Manning this is 1/n per cell. An empty filename uses mannings_n uniformly.",
+        "Hydraulic parameters", "io", ""};
+
+    float_default_map["friction_depth_exponent"] = 5.0f / 3.0f;
+    float_default_map["friction_slope_exponent"] = 0.5f;
+    help_map["friction_depth_exponent"] = {"float","1.6666667",
+        "Depth exponent in q/width = coefficient * h^a * S^b.",
+        "Manning uses 5/3; Chézy uses 3/2.", "Hydraulic parameters", "param", ""};
+    help_map["friction_slope_exponent"] = {"float","0.5",
+        "Slope exponent in q/width = coefficient * h^a * S^b.",
+        "Manning and Chézy both use 1/2.", "Hydraulic parameters", "param", ""};
+
     float_default_map["hydraulic_min_slope"] = 1.0e-8f;
     help_map["hydraulic_min_slope"] = {"float","1e-8",
         "Minimum hydraulic slope used internally.",
@@ -157,6 +193,12 @@ int main(int argc, char* argv[])
         "Applied to all valid cells at every timestep.",
         "Hydraulic parameters", "param", ""};
 
+    string_default_map["rainfall_rate_fname"] = "";
+    help_map["rainfall_rate_fname"] = {"string","",
+        "Optional raster of rainfall/input rate in m/s.",
+        "An empty filename uses uniform_rainfall_rate; a supplied raster overrides it.",
+        "Hydraulic parameters", "io", ""};
+
     float_default_map["receiver_width"] = -1.0f;
     help_map["receiver_width"] = {"float","-1.0",
         "Effective receiver width in metres.",
@@ -166,8 +208,8 @@ int main(int argc, char* argv[])
 
     int_default_map["n_steps"] = 100;
     help_map["n_steps"] = {"int","100",
-        "Number of hydraulic timesteps to run.",
-        "The routing graph remains fixed throughout the run.",
+        "Maximum stationary hydraulic iterations to run.",
+        "Used as the convergence limit or the fixed iteration count.",
         "Hydraulic parameters", "param", ""};
 
     // --- Point inflow ---
@@ -188,12 +230,6 @@ int main(int argc, char* argv[])
     help_map["point_inflow_discharge_m3_per_s"] = {"float","0.0",
         "Point inflow discharge in m^3/s.",
         "Used only when use_point_inflow is true.",
-        "Point inflow", "param", ""};
-
-    string_default_map["hydraulic_run_mode"] = "stationary";
-    help_map["hydraulic_run_mode"] = {"string","stationary",
-        "Hydraulic solve mode.",
-        "Allowed values: stationary or transient.",
         "Point inflow", "param", ""};
 
     bool_default_map["run_until_converged"] = true;
@@ -262,20 +298,6 @@ int main(int argc, char* argv[])
         "Multiplicative factor used to decrease adaptive dt.",
         "Must be > 0 and < 1.",
         "Point inflow", "param", ""};
-
-    // dynamic routing (i.e., graph is updated with water surface)
-    bool_default_map["dynamic_routing_enabled"] = false;
-    help_map["dynamic_routing_enabled"] = {"bool","false",
-        "Rebuild the routing graph from the evolving water surface.",
-        "If true, routing is refreshed during the hydraulic run.",
-        "Point inflow", "param", ""};
-
-    int_default_map["reroute_every"] = 1;
-    help_map["reroute_every"] = {"int","1",
-        "Number of hydraulic iterations between routing rebuilds.",
-        "Used only when dynamic_routing_enabled is true.",
-        "Point inflow", "param", ""};
-
 
     // --- Output controls ---
     bool_default_map["write_water_depth_raster"] = true;
@@ -363,19 +385,6 @@ int main(int argc, char* argv[])
     auto ii = pp.get_int_parameters();
     auto sf = pp.get_string_parameters();
 
-    std::string hydraulic_run_mode = sf["hydraulic_run_mode"];
-    std::transform(hydraulic_run_mode.begin(), hydraulic_run_mode.end(),
-                hydraulic_run_mode.begin(),
-                [](unsigned char c){ return std::tolower(c); });
-
-    if (hydraulic_run_mode != "stationary" && hydraulic_run_mode != "transient")
-    {
-        std::cerr << "FATAL: hydraulic_run_mode must be 'stationary' or 'transient'. "
-                << "Got: " << sf["hydraulic_run_mode"] << "\n";
-        return 1;
-    }
-
-
     // -------------------------------------------------------------------------
     // Cross-parameter logic
     // -------------------------------------------------------------------------
@@ -388,6 +397,22 @@ int main(int argc, char* argv[])
     {
         std::cerr << "FATAL: flow_routing_method must be 'mfd' or 'dinf'. "
                   << "Got: " << sf["flow_routing_method"] << "\n";
+        return 1;
+    }
+
+    std::string bed_preprocessing = sf["bed_preprocessing"];
+    std::transform(bed_preprocessing.begin(), bed_preprocessing.end(),
+                   bed_preprocessing.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+    if (bed_preprocessing != "none" && bed_preprocessing != "fill")
+    {
+        std::cerr << "FATAL: bed_preprocessing must be 'none' or 'fill'. Got: "
+                  << sf["bed_preprocessing"] << "\n";
+        return 1;
+    }
+    if (sf["hydraulic_node_state_fname"].empty())
+    {
+        std::cerr << "FATAL: hydraulic_node_state_fname is required.\n";
         return 1;
     }
 
@@ -461,162 +486,132 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Load raster
+    // Load hydraulic domain
     // -------------------------------------------------------------------------
-    lsdtt::lsdtt_raster_cpu dem(loader);
-    lsdtt::lsdtt_raster_cpu routed_dem = dem;
-
-    // -------------------------------------------------------------------------
-    // DEM preparation
-    // -------------------------------------------------------------------------
-    if (!bf["raster_is_filled"])
-    {
-        std::cout << "\n--- Pit filling ---\n";
-        std::cout << "Minimum slope: " << ff["fill_min_slope"] << "\n";
-
-        try
-        {
-            routed_dem = lsdtt::fill_pits(
-                dem,
-                ff["fill_min_slope"],
-                ii["n_threads"]
-            );
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
-            return 1;
-        }
-    }
-    else
-    {
-        std::cout << "\nSkipping pit filling (raster_is_filled = true).\n";
-    }
-
-    // -------------------------------------------------------------------------
-    // Build flowgraph
-    // -------------------------------------------------------------------------
-    std::cout << "\n--- Building flowgraph ---\n";
-    std::cout << "Method            : " << routing_method << "\n";
-    std::cout << "Boundary conditions: " << sf["boundary_conditions"] << "\n";
-
-    lsdtt::lsdtt_flowgraph_options fg_opts;
-    fg_opts.boundary_conditions       = sf["boundary_conditions"];
-    fg_opts.interior_nodata_is_outlet = true;
-    fg_opts.n_threads                 = ii["n_threads"];
-
-    if (routing_method == "dinf")
-    {
-        fg_opts.method = lsdtt::lsdtt_flowgraph_method::d_infinity;
-    }
-    else
-    {
-        fg_opts.method       = lsdtt::lsdtt_flowgraph_method::mfd;
-        fg_opts.mfd_exponent = ff["mfd_exponent"];
-    }
-
-    lsdtt::lsdtt_flowgraph_cpu flowgraph;
+    lsdtt::lsdtt_raster_cpu routed_dem(loader);
+    lsdtt::lsdtt_data_loader state_loader;
+    lsdtt::lsdtt_raster_cpu state_raster;
     try
     {
-        flowgraph = lsdtt::lsdtt_flowgraph_cpu(
-            routed_dem.get_data_array(),
-            routed_dem.get_mask_array(),
-            routed_dem.get_meta(),
-            fg_opts
-        );
+        const std::string state_path =
+            pp.add_read_path_if_needed(sf["hydraulic_node_state_fname"]);
+        std::cout << "Opening hydraulic node states: " << state_path << "\n";
+        state_loader.open_raster(state_path);
+        state_raster = lsdtt::lsdtt_raster_cpu(state_loader);
     }
     catch (const std::exception& e)
     {
-        std::cerr << "FATAL: flowgraph construction failed: "
-                  << e.what() << "\n";
+        std::cerr << "FATAL: could not load hydraulic node states: " << e.what() << "\n";
+        return 1;
+    }
+    if (state_raster.n_rows() != routed_dem.n_rows() ||
+        state_raster.n_cols() != routed_dem.n_cols() ||
+        state_raster.get_meta().cell_size != routed_dem.get_meta().cell_size ||
+        state_raster.get_meta().x_min != routed_dem.get_meta().x_min ||
+        state_raster.get_meta().y_min != routed_dem.get_meta().y_min ||
+        state_raster.get_meta().crs_wkt != routed_dem.get_meta().crs_wkt)
+    {
+        std::cerr << "FATAL: hydraulic_node_state_fname must use the DEM grid.\n";
         return 1;
     }
 
-    // -------------------------------------------------------------------------
-    // Build hydraulic engine
-    // -------------------------------------------------------------------------
-    std::cout << "\n--- Initialising hydraulic solver ---\n";
-    std::cout << "dt                : " << ff["hydraulic_dt"] << " s\n";
-    std::cout << "Manning's n       : " << ff["mannings_n"] << "\n";
-    std::cout << "Minimum slope     : " << ff["hydraulic_min_slope"] << "\n";
-    std::cout << "Uniform rainfall  : " << ff["uniform_rainfall_rate"] << " m/s\n";
-    std::cout << "Receiver width    : " << ff["receiver_width"] << " m\n";
-    std::cout << "N steps           : " << ii["n_steps"] << "\n";
-
-    std::cout << "Adaptive dt       : "
-              << (bf["adaptive_dt_enabled"] ? "true" : "false") << "\n";
-    if (bf["adaptive_dt_enabled"])
+    lsdtt::lsdtt_array2d_u8 node_state(
+        routed_dem.n_rows(), routed_dem.n_cols(), std::uint8_t{0});
+    try
     {
-        std::cout << "  dt min          : " << ff["adaptive_dt_min"] << " s\n";
-        std::cout << "  dt max          : " << ff["adaptive_dt_max"] << " s\n";
-        std::cout << "  target med|dhw| : "
-                  << ff["adaptive_target_median_abs_dhw"] << " m\n";
-        std::cout << "  growth factor   : "
-                  << ff["adaptive_dt_growth_factor"] << "\n";
-        std::cout << "  shrink factor   : "
-                  << ff["adaptive_dt_shrink_factor"] << "\n";
+        const auto& values = state_raster.get_data_array();
+        const auto& mask = state_raster.get_mask_array();
+        for (int row = 0; row < routed_dem.n_rows(); ++row)
+        for (int col = 0; col < routed_dem.n_cols(); ++col)
+        {
+            if (mask(row, col) == 0) continue;
+            const float value = values(row, col);
+            const int state = static_cast<int>(std::lround(value));
+            if (!std::isfinite(value) || (state != 0 && state != 1 && state != 3) ||
+                std::fabs(value - static_cast<float>(state)) > 1.0e-5f)
+                throw std::invalid_argument("node-state raster values must be exactly 0, 1, or 3");
+            node_state(row, col) = static_cast<std::uint8_t>(state);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: invalid hydraulic node states: " << e.what() << "\n";
+        return 1;
     }
 
-    std::cout << "Dynamic routing   : "
-              << (bf["dynamic_routing_enabled"] ? "true" : "false") << "\n";
-    if (bf["dynamic_routing_enabled"])
+    lsdtt::lsdtt_flowgraph_options fg_opts;
+    fg_opts.boundary_conditions = sf["boundary_conditions"];
+    fg_opts.interior_nodata_is_outlet = false;
+    fg_opts.n_threads = ii["n_threads"];
+    fg_opts.method = (routing_method == "dinf")
+        ? lsdtt::lsdtt_flowgraph_method::d_infinity
+        : lsdtt::lsdtt_flowgraph_method::mfd;
+    fg_opts.mfd_exponent = ff["mfd_exponent"];
+
+    if (bed_preprocessing == "fill")
     {
-        std::cout << "  reroute every   : " << ii["reroute_every"] << " iterations\n";
+        try
+        {
+            std::cout << "\n--- Conditioning bed with explicit outlets ---\n";
+            routed_dem = lsdtt::fill_hydraulic_surface(
+                routed_dem, node_state, fg_opts.boundary_conditions,
+                ff["fill_min_slope"], bf["check_valid_outlet"]).filled_surface;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: bed conditioning failed: " << e.what() << "\n";
+            return 1;
+        }
     }
-
-
 
     lsdtt::lsdtt_hydraulic_options hyd_opts;
-    hyd_opts.dt                    = ff["hydraulic_dt"];
-    hyd_opts.mannings_n            = ff["mannings_n"];
-    hyd_opts.min_slope             = ff["hydraulic_min_slope"];
+    hyd_opts.dt = ff["hydraulic_dt"];
+    hyd_opts.mannings_n = ff["mannings_n"];
+    hyd_opts.min_slope = ff["hydraulic_min_slope"];
     hyd_opts.uniform_rainfall_rate = ff["uniform_rainfall_rate"];
-    hyd_opts.receiver_width        = ff["receiver_width"];
-    hyd_opts.max_dh_rate           = ff["max_dh_rate"];
-    hyd_opts.adaptive_dt_enabled            = bf["adaptive_dt_enabled"];
-    hyd_opts.adaptive_dt_min                = ff["adaptive_dt_min"];
-    hyd_opts.adaptive_dt_max                = ff["adaptive_dt_max"];
-    hyd_opts.adaptive_target_median_abs_dhw =
-        ff["adaptive_target_median_abs_dhw"];
-    hyd_opts.adaptive_dt_growth_factor      = ff["adaptive_dt_growth_factor"];
-    hyd_opts.adaptive_dt_shrink_factor      = ff["adaptive_dt_shrink_factor"];
+    hyd_opts.receiver_width = ff["receiver_width"];
+    hyd_opts.max_dh_rate = ff["max_dh_rate"];
+    hyd_opts.friction_depth_exponent = ff["friction_depth_exponent"];
+    hyd_opts.friction_slope_exponent = ff["friction_slope_exponent"];
+    hyd_opts.adaptive_dt_enabled = bf["adaptive_dt_enabled"];
+    hyd_opts.adaptive_dt_min = ff["adaptive_dt_min"];
+    hyd_opts.adaptive_dt_max = ff["adaptive_dt_max"];
+    hyd_opts.adaptive_target_median_abs_dhw = ff["adaptive_target_median_abs_dhw"];
+    hyd_opts.adaptive_dt_growth_factor = ff["adaptive_dt_growth_factor"];
+    hyd_opts.adaptive_dt_shrink_factor = ff["adaptive_dt_shrink_factor"];
 
-    hyd_opts.print_startup_message = true;
-
+    std::cout << "\n--- Initialising stationary hydraulic solver ---\n";
+    std::cout << "Routing: " << routing_method << ", BC: " << fg_opts.boundary_conditions << "\n";
     lsdtt::lsdtt_hydraulic_graph_cpu hydraulic(
-        flowgraph,
-        routed_dem.get_data_array(),
-        hyd_opts
-    );
+        routed_dem, node_state, fg_opts, hyd_opts,
+        ff["hydraulic_fill_slope_epsilon"], bf["check_valid_outlet"]);
 
-    hydraulic.set_reroute_every(ii["reroute_every"]);
-
-
-    if (hydraulic_run_mode == "stationary")
+    const auto load_field = [&](const std::string& fname, const char* label)
     {
-        if (bf["dynamic_routing_enabled"])
-        {
-            hydraulic.set_run_mode(
-                lsdtt_hydraulic_run_mode::stationary_dynamic_graph);
-        }
-        else
-        {
-            hydraulic.set_run_mode(
-                lsdtt_hydraulic_run_mode::stationary_fixed_graph);
-        }
+        lsdtt::lsdtt_data_loader field_loader;
+        field_loader.open_raster(pp.add_read_path_if_needed(fname));
+        lsdtt::lsdtt_raster_cpu field(field_loader);
+        if (field.n_rows() != routed_dem.n_rows() || field.n_cols() != routed_dem.n_cols() ||
+            field.get_meta().cell_size != routed_dem.get_meta().cell_size ||
+            field.get_meta().x_min != routed_dem.get_meta().x_min ||
+            field.get_meta().y_min != routed_dem.get_meta().y_min ||
+            field.get_meta().crs_wkt != routed_dem.get_meta().crs_wkt)
+            throw std::invalid_argument(std::string(label) + " raster must use the DEM grid");
+        std::vector<double> out(field.get_data().begin(), field.get_data().end());
+        return out;
+    };
+    try
+    {
+        if (!sf["rainfall_rate_fname"].empty())
+            hydraulic.set_rainfall_rate_field(load_field(sf["rainfall_rate_fname"], "rainfall"));
+        if (!sf["friction_coefficient_fname"].empty())
+            hydraulic.set_friction_coefficient_field(
+                load_field(sf["friction_coefficient_fname"], "friction coefficient"));
     }
-    else
+    catch (const std::exception& e)
     {
-        if (bf["dynamic_routing_enabled"])
-        {
-            hydraulic.set_run_mode(
-                lsdtt_hydraulic_run_mode::transient_dynamic_graph);
-        }
-        else
-        {
-            hydraulic.set_run_mode(
-                lsdtt_hydraulic_run_mode::transient_fixed_graph);
-        }
+        std::cerr << "FATAL: could not load hydraulic forcing raster: " << e.what() << "\n";
+        return 1;
     }
 
 
@@ -663,7 +658,7 @@ int main(int argc, char* argv[])
     try
     {
 
-        if (hydraulic_run_mode == "stationary" && bf["run_until_converged"])
+        if (bf["run_until_converged"])
         {
             const bool converged = hydraulic.run_until_converged(
                 ii["n_steps"],
@@ -696,6 +691,8 @@ int main(int argc, char* argv[])
 
     std::cout << "Total water volume = "
               << hydraulic.total_water_volume() << " m^3\n";
+    std::cout << "Cumulative non-conservative hydraulic-surface fill = "
+              << hydraulic.cumulative_surface_projection_volume() << " m^3\n";
 
     // -------------------------------------------------------------------------
     // Output rasters
@@ -813,6 +810,12 @@ int main(int argc, char* argv[])
 
         if (bf["write_specific_drainage_area_raster"])
         {
+            if (!sf["rainfall_rate_fname"].empty())
+            {
+                std::cerr << "FATAL: write_specific_drainage_area_raster requires "
+                          << "spatially uniform rainfall (rainfall_rate_fname must be empty).\n";
+                return 1;
+            }
             if (ff["uniform_rainfall_rate"] <= 0.0f)
             {
                 std::cerr << "FATAL: write_specific_drainage_area_raster requires "
@@ -860,6 +863,6 @@ int main(int argc, char* argv[])
                   k_version, k_citation);
     pp.print_parameters();
 
-    std::cout << "\nlsdtt-hydraulic-routing: done.\n";
+    std::cout << "\nlsdtt-graphflood: done.\n";
     return 0;
 }
