@@ -144,6 +144,29 @@ from typing import Any
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+
+# WHERE THINGS ARE WRITTEN
+#
+# Three separate locations, because they have three different lifetimes and
+# three different size and speed requirements:
+#
+#   FIXTURE_DIR   the downloaded region sources and their crops. Large
+#                 (~512 MB for the server profile), reused across every
+#                 campaign, and worth keeping. Default is inside the repo,
+#                 which is WRONG on a cluster where the repo sits on a quota'd
+#                 home filesystem -- override with --fixture-dir.
+#
+#   out-dir       the campaign directories. Small, one per run, the thing you
+#                 actually want to keep and send. A RELATIVE --out-dir resolves
+#                 against the CURRENT DIRECTORY, so running from a data
+#                 directory puts results in that data directory.
+#
+#   scratch       staged fixtures and intermediate rasters (see
+#                 choose_scratch_root). Node-local, disposable, and must be
+#                 fast -- measurements are taken here.
+#
+# FIXTURE_DIR is module-level because the fixture helpers all reach for it;
+# main() rebinds it once from --fixture-dir before anything uses it.
 FIXTURE_DIR = REPO_ROOT / "tests" / "data" / "dem_cache"
 
 SKIP_EXIT = 77
@@ -1865,7 +1888,18 @@ def main() -> int:
     ap.add_argument("--build-dir", default="build",
                     help="directory holding the built lsdtt-* executables")
     ap.add_argument("--out-dir", default="benchmark_campaigns",
-                    help="campaign root; one subdirectory per run")
+                    help="campaign root; one subdirectory per run. A relative "
+                         "path is resolved against the CURRENT DIRECTORY. Note "
+                         "pixi tasks run from the repo root, so pass an "
+                         "absolute path to collect results elsewhere.")
+    ap.add_argument("--fixture-dir", default="",
+                    help="where the downloaded region sources and their crops "
+                         "live. Defaults to tests/data/dem_cache inside the "
+                         "repo, which is the wrong place on a cluster: the "
+                         "server profile stores ~512 MB here and a repo on a "
+                         "quota'd home filesystem will not take it. Point this "
+                         "at project or scratch storage. Reused across "
+                         "campaigns, so it is worth keeping.")
     ap.add_argument("--python-exe", default=sys.executable,
                     help="interpreter for the reference scripts; must be the "
                          "one with richdem/topotoolbox/whitebox installed")
@@ -1916,6 +1950,12 @@ def main() -> int:
     if args.list:
         print(json.dumps({"profiles": PROFILES, "cases": CASES}, indent=2))
         return 0
+
+    # Rebind before ANY fixture helper runs -- they all reach for the module
+    # global rather than taking it as an argument.
+    global FIXTURE_DIR
+    if args.fixture_dir:
+        FIXTURE_DIR = pathlib.Path(args.fixture_dir).expanduser().resolve()
 
     profile = dict(PROFILES[args.profile])
     explicit_fixtures = ([f.strip() for f in args.fixtures.split(",")
@@ -2011,13 +2051,22 @@ def main() -> int:
         return 0
 
     stamp = now_stamp()
-    run_dir = (pathlib.Path(args.out_dir) /
+    # Relative to the CURRENT DIRECTORY, not the repo. Resolving a relative
+    # path against anything other than cwd is surprising, and here it was
+    # actively wrong: running from a data directory silently deposited the
+    # campaign inside the git working tree instead.
+    #
+    # Note pixi tasks run with cwd set to the manifest root, so
+    # `pixi run bench-server --out-dir results` still lands in the repo. To
+    # collect results elsewhere pass an ABSOLUTE --out-dir, or invoke the
+    # script directly from the directory you want.
+    run_dir = (pathlib.Path(args.out_dir).expanduser().resolve() /
                f"{args.profile}_{socket.gethostname()}_{stamp}")
-    if not run_dir.is_absolute():
-        run_dir = REPO_ROOT / run_dir
+    # Created AFTER staging decides where work goes: staging relocates the work
+    # directory to node-local scratch, and creating it here unconditionally
+    # left an empty `work/` behind in every campaign directory.
     work_dir = run_dir / "work"
     run_dir.mkdir(parents=True, exist_ok=True)
-    work_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"campaign: {run_dir}")
     print(f"profile:  {args.profile} ({profile['description']})")
@@ -2042,6 +2091,7 @@ def main() -> int:
 
     if args.no_stage:
         print(f"  staging disabled; measuring on {source_fs}")
+        work_dir.mkdir(parents=True, exist_ok=True)
     else:
         print(f"  staging fixtures: {source_fs} -> {scratch_root} "
               f"({scratch_fs})")
