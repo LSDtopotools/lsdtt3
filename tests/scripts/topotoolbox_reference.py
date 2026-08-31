@@ -266,18 +266,61 @@ def run_surface(routine: str, dem, repeats: int,
     return info, result
 
 
+def _repeat_time(call, repeats: int) -> dict:
+    """Best-of-N timing for a flow routine, with the result carried along.
+
+    Returns the timing fields plus `_result`, which the caller pops. Bundling
+    the result with the timing keeps the callable's construction and its
+    invocation in one place, so a future routine cannot accidentally time the
+    construction too.
+
+    repeats=1 does exactly one call with no warm-up, preserving the historical
+    single-shot numbers that run_flow_benchmark.py's tolerances were pinned
+    against.
+    """
+    import statistics as _st
+
+    if repeats > 1:
+        with suppressed_output():
+            call()                       # warm-up, discarded
+
+    timings = []
+    for _ in range(max(1, repeats)):
+        t0 = time.perf_counter()
+        with suppressed_output():
+            result = call()
+        timings.append(time.perf_counter() - t0)
+
+    return {
+        "seconds": min(timings),
+        "seconds_median": _st.median(timings),
+        "seconds_all": timings,
+        "seconds_stdev": _st.stdev(timings) if len(timings) > 1 else 0.0,
+        "repeats": len(timings),
+        "_result": result,
+    }
+
+
 def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         azimuth: float = 315.0, altitude: float = 60.0):
     import numpy as np
     import topotoolbox as ttb
 
+    t_read = time.perf_counter()
     with suppressed_output():
         dem = ttb.read_tif(in_path)
+    seconds_read = time.perf_counter() - t_read
 
-    info = {"routine": routine}
+    info = {"reference": "topotoolbox", "routine": routine,
+            "seconds_read": seconds_read}
 
     if routine in SURFACE_ROUTINES:
-        info, result = run_surface(routine, dem, repeats, azimuth, altitude)
+        # update, not rebind: run_surface returns a fresh dict, and rebinding
+        # would drop the `reference` and `seconds_read` fields set above --
+        # which run_benchmark_suite.py reads to keep I/O out of compute.
+        surface_info, result = run_surface(routine, dem, repeats, azimuth,
+                                           altitude)
+        info.update(surface_info)
         info["azimuth"] = azimuth
         info["altitude"] = altitude
         # Multi-output routines: score the correlation guard on one
@@ -289,10 +332,14 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         info["cellsize"] = float(dem.cellsize)
 
     elif routine == "fill":
-        t0 = time.perf_counter()
-        with suppressed_output():
-            result = dem.fillsinks()
-        info["seconds"] = time.perf_counter() - t0
+        # repeats=1 reproduces the historical single-shot behaviour exactly, so
+        # run_flow_benchmark.py's pinned tolerances and cached numbers are
+        # untouched. repeats>1 adds a discarded warm-up and reports best-of-N,
+        # which is what run_benchmark_suite.py asks for so that this reference
+        # is timed on the same basis as the other two rather than being
+        # single-shot against their best-of-N.
+        info.update(_repeat_time(lambda: dem.fillsinks(), repeats))
+        result = info.pop("_result")
 
     elif routine == "accum_d8":
         # Timed in two phases because they are separately meaningful and
@@ -304,19 +351,23 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         # sink_resolution='carve' is a no-op on an already-filled DEM, which is
         # what the benchmark feeds it, so it does not silently modify the
         # surface being compared.
-        t0 = time.perf_counter()
-        with suppressed_output():
-            flow = ttb.FlowObject(dem, method="d8", sink_resolution="carve")
-        build_s = time.perf_counter() - t0
+        build = _repeat_time(
+            lambda: ttb.FlowObject(dem, method="d8", sink_resolution="carve"),
+            repeats)
+        flow = build.pop("_result")
+        accum = _repeat_time(lambda: flow.flow_accumulation(), repeats)
+        result = accum.pop("_result")
 
-        t1 = time.perf_counter()
-        with suppressed_output():
-            result = flow.flow_accumulation()
-        accum_s = time.perf_counter() - t1
-
-        info["seconds"] = build_s + accum_s
-        info["seconds_build_only"] = build_s
-        info["seconds_accumulate_only"] = accum_s
+        # The phase totals are summed on the SAME statistic (both medians, or
+        # both bests) rather than mixing one phase's best with the other's
+        # median, which would produce a total no single run ever achieved.
+        info["seconds"] = build["seconds"] + accum["seconds"]
+        info["seconds_median"] = build["seconds_median"] + accum["seconds_median"]
+        info["seconds_all"] = [b + a for b, a
+                               in zip(build["seconds_all"], accum["seconds_all"])]
+        info["repeats"] = accum["repeats"]
+        info["seconds_build_only"] = build["seconds"]
+        info["seconds_accumulate_only"] = accum["seconds"]
 
     else:
         raise ValueError(f"unknown routine {routine!r}")
@@ -328,6 +379,11 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
     arr = np.asarray(result.z)
     finite = arr[np.isfinite(arr)]
     info.update({
+        # Serial for these routines (scipy convolve, np.gradient and
+        # libtopotoolbox's single-threaded paths). Stated rather than omitted
+        # so a campaign cannot silently attribute a thread count to it.
+        "threads": 1,
+        "peak_rss_mb": peak_rss_mb(),
         "shape": list(arr.shape),
         "n_cells": int(arr.size),
         # Equivalence-of-work check (plan Sec2.4): a tool that produced far
@@ -363,9 +419,6 @@ def main() -> int:
                          "(surface routines only). The reported `seconds` is "
                          "the best of these; `seconds_median` the median.")
     args = ap.parse_args()
-
-    if args.routine in FLOW_ROUTINES and not args.out_path:
-        ap.error("--out is required for the flow routines")
 
     try:
         import topotoolbox  # noqa: F401

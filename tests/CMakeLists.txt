@@ -1953,6 +1953,14 @@ target_link_libraries(lsdtt-perron-ren-p3 PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-perron-ren-p4 cpp/perron_ren_p4_driver.cpp)
 target_link_libraries(lsdtt-perron-ren-p4 PRIVATE lsdtt3_cpu)
 
+# P5 one-step stability/robustness envelope across reference and production solvers.
+add_executable(lsdtt-perron-ren-p5 cpp/perron_ren_p5_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p5 PRIVATE lsdtt3_cpu)
+
+# Heavy P6 spatial refinement; cellular canonical runs stop at 100x100 by design.
+add_executable(lsdtt-perron-ren-p6 cpp/perron_ren_p6_driver.cpp)
+target_link_libraries(lsdtt-perron-ren-p6 PRIVATE lsdtt3_cpu)
+
 # Small Newton-only references for the cellular hillslope investigation. The
 # normal suite uses narrow strips and a 32x32 OCN; larger OCN/scaling cases are
 # performance fixtures and deliberately do not run here.
