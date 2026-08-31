@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 
 import geopandas as gpd
 import numpy as np
+from pyproj import CRS
 from shapely.geometry import box
 
 import lsdtt3
@@ -11,7 +12,10 @@ import lsdtt3
 
 class FlowInfoTest(unittest.TestCase):
     def setUp(self):
-        self.meta = lsdtt3.RasterMeta.from_shape(6, 6, cell_size=10.0)
+        crs = CRS.from_epsg(32630)
+        self.meta = lsdtt3.RasterMeta.from_shape(
+            6, 6, cell_size=10.0, crs_wkt=crs.to_wkt(), epsg_code=32630
+        )
         rows, cols = np.indices((6, 6), dtype=np.float32)
         self.dem = lsdtt3.Raster.from_numpy(
             -rows - 0.01 * cols, np.ones((6, 6), dtype=bool), self.meta
@@ -124,6 +128,7 @@ class FlowInfoTest(unittest.TestCase):
             gpd.GeoDataFrame(
                 {"series": ["AB1"], "land_use": ["CULT"]},
                 geometry=[box(0.0, 0.0, 60.0, 60.0)],
+                crs=self.meta.crs_wkt,
             ).to_file(vector, driver="GeoJSON")
             series = lsdtt3.rasterize_sti_categories(
                 self.dem, str(vector), "series", "categories"

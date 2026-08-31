@@ -27,6 +27,7 @@ nanobind_add_module(_core
     cosmo_raster.cpp
     cosmo_basin.cpp
     statistical_comparison.cpp
+    vector_hydrology.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
