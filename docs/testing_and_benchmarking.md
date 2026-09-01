@@ -1214,7 +1214,15 @@ expensive per-metric operation. Quote the metric family alongside the number.
     from lambda 35 m to 280 m (0.0191 s to 0.0193 s on 1000², a 729× range of
     window cells). Lambda does not tilt the comparison in either direction.
 
-### Why the parallel scaling is poor: it is memory-bound (2026-08-31)
+### Historical: why the original parallel scaling was poor (2026-08-31)
+
+!!! warning "Historical implementation"
+    This section describes the original two-pass `direct_polyfit`. On
+    2026-09-01 the prefix storage was bounded and the passes were fused over row
+    strips. The full-raster `H0/H1/H2/Hn` arrays and full-height prefix buffers
+    discussed below no longer exist. Keep these measurements as provenance, but
+    do not use them to diagnose the current fused loop. The current diagnosis
+    and next measurements follow this historical section.
 
 The first server campaign showed **every lsdtt3 scaling row at or below
 1.00×** — adding threads made lsdtt3 slower on every operation, on a 192-core
@@ -1271,8 +1279,9 @@ std::vector<double> ph0(np), ph0r(np), ph0r2(np), ph1(np), ph1r(np), ph2(np), ph
 | 4000 | 1.7 MB |
 | **8000** | **3.4 MB** |
 
-against 1280 KB of L2 per core and 8 MB of shared L3. At 1000² it already
-overflows L2; at the server profile's 8000² rung, N threads need 3.4N MB and
+against 1280 KB of L2 per core and 8 MB of shared L3. The 438 KB buffer at
+1000² fits L2; it exceeds 1280 KB only above about 2900 rows. At the server
+profile's 8000² rung, N threads need 3.4N MB and
 thrash L3 collectively. **More threads make it worse, which is the observed
 shape.** It also means the scaling gets worse as the DEM gets bigger — the
 opposite of the usual expectation, and a trap when reading the ladder.
@@ -1283,13 +1292,13 @@ The arrays are only ever consumed as a difference of two rows:
 const double raw_S_z = ph0[pb + j] - ph0[pa + j];
 ```
 
-So a full-height prefix array is materialised to compute what a rolling
-vertical window could hold in **O(BLK) scalars**. Replacing it would cut pass
-2's working set by three orders of magnitude and remove the size dependence.
-That is the highest-value change identified, and it is **not yet made** —
-recorded here as a finding, not a fix.
+So a full-height prefix array was materialised to compute a sliding vertical
+window. A naive rolling sum would use **O(BLK) scalars**, but it changes
+floating-point addition order and is not bit-identical. The landed replacement
+instead retains the prefix recurrence in bounded strip storage and carries its
+exact accumulator between strips.
 
-#### Why the server was worse than the laptop (0.64× vs 1.17×)
+#### Historical NUMA hypothesis for the server result (0.64× vs 1.17×)
 
 Untested — forth03 was not available for instrumented runs — but the likely
 additional factor is **NUMA first-touch**. `H0`, `H1`, `H2` and `Hn` (~28 MB at
@@ -1312,9 +1321,10 @@ numactl --hardware                                   # confirm multi-socket
 numactl --cpunodebind=0 --membind=0 <the 2-thread run>
 ```
 
-If pinning to one node recovers the scaling, it is NUMA, and the fix is to
-first-touch those arrays from inside a parallel region so pages land on the
-node of the thread that will read them.
+If pinning to one node recovered the scaling, it would identify NUMA as a
+factor. The full-raster `H` arrays have since been removed. The six output
+coefficient rasters remain possible first-touch candidates, but only after an
+exclusive server run confirms that NUMA still matters.
 
 #### A hypothesis that was tested and REJECTED
 
@@ -1333,6 +1343,74 @@ thread instead of once per block — produced **identical timings**:
 Recorded so the experiment is not repeated. glibc's per-thread arenas already
 make these allocations cheap; the working-set size is what matters, not the
 allocation count.
+
+#### Current fused-loop result and leading candidates (2026-09-01)
+
+The bounded-prefix and fused-strip changes were bit-identical on all 324
+reference rasters. They made `direct_polyfit` 20-73% faster and reduced peak
+memory by 13-25%, but did not produce useful thread scaling: one and four
+threads remain within a few percent. The old pass profile above cannot explain
+the current result because those passes and working sets changed.
+
+The leading current candidate was the shared, full-width `H` strip. Its size is
+`(RSTRIP + 2W + 1) * ncols * 28` bytes. With the original fused-loop
+`RSTRIP=256` and `W=1` it occupied
+7.25 MB at 1000 columns and 29.0 MB at 4000 columns, against 8 MB shared L3 on
+the development machine. Pass 1 writes the complete strip before pass 2 reads
+it, so wide rasters can still evict `H` and recreate substantial DRAM traffic.
+Pass 1 distributes rows while pass 2 distributes column blocks, so the thread
+that produced a cache line generally is not the thread that consumes it;
+private L2 residency does not carry cleanly between the phases.
+
+Initial follow-up measurements confirmed that this working set mattered.
+Changing `RSTRIP` from 256 to 64 improved best complete profiled time by 18-36%
+at 1000² and 16-26% at 4000² across one and four threads. Generated outputs were
+byte-identical at 1/2/4 threads and the five surface-metric tests passed.
+`RSTRIP=64` is now provisional pending the full 324-raster exact-comparison
+matrix; see the plan's §9.5f for the measurements and validation caveat.
+
+The following serial-memory step removed the redundant `H` zero-fill, initialized
+the independent output arrays concurrently, and copied the five required masks
+concurrently. On seven unprofiled generated-raster runs, the resulting whole-fit
+curve reached 1.79x at 1000² and 2.20x at 4000² on four threads. Outputs were
+byte-identical to the `RSTRIP=256` baseline at 1/2/4 threads and all five
+surface-metric tests passed. This remains provisional until the full 324-raster
+matrix and uninitialized-memory checks are available.
+
+Explicit OpenMP SIMD across the block-column loops was subsequently tested and
+rejected. GCC 11 vectorized carry seeding, prefix construction and carry storage,
+but not the nodata-guarded solve. After discarding a batch taken while the laptop
+was in power-saving mode, nine scalar/SIMD pairs were run interleaved. Results
+were inconsistent, and the important 4000² four-thread case regressed by 14%
+on best time and 4% on median. Outputs remained byte-identical, but the SIMD
+directives were removed under the no-regression rule. Do not repeat the same
+directive-only experiment.
+
+Before the serial-memory step, the whole-function fit timer included six serial
+coefficient fills, one mask fill and five serial mask copies outside OpenMP:
+approximately 30 bytes per pixel. The implementation described above now runs
+those independent fills and copies concurrently when multiple threads are
+requested; the allocations themselves remain serial so failures propagate
+normally.
+
+GCC 11 with the project's Release flags also leaves the inner prefix-build and
+solve loops scalar. The prefix recurrence is serial down each column, but
+columns and blocks are independent; at width 1000 there are about 125 blocks,
+so the recurrence does not inherently serialize the OpenMP workers. Shared
+cache pressure, scalar per-core execution and the timed serial fraction are
+stronger candidates than a shortage of parallel blocks.
+
+Current investigation order:
+
+1. Repeat representative cases with `OMP_PLACES=cores` and
+   `OMP_PROC_BIND=close|spread` to exclude WSL2 migration and sibling placement.
+2. Complete `BLK` tuning around the provisional `RSTRIP=64`.
+3. Check load balance on asymmetric nodata rasters.
+4. Test padded carry storage last. Static scheduling limits cross-thread carry
+   sharing to partition boundaries, and carries are written only once per strip.
+
+The detailed implementation and validation steps are in
+`docs/plan_docs/plan_surface_metrics_parallelisation.md`, §9.5 and §10.
 
 #### Sequential cases are no longer swept (changed 2026-09-01)
 

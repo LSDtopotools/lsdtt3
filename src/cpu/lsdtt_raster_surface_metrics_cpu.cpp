@@ -27,6 +27,7 @@
 #include <string>
 #include <thread>
 #include <limits>
+#include <memory>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
@@ -2836,16 +2837,18 @@ poly_fit_coeffs direct_polyfit(
     const int c_lo = W;
     const int c_hi = ncols - W;
     const int nblk = (c_hi > c_lo) ? ((c_hi - c_lo + BLK - 1) / BLK) : 0;
-    constexpr int RSTRIP = 256;
+    constexpr int RSTRIP = 64;
 
     // H rows needed for output rows [s, se) are [s-W, se+W).
     const int         Hrows = RSTRIP + 2 * W + 1;
     const std::size_t Hsz   = static_cast<std::size_t>(Hrows) * ncols;
 
-    std::vector<double> H0(Hsz, 0.0);
-    std::vector<double> H1(Hsz, 0.0);
-    std::vector<double> H2(Hsz, 0.0);
-    std::vector<int>    Hn(Hsz, 0);
+    // Every consumed H element is overwritten by pass 1 before pass 2 reads it.
+    // Default-initialised arrays avoid a redundant serial fill of the strip.
+    std::unique_ptr<double[]> H0(new double[Hsz]);
+    std::unique_ptr<double[]> H1(new double[Hsz]);
+    std::unique_ptr<double[]> H2(new double[Hsz]);
+    std::unique_ptr<int[]>    Hn(new int[Hsz]);
 
     // Prefix rows for a strip: (se-s) + 2W + 1 entries, +1 slack.
     const std::size_t np =
@@ -2867,13 +2870,55 @@ poly_fit_coeffs direct_polyfit(
     // -------------------------------------------------------------------------
     // Output arrays (initialised to nodata/invalid)
     // -------------------------------------------------------------------------
-    std::vector<float>   out_a(npix, nodata_f);
-    std::vector<float>   out_b(npix, nodata_f);
-    std::vector<float>   out_c(npix, nodata_f);
-    std::vector<float>   out_d(npix, nodata_f);
-    std::vector<float>   out_e(npix, nodata_f);
-    std::vector<float>   out_f(npix, nodata_f);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
+    std::vector<float>   out_a;
+    std::vector<float>   out_b;
+    std::vector<float>   out_c;
+    std::vector<float>   out_d;
+    std::vector<float>   out_e;
+    std::vector<float>   out_f;
+    std::vector<uint8_t> out_mask;
+
+    // Reserve serially so allocation failures propagate normally, then perform
+    // the independent, non-throwing fills concurrently on multi-threaded runs.
+    out_a.reserve(npix);
+    out_b.reserve(npix);
+    out_c.reserve(npix);
+    out_d.reserve(npix);
+    out_e.reserve(npix);
+    out_f.reserve(npix);
+    out_mask.reserve(npix);
+#ifdef _OPENMP
+    if (nthreads > 1)
+    {
+        #pragma omp parallel sections num_threads(nthreads)
+        {
+            #pragma omp section
+            out_a.resize(npix, nodata_f);
+            #pragma omp section
+            out_b.resize(npix, nodata_f);
+            #pragma omp section
+            out_c.resize(npix, nodata_f);
+            #pragma omp section
+            out_d.resize(npix, nodata_f);
+            #pragma omp section
+            out_e.resize(npix, nodata_f);
+            #pragma omp section
+            out_f.resize(npix, nodata_f);
+            #pragma omp section
+            out_mask.resize(npix, uint8_t{0});
+        }
+    }
+    else
+#endif
+    {
+        out_a.resize(npix, nodata_f);
+        out_b.resize(npix, nodata_f);
+        out_c.resize(npix, nodata_f);
+        out_d.resize(npix, nodata_f);
+        out_e.resize(npix, nodata_f);
+        out_f.resize(npix, nodata_f);
+        out_mask.resize(npix, uint8_t{0});
+    }
 
 #ifdef _OPENMP
     #pragma omp parallel num_threads(nthreads)
@@ -3144,14 +3189,51 @@ poly_fit_coeffs direct_polyfit(
     }       // strip loop
     }       // omp parallel
 
-    // The raster constructor takes vector<uint8_t>&&, so copy the mask for
-    // the first five coefficients and move it on the last.
+    // The raster constructor takes vector<uint8_t>&&, so copy the mask for the
+    // first five coefficients. Reserve first so OpenMP sections cannot throw.
+    std::vector<uint8_t> mask_a;
+    std::vector<uint8_t> mask_b;
+    std::vector<uint8_t> mask_c;
+    std::vector<uint8_t> mask_d;
+    std::vector<uint8_t> mask_e;
+    mask_a.reserve(npix);
+    mask_b.reserve(npix);
+    mask_c.reserve(npix);
+    mask_d.reserve(npix);
+    mask_e.reserve(npix);
+#ifdef _OPENMP
+    if (nthreads > 1)
+    {
+        #pragma omp parallel sections num_threads(nthreads)
+        {
+            #pragma omp section
+            mask_a.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_b.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_c.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_d.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_e.assign(out_mask.begin(), out_mask.end());
+        }
+    }
+    else
+#endif
+    {
+        mask_a.assign(out_mask.begin(), out_mask.end());
+        mask_b.assign(out_mask.begin(), out_mask.end());
+        mask_c.assign(out_mask.begin(), out_mask.end());
+        mask_d.assign(out_mask.begin(), out_mask.end());
+        mask_e.assign(out_mask.begin(), out_mask.end());
+    }
+
     poly_fit_coeffs result;
-    result.a = lsdtt_raster_cpu(std::move(out_a), std::vector<uint8_t>(out_mask), meta);
-    result.b = lsdtt_raster_cpu(std::move(out_b), std::vector<uint8_t>(out_mask), meta);
-    result.c = lsdtt_raster_cpu(std::move(out_c), std::vector<uint8_t>(out_mask), meta);
-    result.d = lsdtt_raster_cpu(std::move(out_d), std::vector<uint8_t>(out_mask), meta);
-    result.e = lsdtt_raster_cpu(std::move(out_e), std::vector<uint8_t>(out_mask), meta);
+    result.a = lsdtt_raster_cpu(std::move(out_a), std::move(mask_a), meta);
+    result.b = lsdtt_raster_cpu(std::move(out_b), std::move(mask_b), meta);
+    result.c = lsdtt_raster_cpu(std::move(out_c), std::move(mask_c), meta);
+    result.d = lsdtt_raster_cpu(std::move(out_d), std::move(mask_d), meta);
+    result.e = lsdtt_raster_cpu(std::move(out_e), std::move(mask_e), meta);
     result.f = lsdtt_raster_cpu(std::move(out_f), std::move(out_mask),            meta);
     return result;
 }
