@@ -1214,6 +1214,141 @@ expensive per-metric operation. Quote the metric family alongside the number.
     from lambda 35 m to 280 m (0.0191 s to 0.0193 s on 1000², a 729× range of
     window cells). Lambda does not tilt the comparison in either direction.
 
+### Why the parallel scaling is poor: it is memory-bound (2026-08-31)
+
+The first server campaign showed **every lsdtt3 scaling row at or below
+1.00×** — adding threads made lsdtt3 slower on every operation, on a 192-core
+machine. Worst cases were `slope_only` and `polyfit_all` at 0.64–0.67× on two
+threads. This section records what that turned out to be, because the shape is
+easy to misread as a threading bug and it is not one.
+
+#### First establish what the machine can do
+
+Do not interpret a scaling curve without a ceiling to compare it against. Two
+OpenMP kernels at the same working-set size (1M doubles), on the development
+machine — an i5-1145G7, **4 physical cores, 8 threads**:
+
+| kernel | 1t | 2t | 4t | 8t |
+|---|---|---|---|---|
+| compute-bound (60 `sqrt` per element) | 1.00× | **1.83×** | **3.09×** | 2.96× |
+| memory-bound (streaming triad, ~24 MB) | 1.00× | **1.03×** | **1.14×** | **0.27×** |
+
+The machine parallelises compute fine. A bandwidth-bound kernel gets nothing —
+and at 8 threads it is **4× WORSE than serial**, because hyperthreads sharing a
+core's load/store ports simply contend.
+
+`direct_polyfit` measures 1.17× at 2t and degrades after. That places it
+squarely in the memory-bound band. **The OpenMP is correct**: the pragmas,
+`num_threads` clauses and `resolve_thread_count` all do what they should. The
+kernel is not compute-limited, so there is nothing for extra threads to win.
+
+#### Which pass, and why
+
+Instrumenting the two passes of `direct_polyfit`, alpine_1000, best of 3:
+
+| pass | 1t | 2t | 4t | speedup |
+|---|---|---|---|---|
+| 1 — horizontal rolling sums (parallel over rows) | 0.0154 s | 0.0112 s | 0.0122 s | 1.37× → 1.26× |
+| **2 — vertical prefix + solve (parallel over column blocks)** | **0.0264 s** | **0.0269 s** | **0.0286 s** | **0.98× → 0.92×** |
+
+**Pass 2 is 63% of the fit and has negative speedup.** Pass 1 at least gains at
+two threads.
+
+The cause is pass 2's per-thread working set. Each 8-column block allocates
+seven full-height prefix arrays:
+
+```cpp
+const std::size_t np = (nrows + 1) * BLK;
+std::vector<double> ph0(np), ph0r(np), ph0r2(np), ph1(np), ph1r(np), ph2(np), phn(np);
+```
+
+7 × (nrows+1) × BLK doubles **per thread**, growing with the raster:
+
+| nrows | per-thread buffers |
+|---|---|
+| 1000 | 438 KB |
+| 2000 | 875 KB |
+| 4000 | 1.7 MB |
+| **8000** | **3.4 MB** |
+
+against 1280 KB of L2 per core and 8 MB of shared L3. At 1000² it already
+overflows L2; at the server profile's 8000² rung, N threads need 3.4N MB and
+thrash L3 collectively. **More threads make it worse, which is the observed
+shape.** It also means the scaling gets worse as the DEM gets bigger — the
+opposite of the usual expectation, and a trap when reading the ladder.
+
+The arrays are only ever consumed as a difference of two rows:
+
+```cpp
+const double raw_S_z = ph0[pb + j] - ph0[pa + j];
+```
+
+So a full-height prefix array is materialised to compute what a rolling
+vertical window could hold in **O(BLK) scalars**. Replacing it would cut pass
+2's working set by three orders of magnitude and remove the size dependence.
+That is the highest-value change identified, and it is **not yet made** —
+recorded here as a finding, not a fix.
+
+#### Why the server was worse than the laptop (0.64× vs 1.17×)
+
+Untested — forth03 was not available for instrumented runs — but the likely
+additional factor is **NUMA first-touch**. `H0`, `H1`, `H2` and `Hn` (~28 MB at
+1000²) are allocated and zero-filled by the master thread *before* the parallel
+region:
+
+```cpp
+std::vector<double> H0(npix, 0.0);
+```
+
+Linux binds those pages to the master thread's NUMA node. On a 192-core box —
+certainly multi-socket — threads on other sockets then read across the
+interconnect on every access. For a bandwidth-bound kernel that turns added
+threads into a net loss, which fits 0.64× better than a single-socket 1.17×.
+
+Testable on the server with no code change:
+
+```sh
+numactl --hardware                                   # confirm multi-socket
+numactl --cpunodebind=0 --membind=0 <the 2-thread run>
+```
+
+If pinning to one node recovers the scaling, it is NUMA, and the fix is to
+first-touch those arrays from inside a parallel region so pages land on the
+node of the thread that will read them.
+
+#### A hypothesis that was tested and REJECTED
+
+Pass 2 constructs 875 `std::vector<double>` per call (7 per block × 125
+blocks), ~56 MB of allocation and zeroing, all inside the parallel loop body.
+Allocator contention across threads looked like an obvious culprit.
+
+**It is not.** Hoisting the buffers to thread-private — allocated once per
+thread instead of once per block — produced **identical timings**:
+
+| | 1t | 2t | 4t | 8t |
+|---|---|---|---|---|
+| original (per-block allocation) | 0.0588 s | 0.0504 s | 0.0530 s | 0.0600 s |
+| hoisted (per-thread allocation) | 0.0587 s | 0.0523 s | 0.0534 s | 0.0594 s |
+
+Recorded so the experiment is not repeated. glibc's per-thread arenas already
+make these allocations cheap; the working-set size is what matters, not the
+allocation count.
+
+#### Consequences for reading and running the benchmark
+
+- **`fill` and `breach` at 1.00× are not defects.** Priority-flood and
+  grayscale reconstruction are inherently sequential. A flat scaling curve is
+  the correct result there, not a finding.
+- **Do not sweep hyperthreads.** On a bandwidth-bound kernel they cost 4× on
+  the development machine. Cap `--threads` at the physical core count;
+  `--cpus-per-task` should match, and the Slurm wrapper's `--exclusive` matters
+  more here than for a compute-bound benchmark, because a co-tenant competes
+  for the same memory bandwidth.
+- **Scaling curves need the ceiling stated alongside them.** An lsdtt3 curve of
+  1.17× means something quite different on a machine that can do 3.09× than on
+  one that can do 1.14×. Re-run the two-kernel ceiling test on any machine
+  whose scaling numbers are going to be quoted.
+
 ### What is compared, and what must never be
 
 | Suite | Cases | Status |
