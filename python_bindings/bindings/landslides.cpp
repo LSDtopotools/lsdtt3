@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,6 +22,16 @@ public:
  Raster elevation()const{return Raster(z_);} Raster failure_time()const{return Raster(t_);} Raster excavation_depth()const{return Raster(d_);} int n_landslides()const{return n_;} int n_failed()const{return failed_;} double requested_volume_m3()const{return requested_;} double achieved_volume_m3()const{return achieved_;} const std::string& summary()const{return summary_;}
 private: lsdtt::lsdtt_raster_cpu z_,t_,d_; int n_,failed_; double requested_,achieved_; std::string summary_;
 };
+class LandslideSeriesResult {
+public:
+ LandslideSeriesResult(lsdtt::lsdtt_raster_cpu z,lsdtt::lsdtt_raster_cpu t,lsdtt::lsdtt_raster_cpu d,lsdtt::LandslideSeriesResult r):z_(std::move(z)),t_(std::move(t)),d_(std::move(d)),r_(std::move(r)){}
+ Raster elevation()const{return Raster(z_);} Raster failure_time()const{return Raster(t_);} Raster excavation_depth()const{return Raster(d_);}
+ int n_events()const{return r_.n_events;} int n_landslides()const{return r_.n_landslides;} int n_failed()const{return r_.n_failed;} int n_events_short()const{return r_.n_events_short;} int n_events_degenerate()const{return r_.n_events_degenerate;}
+ double duration_yr()const{return r_.duration_yr;} double active_area_m2()const{return r_.active_area_m2;} double requested_volume_m3()const{return r_.requested_volume_m3;} double total_volume_m3()const{return r_.total_volume_m3;} double requested_erosion_rate_mm_kyr()const{return r_.requested_erosion_rate_mm_kyr;} double realised_erosion_rate_mm_kyr()const{return r_.realised_erosion_rate_mm_kyr;} double fraction_area_failed()const{return r_.fraction_area_failed;} double mean_landslides_per_event()const{return r_.mean_landslides_per_event;} const std::string summary()const{return r_.summary();}
+ nb::list event_times_yr()const { nb::list out; for(double value:r_.event_times_yr) out.append(value); return out; }
+ nb::list realised_pixels()const { nb::list out; for(int value:r_.realised_pixels) out.append(value); return out; }
+private: lsdtt::lsdtt_raster_cpu z_,t_,d_; lsdtt::LandslideSeriesResult r_;
+};
 LandslideResult trigger_landslides(const Raster& dem,const FlowInfo& flow,double volume,double event_time,int threshold,const std::string& model,const std::string& preset,int min_pixels,double max_area,double anneal,std::uint64_t seed,const Raster* active_mask) {
     const auto& fm=flow.native().meta(); const auto& dm=dem.native().get_meta();
     if(fm.n_rows!=dm.n_rows||fm.n_cols!=dm.n_cols||fm.cell_size!=dm.cell_size||fm.x_min!=dm.x_min||fm.y_min!=dm.y_min) throw std::invalid_argument("flow must share the DEM grid");
@@ -31,6 +42,20 @@ LandslideResult trigger_landslides(const Raster& dem,const FlowInfo& flow,double
     lsdtt::LandslideSizeSampler sampler(p,dm.cell_size); lsdtt::LandslidePlacementConfig place; place.channel_threshold_pixels=threshold; lsdtt::LandslidePlacer placer(flow.native(),dm,place,active_mask?&active_mask->native():nullptr);
     std::vector<std::uint8_t> mask=dem.native().get_mask(); std::vector<float> times(mask.size(),static_cast<float>(dm.no_data_value)),depth(mask.size(),0.f); lsdtt::lsdtt_raster_cpu tfail(std::move(times),std::vector<std::uint8_t>(mask),dm),exc(std::move(depth),std::move(mask),dm),z=dem.native();
     lsdtt::LandslideEventConfig cfg; cfg.target_volume_m3=volume; cfg.event_time_yr=event_time; cfg.anneal_time_yr=anneal; cfg.seed=seed; auto result=lsdtt::trigger_landslide_event(z,tfail,exc,placer,sampler,cfg); return LandslideResult(std::move(z),std::move(tfail),std::move(exc),result);
+}
+LandslideSeriesResult run_landslide_series(const Raster& dem,const FlowInfo& flow,double start,double end,double recurrence,bool poisson,double volume,double erosion_rate,int threshold,const std::string& model,const std::string& preset,int min_pixels,double max_area,double anneal,double budget_tol,int budget_max_iter,std::uint64_t seed,const Raster* active_mask) {
+    const auto& fm=flow.native().meta(); const auto& dm=dem.native().get_meta();
+    if(fm.n_rows!=dm.n_rows||fm.n_cols!=dm.n_cols||fm.cell_size!=dm.cell_size||fm.x_min!=dm.x_min||fm.y_min!=dm.y_min) throw std::invalid_argument("flow must share the DEM grid");
+    if(!(end>start)||recurrence<=0||threshold<1||min_pixels<1||budget_tol<=0||budget_max_iter<1) throw std::invalid_argument("time bounds, recurrence, placement controls, and budget controls must be positive");
+    if((volume>0)==(erosion_rate>0)) throw std::invalid_argument("provide exactly one of target_volume_per_event_m3 or long_term_erosion_rate_mm_kyr");
+    if(active_mask) same(dem,*active_mask,"active_mask");
+    lsdtt::LandslideSizeParams p; if(!lsdtt::parse_landslide_size_model(model,p.model)) throw std::invalid_argument("size_model must be 'inverse_gamma' or 'truncated_pareto'"); if(!lsdtt::AreaVolumeScaling::from_name(preset,p.av)) throw std::invalid_argument("unknown area_volume_preset");
+    p.n_min_pixels=min_pixels; double cap=threshold*dm.cell_size*dm.cell_size; p.area_max_m2=max_area>0?max_area:cap; if(p.area_max_m2>cap) throw std::invalid_argument("max_area_m2 cannot exceed the channel-threshold area");
+    lsdtt::LandslideSizeSampler sampler(p,dm.cell_size); lsdtt::LandslidePlacementConfig place; place.channel_threshold_pixels=threshold; lsdtt::LandslidePlacer placer(flow.native(),dm,place,active_mask?&active_mask->native():nullptr);
+    std::vector<std::uint8_t> mask=dem.native().get_mask(); std::vector<float> times(mask.size(),static_cast<float>(dm.no_data_value)),depth(mask.size(),0.f); lsdtt::lsdtt_raster_cpu tfail(std::move(times),std::vector<std::uint8_t>(mask),dm),exc(std::move(depth),std::move(mask),dm),z=dem.native();
+    lsdtt::LandslideSeriesConfig cfg; cfg.start_time_yr=start; cfg.end_time_yr=end; cfg.mean_recurrence_yr=recurrence; cfg.poisson_timing=poisson; cfg.target_volume_per_event_m3=volume; cfg.long_term_erosion_rate_mm_kyr=erosion_rate; cfg.anneal_time_yr=anneal; cfg.budget_tol=budget_tol; cfg.budget_max_iter=budget_max_iter; cfg.seed=seed;
+    auto result=lsdtt::run_landslide_series(z,tfail,exc,placer,sampler,cfg);
+    return LandslideSeriesResult(std::move(z),std::move(tfail),std::move(exc),std::move(result));
 }
 lsdtt::LandslideCrnConfig config(double erosion,double production,double shield,const std::string& nuclide,const std::string& scheme,double now) { if(erosion<=0||production<=0||shield<=0) throw std::invalid_argument("erosion, production, and shielding must be positive"); lsdtt::LandslideCrnConfig c; c.background_eff_erate_g_cm2_yr=erosion;c.production_scaling=production;c.total_shielding=shield;c.nuclide=nuclide;c.muon_scheme=scheme;c.t_now_yr=now;return c; }
 Raster landslide_crn_concentration(const Raster& depth,const Raster& failure,double erosion,double production,double shield,const std::string& nuclide,const std::string& scheme,double now){same(depth,failure,"failure_time");return Raster(lsdtt::compute_landslide_surface_concentration(depth.native(),failure.native(),config(erosion,production,shield,nuclide,scheme,now)));}
@@ -43,6 +68,20 @@ Authors
 -------
 B. Gailleton
 )doc").def_prop_ro("elevation",&LandslideResult::elevation).def_prop_ro("failure_time",&LandslideResult::failure_time).def_prop_ro("excavation_depth",&LandslideResult::excavation_depth).def_prop_ro("n_landslides",&LandslideResult::n_landslides).def_prop_ro("n_failed",&LandslideResult::n_failed).def_prop_ro("requested_volume_m3",&LandslideResult::requested_volume_m3).def_prop_ro("achieved_volume_m3",&LandslideResult::achieved_volume_m3).def_prop_ro("summary",&LandslideResult::summary);
+ nb::class_<LandslideSeriesResult>(m,"LandslideSeriesResult",R"doc(Outputs from a stochastic sequence of landslide events.
+
+The elevation raster accumulates every excavation. ``failure_time`` and
+``excavation_depth`` describe the most recent scar at each pixel, which is the
+state required by the cosmogenic response functions.
+
+Authors
+-------
+B. Gailleton
+)doc")
+ .def_prop_ro("elevation",&LandslideSeriesResult::elevation).def_prop_ro("failure_time",&LandslideSeriesResult::failure_time).def_prop_ro("excavation_depth",&LandslideSeriesResult::excavation_depth)
+ .def_prop_ro("n_events",&LandslideSeriesResult::n_events).def_prop_ro("n_landslides",&LandslideSeriesResult::n_landslides).def_prop_ro("n_failed",&LandslideSeriesResult::n_failed).def_prop_ro("n_events_short",&LandslideSeriesResult::n_events_short).def_prop_ro("n_events_degenerate",&LandslideSeriesResult::n_events_degenerate)
+ .def_prop_ro("duration_yr",&LandslideSeriesResult::duration_yr).def_prop_ro("active_area_m2",&LandslideSeriesResult::active_area_m2).def_prop_ro("requested_volume_m3",&LandslideSeriesResult::requested_volume_m3).def_prop_ro("total_volume_m3",&LandslideSeriesResult::total_volume_m3).def_prop_ro("requested_erosion_rate_mm_kyr",&LandslideSeriesResult::requested_erosion_rate_mm_kyr).def_prop_ro("realised_erosion_rate_mm_kyr",&LandslideSeriesResult::realised_erosion_rate_mm_kyr).def_prop_ro("fraction_area_failed",&LandslideSeriesResult::fraction_area_failed).def_prop_ro("mean_landslides_per_event",&LandslideSeriesResult::mean_landslides_per_event)
+ .def_prop_ro("event_times_yr",&LandslideSeriesResult::event_times_yr).def_prop_ro("realised_pixels",&LandslideSeriesResult::realised_pixels).def_prop_ro("summary",&LandslideSeriesResult::summary);
  m.def("trigger_landslides",&trigger_landslides,nb::arg("dem"),nb::arg("flow"),nb::arg("target_volume_m3"),nb::arg("event_time_yr")=0.,nb::arg("channel_threshold_pixels")=1000,nb::arg("size_model")="inverse_gamma",nb::arg("area_volume_preset")="larsen_soil_scar",nb::arg("min_pixels")=1,nb::arg("max_area_m2")=0.,nb::arg("anneal_time_yr")=0.,nb::arg("seed")=1u,nb::arg("active_mask")=nullptr,R"doc(Trigger a volume-budgeted stochastic landslide event.
 
 Parameters
@@ -62,6 +101,44 @@ Returns
 -------
 LandslideResult
     Excavated surface, failure-time/depth rasters, and budget diagnostics.
+
+Authors
+-------
+B. Gailleton
+)doc");
+ m.def("run_landslide_series",&run_landslide_series,nb::arg("dem"),nb::arg("flow"),nb::arg("start_time_yr")=0.,nb::arg("end_time_yr")=100000.,nb::arg("mean_recurrence_yr")=1000.,nb::arg("poisson_timing")=true,nb::arg("target_volume_per_event_m3")=0.,nb::arg("long_term_erosion_rate_mm_kyr")=0.,nb::arg("channel_threshold_pixels")=1000,nb::arg("size_model")="inverse_gamma",nb::arg("area_volume_preset")="larsen_soil_scar",nb::arg("min_pixels")=1,nb::arg("max_area_m2")=0.,nb::arg("anneal_time_yr")=0.,nb::arg("budget_tol")=.02,nb::arg("budget_max_iter")=50,nb::arg("seed")=1u,nb::arg("active_mask")=nullptr,R"doc(Run a reproducible, annealing-aware landslide time series.
+
+Provide exactly one budget: a fixed ``target_volume_per_event_m3`` or a
+``long_term_erosion_rate_mm_kyr`` over the eligible host area. The final DEM
+accumulates scars; the accompanying failure/depth rasters retain the latest
+event at every pixel and can feed the cosmogenic functions directly.
+
+Parameters
+----------
+dem : Raster
+    Depression-conditioned elevation raster.
+flow : FlowInfo
+    Same-grid D8 routing topology.
+start_time_yr, end_time_yr : float
+    Inclusive simulation time interval in years.
+mean_recurrence_yr : float
+    Mean separation of events in years.
+poisson_timing : bool
+    Draw exponential waiting times when True; otherwise use fixed recurrence.
+target_volume_per_event_m3, long_term_erosion_rate_mm_kyr : float
+    Provide exactly one event-budget mode.
+channel_threshold_pixels, size_model, area_volume_preset :
+    Native scar-placement and size-distribution controls.
+min_pixels, max_area_m2, anneal_time_yr :
+    Scar bounds and time before failed ground becomes eligible again.
+budget_tol, budget_max_iter, seed, active_mask :
+    Event-budget solver controls, reproducibility, and optional host mask.
+
+Returns
+-------
+LandslideSeriesResult
+    Final terrain and scar rasters, timing, volume/rate closure, and event
+    diagnostics.
 
 Authors
 -------
