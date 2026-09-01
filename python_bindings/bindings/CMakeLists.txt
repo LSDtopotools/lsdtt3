@@ -34,6 +34,7 @@ nanobind_add_module(_core
     sediment_routing.cpp
     landslides.cpp
     synthetic_workflows.cpp
+    tidal_workflows.cpp
 )
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
