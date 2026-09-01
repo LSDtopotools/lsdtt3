@@ -40,4 +40,5 @@ void bind_hillslope_transport(nb::module_&);
 void bind_landscape_model(nb::module_&);
 void bind_sediment_routing(nb::module_&);
 void bind_landslides(nb::module_&);
+void bind_synthetic_workflows(nb::module_&);
 } // namespace lsdtt3_python
