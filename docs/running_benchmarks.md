@@ -216,8 +216,11 @@ Two practical consequences:
 - **Cap `--threads` at your physical core count.** Including hyperthreads makes
   bandwidth-bound work several times slower, which reads as a scaling collapse
   but is just core sharing.
-- **`fill` and `breach` at 1.00× are correct, not broken.** Priority-flood and
-  grayscale reconstruction are inherently sequential algorithms.
+- **Flow routing and depression filling are not swept at all.** Filling,
+  breaching and flow-graph construction are ordered traversals with no
+  parallelism to measure, so they run once, at one thread, and are excluded
+  from the scaling table. `SUMMARY.md` lists which cases those are. Only the
+  surface metrics are genuinely parallel code, so only they are swept.
 
 The measured breakdown — which pass fails to scale and why, and a NUMA
 first-touch hypothesis for multi-socket machines — is in

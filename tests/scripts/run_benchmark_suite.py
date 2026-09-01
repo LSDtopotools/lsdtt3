@@ -182,6 +182,29 @@ MIN_TRUSTWORTHY_FACTOR = 3.0
 # the campaign length.
 SERIAL_REFERENCES = ("richdem", "topotoolbox")
 
+# Cases where lsdtt3's OWN implementation is inherently sequential too, so no
+# engine in the case has anything to gain from more threads.
+#
+# Depression filling (priority-flood and grayscale reconstruction alike),
+# least-cost breaching, and D8/D-inf/MFD graph construction are ordered
+# traversals: each step depends on the result of the one before it. The first
+# server campaign measured every one of them flat -- 0.92x to 1.09x across
+# 1/2/4 threads, i.e. noise about 1.00x -- which is the CORRECT answer for a
+# sequential algorithm, not a defect.
+#
+# Sweeping threads over them therefore measures nothing. It multiplies the
+# campaign length for those cases and, worse, fills the scaling table with flat
+# rows that invite a reader to conclude something is broken. They are measured
+# ONCE, at the baseline thread count, and flagged `sequential_case` in the CSV.
+#
+# Do NOT add a case here merely because its scaling looks poor. Poor scaling in
+# a genuinely parallel kernel is a finding worth keeping -- the surface metrics
+# are memory-bandwidth-bound and stay in the sweep for exactly that reason.
+# This list is only for algorithms with no parallelism to measure.
+SEQUENTIAL_CASES_NOTE = (
+    "marked per-case with `sequential: True`; see the comment above this line"
+)
+
 REFERENCE_SCRIPTS = {
     "richdem": "richdem_reference.py",
     "topotoolbox": "topotoolbox_reference.py",
@@ -223,6 +246,7 @@ CASES: dict[str, dict[str, Any]] = {
     # Matched, lsdtt3 is within 2% of TopoToolbox. The 2.9x was the algorithm
     # choice, not the implementation. See docs/testing_and_benchmarking.md.
     "fill": {
+        "sequential": True,
         "suite": "flow",
         "note": ("RECONSTRUCTION family: grayscale reconstruction by erosion "
                  "(Vincent 1993 hybrid -- raster scans + FIFO queue, O(N)). "
@@ -238,6 +262,7 @@ CASES: dict[str, dict[str, Any]] = {
                   "output": "_fill.tif"},
     },
     "fill_priority_flood": {
+        "sequential": True,
         "suite": "flow",
         "note": ("PRIORITY-FLOOD family: heap-based flood, O(N log N). "
                  "lsdtt3 barnes2014 vs TopoToolbox hybrid=False vs RichDEM "
@@ -250,7 +275,22 @@ CASES: dict[str, dict[str, Any]] = {
                              "fill_algorithm_choice": "barnes2014"},
                   "output": "_fill.tif"},
     },
+    "fill_epsilon": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("fill with a gradient imposed across flats. PRIORITY-FLOOD "
+                 "ONLY in every tool: reconstruction fills to exactly the "
+                 "spill level and has no mechanism for a gradient, so there "
+                 "is no reconstruction row to compare against here"),
+        "engines": {"richdem": "fill_epsilon", "whitebox": "fill_epsilon"},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_fill_raster": "true",
+                             "fill_min_slope": "0.0001",
+                             "fill_algorithm_choice": "barnes2014"},
+                  "output": "_fill.tif"},
+    },
     "breach": {
+        "sequential": True,
         "suite": "flow",
         "note": "least-cost breaching, Lindsay (2016)",
         "engines": {"richdem": "breach", "whitebox": "breach"},
@@ -260,6 +300,7 @@ CASES: dict[str, dict[str, Any]] = {
                   "output": "_breached.tif"},
     },
     "accum_d8": {
+        "sequential": True,
         "needs_filled": True,
         "suite": "flow",
         "note": ("D8 accumulation, O'Callaghan & Mark (1984). NOT fully "
@@ -282,6 +323,7 @@ CASES: dict[str, dict[str, Any]] = {
     # flow across multiple receivers is the interesting quantity, not whether
     # the three agree on the split.
     "accum_dinf": {
+        "sequential": True,
         "needs_filled": True,
         "suite": "mfd",
         "note": "D-infinity, Tarboton (1997); TIMING ONLY, rules differ",
@@ -293,6 +335,7 @@ CASES: dict[str, dict[str, Any]] = {
         "report_only": True,
     },
     "accum_mfd": {
+        "sequential": True,
         "needs_filled": True,
         "suite": "mfd",
         "note": "MFD: lsdtt3 Quinn (1991) vs Freeman FD8; TIMING ONLY",
@@ -426,6 +469,7 @@ CASES: dict[str, dict[str, Any]] = {
     # ratio necessarily flatters them. Recorded because the ABSOLUTE cost of
     # the hierarchy is a number users ask for.
     "fill_spill_merge": {
+        "sequential": True,
         "suite": "depression",
         "note": ("lsdtt3 builds a nested depression hierarchy (Barnes 2020) "
                  "then Fill-Spill-Merge (Barnes 2021); the references only "
@@ -445,6 +489,7 @@ CASES: dict[str, dict[str, Any]] = {
         "report_only": True,
     },
     "fill_wang_liu": {
+        "sequential": True,
         "suite": "depression",
         "note": "Wang & Liu (2006) fill lineage, a second fill implementation",
         "engines": {"whitebox": "depression_fill_wl"},
@@ -1541,7 +1586,8 @@ CSV_FIELDS = [
     "seconds_median", "seconds_best", "seconds_stdev", "seconds_all",
     "seconds_read", "seconds_write", "seconds_process", "timing_scope",
     "peak_rss_mb", "mcells_per_second",
-    "report_only", "serial_reference", "overhead_dominated",
+    "report_only", "serial_reference", "sequential_case",
+    "overhead_dominated",
     "status", "note",
 ]
 
@@ -1566,6 +1612,7 @@ def build_row(suite, case_name, engine, fixture_key, fixture_sha, n_cells,
         "threads": threads,
         "report_only": bool(case.get("report_only", False)),
         "serial_reference": engine in SERIAL_REFERENCES,
+        "sequential_case": bool(case.get("sequential", False)),
         "note": case.get("note", ""),
     })
 
@@ -1798,6 +1845,16 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append("")
     L.append("## Parallel scaling (lsdtt3 and whitebox)")
     L.append("")
+    seq_cases = sorted({r["case"] for r in rows
+                        if str(r.get("sequential_case")) == "True"})
+    if seq_cases:
+        L.append("Depression filling, breaching and flow-graph construction "
+                 "are inherently sequential -- ordered traversals where each "
+                 "step depends on the previous one. They are measured once, "
+                 "at one thread, and are **not** in this table: "
+                 f"`{'`, `'.join(seq_cases)}`. A flat curve for them would be "
+                 "the correct answer, not a finding, so the sweep is not run.")
+        L.append("")
     _scaling_table(L, ok)
 
     L.append("")
@@ -1900,7 +1957,11 @@ def _scaling_table(L: list[str], rows: list[dict]) -> None:
     well does this implementation use more cores", which is a separate question
     from "which is faster", and mixing them makes both unreadable.
     """
-    par = [r for r in rows if r["engine"] in ("lsdtt3", "whitebox")]
+    # Sequential cases are excluded: they were measured at one thread count by
+    # design, so a row for them here would either be empty or -- worse -- look
+    # like a flat scaling curve that had been tested and failed.
+    par = [r for r in rows if r["engine"] in ("lsdtt3", "whitebox")
+           and str(r.get("sequential_case")) != "True"]
     if not par:
         L.append("_No parallel-capable rows measured._")
         return
@@ -2121,12 +2182,16 @@ def main() -> int:
                       else len(profile["regions"]) * len(profile["ladder"]))
         for name, case in sorted(selected_cases.items()):
             engines = ["lsdtt3"] + sorted(case["engines"])
+            seq = bool(case.get("sequential"))
+            nt = 1 if seq else len(profile["threads"])
             per_engine = []
             for e in engines:
-                t = 1 if e in SERIAL_REFERENCES else len(profile["threads"])
+                t = 1 if e in SERIAL_REFERENCES else nt
                 per_engine.append(f"{e}x{t}")
                 n += t * n_fixtures
-            print(f"  {case['suite']:11s} {name:22s} {' '.join(per_engine)}")
+            tag = "  [sequential: no thread sweep]" if seq else ""
+            print(f"  {case['suite']:11s} {name:22s} "
+                  f"{' '.join(per_engine)}{tag}")
         print(f"\n{n} measurements, each "
               f"{profile['repeats']} repeats + 1 warm-up")
         return 0
@@ -2243,11 +2308,13 @@ def main() -> int:
     baseline_threads = min(profile["threads"])
     measurement_timeout = args.timeout_seconds if args.timeout_seconds > 0 else None
     n_threads = len(profile["threads"])
-    total = sum(
-        len(fixtures) * (n_threads + sum(1 if e in SERIAL_REFERENCES
-                                         else n_threads
-                                         for e in c["engines"]))
-        for c in selected_cases.values())
+    def _case_measurements(c):
+        nt = 1 if c.get("sequential") else n_threads
+        return nt + sum(1 if e in SERIAL_REFERENCES else nt
+                        for e in c["engines"])
+
+    total = sum(len(fixtures) * _case_measurements(c)
+                for c in selected_cases.values())
     done = 0
 
     for case_name, case in sorted(selected_cases.items(),
@@ -2277,7 +2344,13 @@ def main() -> int:
                     continue
                 in_path = filled
 
-            for threads in profile["threads"]:
+            # A sequential case has no parallelism in ANY engine, so the
+            # sweep is skipped entirely and it is measured once. See
+            # SEQUENTIAL_CASES_NOTE.
+            case_threads = ([baseline_threads] if case.get("sequential")
+                            else profile["threads"])
+
+            for threads in case_threads:
                 # lsdtt3
                 info = measure_lsdtt(case_name, case, in_path, work_dir,
                                      threads, profile["repeats"], build_dir,

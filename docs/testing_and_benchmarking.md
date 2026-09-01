@@ -1334,11 +1334,43 @@ Recorded so the experiment is not repeated. glibc's per-thread arenas already
 make these allocations cheap; the working-set size is what matters, not the
 allocation count.
 
+#### Sequential cases are no longer swept (changed 2026-09-01)
+
+Depression filling (both algorithm families), least-cost breaching, and
+D8/D-inf/MFD graph construction are **ordered traversals**: each step depends on
+the result of the one before it. There is no parallelism in them to measure, in
+lsdtt3 or in any of the references.
+
+Sweeping threads over them measured nothing. It multiplied the campaign length
+and — worse — filled the scaling table with flat rows that invite a reader to
+conclude something is broken. Nine cases are now marked `sequential` in the case
+registry and are **measured once, at the baseline thread count**:
+
+`fill`, `fill_priority_flood`, `fill_epsilon`, `breach`, `accum_d8`,
+`accum_dinf`, `accum_mfd`, `fill_spill_merge`, `fill_wang_liu`
+
+They carry `sequential_case = True` in the CSV, are excluded from the scaling
+table, and `SUMMARY.md` states why in that section. This cut the `laptop`
+profile from 308 measurements to 200 with no loss of information.
+
+The surface-metric cases stay in the sweep. They are genuinely parallel code, so
+their poor scaling is a defect worth tracking rather than an expected result —
+see `docs/plan_docs/plan_surface_metrics_parallelisation.md`.
+
+!!! warning "Do not add a case to `SEQUENTIAL_CASES` because its scaling is poor"
+    The flag means "this algorithm has no parallelism to measure", not "this
+    scales badly". Marking a genuinely parallel kernel sequential would hide
+    exactly the finding the benchmark exists to surface.
+
+Whether these algorithms *could* be parallelised bit-identically is a separate
+question, researched in
+`docs/plan_docs/research_parallel_flow_routing.md`.
+
 #### Consequences for reading and running the benchmark
 
-- **`fill` and `breach` at 1.00× are not defects.** Priority-flood and
-  grayscale reconstruction are inherently sequential. A flat scaling curve is
-  the correct result there, not a finding.
+- **`fill` and `breach` are no longer swept at all**, for the reason above.
+  Before 2026-09-01 they appeared in the scaling table at ~1.00×, which was the
+  correct result rather than a finding.
 - **Do not sweep hyperthreads.** On a bandwidth-bound kernel they cost 4× on
   the development machine. Cap `--threads` at the physical core count;
   `--cpus-per-task` should match, and the Slurm wrapper's `--exclusive` matters
