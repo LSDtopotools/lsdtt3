@@ -1056,6 +1056,409 @@ flagged `overhead_dominated` if it is within 3x of it. The `laptop` profile
 proves the pipeline works; the `server` profile, with the large fixtures,
 produces the numbers.
 
+### Two like-for-like failures found on the first server campaign (2026-08-31)
+
+The first `laptop`-profile campaign on forth03 reported lsdtt3 **slower than
+TopoToolbox on every single-core comparison** — 20 of 20, with fill 2.9× behind.
+Investigating against the TopoToolbox source showed **both headline losses were
+the benchmark comparing unlike things**, not lsdtt3 being slow. Recorded here
+because the corrected cases are only meaningful alongside what they replaced.
+
+#### 1. `fill` compared two different algorithms
+
+Both tools implement both algorithm families, and both default to a *different*
+one:
+
+| | reconstruction (O(N), FIFO queue) | priority-flood (O(N log N), heap) |
+|---|---|---|
+| lsdtt3 | `vincent1993` | `barnes2014` ← **CLI default** |
+| TopoToolbox | `hybrid=True` ← **default** | `hybrid=False` |
+
+The suite used both defaults, so it ran lsdtt3's heap against TopoToolbox's
+reconstruction. On alpine_1000 at `fill_min_slope: 0`, output **bit-identical**
+(0 differing cells of 1,000,000):
+
+| | compute | throughput |
+|---|---|---|
+| lsdtt3 `barnes2014` | 0.1282 s | 7.80 Mcells/s |
+| lsdtt3 `vincent1993` | 0.0446 s | **22.42 Mcells/s** |
+| TopoToolbox `hybrid=True` | — | 22.84 Mcells/s |
+
+**Matched, lsdtt3 is within 2% of TopoToolbox.** The reported 2.9× gap was
+entirely the algorithm choice.
+
+**Fix:** the `fill` case now pins `fill_algorithm_choice: vincent1993` against
+`hybrid=True`, and a new `fill_priority_flood` case pins `barnes2014` against
+`hybrid=False` and RichDEM (Zhou 2016). `topotoolbox_reference.py` gained a
+`fill_priority_flood` routine to expose the non-hybrid path. Both families are
+now measured; neither is compared across.
+
+`fill_epsilon` has no reconstruction row, and cannot: reconstruction fills to
+exactly the spill level and has no mechanism for a gradient across flats.
+
+#### 2. `accum_d8` charges lsdtt3 for the S-vector
+
+lsdtt3's D8 build produces an S-vector the references do not build. Measured on
+a 1000² filled tile, single-threaded:
+
+| configuration | build |
+|---|---|
+| all on (what the CLIs request) | 186.4 ms |
+| without the acyclicity check | 190.0 ms (free) |
+| without the topological order | 178.3 ms |
+| **without the S-vector** | **80.1 ms** |
+| receivers only | 52.4 ms |
+
+The S-vector is **~106 ms of the 186 ms**. `get_drainage_area_raster()` then
+just reads its precomputed subtree sizes, which is why the accumulation phase
+measures 1.4 ms — the work was already done. Accumulating over the topological
+order gives the identical raster (0 differing cells of 1,000,000) for
+0.1341 s against 0.1951 s, **1.45× faster**.
+
+**This is deliberately NOT changed**, and the CLI keeps building the S-vector.
+It is what makes `is_upslope_of` an O(1) interval test, and chi analysis, basin
+summaries, source finding and the cosmogenic routines all depend on it. See
+`docs/flow_routing.md`.
+
+**Fix:** the `accum_d8` case note now states that lsdtt3 performs work the
+references do not, and quantifies it. The asymmetry is recorded rather than
+engineered away — but do not quote that row as a like-for-like accumulation
+comparison.
+
+### Surface metrics: what the shared fit costs and when it pays
+
+lsdtt3 fits one 6-coefficient quadratic and derives every metric from it;
+TopoToolbox and Whitebox recompute their derivatives per metric. The suite runs
+`polyfit_method: direct` throughout. Measured on alpine_1000:
+
+| phase | time |
+|---|---|
+| shared `direct` fit | **82.5 ms** |
+| + slope | 28.0 ms |
+| + aspect_degrees | 44.3 ms |
+| + profile_curvature | 22.3 ms |
+| + plan_curvature | 20.4 ms |
+
+The fit is ~40–55% of the total at four metrics and is paid **once**, so
+lsdtt3's position improves with every metric added. End to end on one machine:
+
+| metrics | lsdtt3 | if each were computed independently |
+|---|---|---|
+| 1 (`slope_only`) | 93.7 ms | 93.7 ms |
+| 4 (`polyfit_all`) | ~199 ms | ~375 ms |
+| 8 (`polyfit_many`) | 275.5 ms | ~749 ms |
+
+lsdtt3 exposes ~25 metrics from the same fit.
+
+#### Marginal cost, and where lsdtt3 becomes cheaper
+
+Measured as a series rather than extrapolated from two points, **curvatures
+only** on alpine_1000, single-threaded, best of 3–4. Matching the metric family
+matters — mixing slope and aspect in distorts both sides (see the correction
+below).
+
+| | fixed | per metric |
+|---|---|---|
+| **lsdtt3** | 50.6 ms (the quadratic fit) | **24.3 ms** |
+| **TopoToolbox** | 8.0 ms | **50.2 ms** (5 convolutions each) |
+
+TopoToolbox's marginal cost is **2.1×** lsdtt3's, and it carries almost no fixed
+cost because it has no shared fit to amortise.
+
+| N curvatures | lsdtt3 | TopoToolbox | winner |
+|---|---|---|---|
+| 1 | 79.5 ms | 62.4 ms | TopoToolbox |
+| **2** | **98.6 ms** | **102.7 ms** | **lsdtt3** |
+| 3 | 117.2 ms | 157.0 ms | lsdtt3 |
+| 4 | 151.6 ms | 211.6 ms | lsdtt3 |
+| 5 | 162.2 ms | [258.8 ms] | lsdtt3 |
+| 6 | 204.5 ms | [309.0 ms] | lsdtt3 |
+
+`[]` extrapolated; TopoToolbox exposes only four curvature types. Crossover is
+at **N = 1.65**, so **lsdtt3 is cheaper from two metrics onward** — and N = 2, 3
+and 4 are directly measured rather than fitted. By four metrics lsdtt3 is 1.4×
+ahead, and the gap widens linearly.
+
+!!! warning "Correction: an earlier estimate of ~6 metrics was wrong"
+    This document previously put the crossover at "roughly six metrics onward",
+    from a two-point extrapolation over a MIXED metric set (slope + aspect + 2
+    curvatures). Mixing families distorts both sides: TopoToolbox's
+    `evansslope` is 2 convolutions rather than 5 — and much of its 68 ms is a
+    `distance_transform_edt` NaN infill that lsdtt3 does not perform — while
+    `aspect_degrees` is lsdtt3's *dearest* derivation at 44 ms, roughly double
+    its other metrics. Compare curvature against curvature.
+
+**The crossover depends on which metrics you want.** Two is the figure for
+curvatures. An aspect-heavy set moves it right, because aspect is lsdtt3's most
+expensive per-metric operation. Quote the metric family alongside the number.
+
+**Three reasons the surface rows are `report_only`:**
+
+1. **`slope_only` is lsdtt3's worst case by construction.** It pays the full
+   quadratic fit to produce one number, where TopoToolbox runs 2 convolutions.
+   Reported because it is the honest counterweight to `polyfit_all`; quoting
+   only the favourable case would be cherry-picking.
+2. **The metric sets differ.** `polyfit_all` yields slope + aspect + 2
+   curvatures; TopoToolbox's `curvature_all4` yields 4 curvatures. Not the same
+   products.
+3. **`polyfit_many` has no counterpart at all** — no reference exposes an
+   eight-metric call. It is an lsdtt3-only row, included to show the fit
+   amortising, not to score a comparison.
+
+!!! warning "Correction: window size is free, contrary to an earlier claim"
+    This document previously stated that lsdtt3's default
+    `polyfit_lambda_metres: 70` is a wider window than the references' fixed
+    3×3, so lsdtt3 does more work per cell and its surface numbers are
+    "conservative". **That is wrong.** The `direct` method is a separable
+    rolling-moment fit whose cost is independent of window size — measured flat
+    from lambda 35 m to 280 m (0.0191 s to 0.0193 s on 1000², a 729× range of
+    window cells). Lambda does not tilt the comparison in either direction.
+
+### Historical: why the original parallel scaling was poor (2026-08-31)
+
+!!! warning "Historical implementation"
+    This section describes the original two-pass `direct_polyfit`. On
+    2026-09-01 the prefix storage was bounded and the passes were fused over row
+    strips. The full-raster `H0/H1/H2/Hn` arrays and full-height prefix buffers
+    discussed below no longer exist. Keep these measurements as provenance, but
+    do not use them to diagnose the current fused loop. The current diagnosis
+    and next measurements follow this historical section.
+
+The first server campaign showed **every lsdtt3 scaling row at or below
+1.00×** — adding threads made lsdtt3 slower on every operation, on a 192-core
+machine. Worst cases were `slope_only` and `polyfit_all` at 0.64–0.67× on two
+threads. This section records what that turned out to be, because the shape is
+easy to misread as a threading bug and it is not one.
+
+#### First establish what the machine can do
+
+Do not interpret a scaling curve without a ceiling to compare it against. Two
+OpenMP kernels at the same working-set size (1M doubles), on the development
+machine — an i5-1145G7, **4 physical cores, 8 threads**:
+
+| kernel | 1t | 2t | 4t | 8t |
+|---|---|---|---|---|
+| compute-bound (60 `sqrt` per element) | 1.00× | **1.83×** | **3.09×** | 2.96× |
+| memory-bound (streaming triad, ~24 MB) | 1.00× | **1.03×** | **1.14×** | **0.27×** |
+
+The machine parallelises compute fine. A bandwidth-bound kernel gets nothing —
+and at 8 threads it is **4× WORSE than serial**, because hyperthreads sharing a
+core's load/store ports simply contend.
+
+`direct_polyfit` measures 1.17× at 2t and degrades after. That places it
+squarely in the memory-bound band. **The OpenMP is correct**: the pragmas,
+`num_threads` clauses and `resolve_thread_count` all do what they should. The
+kernel is not compute-limited, so there is nothing for extra threads to win.
+
+#### Which pass, and why
+
+Instrumenting the two passes of `direct_polyfit`, alpine_1000, best of 3:
+
+| pass | 1t | 2t | 4t | speedup |
+|---|---|---|---|---|
+| 1 — horizontal rolling sums (parallel over rows) | 0.0154 s | 0.0112 s | 0.0122 s | 1.37× → 1.26× |
+| **2 — vertical prefix + solve (parallel over column blocks)** | **0.0264 s** | **0.0269 s** | **0.0286 s** | **0.98× → 0.92×** |
+
+**Pass 2 is 63% of the fit and has negative speedup.** Pass 1 at least gains at
+two threads.
+
+The cause is pass 2's per-thread working set. Each 8-column block allocates
+seven full-height prefix arrays:
+
+```cpp
+const std::size_t np = (nrows + 1) * BLK;
+std::vector<double> ph0(np), ph0r(np), ph0r2(np), ph1(np), ph1r(np), ph2(np), phn(np);
+```
+
+7 × (nrows+1) × BLK doubles **per thread**, growing with the raster:
+
+| nrows | per-thread buffers |
+|---|---|
+| 1000 | 438 KB |
+| 2000 | 875 KB |
+| 4000 | 1.7 MB |
+| **8000** | **3.4 MB** |
+
+against 1280 KB of L2 per core and 8 MB of shared L3. The 438 KB buffer at
+1000² fits L2; it exceeds 1280 KB only above about 2900 rows. At the server
+profile's 8000² rung, N threads need 3.4N MB and
+thrash L3 collectively. **More threads make it worse, which is the observed
+shape.** It also means the scaling gets worse as the DEM gets bigger — the
+opposite of the usual expectation, and a trap when reading the ladder.
+
+The arrays are only ever consumed as a difference of two rows:
+
+```cpp
+const double raw_S_z = ph0[pb + j] - ph0[pa + j];
+```
+
+So a full-height prefix array was materialised to compute a sliding vertical
+window. A naive rolling sum would use **O(BLK) scalars**, but it changes
+floating-point addition order and is not bit-identical. The landed replacement
+instead retains the prefix recurrence in bounded strip storage and carries its
+exact accumulator between strips.
+
+#### Historical NUMA hypothesis for the server result (0.64× vs 1.17×)
+
+Untested — forth03 was not available for instrumented runs — but the likely
+additional factor is **NUMA first-touch**. `H0`, `H1`, `H2` and `Hn` (~28 MB at
+1000²) are allocated and zero-filled by the master thread *before* the parallel
+region:
+
+```cpp
+std::vector<double> H0(npix, 0.0);
+```
+
+Linux binds those pages to the master thread's NUMA node. On a 192-core box —
+certainly multi-socket — threads on other sockets then read across the
+interconnect on every access. For a bandwidth-bound kernel that turns added
+threads into a net loss, which fits 0.64× better than a single-socket 1.17×.
+
+Testable on the server with no code change:
+
+```sh
+numactl --hardware                                   # confirm multi-socket
+numactl --cpunodebind=0 --membind=0 <the 2-thread run>
+```
+
+If pinning to one node recovered the scaling, it would identify NUMA as a
+factor. The full-raster `H` arrays have since been removed. The six output
+coefficient rasters remain possible first-touch candidates, but only after an
+exclusive server run confirms that NUMA still matters.
+
+#### A hypothesis that was tested and REJECTED
+
+Pass 2 constructs 875 `std::vector<double>` per call (7 per block × 125
+blocks), ~56 MB of allocation and zeroing, all inside the parallel loop body.
+Allocator contention across threads looked like an obvious culprit.
+
+**It is not.** Hoisting the buffers to thread-private — allocated once per
+thread instead of once per block — produced **identical timings**:
+
+| | 1t | 2t | 4t | 8t |
+|---|---|---|---|---|
+| original (per-block allocation) | 0.0588 s | 0.0504 s | 0.0530 s | 0.0600 s |
+| hoisted (per-thread allocation) | 0.0587 s | 0.0523 s | 0.0534 s | 0.0594 s |
+
+Recorded so the experiment is not repeated. glibc's per-thread arenas already
+make these allocations cheap; the working-set size is what matters, not the
+allocation count.
+
+#### Current fused-loop result and leading candidates (2026-09-01)
+
+The bounded-prefix and fused-strip changes were bit-identical on all 324
+reference rasters. They made `direct_polyfit` 20-73% faster and reduced peak
+memory by 13-25%, but did not produce useful thread scaling: one and four
+threads remain within a few percent. The old pass profile above cannot explain
+the current result because those passes and working sets changed.
+
+The leading current candidate was the shared, full-width `H` strip. Its size is
+`(RSTRIP + 2W + 1) * ncols * 28` bytes. With the original fused-loop
+`RSTRIP=256` and `W=1` it occupied
+7.25 MB at 1000 columns and 29.0 MB at 4000 columns, against 8 MB shared L3 on
+the development machine. Pass 1 writes the complete strip before pass 2 reads
+it, so wide rasters can still evict `H` and recreate substantial DRAM traffic.
+Pass 1 distributes rows while pass 2 distributes column blocks, so the thread
+that produced a cache line generally is not the thread that consumes it;
+private L2 residency does not carry cleanly between the phases.
+
+Initial follow-up measurements confirmed that this working set mattered.
+Changing `RSTRIP` from 256 to 64 improved best complete profiled time by 18-36%
+at 1000² and 16-26% at 4000² across one and four threads. Generated outputs were
+byte-identical at 1/2/4 threads and the five surface-metric tests passed.
+`RSTRIP=64` is now provisional pending the full 324-raster exact-comparison
+matrix; see the plan's §9.5f for the measurements and validation caveat.
+
+The following serial-memory step removed the redundant `H` zero-fill, initialized
+the independent output arrays concurrently, and copied the five required masks
+concurrently. On seven unprofiled generated-raster runs, the resulting whole-fit
+curve reached 1.79x at 1000² and 2.20x at 4000² on four threads. Outputs were
+byte-identical to the `RSTRIP=256` baseline at 1/2/4 threads and all five
+surface-metric tests passed. This remains provisional until the full 324-raster
+matrix and uninitialized-memory checks are available.
+
+Explicit OpenMP SIMD across the block-column loops was subsequently tested and
+rejected. GCC 11 vectorized carry seeding, prefix construction and carry storage,
+but not the nodata-guarded solve. After discarding a batch taken while the laptop
+was in power-saving mode, nine scalar/SIMD pairs were run interleaved. Results
+were inconsistent, and the important 4000² four-thread case regressed by 14%
+on best time and 4% on median. Outputs remained byte-identical, but the SIMD
+directives were removed under the no-regression rule. Do not repeat the same
+directive-only experiment.
+
+Before the serial-memory step, the whole-function fit timer included six serial
+coefficient fills, one mask fill and five serial mask copies outside OpenMP:
+approximately 30 bytes per pixel. The implementation described above now runs
+those independent fills and copies concurrently when multiple threads are
+requested; the allocations themselves remain serial so failures propagate
+normally.
+
+GCC 11 with the project's Release flags also leaves the inner prefix-build and
+solve loops scalar. The prefix recurrence is serial down each column, but
+columns and blocks are independent; at width 1000 there are about 125 blocks,
+so the recurrence does not inherently serialize the OpenMP workers. Shared
+cache pressure, scalar per-core execution and the timed serial fraction are
+stronger candidates than a shortage of parallel blocks.
+
+Current investigation order:
+
+1. Repeat representative cases with `OMP_PLACES=cores` and
+   `OMP_PROC_BIND=close|spread` to exclude WSL2 migration and sibling placement.
+2. Complete `BLK` tuning around the provisional `RSTRIP=64`.
+3. Check load balance on asymmetric nodata rasters.
+4. Test padded carry storage last. Static scheduling limits cross-thread carry
+   sharing to partition boundaries, and carries are written only once per strip.
+
+The detailed implementation and validation steps are in
+`docs/plan_docs/plan_surface_metrics_parallelisation.md`, §9.5 and §10.
+
+#### Sequential cases are no longer swept (changed 2026-09-01)
+
+Depression filling (both algorithm families), least-cost breaching, and
+D8/D-inf/MFD graph construction are **ordered traversals**: each step depends on
+the result of the one before it. There is no parallelism in them to measure, in
+lsdtt3 or in any of the references.
+
+Sweeping threads over them measured nothing. It multiplied the campaign length
+and — worse — filled the scaling table with flat rows that invite a reader to
+conclude something is broken. Nine cases are now marked `sequential` in the case
+registry and are **measured once, at the baseline thread count**:
+
+`fill`, `fill_priority_flood`, `fill_epsilon`, `breach`, `accum_d8`,
+`accum_dinf`, `accum_mfd`, `fill_spill_merge`, `fill_wang_liu`
+
+They carry `sequential_case = True` in the CSV, are excluded from the scaling
+table, and `SUMMARY.md` states why in that section. This cut the `laptop`
+profile from 308 measurements to 200 with no loss of information.
+
+The surface-metric cases stay in the sweep. They are genuinely parallel code, so
+their poor scaling is a defect worth tracking rather than an expected result —
+see `docs/plan_docs/plan_surface_metrics_parallelisation.md`.
+
+!!! warning "Do not add a case to `SEQUENTIAL_CASES` because its scaling is poor"
+    The flag means "this algorithm has no parallelism to measure", not "this
+    scales badly". Marking a genuinely parallel kernel sequential would hide
+    exactly the finding the benchmark exists to surface.
+
+Whether these algorithms *could* be parallelised bit-identically is a separate
+question, researched in
+`docs/plan_docs/research_parallel_flow_routing.md`.
+
+#### Consequences for reading and running the benchmark
+
+- **`fill` and `breach` are no longer swept at all**, for the reason above.
+  Before 2026-09-01 they appeared in the scaling table at ~1.00×, which was the
+  correct result rather than a finding.
+- **Do not sweep hyperthreads.** On a bandwidth-bound kernel they cost 4× on
+  the development machine. Cap `--threads` at the physical core count;
+  `--cpus-per-task` should match, and the Slurm wrapper's `--exclusive` matters
+  more here than for a compute-bound benchmark, because a co-tenant competes
+  for the same memory bandwidth.
+- **Scaling curves need the ceiling stated alongside them.** An lsdtt3 curve of
+  1.17× means something quite different on a machine that can do 3.09× than on
+  one that can do 1.14×. Re-run the two-kernel ceiling test on any machine
+  whose scaling numbers are going to be quoted.
+
 ### What is compared, and what must never be
 
 | Suite | Cases | Status |
@@ -1071,10 +1474,9 @@ Two of these deserve their reasoning stated wherever they are quoted:
 quadratic and derives every metric from it; TopoToolbox and Whitebox recompute
 their derivatives per metric. `polyfit_all` is therefore where lsdtt3's design
 pays, and `slope_only` is where it does not -- lsdtt3 pays for a full fit to
-produce a single number. Quoting only the first would be cherry-picking. Note
-also that lsdtt3's default `polyfit_lambda_metres` of 70 m is a **wider window**
-than the references' fixed 3×3, so lsdtt3 is doing more work per cell and its
-surface numbers are conservative.
+produce a single number. Quoting only the first would be cherry-picking. Note that the
+window size does NOT tilt this: the `direct` fit's cost is independent of
+`polyfit_lambda_metres` (measured flat over a 729× range of window cells).
 
 `fill_spill_merge` compares lsdtt3's nested depression hierarchy (Barnes 2020)
 plus Fill-Spill-Merge (Barnes 2021) against the cheapest thing the other tools

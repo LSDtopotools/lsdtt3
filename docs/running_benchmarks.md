@@ -211,11 +211,33 @@ RichDEM in particular carries ~10 ms of fixed cost per call, from a per-call
 array construction plus the citation block it prints on every invocation. On a
 small DEM that is most of what you measure. The summary states the figure.
 
-### 4. Scaling curves need the big DEMs
+### 4. Scaling curves need a ceiling, and the big DEMs
 
-The `laptop` profile's speedups sit between about 0.8× and 1.4× — that is noise,
-not a scaling result. There is not enough work in a 500² grid to amortise
-thread setup. Use the `server` profile for anything about parallel scaling.
+The `laptop` profile's speedups sit between about 0.8× and 1.4×. There is not
+enough work in a 500² grid to amortise thread setup, so use the `server`
+profile for anything about parallel scaling.
+
+More importantly, **a scaling number means nothing without knowing what the
+machine can do**. lsdtt3's surface-metric kernels are memory-bandwidth-bound,
+not compute-bound, so they scale like a streaming kernel rather than like an
+arithmetic one. On the development machine a compute-bound loop reached 3.09×
+on 4 threads while a streaming loop managed only 1.14× — and 0.27× on 8, where
+hyperthreads contend for the same load/store ports.
+
+Two practical consequences:
+
+- **Cap `--threads` at your physical core count.** Including hyperthreads makes
+  bandwidth-bound work several times slower, which reads as a scaling collapse
+  but is just core sharing.
+- **Flow routing and depression filling are not swept at all.** Filling,
+  breaching and flow-graph construction are ordered traversals with no
+  parallelism to measure, so they run once, at one thread, and are excluded
+  from the scaling table. `SUMMARY.md` lists which cases those are. Only the
+  surface metrics are genuinely parallel code, so only they are swept.
+
+The measured breakdown — which pass fails to scale and why, and a NUMA
+first-touch hypothesis for multi-socket machines — is in
+[Testing and benchmarking](testing_and_benchmarking.md).
 
 ---
 

@@ -324,6 +324,66 @@ operation.
 
 ---
 
+## Depression filling: two algorithms, one result
+
+`lsdtt3` ships two depression-filling backends. They produce **bit-identical**
+output at `fill_min_slope: 0` and differ only in cost.
+
+| `fill_algorithm_choice` | algorithm | complexity | memory access |
+|---|---|---|---|
+| `barnes2014` (CLI default) | Improved Priority-Flood (Barnes et al. 2014) | O(N log N) — nearly every cell through a binary heap | heap-ordered, cache-hostile |
+| `vincent1993` | grayscale reconstruction by erosion (Vincent 1993), hybrid form: forward scan, backward scan, then a FIFO queue for the residue | O(N), small constant | almost entirely sequential |
+
+Measured on a 1000×1000 Copernicus tile (Himalaya), `fill_min_slope: 0`:
+
+| backend | compute | throughput |
+|---|---|---|
+| `barnes2014` | 0.1282 s | 7.80 Mcells/s |
+| `vincent1993` | 0.0446 s | **22.42 Mcells/s** |
+
+**2.87× faster, 0 differing cells out of 1,000,000.**
+
+### Which to use
+
+- **`fill_min_slope: 0`** → `vincent1993`. Same surface, ~3× faster.
+- **`fill_min_slope > 0`** → `barnes2014`, and there is no choice.
+  Reconstruction fills to exactly the spill level and has no mechanism for
+  imposing a gradient across the resulting flats. Priority-flood applies the
+  increment inline as it floods.
+- **Periodic boundaries** → `barnes2014`. The reconstruction fast path has its
+  own neighbour walk and does not wrap.
+
+Note that lsdtt3's D8 router **requires** a gradient on flats — it throws
+`could not assign a receiver` on a truly flat surface — so a `vincent1993` fill
+is an endpoint (or an input to something other than D8 routing), not a
+precursor to routing. That is why `fill_min_slope` defaults to `1e-4`.
+
+!!! note "The library dispatches; the CLI does not"
+    `fill_pits()` selects the backend automatically from `min_slope`
+    (`<= 0` → reconstruction). `lsdtt-raster-preprocessing` instead dispatches
+    on `fill_algorithm_choice`, which defaults to `barnes2014`, so a CLI run
+    with `fill_min_slope: 0` pays the heap cost unless you ask for
+    `vincent1993` explicitly.
+
+### This is also what TopoToolbox does
+
+TopoToolbox's `fillsinks()` takes a `hybrid` flag defaulting to **`True`** —
+the same reconstruction algorithm as `vincent1993`. Measured on the same tile:
+
+| | reconstruction | priority-flood | ratio |
+|---|---|---|---|
+| lsdtt3 | 0.0446 s | 0.1282 s | 2.87× |
+| TopoToolbox | 0.0541 s | 0.1067 s | 1.97× |
+
+Both tools show the same ordering, and matched algorithm against algorithm the
+two implementations are close. **Comparing across families is the mistake to
+avoid** — an early version of the benchmark suite ran lsdtt3's default (heap)
+against TopoToolbox's default (reconstruction) and reported lsdtt3 2.9× slower,
+which measured the choice of algorithm rather than the quality of either
+implementation. See `docs/testing_and_benchmarking.md`.
+
+---
+
 ## s_vector rationale (D8 only)
 
 `s_vector` is the key D8 indexing feature in `lsdtt3`:
@@ -339,6 +399,43 @@ Why this matters:
 - Repeated upslope queries (chi, basin summaries, thresholded source finding,
   many cosmogenic operations) avoid repeated graph searches.
 - Memory is paid once at build time; query-time cost is predictable.
+
+### What it costs at build time
+
+The S-vector is not free, and it is worth knowing how much of a D8 build it
+accounts for. Measured on a 1000×1000 filled tile, single-threaded, by toggling
+each `lsdtt_flowinfo_options` flag:
+
+| configuration | build time |
+|---|---|
+| all on (what the CLIs request) | 186.4 ms |
+| without the acyclicity check | 190.0 ms (free) |
+| without the topological order | 178.3 ms |
+| **without the S-vector** | **80.1 ms** |
+| receivers only | 52.4 ms |
+
+**The S-vector is ~106 ms of the 186 ms — more than everything else combined.**
+
+Because `get_drainage_area_raster()` reads the precomputed `s_vector_size`
+intervals, the drainage-area call itself then costs ~1.4 ms: the accumulation
+work was already paid for during the build. Accumulating over the topological
+order instead gives the identical raster (0 differing cells of 1,000,000) with
+a cheaper total:
+
+| route | build | accumulate | total |
+|---|---|---|---|
+| `s_vector` subtree sizes | 0.1934 s | 0.0016 s | 0.1951 s |
+| topological order + `accumulate()` | 0.0941 s | 0.0400 s | **0.1341 s** |
+
+**This is deliberately not changed.** If drainage area were the only product,
+the second route would be 1.45× faster — but the S-vector is what makes
+`is_upslope_of` an O(1) interval test, and chi analysis, basin summaries,
+source finding and the cosmogenic routines all depend on it. Building it once
+during routing is cheaper than reconstructing upslope sets on demand later.
+
+The consequence for benchmarking is that lsdtt3's D8 accumulation timing
+includes work no other tool performs. That asymmetry is recorded in the
+benchmark case notes rather than engineered away.
 
 For D-infinity/MFD, upslope sets overlap fractionally, so an equivalent
 contiguous interval index is not available in the same form.
