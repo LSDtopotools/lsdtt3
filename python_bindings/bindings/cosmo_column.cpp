@@ -10,6 +10,7 @@
 
 #include <cpu/lsdtt_crn_column.hpp>
 #include <cpu/lsdtt_crn_diagnostics.hpp>
+#include <cpu/lsdtt_cosmo_raster_cpu.hpp>
 
 #include "binding_common.hpp"
 
@@ -80,9 +81,45 @@ public:
                                      initial_26Al, initial_14C);
     }
 
+    const lsdtt::lsdtt_crn_column& native() const noexcept { return column_; }
+
 private:
     lsdtt::lsdtt_crn_column column_;
 };
+
+void require_same_grid(const Raster& a, const Raster& b, const char* name)
+{
+    const auto& am = a.native().get_meta();
+    const auto& bm = b.native().get_meta();
+    if (am.n_rows != bm.n_rows || am.n_cols != bm.n_cols ||
+        am.x_min != bm.x_min || am.y_min != bm.y_min ||
+        am.cell_size != bm.cell_size || am.crs_wkt != bm.crs_wkt)
+        throw std::invalid_argument(std::string(name) + " must share the production-scaling grid");
+}
+
+nb::object crn_transient_history(const CRNColumn& column, const Raster& production_scaling,
+                                 const Raster* topographic_shielding,
+                                 double sampling_depth_m, const std::string& muon_scheme)
+{
+    if (sampling_depth_m < 0.0)
+        throw std::invalid_argument("sampling_depth_m must be non-negative");
+    lsdtt::lsdtt_raster_cpu unity;
+    const lsdtt::lsdtt_raster_cpu* shielding = nullptr;
+    if (topographic_shielding) {
+        require_same_grid(production_scaling, *topographic_shielding, "topographic_shielding");
+        shielding = &topographic_shielding->native();
+    } else {
+        unity = lsdtt::make_uniform_raster(production_scaling.native(), 1.0f, lsdtt::MaskedFill::NoData);
+        shielding = &unity;
+    }
+    auto result = lsdtt::calculate_crn_concentration_raster_transient_multi(
+        muon_scheme, column.native(), production_scaling.native(), *shielding, sampling_depth_m);
+    nb::dict output;
+    output["be10"] = Raster(std::move(result.Be10));
+    output["al26"] = Raster(std::move(result.Al26));
+    output["c14"] = Raster(std::move(result.C14));
+    return output;
+}
 
 } // namespace
 
@@ -181,6 +218,37 @@ are effective rates in g/cm²/yr.
           nb::arg("effective_erosion_rate_old_g_cm2_yr"),
           nb::arg("total_scaling") = 1.0, nb::arg("muon_scheme") = "BraucherBorchers",
           R"doc(Invert a two-nuclide step-change pair for new erosion rate and timing.)doc");
+
+    m.def("crn_transient_history", &crn_transient_history,
+          nb::arg("column"), nb::arg("production_scaling"),
+          nb::arg("topographic_shielding") = nullptr, nb::arg("sampling_depth_m") = 0.0,
+          nb::arg("muon_scheme") = "BraucherBorchers", R"doc(
+Predict Be-10, Al-26, and C-14 raster concentrations for an arbitrary erosion history.
+
+Parameters
+----------
+column : CRNColumn
+    Column with a validated present-to-past erosion/removal history.
+production_scaling : Raster
+    Per-pixel production-scaling factor.
+topographic_shielding : Raster, optional
+    Same-grid shielding factor. Unity is used when omitted.
+sampling_depth_m : float, optional
+    Depth below the present surface at which to predict concentration.
+
+Returns
+-------
+dict[str, Raster]
+    ``be10``, ``al26``, and ``c14`` concentration rasters in atoms g⁻¹.
+
+Notes
+-----
+The calculation is O(number of valid pixels × history rows).
+
+Authors
+-------
+B. Gailleton
+)doc");
 }
 
 } // namespace lsdtt3_python

@@ -9,6 +9,7 @@
 #include <nanobind/stl/string.h>
 
 #include <cpu/lsdtt_internal_drainage_cpu.hpp>
+#include <cpu/lsdtt_depression_hierarchy_cpu.hpp>
 
 #include "binding_common.hpp"
 
@@ -98,6 +99,72 @@ struct InternalDrainageResult {
     int n_candidates = 0;
 };
 
+class DepressionHierarchyResult {
+public:
+    DepressionHierarchyResult(lsdtt::lsdtt_raster_cpu labels,
+                              lsdtt::lsdtt_raster_cpu flow_direction,
+                              nb::object nodes)
+        : labels_(std::move(labels)), flow_direction_(std::move(flow_direction)),
+          nodes_(std::move(nodes)) {}
+    Raster labels() const { return Raster(labels_); }
+    Raster flow_direction() const { return Raster(flow_direction_); }
+    nb::object nodes() const { return nodes_; }
+    int n_nodes() const { return nb::cast<int>(nodes_.attr("shape")[0]); }
+private:
+    lsdtt::lsdtt_raster_cpu labels_, flow_direction_;
+    nb::object nodes_;
+};
+
+DepressionHierarchyResult depression_hierarchy(const Raster& dem,
+                                               const std::string& boundary_conditions,
+                                               bool ocean_from_boundary,
+                                               bool nodata_is_ocean,
+                                               nb::object ocean_level)
+{
+    if (boundary_conditions.size() != 4)
+        throw std::invalid_argument("boundary_conditions must contain four NESW codes");
+    lsdtt::depression_hierarchy_options options;
+    options.boundary_conditions = boundary_conditions;
+    options.ocean_from_boundary = ocean_from_boundary;
+    options.nodata_is_ocean = nodata_is_ocean;
+    if (!ocean_level.is_none()) options.ocean_level = nb::cast<float>(ocean_level);
+
+    std::vector<lsdtt::dep_label_t> labels;
+    std::vector<std::uint8_t> directions;
+    auto hierarchy = lsdtt::build_depression_hierarchy(dem.native(), labels, directions, options);
+    const auto& meta = dem.native().get_meta();
+    const auto& valid = dem.native().get_mask();
+    std::vector<float> label_values(labels.size()), direction_values(directions.size());
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+        label_values[i] = static_cast<float>(labels[i]);
+        direction_values[i] = directions[i] == lsdtt::k_dh_no_flow
+            ? static_cast<float>(meta.no_data_value) : static_cast<float>(directions[i]);
+    }
+    std::vector<std::uint8_t> direction_mask(valid);
+    for (std::size_t i = 0; i < directions.size(); ++i)
+        if (directions[i] == lsdtt::k_dh_no_flow) direction_mask[i] = 0;
+
+    nb::list rows;
+    for (const auto& node : hierarchy) {
+        nb::dict row;
+        row["depression_id"] = node.dep_label; row["pit_flat"] = node.pit_cell;
+        row["outlet_flat"] = node.out_cell; row["parent_id"] = node.parent == lsdtt::k_no_parent ? -1 : static_cast<std::int64_t>(node.parent);
+        row["overflow_depression_id"] = node.odep == lsdtt::k_no_label ? -1 : static_cast<std::int64_t>(node.odep);
+        row["geographic_overflow_id"] = node.geolink == lsdtt::k_no_label ? -1 : static_cast<std::int64_t>(node.geolink);
+        row["left_child_id"] = node.lchild == lsdtt::k_no_label ? -1 : static_cast<std::int64_t>(node.lchild);
+        row["right_child_id"] = node.rchild == lsdtt::k_no_label ? -1 : static_cast<std::int64_t>(node.rchild);
+        row["pit_elevation"] = node.pit_elev; row["spill_elevation"] = node.out_elev;
+        row["n_pixels"] = node.cell_count; row["volume_m3"] = node.dep_vol;
+        row["water_volume_m3"] = node.water_vol; row["ocean_parent"] = node.ocean_parent;
+        row["is_leaf"] = node.lchild == lsdtt::k_no_label && node.rchild == lsdtt::k_no_label;
+        rows.append(std::move(row));
+    }
+    return DepressionHierarchyResult(
+        lsdtt::lsdtt_raster_cpu(std::move(label_values), std::vector<std::uint8_t>(valid), meta),
+        lsdtt::lsdtt_raster_cpu(std::move(direction_values), std::move(direction_mask), meta),
+        dataframe(rows));
+}
+
 InternalDrainageResult find_internal_drainage(const Raster& dem, const std::string& method,
                                               const std::string& boundary_conditions,
                                               int min_pixels, float min_depth_metres,
@@ -139,6 +206,45 @@ B. Gailleton
         .def_prop_ro("candidates", [](const InternalDrainageResult& self) { return self.candidates; })
         .def_prop_ro("polygons", [](const InternalDrainageResult& self) { return self.polygons; })
         .def_prop_ro("n_candidates", [](const InternalDrainageResult& self) { return self.n_candidates; });
+
+    nb::class_<DepressionHierarchyResult>(module, "DepressionHierarchyResult", R"doc(
+Complete Barnes depression hierarchy with raster labels and a node table.
+
+Authors
+-------
+B. Gailleton
+)doc")
+        .def_prop_ro("labels", &DepressionHierarchyResult::labels)
+        .def_prop_ro("flow_direction", &DepressionHierarchyResult::flow_direction)
+        .def_prop_ro("nodes", &DepressionHierarchyResult::nodes)
+        .def_prop_ro("n_nodes", &DepressionHierarchyResult::n_nodes);
+
+    module.def("depression_hierarchy", &depression_hierarchy,
+        nb::arg("dem"), nb::arg("boundary_conditions") = "oooo",
+        nb::arg("ocean_from_boundary") = true, nb::arg("nodata_is_ocean") = false,
+        nb::arg("ocean_level") = nb::none(), R"doc(
+Build the complete nested depression hierarchy for a DEM.
+
+Parameters
+----------
+dem : Raster
+    Projected elevation raster.
+boundary_conditions : str, optional
+    Open edges seed the ocean when ``ocean_from_boundary=True``.
+ocean_from_boundary, nodata_is_ocean : bool, optional
+    Define ocean seeds from open edges and/or nodata cells.
+ocean_level : float, optional
+    Treat valid cells at this elevation as ocean seeds.
+
+Returns
+-------
+DepressionHierarchyResult
+    Leaf labels, D8 spill-routing directions, and leaf/meta-depression nodes.
+
+Authors
+-------
+B. Gailleton
+)doc");
 
     module.def("find_internal_drainage", &find_internal_drainage,
         nb::arg("dem"), nb::arg("method") = "hierarchy", nb::arg("boundary_conditions") = "oooo",

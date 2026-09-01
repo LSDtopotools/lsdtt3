@@ -335,6 +335,68 @@ nb::object basin_outline_ridgelines(const BasinCollection& collection, const Ras
                                       : ctor(data, nb::arg("geometry") = geometry, nb::arg("crs") = flow.meta().crs_wkt);
 }
 
+nb::object basin_ridgeline_extrema(const BasinCollection& collection,
+                                   const ChannelNetwork& network, const Raster& dem,
+                                   const std::string& split_method,
+                                   float snout_smoothing_fraction,
+                                   int detrend_smoothing_pixels)
+{
+    if (&network.flow() != &collection.flow())
+        throw std::invalid_argument("network and basins must belong to the same FlowInfo");
+    if (snout_smoothing_fraction <= 0.0f || snout_smoothing_fraction > 1.0f ||
+        detrend_smoothing_pixels < 1)
+        throw std::invalid_argument("invalid ridgeline smoothing controls");
+    const auto& flow = collection.flow();
+    const auto& meta = dem.native().get_meta();
+    if (meta.n_rows != flow.n_rows() || meta.n_cols != flow.n_cols() ||
+        meta.x_min != flow.meta().x_min || meta.y_min != flow.meta().y_min ||
+        meta.cell_size != flow.meta().cell_size || meta.crs_wkt != flow.meta().crs_wkt)
+        throw std::invalid_argument("dem must share the BasinCollection flow grid");
+    if (split_method != "longest_channel" && split_method != "maximum_elevation" &&
+        split_method != "equal_length")
+        throw std::invalid_argument("split_method must be 'longest_channel', 'maximum_elevation', or 'equal_length'");
+
+  auto distance_result = flow.get_distance_from_outlet_raster();
+  const lsdtt::lsdtt_raster_cpu distance(
+      std::move(distance_result.data), std::move(distance_result.mask),
+      std::move(distance_result.meta));
+    nb::list rows, geometry;
+    nb::object point = nb::module_::import_("shapely.geometry").attr("Point");
+    for (std::size_t basin = 0; basin < collection.size(); ++basin) {
+        const auto outline = collection.basin(basin).get_basin_outline();
+        std::vector<lsdtt::lsdtt_ridgeline_cpu> ridges;
+        if (split_method == "longest_channel") ridges = outline.split_outline_into_ridgelines_by_longest_channel(distance);
+        else if (split_method == "maximum_elevation") ridges = outline.split_outline_into_ridgelines_by_max_elevation(dem.native());
+        else ridges = outline.split_outline_into_ridgelines_by_equal_length();
+        for (std::size_t ridge_id = 0; ridge_id < ridges.size(); ++ridge_id) {
+            auto& ridge = ridges[ridge_id];
+            if (ridge.size() < 3) continue;
+            ridge.fill_elevation(dem.native());
+            ridge.segment_ridgeline_snout_by_curvature(snout_smoothing_fraction);
+            ridge.fit_ridgeline_profile(false, false);
+            ridge.smoothen_and_derive_detrended_ridgeline(detrend_smoothing_pixels);
+            const auto extrema = ridge.get_ridgeline_extrema(flow, network.native());
+            for (const auto& extremum : extrema) {
+                if (extremum.node_index < 0 || static_cast<std::size_t>(extremum.node_index) >= ridge.positions().size()) continue;
+                const auto& xy = ridge.positions()[static_cast<std::size_t>(extremum.node_index)];
+                nb::dict row;
+                row["basin_id"] = basin; row["ridgeline_id"] = ridge_id;
+                row["node_index"] = extremum.node_index; row["type"] = extremum.type;
+                row["distance_to_next_metres"] = extremum.distance_to_next;
+                row["relief_to_next_metres"] = extremum.relief_to_next;
+                row["distance_to_tdj_metres"] = extremum.distance_to_tdj;
+                row["ridgeline_slope_fit"] = ridge.slope_fit();
+                row["ridgeline_r_squared_fit"] = ridge.r_squared_fit();
+                rows.append(std::move(row)); geometry.append(point(xy.x, xy.y));
+            }
+        }
+    }
+    nb::object table = nb::module_::import_("pandas").attr("DataFrame")(rows);
+    nb::object ctor = nb::module_::import_("geopandas").attr("GeoDataFrame");
+    return flow.meta().crs_wkt.empty() ? ctor(table, nb::arg("geometry") = geometry)
+                                      : ctor(table, nb::arg("geometry") = geometry, nb::arg("crs") = flow.meta().crs_wkt);
+}
+
 nb::object basin_channel_lengths(const BasinCollection& collection, const ChannelNetwork& network, int max_stream_order)
 {
     if (max_stream_order < 1) throw std::invalid_argument("max_stream_order must be positive");
@@ -577,6 +639,33 @@ Return total in-basin D8 channel length by Strahler stream order.
 )doc");
     module.def("basin_surface_metrics", &basin_surface_metrics, nb::arg("basins"), nb::arg("dem"),
         nb::arg("scales"), nb::arg("metrics"), nb::arg("include_outline") = true, nb::arg("n_threads") = 0);
+    module.def("basin_ridgeline_extrema", &basin_ridgeline_extrema,
+        nb::arg("basins"), nb::arg("network"), nb::arg("dem"),
+        nb::arg("split_method") = "longest_channel",
+        nb::arg("snout_smoothing_fraction") = 0.1f,
+        nb::arg("detrend_smoothing_pixels") = 5, R"doc(
+Locate topology-aware maxima and minima along selected basin-outline ridgelines.
+
+Parameters
+----------
+basins : BasinCollection
+    Basin outlines to split into ridgelines.
+network : ChannelNetwork
+    Same-flow topology used to identify triple/quadruple divide junctions.
+dem : Raster
+    Elevation raster on the shared flow grid.
+split_method : {"longest_channel", "maximum_elevation", "equal_length"}, optional
+    Rule used to divide each basin outline into ridgelines.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    Extrema points with ridge fitting and topological-distance diagnostics.
+
+Authors
+-------
+B. Gailleton
+)doc");
     flow.def("basins", &make_basins, nb::arg("outlets") = nb::none(), nb::arg("min_upslope_pixels") = 0,
         R"doc(
 Create a ``BasinCollection`` from explicit outlet pixels or all qualifying D8 outlets.
