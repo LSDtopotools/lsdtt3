@@ -1951,6 +1951,23 @@ def main() -> int:
         print(json.dumps({"profiles": PROFILES, "cases": CASES}, indent=2))
         return 0
 
+    # Line-buffer our own stdout.
+    #
+    # Python block-buffers stdout (~8 KB) whenever it is not a terminal, which
+    # is exactly the case for every way this script is actually run for real:
+    # `nohup ... &`, a Slurm job log, or any redirect to a file. A campaign
+    # that takes hours would then show nothing at all for a long stretch and
+    # look hung, when it is simply running. Progress output is the only way to
+    # tell a slow measurement from a stalled one, so it has to arrive as it
+    # happens.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        # Older interpreters, or a stdout that cannot be reconfigured. Not
+        # worth failing a campaign over -- the run is still correct, the log is
+        # just chunky.
+        pass
+
     # Rebind before ANY fixture helper runs -- they all reach for the module
     # global rather than taking it as an argument.
     global FIXTURE_DIR
@@ -2068,7 +2085,19 @@ def main() -> int:
     work_dir = run_dir / "work"
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Both paths, up front and unconditionally.
+    #
+    # The fixture cache defaults INSIDE THE REPOSITORY, while the campaign
+    # defaults to the current directory -- two different roots, which is
+    # genuinely surprising and has already cost someone a confused hunt for
+    # DEMs that were never going to be next to their results. The sbatch
+    # wrapper overrides the fixture path to sit beside the campaign; a direct
+    # run does not. Printing both makes the difference visible in the first
+    # three lines of any log instead of being something you have to know.
     print(f"campaign: {run_dir}")
+    print(f"fixtures: {FIXTURE_DIR}"
+          + ("" if args.fixture_dir else "   (default: inside the repo -- "
+                                         "use --fixture-dir to move it)"))
     print(f"profile:  {args.profile} ({profile['description']})")
 
     hardware = capture_hardware_manifest(build_dir, args.python_exe)

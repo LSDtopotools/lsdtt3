@@ -145,11 +145,24 @@ A relative `--out-dir` resolves against the **current directory**.
 
 Three separate locations, with three different lifetimes:
 
-| what | default | override |
-|---|---|---|
-| campaign output | `./benchmark_campaigns/` | `--out-dir` |
-| DEM cache | `<repo>/tests/data/dem_cache/` | `--fixture-dir` |
-| working scratch | `$TMPDIR` | `--scratch-dir` |
+| what | default (direct run) | default (via sbatch) | override |
+|---|---|---|---|
+| campaign output | `./benchmark_campaigns/` | `<submit dir>/benchmark_campaigns/` | `--out-dir` / `BENCH_OUT_DIR` |
+| DEM cache | **`<repo>/tests/data/dem_cache/`** | `<submit dir>/benchmark_fixtures/` | `--fixture-dir` / `BENCH_FIXTURE_DIR` |
+| working scratch | `$TMPDIR` | `$TMPDIR` | `--scratch-dir` |
+
+!!! warning "The DEM cache and the campaign do not default to the same place"
+    On a **direct run** the campaign follows your current directory but the DEM
+    cache goes **inside the repository**. So after
+    `pixi run bench-laptop --out-dir /my/data` the DEMs are in
+    `<repo>/tests/data/dem_cache/`, not in `/my/data/`. Only the sbatch wrapper
+    puts the two side by side.
+
+    The suite prints both paths in its first three lines. If you want them
+    together on a direct run, say so:
+    ```sh
+    pixi run bench-laptop --out-dir /my/data --fixture-dir /my/data/fixtures
+    ```
 
 On a shared machine or a cluster, move the DEM cache off the repository with
 `--fixture-dir` — the `server` profile stores ~512 MB there, and it is reused by
@@ -214,6 +227,154 @@ Everything is a flag or an environment variable; no file needs editing.
 pixi run bench-server --out-dir "$PWD" --fixture-dir /scratch/$USER/lsdtt3_fixtures
 ```
 
+### The standard server workflow, start to finish
+
+Clone and build once, then run from wherever you want the results.
+
+**1. Clone and install the environment** (login node, once):
+
+```sh
+git clone https://github.com/LSDtopotools/lsdtt3.git
+cd lsdtt3
+pixi install -e benchmark
+```
+
+**2. Build in Release mode** (once):
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+
+Binaries land in `/path/to/lsdtt3/build/`, which is where the benchmark looks
+by default.
+
+**3. Submit from your data directory.** Everything else is derived:
+
+| | derived from | value |
+|---|---|---|
+| repository | the script's own path | `/path/to/lsdtt3` |
+| binaries | `<repo>/build` | `/path/to/lsdtt3/build` |
+| pixi environment | `<repo>/pixi.toml`, `-e benchmark` | the one from step 1 |
+| campaign output | the **submit** directory | `<submit>/benchmark_campaigns/` |
+| DEM cache | the **submit** directory | `<submit>/benchmark_fixtures/` |
+| job logs | the **submit** directory | `lsdtt3-bench-<jobid>.out` / `.err` |
+
+Nothing is written into the clone.
+
+### Three Slurm runs, smallest first
+
+Do these in order. Each one proves something the next depends on, and the first
+two cost minutes rather than hours.
+
+#### a. The plumbing test — one case, one region, ~2 minutes
+
+The smallest submission that exercises the entire chain: your account, the
+scheduler, the repository detection, the pixi environment, the binaries, the
+DEM download and the output paths. It measures one operation on one small DEM,
+so the numbers are not interesting — **the point is that it finishes.**
+
+```sh
+cd /path/to/my/data
+BENCH_PROFILE=laptop sbatch --account=PROJECT \
+    /path/to/lsdtt3/tests/scripts/slurm_benchmark.sbatch \
+    --cases fill --regions alpine --ladder 500 --threads 1 --repeats 2
+```
+
+Arguments after the script name pass straight through to the suite, so any of
+`--cases`, `--regions`, `--ladder`, `--threads`, `--repeats` can be narrowed
+this way.
+
+When it finishes, read the **top** of `lsdtt3-bench-<jobid>.out` before
+anything else:
+
+```
+repository      : /path/to/lsdtt3
+binaries        : /path/to/lsdtt3/build
+campaign output : /path/to/my/data/benchmark_campaigns
+fixture cache   : /path/to/my/data/benchmark_fixtures
+
+reference implementations importable in this environment:
+    richdem              yes
+    topotoolbox          yes
+    whitebox_workflows   yes
+    PROJ database        yes
+```
+
+Every path should be where you expect, and all three references should say
+`yes`. A `NO` here is the one failure that looks like success — see
+[Troubleshooting](#troubleshooting).
+
+#### b. The laptop profile — ~10 minutes, ~8 MB
+
+The full `laptop` profile: both regions, 500² and 1000² DEMs, threads 1/2/4,
+every case. This is a real baseline you can keep, and it confirms the whole
+suite runs under the scheduler before you commit to a long job.
+
+```sh
+cd /path/to/my/data
+BENCH_PROFILE=laptop sbatch --account=PROJECT \
+    /path/to/lsdtt3/tests/scripts/slurm_benchmark.sbatch
+```
+
+Expect most rows to be flagged `overhead_dominated` — the DEMs are small. That
+is correct behaviour, not a problem. See
+[Reading the results](#reading-the-results).
+
+#### c. The server profile — hours, ~512 MB
+
+The quotable run. `server` is the default, so there is nothing to set:
+
+```sh
+cd /path/to/my/data
+sbatch --account=PROJECT /path/to/lsdtt3/tests/scripts/slurm_benchmark.sbatch
+```
+
+Raising the thread sweep means raising the allocation to match, or the job
+refuses to start:
+
+```sh
+sbatch --account=PROJECT --cpus-per-task=32 \
+    /path/to/lsdtt3/tests/scripts/slurm_benchmark.sbatch --threads 1,2,4,8,16,32
+```
+
+!!! tip "Point the DEM cache at scratch"
+    ~512 MB, reused by every later campaign, so somewhere persistent beats a
+    quota'd home directory:
+    ```sh
+    export BENCH_FIXTURE_DIR=/scratch/$USER/lsdtt3_fixtures
+    ```
+
+!!! warning "Directories you create are not used unless you say so"
+    Making a `bench_results/` directory does not make the campaign go there.
+    The defaults are `<submit>/benchmark_campaigns` and
+    `<submit>/benchmark_fixtures`, and your own directories are simply ignored.
+    To use them, name them:
+    ```sh
+    export BENCH_OUT_DIR=$PWD/bench_results
+    export BENCH_FIXTURE_DIR=$PWD/lsdtt3_fixtures
+    ```
+
+### Where results go, exactly
+
+**Results follow the directory you submit from, not where the script lives.**
+Slurm sets `SLURM_SUBMIT_DIR` to your working directory at `sbatch` time, and
+both the campaign and the DEM cache default there.
+
+| you run | results land in |
+|---|---|
+| `cd /path/to/my/data && sbatch /path/to/lsdtt3/.../slurm_benchmark.sbatch` | `/path/to/my/data/` |
+| `cd /path/to/lsdtt3/tests/scripts && sbatch slurm_benchmark.sbatch` | `/path/to/lsdtt3/tests/scripts/` |
+
+!!! warning "Submitting from the script's own directory writes into the repository"
+    The second row puts `benchmark_campaigns/` **and ~512 MB of cached DEMs**
+    inside `tests/scripts/`, in your source tree. The job warns when it detects
+    this but does not stop. Submit from a data directory, or set `BENCH_OUT_DIR`
+    and `BENCH_FIXTURE_DIR` explicitly.
+
+The same rule applies without Slurm: `$PWD` stands in for the submit directory,
+so `cd` to where you want the results and run the suite directly.
+
 ### Under Slurm
 
 `tests/scripts/slurm_benchmark.sbatch` contains **no measurement logic**. It
@@ -221,11 +382,6 @@ just arranges for a scheduler node to run the same command everyone else runs,
 so results from Slurm and non-Slurm sites stay comparable. If your cluster uses
 PBS, LSF or SGE, ignore the file and run the command above in your own job
 script — you get an identical campaign directory.
-
-```sh
-cd /path/to/my/data
-sbatch --account=PROJECT tests/scripts/slurm_benchmark.sbatch
-```
 
 Slurm settings go to `sbatch` (which overrides the `#SBATCH` lines) or through
 Slurm's own `SBATCH_*` variables. There is deliberately **no `#SBATCH
@@ -314,6 +470,23 @@ database. Activate the environment (`conda activate <env>`, or use
 **"--threads goes up to N but this machine reports M logical cores."** Rows
 above the core count are oversubscribed and their scaling figures are
 meaningless. Pass a smaller `--threads`.
+
+**The log is empty and it looks hung.** Almost always stdout buffering, not a
+stall. The suite line-buffers its own output, but if you are on a version that
+predates that, or something else in the chain buffers, force it:
+
+```sh
+PYTHONUNBUFFERED=1 nohup pixi run bench-laptop --out-dir /abs/path &
+```
+
+To check progress without the log, look at the campaign directory — the
+`hardware_manifest.json` appears almost immediately, and the DEM cache grows
+during the first run:
+
+```sh
+ls -lt /abs/path/benchmark_campaigns/
+ls -l  /abs/path/benchmark_fixtures/
+```
 
 **A download fails.** The suite reports it and carries on with whatever it has.
 Re-run when the network is back; anything already cached is not fetched again.
