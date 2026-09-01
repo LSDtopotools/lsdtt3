@@ -9,6 +9,7 @@
 #include <nanobind/stl/string.h>
 
 #include <cpu/lsdtt_hillslope_implicit_cpu.hpp>
+#include <cpu/lsdtt_hillslope_cellular_cpu.hpp>
 #include <cpu/lsdtt_hillslope_newton_cpu.hpp>
 #include <cpu/lsdtt_hillslope_steady_state_cpu.hpp>
 #include <cpu/lsdtt_hillslope_transport_cpu.hpp>
@@ -107,6 +108,32 @@ private:
     bool limiter_fired_;
 };
 
+class HillslopeCellularResult
+{
+public:
+    explicit HillslopeCellularResult(lsdtt::lsdtt_hillslope_cellular_result result)
+        : elevation_(std::move(result.elevation)), n_substeps_(result.n_substeps),
+          n_face_events_(result.n_face_events), max_slope_ratio_(result.final_max_slope_ratio),
+          exported_volume_(result.net_dirichlet_export_volume), completed_(result.completed),
+          message_(std::move(result.message)) {}
+
+    Raster elevation() const { return Raster(elevation_); }
+    long n_substeps() const noexcept { return n_substeps_; }
+    long long n_face_events() const noexcept { return n_face_events_; }
+    double max_slope_ratio() const noexcept { return max_slope_ratio_; }
+    double exported_volume_m3() const noexcept { return exported_volume_; }
+    bool completed() const noexcept { return completed_; }
+    const std::string& message() const noexcept { return message_; }
+
+private:
+    lsdtt::lsdtt_raster_cpu elevation_;
+    long n_substeps_;
+    long long n_face_events_;
+    double max_slope_ratio_, exported_volume_;
+    bool completed_;
+    std::string message_;
+};
+
 HillslopeSteadyStateResult hillslope_steady_state(
     const Raster& dem, const Raster& channels, const std::string& model,
     float diffusivity, float uplift_rate, float critical_slope,
@@ -195,6 +222,34 @@ Raster hillslope_transport_adi(const Raster& dem, float diffusivity,
         validate_boundaries(boundary_conditions)));
 }
 
+HillslopeCellularResult hillslope_transport_cellular(
+    const Raster& dem, const Raster& channels, double duration_years,
+    double diffusivity, double uplift_rate, double critical_slope,
+    double r_match, double cfl_safety, double nonlocal_fraction,
+    double nonlocal_activation_ratio, double nonlocal_deposition_probability,
+    int nonlocal_max_hops, const std::string& boundary_conditions, int n_threads)
+{
+    if (duration_years < 0.0 || diffusivity <= 0.0 || critical_slope <= 0.0)
+        throw std::invalid_argument("duration_years must be non-negative; diffusivity and critical_slope must be positive");
+    if (!(r_match > 0.0 && r_match < 1.0) || !(cfl_safety > 0.0 && cfl_safety <= 1.0) ||
+        !(nonlocal_fraction >= 0.0 && nonlocal_fraction <= 1.0) ||
+        !(nonlocal_activation_ratio >= 0.0 && nonlocal_activation_ratio < 1.0) ||
+        !(nonlocal_deposition_probability > 0.0 && nonlocal_deposition_probability <= 1.0) ||
+        nonlocal_max_hops < 1)
+        throw std::invalid_argument("invalid cellular hillslope controls");
+    lsdtt::lsdtt_hillslope_cellular_options options;
+    options.D = diffusivity; options.U = uplift_rate; options.Sc = critical_slope;
+    options.r_match = r_match; options.cfl_safety = cfl_safety;
+    options.nonlocal_fraction = nonlocal_fraction;
+    options.nonlocal_activation_ratio = nonlocal_activation_ratio;
+    options.nonlocal_deposition_probability = nonlocal_deposition_probability;
+    options.nonlocal_max_hops = nonlocal_max_hops;
+    options.boundary_conditions = validate_boundaries(boundary_conditions);
+    options.n_threads = n_threads;
+    return HillslopeCellularResult(lsdtt::compute_hillslope_cellular_transport(
+        dem.native(), channel_mask(dem, channels), duration_years, options));
+}
+
 } // namespace
 
 void bind_hillslope_transport(nb::module_& module)
@@ -225,6 +280,21 @@ B. Gailleton
         .def_prop_ro("final_dt", &HillslopeTransportResult::final_dt)
         .def_prop_ro("max_slope_ratio", &HillslopeTransportResult::max_slope_ratio)
         .def_prop_ro("limiter_fired", &HillslopeTransportResult::limiter_fired);
+
+    nb::class_<HillslopeCellularResult>(module, "HillslopeCellularResult", R"doc(
+Conservative cellular hillslope-transport result and mass-transfer diagnostics.
+
+Authors
+-------
+B. Gailleton
+)doc")
+        .def_prop_ro("elevation", &HillslopeCellularResult::elevation)
+        .def_prop_ro("n_substeps", &HillslopeCellularResult::n_substeps)
+        .def_prop_ro("n_face_events", &HillslopeCellularResult::n_face_events)
+        .def_prop_ro("max_slope_ratio", &HillslopeCellularResult::max_slope_ratio)
+        .def_prop_ro("exported_volume_m3", &HillslopeCellularResult::exported_volume_m3)
+        .def_prop_ro("completed", &HillslopeCellularResult::completed)
+        .def_prop_ro("message", &HillslopeCellularResult::message);
 
     module.def("hillslope_steady_state", &hillslope_steady_state,
         nb::arg("dem"), nb::arg("channels"), nb::arg("model") = "roering",
@@ -355,6 +425,36 @@ Returns
 -------
 Raster
     New elevation surface.
+
+Authors
+-------
+B. Gailleton
+)doc");
+
+    module.def("hillslope_transport_cellular", &hillslope_transport_cellular,
+        nb::arg("dem"), nb::arg("channels"), nb::arg("duration_years"),
+        nb::arg("diffusivity") = 1.0e-3, nb::arg("uplift_rate") = 0.0,
+        nb::arg("critical_slope") = 0.8, nb::arg("r_match") = 0.85,
+        nb::arg("cfl_safety") = 0.8, nb::arg("nonlocal_fraction") = 0.0,
+        nb::arg("nonlocal_activation_ratio") = 0.8,
+        nb::arg("nonlocal_deposition_probability") = 0.5,
+        nb::arg("nonlocal_max_hops") = 4, nb::arg("boundary_conditions") = "oooo",
+        nb::arg("n_threads") = 0, R"doc(
+Advance conservative face-transfer cellular hillslope transport.
+
+Parameters
+----------
+dem, channels : Raster
+    Current elevation and same-grid binary fixed-channel mask.
+duration_years, diffusivity, uplift_rate, critical_slope : float
+    Transport duration and physical flux-law parameters.
+r_match, cfl_safety, nonlocal_fraction : float, optional
+    Cellular stability and optional nonlocal-transfer controls.
+
+Returns
+-------
+HillslopeCellularResult
+    Updated elevation and conservative transfer diagnostics.
 
 Authors
 -------

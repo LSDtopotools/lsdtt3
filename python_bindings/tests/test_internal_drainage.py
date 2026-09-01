@@ -44,6 +44,14 @@ class InternalDrainageTest(unittest.TestCase):
         self.assertIn("sink_id", result.candidates.columns)
         self.assertIn("volume_m3", result.candidates.columns)
 
+    def test_complete_hierarchy_exposes_labels_and_parent_tree(self):
+        hierarchy = lsdtt3.depression_hierarchy(self.dem)
+
+        self.assertGreaterEqual(hierarchy.n_nodes, 2)  # ocean plus one leaf
+        self.assertEqual(hierarchy.labels.shape, self.dem.shape)
+        self.assertIn("parent_id", hierarchy.nodes.columns)
+        self.assertTrue(hierarchy.nodes.is_leaf.any())
+
 
 if __name__ == "__main__":
     unittest.main()

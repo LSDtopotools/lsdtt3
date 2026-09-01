@@ -21,3 +21,14 @@ def test_steady_state_ratio_and_accumulation():
     flow = lsdtt3.FlowInfo(dem)
     accumulated = lsdtt3.crn_accumulated_concentration(be10, erosion, flow)
     assert accumulated.shape == dem.shape
+
+
+def test_arbitrary_history_returns_all_three_nuclides():
+    dem = _raster([[1000, 990], [1010, 980]])
+    column = lsdtt3.CRNColumn()
+    column.set_erosion_history(
+        [1_000.0, -9_999.0], [1.0e-3, 1.0e-3], [0.0, 0.0]
+    )
+    result = lsdtt3.crn_transient_history(column, lsdtt3.crn_uniform_raster(dem, 1.0))
+    assert set(result) == {"be10", "al26", "c14"}
+    assert all(raster.shape == dem.shape for raster in result.values())

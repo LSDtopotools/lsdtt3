@@ -52,6 +52,15 @@ class HillslopeTransportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly 0 or 1"):
             lsdtt3.hillslope_transport_explicit(self.dem, bad, 0.05, 1.0)
 
+    def test_cellular_transport_returns_conservative_diagnostics(self):
+        result = lsdtt3.hillslope_transport_cellular(
+            self.dem, self.channels, 10.0, diffusivity=0.05,
+            boundary_conditions="nnnn", n_threads=1,
+        )
+        self.assertTrue(result.completed, result.message)
+        self.assertGreaterEqual(result.n_substeps, 1)
+        self.assertEqual(result.elevation.shape, self.dem.shape)
+
 
 if __name__ == "__main__":
     unittest.main()

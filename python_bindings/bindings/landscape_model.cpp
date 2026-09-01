@@ -165,7 +165,12 @@ public:
                    float critical_hillslope_slope, float incision_threshold_area,
                    const std::string& coupling_regime, const std::string& boundary_conditions,
                    const std::string& fluvial_method, nb::object channel_mask,
-                   bool hold_channel_mask_fixed, nb::object fixed_pixels, int n_threads)
+                   bool hold_channel_mask_fixed, nb::object fixed_pixels, int n_threads,
+                   float baselevel_fall_rate, double cellular_r_match,
+                   double cellular_cfl_safety, double cellular_nonlocal_fraction,
+                   double cellular_nonlocal_activation_ratio,
+                   double cellular_nonlocal_deposition_probability,
+                   int cellular_nonlocal_max_hops)
         : elevation_(dem.native())
     {
         if (timestep <= 0.0f || erodibility < 0.0f || uplift_rate < 0.0f ||
@@ -177,8 +182,15 @@ public:
             throw std::invalid_argument("fluvial_method must be 'd8', 'dinf', or 'none'");
         if (hillslope_model != "none" && hillslope_model != "linear" &&
             hillslope_model != "roering" && hillslope_model != "roering_implicit" &&
-            hillslope_model != "cidre" && hillslope_model != "adi")
-            throw std::invalid_argument("hillslope_model must be 'none', 'linear', 'roering', 'roering_implicit', 'cidre', or 'adi'");
+            hillslope_model != "cidre" && hillslope_model != "adi" && hillslope_model != "cellular")
+            throw std::invalid_argument("hillslope_model must be 'none', 'linear', 'roering', 'roering_implicit', 'cidre', 'adi', or 'cellular'");
+        if (baselevel_fall_rate < 0.0f || !(cellular_r_match > 0.0 && cellular_r_match < 1.0) ||
+            !(cellular_cfl_safety > 0.0 && cellular_cfl_safety <= 1.0) ||
+            !(cellular_nonlocal_fraction >= 0.0 && cellular_nonlocal_fraction <= 1.0) ||
+            !(cellular_nonlocal_activation_ratio >= 0.0 && cellular_nonlocal_activation_ratio < 1.0) ||
+            !(cellular_nonlocal_deposition_probability > 0.0 && cellular_nonlocal_deposition_probability <= 1.0) ||
+            cellular_nonlocal_max_hops < 1)
+            throw std::invalid_argument("invalid base-level or cellular-hillslope controls");
         options_.timestep = timestep;
         options_.erodibility = erodibility;
         options_.m_exponent = m_exponent;
@@ -189,6 +201,7 @@ public:
         options_.enable_nonlinear_hillslopes = nonlinear_hillslopes;
         options_.critical_hillslope_slope = critical_hillslope_slope;
         options_.incision_threshold_area = incision_threshold_area;
+        options_.baselevel_fall_rate = baselevel_fall_rate;
         options_.coupling_regime = lsdtt::parse_hillslope_coupling_regime(coupling_regime);
         options_.boundary_conditions = bc;
         options_.enable_d8_fluvial_erosion = fluvial_method == "d8";
@@ -196,6 +209,12 @@ public:
         options_.enable_hillslope_transport = hillslope_model != "none";
         options_.enable_uplift = uplift_rate != 0.0f;
         options_.n_threads = n_threads;
+        options_.cellular_r_match = cellular_r_match;
+        options_.cellular_cfl_safety = cellular_cfl_safety;
+        options_.cellular_nonlocal_fraction = cellular_nonlocal_fraction;
+        options_.cellular_nonlocal_activation_ratio = cellular_nonlocal_activation_ratio;
+        options_.cellular_nonlocal_deposition_probability = cellular_nonlocal_deposition_probability;
+        options_.cellular_nonlocal_max_hops = cellular_nonlocal_max_hops;
         if (!channel_mask.is_none())
         {
             const auto& channels = nb::cast<const Raster&>(channel_mask);
@@ -213,6 +232,21 @@ public:
     Raster elevation() const { return Raster(elevation_); }
     int iteration() const noexcept { return iteration_; }
     float time_years() const noexcept { return time_years_; }
+    std::string coupling_regime() const
+    {
+        return lsdtt::name_of(lsdtt::resolve_hillslope_coupling_regime(
+            options_.coupling_regime, options_.incision_threshold_area,
+            !options_.explicit_channel_mask.empty()));
+    }
+    std::string hillslope_model() const { return options_.hillslope_transport_model; }
+    void set_forcing(float uplift_rate, float baselevel_fall_rate)
+    {
+        if (uplift_rate < 0.0f || baselevel_fall_rate < 0.0f)
+            throw std::invalid_argument("uplift_rate and baselevel_fall_rate must be non-negative");
+        options_.uplift_rate = uplift_rate;
+        options_.baselevel_fall_rate = baselevel_fall_rate;
+        options_.enable_uplift = uplift_rate != 0.0f;
+    }
     Raster channel_mask() const
     {
         auto mask = lsdtt::compute_lem_channel_mask(elevation_, options_);
@@ -281,7 +315,7 @@ B. Gailleton
         .def(nb::init<const Raster&, float, float, float, float, float, float,
                       const std::string&, bool, float, float, const std::string&,
                       const std::string&, const std::string&, nb::object, bool,
-                      nb::object, int>(),
+                      nb::object, int, float, double, double, double, double, double, int>(),
              nb::arg("dem"), nb::arg("timestep_years") = 100.0f,
              nb::arg("erodibility") = 1.0e-3f, nb::arg("m_exponent") = 0.45f,
              nb::arg("n_exponent") = 1.0f, nb::arg("uplift_rate") = 1.0e-4f,
@@ -292,7 +326,12 @@ B. Gailleton
              nb::arg("coupling_regime") = "automatic", nb::arg("boundary_conditions") = "oooo",
              nb::arg("fluvial_method") = "d8", nb::arg("channel_mask") = nb::none(),
              nb::arg("hold_channel_mask_fixed") = false, nb::arg("fixed_pixels") = nb::none(),
-             nb::arg("n_threads") = 0, R"doc(
+             nb::arg("n_threads") = 0, nb::arg("baselevel_fall_rate") = 0.0f,
+             nb::arg("cellular_r_match") = 0.85, nb::arg("cellular_cfl_safety") = 0.8,
+             nb::arg("cellular_nonlocal_fraction") = 0.0,
+             nb::arg("cellular_nonlocal_activation_ratio") = 0.8,
+             nb::arg("cellular_nonlocal_deposition_probability") = 0.5,
+             nb::arg("cellular_nonlocal_max_hops") = 4, R"doc(
 Create a coupled landscape-evolution model from an in-memory DEM.
 
 Parameters
@@ -305,7 +344,7 @@ erodibility, m_exponent, n_exponent : float, optional
     Stream-power incision parameters.
 uplift_rate, hillslope_diffusivity : float, optional
     Uniform uplift in m yr⁻¹ and hillslope diffusivity in m² yr⁻¹.
-hillslope_model : {"none", "linear", "roering", "roering_implicit", "cidre", "adi"}, optional
+hillslope_model : {"none", "linear", "roering", "roering_implicit", "cidre", "adi", "cellular"}, optional
     Hillslope process model. ``none`` disables hillslope transport.
 nonlinear_hillslopes, critical_hillslope_slope : bool, float, optional
     Roering nonlinear-flux controls.
@@ -325,6 +364,10 @@ fixed_pixels : array-like of int, optional
     Explicit N-by-2 ``(row, col)`` fixed-elevation cells. Defaults to open/base-level edges.
 n_threads : int, optional
     OpenMP thread count; zero uses the runtime default.
+baselevel_fall_rate : float, optional
+    Downward motion of fixed base-level cells in m yr⁻¹.
+cellular_r_match, cellular_cfl_safety, cellular_nonlocal_fraction : float, optional
+    Cellular-hillslope calibration, stability, and optional nonlocal-transfer controls.
 
 Returns
 -------
@@ -338,6 +381,26 @@ B. Gailleton
         .def_prop_ro("elevation", &LandscapeModel::elevation)
         .def_prop_ro("iteration", &LandscapeModel::iteration)
         .def_prop_ro("time_years", &LandscapeModel::time_years)
+        .def_prop_ro("coupling_regime", &LandscapeModel::coupling_regime,
+                     "Resolved coupling experiment: coupled or channels_as_boundaries.")
+        .def_prop_ro("hillslope_model", &LandscapeModel::hillslope_model)
+        .def("set_forcing", &LandscapeModel::set_forcing,
+             nb::arg("uplift_rate"), nb::arg("baselevel_fall_rate") = 0.0f, R"doc(
+Change the uniform tectonic/base-level forcing used by subsequent steps.
+
+Parameters
+----------
+uplift_rate, baselevel_fall_rate : float
+    Non-negative uplift and fixed-base-level lowering rates in m yr⁻¹.
+
+Returns
+-------
+None
+
+Authors
+-------
+B. Gailleton
+)doc")
         .def("channel_mask", &LandscapeModel::channel_mask, R"doc(
 Return the imposed or currently threshold-derived channel mask.
 

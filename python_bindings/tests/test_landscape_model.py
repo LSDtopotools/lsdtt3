@@ -48,6 +48,15 @@ class LandscapeModelTest(unittest.TestCase):
             result.elevation.to_numpy()[-1], self.dem.to_numpy()[-1]
         )
 
+    def test_cellular_model_reports_resolved_coupling(self):
+        model = lsdtt3.LandscapeModel(
+            self.dem, timestep_years=1.0, fluvial_method="none", uplift_rate=0.0,
+            hillslope_model="cellular", boundary_conditions="nnnn",
+        )
+        self.assertEqual(model.hillslope_model, "cellular")
+        self.assertEqual(model.coupling_regime, "coupled")
+        model.set_forcing(1.0e-4, baselevel_fall_rate=2.0e-4)
+
 
 if __name__ == "__main__":
     unittest.main()

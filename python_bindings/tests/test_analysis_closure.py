@@ -62,6 +62,28 @@ class BasinOutlineRidgelineTests(unittest.TestCase):
             <= set(ridges.columns)
         )
 
+    def test_ridgeline_extrema_include_network_topology_diagnostics(self):
+        meta = lsdtt3.RasterMeta.from_shape(21, 21, cell_size=10.0)
+        rows, cols = np.indices((21, 21))
+        dem = lsdtt3.Raster.from_numpy(
+            (200.0 - 4.0 * rows + 2.0 * np.abs(cols - 10)).astype(np.float32),
+            np.ones((21, 21), dtype=bool), meta,
+        )
+        flow = lsdtt3.FlowInfo(
+            dem, boundary_conditions="nnnn", forced_outlets=np.array([[20, 10]]),
+            allow_pits_as_outlets=True,
+        )
+        network = flow.channel_network(flow.channel_scope(5))
+        extrema = lsdtt3.basin_ridgeline_extrema(
+            flow.basins(np.array([[20, 10]])), network, dem,
+            detrend_smoothing_pixels=1,
+        )
+        self.assertGreater(len(extrema), 0)
+        self.assertTrue(
+            {"type", "distance_to_tdj_metres", "ridgeline_slope_fit", "geometry"}
+            <= set(extrema.columns)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
