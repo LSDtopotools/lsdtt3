@@ -28,6 +28,13 @@ set(LSDTT_INTERNAL_DRAINAGE_FIXTURE_DIR
 set(LSDTT_HILLTOP_COUPLING_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/hilltop_coupling_fixture")
 
+# Written by lsdtt-test-fluvial-surfaces (the fixture_fluvial_surfaces_cli
+# CTest fixture): a projected 200x200 linear-range DEM with flat piedmont and
+# a rough mountain zone, plus the channel source point that
+# lsdtt-valley-centreline requires.
+set(LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/fluvial_surfaces_fixture")
+
 function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
     set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
 
@@ -3311,6 +3318,107 @@ if(_lsdtt_unit_guard_files)
 endif()
 
 # =============================================================================
+# lsdtt-flat-surface-finder and lsdtt-valley-centreline
+#
+# Phase 0a of docs/plan_docs/plan_fluvial_surfaces_cli_split.md. Both CLIs
+# shipped with no coverage of any kind, so there was nothing to refactor
+# against. These tests exist to pin CURRENT behaviour before the split moves it.
+#
+# The fixture is a projected 200x200 linear-range DEM: rough mountains, flat
+# piedmont, and a channel network shed onto the piedmont. tests/data has no
+# projected DEM large enough (tiny_dem.asc is 5x5, tiny30_dem.tif is geographic
+# and both CLIs refuse it via check_projected_metres()).
+# =============================================================================
+
+add_executable(lsdtt-test-fluvial-surfaces cpp/test_fluvial_surfaces.cpp)
+target_link_libraries(lsdtt-test-fluvial-surfaces PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_fluvial_surfaces_fixture
+         COMMAND lsdtt-test-fluvial-surfaces)
+set_tests_properties(unit_fluvial_surfaces_fixture PROPERTIES
+    LABELS "unit")
+
+add_test(NAME fixture_fluvial_surfaces_cli
+         COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
+                 ${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR})
+set_tests_properties(fixture_fluvial_surfaces_cli PROPERTIES
+    LABELS "fixture"
+    FIXTURES_SETUP fluvial_surfaces_fixture)
+
+add_test(NAME smoke_flat_surface_finder_help
+         COMMAND lsdtt-flat-surface-finder -h)
+set_tests_properties(smoke_flat_surface_finder_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "relief_threshold_metres")
+
+add_test(NAME smoke_valley_centreline_help
+         COMMAND lsdtt-valley-centreline -h)
+set_tests_properties(smoke_valley_centreline_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "valley_corridor_width_metres")
+
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder
+    lsdtt-flat-surface-finder
+    flat_surface_finder_smoke.param.in
+    fsf_labelled_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsf_combined_flat_mask.tif
+    --expect fsf_relief_cdf.csv
+)
+set_tests_properties(smoke_flat_surface_finder PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_valley_centreline
+    lsdtt-valley-centreline
+    valley_centreline_smoke.param.in
+    vc_valley_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect vc_valley_break_metric.csv
+    --expect vc_valley_breaks.csv
+    --expect vc_valley_centreline.fgb
+    --expect-vector-feature-min vc_valley_centreline.fgb:1
+)
+set_tests_properties(smoke_valley_centreline PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# THE guard on find_population_breaks (plan finding C5). That function is shared
+# by the valley engine and the HAND-banding classifier, so the phase 0c ladder
+# engine must WRAP it rather than change it -- and this pin is what says whether
+# it moved. A single-row table, so the SHA is a real pin rather than a hash of
+# incidental float formatting; the readable assertion beside it is there so a
+# failure reports which number changed instead of only that one did.
+add_lsdtt_cli_smoke_test(
+    rigorous_valley_centreline_break_pin
+    lsdtt-valley-centreline
+    valley_centreline_smoke.param.in
+    vc_valley_breaks.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-sha256 "vc_valley_breaks.csv:c8a093a17a0cd4768bb4cb3e5400de7ebf0c42527e47ea9f7db14b8cacf132c0"
+    --expect-file-contains "vc_valley_breaks.csv:0,-0.500000,21.877136,true"
+    --expect-raster-checksum vc_valley_mask.tif:4707
+)
+set_tests_properties(rigorous_valley_centreline_break_pin PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The phase 1 baseline. Band-then-label rewrites exactly this raster: today the
+# labelling runs once over the whole broken flat mask, and after the reordering
+# it runs once per band. Without this checksum recorded BEFORE the change there
+# is nothing to say what the reordering actually did.
+add_lsdtt_cli_smoke_test(
+    rigorous_flat_surface_finder_label_baseline
+    lsdtt-flat-surface-finder
+    flat_surface_finder_smoke.param.in
+    fsf_labelled_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsf_labelled_flat_mask.tif:20987
+    --expect-raster-checksum fsf_combined_flat_mask.tif:13879
+)
+set_tests_properties(rigorous_flat_surface_finder_label_baseline PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# =============================================================================
 # COMPARTMENTALISATION: domain and cost labels
 #
 # Running all 100+ tests after every change is wasteful: most of them cannot be
@@ -3353,6 +3461,10 @@ set(LSDTT_DOMAIN_RULES
     "surface_metrics"        "surface_metrics"
     "hillslope"              "hillslope"
     "lem"                    "lem"
+    # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
+    # split writes a channel network, so tests named for that would otherwise be
+    # claimed by "network" and disappear from a fluvial_surfaces compartment run.
+    "fluvial_surfaces|flat_surface|valley_centreline" "fluvial_surfaces"
     "chi|channel|drainage|basin|flow_properties|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret"           "core"

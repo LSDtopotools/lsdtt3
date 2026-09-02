@@ -1,0 +1,34 @@
+# Phase 0a baseline for lsdtt-flat-surface-finder.
+# Fixture: fluvsurf_dem.tif, a projected 200x200 linear-range DEM whose
+# piedmont carries 0.5 m of noise and whose mountain zone carries 200 m, so a
+# 2 m local-relief threshold separates them cleanly.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fsf
+
+n_threads: 1
+write_output_format: gtiff
+
+# Detection. Fixed threshold, not adaptive: the adaptive path picks its value
+# from the relief CDF and would drift with any change to the generator.
+relief_window_pixels: 5
+relief_threshold_metres: 2.0
+adaptive_relief_threshold: false
+
+# No morphology, so the mask written here is the raw thresholded relief.
+flat_closing_radius_metres: 0
+flat_opening_radius_metres: 0
+min_component_pixels: 100
+
+# The channel-relative half of this CLI is deliberately left off. It moves to
+# lsdtt-fluvial-surfaces in phase 3, and pinning it here would pin behaviour
+# that is about to be relocated rather than behaviour that must not change.
+break_flats_with_channels: false
+write_channel_network: false
+find_floodplain: false
+run_plane_analysis: false
+
+write_combined_flat_mask: true
+write_metric_flat_masks: false
+write_texture_rasters: false
