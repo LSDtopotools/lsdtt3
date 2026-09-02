@@ -111,6 +111,10 @@ def _run(name: str) -> int:
 def main() -> int:
     """Dispatch a pip console script to its bundled vanilla driver.
 
+    Parameters
+    ----------
+    None
+
     Returns
     -------
     int
@@ -135,48 +139,93 @@ def main() -> int:
 def raster_preprocessing() -> int:
     """Run the bundled ``lsdtt-raster-preprocessing`` driver.
 
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    int
+        Native driver's exit status.
+
     Authors
     -------
     B. Gailleton
     """
-    _run("lsdtt-raster-preprocessing")
+    return _run("lsdtt-raster-preprocessing")
 
 
 def channel_extraction() -> int:
     """Run the bundled ``lsdtt-channel-extraction`` driver.
 
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    int
+        Native driver's exit status.
+
     Authors
     -------
     B. Gailleton
     """
-    _run("lsdtt-channel-extraction")
+    return _run("lsdtt-channel-extraction")
 
 
 def chi_analysis() -> int:
     """Run the bundled ``lsdtt-chi-analysis`` driver.
 
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    int
+        Native driver's exit status.
+
     Authors
     -------
     B. Gailleton
     """
-    _run("lsdtt-chi-analysis")
+    return _run("lsdtt-chi-analysis")
 
 
 def graphflood() -> int:
     """Run the bundled ``lsdtt-graphflood`` driver.
 
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    int
+        Native driver's exit status.
+
     Authors
     -------
     B. Gailleton
     """
-    _run("lsdtt-graphflood")
+    return _run("lsdtt-graphflood")
 
 
 def fetch_raster() -> int:
     """Run the bundled ``lsdtt-fetch-raster`` driver.
 
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    int
+        Native driver's exit status.
+
     Authors
     -------
     B. Gailleton
     """
-    _run("lsdtt-fetch-raster")
+    return _run("lsdtt-fetch-raster")

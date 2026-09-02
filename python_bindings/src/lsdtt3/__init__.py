@@ -508,9 +508,59 @@ def _numpy_style_docstring(function):
     return documented
 
 
+def _numpy_style_class_docstring(cls):
+    """Give an exported native-backed class a consistent public docstring.
+
+    Parameters
+    ----------
+    cls : type
+        Native-backed class exported by :mod:`lsdtt3._core`.
+
+    Returns
+    -------
+    type
+        The same class, with its original documentation retained under
+        ``Notes`` and a NumPy-style class-documentation envelope.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    original_doc = cls.__doc__ or "No additional binding notes are available."
+    summary = original_doc.strip().split("\n", maxsplit=1)[0].strip()
+    if not summary:
+        summary = f"Native-backed :mod:`lsdtt3` class ``{cls.__name__}``."
+
+    cls.__doc__ = f"""{summary}
+
+    Parameters
+    ----------
+    *args
+        Constructor arguments described by the generated binding signature.
+    **kwargs
+        Constructor keyword arguments described by the generated binding
+        signature.
+
+    Attributes
+    ----------
+    See the generated binding signature for available properties and methods.
+
+    Notes
+    -----
+    {original_doc.strip()}
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    return cls
+
+
 for _public_name in __all__:
     _public_value = globals()[_public_name]
-    if callable(_public_value) and not isinstance(_public_value, type):
+    if isinstance(_public_value, type):
+        globals()[_public_name] = _numpy_style_class_docstring(_public_value)
+    elif callable(_public_value):
         globals()[_public_name] = _numpy_style_docstring(_public_value)
 
 del _public_name, _public_value

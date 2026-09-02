@@ -148,8 +148,26 @@ def _search(query: str, namespace: Mapping[str, object]) -> str:
 def helper_for_llm(topic: str = "index", *, _namespace: Mapping[str, object]) -> str:
     """Return a compact API card selected by topic, symbol, or search query.
 
+    Parameters
+    ----------
+    topic : str, default="index"
+        Topic name, ``"symbol:<name>"``, ``"search:<words>"``, or ``"all"``.
+    _namespace : collections.abc.Mapping[str, object]
+        Public package namespace supplied by :mod:`lsdtt3`.
+
+    Returns
+    -------
+    str
+        Compact retrieval-oriented API context.
+
+    Notes
+    -----
     ``_namespace`` is supplied only by :mod:`lsdtt3` to avoid import cycles.
     It is intentionally private rather than part of the public helper API.
+
+    Authors
+    -------
+    B. Gailleton
     """
     request = topic.strip().lower()
     if request in ("", "index", "help"):
