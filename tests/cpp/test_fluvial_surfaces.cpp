@@ -68,6 +68,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "lsdtt_data_loader.hpp"
@@ -77,6 +78,8 @@
 #include "lsdtt_raster_geometry.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "lsdtt_flat_surface_channel_classify_cpu.hpp"
 
 namespace
 {
@@ -786,12 +789,461 @@ void write_phase0b_fixtures(const std::string& output_dir)
     std::cout << "phase 0b fixtures written to " << output_dir << "\n";
 }
 
+// =============================================================================
+// Phase 0c - the reference-field ladder engine
+//
+// T2, T4, T5 and T7 of section 7 of the plan.
+// =============================================================================
+
+// HAND above the staircase's own trunk channel, plus the flow-distance raster
+// and per-pixel source id the reach-relative path needs.
+struct staircase_hand
+{
+    lsdtt::lsdtt_raster_cpu          hand;
+    lsdtt::lsdtt_raster_cpu          flow_distance;
+    lsdtt::lsdtt_raster_cpu          admitted;
+    std::vector<std::int32_t>        source_id;
+};
+
+staircase_hand hand_for_staircase(
+    const lsdtt::lsdtt_terrace_staircase_surface& s)
+{
+    const lsdtt::lsdtt_raster_cpu filled =
+        lsdtt::fill_pits(s.dem, 0.0001f, /*n_threads=*/1);
+
+    lsdtt::lsdtt_flowinfo_options o;
+    o.boundary_conditions     = "oooo";
+    o.build_topological_order = true;
+    o.build_s_vector          = true;
+    o.n_threads               = 1;
+
+    const std::unique_ptr<lsdtt::lsdtt_flow_base> f = lsdtt::make_flow_base(
+        filled.get_data_array(), filled.get_mask_array(), filled.get_meta(), o);
+
+    const std::vector<float>& cm = s.channel_mask.get_data();
+    std::vector<uint8_t> chan(cm.size(), 0);
+    for (std::size_t i = 0; i < cm.size(); ++i) chan[i] = cm[i] > 0.5f ? 1 : 0;
+
+    lsdtt::height_above_channel_donor_result hd =
+        f->get_height_above_channel_mask_donor_raster(
+            s.dem.get_data(), s.dem.get_mask(), chan);
+
+    staircase_hand out;
+    out.hand          = lsdtt::lsdtt_raster_cpu(std::move(hd.height));
+    out.flow_distance = lsdtt::lsdtt_raster_cpu(
+        f->get_distance_from_outlet_raster());
+
+    // Admit everything with a defined HAND that is not the channel itself.
+    const std::vector<float>&   hv = out.hand.get_data();
+    const std::vector<uint8_t>& hm = out.hand.get_mask();
+    std::vector<float>   adm(hv.size(), 0.0f);
+    std::vector<uint8_t> adm_mask(hv.size(), 1);
+    for (std::size_t i = 0; i < hv.size(); ++i)
+    {
+        if (hm[i] && std::isfinite(hv[i]) && chan[i] == 0) adm[i] = 1.0f;
+    }
+    out.admitted = lsdtt::lsdtt_raster_cpu(
+        std::move(adm), std::move(adm_mask), out.hand.get_meta());
+
+    // One channel: every pixel with a donor belongs to source 0.
+    out.source_id.assign(hv.size(), -1);
+    for (std::size_t i = 0; i < hv.size(); ++i)
+    {
+        if (hd.donor_flat[i] >= 0) out.source_id[i] = 0;
+    }
+    return out;
+}
+
+void run_ladder_checks()
+{
+    std::cout << "lsdtt-test-fluvial-surfaces\n"
+              << "Phase 0c reference-field ladder\n\n";
+
+    // -------------------------------------------------------------------------
+    // FINDING, and it decides which algorithm the rest of these tests use.
+    //
+    // find_population_breaks bins on log10. A terrace flight is spaced LINEARLY
+    // in height above the channel, so log binning compresses it: treads at
+    // 8 / 16 / 24 / 32 m land in bins 39, 45, 48 and 50 of a 64-bin histogram -
+    // spacings of 6, 3 and 2 bins against a smoothing kernel about 5 bins wide.
+    // The upper treads merge into one mode and no antimode survives between
+    // them, so the finder returns NO breaks at all on a regular staircase.
+    //
+    // That is not a defect in the finder. It was built to separate a bimodal
+    // valley-floor-versus-hillslope population, which is exactly a two-band cut
+    // and which it does well. It is a statement about which reference
+    // populations it can ladder, and the staircase is not one of them.
+    // Fisher-Jenks, working on the linear field, resolves the same flight.
+    //
+    // Both facts are asserted below so neither can rot, and T2 accordingly runs
+    // its resolvability arms under jenks.
+    // -------------------------------------------------------------------------
+    std::cout << "-- the antimode finder on a linearly spaced flight --\n";
+
+    const lsdtt::lsdtt_terrace_staircase_surface st =
+        lsdtt::generate_terrace_staircase_surface(
+            k_st_n_rows, k_st_n_cols, k_st_cell_size,
+            k_st_n_terraces, k_st_tread_width, k_st_riser, k_st_valley_grad,
+            0.0, k_st_cross_grad, 0, 30.0, 0.0, 100.0, 0.5, 1, 1);
+
+    const staircase_hand sh = hand_for_staircase(st);
+
+    lsdtt::ladder_request base_req;
+    base_req.reference_field     = lsdtt::reference_field_choice::hand;
+    base_req.break_algorithm     = lsdtt::ladder_break_choice::antimode;
+    base_req.reach_window_metres = -1.0;   // global
+    base_req.hist_bins           = 64;
+    base_req.min_field_metres    = 0.05;
+    base_req.max_valley_fraction = 0.6;
+
+    {
+        const lsdtt::ladder_result anti =
+            lsdtt::build_reference_field_ladder(sh.hand, sh.admitted, base_req);
+
+        lsdtt::ladder_request jr = base_req;
+        jr.break_algorithm = lsdtt::ladder_break_choice::jenks;
+        const lsdtt::ladder_result jen =
+            lsdtt::build_reference_field_ladder(sh.hand, sh.admitted, jr);
+
+        std::cout << "      antimode candidates on the staircase = "
+                  << anti.global_breaks_m.size()
+                  << ", jenks k = " << jen.windows.at(0).k_selected << "\n";
+
+        check(anti.global_breaks_m.empty(),
+              "the antimode finder returns no breaks on a linearly spaced "
+              "flight (log binning merges the upper treads)");
+        check(jen.windows.at(0).k_selected >= 4,
+              "jenks on the linear field resolves the same flight");
+    }
+
+    // -------------------------------------------------------------------------
+    // T5 - level_count = 2 reproduces the legacy valley cut EXACTLY.
+    //
+    // This is the pin that lets the valley engine be re-plumbed onto the ladder
+    // without changing its answer. find_population_breaks is shared with
+    // lsdtt-valley-centreline, so the ladder must WRAP it, not replace it.
+    //
+    // Run on a BIMODAL population, because that is what the legacy cut is for
+    // and what it can actually separate (see the finding above): a tight
+    // low-lying valley-floor mode and a broad elevated hillslope mode.
+    // -------------------------------------------------------------------------
+    std::cout << "\n-- T5: k = 2 reproduces the legacy valley cut --\n";
+    {
+        const int nr = 200, nc = 200;
+        const std::size_t np = static_cast<std::size_t>(nr) * nc;
+        lsdtt::lsdtt_raster_meta bm = st.dem.get_meta();
+        bm.n_rows = nr; bm.n_cols = nc;
+
+        // Two well-separated log-space modes plus a sparse high tail.
+        //
+        // The tail is not decoration. find_population_breaks scans for local
+        // maxima over bins 1..nb-2, so a mode occupying the TOPMOST histogram
+        // bin is invisible to it and only one maximum is found - whereupon it
+        // returns nothing at all. Real HAND populations always carry a valley-
+        // wall tail above the upper mode; a synthetic one has to supply it.
+        std::vector<float>   bv(np, 0.0f);
+        std::vector<uint8_t> bmk(np, 1);
+        std::vector<float>   ba(np, 1.0f);
+        std::vector<uint8_t> bam(np, 1);
+        for (std::size_t i = 0; i < np; ++i)
+        {
+            const double u = static_cast<double>((i * 2654435761u) % 1000) / 1000.0;
+            if (i % 97 == 0)     bv[i] = static_cast<float>(150.0 + 100.0 * u);
+            else if (i % 3 != 0) bv[i] = static_cast<float>(1.5 + 1.0 * u);
+            else                 bv[i] = static_cast<float>(30.0 + 15.0 * u);
+        }
+        const lsdtt::lsdtt_raster_cpu field(
+            std::move(bv), std::move(bmk), bm);
+        const lsdtt::lsdtt_raster_cpu adm(
+            std::move(ba), std::move(bam), bm);
+
+        // The legacy call, verbatim, on the same population.
+        const int nbins = 64;
+        const double floor_m = 0.05;
+        const double lo_log = std::log10(floor_m);
+        double hi_log = lo_log;
+        const std::vector<float>& fvv = field.get_data();
+        for (std::size_t i = 0; i < np; ++i)
+            hi_log = std::max(hi_log,
+                std::log10(std::max<double>(fvv[i], floor_m)));
+        hi_log += 1e-6;
+
+        std::vector<std::int64_t> hist(nbins, 0);
+        for (std::size_t i = 0; i < np; ++i)
+        {
+            const double l = std::log10(std::max<double>(fvv[i], floor_m));
+            int b = static_cast<int>((l - lo_log) / (hi_log - lo_log) * nbins);
+            ++hist[static_cast<std::size_t>(std::clamp(b, 0, nbins - 1))];
+        }
+        const std::vector<double> legacy =
+            lsdtt::find_population_breaks(hist, lo_log, hi_log, 0.6);
+
+        lsdtt::ladder_request r2 = base_req;
+        r2.level_count = 2;
+        const lsdtt::ladder_result lr =
+            lsdtt::build_reference_field_ladder(field, adm, r2);
+
+        check(!legacy.empty(),
+              "the legacy break finder separates a bimodal population");
+        check(lr.windows.size() == 1 && lr.windows.at(0).breaks_m.size() == 1,
+              "the k = 2 ladder returns exactly one break");
+        if (!legacy.empty() && !lr.windows.at(0).breaks_m.empty())
+        {
+            std::cout << "      legacy break = " << std::setprecision(12)
+                      << legacy[0] << " m, ladder break = "
+                      << lr.windows.at(0).breaks_m[0] << " m\n";
+            check(lr.windows.at(0).breaks_m[0] == legacy[0],
+                  "the k = 2 ladder break is BIT-EQUAL to the legacy cut");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // T2 - UNRESOLVED is reported, never fabricated.
+    //
+    // Both arms matter. A test that only checks the unresolvable case can pass
+    // by always saying unresolved, so the resolvable case is asserted beside it.
+    // -------------------------------------------------------------------------
+    std::cout << "\n-- T2: unresolved is reported, not fabricated --\n";
+
+    auto ladder_on = [&](double riser_height, double ev, int level_count)
+        -> lsdtt::ladder_result
+    {
+        const lsdtt::lsdtt_terrace_staircase_surface s =
+            lsdtt::generate_terrace_staircase_surface(
+                k_st_n_rows, k_st_n_cols, k_st_cell_size,
+                k_st_n_terraces, k_st_tread_width, riser_height,
+                // A gentle valley so the cross-fall is the steeper gradient at
+                // BOTH riser heights: the monotonicity cap forces a small
+                // cross-fall when the risers are small, and if the valley
+                // gradient then wins, the treads drain downstream and HAND
+                // stops being a tread height at all. The two arms must differ
+                // only in riser height.
+                /*valley_gradient=*/0.0002, 0.0,
+                0.6 * riser_height / k_st_tread_width,
+                0, 30.0, 0.0, 100.0, 0.5, 1, 1);
+        staircase_hand h = hand_for_staircase(s);
+
+        // Admit ONLY tread cells. With the valley wall included the population
+        // spans ~180 m and Fisher-Jenks simply spends its bands up the wall,
+        // where the gaps are large - so a flight of 0.4 m risers would come
+        // back "resolved" on structure that has nothing to do with the
+        // terraces. Restricting to the treads makes the test about the flight.
+        {
+            const std::vector<float>& tid = s.tread_id.get_data();
+            std::vector<float>&       adm = h.admitted.get_data();
+            for (std::size_t i = 0; i < adm.size(); ++i)
+                if (tid[i] <= 0.0f) adm[i] = 0.0f;
+        }
+
+        lsdtt::ladder_request r = base_req;
+        // Jenks, not antimode: the finding above shows antimode cannot ladder
+        // a linearly spaced flight at all, so under it every arm of this test
+        // would return k = 1 and the resolvability floor would never be
+        // exercised.
+        r.break_algorithm          = lsdtt::ladder_break_choice::jenks;
+        r.vertical_accuracy_metres = ev;
+        r.resolvability_kappa      = 3.0;
+        r.level_count              = level_count;
+        return lsdtt::build_reference_field_ladder(h.hand, h.admitted, r);
+    };
+
+    {
+        // Risers of 0.4 m against a required gap of 1.5 m: nothing the DEM can
+        // separate.
+        const lsdtt::ladder_result lo_r = ladder_on(0.4, 0.5, 0);
+        const lsdtt::ladder_window& w = lo_r.windows.at(0);
+        std::cout << "      riser 0.4 m, required gap "
+                  << w.required_gap_m << " m -> k = " << w.k_selected
+                  << ", min centre gap = " << w.min_band_centre_gap_m << " m\n";
+        check(w.status == lsdtt::ladder_status::unresolved,
+              "a sub-resolution staircase reports UNRESOLVED");
+        check(w.k_selected == 1,
+              "and emits one band rather than inventing levels");
+        check(lo_r.n_windows_unresolved == 1 && lo_r.n_windows_resolved == 0,
+              "the unresolved count is reported");
+
+        // The same flight with 8 m risers is comfortably resolvable.
+        const lsdtt::ladder_result hi_r = ladder_on(8.0, 0.5, 0);
+        const lsdtt::ladder_window& w2 = hi_r.windows.at(0);
+        std::cout << "      riser 8.0 m, required gap "
+                  << w2.required_gap_m << " m -> k = " << w2.k_selected
+                  << ", min centre gap = " << w2.min_band_centre_gap_m << " m\n";
+        check(w2.status == lsdtt::ladder_status::resolved,
+              "an 8 m staircase resolves, so the test cannot pass by always "
+              "saying unresolved");
+        check(w2.k_selected >= 2,
+              "and recovers more than one level");
+        check(w2.min_band_centre_gap_m >= w2.required_gap_m,
+              "the selected partition really does clear the floor");
+
+        // An EXPLICIT k that cannot be resolved is honoured and flagged, never
+        // silently replaced with a different number.
+        const lsdtt::ladder_result forced = ladder_on(0.4, 0.5, 4);
+        const lsdtt::ladder_window& w3 = forced.windows.at(0);
+        std::cout << "      explicit k = 4 on the 0.4 m flight -> k = "
+                  << w3.k_selected << ", status "
+                  << static_cast<int>(w3.status) << "\n";
+        check(w3.status == lsdtt::ladder_status::unresolved,
+              "an inadmissible explicit level_count reports unresolved");
+    }
+
+    // -------------------------------------------------------------------------
+    // T4 - labels are globally unique and each maps to exactly one band.
+    //
+    // The band is NOT packed into the label (see the header): it travels in the
+    // band_index raster and in patch_record, so what has to hold is that the
+    // label -> band map is single-valued and that every label round-trips
+    // through the float32 backing store exactly.
+    // -------------------------------------------------------------------------
+    std::cout << "\n-- T4: labels globally unique, band map single-valued --\n";
+    {
+        lsdtt::ladder_request r = base_req;
+        r.break_algorithm          = lsdtt::ladder_break_choice::jenks;
+        r.vertical_accuracy_metres = 0.5;
+        const lsdtt::ladder_result lr =
+            lsdtt::build_reference_field_ladder(sh.hand, sh.admitted, r);
+
+        const lsdtt::banded_label_result bl =
+            lsdtt::label_components_within_bands(
+                lr.band_index, sh.admitted, sh.hand,
+                /*min_component_pixels=*/50, lsdtt::pixel_connectivity::d4);
+
+        const std::vector<float>& lab = bl.labels.get_data();
+        const std::vector<float>& bnd = lr.band_index.get_data();
+
+        std::unordered_map<std::int64_t, int> label_band;
+        bool single_valued = true;
+        bool exact_float   = true;
+        std::int64_t max_label = 0;
+
+        for (std::size_t i = 0; i < lab.size(); ++i)
+        {
+            if (lab[i] <= 0.0f) continue;
+            const std::int64_t l = static_cast<std::int64_t>(lab[i]);
+            max_label = std::max(max_label, l);
+            if (static_cast<float>(l) != lab[i]) exact_float = false;
+            const int b = static_cast<int>(bnd[i]);
+            auto it = label_band.find(l);
+            if (it == label_band.end()) label_band[l] = b;
+            else if (it->second != b) single_valued = false;
+        }
+
+        std::cout << "      " << bl.patches.size() << " patches, max label "
+                  << max_label << ", " << (lr.max_band_index + 1) << " bands\n";
+
+        check(!bl.patches.empty(), "band-then-label produces patches");
+        check(single_valued,
+              "every label maps to exactly one band");
+        check(exact_float,
+              "every label round-trips through the float32 store exactly");
+        check(max_label == static_cast<std::int64_t>(bl.patches.size()),
+              "labels are a dense global running counter 1..N");
+
+        // The patch table agrees with the raster.
+        bool table_ok = true;
+        for (std::size_t p = 0; p < bl.patches.size(); ++p)
+        {
+            const lsdtt::patch_record& rec = bl.patches[p];
+            if (rec.label != static_cast<std::int64_t>(p) + 1) table_ok = false;
+            auto it = label_band.find(rec.label);
+            if (it == label_band.end() || it->second != rec.band) table_ok = false;
+            if (rec.n_pixels < 50) table_ok = false;
+        }
+        check(table_ok,
+              "patch_record index, label, band and size all agree with the raster");
+
+        // No patch spans two bands - the property band-then-label exists for.
+        std::cout << "      (the 2^24 patch-count guard is not exercised: "
+                  << "constructing 16.7M patches needs a ~34M-cell grid)\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // T7 - selection is a CONSTRAINT with an extremum, not a trade-off.
+    //
+    // Arm 1 runs under jenks. The antimode finder bins on log10 with a floor,
+    // so multiplying the field by 100 re-bins the histogram and moves the
+    // candidate breaks for reasons that have nothing to do with the selection
+    // rule; jenks works on the linear field and takes k directly, which is what
+    // isolates the property under test.
+    //
+    // Arm 2 is the behaviour that distinguishes a constraint from a trade-off:
+    // raising the required gap can only ever reduce the admissible k, and past
+    // some point admits nothing. Under an additive score a large gap
+    // requirement could be paid for by a good variance fit, and k would not
+    // fall monotonically.
+    // -------------------------------------------------------------------------
+    std::cout << "\n-- T7: selection is a constraint, not a trade-off --\n";
+    {
+        auto scaled_ladder = [&](double scale) -> int
+        {
+            const std::vector<float>&   hv = sh.hand.get_data();
+            const std::vector<uint8_t>& hm = sh.hand.get_mask();
+            std::vector<float>   sv(hv.size(), 0.0f);
+            std::vector<uint8_t> sm(hm.begin(), hm.end());
+            for (std::size_t i = 0; i < hv.size(); ++i)
+                sv[i] = static_cast<float>(hv[i] * scale);
+            const lsdtt::lsdtt_raster_cpu scaled(
+                std::move(sv), std::move(sm), sh.hand.get_meta());
+
+            lsdtt::ladder_request r = base_req;
+            r.break_algorithm          = lsdtt::ladder_break_choice::jenks;
+            r.vertical_accuracy_metres = 0.5 * scale;
+            r.resolvability_kappa      = 3.0;
+            const lsdtt::ladder_result lr =
+                lsdtt::build_reference_field_ladder(scaled, sh.admitted, r);
+            return lr.windows.at(0).k_selected;
+        };
+
+        const int k_1   = scaled_ladder(1.0);
+        const int k_100 = scaled_ladder(100.0);
+        std::cout << "      jenks k at scale 1 = " << k_1
+                  << ", at scale 100 = " << k_100 << "\n";
+        check(k_1 == k_100,
+              "scaling the field and E_v together leaves k unchanged");
+
+        // Monotone response to a tightening constraint.
+        std::vector<int> ks;
+        for (const double ev : {0.1, 1.0, 5.0, 20.0, 100.0})
+        {
+            lsdtt::ladder_request r = base_req;
+            r.break_algorithm          = lsdtt::ladder_break_choice::jenks;
+            r.vertical_accuracy_metres = ev;
+            r.resolvability_kappa      = 3.0;
+            const lsdtt::ladder_result lr =
+                lsdtt::build_reference_field_ladder(sh.hand, sh.admitted, r);
+            ks.push_back(lr.windows.at(0).k_selected);
+        }
+        std::cout << "      k as E_v rises (0.1, 1, 5, 20, 100 m):";
+        for (const int k : ks) std::cout << " " << k;
+        std::cout << "\n";
+
+        bool monotone = true;
+        for (std::size_t i = 1; i < ks.size(); ++i)
+            if (ks[i] > ks[i - 1]) monotone = false;
+        check(monotone,
+              "k never RISES as the resolvability floor is raised");
+        check(ks.front() > ks.back(),
+              "and it genuinely falls, so the floor is actually binding");
+        check(ks.back() == 1,
+              "a floor no partition can clear collapses to one band");
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[])
 {
     try
     {
+        if (argc == 2 && std::string(argv[1]) == "--ladder")
+        {
+            run_ladder_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
         if (argc == 3 && std::string(argv[1]) == "--write-cli-fixture")
         {
             write_cli_fixture(argv[2]);

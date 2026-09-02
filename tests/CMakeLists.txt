@@ -3338,6 +3338,16 @@ add_test(NAME unit_fluvial_surfaces_fixture
 set_tests_properties(unit_fluvial_surfaces_fixture PROPERTIES
     LABELS "unit")
 
+# Phase 0c. T2, T4, T5 and T7 of the plan's section 7: the resolvability floor
+# reports UNRESOLVED rather than fabricating levels, labels are a globally
+# unique running counter whose band map is single-valued, k = 2 reproduces the
+# legacy valley cut bit-for-bit, and k selection is a constraint with an
+# extremum rather than a trade-off.
+add_test(NAME unit_fluvial_surface_ladder
+         COMMAND lsdtt-test-fluvial-surfaces --ladder)
+set_tests_properties(unit_fluvial_surface_ladder PROPERTIES
+    LABELS "unit")
+
 add_test(NAME fixture_fluvial_surfaces_cli
          COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
                  ${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR})
@@ -3481,7 +3491,7 @@ set(LSDTT_DOMAIN_RULES
     # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
-    "fluvial_surfaces|flat_surface|valley_centreline" "fluvial_surfaces"
+    "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
     "chi|channel|drainage|basin|flow_properties|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret"           "core"

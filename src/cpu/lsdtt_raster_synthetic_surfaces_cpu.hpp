@@ -1024,6 +1024,17 @@ struct lsdtt_terrace_staircase_surface
 //   Must be < riser_height_m / tread_width_m, otherwise the cross-fall exceeds
 //   the riser and the staircase stops being monotonic; this is checked.
 //
+//   It must ALSO exceed valley_gradient, and that one is not checked because
+//   it is a statement about what the caller wants rather than about a valid
+//   surface. Whichever gradient is steeper decides where water on a tread
+//   goes. Below valley_gradient the treads drain DOWNSTREAM to a far-away
+//   channel cell, and height above channel then measures how far downstream
+//   the flow path ran before it found the channel - not the height of the
+//   tread. The staircase still looks correct and the HAND field is still
+//   fully defined, so nothing warns: the ladder simply bands the wrong
+//   quantity. A low flight is the dangerous case, because the monotonicity
+//   cap above forces a small cross-fall exactly when riser_height_m is small.
+//
 // n_riser_gaps, riser_gap_width_m
 //   Road- or spill-like cuts that destroy riser continuity. At n_riser_gaps
 //   evenly spaced downstream stations, a band riser_gap_width_m long along the
