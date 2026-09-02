@@ -66,6 +66,8 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -803,6 +805,9 @@ struct staircase_hand
     lsdtt::lsdtt_raster_cpu          flow_distance;
     lsdtt::lsdtt_raster_cpu          admitted;
     std::vector<std::int32_t>        source_id;
+    std::vector<std::int32_t>        channel_source_id;
+    std::vector<std::int64_t>        donor_flat;
+    std::vector<std::uint8_t>        channel_mask;
 };
 
 staircase_hand hand_for_staircase(
@@ -847,11 +852,283 @@ staircase_hand hand_for_staircase(
 
     // One channel: every pixel with a donor belongs to source 0.
     out.source_id.assign(hv.size(), -1);
+    out.channel_source_id.assign(hv.size(), -1);
+    out.channel_mask = chan;
+    out.donor_flat = hd.donor_flat;
     for (std::size_t i = 0; i < hv.size(); ++i)
     {
         if (hd.donor_flat[i] >= 0) out.source_id[i] = 0;
+        if (chan[i]) out.channel_source_id[i] = 0;
     }
     return out;
+}
+
+
+// =============================================================================
+// Phase 1 - T1: band-then-label keeps dissected treads separate
+//
+// The standing assertions are on the NEW path only. The old path's leak is
+// measured once and reported, but is deliberately not asserted: it disappears
+// with the label_within_bands gate, and a test that pins a defect breaks when
+// the defect is deleted.
+// =============================================================================
+struct t1_measurement
+{
+    std::int64_t n_labels                = 0;
+    std::int64_t largest_label_pixels    = 0;
+    int          largest_label_treads    = 0;
+    int          max_treads_in_any_label = 0;
+    double       purity                  = 0.0;   // fraction of labelled tread
+                                                  // pixels in single-tread labels
+};
+
+// How many distinct true treads does each label touch, and how pure is the
+// labelling overall?
+t1_measurement measure_labels(const lsdtt::lsdtt_raster_cpu& labels,
+                              const lsdtt::lsdtt_raster_cpu& tread_id)
+{
+    const std::vector<float>& lv = labels.get_data();
+    const std::vector<float>& tv = tread_id.get_data();
+
+    std::unordered_map<std::int64_t, std::unordered_map<int, std::int64_t>> hits;
+    std::unordered_map<std::int64_t, std::int64_t> sizes;
+
+    for (std::size_t i = 0; i < lv.size(); ++i)
+    {
+        if (lv[i] <= 0.0f) continue;
+        const std::int64_t l = static_cast<std::int64_t>(lv[i]);
+        ++sizes[l];
+        const int t = static_cast<int>(tv[i]);
+        if (t > 0) ++hits[l][t];
+    }
+
+    t1_measurement m;
+    m.n_labels = static_cast<std::int64_t>(sizes.size());
+
+    std::int64_t pure_px = 0, total_px = 0;
+    for (const auto& [l, per_tread] : hits)
+    {
+        const int n_treads = static_cast<int>(per_tread.size());
+        m.max_treads_in_any_label = std::max(m.max_treads_in_any_label, n_treads);
+        std::int64_t sum = 0;
+        for (const auto& [t, c] : per_tread) sum += c;
+        total_px += sum;
+        if (n_treads == 1) pure_px += sum;
+    }
+    m.purity = total_px ? static_cast<double>(pure_px) / total_px : 0.0;
+
+    for (const auto& [l, sz] : sizes)
+    {
+        if (sz > m.largest_label_pixels)
+        {
+            m.largest_label_pixels = sz;
+            auto it = hits.find(l);
+            m.largest_label_treads =
+                (it == hits.end()) ? 0 : static_cast<int>(it->second.size());
+        }
+    }
+    return m;
+}
+
+void run_band_then_label_checks()
+{
+    std::cout << "lsdtt-test-fluvial-surfaces\n"
+              << "Phase 1 band-then-label (T1)\n\n";
+
+    // The dissected staircase: 4 treads, 3 gaps wide enough to read as flat.
+    // A gentle valley so the cross-fall wins and HAND is a tread height (see
+    // the generator header).
+    const lsdtt::lsdtt_terrace_staircase_surface st =
+        lsdtt::generate_terrace_staircase_surface(
+            k_st_n_rows, k_st_n_cols, k_st_cell_size,
+            k_st_n_terraces, k_st_tread_width, k_st_riser,
+            /*valley_gradient=*/0.0002, 0.0,
+            0.6 * k_st_riser / k_st_tread_width,
+            /*n_riser_gaps=*/3, k_st_gap_width,
+            0.0, 100.0, 0.5, 1, 1);
+
+    staircase_hand sh = hand_for_staircase(st);
+
+    // Flat ground = everything off the risers and off the wall. Emulating what
+    // the flat-surface finder admits: the treads AND the gap ramps, which is
+    // precisely the set in which the gaps can connect two treads.
+    const lsdtt::lsdtt_raster_cpu relief =
+        lsdtt::moving_window_local_relief(st.dem, 2.0 * k_st_cell_size);
+    {
+        const std::vector<float>& rv = relief.get_data();
+        std::vector<float>&       ad = sh.admitted.get_data();
+        for (std::size_t i = 0; i < ad.size(); ++i)
+            if (!(rv[i] < 2.0f)) ad[i] = 0.0f;
+    }
+
+    // One label over the whole admitted set: what the OLD ordering produces
+    // before any height is consulted.
+    const lsdtt::banded_label_result whole =
+        lsdtt::label_components_within_bands(
+            /*band_index=*/sh.admitted,     // a single band: every admitted
+                                            // pixel carries band 0
+            sh.admitted, sh.hand, 50, lsdtt::pixel_connectivity::d4);
+
+    // Careful: passing `admitted` as the band index gives band 1 for admitted
+    // pixels, which is still ONE band, so this is exactly a whole-raster
+    // labelling.
+    const t1_measurement old_m = measure_labels(whole.labels, st.tread_id);
+
+    std::cout << "-- measurement: the OLD ordering on the dissected flight --\n"
+              << "      labels = " << old_m.n_labels
+              << ", largest spans " << old_m.largest_label_treads
+              << " true treads (" << old_m.largest_label_pixels << " px)\n"
+              << "      worst label spans " << old_m.max_treads_in_any_label
+              << " treads, tread purity = "
+              << std::setprecision(4) << old_m.purity << "\n"
+              << "      (recorded, not asserted: this path is deleted in phase 6)\n\n";
+
+    // ---- the NEW path ----
+    lsdtt::flat_surface_classify_request request;
+    request.label_within_bands = true;
+    request.ladder_break_algorithm = lsdtt::ladder_break_choice::jenks;
+    request.ladder_level_count = k_st_n_terraces;
+    request.band_reach_window_metres = -1.0;
+    request.vertical_accuracy_metres = 0.5;
+    request.band_min_component_pixels = 50;
+    request.floodplain_max_height_metres = 5.0;
+    request.terrace_min_height_metres = 5.0;
+
+    const lsdtt::flat_surface_classify_result classified =
+        lsdtt::classify_flat_surfaces_by_channel(
+            whole.labels, sh.hand, sh.channel_mask, sh.channel_source_id,
+            request, &sh.donor_flat, &sh.flow_distance);
+
+    const t1_measurement new_m =
+        measure_labels(classified.banded_labels_raster, st.tread_id);
+
+    std::set<int> bands;
+    const std::vector<float>& labels = classified.banded_labels_raster.get_data();
+    const std::vector<float>& band_index = classified.hand_band_raster.get_data();
+    for (std::size_t i = 0; i < labels.size(); ++i)
+        if (labels[i] > 0.0f && band_index[i] >= 0.0f)
+            bands.insert(static_cast<int>(band_index[i]));
+
+    std::map<std::pair<int, int>, std::set<std::int64_t>> true_patch_labels;
+    std::unordered_map<std::int64_t, std::set<std::pair<int, int>>> label_patches;
+    const std::vector<float>& truth = st.tread_id.get_data();
+    for (std::size_t i = 0; i < labels.size(); ++i)
+    {
+        if (labels[i] <= 0.0f || truth[i] <= 0.0f) continue;
+        const int tread = static_cast<int>(truth[i]);
+        const int col = static_cast<int>(i % static_cast<std::size_t>(k_st_n_cols));
+        const std::pair<int, int> key{tread, col < k_st_n_cols / 2 ? 0 : 1};
+        const std::int64_t label = static_cast<std::int64_t>(labels[i]);
+        true_patch_labels[key].insert(label);
+        label_patches[label].insert(key);
+    }
+
+    bool one_label_per_true_patch = true;
+    for (const auto& [key, patch_labels] : true_patch_labels)
+        one_label_per_true_patch = one_label_per_true_patch && patch_labels.size() == 1;
+    bool one_true_patch_per_label = true;
+    for (const auto& [label, patches] : label_patches)
+        one_true_patch_per_label = one_true_patch_per_label && patches.size() == 1;
+
+    std::cout << "-- T1: the NEW ordering --\n"
+              << "      bands = " << bands.size()
+              << ", labels = " << new_m.n_labels
+              << ", worst label spans " << new_m.max_treads_in_any_label
+              << " treads, tread purity = " << new_m.purity << "\n";
+
+    check(classified.used_band_then_label,
+          "the classifier reports that the band-then-label path ran");
+    check(bands == std::set<int>({0, 1, 2, 3}),
+          "the ladder recovers exactly n_terraces bands");
+    check(new_m.max_treads_in_any_label == 1,
+          "no label spans more than one true tread");
+    check(new_m.purity >= 0.999,
+          "tread purity is 1.0 under band-then-label");
+    check(true_patch_labels.size() == 2 * k_st_n_terraces,
+          "the truth raster contains two spatial patches per tread");
+    check(one_label_per_true_patch && one_true_patch_per_label,
+          "component count per band equals the spatially separate tread patches");
+    check(classified.patches.size() == classified.labels.size(),
+          "every replacement patch has one classification record");
+    bool metadata_agrees = true;
+    for (const lsdtt::flat_surface_label_class& rec : classified.labels)
+    {
+        if (rec.label <= 0 ||
+            static_cast<std::size_t>(rec.label) > classified.patches.size())
+        {
+            metadata_agrees = false;
+            continue;
+        }
+        const lsdtt::patch_record& patch =
+            classified.patches[static_cast<std::size_t>(rec.label - 1)];
+        metadata_agrees = metadata_agrees && rec.hand_band == patch.band &&
+            std::abs(rec.median_height - patch.median_field) < 1e-6;
+    }
+    check(metadata_agrees,
+          "patch and classification records agree on band and median");
+
+    // Window integration regressions found during the Phase 1 review.
+    lsdtt::ladder_request windowed;
+    windowed.break_algorithm = lsdtt::ladder_break_choice::jenks;
+    windowed.level_count = k_st_n_terraces;
+    windowed.reach_window_metres = 500.0;
+    windowed.vertical_accuracy_metres = 0.5;
+    windowed.min_window_pixels = 1000000;  // force global fallback
+    std::vector<std::int32_t> partial_source = sh.source_id;
+    std::size_t missing_donor_pixel = partial_source.size();
+    for (std::size_t i = 0; i < partial_source.size(); ++i)
+    {
+        if (sh.admitted.get_data()[i] > 0.5f && sh.hand.get_mask()[i])
+        {
+            partial_source[i] = -1;
+            missing_donor_pixel = i;
+            break;
+        }
+    }
+    const lsdtt::ladder_result sparse =
+        lsdtt::build_reference_field_ladder(
+            sh.hand, sh.admitted, windowed, &partial_source, &sh.flow_distance);
+    bool sparse_metadata_agrees = !sparse.windows.empty();
+    bool windows_sorted = true;
+    for (std::size_t i = 0; i < sparse.windows.size(); ++i)
+    {
+        const lsdtt::ladder_window& w = sparse.windows[i];
+        sparse_metadata_agrees = sparse_metadata_agrees &&
+            w.status == lsdtt::ladder_status::degenerate &&
+            w.used_global_breaks &&
+            w.k_selected == static_cast<int>(w.breaks_m.size()) + 1;
+        if (i > 0)
+        {
+            const lsdtt::ladder_window& prev = sparse.windows[i - 1];
+            windows_sorted = windows_sorted &&
+                (prev.source_id < w.source_id ||
+                 (prev.source_id == w.source_id &&
+                  prev.window_centre_m <= w.window_centre_m));
+        }
+    }
+    check(sparse_metadata_agrees,
+          "sparse windows report the global partition they actually apply");
+    check(windows_sorted,
+          "ladder windows have deterministic source and centre ordering");
+    check(missing_donor_pixel < partial_source.size() &&
+          sparse.band_index.get_data()[missing_donor_pixel] >= 0.0f,
+          "an admitted pixel without a donor receives the global fallback band");
+
+    lsdtt::ladder_request unresolved = windowed;
+    unresolved.level_count = 0;
+    unresolved.max_level_count = k_st_n_terraces;
+    unresolved.min_window_pixels = 1;
+    unresolved.vertical_accuracy_metres = 1000000.0;
+    const lsdtt::ladder_result unresolved_result =
+        lsdtt::build_reference_field_ladder(
+            sh.hand, sh.admitted, unresolved, &sh.source_id, &sh.flow_distance);
+    bool unresolved_is_one_band = !unresolved_result.windows.empty();
+    for (const lsdtt::ladder_window& w : unresolved_result.windows)
+        unresolved_is_one_band = unresolved_is_one_band &&
+            w.status == lsdtt::ladder_status::unresolved &&
+            w.k_selected == 1 && w.breaks_m.empty();
+    check(unresolved_is_one_band && unresolved_result.max_band_index == 0,
+          "auto-unresolved windows retain their own honest one-band partition");
 }
 
 void run_ladder_checks()
@@ -1235,6 +1512,15 @@ int main(int argc, char* argv[])
 {
     try
     {
+        if (argc == 2 && std::string(argv[1]) == "--band-then-label")
+        {
+            run_band_then_label_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
         if (argc == 2 && std::string(argv[1]) == "--ladder")
         {
             run_ladder_checks();

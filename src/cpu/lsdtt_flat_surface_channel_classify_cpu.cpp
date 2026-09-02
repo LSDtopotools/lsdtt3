@@ -242,12 +242,10 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     const lsdtt_raster_cpu*              channel_flow_distance)
 {
     const lsdtt_raster_meta& meta = labelled_flat_mask.get_meta();
-    const std::vector<float>&   lbl  = labelled_flat_mask.get_data();
-    const std::vector<uint8_t>& lmask = labelled_flat_mask.get_mask();
     const std::vector<float>&   hand = height_above_channel.get_data();
     const std::vector<uint8_t>& hmask = height_above_channel.get_mask();
 
-    const std::size_t n = lbl.size();
+    const std::size_t n = labelled_flat_mask.get_data().size();
     if (hand.size() != n || channel_mask.size() != n ||
         channel_source_id.size() != n)
     {
@@ -255,9 +253,10 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             "classify_flat_surfaces_by_channel: raster / mask size mismatch.");
     }
 
-    bool banding = request.enable_hand_banding &&
-                   donor_flat != nullptr && channel_flow_distance != nullptr;
-    if (banding &&
+    const bool have_donor_reach =
+        donor_flat != nullptr && channel_flow_distance != nullptr;
+    bool banding = request.enable_hand_banding && have_donor_reach;
+    if (have_donor_reach &&
         (donor_flat->size() != n ||
          channel_flow_distance->get_data().size() != n))
     {
@@ -265,6 +264,106 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             "classify_flat_surfaces_by_channel: donor_flat / "
             "channel_flow_distance size mismatch.");
     }
+
+    // -------------------------------------------------------------------------
+    // BAND-THEN-LABEL (request.label_within_bands).
+    //
+    // Stratify HAND first, then label connected components within each band, and
+    // classify THOSE labels rather than the caller's. A label built inside one
+    // band cannot straddle a class boundary, so the two repair mechanisms that
+    // exist to detect straddling labels have nothing left to detect and are
+    // switched off below rather than run to no effect.
+    // -------------------------------------------------------------------------
+    lsdtt_raster_cpu     banded_labels;
+    ladder_result        lad;
+    banded_label_result  banded;
+    bool                 used_ladder = false;
+
+    if (request.label_within_bands)
+    {
+        const std::vector<float>&   in_lbl  = labelled_flat_mask.get_data();
+        const std::vector<uint8_t>& in_mask = labelled_flat_mask.get_mask();
+
+        // The admitted set is wherever the caller found flat ground. Which
+        // component a pixel landed in is deliberately discarded - that grouping
+        // is the thing being replaced.
+        std::vector<float>   adm(n, 0.0f);
+        std::vector<uint8_t> adm_mask(n, 1);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (in_mask[i] && in_lbl[i] > 0.5f) adm[i] = 1.0f;
+        }
+        const lsdtt_raster_cpu admitted(
+            std::move(adm), std::move(adm_mask), meta);
+
+        ladder_request lr;
+        lr.reference_field         = reference_field_choice::hand;
+        lr.break_algorithm         = request.ladder_break_algorithm;
+        lr.level_count             = request.ladder_level_count;
+        lr.max_level_count         = request.ladder_max_level_count;
+        lr.vertical_accuracy_metres = request.vertical_accuracy_metres;
+        lr.resolvability_kappa     = request.resolvability_kappa;
+        lr.reach_window_metres     = request.band_reach_window_metres;
+        lr.min_window_pixels       = request.band_min_window_pixels;
+        lr.hist_bins               = request.band_hist_bins;
+        lr.min_field_metres        = request.band_min_hand_metres;
+        lr.max_valley_fraction     = request.band_max_valley_fraction;
+        lr.n_threads               = request.n_threads;
+
+        // Reach-relative windowing needs each pixel placed ALONG the channel,
+        // which means going through its HAND donor: the source id and the flow
+        // distance are read at the donor node, not at the pixel. Without donors
+        // the ladder falls back to one global partition.
+        std::vector<std::int32_t> pixel_source;
+        lsdtt_raster_cpu          donor_distance;
+        const std::vector<std::int32_t>* src_ptr  = nullptr;
+        const lsdtt_raster_cpu*          dist_ptr = nullptr;
+
+        if (donor_flat != nullptr && channel_flow_distance != nullptr &&
+            donor_flat->size() == n &&
+            channel_flow_distance->get_data().size() == n)
+        {
+            const std::vector<float>&   fd  = channel_flow_distance->get_data();
+            const std::vector<uint8_t>& fdm = channel_flow_distance->get_mask();
+
+            pixel_source.assign(n, -1);
+            std::vector<float>   dd(n, 0.0f);
+            std::vector<uint8_t> dm(n, 0);
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                const std::int64_t df = (*donor_flat)[i];
+                if (df < 0) continue;
+                const std::size_t dfi = static_cast<std::size_t>(df);
+                if (dfi >= n || !fdm[dfi] || !std::isfinite(fd[dfi])) continue;
+                pixel_source[i] = channel_source_id[dfi];
+                dd[i] = fd[dfi];
+                dm[i] = 1;
+            }
+            donor_distance = lsdtt_raster_cpu(
+                std::move(dd), std::move(dm), meta);
+            src_ptr  = &pixel_source;
+            dist_ptr = &donor_distance;
+        }
+
+        lad = build_reference_field_ladder(
+            height_above_channel, admitted, lr, src_ptr, dist_ptr);
+
+        banded = label_components_within_bands(
+            lad.band_index, admitted, height_above_channel,
+            std::max(1, request.band_min_component_pixels),
+            pixel_connectivity::d4);
+
+        banded_labels = banded.labels;
+        used_ladder   = true;
+
+        // Both repairs are now dead code paths, not merely unnecessary ones.
+        banding = false;
+    }
+
+    const lsdtt_raster_cpu& labels_in_use =
+        used_ladder ? banded_labels : labelled_flat_mask;
+    const std::vector<float>&   lbl   = labels_in_use.get_data();
+    const std::vector<uint8_t>& lmask = labels_in_use.get_mask();
 
     const double cell = meta.cell_size;
     double adj_radius = request.channel_adjacency_radius_metres;
@@ -345,7 +444,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
 
     const std::vector<float>* fd_data = nullptr;
     const std::vector<uint8_t>* fd_mask = nullptr;
-    if (banding)
+    if (have_donor_reach)
     {
         fd_data = &channel_flow_distance->get_data();
         fd_mask = &channel_flow_distance->get_mask();
@@ -355,9 +454,11 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     // pixel has no usable donor.
     auto donor_reach = [&](std::size_t i, std::int32_t& s, double& d) -> bool
     {
+        if (!have_donor_reach || i >= donor_flat->size()) return false;
         const std::int64_t df = (*donor_flat)[i];
         if (df < 0) return false;
         const std::size_t dfi = static_cast<std::size_t>(df);
+        if (dfi >= n) return false;
         if (!(*fd_mask)[dfi] || !std::isfinite((*fd_data)[dfi])) return false;
         s = channel_source_id[dfi];
         d = static_cast<double>((*fd_data)[dfi]);
@@ -576,7 +677,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         if (hmask[i] && std::isfinite(hand[i]))
             a.heights.push_back(hand[i]);
 
-        if (banding)
+        if (have_donor_reach)
         {
             std::int32_t s; double d;
             if (hmask[i] && std::isfinite(hand[i]) && donor_reach(i, s, d))
@@ -622,7 +723,12 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         flat_surface_label_class rec;
         rec.label    = parent;
         rec.n_pixels = a.n_pixels;
-        if (slot >= 2)
+        if (used_ladder && parent > 0 &&
+            static_cast<std::size_t>(parent) <= banded.patches.size())
+        {
+            rec.hand_band = banded.patches[static_cast<std::size_t>(parent - 1)].band;
+        }
+        else if (slot >= 2)
         {
             rec.hand_band  = slot - 2;
             rec.band_split = true;
@@ -668,6 +774,31 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             if (v > best_votes) { best_votes = v; best_src = s; }
         rec.source_id = best_src;
 
+        if (used_ladder && !lad.windows.empty())
+        {
+            if (lad.windows.size() == 1 && lad.windows.front().source_id < 0)
+            {
+                rec.ladder_window_centre_metres =
+                    lad.windows.front().window_centre_m;
+            }
+            else if (rec.source_id >= 0 &&
+                     rec.median_channel_distance_metres >= 0.0)
+            {
+                double best_delta = std::numeric_limits<double>::infinity();
+                for (const ladder_window& w : lad.windows)
+                {
+                    if (w.source_id != rec.source_id) continue;
+                    const double delta = std::abs(
+                        w.window_centre_m - rec.median_channel_distance_metres);
+                    if (delta < best_delta)
+                    {
+                        best_delta = delta;
+                        rec.ladder_window_centre_metres = w.window_centre_m;
+                    }
+                }
+            }
+        }
+
         // Terrace eligibility (linked source + inside the valley corridor +
         // sits at one coherent level above its channel).
         const bool corridor_ok =
@@ -684,7 +815,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
 
         // Leak backstop: does this unit straddle both bands with a bimodal HAND?
         hand_leak_split leak;
-        if (request.enable_leak_split && rec.has_height)
+        if (request.enable_leak_split && !used_ladder && rec.has_height)
             leak = detect_hand_leak(
                 a.heights,
                 request.floodplain_max_height_metres,
@@ -805,6 +936,18 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         }
         result.hand_band_raster =
             lsdtt_raster_cpu(std::move(bd), std::move(bm), band_meta);
+    }
+
+    if (used_ladder)
+    {
+        result.used_band_then_label = true;
+        result.banded_labels_raster = std::move(banded.labels);
+        result.patches              = std::move(banded.patches);
+        result.ladder_windows       = lad.windows;
+        result.global_breaks_m      = lad.global_breaks_m;
+        // The ladder's band index is the authoritative per-pixel band here;
+        // the banding pre-pass did not run.
+        result.hand_band_raster     = std::move(lad.band_index);
     }
 
     return result;

@@ -1,0 +1,33 @@
+# Phase 1: band-then-label through the CLI, on the dissected staircase fixture.
+# Four treads, three road-like riser gaps wide enough to read as flat - the
+# geometry in which the old ordering merges every tread into one surface.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: btl
+
+n_threads: 1
+write_output_format: gtiff
+
+relief_window_pixels: 5
+relief_threshold_metres: 2.0
+min_component_pixels: 50
+
+find_floodplain: true
+label_within_bands: true
+
+# jenks, not antimode: a terrace flight is spaced linearly in height above the
+# channel, and the antimode finder bins on log10, which compresses the upper
+# treads until they merge and it returns no breaks at all.
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+resolvability_kappa: 3.0
+
+channel_threshold_contributing_pixels: 500
+floodplain_max_height_metres: 5.0
+terrace_min_height_metres: 5.0
+
+write_banded_labels_raster: true
+write_surface_patches_csv: true
+write_ladder_windows_csv: true

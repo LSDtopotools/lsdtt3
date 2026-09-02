@@ -35,7 +35,10 @@ double median_of_copy(std::vector<double> v)
     if (v.empty()) return 0.0;
     const std::size_t mid = v.size() / 2;
     std::nth_element(v.begin(), v.begin() + mid, v.end());
-    return v[mid];
+    const double upper = v[mid];
+    if (v.size() % 2 != 0) return upper;
+    const double lower = *std::max_element(v.begin(), v.begin() + mid);
+    return 0.5 * (lower + upper);
 }
 
 // -----------------------------------------------------------------------------
@@ -367,6 +370,8 @@ ladder_result build_reference_field_ladder(
     const std::vector<float>&   am = admitted_mask.get_data();
 
     ladder_result result;
+    lsdtt_raster_meta band_meta = meta;
+    band_meta.no_data_value = -1.0;
 
     // Band index raster: -1 everywhere a pixel is not admitted or the field is
     // undefined, so a consumer can never mistake "not banded" for band 0.
@@ -411,7 +416,7 @@ ladder_result build_reference_field_ladder(
         result.windows.push_back(std::move(w));
         result.n_windows_degenerate = 1;
         result.band_index = lsdtt_raster_cpu(
-            std::move(band_data), std::move(band_mask), meta);
+            std::move(band_data), std::move(band_mask), band_meta);
         return result;
     }
 
@@ -442,6 +447,8 @@ ladder_result build_reference_field_ladder(
                                    request.max_valley_fraction),
             request);
     }
+    const selection global_selection = select_partition(
+        all_values, result.global_breaks_m, request, required_gap);
 
     // -------------------------------------------------------------------------
     // Windowing. A fan has no along-channel coordinate, so the fitted-surface
@@ -458,8 +465,7 @@ ladder_result build_reference_field_ladder(
     if (!want_windows)
     {
         // One global ladder.
-        const selection sel = select_partition(
-            all_values, result.global_breaks_m, request, required_gap);
+        const selection& sel = global_selection;
 
         for (std::size_t i = 0; i < n; ++i)
         {
@@ -489,7 +495,7 @@ ladder_result build_reference_field_ladder(
         else                                              ++result.n_windows_degenerate;
 
         result.band_index = lsdtt_raster_cpu(
-            std::move(band_data), std::move(band_mask), meta);
+            std::move(band_data), std::move(band_mask), band_meta);
         return result;
     }
 
@@ -567,6 +573,7 @@ ladder_result build_reference_field_ladder(
         std::vector<std::vector<double>>& wb = wbreaks[s];
         wb.resize(static_cast<std::size_t>(sb.n_windows));
         std::vector<char> has_own(static_cast<std::size_t>(sb.n_windows), 0);
+        std::vector<selection> selected(static_cast<std::size_t>(sb.n_windows));
         const std::size_t first_rec = result.windows.size();
 
         for (int w = 0; w < sb.n_windows; ++w)
@@ -601,6 +608,9 @@ ladder_result build_reference_field_ladder(
                 const selection sel =
                     select_partition(pooled, cand, request, required_gap);
 
+                selected[static_cast<std::size_t>(w)] = sel;
+                has_own[static_cast<std::size_t>(w)] = 1;
+
                 rec.k_selected            = sel.k;
                 rec.status                = sel.status;
                 rec.breaks_m              = sel.breaks;
@@ -608,24 +618,21 @@ ladder_result build_reference_field_ladder(
                 rec.min_band_centre_gap_m = sel.min_centre_gap;
                 rec.goodness_of_variance_fit = sel.gvf;
 
-                if (!sel.breaks.empty())
-                {
-                    wb[static_cast<std::size_t>(w)] = sel.breaks;
-                    has_own[static_cast<std::size_t>(w)] = 1;
-                }
+                wb[static_cast<std::size_t>(w)] = sel.breaks;
             }
             else
             {
                 rec.status = ladder_status::degenerate;
             }
 
-            rec.used_global_breaks = !has_own[static_cast<std::size_t>(w)];
             result.windows.push_back(std::move(rec));
         }
 
-        // A window without its own breaks inherits the nearest window on the
-        // same source that has some, and falls back to the global set only
-        // when that source has none anywhere.
+        // A sparse window inherits the complete selection from the nearest
+        // adequately populated window on the same source, or the complete
+        // global selection when that source has none. An adequately populated
+        // unresolved window owns its one-band selection and is never replaced
+        // by unrelated multi-band breaks.
         for (int w = 0; w < sb.n_windows; ++w)
         {
             if (has_own[static_cast<std::size_t>(w)]) continue;
@@ -638,29 +645,49 @@ ladder_result build_reference_field_ladder(
                     best = k;
                 }
             }
-            wb[static_cast<std::size_t>(w)] = (best >= 0)
-                ? wb[static_cast<std::size_t>(best)]
-                : result.global_breaks_m;
-            result.windows[first_rec + static_cast<std::size_t>(w)].breaks_m =
-                wb[static_cast<std::size_t>(w)];
+            const selection& fallback = (best >= 0)
+                ? selected[static_cast<std::size_t>(best)]
+                : global_selection;
+            ladder_window& rec =
+                result.windows[first_rec + static_cast<std::size_t>(w)];
+            rec.k_selected = fallback.k;
+            rec.breaks_m = fallback.breaks;
+            rec.band_centres_m = fallback.band_centres;
+            rec.min_band_centre_gap_m = fallback.min_centre_gap;
+            rec.goodness_of_variance_fit = fallback.gvf;
+            rec.used_global_breaks = best < 0;
+            wb[static_cast<std::size_t>(w)] = fallback.breaks;
         }
     }
 
-    // Per-pixel band index from the pixel's own window.
+    // Per-pixel band index from the pixel's own window. Pixels without a usable
+    // donor coordinate remain admitted and use the global partition.
     for (std::size_t i = 0; i < n; ++i)
     {
         if (!is_live(i)) continue;
-        if (!cm[i] || !std::isfinite(cd[i])) continue;
-        const std::int32_t s = (*window_source_id)[i];
-        if (s < 0) continue;
-        const source_bins& sb = bins.at(s);
-        const std::vector<double>& brk =
-            wbreaks.at(s)[static_cast<std::size_t>(
-                window_of(sb, static_cast<double>(cd[i])))];
-        const int b = band_of(static_cast<double>(fv[i]), brk);
+        const std::vector<double>* brk = &global_selection.breaks;
+        if (cm[i] && std::isfinite(cd[i]))
+        {
+            const std::int32_t s = (*window_source_id)[i];
+            const auto bit = bins.find(s);
+            if (s >= 0 && bit != bins.end())
+            {
+                const source_bins& sb = bit->second;
+                brk = &wbreaks.at(s)[static_cast<std::size_t>(
+                    window_of(sb, static_cast<double>(cd[i])))];
+            }
+        }
+        const int b = band_of(static_cast<double>(fv[i]), *brk);
         band_data[i] = static_cast<float>(b);
         result.max_band_index = std::max(result.max_band_index, b);
     }
+
+    std::sort(result.windows.begin(), result.windows.end(),
+        [](const ladder_window& a, const ladder_window& b)
+        {
+            if (a.source_id != b.source_id) return a.source_id < b.source_id;
+            return a.window_centre_m < b.window_centre_m;
+        });
 
     for (const ladder_window& w : result.windows)
     {
@@ -671,7 +698,7 @@ ladder_result build_reference_field_ladder(
     }
 
     result.band_index = lsdtt_raster_cpu(
-        std::move(band_data), std::move(band_mask), meta);
+        std::move(band_data), std::move(band_mask), band_meta);
     return result;
 }
 
@@ -796,11 +823,59 @@ banded_label_result label_components_within_bands(
 
             std::vector<double> vals;
             vals.reserve(members.size());
+            double sx = 0.0, sy = 0.0, sz = 0.0;
             for (const std::size_t m : members)
             {
-                if (std::isfinite(fv[m])) vals.push_back(static_cast<double>(fv[m]));
+                if (!std::isfinite(fv[m])) continue;
+                const int r = static_cast<int>(m / static_cast<std::size_t>(n_cols));
+                const int c = static_cast<int>(m % static_cast<std::size_t>(n_cols));
+                const double x = static_cast<double>(c) * meta.cell_size;
+                const double y = -static_cast<double>(r) * meta.cell_size;
+                const double z = static_cast<double>(fv[m]);
+                vals.push_back(z);
+                sx += x;
+                sy += y;
+                sz += z;
             }
-            rec.median_field = median_of_copy(std::move(vals));
+            rec.median_field = median_of_copy(vals);
+
+            if (vals.size() >= 3)
+            {
+                const double inv_n = 1.0 / static_cast<double>(vals.size());
+                const double mx = sx * inv_n;
+                const double my = sy * inv_n;
+                const double mz = sz * inv_n;
+                double sxx = 0.0, sxy = 0.0, syy = 0.0;
+                double sxz = 0.0, syz = 0.0;
+                for (const std::size_t m : members)
+                {
+                    if (!std::isfinite(fv[m])) continue;
+                    const int r = static_cast<int>(m / static_cast<std::size_t>(n_cols));
+                    const int c = static_cast<int>(m % static_cast<std::size_t>(n_cols));
+                    const double x = static_cast<double>(c) * meta.cell_size - mx;
+                    const double y = -static_cast<double>(r) * meta.cell_size - my;
+                    const double z = static_cast<double>(fv[m]) - mz;
+                    sxx += x * x;
+                    sxy += x * y;
+                    syy += y * y;
+                    sxz += x * z;
+                    syz += y * z;
+                }
+                const double det = sxx * syy - sxy * sxy;
+                if (std::abs(det) > 1e-12)
+                {
+                    const double a = (sxz * syy - syz * sxy) / det;
+                    const double b = (syz * sxx - sxz * sxy) / det;
+                    if (std::hypot(a, b) > 1e-12)
+                    {
+                        constexpr double rad_to_deg =
+                            180.0 / 3.14159265358979323846;
+                        rec.aspect_degrees = std::atan2(-a, -b) * rad_to_deg;
+                        if (rec.aspect_degrees < 0.0)
+                            rec.aspect_degrees += 360.0;
+                    }
+                }
+            }
 
             out.patches.push_back(std::move(rec));
             ++next_label;

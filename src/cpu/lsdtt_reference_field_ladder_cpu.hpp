@@ -173,7 +173,8 @@ struct ladder_window
 
     std::vector<double> breaks_m;         // k-1 breaks, ascending
 
-    // k band CENTRES: the MEDIAN reference-field value within each band.
+    // k band CENTRES: the MEDIAN reference-field value within each band. For an
+    // even population this is the mean of the two middle values.
     //
     // Deliberately NOT the arithmetic midpoint of the band edges, which is what
     // the published resolvability rule this borrows from uses. The median is
@@ -199,6 +200,7 @@ struct ladder_window
 struct ladder_result
 {
     lsdtt_raster_cpu           band_index;   // 0..k-1 on admitted pixels, -1 else
+    // Deterministic order: source_id, then window_centre_m.
     std::vector<ladder_window> windows;
     std::vector<double>        global_breaks_m;
 

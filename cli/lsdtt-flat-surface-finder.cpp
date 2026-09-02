@@ -444,6 +444,99 @@ int main(int argc, char* argv[])
         "no longer carries the terrace class across the whole interfluve.",
         "Floodplain / terrace classification (height above channel)", "param", ""};
 
+    bool_default_map["label_within_bands"] = true;
+    help_map["label_within_bands"] = {"bool","true",
+        "Band the height-above-channel field FIRST, then label connected "
+        "components within each band.",
+        "The alternative labels once over the whole flat mask and consults "
+        "height afterwards, which forces the riser network to be continuous: a "
+        "road or gully cutting a riser lets two treads at different heights "
+        "merge into one surface, and nothing downstream can separate them "
+        "again. Banding first makes that merge impossible. On the dissected "
+        "synthetic staircase the old ordering returned one label spanning all "
+        "four treads; this returns eight, each on exactly one tread. "
+        "enable_leak_split and enable_hand_banding are ignored when this is "
+        "set - both exist only to repair leaks that can no longer form.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
+
+    string_default_map["ladder_break_algorithm_choice"] = "jenks";
+    help_map["ladder_break_algorithm_choice"] = {"string","jenks",
+        "How the band breaks are found: antimode or jenks.",
+        "antimode takes antimodes of a smoothed log10 density and is the right "
+        "choice for a two-band valley cut, where the population really is "
+        "bimodal. It CANNOT ladder a terrace flight: log binning compresses "
+        "linearly spaced treads until the upper ones merge, and it returns no "
+        "breaks at all. jenks works on the linear field and takes the level "
+        "count directly.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
+
+    int_default_map["ladder_level_count"] = 0;
+    help_map["ladder_level_count"] = {"int","0",
+        "Number of height bands to cut. 0 = auto (the largest count the DEM "
+        "can resolve); 2 = a valley-floor cut; n = an n-level ladder.",
+        "There is no separate valley mode and no terrace mode: they are the "
+        "same operation at different level counts.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
+
+    int_default_map["ladder_max_level_count"] = 12;
+    help_map["ladder_max_level_count"] = {"int","12",
+        "Ceiling on the number of bands one reach may carry.",
+        "A judgement about what a reach can plausibly hold, not a storage "
+        "limit.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
+
+    float_default_map["vertical_accuracy_metres"] = 0.0f;
+    help_map["vertical_accuracy_metres"] = {"float","0",
+        "Vertical accuracy of the elevation product (E_v, m). Two bands are "
+        "only claimed as distinct when their centres differ by more than "
+        "resolvability_kappa * E_v.",
+        "0 DISABLES the floor, so every window reports resolved and the ladder "
+        "carries no instrument guarantee at all. This is metadata the DEM "
+        "cannot supply: a DEM whose vertical unit is feet on a metre grid has "
+        "an effective E_v 3.28x larger than its header implies.",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
+
+    float_default_map["resolvability_kappa"] = 3.0f;
+    help_map["resolvability_kappa"] = {"float","3.0",
+        "Multiplier on the vertical accuracy that sets the required band-centre "
+        "separation.","",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
+
+    int_default_map["band_min_component_pixels"] = 1;
+    help_map["band_min_component_pixels"] = {"int","1",
+        "Minimum size (pixels) of a connected component within a band.","",
+        "Floodplain / terrace classification (height above channel)", "param", ""};
+
+    bool_default_map["write_banded_labels_raster"] = true;
+    help_map["write_banded_labels_raster"] = {"bool","true",
+        "Write the band-then-label surface labels (UInt32, 1..N).",
+        "Output suffix: _banded_labels.tif  Requires label_within_bands.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
+
+    bool_default_map["write_band_index_raster"] = true;
+    help_map["write_band_index_raster"] = {"bool","true",
+        "Write the authoritative per-pixel ladder band index.",
+        "Output suffix: _band_index.tif (Int16, nodata -1). Requires "
+        "label_within_bands.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
+
+    bool_default_map["write_surface_patches_csv"] = true;
+    help_map["write_surface_patches_csv"] = {"bool","true",
+        "Write one row per labelled patch: label, band, pixels, area, median "
+        "height above channel.",
+        "Output suffix: _surface_patches.csv  This is the join key for the "
+        "labels raster. Requires label_within_bands.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
+
+    bool_default_map["write_ladder_windows_csv"] = true;
+    help_map["write_ladder_windows_csv"] = {"bool","true",
+        "Write the per-window ladder report: level count, branch taken, band "
+        "centres and the gap that decided them.",
+        "Output suffix: _ladder_windows.csv  What may be claimed about the "
+        "ladder depends on the branch, so this should be read on every run. "
+        "Requires label_within_bands.",
+        "Floodplain / terrace classification (height above channel)", "switch", ""};
+
     bool_default_map["write_hand_band_raster"] = false;
     help_map["write_hand_band_raster"] = {"bool","false",
         "Write the per-pixel HAND band index raster.",
@@ -1697,11 +1790,47 @@ int main(int argc, char* argv[])
                 creq.terrace_corridor_per_pixel      =
                     bf["terrace_corridor_per_pixel"];
 
+                creq.label_within_bands = bf["label_within_bands"];
+                creq.ladder_level_count = ip["ladder_level_count"];
+                creq.ladder_max_level_count = ip["ladder_max_level_count"];
+                creq.vertical_accuracy_metres =
+                    static_cast<double>(ff["vertical_accuracy_metres"]);
+                creq.resolvability_kappa =
+                    static_cast<double>(ff["resolvability_kappa"]);
+                creq.band_min_component_pixels =
+                    ip["band_min_component_pixels"];
+                {
+                    const std::string& ba = sf["ladder_break_algorithm_choice"];
+                    if (ba == "antimode")
+                        creq.ladder_break_algorithm =
+                            lsdtt::ladder_break_choice::antimode;
+                    else if (ba == "jenks")
+                        creq.ladder_break_algorithm =
+                            lsdtt::ladder_break_choice::jenks;
+                    else
+                    {
+                        std::cerr << "FATAL: unknown "
+                                     "ladder_break_algorithm_choice '" << ba
+                                  << "'. Valid: antimode, jenks.\n";
+                        return 1;
+                    }
+                }
+                if (creq.label_within_bands &&
+                    creq.vertical_accuracy_metres <= 0.0)
+                {
+                    std::cerr << "Warning: vertical_accuracy_metres is 0, so the "
+                                 "resolvability floor is disabled. The "
+                                 "ladder carries no instrument guarantee.\n";
+                }
+
                 std::cout << "Classifying surfaces "
                           << "(floodplain <= " << fp_max << " m, terrace >= "
                           << creq.terrace_min_height_metres << " m"
-                          << (creq.enable_hand_banding
-                                  ? ", reach-relative HAND banding on" : "")
+                          << (creq.label_within_bands
+                                  ? ", band-then-label on"
+                                  : (creq.enable_hand_banding
+                                         ? ", reach-relative HAND banding on"
+                                         : ""))
                           << ")...\n";
 
                 lsdtt::flat_surface_classify_result cres =
@@ -1773,15 +1902,160 @@ int main(int argc, char* argv[])
                             r.band_split ? "true" : "false",
                             std::to_string(r.hand_spread_metres),
                             r.spread_guard_failed ? "true" : "false",
-                            std::to_string(r.median_channel_distance_metres) });
+                            std::to_string(r.median_channel_distance_metres),
+                            std::to_string(r.ladder_window_centre_metres) });
                     }
                     loader.write_csv(p,
                         {"label","class","source_id","n_pixels",
                          "median_hand_m","mean_hand_m","min_hand_m","max_hand_m",
                          "min_dist_to_channel_m","adjacent_to_channel",
                          "leak_split","split_hand_m",
-                         "hand_band","band_split","hand_spread_m",
-                         "spread_guard_failed","median_channel_distance_m"},
+                          "hand_band","band_split","hand_spread_m",
+                          "spread_guard_failed","median_channel_distance_m",
+                          "ladder_window_centre_m"},
+                        rows);
+                }
+
+                if (cres.used_band_then_label)
+                {
+                    std::cout << "  band-then-label: "
+                              << cres.patches.size() << " patch(es)\n";
+
+                    std::int64_t n_res = 0, n_unres = 0, n_deg = 0;
+                    for (const lsdtt::ladder_window& w : cres.ladder_windows)
+                    {
+                        if (w.status == lsdtt::ladder_status::resolved ||
+                            w.status == lsdtt::ladder_status::forced) ++n_res;
+                        else if (w.status == lsdtt::ladder_status::unresolved)
+                            ++n_unres;
+                        else ++n_deg;
+                    }
+                    std::cout << "  ladder: " << n_res << " window(s) resolved, "
+                              << n_unres << " unresolved, " << n_deg
+                              << " degenerate";
+                    if (!cres.ladder_windows.empty())
+                        std::cout << "  (required band-centre gap = "
+                                  << cres.ladder_windows[0].required_gap_m
+                                  << " m)";
+                    std::cout << "\n";
+                    if (n_unres > 0)
+                    {
+                        std::cout << "  NOTE: an unresolved window means the DEM "
+                                     "cannot separate the requested levels "
+                                     "there; do not describe them as resolved "
+                                     "levels.\n";
+                        if (creq.ladder_level_count <= 0)
+                            std::cout << "  Auto-unresolved windows emit one "
+                                         "band.\n";
+                    }
+                }
+
+                if (bf["write_banded_labels_raster"] &&
+                    cres.used_band_then_label &&
+                    !cres.banded_labels_raster.get_data().empty())
+                {
+                    const std::string p = stem + "_banded_labels.tif";
+                    std::cout << "Writing banded labels (UInt32): " << p << "\n";
+                    loader.write_full(cres.banded_labels_raster.get_data(),
+                                      cres.banded_labels_raster.get_meta(),
+                                      p, out_format, GDT_UInt32);
+                }
+
+                if (bf["write_band_index_raster"] &&
+                    cres.used_band_then_label &&
+                    !cres.hand_band_raster.get_data().empty())
+                {
+                    const std::string p = stem + "_band_index.tif";
+                    std::cout << "Writing band index (Int16): " << p << "\n";
+                    loader.write_full(cres.hand_band_raster.get_data(),
+                                      cres.hand_band_raster.get_meta(),
+                                      p, out_format, GDT_Int16);
+                }
+
+                if (bf["write_surface_patches_csv"] &&
+                    cres.used_band_then_label)
+                {
+                    const std::string p = stem + "_surface_patches.csv";
+                    std::cout << "Writing surface patches: " << p << "\n";
+                    std::vector<std::vector<std::string>> rows;
+                    rows.reserve(cres.patches.size());
+                    std::unordered_map<std::int64_t,
+                                       const lsdtt::flat_surface_label_class*> classes;
+                    for (const lsdtt::flat_surface_label_class& r : cres.labels)
+                        classes[r.label] = &r;
+                    for (const lsdtt::patch_record& pr : cres.patches)
+                    {
+                        const auto it = classes.find(pr.label);
+                        const lsdtt::flat_surface_label_class* cr =
+                            it == classes.end() ? nullptr : it->second;
+                        const char* cname = !cr ? "none"
+                            : cr->cls == lsdtt::surface_class::floodplain ? "floodplain"
+                            : cr->cls == lsdtt::surface_class::terrace ? "terrace"
+                            : "none";
+                        rows.push_back({
+                            std::to_string(pr.label),
+                            std::to_string(pr.band),
+                            cname,
+                            std::to_string(cr ? cr->source_id : -1),
+                            std::to_string(pr.n_pixels),
+                            std::to_string(pr.area_m2),
+                            std::to_string(pr.median_field),
+                            std::to_string(pr.aspect_degrees),
+                            std::to_string(cr ? cr->ladder_window_centre_metres : -1.0) });
+                    }
+                    loader.write_csv(p,
+                        {"label","band","class","source_id","n_pixels",
+                         "area_m2","median_field_m","aspect_degrees",
+                         "window_centre_m"},
+                        rows);
+                }
+
+                if (bf["write_ladder_windows_csv"] &&
+                    cres.used_band_then_label)
+                {
+                    const std::string p = stem + "_ladder_windows.csv";
+                    std::cout << "Writing ladder windows: " << p << "\n";
+                    auto status_name = [](lsdtt::ladder_status st)
+                    {
+                        switch (st)
+                        {
+                            case lsdtt::ladder_status::resolved:   return "resolved";
+                            case lsdtt::ladder_status::unresolved: return "unresolved";
+                            case lsdtt::ladder_status::forced:     return "forced";
+                            default:                               return "degenerate";
+                        }
+                    };
+                    auto join = [](const std::vector<double>& v)
+                    {
+                        std::string out;
+                        for (std::size_t i = 0; i < v.size(); ++i)
+                        {
+                            if (i) out += ";";
+                            out += std::to_string(v[i]);
+                        }
+                        return out;
+                    };
+                    std::vector<std::vector<std::string>> rows;
+                    for (const lsdtt::ladder_window& w : cres.ladder_windows)
+                    {
+                        rows.push_back({
+                            std::to_string(w.source_id),
+                            std::to_string(w.window_centre_m),
+                            std::to_string(w.n_pixels),
+                            std::to_string(w.k_selected),
+                            status_name(w.status),
+                            w.used_global_breaks ? "1" : "0",
+                            join(w.breaks_m),
+                            join(w.band_centres_m),
+                            std::to_string(w.min_band_centre_gap_m),
+                            std::to_string(w.required_gap_m),
+                            std::to_string(w.goodness_of_variance_fit) });
+                    }
+                    loader.write_csv(p,
+                        {"source_id","window_centre_m","n_pixels","k_selected",
+                         "status","used_global_breaks","breaks_m",
+                         "band_centres_m","min_band_centre_gap_m",
+                         "required_gap_m","goodness_of_variance_fit"},
                         rows);
                 }
 
@@ -1834,7 +2108,9 @@ int main(int argc, char* argv[])
                     const std::vector<uint8_t>& hm = hand.get_mask();
                     const std::vector<float>&   fdd = flow_dist.get_data();
                     const std::vector<uint8_t>& fdm = flow_dist.get_mask();
-                    const std::vector<float>&   ld = labelled_flat_mask.get_data();
+                    const std::vector<float>& ld = cres.used_band_then_label
+                        ? cres.banded_labels_raster.get_data()
+                        : labelled_flat_mask.get_data();
                     const std::vector<float>*   bd = nullptr;
                     if (!cres.hand_band_raster.get_data().empty())
                         bd = &cres.hand_band_raster.get_data();

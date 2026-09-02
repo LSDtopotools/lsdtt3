@@ -68,6 +68,7 @@
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_reference_field_ladder_cpu.hpp"
 
 namespace lsdtt
 {
@@ -161,6 +162,43 @@ struct flat_surface_classify_request
     // that merely touches the valley (a flat upland reaching the valley edge)
     // from carrying the terrace class across the whole interfluve.
     bool   terrace_corridor_per_pixel         = true;
+
+    // --- Band-then-label (phase 1 of the fluvial-surfaces plan) -------------
+    //
+    // When true the incoming labels are DISCARDED and rebuilt: the HAND field
+    // is stratified by the reference-field ladder, and connected components are
+    // labelled WITHIN each band. Every label then lies in exactly one band by
+    // construction.
+    //
+    // This is why it matters. The incumbent ordering labels once over the whole
+    // flat mask and consults height afterwards, which forces the riser network
+    // to be continuous - a road or gully through a riser lets two treads at
+    // different heights merge into one component, and nothing downstream can
+    // separate them again. Banding first makes that merge impossible rather
+    // than detectable.
+    //
+    // Two consequences, and both are why the switch is not merely a different
+    // route to the same answer:
+    //   - enable_leak_split becomes dead. A leak is a label straddling two
+    //     class bands; a label cannot straddle a band it was built inside.
+    //   - enable_hand_banding becomes dead. The ladder IS the banding, applied
+    //     as the primary segmentation instead of as a repair afterwards.
+    // Both are ignored when this is set.
+    //
+    // Temporary gate. It exists so the old path stays reachable for A/B
+    // measurement and disappears with it. Defaulted ON: a caller who does not
+    // think about this should get the ordering that cannot silently merge two
+    // treads, not the one that can.
+    bool   label_within_bands            = true;
+
+    // Ladder controls, used only when label_within_bands is set. The band_*
+    // fields above are reused for the histogram and window geometry.
+    ladder_break_choice ladder_break_algorithm = ladder_break_choice::antimode;
+    int    ladder_level_count            = 0;    // 0 = auto (largest admissible)
+    int    ladder_max_level_count        = 12;
+    double vertical_accuracy_metres      = 0.0;  // E_v; 0 disables the floor
+    double resolvability_kappa           = 3.0;
+    int    band_min_component_pixels     = 1;
 };
 
 // -----------------------------------------------------------------------------
@@ -204,6 +242,9 @@ struct flat_surface_label_class
     // Median along-channel flow distance (m, from the DEM outlet) of the HAND
     // donor nodes of this record's pixels; -1 when donors are unavailable.
     double median_channel_distance_metres = -1.0;
+    // Centre of the ladder window nearest that median donor distance. Zero for
+    // a global ladder and -1 when no ladder window can be associated.
+    double ladder_window_centre_metres    = -1.0;
 };
 
 // -----------------------------------------------------------------------------
@@ -252,6 +293,18 @@ struct flat_surface_classify_result
     std::vector<hand_band_window> band_windows;
     std::vector<double>           global_breaks_m;
     std::int64_t                  n_band_split_labels = 0;
+
+    // --- Band-then-label outputs (empty unless label_within_bands) ----------
+    // The labels actually classified: a global running counter 1..N, each
+    // wholly inside one band. Differs from the caller's incoming labels.
+    lsdtt_raster_cpu           banded_labels_raster;
+    std::vector<patch_record>  patches;
+    // Per-window ladder records, carrying the k that was selected, the branch
+    // taken and the gap that decided it. The branch is what governs whether
+    // the result may be described as levels at all, so it is reported rather
+    // than kept internal.
+    std::vector<ladder_window> ladder_windows;
+    bool                       used_band_then_label = false;
 };
 
 // -----------------------------------------------------------------------------

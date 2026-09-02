@@ -3396,6 +3396,44 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_flat_surface_finder PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Phase 1. The reordering through the CLI: the ladder must resolve the flight,
+# every patch must carry a band, and the run must report which windows resolved.
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_band_then_label
+    lsdtt-flat-surface-finder
+    flat_surface_finder_band_then_label.param.in
+    btl_banded_labels.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect btl_band_index.tif
+    --expect btl_surface_patches.csv
+    --expect btl_ladder_windows.csv
+    --expect btl_surface_class.tif
+    --stdout-contains "band-then-label on"
+    --expect-raster-values "btl_band_index.tif:0,1,2,3"
+    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
+    --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
+)
+set_tests_properties(smoke_flat_surface_finder_band_then_label PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_test(NAME unit_fluvial_surfaces_band_then_label
+         COMMAND lsdtt-test-fluvial-surfaces --band-then-label)
+set_tests_properties(unit_fluvial_surfaces_band_then_label PROPERTIES
+    LABELS "unit")
+
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_band_then_label_defaults
+    lsdtt-flat-surface-finder
+    flat_surface_finder_band_then_label_defaults.param.in
+    defaults_surface_class.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect defaults_band_index.tif
+    --stderr-contains "resolvability floor is disabled"
+    --stdout-contains "band-then-label on"
+)
+set_tests_properties(smoke_flat_surface_finder_band_then_label_defaults PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     smoke_valley_centreline
     lsdtt-valley-centreline
