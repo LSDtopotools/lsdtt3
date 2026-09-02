@@ -17,6 +17,29 @@ import subprocess
 import sys
 
 
+_DRIVERS = frozenset(
+    {
+        "lsdtt-raster-preprocessing", "lsdtt-raster-synthetic-tests",
+        "lsdtt-synthetic-networks", "lsdtt-surface-metrics",
+        "lsdtt-channel-extraction", "lsdtt-internal-drainage",
+        "lsdtt-hillslope-channel-coupling", "lsdtt-drainage-analysis",
+        "lsdtt-feature-finder", "lsdtt-mountain-front", "lsdtt-basin-stats",
+        "lsdtt-basin-extraction", "lsdtt-flat-surface-finder",
+        "lsdtt-valley-centreline", "lsdtt-graphflood",
+        "lsdtt-channel-network-analysis", "lsdtt-cross-sections",
+        "lsdtt-stream-burning", "lsdtt-water-line-repair",
+        "lsdtt-water-centreline", "lsdtt-cosmo-tool",
+        "lsdtt-cosmo-prediction", "lsdtt-cosmo-landslides",
+        "lsdtt-cosmo-column-tool", "lsdtt-marsh-topography",
+        "lsdtt-linear-stats", "lsdtt-bearing-comparison",
+        "lsdtt-swath-profile", "lsdtt-lem", "lsdtt-sediment-routing",
+        "lsdtt-ridgeline-analysis", "lsdtt-basin-surface-metrics",
+        "lsdtt-divide-migration", "lsdtt-raster-calculator",
+        "lsdtt-fetch-raster", "lsdtt-spectral-analysis", "lsdtt-chi-analysis",
+    }
+)
+
+
 def _driver_path(name: str) -> Path:
     """Return the packaged executable path for one driver.
 
@@ -67,9 +90,46 @@ def _run(name: str) -> int:
     B. Gailleton
     """
     executable = _driver_path(name)
+    environment = None
+    if os.name == "nt":
+        # delvewheel can stage DLLs beside lsdtt3 or in a sibling lsdtt3.libs
+        # directory.  A child executable does not inherit Python's extension
+        # loader hooks, so make both wheel-local locations explicit.
+        package_dir = Path(__file__).resolve().parent
+        library_dirs = (package_dir, package_dir.with_name(f"{package_dir.name}.libs"),
+                        package_dir / ".libs")
+        environment = os.environ.copy()
+        environment["PATH"] = os.pathsep.join(
+            [*(str(path) for path in library_dirs if path.is_dir()),
+             environment.get("PATH", "")]
+        )
     return subprocess.run(
-        [os.fspath(executable), *sys.argv[1:]], check=False
+        [os.fspath(executable), *sys.argv[1:]], check=False, env=environment
     ).returncode
+
+
+def main() -> int:
+    """Dispatch a pip console script to its bundled vanilla driver.
+
+    Returns
+    -------
+    int
+        Native driver's exit status.
+
+    Raises
+    ------
+    RuntimeError
+        If invoked under a console-script name that is not an LSDTopoTools
+        driver distributed by this package.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    name = Path(sys.argv[0]).stem
+    if name not in _DRIVERS:
+        raise RuntimeError(f"Unknown LSDTopoTools console script: '{name}'.")
+    return _run(name)
 
 
 def raster_preprocessing() -> int:

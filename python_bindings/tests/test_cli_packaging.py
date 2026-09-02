@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import re
 
 import pytest
 
@@ -37,15 +38,30 @@ def test_run_forwards_arguments_and_exit_code(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(_cli, "_driver_path", lambda _: executable)
     monkeypatch.setattr(_cli.sys, "argv", ["lsdtt-chi-analysis", "params.txt"])
 
-    calls: list[tuple[list[str], bool]] = []
+    calls: list[tuple[list[str], bool, object]] = []
 
     class Completed:
         returncode = 7
 
-    def run(command: list[str], *, check: bool) -> Completed:
-        calls.append((command, check))
+    def run(command: list[str], *, check: bool, env: object) -> Completed:
+        calls.append((command, check, env))
         return Completed()
 
     monkeypatch.setattr(_cli.subprocess, "run", run)
     assert _cli._run("lsdtt-chi-analysis") == 7
-    assert calls == [([str(executable), "params.txt"], False)]
+    assert calls == [([str(executable), "params.txt"], False, None)]
+
+
+def test_main_derives_driver_from_console_script_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One generic console entry point dispatches every declared driver."""
+    monkeypatch.setattr(_cli.sys, "argv", ["/venv/bin/lsdtt-surface-metrics", "p.txt"])
+    monkeypatch.setattr(_cli, "_run", lambda name: 3 if name == "lsdtt-surface-metrics" else 1)
+    assert _cli.main() == 3
+
+
+def test_driver_inventory_matches_the_vanilla_cmake_build() -> None:
+    """Every root-CMake vanilla driver has a wheel dispatcher declaration."""
+    root = Path(__file__).parents[2]
+    vanilla_cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    expected = set(re.findall(r"lsdtt_cli\((lsdtt-[\w-]+)", vanilla_cmake))
+    assert _cli._DRIVERS == expected
