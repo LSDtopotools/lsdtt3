@@ -1,0 +1,32 @@
+# Phase 0b: the terrace staircase and alluvial fan generators, driven through
+# lsdtt-raster-synthetic-tests rather than through the test binary, so the
+# user-facing path to both surfaces is covered too.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: synfs
+
+n_rows: 200
+n_cols: 300
+cell_size: 10.0
+seed: 1
+n_threads: 1
+write_output_format: gtiff
+
+# 4 treads x 300 m either side of the channel is 2400 m of flight, which a
+# 300-column grid at 10 m spans with valley wall to spare on both flanks.
+write_terrace_staircase_surface: true
+terrace_n_terraces: 4
+terrace_tread_width_m: 300.0
+terrace_riser_height_m: 8.0
+terrace_tread_cross_gradient: 0.002
+
+# Three road-like cuts, each 120 m along the valley. The width matters: a gap
+# narrower than the detector's roughness window never reads as flat, because a
+# window centred in it still reaches the stepped rows either side.
+terrace_n_riser_gaps: 3
+terrace_riser_gap_width_m: 120.0
+
+write_alluvial_fan_surface: true
+fan_n_inset_lobes: 2
+fan_lobe_inset_m: 4.0
+fan_gradient: 0.03

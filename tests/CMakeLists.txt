@@ -3345,6 +3345,23 @@ set_tests_properties(fixture_fluvial_surfaces_cli PROPERTIES
     LABELS "fixture"
     FIXTURES_SETUP fluvial_surfaces_fixture)
 
+# The generators are reachable from the user-facing CLI, not only from the test
+# binary. Five rasters, because the ground-truth tread_id / lobe_id layers are
+# what every later assertion about purity is scored against.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_generators
+    lsdtt-raster-synthetic-tests
+    synthetic_terrace_fan.param.in
+    synfs_terrace_staircase.tif
+    --expect synfs_terrace_staircase_tread_id.tif
+    --expect synfs_terrace_staircase_channel_mask.tif
+    --expect synfs_alluvial_fan.tif
+    --expect synfs_alluvial_fan_lobe_id.tif
+    --expect-raster-size synfs_terrace_staircase.tif:300x200
+    --expect-raster-stat synfs_terrace_staircase_tread_id.tif:max:4.0:4.0
+    --expect-raster-stat synfs_alluvial_fan_lobe_id.tif:max:2.0:2.0
+)
+
 add_test(NAME smoke_flat_surface_finder_help
          COMMAND lsdtt-flat-surface-finder -h)
 set_tests_properties(smoke_flat_surface_finder_help PROPERTIES
