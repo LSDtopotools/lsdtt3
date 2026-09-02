@@ -978,6 +978,10 @@ class VectorBounds:
 def opentopography_datasets() -> list[dict[str, Any]]:
     """Return OpenTopography DEM catalogue records.
 
+    Parameters
+    ----------
+    None
+
     Returns
     -------
     list of dict
