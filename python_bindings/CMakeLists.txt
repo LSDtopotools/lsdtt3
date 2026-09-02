@@ -24,6 +24,8 @@ option(LSDTT_PYTHON_OPENCV "Enable OpenCV image-analysis routines when available
 option(LSDTT_PYTHON_EIGEN "Enable Eigen inversion routines when available" ON)
 option(LSDTT_PYTHON_RELEASE_WHEEL
     "Stage GDAL and PROJ runtime data for a self-contained release wheel" OFF)
+option(LSDTT_PYTHON_CLI
+    "Build the selected vanilla LSDTopoTools command-line drivers for the wheel" ON)
 
 # These optional overrides make a reproducible release build independent of
 # how CMake located GDAL and PROJ on the build host.
@@ -171,11 +173,94 @@ set_target_properties(lsdtt3_runtime PROPERTIES
     INSTALL_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"
 )
 install(TARGETS lsdtt3_runtime LIBRARY DESTINATION lsdtt3)
+
+# A wheel can carry native command-line programs just like it carries _core.
+# The drivers are compiled unchanged from ../cli and link the same runtime as
+# the bindings, so the pip and standalone interfaces remain behaviourally
+# identical.
+if(LSDTT_PYTHON_CLI)
+    if(APPLE)
+        set(LSDTT_PYTHON_CLI_RUNTIME_PATH "@loader_path/..")
+    elseif(WIN32)
+        set(LSDTT_PYTHON_CLI_RUNTIME_PATH "")
+    else()
+        set(LSDTT_PYTHON_CLI_RUNTIME_PATH "$ORIGIN/..")
+    endif()
+
+    function(lsdtt_python_cli TARGET SOURCE)
+        add_executable(${TARGET} "${LSDTT3_SOURCE_DIR}/${SOURCE}")
+        target_include_directories(${TARGET} PRIVATE
+            "${LSDTT3_SRC_DIR}"
+            "${LSDTT3_SRC_DIR}/core"
+            "${LSDTT3_SRC_DIR}/cpu"
+            "${LSDTT3_SRC_DIR}/utils"
+            ${GDAL_INCLUDE_DIRS}
+        )
+        target_link_libraries(${TARGET} PRIVATE lsdtt3::runtime)
+        target_compile_features(${TARGET} PRIVATE cxx_std_17)
+        if(LSDTT_PYTHON_CLI_RUNTIME_PATH)
+            set_target_properties(${TARGET} PROPERTIES
+                BUILD_RPATH "${LSDTT_PYTHON_CLI_RUNTIME_PATH}"
+                INSTALL_RPATH "${LSDTT_PYTHON_CLI_RUNTIME_PATH}"
+            )
+        endif()
+        install(TARGETS ${TARGET} RUNTIME DESTINATION lsdtt3/bin)
+    endfunction()
+
+    lsdtt_python_cli(lsdtt-raster-preprocessing "cli/lsdtt-raster-preprocessing.cpp")
+    lsdtt_python_cli(lsdtt-raster-synthetic-tests "cli/lsdtt-raster-synthetic-tests.cpp")
+    lsdtt_python_cli(lsdtt-synthetic-networks "cli/lsdtt-synthetic-networks.cpp")
+    lsdtt_python_cli(lsdtt-surface-metrics "cli/lsdtt-surface-metrics.cpp")
+    lsdtt_python_cli(lsdtt-channel-extraction "cli/lsdtt-channel-extraction.cpp")
+    lsdtt_python_cli(lsdtt-internal-drainage "cli/lsdtt-internal-drainage.cpp")
+    lsdtt_python_cli(lsdtt-hillslope-channel-coupling "cli/lsdtt-hillslope-channel-coupling.cpp")
+    lsdtt_python_cli(lsdtt-drainage-analysis "cli/lsdtt-drainage-analysis.cpp")
+    lsdtt_python_cli(lsdtt-feature-finder "cli/lsdtt-feature-finder.cpp")
+    lsdtt_python_cli(lsdtt-mountain-front "cli/lsdtt-mountain-front.cpp")
+    lsdtt_python_cli(lsdtt-basin-stats "cli/lsdtt-basin-stats.cpp")
+    lsdtt_python_cli(lsdtt-basin-extraction "cli/lsdtt-basin-extraction.cpp")
+    lsdtt_python_cli(lsdtt-flat-surface-finder "cli/lsdtt-flat-surface-finder.cpp")
+    lsdtt_python_cli(lsdtt-valley-centreline "cli/lsdtt-valley-centreline.cpp")
+    lsdtt_python_cli(lsdtt-chi-analysis "cli/lsdtt-chi-analysis.cpp")
+    lsdtt_python_cli(lsdtt-graphflood "cli/lsdtt-graphflood.cpp")
+    lsdtt_python_cli(lsdtt-channel-network-analysis "cli/lsdtt-channel-network-analysis.cpp")
+    lsdtt_python_cli(lsdtt-cross-sections "cli/lsdtt-cross-sections.cpp")
+    lsdtt_python_cli(lsdtt-stream-burning "cli/lsdtt-stream-burning.cpp")
+    lsdtt_python_cli(lsdtt-water-line-repair "cli/lsdtt-water-line-repair.cpp")
+    lsdtt_python_cli(lsdtt-water-centreline "cli/lsdtt-water-centreline.cpp")
+    lsdtt_python_cli(lsdtt-cosmo-tool "cli/lsdtt-cosmo-tool.cpp")
+    lsdtt_python_cli(lsdtt-cosmo-prediction "cli/lsdtt-cosmo-prediction.cpp")
+    lsdtt_python_cli(lsdtt-cosmo-landslides "cli/lsdtt-cosmo-landslides.cpp")
+    lsdtt_python_cli(lsdtt-cosmo-column-tool "cli/lsdtt-cosmo-column-tool.cpp")
+    lsdtt_python_cli(lsdtt-marsh-topography "cli/lsdtt-marsh-topography.cpp")
+    lsdtt_python_cli(lsdtt-linear-stats "cli/lsdtt-linear-stats.cpp")
+    lsdtt_python_cli(lsdtt-bearing-comparison "cli/lsdtt-bearing-comparison.cpp")
+    lsdtt_python_cli(lsdtt-swath-profile "cli/lsdtt-swath-profile.cpp")
+    lsdtt_python_cli(lsdtt-lem "cli/lsdtt-lem.cpp")
+    lsdtt_python_cli(lsdtt-sediment-routing "cli/lsdtt-sediment-routing.cpp")
+    lsdtt_python_cli(lsdtt-ridgeline-analysis "cli/lsdtt-ridgeline-analysis.cpp")
+    lsdtt_python_cli(lsdtt-basin-surface-metrics "cli/lsdtt-basin-surface-metrics.cpp")
+    lsdtt_python_cli(lsdtt-divide-migration "cli/lsdtt-divide-migration.cpp")
+    lsdtt_python_cli(lsdtt-raster-calculator "cli/lsdtt-raster-calculator.cpp")
+    lsdtt_python_cli(lsdtt-fetch-raster "cli/lsdtt-fetch-raster.cpp")
+    if(LSDTT_PYTHON_FFTW_TARGET)
+        lsdtt_python_cli(lsdtt-spectral-analysis "cli/lsdtt-spectral-analysis.cpp")
+    endif()
+endif()
+
 install(
     DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src/lsdtt3/"
     DESTINATION lsdtt3
     FILES_MATCHING PATTERN "*.py"
 )
+
+# Vanilla cosmogenic drivers locate this relative to their executable as
+# ../share/lsdtt3/crn_parameters.nc.  Keeping that established layout avoids
+# a Python-only path convention and leaves their CLI behaviour unchanged.
+if(LSDTT_PYTHON_CLI)
+    install(FILES "${LSDTT3_SOURCE_DIR}/data/crn_parameters.nc"
+        DESTINATION lsdtt3/share/lsdtt3)
+endif()
 
 if(LSDTT_PYTHON_RELEASE_WHEEL)
     if(NOT LSDTT_PYTHON_GDAL_DATA_DIR)
