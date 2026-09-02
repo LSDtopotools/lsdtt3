@@ -24,6 +24,8 @@ option(LSDTT_PYTHON_OPENCV "Enable OpenCV image-analysis routines when available
 option(LSDTT_PYTHON_EIGEN "Enable Eigen inversion routines when available" ON)
 option(LSDTT_PYTHON_RELEASE_WHEEL
     "Stage GDAL and PROJ runtime data for a self-contained release wheel" OFF)
+option(LSDTT_PYTHON_CLI
+    "Build the selected vanilla LSDTopoTools command-line drivers for the wheel" ON)
 
 # These optional overrides make a reproducible release build independent of
 # how CMake located GDAL and PROJ on the build host.
@@ -171,6 +173,47 @@ set_target_properties(lsdtt3_runtime PROPERTIES
     INSTALL_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"
 )
 install(TARGETS lsdtt3_runtime LIBRARY DESTINATION lsdtt3)
+
+# A wheel can carry native command-line programs just like it carries _core.
+# Keep the first package set deliberately small while the launch and repair
+# behaviour is established across Linux, macOS, and Windows.  The drivers are
+# compiled unchanged from ../cli and link the same runtime as the bindings.
+if(LSDTT_PYTHON_CLI)
+    if(APPLE)
+        set(LSDTT_PYTHON_CLI_RUNTIME_PATH "@loader_path/..")
+    elseif(WIN32)
+        set(LSDTT_PYTHON_CLI_RUNTIME_PATH "")
+    else()
+        set(LSDTT_PYTHON_CLI_RUNTIME_PATH "$ORIGIN/..")
+    endif()
+
+    function(lsdtt_python_cli TARGET SOURCE)
+        add_executable(${TARGET} "${LSDTT3_SOURCE_DIR}/${SOURCE}")
+        target_include_directories(${TARGET} PRIVATE
+            "${LSDTT3_SRC_DIR}"
+            "${LSDTT3_SRC_DIR}/core"
+            "${LSDTT3_SRC_DIR}/cpu"
+            "${LSDTT3_SRC_DIR}/utils"
+            ${GDAL_INCLUDE_DIRS}
+        )
+        target_link_libraries(${TARGET} PRIVATE lsdtt3::runtime)
+        target_compile_features(${TARGET} PRIVATE cxx_std_17)
+        if(LSDTT_PYTHON_CLI_RUNTIME_PATH)
+            set_target_properties(${TARGET} PROPERTIES
+                BUILD_RPATH "${LSDTT_PYTHON_CLI_RUNTIME_PATH}"
+                INSTALL_RPATH "${LSDTT_PYTHON_CLI_RUNTIME_PATH}"
+            )
+        endif()
+        install(TARGETS ${TARGET} RUNTIME DESTINATION lsdtt3/bin)
+    endfunction()
+
+    lsdtt_python_cli(lsdtt-raster-preprocessing "cli/lsdtt-raster-preprocessing.cpp")
+    lsdtt_python_cli(lsdtt-channel-extraction "cli/lsdtt-channel-extraction.cpp")
+    lsdtt_python_cli(lsdtt-chi-analysis "cli/lsdtt-chi-analysis.cpp")
+    lsdtt_python_cli(lsdtt-graphflood "cli/lsdtt-graphflood.cpp")
+    lsdtt_python_cli(lsdtt-fetch-raster "cli/lsdtt-fetch-raster.cpp")
+endif()
+
 install(
     DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src/lsdtt3/"
     DESTINATION lsdtt3

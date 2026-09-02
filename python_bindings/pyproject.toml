@@ -9,6 +9,13 @@ description = "Python bindings for LSDTopoTools3"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "geopandas>=1.0"]
 
+[project.scripts]
+lsdtt-raster-preprocessing = "lsdtt3._cli:raster_preprocessing"
+lsdtt-channel-extraction = "lsdtt3._cli:channel_extraction"
+lsdtt-chi-analysis = "lsdtt3._cli:chi_analysis"
+lsdtt-graphflood = "lsdtt3._cli:graphflood"
+lsdtt-fetch-raster = "lsdtt3._cli:fetch_raster"
+
 [tool.scikit-build]
 wheel.packages = ["src/lsdtt3"]
 cmake.build-type = "Release"

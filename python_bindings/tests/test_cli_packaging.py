@@ -1,0 +1,51 @@
+"""Tests for the pip-installed vanilla CLI dispatch layer."""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+
+_CLI_PATH = Path(__file__).parents[1] / "src" / "lsdtt3" / "_cli.py"
+_SPEC = importlib.util.spec_from_file_location("lsdtt3_cli_test", _CLI_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+_cli = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_cli)
+
+
+def test_driver_path_reports_missing_driver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A wheel without the executable fails with a direct useful error."""
+    monkeypatch.setattr(_cli, "__file__", str(tmp_path / "_cli.py"))
+    with pytest.raises(RuntimeError, match="does not include 'lsdtt-graphflood'"):
+        _cli._driver_path("lsdtt-graphflood")
+
+
+def test_driver_path_uses_platform_layout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Drivers are discovered underneath the installed package directory."""
+    monkeypatch.setattr(_cli, "__file__", str(tmp_path / "_cli.py"))
+    executable = tmp_path / "bin" / "lsdtt-chi-analysis"
+    executable.parent.mkdir()
+    executable.touch()
+    assert _cli._driver_path("lsdtt-chi-analysis") == executable
+
+
+def test_run_forwards_arguments_and_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Python console script preserves native CLI arguments and status."""
+    executable = Path("/tmp/lsdtt-chi-analysis")
+    monkeypatch.setattr(_cli, "_driver_path", lambda _: executable)
+    monkeypatch.setattr(_cli.sys, "argv", ["lsdtt-chi-analysis", "params.txt"])
+
+    calls: list[tuple[list[str], bool]] = []
+
+    class Completed:
+        returncode = 7
+
+    def run(command: list[str], *, check: bool) -> Completed:
+        calls.append((command, check))
+        return Completed()
+
+    monkeypatch.setattr(_cli.subprocess, "run", run)
+    assert _cli._run("lsdtt-chi-analysis") == 7
+    assert calls == [([str(executable), "params.txt"], False)]
