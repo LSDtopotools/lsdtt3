@@ -9,6 +9,8 @@ from functools import wraps
 import os
 from pathlib import Path
 
+from ._llm import helper_for_llm as _render_llm_api
+
 
 def _configure_bundled_geospatial_data() -> None:
     """Configure bundled GDAL and PROJ data for a standalone wheel.
@@ -425,7 +427,29 @@ __all__ = [
     "crn_invert_basin_erosion",
     "crn_pair_diagnostics",
     "crn_transient_history",
+    "helper_for_llm",
 ]
+
+
+def helper_for_llm(topic="index"):
+    """Return an ultra-compact, LLM-oriented API card.
+
+    Parameters
+    ----------
+    topic : str, default="index"
+        Topic name; use ``"symbol:<name>"`` for one public symbol,
+        ``"search:<words>"`` for a compact name search, or ``"all"``.
+
+    Returns
+    -------
+    str
+        Machine-oriented API context with exact public identifiers.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    return _render_llm_api(topic, _namespace=globals())
 
 
 def _numpy_style_docstring(function):
