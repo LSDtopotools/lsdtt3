@@ -191,6 +191,28 @@ From `docs/testing_and_benchmarking.md` on `alpine_medium` (720x720, 30 m):
 | All four curvatures | 30.2 ms | 159.8 ms | one-fit reuse benefit |
 | Peak RSS (surface workflow) | 83-86 MB | 207-233 MB | documented benchmark fixture |
 
+!!! warning "These are FIT-ONLY timings, on a different fixture"
+    The table above comes from `run_surface_benchmark.py`, whose timer reads
+    the CLI's `Running direct fit... done (X s)` line only. That is the
+    **shared quadratic fit**, and it excludes the per-metric derivation that
+    follows — which on a 1000x1000 tile costs a further 20-44 ms per metric.
+    So the lsdtt3 column understates lsdtt3's end-to-end cost, and the "all
+    four curvatures" row in particular is not four metrics' worth of work.
+    The fixture is also `alpine_medium` (720x720), not the 1000x1000 used
+    elsewhere.
+
+    For end-to-end numbers that include both phases, and for the marginal cost
+    per metric and the crossover against TopoToolbox, see the surface-metrics
+    section of [Testing and benchmarking](testing_and_benchmarking.md). Summary
+    of the measured position, curvatures only on 1000x1000:
+
+    | | fixed | per metric |
+    |---|---|---|
+    | lsdtt3 | 50.6 ms (the fit) | 24.3 ms |
+    | TopoToolbox | 8.0 ms | 50.2 ms |
+
+    lsdtt3 is cheaper from **two** curvature metrics onward.
+
 ---
 
 ## 3-way algorithmic comparison (operation ordering)

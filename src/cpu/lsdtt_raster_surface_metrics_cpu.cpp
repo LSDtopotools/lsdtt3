@@ -27,6 +27,7 @@
 #include <string>
 #include <thread>
 #include <limits>
+#include <memory>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
@@ -2812,20 +2813,143 @@ poly_fit_coeffs direct_polyfit(
     //   H1[c] = H1[c-1] - H0[c-1] + (W+1)*v_rem + W*v_add
     //   H2[c] = H2[c-1] - 2*H1[c-1] + H0[c-1] - (W+1)^2*v_rem + W^2*v_add
     // -------------------------------------------------------------------------
-    std::vector<double> H0(npix, 0.0);
-    std::vector<double> H1(npix, 0.0);
-    std::vector<double> H2(npix, 0.0);
-    std::vector<int>    Hn(npix, 0);
-
     const int nthreads = resolve_thread_count(n_threads);
     (void)nthreads;   // suppresses unused-variable warning when OpenMP absent
 
+    // -------------------------------------------------------------------------
+    // FUSED passes 1 and 2, over row-strips.
+    //
+    // H0/H1/H2/Hn used to be full-raster: pass 1 wrote all of them to memory
+    // and pass 2 read all of them back. At 8000x8000 that is 1.79 GB written
+    // and read per call; at 16000x16000, 7.17 GB. On any raster past L3 the
+    // round-trip IS the runtime, which is why the thread sweep was flat.
+    //
+    // Fusing the passes over strips means H never leaves cache and the
+    // full-raster allocation disappears entirely. That is a memory saving as
+    // much as a speed one -- it is the difference between a continental run
+    // fitting in RAM and not.
+    //
+    // Bit-identity: pass 1 is row-independent, so a row's H values are the same
+    // wherever they are stored; pass 2's prefix chain is preserved by carrying
+    // the accumulator across strips. No floating-point operation is reordered.
+    // -------------------------------------------------------------------------
+    constexpr int BLK = 8;
+    const int c_lo = W;
+    const int c_hi = ncols - W;
+    const int nblk = (c_hi > c_lo) ? ((c_hi - c_lo + BLK - 1) / BLK) : 0;
+    constexpr int RSTRIP = 64;
+
+    // H rows needed for output rows [s, se) are [s-W, se+W).
+    const int         Hrows = RSTRIP + 2 * W + 1;
+    const std::size_t Hsz   = static_cast<std::size_t>(Hrows) * ncols;
+
+    // Every consumed H element is overwritten by pass 1 before pass 2 reads it.
+    // Default-initialised arrays avoid a redundant serial fill of the strip.
+    std::unique_ptr<double[]> H0(new double[Hsz]);
+    std::unique_ptr<double[]> H1(new double[Hsz]);
+    std::unique_ptr<double[]> H2(new double[Hsz]);
+    std::unique_ptr<int[]>    Hn(new int[Hsz]);
+
+    // Prefix rows for a strip: (se-s) + 2W + 1 entries, +1 slack.
+    const std::size_t np =
+        static_cast<std::size_t>(RSTRIP + 2 * W + 2) *
+        static_cast<std::size_t>(BLK);
+
+    // Per-block prefix carry, persisting across strips. Indexed blk*BLK + j;
+    // each block is touched by exactly one thread per strip, with an implicit
+    // barrier between strips, so no synchronisation is needed.
+    const std::size_t csz = static_cast<std::size_t>(nblk) * BLK;
+    std::vector<double> carry_ph0  (csz, 0.0);
+    std::vector<double> carry_ph0r (csz, 0.0);
+    std::vector<double> carry_ph0r2(csz, 0.0);
+    std::vector<double> carry_ph1  (csz, 0.0);
+    std::vector<double> carry_ph1r (csz, 0.0);
+    std::vector<double> carry_ph2  (csz, 0.0);
+    std::vector<double> carry_phn  (csz, 0.0);
+
+    // -------------------------------------------------------------------------
+    // Output arrays (initialised to nodata/invalid)
+    // -------------------------------------------------------------------------
+    std::vector<float>   out_a;
+    std::vector<float>   out_b;
+    std::vector<float>   out_c;
+    std::vector<float>   out_d;
+    std::vector<float>   out_e;
+    std::vector<float>   out_f;
+    std::vector<uint8_t> out_mask;
+
+    // Reserve serially so allocation failures propagate normally, then perform
+    // the independent, non-throwing fills concurrently on multi-threaded runs.
+    out_a.reserve(npix);
+    out_b.reserve(npix);
+    out_c.reserve(npix);
+    out_d.reserve(npix);
+    out_e.reserve(npix);
+    out_f.reserve(npix);
+    out_mask.reserve(npix);
 #ifdef _OPENMP
-    #pragma omp parallel for schedule(static) num_threads(nthreads)
-#endif
-    for (int r = 0; r < nrows; ++r)
+    if (nthreads > 1)
     {
-        const std::size_t base = static_cast<std::size_t>(r) * ncols;
+        #pragma omp parallel sections num_threads(nthreads)
+        {
+            #pragma omp section
+            out_a.resize(npix, nodata_f);
+            #pragma omp section
+            out_b.resize(npix, nodata_f);
+            #pragma omp section
+            out_c.resize(npix, nodata_f);
+            #pragma omp section
+            out_d.resize(npix, nodata_f);
+            #pragma omp section
+            out_e.resize(npix, nodata_f);
+            #pragma omp section
+            out_f.resize(npix, nodata_f);
+            #pragma omp section
+            out_mask.resize(npix, uint8_t{0});
+        }
+    }
+    else
+#endif
+    {
+        out_a.resize(npix, nodata_f);
+        out_b.resize(npix, nodata_f);
+        out_c.resize(npix, nodata_f);
+        out_d.resize(npix, nodata_f);
+        out_e.resize(npix, nodata_f);
+        out_f.resize(npix, nodata_f);
+        out_mask.resize(npix, uint8_t{0});
+    }
+
+#ifdef _OPENMP
+    #pragma omp parallel num_threads(nthreads)
+#endif
+    {
+    // Per-thread prefix buffers, allocated once for the whole run.
+    std::vector<double> ph0  (np, 0.0);
+    std::vector<double> ph0r (np, 0.0);
+    std::vector<double> ph0r2(np, 0.0);
+    std::vector<double> ph1  (np, 0.0);
+    std::vector<double> ph1r (np, 0.0);
+    std::vector<double> ph2  (np, 0.0);
+    std::vector<double> phn  (np, 0.0);
+
+    // Every thread runs the strip loop control; the omp for directives inside
+    // distribute the work and their implicit barriers order the two passes.
+    for (int s = W; s < nrows - W; s += RSTRIP)
+    {
+        const int se      = std::min(s + RSTRIP, nrows - W);   // exclusive
+        const int r_first = s - W;
+        const int r_last  = se + W;                            // exclusive
+
+        // ---- PASS 1: horizontal rolling sums for this strip's rows --------
+#ifdef _OPENMP
+        #pragma omp for schedule(static)
+#endif
+        for (int r = r_first; r < r_last; ++r)
+        {
+            const std::size_t base  = static_cast<std::size_t>(r) * ncols;
+            const std::size_t hbase =
+                static_cast<std::size_t>(r - r_first) * ncols;
 
         // Returns the valid elevation at (r, j) as double, or 0 if invalid/OOB.
         auto get_v = [&](int j) -> double
@@ -2861,10 +2985,10 @@ poly_fit_coeffs direct_polyfit(
                 h2 += dc * dc * v;
             }
         }
-        H0[base]     = h0;
-        H1[base]     = h1;
-        H2[base]     = h2;
-        Hn[base]     = hn;
+        H0[hbase]     = h0;
+        H1[hbase]     = h1;
+        H2[hbase]     = h2;
+        Hn[hbase]     = hn;
 
         // Roll from c=0 to c=ncols-1.
         const double Wp1 = static_cast<double>(W + 1);
@@ -2888,23 +3012,13 @@ poly_fit_coeffs direct_polyfit(
                                  + (is_nd(j_add) ? 1 : 0);
 
             h0 = new_h0; h1 = new_h1; h2 = new_h2; hn = new_hn;
-            H0[base + c] = h0;
-            H1[base + c] = h1;
-            H2[base + c] = h2;
-            Hn[base + c] = hn;
+            H0[hbase + c] = h0;
+            H1[hbase + c] = h1;
+            H2[hbase + c] = h2;
+            Hn[hbase + c] = hn;
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Output arrays (initialised to nodata/invalid)
-    // -------------------------------------------------------------------------
-    std::vector<float>   out_a(npix, nodata_f);
-    std::vector<float>   out_b(npix, nodata_f);
-    std::vector<float>   out_c(npix, nodata_f);
-    std::vector<float>   out_d(npix, nodata_f);
-    std::vector<float>   out_e(npix, nodata_f);
-    std::vector<float>   out_f(npix, nodata_f);
-    std::vector<uint8_t> out_mask(npix, uint8_t{0});
 
     // -------------------------------------------------------------------------
     // Pass 2 - Vertical prefix sums + per-pixel OLS solve (parallel over cols).
@@ -2935,54 +3049,47 @@ poly_fit_coeffs direct_polyfit(
     //   E = -raw_S_yz  / (W3d*d*sk2)        (y first derivative)
     //   [a,b,F] = invM3 * [d^2*raw_S_x2z, d^2*raw_S_y2z, raw_S_z]
     // -------------------------------------------------------------------------
-    // Column BLOCKING.  The prefix arrays below are built for BLK adjacent
-    // columns at once and interleaved as (nrows+1) x BLK, so the reads of
-    // H0/H1/H2/Hn and the writes of out_* run ALONG raster rows instead of
-    // down columns.
-    //
-    // Why: these are row-major arrays, so a column-wise walk pulled a 64-byte
-    // cache line for every 8-byte read and took a line for ownership on every
-    // 4-byte write, across seven strided streams.  That turned ~58 bytes of
-    // data per pixel into ~1.6 kB of memory traffic, and made the cost per
-    // pixel GROW with raster size (104.7 / 196.5 / 321.6 ns/px at n = 1440 /
-    // 2880 / 4096) -- the signature of poor cache-line utilisation rather than
-    // saturated bandwidth.
-    //
-    // The arithmetic and its evaluation order are unchanged, so the output is
-    // bit-identical; only the iteration order over independent columns
-    // changes.  Measured 2.8x on this pass and ~1.7x on the whole function at
-    // 2880x2880; blocked at one thread beats the previous code at four.  No
-    // gain at 1440x1440, where the working set still fits in cache.
-    // See docs/testing_and_benchmarking.md section 10b.
-    constexpr int BLK = 8;
-    const int c_lo = W;
-    const int c_hi = ncols - W;
-    const int nblk = (c_hi > c_lo) ? ((c_hi - c_lo + BLK - 1) / BLK) : 0;
-
+        // ---- PASS 2: consume this strip's H, over column blocks -----------
+        //
+        // Column BLOCKING: the prefix arrays are built for BLK adjacent columns
+        // at once and interleaved as rows x BLK, so the reads of H0/H1/H2/Hn and
+        // the writes of out_* run ALONG raster rows instead of down columns.
+        // A column-wise walk pulled a 64-byte cache line for every 8-byte read
+        // and took a line for ownership on every 4-byte write across seven
+        // strided streams -- ~58 bytes of data per pixel became ~1.6 kB of
+        // traffic. Measured 2.8x on this pass at 2880x2880.
+        // See docs/testing_and_benchmarking.md section 10b.
 #ifdef _OPENMP
-    #pragma omp parallel for schedule(static) num_threads(nthreads)
+        #pragma omp for schedule(static)
 #endif
     for (int blk = 0; blk < nblk; ++blk)
     {
         const int c0 = c_lo + blk * BLK;
         const int nc = (c0 + BLK <= c_hi) ? BLK : (c_hi - c0);
+        const std::size_t cb = static_cast<std::size_t>(blk) * BLK;
 
-        // Interleaved prefix arrays: element (r, j) lives at r*BLK + j.
-        const std::size_t np =
-            static_cast<std::size_t>(nrows + 1) * static_cast<std::size_t>(BLK);
-        std::vector<double> ph0  (np, 0.0);
-        std::vector<double> ph0r (np, 0.0);
-        std::vector<double> ph0r2(np, 0.0);
-        std::vector<double> ph1  (np, 0.0);
-        std::vector<double> ph1r (np, 0.0);
-        std::vector<double> ph2  (np, 0.0);
-        std::vector<double> phn  (np, 0.0);
+            // Seed index 0 of the strip-local prefix with this block's carry:
+            // the running sum of H over rows [0, s-W). Zero on the first strip,
+            // which is exactly what the full-height array held at index 0.
+            for (int j = 0; j < nc; ++j)
+            {
+                ph0  [j] = carry_ph0  [cb + j];
+                ph0r [j] = carry_ph0r [cb + j];
+                ph0r2[j] = carry_ph0r2[cb + j];
+                ph1  [j] = carry_ph1  [cb + j];
+                ph1r [j] = carry_ph1r [cb + j];
+                ph2  [j] = carry_ph2  [cb + j];
+                phn  [j] = carry_phn  [cb + j];
+            }
 
-        for (int r = 0; r < nrows; ++r)
+        for (int r = r_first; r < r_last; ++r)
         {
-            const std::size_t ib = static_cast<std::size_t>(r) * ncols + c0;
-            const std::size_t pp = static_cast<std::size_t>(r)     * BLK;
-            const std::size_t pn = static_cast<std::size_t>(r + 1) * BLK;
+            const std::size_t ib =
+                static_cast<std::size_t>(r - r_first) * ncols + c0;
+            const std::size_t pp =
+                static_cast<std::size_t>(r - r_first)     * BLK;
+            const std::size_t pn =
+                static_cast<std::size_t>(r - r_first + 1) * BLK;
             const double      rd = static_cast<double>(r);
 
             for (int j = 0; j < nc; ++j)
@@ -3002,12 +3109,15 @@ poly_fit_coeffs direct_polyfit(
             }
         }
 
-        for (int r0 = W; r0 < nrows - W; ++r0)
+        for (int r0 = s; r0 < se; ++r0)
         {
+            // Strip-relative prefix indices. Absolute row (r0 - W) sits at
+            // local index (r0 - W) - r_first = r0 - s, and (r0 + W + 1) at
+            // r0 - s + 2W + 1.
             const std::size_t pa =
-                static_cast<std::size_t>(r0 - W)     * BLK;   // ra
+                static_cast<std::size_t>(r0 - s)             * BLK;   // ra
             const std::size_t pb =
-                static_cast<std::size_t>(r0 + W + 1) * BLK;   // rb (exclusive)
+                static_cast<std::size_t>(r0 - s + 2 * W + 1) * BLK;   // rb (excl)
             const std::size_t oidx =
                 static_cast<std::size_t>(r0) * ncols + c0;
             const double r0d = static_cast<double>(r0);
@@ -3059,16 +3169,71 @@ poly_fit_coeffs direct_polyfit(
                 out_mask[oidx + j] = uint8_t{1};
             }
         }
+
+            // Carry the prefix at the NEXT strip's first row, which is
+            // absolute row (se - W) and therefore local index (se - W) -
+            // r_first = se - s.  Only meaningful when another strip follows.
+            const std::size_t pc =
+                static_cast<std::size_t>(se - s) * BLK;
+            for (int j = 0; j < nc; ++j)
+            {
+                carry_ph0  [cb + j] = ph0  [pc + j];
+                carry_ph0r [cb + j] = ph0r [pc + j];
+                carry_ph0r2[cb + j] = ph0r2[pc + j];
+                carry_ph1  [cb + j] = ph1  [pc + j];
+                carry_ph1r [cb + j] = ph1r [pc + j];
+                carry_ph2  [cb + j] = ph2  [pc + j];
+                carry_phn  [cb + j] = phn  [pc + j];
+            }
+        }   // blk loop (omp for)
+    }       // strip loop
+    }       // omp parallel
+
+    // The raster constructor takes vector<uint8_t>&&, so copy the mask for the
+    // first five coefficients. Reserve first so OpenMP sections cannot throw.
+    std::vector<uint8_t> mask_a;
+    std::vector<uint8_t> mask_b;
+    std::vector<uint8_t> mask_c;
+    std::vector<uint8_t> mask_d;
+    std::vector<uint8_t> mask_e;
+    mask_a.reserve(npix);
+    mask_b.reserve(npix);
+    mask_c.reserve(npix);
+    mask_d.reserve(npix);
+    mask_e.reserve(npix);
+#ifdef _OPENMP
+    if (nthreads > 1)
+    {
+        #pragma omp parallel sections num_threads(nthreads)
+        {
+            #pragma omp section
+            mask_a.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_b.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_c.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_d.assign(out_mask.begin(), out_mask.end());
+            #pragma omp section
+            mask_e.assign(out_mask.begin(), out_mask.end());
+        }
+    }
+    else
+#endif
+    {
+        mask_a.assign(out_mask.begin(), out_mask.end());
+        mask_b.assign(out_mask.begin(), out_mask.end());
+        mask_c.assign(out_mask.begin(), out_mask.end());
+        mask_d.assign(out_mask.begin(), out_mask.end());
+        mask_e.assign(out_mask.begin(), out_mask.end());
     }
 
-    // The raster constructor takes vector<uint8_t>&&, so copy the mask for
-    // the first five coefficients and move it on the last.
     poly_fit_coeffs result;
-    result.a = lsdtt_raster_cpu(std::move(out_a), std::vector<uint8_t>(out_mask), meta);
-    result.b = lsdtt_raster_cpu(std::move(out_b), std::vector<uint8_t>(out_mask), meta);
-    result.c = lsdtt_raster_cpu(std::move(out_c), std::vector<uint8_t>(out_mask), meta);
-    result.d = lsdtt_raster_cpu(std::move(out_d), std::vector<uint8_t>(out_mask), meta);
-    result.e = lsdtt_raster_cpu(std::move(out_e), std::vector<uint8_t>(out_mask), meta);
+    result.a = lsdtt_raster_cpu(std::move(out_a), std::move(mask_a), meta);
+    result.b = lsdtt_raster_cpu(std::move(out_b), std::move(mask_b), meta);
+    result.c = lsdtt_raster_cpu(std::move(out_c), std::move(mask_c), meta);
+    result.d = lsdtt_raster_cpu(std::move(out_d), std::move(mask_d), meta);
+    result.e = lsdtt_raster_cpu(std::move(out_e), std::move(mask_e), meta);
     result.f = lsdtt_raster_cpu(std::move(out_f), std::move(out_mask),            meta);
     return result;
 }
