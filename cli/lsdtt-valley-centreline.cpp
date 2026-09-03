@@ -207,6 +207,21 @@ int main(int argc, char* argv[])
         "Cap on the detected valley HAND break (m).","0 = no cap.",
         "Valley identification", "param", ""};
 
+    // --- Valley mask input (phase 5 of the fluvial-surfaces plan) ---
+    string_default_map["valley_mask_fname"] = "";
+    help_map["valley_mask_fname"] = {"string","",
+        "Valley mask raster from lsdtt-fluvial-surfaces, in read_path.",
+        "Cells > 0.5 are valley. Normally <stem>_valley_mask.tif from "
+        "lsdtt-fluvial-surfaces, which is band 0 of its reference-field ladder. "
+        "When supplied, this tool does NOT identify the valley: it skips the "
+        "corridor HAND break search entirely and goes straight to the medial-"
+        "axis centreline, the trough carve and the pinned baseline, which are "
+        "the parts that are genuinely its own. Every valley_* break parameter "
+        "is then ignored, and each channel reports no break rather than a "
+        "fabricated one. Leave empty to derive the valley here as before "
+        "(deprecated: that path moves out entirely at the next step).",
+        "Valley mask","io",""};
+
     int_default_map["valley_dilation_pixels"] = 4;
     help_map["valley_dilation_pixels"] = {"int","4",
         "Constrained dilation of valley patches (pixels).",
@@ -784,6 +799,40 @@ int main(int argc, char* argv[])
     vreq.min_centreline_nodes = ifs["min_centreline_nodes"];
     vreq.n_threads = ifs["n_threads"];
 
+    // Load the supplied valley mask, if any. Held here so it outlives the
+    // request, which only stores a pointer.
+    lsdtt::lsdtt_raster_cpu supplied_valley;
+    if (!sf["valley_mask_fname"].empty())
+    {
+        const std::string vpath =
+            pp.add_read_path_if_needed(sf["valley_mask_fname"]);
+        std::cout << "Loading valley mask: " << vpath << "\n";
+        try
+        {
+            lsdtt::lsdtt_data_loader vloader;
+            vloader.open_raster(vpath);
+            supplied_valley = lsdtt::lsdtt_raster_cpu(vloader);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: loading valley mask: " << e.what() << "\n";
+            return 1;
+        }
+        const lsdtt::lsdtt_raster_meta& vm = supplied_valley.get_meta();
+        if (vm.n_rows != dem.get_meta().n_rows ||
+            vm.n_cols != dem.get_meta().n_cols)
+        {
+            std::cerr << "FATAL: valley mask is " << vm.n_rows << "x"
+                      << vm.n_cols << " but the DEM is "
+                      << dem.get_meta().n_rows << "x"
+                      << dem.get_meta().n_cols << ".\n";
+            return 1;
+        }
+        vreq.supplied_valley_mask = &supplied_valley;
+        std::cout << "  Valley identification is supplied, so the corridor "
+                     "HAND break search is skipped.\n";
+    }
+
     lsdtt::valley_centreline_result vres;
     try
     {
@@ -814,11 +863,16 @@ int main(int argc, char* argv[])
             bmax = std::max(bmax, b);
         }
         std::cout << "  channel " << ch.source_id << ": "
-                  << ch.n_valley_pixels << " valley px, HAND break "
-                  << ch.valley_hand_break_metres << " m"
-                  << " (reach range " << bmin << "-" << bmax << " m, "
-                  << ch.window_break_m.size() << " windows)"
-                  << (ch.used_fallback_break ? " (fallback)" : "")
+                  << ch.n_valley_pixels << " valley px, ";
+        if (!ch.valley_break_derived)
+            std::cout << "break not derived (valley supplied)";
+        else
+            std::cout << "HAND break "
+                      << ch.valley_hand_break_metres << " m"
+                      << " (reach range " << bmin << "-" << bmax << " m, "
+                      << ch.window_break_m.size() << " windows)"
+                      << (ch.used_fallback_break ? " (fallback)" : "");
+        std::cout
                   << ", centreline "
                   << (ch.routing_succeeded
                           ? std::to_string(ch.centreline_flats.size()) +

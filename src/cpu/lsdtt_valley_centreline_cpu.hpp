@@ -57,6 +57,26 @@ namespace lsdtt
 // -----------------------------------------------------------------------------
 struct valley_centreline_request
 {
+    // -------------------------------------------------------------------------
+    // Supplied valley mask (phase 5 of the fluvial-surfaces plan)
+    //
+    // When non-null, the engine does NOT identify the valley. It skips the
+    // corridor HAND break search entirely and takes each channel's valley as
+    // (this mask AND that channel's corridor), then carries on with mask
+    // cleaning, the trough surface and the centreline as usual.
+    //
+    // This is the direction the split takes: valley identification belongs to
+    // lsdtt-fluvial-surfaces, which bands a reference field and writes band 0
+    // as <stem>_valley_mask.tif. This engine keeps what is genuinely its own -
+    // the medial-axis centreline, the trough carve and the pinned baseline.
+    //
+    // Cells > 0.5 are valley. Must be co-registered with the DEM. Every
+    // valley_* break parameter below is IGNORED when this is set, and each
+    // channel record reports valley_break_derived = false rather than a
+    // fabricated break value.
+    // -------------------------------------------------------------------------
+    const lsdtt_raster_cpu* supplied_valley_mask = nullptr;
+
     // --- Valley identification ---
     // Corridor half-width: only pixels within this Euclidean distance of the
     // channel participate in the HAND population and can be valley pixels.
@@ -181,8 +201,17 @@ struct valley_channel_centreline
     std::int32_t source_id                = -1;
     // Whole-corridor HAND break (also the fallback for windows without their
     // own break), and whether it came from a population break.
+    //
+    // NOT MEANINGFUL when valley_break_derived is false: a supplied valley mask
+    // did not come from a break this engine found, so there is no break to
+    // report. The value is then NaN rather than 0.0, which would read as a
+    // genuine break at zero height above the channel - the same reason
+    // ladder_status exists rather than a silent k = 1.
     double       valley_hand_break_metres = 0.0;
     bool         used_fallback_break      = false;
+    // False when the valley came from request.supplied_valley_mask instead of
+    // from this engine's own corridor HAND break search.
+    bool         valley_break_derived     = true;
 
     // Reach-adaptive breaks: one entry per along-channel window.
     // window_break_own[w] is true when the window's own population produced
