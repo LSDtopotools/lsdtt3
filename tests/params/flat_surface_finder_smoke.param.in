@@ -24,11 +24,8 @@ min_component_pixels: 100
 # The channel-relative half of this CLI is deliberately left off. It moves to
 # lsdtt-fluvial-surfaces in phase 3, and pinning it here would pin behaviour
 # that is about to be relocated rather than behaviour that must not change.
-break_flats_with_channels: false
-write_channel_network: false
-find_floodplain: false
 run_plane_analysis: false
 
-write_combined_flat_mask: true
-write_metric_flat_masks: false
+write_combined_flat_mask_raster: true
+write_metric_flat_mask_rasters: false
 write_texture_rasters: false

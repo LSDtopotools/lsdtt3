@@ -239,6 +239,23 @@ public:
     void set_removed_keys(std::map<std::string, std::string> removed)
     { removed_key_message_map_ = std::move(removed); }
 
+    // Old name -> the exact message to print. The key is accepted, ignored, and
+    // the run CONTINUES.
+    //
+    // This is group (b), and the line between it and set_removed_keys is the
+    // whole point of having both: a key belongs here only when ignoring it
+    // cannot change what the user believes happened. A key that TUNED or
+    // DISABLED a mechanism which no longer exists qualifies - the analysis
+    // still runs, and runs better. A key that TURNED SOMETHING ON does not,
+    // because ignoring it leaves the user believing an analysis ran when it did
+    // not, and that is the failure this whole facility exists to prevent.
+    //
+    // Distinct from the unknown-key report, which can only say a key was not
+    // recognised. These keys were real, they were removed for a reason, and the
+    // message should say what replaced the mechanism.
+    void set_ignored_keys(std::map<std::string, std::string> ignored)
+    { ignored_key_message_map_ = std::move(ignored); }
+
     // Report file keys that no defaults map declares and that are not reserved
     // file-I/O keys. On by default: it falls out of the same scan and is worth
     // having on its own, because a typo in a parameter name is otherwise
@@ -555,6 +572,7 @@ private:
     // Key-policy maps; see set_deprecated_aliases / set_removed_keys.
     std::map<std::string, std::string> deprecated_alias_map_;
     std::map<std::string, std::string> removed_key_message_map_;
+    std::map<std::string, std::string> ignored_key_message_map_;
     bool report_unknown_keys_ = true;
 
     // Applies the key policy to the raw file keys. Called by both

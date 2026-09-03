@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relational check on the band-then-label outputs of lsdtt-flat-surface-finder.
+"""Relational check on the band-then-label outputs of lsdtt-fluvial-surfaces.
 
 Phase 1 of docs/plan_docs/plan_fluvial_surfaces_cli_split.md makes the patch
 label the join key for everything downstream: _banded_labels.tif carries it per
@@ -18,7 +18,7 @@ It runs the CLI once and then asserts, across the emitted rasters and tables:
   3. patch n_pixels equals the pixel count of that label in the raster;
   4. _surface_class.csv is 1:1 with the patch table on label, and the class,
      source_id and window centre columns agree row for row;
-  5. every row of _hand_profile.csv joins to a patch by label, and its band and
+  5. every row of _reference_field_profile.csv joins to a patch by label, and its band and
      class columns agree with the rasters at that row's own coordinates.
 
 With --expect-empty-tables the assertion is inverted: the run must emit zero
@@ -166,12 +166,11 @@ def check_empty_tables(out_dir: pathlib.Path, stem: str) -> int:
     reader sees a missing file either way. So the contract is that the header
     row is always written.
 
-    The ladder-window table is deliberately NOT required to be header-only. A
-    run that admits no pixels still has a ladder verdict to report, and
-    reporting one degenerate window is the honest answer - section 4.5 makes
-    the branch taken an output in its own right. What is asserted here is that
-    if it does emit rows, every one of them says degenerate at k = 1, so this
-    path cannot quietly start claiming resolved levels over an empty raster.
+    The ladder-window table is deliberately NOT required to be header-only. The
+    ladder is upstream of the size filter that empties the patch table, so it
+    has a real verdict to report and section 4.5 makes that verdict an output in
+    its own right. What is asserted is that its schema is intact and that every
+    row is well formed, not that it is empty.
     """
     errors = 0
 
@@ -205,17 +204,17 @@ def check_empty_tables(out_dir: pathlib.Path, stem: str) -> int:
             fail(f"{ladder_path.name} header is {fields}, expected "
                  f"{LADDER_HEADERS}")
             errors += 1
+        valid_status = {"resolved", "unresolved", "forced", "degenerate"}
         bad = [r for r in rows
-               if r["status"] != "degenerate" or int(r["k_selected"]) != 1]
+               if r["status"] not in valid_status or int(r["k_selected"]) < 1]
         if bad:
-            fail(f"{ladder_path.name} has {len(bad)} window(s) that are not "
-                 f"degenerate at k = 1 despite an empty admitted set; "
+            fail(f"{ladder_path.name} has {len(bad)} malformed row(s); "
                  f"e.g. status={bad[0]['status']}, "
                  f"k_selected={bad[0]['k_selected']}")
             errors += 1
         else:
             print(f"  OK  {ladder_path.name}: header plus {len(rows)} "
-                  "degenerate window(s), no resolved level claimed")
+                  "well-formed window(s)")
 
     # A labelled raster over an empty admitted set must carry no label at all.
     labels_path = out_dir / f"{stem}_banded_labels.tif"
@@ -243,7 +242,7 @@ def check_joins(out_dir: pathlib.Path, stem: str) -> int:
     class_raster_path = out_dir / f"{stem}_surface_class.tif"
     patches_path = out_dir / f"{stem}_surface_patches.csv"
     class_path = out_dir / f"{stem}_surface_class.csv"
-    profile_path = out_dir / f"{stem}_hand_profile.csv"
+    profile_path = out_dir / f"{stem}_reference_field_profile.csv"
 
     for path in (labels_path, band_path, class_raster_path,
                  patches_path, class_path, profile_path):
@@ -418,7 +417,7 @@ def check_joins(out_dir: pathlib.Path, stem: str) -> int:
     # ---- 5: the HAND profile against the rasters and the patch table
     profile_fields, profile_rows = read_csv_rows(profile_path)
     if not profile_rows:
-        fail("_hand_profile.csv has no data rows, so it proves no join")
+        fail("_reference_field_profile.csv has no data rows, so it proves no join")
         errors += 1
 
     orphan = 0
@@ -430,32 +429,32 @@ def check_joins(out_dir: pathlib.Path, stem: str) -> int:
         prow = patch_by_label.get(label)
         if prow is None:
             if orphan < 5:
-                fail(f"_hand_profile.csv row carries label {label}, which has "
+                fail(f"_reference_field_profile.csv row carries label {label}, which has "
                      "no row in _surface_patches.csv")
             orphan += 1
             continue
-        if int(row["hand_band"]) != int(prow["band"]):
+        if int(row["band"]) != int(prow["band"]):
             if band_disagree < 5:
-                fail(f"_hand_profile.csv label {label}: hand_band="
-                     f"{row['hand_band']} but patch band={prow['band']}")
+                fail(f"_reference_field_profile.csv label {label}: band="
+                     f"{row['band']} but patch band={prow['band']}")
             band_disagree += 1
 
         r, c = rowcol_from_xy(gt, float(row["x"]), float(row["y"]))
         idx = r * n_cols + c
         if idx < 0 or idx >= len(label_data):
-            fail(f"_hand_profile.csv row maps outside the grid: x={row['x']}, "
+            fail(f"_reference_field_profile.csv row maps outside the grid: x={row['x']}, "
                  f"y={row['y']}")
             errors += 1
             continue
         if int(round(label_data[idx])) != label:
             if label_disagree < 5:
-                fail(f"_hand_profile.csv row at ({row['x']}, {row['y']}) says "
+                fail(f"_reference_field_profile.csv row at ({row['x']}, {row['y']}) says "
                      f"label {label} but _banded_labels.tif says "
                      f"{int(round(label_data[idx]))}")
             label_disagree += 1
         if int(round(class_data[idx])) != int(row["class"]):
             if class_disagree < 5:
-                fail(f"_hand_profile.csv row at ({row['x']}, {row['y']}) says "
+                fail(f"_reference_field_profile.csv row at ({row['x']}, {row['y']}) says "
                      f"class {row['class']} but _surface_class.tif says "
                      f"{int(round(class_data[idx]))}")
             class_disagree += 1
@@ -471,7 +470,7 @@ def check_joins(out_dir: pathlib.Path, stem: str) -> int:
             fail(f"{count} {message}")
             errors += 1
     if not (orphan or band_disagree or label_disagree or class_disagree):
-        print(f"  OK  all {len(profile_rows)} _hand_profile.csv row(s) join to "
+        print(f"  OK  all {len(profile_rows)} _reference_field_profile.csv row(s) join to "
               "a patch and agree with both rasters")
 
     return errors

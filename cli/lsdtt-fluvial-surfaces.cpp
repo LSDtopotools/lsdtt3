@@ -595,6 +595,17 @@ int main(int argc, char* argv[])
         "Output file: <stem>_surface_class.csv. hand field only.",
         "Outputs","switch",""};
 
+    bool_default_map["write_reference_field_profile_csv"] = false;
+    help_map["write_reference_field_profile_csv"] = {"bool","false",
+        "Write a per-pixel table of the reference field along the channel.",
+        "Output file: <stem>_reference_field_profile.csv with x, y, field_m, "
+        "channel_flow_distance_m, source_id, class, label and band. One row per "
+        "labelled pixel: the input for a height-against-distance profile "
+        "figure, and the table that proves the raster labels join to the patch "
+        "and class tables. Requires the hand field with a computed HAND, since "
+        "the along-channel distance comes from the pixel's HAND donor node.",
+        "Outputs","switch",""};
+
     bool_default_map["write_ladder_windows_csv"] = true;
     help_map["write_ladder_windows_csv"] = {"bool","true",
         "Write the per-window resolvability report.",
@@ -1382,6 +1393,65 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_ladder_windows.csv";
         std::cout << "Writing ladder windows: " << p << "\n";
         lsdtt::write_ladder_windows_csv(loader, p, ladder.windows);
+    }
+
+    if (bf["write_reference_field_profile_csv"])
+    {
+        // Per-pixel field against along-channel distance. The distance is read
+        // at the pixel's HAND DONOR node, not at the pixel, which is why this
+        // needs a computed HAND: a supplied HAND raster carries no donors, and
+        // a fitted surface has no channel to measure along at all.
+        if (!have_donors || !scope_resolved)
+        {
+            std::cerr << "WARNING: write_reference_field_profile_csv needs a "
+                         "computed HAND (it reads the along-channel distance at "
+                         "each pixel's donor node), so no profile was written.\n";
+        }
+        else
+        {
+            const std::string p = stem + "_reference_field_profile.csv";
+            std::cout << "Writing reference field profile: " << p << "\n";
+
+            const std::vector<float>&   fv  = reference_field.get_data();
+            const std::vector<uint8_t>& fm  = reference_field.get_mask();
+            const std::vector<float>&   fdd = flow_distance.get_data();
+            const std::vector<uint8_t>& fdm = flow_distance.get_mask();
+            const std::vector<float>&   lv  = banded.labels.get_data();
+            const std::vector<float>&   bv  = ladder.band_index.get_data();
+            const std::vector<float>*   cv  =
+                class_raster.get_data().empty() ? nullptr
+                                                : &class_raster.get_data();
+
+            std::vector<std::vector<std::string>> rows;
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                if (!(lv[i] > 0.0f)) continue;          // not a labelled patch
+                if (!fm[i] || !std::isfinite(fv[i])) continue;
+                const std::int64_t donor = donor_flat[i];
+                if (donor < 0) continue;
+                const std::size_t d = static_cast<std::size_t>(donor);
+                if (d >= n_pixels || !fdm[d] || !std::isfinite(fdd[d])) continue;
+
+                const int r = static_cast<int>(i / static_cast<std::size_t>(meta.n_cols));
+                const int c = static_cast<int>(i % static_cast<std::size_t>(meta.n_cols));
+                const lsdtt::lsdtt_xy xy =
+                    lsdtt::cell_center_from_row_col(meta, r, c);
+                rows.push_back({
+                    std::to_string(xy.x),
+                    std::to_string(xy.y),
+                    std::to_string(fv[i]),
+                    std::to_string(fdd[d]),
+                    std::to_string(scope.channel_source_id[d]),
+                    cv ? std::to_string(static_cast<int>((*cv)[i]))
+                       : std::string("-1"),
+                    std::to_string(static_cast<std::int64_t>(std::llround(lv[i]))),
+                    std::to_string(static_cast<int>(bv[i])) });
+            }
+            loader.write_csv(p,
+                {"x","y","field_m","channel_flow_distance_m",
+                 "source_id","class","label","band"},
+                rows);
+        }
     }
 
     if (bf["write_channel_network"] && scope_resolved && flow)

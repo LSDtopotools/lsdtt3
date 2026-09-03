@@ -217,7 +217,18 @@ void lsdtt_param_parser::apply_key_policy(
         parameter_map_.erase(old_key);
     }
 
-    // --- 3. Unknown keys: a warning, never fatal -----------------------------
+    // --- 3. Ignored keys: named, explained, and survived ---------------------
+    // Erased after reporting so they do not also surface as unknown: the
+    // specific message is strictly better than "not recognised", and printing
+    // both for one key would read as two separate problems.
+    for (const auto& [old_key, message] : ignored_key_message_map_)
+    {
+        if (!parameter_map_.count(old_key)) continue;
+        std::cerr << "WARNING: " << message << "\n";
+        parameter_map_.erase(old_key);
+    }
+
+    // --- 4. Unknown keys: a warning, never fatal -----------------------------
     if (!report_unknown_keys_) return;
 
     const std::set<std::string> declared(declared_keys.begin(),
