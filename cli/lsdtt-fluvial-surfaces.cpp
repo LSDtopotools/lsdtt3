@@ -81,6 +81,7 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_reference_field_ladder_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"  // clean_valley_mask
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_version   = "0.1.0";
@@ -566,6 +567,42 @@ int main(int argc, char* argv[])
         "lsdtt-valley-centreline expects as valley_mask_fname. With "
         "ladder_level_count 2 it is exactly the valley/wall cut.",
         "Outputs","switch",""};
+
+    // --- Valley mask cleaning ---
+    bool_default_map["clean_valley_mask"] = true;
+    help_map["clean_valley_mask"] = {"bool","true",
+        "Tidy band 0 before writing it as the valley mask.",
+        "Band 0 straight off the ladder is speckled and contains flat patches "
+        "that have nothing to do with the channel, so it is not a drop-in for "
+        "lsdtt-valley-centreline until it has been cleaned the way that tool "
+        "used to clean its own. Erode, drop patches that do not reach the "
+        "channel, then regrow. Only affects <stem>_valley_mask.tif; the band "
+        "index, the labels and the patch table are untouched.",
+        "Outputs","switch","write_valley_mask_raster"};
+
+    int_default_map["valley_dilation_pixels"] = 4;
+    help_map["valley_dilation_pixels"] = {"int","4",
+        "Erosion / regrow radius used when cleaning the valley mask [pixels].",
+        "The erosion breaks threads joining real valley floor to incidental "
+        "flat ground; the regrow is twice this, which restores the rim and "
+        "fills enclosed holes without letting the mask creep outward.",
+        "Outputs","param","clean_valley_mask"};
+
+    float_default_map["valley_max_detour_ratio"] = 3.0f;
+    help_map["valley_max_detour_ratio"] = {"float","3.0",
+        "Maximum along-ground path to the channel, as a multiple of the "
+        "straight-line distance.",
+        "A flat that sits NEAR the channel but is only reachable the long way "
+        "round is a different landform, not this channel's valley floor. 0 or "
+        "negative disables the test.",
+        "Outputs","param","clean_valley_mask"};
+
+    bool_default_map["restrict_valley_to_channel_connected"] = true;
+    help_map["restrict_valley_to_channel_connected"] = {"bool","true",
+        "Drop valley patches with no pixel on or beside the channel.",
+        "The valley floor of a channel touches that channel. A patch that "
+        "touches none is flat ground somewhere else.",
+        "Outputs","param","clean_valley_mask"};
 
     bool_default_map["write_surface_class_raster"] = true;
     help_map["write_surface_class_raster"] = {"bool","true",
@@ -1349,11 +1386,48 @@ int main(int argc, char* argv[])
         {
             if (bi[i] >= -0.5f && bi[i] < 0.5f) { vm[i] = 1.0f; ++n_valley; }
         }
+        lsdtt::lsdtt_raster_cpu valley_raster(
+            std::move(vm), std::move(vmm), meta);
+
+        if (bf["clean_valley_mask"] && scope_resolved)
+        {
+            lsdtt::valley_mask_clean_request creq2;
+            creq2.dilation_pixels = ip["valley_dilation_pixels"];
+            creq2.restrict_to_channel_connected =
+                bf["restrict_valley_to_channel_connected"];
+            creq2.max_detour_ratio =
+                static_cast<double>(ff["valley_max_detour_ratio"]);
+            creq2.n_threads = ip["n_threads"];
+            try
+            {
+                std::vector<std::uint8_t> cmask2(scope.channel_mask.begin(),
+                                                 scope.channel_mask.end());
+                valley_raster = lsdtt::clean_valley_mask(
+                    valley_raster, cmask2, creq2);
+                std::int64_t n_after = 0;
+                for (const float v : valley_raster.get_data())
+                    if (v > 0.5f) ++n_after;
+                std::cout << "  valley mask cleaned: " << n_valley << " -> "
+                          << n_after << " cell(s)\n";
+                n_valley = n_after;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: valley mask cleaning failed: "
+                          << e.what() << "\n";
+            }
+        }
+        else if (bf["clean_valley_mask"])
+        {
+            std::cout << "  valley mask not cleaned: cleaning needs a channel "
+                         "network, and no channel scope was resolved.\n";
+        }
+
         const std::string p = stem + "_valley_mask.tif";
         std::cout << "Writing valley mask (band 0, " << n_valley
                   << " cell(s)): " << p << "\n";
-        loader.write_full(vm, meta, p, out_format, GDT_Byte);
-        (void)vmm;
+        loader.write_full(valley_raster.get_data(), meta, p, out_format,
+                          GDT_Byte);
     }
 
     if (use_hand && bf["write_surface_class_raster"] &&

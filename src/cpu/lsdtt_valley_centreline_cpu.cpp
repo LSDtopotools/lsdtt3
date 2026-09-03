@@ -1547,4 +1547,70 @@ valley_centreline_result extract_valley_centrelines(
     return result;
 }
 
+// =============================================================================
+// clean_valley_mask (public - see header)
+// =============================================================================
+lsdtt_raster_cpu clean_valley_mask(
+    const lsdtt_raster_cpu&          valley_mask,
+    const std::vector<std::uint8_t>& channel_mask,
+    const valley_mask_clean_request& request)
+{
+    static const char* fn = "lsdtt::clean_valley_mask";
+
+    const lsdtt_raster_meta& meta = valley_mask.get_meta();
+    const std::size_t n =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+
+    if (channel_mask.size() != n)
+    {
+        throw std::invalid_argument(
+            std::string(fn) + ": channel_mask does not match valley_mask");
+    }
+
+    const std::vector<float>&   vv = valley_mask.get_data();
+    const std::vector<uint8_t>& vm = valley_mask.get_mask();
+
+    std::vector<std::uint8_t> valley(n, k_off);
+    for (std::size_t i = 0; i < n; ++i)
+        if (vm[i] && vv[i] > 0.5f) valley[i] = k_on;
+
+    // The channel nodes seed the adjacency test, and the distance transform to
+    // them is what the detour ratio is measured against.
+    std::vector<std::int64_t> nodes;
+    std::vector<float>   cd(n, 0.0f);
+    std::vector<uint8_t> cm(n, 1u);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (channel_mask[i])
+        {
+            cd[i] = 1.0f;
+            nodes.push_back(static_cast<std::int64_t>(i));
+        }
+    }
+    if (nodes.empty())
+    {
+        // Nothing to be adjacent to, so no cleaning is meaningful. Returning
+        // the input unchanged is the honest answer; silently emptying the mask
+        // would look like the cleaning had rejected everything.
+        return valley_mask;
+    }
+
+    const lsdtt_raster_cpu chan_binary(std::move(cd), std::move(cm), meta);
+    const lsdtt_raster_cpu dist =
+        euclidean_distance_transform(chan_binary, request.n_threads);
+
+    clean_valley_patches(valley, dist.get_data(), dist.get_mask(), nodes,
+                         request.dilation_pixels,
+                         request.restrict_to_channel_connected,
+                         request.max_detour_ratio,
+                         meta.cell_size, meta.n_rows, meta.n_cols);
+
+    std::vector<float>   od(n, 0.0f);
+    std::vector<uint8_t> om(n, 1u);
+    for (std::size_t i = 0; i < n; ++i)
+        if (valley[i]) od[i] = 1.0f;
+
+    return lsdtt_raster_cpu(std::move(od), std::move(om), meta);
+}
+
 } // namespace lsdtt
