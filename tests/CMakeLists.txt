@@ -3348,6 +3348,15 @@ add_test(NAME unit_fluvial_surface_ladder
 set_tests_properties(unit_fluvial_surface_ladder PROPERTIES
     LABELS "unit")
 
+# Phase 2. T3: the fitted-surface reference field. Both arms run the SAME ladder
+# with the SAME auto k selection over the SAME admitted set, and only the banded
+# raster differs, so what the test measures is the field rather than the tuning.
+# HAND shreds the fan into radial arcs; the residual to a fitted cone does not.
+add_test(NAME unit_fluvial_surface_fitted_field
+         COMMAND lsdtt-test-fluvial-surfaces --fitted-surface)
+set_tests_properties(unit_fluvial_surface_fitted_field PROPERTIES
+    LABELS "unit")
+
 add_test(NAME fixture_fluvial_surfaces_cli
          COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
                  ${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR})
@@ -3414,6 +3423,43 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
 )
 set_tests_properties(smoke_flat_surface_finder_band_then_label PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The label is the join key for everything band-then-label emits (plan section
+# 4.3), and that is exactly the property no per-file assertion above can see:
+# the smoke test pins each table's SCHEMA, but a schema says nothing about
+# whether a label in the raster has a row in the patch table, or whether the two
+# agree about which band it is in. So these two run the CLI and then check
+# ACROSS the outputs.
+#
+# The join arm also carries the only coverage of write_hand_profile_csv. It is
+# off by default and no other fixture turns it on, so its label and hand_band
+# columns had never been checked against the rasters they claim to describe.
+add_test(NAME rigorous_fluvial_surfaces_label_band_identity
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_fluvial_surface_joins.py"
+        --exe "$<TARGET_FILE:lsdtt-flat-surface-finder>"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/flat_surface_finder_join_check.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_label_band_identity"
+        --stem join)
+set_tests_properties(rigorous_fluvial_surfaces_label_band_identity PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# A table with no rows and a table that was never written look identical to a
+# downstream reader. This pins that the empty result is the former.
+add_test(NAME rigorous_fluvial_surfaces_empty_result
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_fluvial_surface_joins.py"
+        --exe "$<TARGET_FILE:lsdtt-flat-surface-finder>"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/flat_surface_finder_empty_result.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_empty_result"
+        --stem empty
+        --expect-empty-tables)
+set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
+    LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_test(NAME unit_fluvial_surfaces_band_then_label

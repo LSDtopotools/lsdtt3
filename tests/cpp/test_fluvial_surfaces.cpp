@@ -1506,6 +1506,283 @@ void run_ladder_checks()
     }
 }
 
+// =============================================================================
+// T3 - the fitted-surface reference field does not shred a fan
+//
+// Phase 2 of docs/plan_docs/plan_fluvial_surfaces_cli_split.md.
+//
+// The claim under test is about WHICH FIELD, not which algorithm: the same
+// ladder, the same break finder and the same k selection are run twice, and the
+// only thing that changes is the raster being banded. HAND on a fan climbs
+// continuously from toe to apex, so its bands are annuli of constant height
+// above the channel and they cut clean across the lobe boundaries. The residual
+// to a fitted surface has no radial trend left in it, so its bands ARE the
+// depositional surfaces.
+//
+// The comparison uses level_count = 0 (auto) for both arms deliberately. Fixing
+// k would let the test pass by having been told the answer; auto makes each
+// field argue for its own level count against the same resolvability floor, so
+// what is measured is the field's structure rather than the caller's.
+// =============================================================================
+struct fan_hand
+{
+    lsdtt::lsdtt_raster_cpu   hand;
+    lsdtt::lsdtt_raster_cpu   admitted;
+    std::vector<std::int64_t> donor_flat;
+};
+
+fan_hand hand_for_fan(const lsdtt::lsdtt_alluvial_fan_surface& fan,
+                      int channel_threshold_pixels)
+{
+    const lsdtt::lsdtt_raster_cpu filled =
+        lsdtt::fill_pits(fan.dem, 0.0001f, /*n_threads=*/1);
+
+    lsdtt::lsdtt_flowinfo_options o;
+    o.boundary_conditions     = "oooo";
+    o.build_topological_order = true;
+    o.build_s_vector          = true;
+    o.n_threads               = 1;
+
+    const std::unique_ptr<lsdtt::lsdtt_flow_base> f = lsdtt::make_flow_base(
+        filled.get_data_array(), filled.get_mask_array(), filled.get_meta(), o);
+
+    // No channel is supplied with the fan, so take one the way a user would:
+    // a contributing-pixel threshold on the fan's own routing. The trunk runs
+    // down the fan axis, which is exactly the geometry that makes HAND climb
+    // with distance from the apex.
+    const lsdtt::lsdtt_raster_result npx = f->get_n_contributing_pixels_raster();
+    std::vector<std::uint8_t> chan(npx.data.size(), 0);
+    for (std::size_t i = 0; i < npx.data.size(); ++i)
+    {
+        if (npx.mask[i] && npx.data[i] >= static_cast<float>(channel_threshold_pixels))
+            chan[i] = 1;
+    }
+
+    lsdtt::height_above_channel_donor_result hd =
+        f->get_height_above_channel_mask_donor_raster(
+            fan.dem.get_data(), fan.dem.get_mask(), chan);
+
+    fan_hand out;
+    out.hand       = lsdtt::lsdtt_raster_cpu(std::move(hd.height));
+    out.donor_flat = hd.donor_flat;
+
+    // Admit every off-channel cell with a defined HAND. Both arms band exactly
+    // this set, so a component-count difference cannot come from one arm having
+    // been handed a different domain.
+    const std::vector<float>&   hv = out.hand.get_data();
+    const std::vector<uint8_t>& hm = out.hand.get_mask();
+    std::vector<float>   adm(hv.size(), 0.0f);
+    std::vector<uint8_t> adm_mask(hv.size(), 1);
+    for (std::size_t i = 0; i < hv.size(); ++i)
+    {
+        if (hm[i] && std::isfinite(hv[i]) && chan[i] == 0) adm[i] = 1.0f;
+    }
+    out.admitted = lsdtt::lsdtt_raster_cpu(
+        std::move(adm), std::move(adm_mask), out.hand.get_meta());
+    return out;
+}
+
+// How many connected components does a labelling place on the cells of one
+// ground-truth region, and how pure are they?
+struct region_measurement
+{
+    std::int64_t n_components = 0;   // labels touching this region at all
+    double       purity       = 0.0; // fraction of the region's labelled cells
+                                     // sitting in labels whose majority IS this
+                                     // region
+};
+
+region_measurement measure_region(
+    const lsdtt::lsdtt_raster_cpu& labels,
+    const lsdtt::lsdtt_raster_cpu& region_id,
+    int                            want_region)
+{
+    const std::vector<float>& lv = labels.get_data();
+    const std::vector<float>& rv = region_id.get_data();
+
+    // per label: cells in the wanted region, and cells in total
+    std::map<std::int64_t, std::int64_t> in_region;
+    std::map<std::int64_t, std::int64_t> total;
+    for (std::size_t i = 0; i < lv.size(); ++i)
+    {
+        if (!(lv[i] > 0.0f)) continue;
+        const std::int64_t lab = static_cast<std::int64_t>(std::llround(lv[i]));
+        ++total[lab];
+        if (static_cast<int>(std::llround(rv[i])) == want_region) ++in_region[lab];
+    }
+
+    region_measurement out;
+    std::int64_t n_region_cells = 0;
+    std::int64_t n_pure_cells   = 0;
+    for (const auto& kv : in_region)
+    {
+        if (kv.second == 0) continue;
+        ++out.n_components;
+        n_region_cells += kv.second;
+        // "Pure" means the label is mostly this region, so a label that merely
+        // clips a corner of it does not count as covering it.
+        if (2 * kv.second >= total[kv.first]) n_pure_cells += kv.second;
+    }
+    out.purity = n_region_cells > 0
+        ? static_cast<double>(n_pure_cells) / static_cast<double>(n_region_cells)
+        : 0.0;
+    return out;
+}
+
+void run_fitted_surface_checks()
+{
+    std::cout << "lsdtt-test-fluvial-surfaces\n"
+              << "Phase 2 fitted-surface reference field (T3)\n\n";
+
+    // 200 x 200 at 10 m = a 2 km fan, so HAND climbs tens of metres from toe to
+    // apex while the lobes sit a constant 4 m below the older surface.
+    const lsdtt::lsdtt_alluvial_fan_surface fan =
+        lsdtt::generate_alluvial_fan_surface(
+            k_fan_n_rows, k_fan_n_cols, k_fan_cell_size,
+            /*apex_x_fraction=*/0.5, /*apex_y_fraction=*/0.95,
+            /*apex_elevation=*/500.0, k_fan_gradient, /*concavity=*/0.0,
+            k_fan_n_lobes, k_fan_inset, /*lobe_half_angle_deg=*/25.0,
+            /*noise=*/0.0, /*seed=*/1, /*n_threads=*/1);
+
+    const fan_hand fh = hand_for_fan(fan, /*channel_threshold_pixels=*/500);
+
+    // The same request for both arms. Only reference_field and the banded
+    // raster differ.
+    lsdtt::ladder_request lr;
+    lr.break_algorithm          = lsdtt::ladder_break_choice::jenks;
+    lr.level_count              = 0;      // auto: let each field argue its own k
+    lr.max_level_count          = 12;
+    lr.vertical_accuracy_metres = 0.5;
+    lr.resolvability_kappa      = 3.0;    // required band-centre gap 1.5 m
+    lr.reach_window_metres      = -1.0;   // global, so windowing cannot confound
+    lr.n_threads                = 1;
+
+    // ---- arm 1: HAND ----------------------------------------------------
+    lsdtt::ladder_request hr = lr;
+    hr.reference_field = lsdtt::reference_field_choice::hand;
+
+    const lsdtt::ladder_result hand_ladder =
+        lsdtt::build_reference_field_ladder(fh.hand, fh.admitted, hr);
+    const lsdtt::banded_label_result hand_labels =
+        lsdtt::label_components_within_bands(
+            hand_ladder.band_index, fh.admitted, fh.hand,
+            /*min_component_pixels=*/50, lsdtt::pixel_connectivity::d4);
+
+    const region_measurement hand_old =
+        measure_region(hand_labels.labels, fan.lobe_id, 0);
+
+    std::cout << "-- HAND field --\n"
+              << "      k = " << hand_ladder.windows.front().k_selected
+              << ", bands = " << (hand_ladder.max_band_index + 1)
+              << ", patches = " << hand_labels.patches.size() << "\n"
+              << "      older surface (lobe_id 0) is cut into "
+              << hand_old.n_components << " component(s)\n";
+
+    // ---- arm 2: the residual to a fitted plane ---------------------------
+    lsdtt::fitted_surface_request fs;
+    fs.algorithm  = lsdtt::fitted_surface_choice::cone;
+    fs.n_threads  = 1;
+    // The apex is found from the DEM, not supplied: the auto path is what a
+    // caller gets by default, so it is the one worth testing.
+
+    const lsdtt::fitted_surface_field field =
+        lsdtt::build_fitted_surface_reference_field(fan.dem, fh.admitted, fs);
+    check(field.valid, "the cone fit to the fan succeeds");
+    if (!field.valid) return;
+
+    std::cout << "\n-- fitted-surface field (cone) --\n"
+              << "      apex (" << field.cone_coeffs.apex_x << ", "
+              << field.cone_coeffs.apex_y << "), z_apex = "
+              << field.cone_coeffs.apex_elevation << " m, gradient = "
+              << field.cone_coeffs.gradient << "\n"
+              << "      rmse = " << field.rmse << " m over "
+              << field.n_pixels_used << " cell(s)\n";
+
+    // The auto apex must land on the real one, or every radius is measured from
+    // the wrong origin and the residual carries a spurious radial trend.
+    check(std::abs(field.cone_coeffs.gradient + k_fan_gradient) < 0.1 * k_fan_gradient,
+          "the fitted cone recovers the fan's radial gradient to within 10%");
+
+    lsdtt::ladder_request fr = lr;
+    fr.reference_field = lsdtt::reference_field_choice::fitted_surface;
+
+    const lsdtt::ladder_result fit_ladder =
+        lsdtt::build_reference_field_ladder(field.field, fh.admitted, fr);
+    const lsdtt::banded_label_result fit_labels =
+        lsdtt::label_components_within_bands(
+            fit_ladder.band_index, fh.admitted, field.field,
+            /*min_component_pixels=*/50, lsdtt::pixel_connectivity::d4);
+
+    const region_measurement fit_old =
+        measure_region(fit_labels.labels, fan.lobe_id, 0);
+
+    std::cout << "      k = " << fit_ladder.windows.front().k_selected
+              << ", bands = " << (fit_ladder.max_band_index + 1)
+              << ", patches = " << fit_labels.patches.size() << "\n"
+              << "      older surface (lobe_id 0) is cut into "
+              << fit_old.n_components << " component(s)\n";
+
+    for (int l = 1; l <= k_fan_n_lobes; ++l)
+    {
+        const region_measurement m =
+            measure_region(fit_labels.labels, fan.lobe_id, l);
+        std::cout << "      lobe " << l << ": " << m.n_components
+                  << " component(s), purity " << std::setprecision(4)
+                  << m.purity << "\n";
+    }
+
+    // ---- the assertions --------------------------------------------------
+    std::cout << "\n";
+    check(hand_old.n_components > 6,
+          "HAND shreds the older fan surface into more than 6 components");
+    check(fit_old.n_components <= 2,
+          "the fitted-surface field keeps the older fan surface whole "
+          "(<= 2 components)");
+    check(fit_old.n_components < hand_old.n_components,
+          "and it is strictly less fragmented than the HAND arm");
+
+    bool lobes_clean = true;
+    for (int l = 1; l <= k_fan_n_lobes; ++l)
+    {
+        const region_measurement m =
+            measure_region(fit_labels.labels, fan.lobe_id, l);
+        if (m.n_components != 1 || m.purity < 0.95) lobes_clean = false;
+    }
+    check(lobes_clean,
+          "every inset lobe is a single component with purity >= 0.95");
+
+    // The C6 note is a behaviour, not a comment: a fan has no along-channel
+    // coordinate, so the fitted-surface field must be banded globally even when
+    // window arguments are supplied.
+    {
+        std::vector<std::int32_t> src(fh.hand.get_data().size(), 0);
+        lsdtt::ladder_request wr = fr;
+        wr.reach_window_metres = 0.0;    // auto windows: would window on HAND
+        const lsdtt::ladder_result w = lsdtt::build_reference_field_ladder(
+            field.field, fh.admitted, wr, &src, &fh.hand);
+        check(w.windows.size() == 1,
+              "the fitted-surface field is banded globally even when window "
+              "arguments are supplied (C6)");
+    }
+
+    // The antimode finder bins on log10, so a signed field must be refused
+    // rather than silently folded into the lowest bin.
+    {
+        lsdtt::ladder_request ar = fr;
+        ar.break_algorithm = lsdtt::ladder_break_choice::antimode;
+        bool threw = false;
+        try
+        {
+            (void)lsdtt::build_reference_field_ladder(
+                field.field, fh.admitted, ar);
+        }
+        catch (const std::invalid_argument&) { threw = true; }
+        check(threw,
+              "the antimode finder refuses a field containing negative values "
+              "instead of banding a destroyed histogram");
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[])
@@ -1515,6 +1792,15 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--band-then-label")
         {
             run_band_then_label_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--fitted-surface")
+        {
+            run_fitted_surface_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

@@ -59,8 +59,9 @@
 #include <cstdint>
 #include <vector>
 
-#include "lsdtt_raster_binary_mask_cpu.hpp"   // pixel_connectivity
+#include "lsdtt_raster_binary_mask_cpu.hpp"     // pixel_connectivity
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_surface_fitting_cpu.hpp" // plane / poly2 coefficients
 
 namespace lsdtt
 {
@@ -79,6 +80,124 @@ enum class reference_field_choice
 };
 
 // =============================================================================
+// fitted_surface_choice
+//
+// Which surface is fitted to produce the `fitted_surface` reference field.
+//
+// plane_ransac - a plane, fitted by RANSAC rather than OLS. The outliers on a
+//                fan are not noise: incised distributary channels and inset
+//                lobes are large-amplitude departures covering a real fraction
+//                of the domain, and OLS would tilt the reference toward the
+//                very features the residual is supposed to isolate.
+// poly2        - a degree-2 polynomial, for a broadly curved surface with no
+//                single centre. OLS, because the poly2 fitter has no robust
+//                variant; restrict the fit domain with a mask instead.
+// cone         - z falling linearly with distance from an apex. THIS IS THE
+//                ONE FOR A FAN, and the default. A fan is radial, and a cone is
+//                not a low-order polynomial in x and y: on the synthetic fan
+//                fixture the older surface's own residual spread is ~34 m under
+//                a RANSAC plane and ~10 m under a poly2, against a 4 m lobe
+//                inset - the misfit swamps the signal. Under a cone it is
+//                ~0.3 m. See lsdtt_raster_surface_fitting_cpu.hpp.
+// =============================================================================
+enum class fitted_surface_choice
+{
+    cone,
+    plane_ransac,
+    poly2
+};
+
+// =============================================================================
+// fitted_surface_request / fitted_surface_field
+//
+// Inputs and outputs of build_fitted_surface_reference_field. Separated from
+// ladder_request because the fit is a distinct step: it produces a raster, and
+// the ladder then bands that raster like any other field. Keeping them apart is
+// what lets a caller supply a precomputed field instead.
+// =============================================================================
+struct fitted_surface_request
+{
+    fitted_surface_choice algorithm = fitted_surface_choice::cone;
+
+    // Cone only. The apex is supplied rather than solved for: it is a strongly
+    // non-linear parameter, and on a real fan the user can point at the fan
+    // head far more reliably than a solver can find it. Leave apex_is_set false
+    // to take the centroid of the highest apex_fraction of the fit mask.
+    bool   apex_is_set   = false;
+    double apex_x        = 0.0;
+    double apex_y        = 0.0;
+    double apex_fraction = 0.001;
+
+    // RANSAC inlier tolerance, in DEM vertical units. A pixel is an inlier if
+    // it sits within this of the hypothesised plane, so it should be set to
+    // roughly the roughness of the surface being fitted, NOT to the depth of
+    // the features being isolated: a tolerance as large as the lobe inset lets
+    // the lobes join the fit and flattens the very signal being measured.
+    double ransac_tolerance_metres = 5.0;
+    int    ransac_iterations       = 1000;
+    int    seed                    = 1;
+
+    int    n_threads               = 0;
+};
+
+struct fitted_surface_field
+{
+    // The signed residual, DEM minus fitted surface. Empty when !valid.
+    //
+    // SIGN: positive above the fitted surface, negative below, straight from
+    // residual_from_fitted_plane. This is deliberately the same direction as
+    // HAND - larger means higher - so band 0 is the low, young surface under
+    // either field and the band index means the same thing in both. On a fan
+    // that puts the inset lobes in the low band and the older surface above
+    // them, which is the correct relative-age ordering.
+    lsdtt_raster_cpu field;
+
+    bool   valid         = false;
+    double rmse          = 0.0;
+    int    n_pixels_used = 0;
+    fitted_surface_choice algorithm_used = fitted_surface_choice::cone;
+
+    // The fit itself, reported so a caller can write or check it. Only the
+    // member matching algorithm_used is populated.
+    lsdtt_plane_coefficients plane_coeffs;
+    lsdtt_poly2_coefficients poly2_coeffs;
+    lsdtt_cone_coefficients  cone_coeffs;
+};
+
+// -----------------------------------------------------------------------------
+// build_fitted_surface_reference_field
+//
+// Fit a surface to `dem` over `fit_mask` (> 0.5), then return the signed
+// residual to it over the whole valid DEM.
+//
+// WHY THIS FIELD EXISTS. HAND is the right field for a terrace flight, where
+// treads sit at a roughly constant height above the channel and HAND is a step
+// function across them. It is the wrong field for a fan: a fan climbs
+// CONTINUOUSLY in HAND from toe to apex, so a HAND ladder cuts one surface into
+// a series of arcs banded by distance from the apex rather than by age. What is
+// actually constant on a fan is the depth of an inset lobe BELOW THE PROJECTION
+// of the older surface - which is exactly what a residual to a fitted surface
+// measures.
+//
+// The fit domain and the banded domain need not be the same, and usually should
+// not be: fit on the older surface alone if it can be delineated, then band the
+// residual everywhere. Pass the admitted mask for both to fit on everything.
+// Restricting the domain sharpens the reference but is not required - on the
+// fan fixture a cone fitted to everything, lobes included, still separates the
+// two populations by ~3.5 m; the lobes drag the whole fit down rather than
+// blurring the boundary, and the ladder does not care about the absolute
+// offset.
+//
+// Returns valid = false (and an empty field) if the fit could not be performed;
+// the caller decides whether that is fatal. Does not throw on a failed fit.
+// -----------------------------------------------------------------------------
+[[nodiscard]] fitted_surface_field build_fitted_surface_reference_field(
+    const lsdtt_raster_cpu&       dem,
+    const lsdtt_raster_cpu&       fit_mask,
+    const fitted_surface_request& request
+);
+
+// =============================================================================
 // ladder_break_choice
 //
 // antimode - the incumbent: antimodes of a smoothed log10 density, shared with
@@ -86,6 +205,19 @@ enum class reference_field_choice
 // jenks    - Fisher-Jenks on the linear field. Takes k directly, so it is the
 //            natural choice when the level count is explicit, and it is the
 //            source of the reported goodness-of-variance fit.
+//
+// ANTIMODE REQUIRES A NON-NEGATIVE FIELD. Its histogram is built on log10 of
+// the field with a small positive floor, which suits HAND (non-negative by
+// construction, heavy-tailed) and destroys a signed one: every negative value
+// is floored into the lowest bin, so on a fitted-surface residual the whole
+// below-surface population - the inset lobes, the thing being looked for -
+// collapses into a single spike and the breaks returned are meaningless.
+//
+// build_reference_field_ladder therefore THROWS rather than banding a field
+// containing negative values with the antimode finder. Use jenks, which works
+// on the linear field and takes k directly. This is not a limitation of the
+// fitted-surface field; it is the log-domain assumption in the antimode path
+// being stated out loud instead of silently violated.
 // =============================================================================
 enum class ladder_break_choice
 {

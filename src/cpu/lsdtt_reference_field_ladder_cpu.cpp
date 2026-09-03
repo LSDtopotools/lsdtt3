@@ -344,6 +344,82 @@ std::vector<double> clamp_breaks(
 }  // namespace
 
 // =============================================================================
+// build_fitted_surface_reference_field
+// =============================================================================
+fitted_surface_field build_fitted_surface_reference_field(
+    const lsdtt_raster_cpu&       dem,
+    const lsdtt_raster_cpu&       fit_mask,
+    const fitted_surface_request& request)
+{
+    static const char* fn = "lsdtt::build_fitted_surface_reference_field";
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const std::size_t n =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+
+    if (fit_mask.get_data().size() != n)
+    {
+        throw std::invalid_argument(
+            std::string(fn) + ": fit_mask does not match dem");
+    }
+
+    fitted_surface_field out;
+    out.algorithm_used = request.algorithm;
+
+    if (request.algorithm == fitted_surface_choice::cone)
+    {
+        double apex_x = request.apex_x;
+        double apex_y = request.apex_y;
+        if (!request.apex_is_set &&
+            !find_cone_apex(dem, fit_mask, request.apex_fraction, apex_x, apex_y))
+        {
+            return out;   // the mask selects nothing; valid stays false
+        }
+
+        const lsdtt_cone_fit_result fit =
+            fit_cone_to_mask(dem, fit_mask, apex_x, apex_y);
+        if (!fit.valid) return out;
+
+        out.cone_coeffs   = fit.coeffs;
+        out.rmse          = fit.rmse;
+        out.n_pixels_used = fit.n_pixels_used;
+        out.field         = residual_from_fitted_cone(
+            dem, fit.coeffs, request.n_threads);
+        out.valid         = true;
+        return out;
+    }
+
+    if (request.algorithm == fitted_surface_choice::poly2)
+    {
+        const lsdtt_poly2_fit_result fit = fit_poly2_to_mask(dem, fit_mask);
+        if (!fit.valid) return out;   // valid stays false; caller decides
+
+        out.poly2_coeffs  = fit.coeffs;
+        out.rmse          = fit.rmse;
+        out.n_pixels_used = fit.n_pixels_used;
+        out.field         = residual_from_fitted_poly2(
+            dem, fit.coeffs, request.n_threads);
+        out.valid         = true;
+        return out;
+    }
+
+    const lsdtt_plane_fit_result fit = fit_plane_to_mask_ransac(
+        dem, fit_mask,
+        request.ransac_tolerance_metres,
+        request.ransac_iterations,
+        request.seed);
+    if (!fit.valid) return out;
+
+    out.plane_coeffs  = fit.coeffs;
+    out.rmse          = fit.rmse;
+    out.n_pixels_used = fit.n_pixels_used;
+    out.field         = residual_from_fitted_plane(
+        dem, fit.coeffs, request.n_threads);
+    out.valid         = true;
+    return out;
+}
+
+// =============================================================================
 // build_reference_field_ladder
 // =============================================================================
 ladder_result build_reference_field_ladder(
@@ -401,6 +477,22 @@ ladder_result build_reference_field_ladder(
 
     const double required_gap =
         std::max(0.0, request.resolvability_kappa * request.vertical_accuracy_metres);
+
+    // The antimode finder bins on log10 with a small positive floor, so every
+    // negative value lands in the lowest bin. On a signed field - a
+    // fitted-surface residual, where below-surface IS the signal - that folds
+    // the entire below-surface population into one spike and the breaks that
+    // come back mean nothing. Refuse rather than return a plausible-looking
+    // ladder built on a destroyed histogram. See ladder_break_choice.
+    if (request.break_algorithm == ladder_break_choice::antimode &&
+        std::isfinite(lo) && lo < 0.0)
+    {
+        throw std::invalid_argument(
+            std::string(fn) + ": the antimode break finder bins on log10 and "
+            "cannot band a field containing negative values (minimum here is " +
+            std::to_string(lo) + "). Use ladder_break_choice::jenks, which "
+            "works on the linear field.");
+    }
 
     if (all_values.size() < 2 || !(hi > lo))
     {
