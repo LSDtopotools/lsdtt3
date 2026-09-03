@@ -3481,6 +3481,27 @@ set_tests_properties(smoke_flat_surface_finder_band_then_label_defaults PROPERTI
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # =============================================================================
+# Parameter key policy (phase 3b): deprecated, removed and unknown keys
+#
+# The prerequisite for phase 4, where CLI 1 first sheds parameters. Until this
+# existed a removed key was silently a no-op - the typed parses iterate over the
+# DEFAULTS MAPS, so a key in the file that no map declares is never looked at by
+# anything, and an old parameter file would run happily having done none of what
+# it asked for.
+#
+# The driver re-executes itself as a child for each arm, because the removed-key
+# case exits the process.
+# =============================================================================
+add_executable(lsdtt-test-param-deprecation cpp/test_param_deprecation.cpp)
+target_link_libraries(lsdtt-test-param-deprecation PRIVATE lsdtt3_core)
+
+add_test(NAME unit_param_parser_deprecation
+         COMMAND lsdtt-test-param-deprecation
+                 "${CMAKE_CURRENT_BINARY_DIR}/param_deprecation")
+set_tests_properties(unit_param_parser_deprecation PROPERTIES
+    LABELS "unit")
+
+# =============================================================================
 # lsdtt-fluvial-surfaces (phase 3 of the plan: the new CLI)
 #
 # The tool between lsdtt-flat-surface-finder (which ground is flat?) and

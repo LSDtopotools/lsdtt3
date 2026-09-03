@@ -189,8 +189,75 @@ public:
     // Called automatically by the path+file constructor after parse_file().
     void parse_file_io();
 
+    // =========================================================================
+    // Deprecated and removed parameter keys
+    //
+    // WHY THIS EXISTS. The typed parse functions below iterate over the CLI's
+    // DEFAULTS MAPS and pull matching keys out of the file. A key present in
+    // the file but absent from every defaults map is therefore never looked at
+    // by anything: it is silently a no-op. That is the worst available
+    // behaviour when a parameter is renamed or retired, because a user whose
+    // old file says `find_floodplain: true` gets a run in which no
+    // classification happened, no error, and no warning - and every reason to
+    // believe it did.
+    //
+    // The scan below runs against the RAW KEYS PRESENT IN THE FILE, not
+    // against the defaults maps. That distinction is the whole design: adding
+    // the old names to the defaults maps so they parse would silently
+    // re-accept every deprecated key and defeat the point.
+    //
+    // TWO GROUPS, AND THE LINE BETWEEN THEM. A key is accepted-and-ignored
+    // only when ignoring it cannot change what the user believes happened.
+    //
+    //   set_deprecated_aliases  - the parameter still exists under a new name.
+    //                             The value is carried across and a warning
+    //                             names the replacement. Nothing is lost.
+    //   set_removed_keys        - the parameter is gone. Typically these are
+    //                             keys whose whole purpose was to TURN
+    //                             SOMETHING ON, where silently ignoring one
+    //                             leaves the user believing an analysis ran
+    //                             when it did not. A hard stop with the exact
+    //                             migration message is the only outcome that
+    //                             tells them otherwise.
+    //
+    // A key that merely TUNED or DISABLED a mechanism that no longer exists
+    // belongs in neither map: its absence cannot be mistaken for a missing
+    // analysis, so the unknown-key report is the right amount of noise.
+    //
+    // Both maps start empty, so a CLI that sets neither behaves exactly as it
+    // did before.
+    // =========================================================================
+
+    // Old name -> new name. When the old key appears in the file its value is
+    // copied to the new key and a warning naming the replacement is printed.
+    // If both names appear, the NEW one wins and the conflict is reported.
+    void set_deprecated_aliases(std::map<std::string, std::string> aliases)
+    { deprecated_alias_map_ = std::move(aliases); }
+
+    // Old name -> the exact message to print. A key here appearing in the file
+    // is fatal: see the note on parse_all_parameters about how it stops.
+    void set_removed_keys(std::map<std::string, std::string> removed)
+    { removed_key_message_map_ = std::move(removed); }
+
+    // Report file keys that no defaults map declares and that are not reserved
+    // file-I/O keys. On by default: it falls out of the same scan and is worth
+    // having on its own, because a typo in a parameter name is otherwise
+    // completely silent. It is a WARNING, never fatal - a CLI may legitimately
+    // read a key by another route, and a false warning must not stop a run.
+    void set_report_unknown_keys(bool report) { report_unknown_keys_ = report; }
+
     // Parse all parameter types from their respective default maps.
     // Convenience wrapper around the four typed parse functions.
+    //
+    // Before parsing, the raw file keys are checked against the deprecated and
+    // removed maps above and against the union of the defaults maps.
+    //
+    // A REMOVED KEY PRINTS ITS MESSAGE AND EXITS 1. It does not throw: almost
+    // no CLI guards this call, so throwing would abort through std::terminate
+    // and bury the migration message under a crash. Exiting from the parser is
+    // the same thing parse_args_deferred already does for -v and -c, and it
+    // means no CLI has to remember to check anything for the guarantee to
+    // hold.
     void parse_all_parameters(
         const std::map<std::string, float>&       defaults_f,
         const std::map<std::string, int>&         defaults_i,
@@ -484,6 +551,15 @@ private:
 
     // Raw string map of all key:value pairs read from file
     std::map<std::string, std::string> parameter_map_;
+
+    // Key-policy maps; see set_deprecated_aliases / set_removed_keys.
+    std::map<std::string, std::string> deprecated_alias_map_;
+    std::map<std::string, std::string> removed_key_message_map_;
+    bool report_unknown_keys_ = true;
+
+    // Applies the key policy to the raw file keys. Called by both
+    // parse_all_parameters overloads before any typed parse runs.
+    void apply_key_policy(const std::vector<std::string>& declared_keys);
 
 public:
     // True if the parameter file actually contained this key.
