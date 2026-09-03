@@ -1,0 +1,30 @@
+# Phase 3: the fitted-surface reference field through the CLI, on the fan.
+#
+# A fan climbs continuously in height above its channel, so a HAND ladder would
+# cut it into arcs banded by distance from the apex rather than by age. The
+# residual to a fitted cone has no radial trend left in it, so its bands are
+# the depositional surfaces.
+#
+# ladder_break_algorithm_choice is deliberately NOT set: selecting
+# fitted_surface must switch the break finder to jenks on its own, because the
+# antimode finder bins on log10 and cannot band a signed residual. The test
+# asserts that the switch is announced.
+read_path: __READ_PATH__
+read_fname: fan_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fsfan
+
+n_threads: 1
+write_output_format: gtiff
+
+# The fan falls at 0.03 m/m, so a 3-pixel window carries ~1 m of relief on the
+# older surface alone; 1 m would admit nothing at all.
+fallback_admission_algorithm_choice: relief
+fallback_relief_window_pixels: 3
+fallback_relief_threshold_metres: 3.0
+min_component_pixels: 50
+
+reference_field_algorithm_choice: fitted_surface
+fitted_surface_algorithm_choice: cone
+ladder_level_count: 2
+vertical_accuracy_metres: 0.5

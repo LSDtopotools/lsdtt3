@@ -1126,45 +1126,19 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Channel scope resolution ---\n";
         try
         {
-            auto resolve_pt_fmt =
-                [](const std::string& fmt) -> lsdtt::lsdtt_point_input_format
-            {
-                if (fmt == "auto_detect" || fmt == "auto")
-                    return lsdtt::lsdtt_point_input_format::auto_detect;
-                if (fmt == "csv" || fmt == "csv_latitude_longitude_epsg4326")
-                    return lsdtt::lsdtt_point_input_format::
-                        csv_latitude_longitude_epsg4326;
-                if (fmt == "ogr_vector_layer" || fmt == "vector" || fmt == "ogr")
-                    return lsdtt::lsdtt_point_input_format::ogr_vector_layer;
-                throw std::runtime_error("Unknown point input format: " + fmt);
-            };
-
+            // Point loading is identical in every CLI that takes source and
+            // outlet points, so it lives in lsdtt_channel_scope_cpu.
             auto load_role_flats = [&](const std::string& role)
                 -> std::vector<std::int64_t>
             {
-                const std::string path = sf[role + "_points_path"];
-                if (path.empty()) return {};
-
-                lsdtt::lsdtt_point_input_options popts;
-                popts.input_format =
-                    resolve_pt_fmt(sf[role + "_points_input_format"]);
-                popts.vector_layer_name = sf[role + "_points_layer_name"];
-                popts.csv_latitude_field_name =
-                    sf[role + "_points_latitude_field_name"];
-                popts.csv_longitude_field_name =
-                    sf[role + "_points_longitude_field_name"];
-                popts.keep_points_outside_raster = true;
-
-                std::cout << "Loading " << role << " points from: "
-                          << path << "\n";
-                std::vector<lsdtt::lsdtt_input_point> pts =
-                    lsdtt::load_points_in_raster_crs(
-                        path, routing_dem.get_meta(), popts);
-                std::vector<std::int64_t> flats =
-                    lsdtt::successfully_mapped_input_points_to_flats(pts);
-                std::cout << "  " << pts.size() << " point(s) loaded, "
-                          << flats.size() << " mapped to valid cells\n";
-                return flats;
+                lsdtt::point_role_input in;
+                in.role_name            = role;
+                in.path                 = sf[role + "_points_path"];
+                in.input_format         = sf[role + "_points_input_format"];
+                in.layer_name           = sf[role + "_points_layer_name"];
+                in.latitude_field_name  = sf[role + "_points_latitude_field_name"];
+                in.longitude_field_name = sf[role + "_points_longitude_field_name"];
+                return lsdtt::load_role_point_flats(in, routing_dem.get_meta());
             };
 
             lsdtt::channel_scope_request scope_req;
@@ -1207,188 +1181,17 @@ int main(int argc, char* argv[])
                           << " unsnapped\n";
             }
 
-            const std::string scope_stem = pp.get_full_write_path();
+            // The three scope diagnostics are shared with every other CLI
+            // that resolves a scope; see lsdtt_channel_scope_cpu.hpp.
+            lsdtt::channel_scope_diagnostic_request diag;
+            diag.write_scope_raster    = bf["write_channel_scope_raster"];
+            diag.write_scope_nodes_csv = bf["write_channel_scope_nodes"];
+            diag.write_point_snap_csv  = bf["write_point_snap_csv"];
+            diag.raster_format         = out_format;
 
-            if (bf["write_channel_scope_raster"])
-            {
-                // source_id + 1 so 0 = background, matching labelled masks.
-                std::vector<float> scope_vals(
-                    ch_scope.channel_source_id.size(), 0.0f);
-                for (std::size_t i = 0; i < scope_vals.size(); ++i)
-                    if (ch_scope.channel_source_id[i] >= 0)
-                        scope_vals[i] = static_cast<float>(
-                            ch_scope.channel_source_id[i] + 1);
-                const std::string p = scope_stem + "_channel_scope.tif";
-                std::cout << "Writing channel scope raster (UInt32): "
-                          << p << "\n";
-                loader.write_full(scope_vals, dem.get_meta(), p, out_format,
-                                  GDT_UInt32);
-            }
-
-            if (bf["write_channel_scope_nodes"])
-            {
-                const std::string p = scope_stem + "_channel_scope_nodes.csv";
-                std::cout << "Writing channel scope nodes: " << p << "\n";
-                const std::vector<float>& dem_d = dem.get_data();
-                std::vector<std::vector<std::string>> rows;
-                for (std::size_t s = 0;
-                     s < ch_scope.channel_node_lists.size(); ++s)
-                {
-                    const auto& nodes = ch_scope.channel_node_lists[s];
-                    for (std::size_t n = 0; n < nodes.size(); ++n)
-                    {
-                        const int r = ch_flow->row_from_flat_unchecked(nodes[n]);
-                        const int c = ch_flow->col_from_flat_unchecked(nodes[n]);
-                        const lsdtt::lsdtt_xy xy =
-                            lsdtt::cell_center_from_row_col(dem.get_meta(), r, c);
-                        rows.push_back({
-                            std::to_string(s),
-                            std::to_string(n),
-                            std::to_string(xy.x),
-                            std::to_string(xy.y),
-                            std::to_string(dem_d[nodes[n]]),
-                            std::to_string(ch_flow->s_vector_size(nodes[n])) });
-                    }
-                }
-                loader.write_csv(p,
-                    {"source_id","node_seq","x","y","elevation",
-                     "contributing_pixels"},
-                    rows);
-            }
-
-            if (bf["write_point_snap_csv"])
-            {
-                // CSV diagnostics plus raw/snapped FlatGeobuf point layers so
-                // both styles can be overlaid in one QC figure.
-                auto status_name = [](lsdtt::lsdtt_snap_status st)
-                {
-                    switch (st)
-                    {
-                        case lsdtt::lsdtt_snap_status::success:
-                            return "success";
-                        case lsdtt::lsdtt_snap_status::input_out_of_bounds:
-                            return "input_out_of_bounds";
-                        case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
-                            return "input_invalid_flow_cell";
-                        case lsdtt::lsdtt_snap_status::
-                             threshold_not_found_in_search_window:
-                            return "threshold_not_found";
-                        default:
-                            return "outlet_reached_before_threshold";
-                    }
-                };
-
-                auto xy_of_rc = [&](int r, int c)
-                { return lsdtt::cell_center_from_row_col(dem.get_meta(), r, c); };
-
-                std::vector<std::vector<std::string>> rows;
-
-                struct scope_pt { double x, y; std::string role; int id; };
-                std::vector<scope_pt> raw_pts, snapped_pts;
-
-                // In auto-role mode the role comes from input_point_role
-                // (a supplied point may be a source or an auto-detected outlet).
-                const bool auto_roles = !ch_scope.input_point_role.empty();
-
-                for (std::size_t i = 0; i < ch_scope.source_snaps.size(); ++i)
-                {
-                    const lsdtt::lsdtt_snap_result& sr = ch_scope.source_snaps[i];
-                    const std::string role =
-                        (auto_roles && i < ch_scope.input_point_role.size() &&
-                         ch_scope.input_point_role[i] == 1)
-                        ? "outlet" : "source";
-                    const lsdtt::lsdtt_xy raw =
-                        xy_of_rc(sr.input_row, sr.input_col);
-                    const bool ok =
-                        sr.status == lsdtt::lsdtt_snap_status::success;
-                    lsdtt::lsdtt_xy snp{0.0, 0.0};
-                    double snap_dist = -1.0;
-                    if (ok)
-                    {
-                        snp = xy_of_rc(sr.snapped_row, sr.snapped_col);
-                        const double dx = snp.x - raw.x, dy = snp.y - raw.y;
-                        snap_dist = std::sqrt(dx*dx + dy*dy);
-                    }
-                    rows.push_back({
-                        role, std::to_string(i), status_name(sr.status),
-                        std::to_string(raw.x), std::to_string(raw.y),
-                        ok ? std::to_string(snp.x) : "",
-                        ok ? std::to_string(snp.y) : "",
-                        std::to_string(snap_dist),
-                        std::to_string(sr.snapped_contributing_pixels) });
-                    raw_pts.push_back({raw.x, raw.y, role,
-                                       static_cast<int>(i)});
-                    if (ok)
-                        snapped_pts.push_back({snp.x, snp.y, role,
-                                               static_cast<int>(i)});
-                }
-
-                // Explicit-outlet mode only: separate outlet file diagnostics.
-                for (std::size_t o = 0;
-                     o < (auto_roles ? 0 : ch_scope.outlet_matched_source.size());
-                     ++o)
-                {
-                    const std::int32_t ms = ch_scope.outlet_matched_source[o];
-                    const bool ok = ms >= 0;
-                    std::string sx, sy;
-                    if (ok && ch_scope.resolved_outlets[ms] >= 0)
-                    {
-                        const std::int64_t of = ch_scope.resolved_outlets[ms];
-                        const lsdtt::lsdtt_xy oxy = xy_of_rc(
-                            ch_flow->row_from_flat_unchecked(of),
-                            ch_flow->col_from_flat_unchecked(of));
-                        sx = std::to_string(oxy.x);
-                        sy = std::to_string(oxy.y);
-                        snapped_pts.push_back({oxy.x, oxy.y, "outlet",
-                                               static_cast<int>(o)});
-                    }
-                    rows.push_back({
-                        "outlet", std::to_string(o),
-                        ok ? "matched" : "unmatched",
-                        "", "", sx, sy,
-                        std::to_string(
-                            ch_scope.outlet_snap_distance_metres.empty()
-                            ? -1.0
-                            : ch_scope.outlet_snap_distance_metres[o]),
-                        "" });
-                }
-
-                const std::string p = scope_stem + "_point_snaps.csv";
-                std::cout << "Writing point snap diagnostics: " << p << "\n";
-                loader.write_csv(p,
-                    {"role","point_id","status","raw_x","raw_y",
-                     "snapped_x","snapped_y","snap_distance_m",
-                     "contributing_pixels"},
-                    rows);
-
-                auto write_pt_layer = [&](const std::vector<scope_pt>& pts,
-                                          const std::string& suffix,
-                                          const std::string& layer)
-                {
-                    if (pts.empty()) return;
-                    const std::string vp = scope_stem + suffix;
-                    std::cout << "Writing " << pts.size()
-                              << " point(s): " << vp << "\n";
-                    lsdtt::lsdtt_vector_schema schema;
-                    schema.field_names = {"role", "point_id"};
-                    schema.field_types = {
-                        lsdtt::lsdtt_vector_field_type::string_type,
-                        lsdtt::lsdtt_vector_field_type::int64_type };
-                    loader.begin_vector_write(
-                        vp, layer, schema, dem.get_meta().crs_wkt,
-                        lsdtt::vector_output_format::flatgeobuf, false);
-                    for (const scope_pt& pt : pts)
-                        loader.write_point(pt.x, pt.y,
-                            { pt.role,
-                              static_cast<std::int64_t>(pt.id) });
-                    loader.finish_vector_write();
-                };
-
-                write_pt_layer(raw_pts, "_scope_points_raw.fgb",
-                               "scope_points_raw");
-                write_pt_layer(snapped_pts, "_scope_points_snapped.fgb",
-                               "scope_points_snapped");
-            }
+            lsdtt::write_channel_scope_diagnostics(
+                ch_scope, *ch_flow, dem, loader,
+                pp.get_full_write_path(), diag);
         }
         catch (const std::exception& e)
         {
@@ -1878,42 +1681,7 @@ int main(int argc, char* argv[])
                 {
                     const std::string p = stem + "_surface_class.csv";
                     std::cout << "Writing surface class table: " << p << "\n";
-                    std::vector<std::vector<std::string>> rows;
-                    rows.reserve(cres.labels.size());
-                    for (const lsdtt::flat_surface_label_class& r : cres.labels)
-                    {
-                        const char* cname =
-                            r.cls == lsdtt::surface_class::floodplain ? "floodplain"
-                          : r.cls == lsdtt::surface_class::terrace    ? "terrace"
-                                                                      : "none";
-                        rows.push_back({
-                            std::to_string(r.label), cname,
-                            std::to_string(r.source_id),
-                            std::to_string(r.n_pixels),
-                            std::to_string(r.median_height),
-                            std::to_string(r.mean_height),
-                            std::to_string(r.min_height),
-                            std::to_string(r.max_height),
-                            std::to_string(r.min_distance_to_channel_metres),
-                            r.adjacent_to_channel ? "true" : "false",
-                            r.split_leak ? "true" : "false",
-                            std::to_string(r.split_hand_metres),
-                            std::to_string(r.hand_band),
-                            r.band_split ? "true" : "false",
-                            std::to_string(r.hand_spread_metres),
-                            r.spread_guard_failed ? "true" : "false",
-                            std::to_string(r.median_channel_distance_metres),
-                            std::to_string(r.ladder_window_centre_metres) });
-                    }
-                    loader.write_csv(p,
-                        {"label","class","source_id","n_pixels",
-                         "median_hand_m","mean_hand_m","min_hand_m","max_hand_m",
-                         "min_dist_to_channel_m","adjacent_to_channel",
-                         "leak_split","split_hand_m",
-                          "hand_band","band_split","hand_spread_m",
-                          "spread_guard_failed","median_channel_distance_m",
-                          "ladder_window_centre_m"},
-                        rows);
+                    lsdtt::write_surface_class_csv(loader, p, cres.labels);
                 }
 
                 if (cres.used_band_then_label)
@@ -1977,37 +1745,8 @@ int main(int argc, char* argv[])
                 {
                     const std::string p = stem + "_surface_patches.csv";
                     std::cout << "Writing surface patches: " << p << "\n";
-                    std::vector<std::vector<std::string>> rows;
-                    rows.reserve(cres.patches.size());
-                    std::unordered_map<std::int64_t,
-                                       const lsdtt::flat_surface_label_class*> classes;
-                    for (const lsdtt::flat_surface_label_class& r : cres.labels)
-                        classes[r.label] = &r;
-                    for (const lsdtt::patch_record& pr : cres.patches)
-                    {
-                        const auto it = classes.find(pr.label);
-                        const lsdtt::flat_surface_label_class* cr =
-                            it == classes.end() ? nullptr : it->second;
-                        const char* cname = !cr ? "none"
-                            : cr->cls == lsdtt::surface_class::floodplain ? "floodplain"
-                            : cr->cls == lsdtt::surface_class::terrace ? "terrace"
-                            : "none";
-                        rows.push_back({
-                            std::to_string(pr.label),
-                            std::to_string(pr.band),
-                            cname,
-                            std::to_string(cr ? cr->source_id : -1),
-                            std::to_string(pr.n_pixels),
-                            std::to_string(pr.area_m2),
-                            std::to_string(pr.median_field),
-                            std::to_string(pr.aspect_degrees),
-                            std::to_string(cr ? cr->ladder_window_centre_metres : -1.0) });
-                    }
-                    loader.write_csv(p,
-                        {"label","band","class","source_id","n_pixels",
-                         "area_m2","median_field_m","aspect_degrees",
-                         "window_centre_m"},
-                        rows);
+                    lsdtt::write_surface_patches_csv(
+                        loader, p, cres.patches, cres.labels);
                 }
 
                 if (bf["write_ladder_windows_csv"] &&
@@ -2015,48 +1754,8 @@ int main(int argc, char* argv[])
                 {
                     const std::string p = stem + "_ladder_windows.csv";
                     std::cout << "Writing ladder windows: " << p << "\n";
-                    auto status_name = [](lsdtt::ladder_status st)
-                    {
-                        switch (st)
-                        {
-                            case lsdtt::ladder_status::resolved:   return "resolved";
-                            case lsdtt::ladder_status::unresolved: return "unresolved";
-                            case lsdtt::ladder_status::forced:     return "forced";
-                            default:                               return "degenerate";
-                        }
-                    };
-                    auto join = [](const std::vector<double>& v)
-                    {
-                        std::string out;
-                        for (std::size_t i = 0; i < v.size(); ++i)
-                        {
-                            if (i) out += ";";
-                            out += std::to_string(v[i]);
-                        }
-                        return out;
-                    };
-                    std::vector<std::vector<std::string>> rows;
-                    for (const lsdtt::ladder_window& w : cres.ladder_windows)
-                    {
-                        rows.push_back({
-                            std::to_string(w.source_id),
-                            std::to_string(w.window_centre_m),
-                            std::to_string(w.n_pixels),
-                            std::to_string(w.k_selected),
-                            status_name(w.status),
-                            w.used_global_breaks ? "1" : "0",
-                            join(w.breaks_m),
-                            join(w.band_centres_m),
-                            std::to_string(w.min_band_centre_gap_m),
-                            std::to_string(w.required_gap_m),
-                            std::to_string(w.goodness_of_variance_fit) });
-                    }
-                    loader.write_csv(p,
-                        {"source_id","window_centre_m","n_pixels","k_selected",
-                         "status","used_global_breaks","breaks_m",
-                         "band_centres_m","min_band_centre_gap_m",
-                         "required_gap_m","goodness_of_variance_fit"},
-                        rows);
+                    lsdtt::write_ladder_windows_csv(
+                        loader, p, cres.ladder_windows);
                 }
 
                 if (bf["write_hand_band_raster"] &&
@@ -2645,46 +2344,19 @@ int main(int argc, char* argv[])
     if (bf["write_channel_network"] && ch_jnet)
     {
         std::cout << "\n--- Writing channel network ---\n";
-        try
-        {
-            const lsdtt::vector_output_format vec_fmt =
-                lsdtt::resolve_vector_output_format(
-                    sf["channel_network_vector_format"]);
-            const std::string vec_ext = lsdtt::output_extension(vec_fmt);
+        // One shared writer, several call sites: see write_channel_network_layers
+        // in lsdtt_channel_scope_cpu.hpp for why the layer-writing code lives
+        // there rather than being copied into each CLI offering these
+        // parameters.
+        lsdtt::channel_network_write_request net_req;
+        net_req.write_lines           = bf["write_channel_network_lines"];
+        net_req.write_channel_points  = bf["write_channel_network_points"];
+        net_req.write_junction_points = bf["write_junction_network_points"];
+        net_req.format = lsdtt::resolve_vector_output_format(
+            sf["channel_network_vector_format"]);
+        if (conn_computed) net_req.channel_source_id = conn.channel_source_id;
 
-            if (bf["write_channel_network_lines"])
-            {
-                const std::string p = stem + "_channel_network_lines" + vec_ext;
-                std::cout << "Writing: " << p << "\n";
-                ch_jnet->write_channel_network_lines(
-                    p, vec_fmt, "channel_network_lines", true,
-                    conn_computed ? conn.channel_source_id
-                                  : std::vector<std::int32_t>{});
-            }
-
-            const lsdtt::point_output_format pt_fmt =
-                (vec_fmt == lsdtt::vector_output_format::gpkg)
-                ? lsdtt::point_output_format::gpkg
-                : lsdtt::point_output_format::flatgeobuf;
-
-            if (bf["write_channel_network_points"])
-            {
-                const std::string p = stem + "_channel_network_points" + vec_ext;
-                std::cout << "Writing: " << p << "\n";
-                ch_jnet->write_channel_network_points(p, pt_fmt);
-            }
-
-            if (bf["write_junction_network_points"])
-            {
-                const std::string p = stem + "_junction_network_points" + vec_ext;
-                std::cout << "Writing: " << p << "\n";
-                ch_jnet->write_junction_network_points(p, pt_fmt);
-            }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Warning: writing channel network failed: " << e.what() << "\n";
-        }
+        lsdtt::write_channel_network_layers(*ch_jnet, stem, net_req);
     }
 
     std::cout << "\n";

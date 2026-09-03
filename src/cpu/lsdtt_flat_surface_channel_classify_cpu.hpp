@@ -69,6 +69,7 @@
 
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "../core/lsdtt_data_loader.hpp"
 
 namespace lsdtt
 {
@@ -348,6 +349,42 @@ struct flat_surface_classify_result
     const flat_surface_classify_request& request,
     const std::vector<std::int64_t>*  donor_flat            = nullptr,
     const lsdtt_raster_cpu*           channel_flow_distance = nullptr
+);
+
+// =============================================================================
+// Shared output writers
+//
+// These three tables are written by every CLI that runs the ladder, and they
+// are the tables the label joins ACROSS: raster label -> patch row -> class row.
+// One implementation, so a column added or renamed in one CLI cannot silently
+// diverge from the other and break the join.
+// rigorous_fluvial_surfaces_label_band_identity is what checks the join holds.
+// =============================================================================
+
+// <stem>_ladder_windows.csv - the resolvability report. Always worth writing:
+// what may be claimed about a ladder depends on whether its windows resolved.
+void write_ladder_windows_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows
+);
+
+// <stem>_surface_patches.csv - one row per connected patch, keyed on the label.
+// `classes` may be empty: then the class, source and window columns are filled
+// with their "unknown" values rather than the column being dropped, so the
+// schema does not depend on whether a classification ran.
+void write_surface_patches_csv(
+    lsdtt_data_loader&                            loader,
+    const std::string&                            out_path,
+    const std::vector<patch_record>&              patches,
+    const std::vector<flat_surface_label_class>&  classes
+);
+
+// <stem>_surface_class.csv - one row per classification record.
+void write_surface_class_csv(
+    lsdtt_data_loader&                           loader,
+    const std::string&                           out_path,
+    const std::vector<flat_surface_label_class>& classes
 );
 
 } // namespace lsdtt

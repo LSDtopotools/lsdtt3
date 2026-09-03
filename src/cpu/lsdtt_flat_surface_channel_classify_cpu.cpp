@@ -953,4 +953,146 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     return result;
 }
 
+// =============================================================================
+// Shared output writers. See the header for why they are not in the CLIs.
+// =============================================================================
+
+namespace
+{
+
+const char* surface_class_name(surface_class cls)
+{
+    switch (cls)
+    {
+        case surface_class::floodplain: return "floodplain";
+        case surface_class::terrace:    return "terrace";
+        default:                        return "none";
+    }
+}
+
+const char* ladder_status_name(ladder_status st)
+{
+    switch (st)
+    {
+        case ladder_status::resolved:   return "resolved";
+        case ladder_status::unresolved: return "unresolved";
+        case ladder_status::forced:     return "forced";
+        default:                        return "degenerate";
+    }
+}
+
+std::string join_doubles(const std::vector<double>& v)
+{
+    std::string out;
+    for (std::size_t i = 0; i < v.size(); ++i)
+    {
+        if (i) out += ";";
+        out += std::to_string(v[i]);
+    }
+    return out;
+}
+
+}  // namespace
+
+void write_ladder_windows_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows)
+{
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(windows.size());
+    for (const ladder_window& w : windows)
+    {
+        rows.push_back({
+            std::to_string(w.source_id),
+            std::to_string(w.window_centre_m),
+            std::to_string(w.n_pixels),
+            std::to_string(w.k_selected),
+            ladder_status_name(w.status),
+            w.used_global_breaks ? "1" : "0",
+            join_doubles(w.breaks_m),
+            join_doubles(w.band_centres_m),
+            std::to_string(w.min_band_centre_gap_m),
+            std::to_string(w.required_gap_m),
+            std::to_string(w.goodness_of_variance_fit) });
+    }
+    loader.write_csv(out_path,
+        {"source_id","window_centre_m","n_pixels","k_selected",
+         "status","used_global_breaks","breaks_m","band_centres_m",
+         "min_band_centre_gap_m","required_gap_m","goodness_of_variance_fit"},
+        rows);
+}
+
+void write_surface_patches_csv(
+    lsdtt_data_loader&                           loader,
+    const std::string&                           out_path,
+    const std::vector<patch_record>&             patches,
+    const std::vector<flat_surface_label_class>& classes)
+{
+    std::unordered_map<std::int64_t, const flat_surface_label_class*> by_label;
+    by_label.reserve(classes.size());
+    for (const flat_surface_label_class& r : classes) by_label[r.label] = &r;
+
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(patches.size());
+    for (const patch_record& pr : patches)
+    {
+        const auto it = by_label.find(pr.label);
+        const flat_surface_label_class* cr =
+            it == by_label.end() ? nullptr : it->second;
+        rows.push_back({
+            std::to_string(pr.label),
+            std::to_string(pr.band),
+            cr ? surface_class_name(cr->cls) : "none",
+            std::to_string(cr ? cr->source_id : -1),
+            std::to_string(pr.n_pixels),
+            std::to_string(pr.area_m2),
+            std::to_string(pr.median_field),
+            std::to_string(pr.aspect_degrees),
+            std::to_string(cr ? cr->ladder_window_centre_metres : -1.0) });
+    }
+    loader.write_csv(out_path,
+        {"label","band","class","source_id","n_pixels",
+         "area_m2","median_field_m","aspect_degrees","window_centre_m"},
+        rows);
+}
+
+void write_surface_class_csv(
+    lsdtt_data_loader&                           loader,
+    const std::string&                           out_path,
+    const std::vector<flat_surface_label_class>& classes)
+{
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(classes.size());
+    for (const flat_surface_label_class& r : classes)
+    {
+        rows.push_back({
+            std::to_string(r.label), surface_class_name(r.cls),
+            std::to_string(r.source_id),
+            std::to_string(r.n_pixels),
+            std::to_string(r.median_height),
+            std::to_string(r.mean_height),
+            std::to_string(r.min_height),
+            std::to_string(r.max_height),
+            std::to_string(r.min_distance_to_channel_metres),
+            r.adjacent_to_channel ? "true" : "false",
+            r.split_leak ? "true" : "false",
+            std::to_string(r.split_hand_metres),
+            std::to_string(r.hand_band),
+            r.band_split ? "true" : "false",
+            std::to_string(r.hand_spread_metres),
+            r.spread_guard_failed ? "true" : "false",
+            std::to_string(r.median_channel_distance_metres),
+            std::to_string(r.ladder_window_centre_metres) });
+    }
+    loader.write_csv(out_path,
+        {"label","class","source_id","n_pixels",
+         "median_hand_m","mean_hand_m","min_hand_m","max_hand_m",
+         "min_dist_to_channel_m","adjacent_to_channel",
+         "leak_split","split_hand_m","hand_band","band_split","hand_spread_m",
+         "spread_guard_failed","median_channel_distance_m",
+         "ladder_window_centre_m"},
+        rows);
+}
+
 } // namespace lsdtt
