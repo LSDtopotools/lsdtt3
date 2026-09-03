@@ -3500,6 +3500,116 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_flat_surface_finder_ignored_parameter PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# =============================================================================
+# Parameter key policy (phase 3b): deprecated, removed and unknown keys
+#
+# The prerequisite for phase 4, where CLI 1 first sheds parameters. Until this
+# existed a removed key was silently a no-op - the typed parses iterate over the
+# DEFAULTS MAPS, so a key in the file that no map declares is never looked at by
+# anything, and an old parameter file would run happily having done none of what
+# it asked for.
+#
+# The driver re-executes itself as a child for each arm, because the removed-key
+# case exits the process.
+# =============================================================================
+add_executable(lsdtt-test-param-deprecation cpp/test_param_deprecation.cpp)
+target_link_libraries(lsdtt-test-param-deprecation PRIVATE lsdtt3_core)
+
+add_test(NAME unit_param_parser_deprecation
+         COMMAND lsdtt-test-param-deprecation
+                 "${CMAKE_CURRENT_BINARY_DIR}/param_deprecation")
+# The domain label is explicit: the compartmentalisation block at the foot of
+# this file assigns domains by NAME match, and this test is called
+# param_parser rather than fluvial_surface. It is nonetheless the guard on a
+# facility built for this workstream, so it belongs in that compartment.
+set_tests_properties(unit_param_parser_deprecation PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# =============================================================================
+# lsdtt-fluvial-surfaces (phase 3 of the plan: the new CLI)
+#
+# The tool between lsdtt-flat-surface-finder (which ground is flat?) and
+# lsdtt-valley-centreline (trace this valley): it does everything that needs a
+# height reference, and it writes the valley mask CLI 3 consumes.
+# =============================================================================
+add_test(NAME smoke_fluvial_surfaces_help
+         COMMAND lsdtt-fluvial-surfaces -h)
+set_tests_properties(smoke_fluvial_surfaces_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "reference_field_algorithm_choice")
+
+# End to end, with no flat_mask_fname, so the built-in fallback admission is
+# exercised too: the tool has to work on its own as well as downstream of CLI 1.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_smoke.param.in
+    fsurf_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsurf_banded_labels.tif
+    --expect fsurf_valley_mask.tif
+    --expect fsurf_surface_class.tif
+    --expect fsurf_surface_patches.csv
+    --expect fsurf_ladder_windows.csv
+    --expect fsurf_reference_field.tif
+    --stdout-contains "Ladder and band-then-label"
+    --stdout-contains "window(s) resolved"
+    --expect-raster-values "fsurf_band_index.tif:0,1,2,3"
+    --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
+    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
+)
+set_tests_properties(smoke_fluvial_surfaces PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# THE composability guarantee: HAND is the expensive stage and the level count
+# is what gets iterated on, so a supplied HAND must reproduce the computed path
+# exactly or every iteration is a different experiment from the final run.
+# Two runs compared by checksum, which no single-run assertion can express.
+add_test(NAME smoke_fluvial_surfaces_hand_input
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_fluvial_surfaces_hand_roundtrip.py"
+        --exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/fluvial_surfaces_hand_input.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fluvial_surfaces_hand_input"
+        --stem fsin)
+set_tests_properties(smoke_fluvial_surfaces_hand_input PROPERTIES
+    LABELS "smoke;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The fitted-surface field through the CLI. The param file deliberately does not
+# name a break algorithm, so this also pins that selecting fitted_surface
+# switches the finder to jenks on its own and says so - antimode bins on log10
+# and cannot band a signed residual.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_fitted_surface
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_fitted_surface.param.in
+    fsfan_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsfan_banded_labels.tif
+    --expect fsfan_valley_mask.tif
+    --expect fsfan_surface_patches.csv
+    --expect fsfan_reference_field.tif
+    --stdout-contains "the break finder is jenks"
+    --stdout-contains "cone fit"
+    --expect-raster-values "fsfan_band_index.tif:0,1"
+)
+set_tests_properties(smoke_fluvial_surfaces_fitted_surface PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_bad_reference_field
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_bad_reference_field.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "unknown reference_field_algorithm_choice 'elevation'. Valid: hand, fitted_surface."
+)
+set_tests_properties(failure_fluvial_surfaces_bad_reference_field PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     smoke_valley_centreline
     lsdtt-valley-centreline

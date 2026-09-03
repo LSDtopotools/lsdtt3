@@ -689,42 +689,20 @@ int main(int argc, char* argv[])
     lsdtt::channel_scope_result scope;
     try
     {
-        auto resolve_pt_fmt =
-            [](const std::string& fmt) -> lsdtt::lsdtt_point_input_format
-        {
-            if (fmt == "auto_detect" || fmt == "auto")
-                return lsdtt::lsdtt_point_input_format::auto_detect;
-            if (fmt == "csv" || fmt == "csv_latitude_longitude_epsg4326")
-                return lsdtt::lsdtt_point_input_format::
-                    csv_latitude_longitude_epsg4326;
-            if (fmt == "ogr_vector_layer" || fmt == "vector" || fmt == "ogr")
-                return lsdtt::lsdtt_point_input_format::ogr_vector_layer;
-            throw std::runtime_error("Unknown point input format: " + fmt);
-        };
-
+        // Point loading is identical in every CLI that takes source and
+        // outlet points, so it lives in lsdtt_channel_scope_cpu. CLI 1 and
+        // lsdtt-fluvial-surfaces call the same function.
         auto load_role_flats = [&](const std::string& role)
             -> std::vector<std::int64_t>
         {
-            const std::string ppath = sf[role + "_points_path"];
-            if (ppath.empty()) return {};
-            lsdtt::lsdtt_point_input_options popts;
-            popts.input_format =
-                resolve_pt_fmt(sf[role + "_points_input_format"]);
-            popts.vector_layer_name = sf[role + "_points_layer_name"];
-            popts.csv_latitude_field_name =
-                sf[role + "_points_latitude_field_name"];
-            popts.csv_longitude_field_name =
-                sf[role + "_points_longitude_field_name"];
-            popts.keep_points_outside_raster = true;
-            std::cout << "Loading " << role << " points from: " << ppath << "\n";
-            std::vector<lsdtt::lsdtt_input_point> pts =
-                lsdtt::load_points_in_raster_crs(
-                    ppath, routing_dem.get_meta(), popts);
-            std::vector<std::int64_t> flats =
-                lsdtt::successfully_mapped_input_points_to_flats(pts);
-            std::cout << "  " << pts.size() << " point(s) loaded, "
-                      << flats.size() << " mapped to valid cells\n";
-            return flats;
+            lsdtt::point_role_input in;
+            in.role_name            = role;
+            in.path                 = sf[role + "_points_path"];
+            in.input_format         = sf[role + "_points_input_format"];
+            in.layer_name           = sf[role + "_points_layer_name"];
+            in.latitude_field_name  = sf[role + "_points_latitude_field_name"];
+            in.longitude_field_name = sf[role + "_points_longitude_field_name"];
+            return lsdtt::load_role_point_flats(in, routing_dem.get_meta());
         };
 
         lsdtt::channel_scope_request scope_req;
