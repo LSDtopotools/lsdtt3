@@ -3391,7 +3391,7 @@ add_test(NAME smoke_valley_centreline_help
          COMMAND lsdtt-valley-centreline -h)
 set_tests_properties(smoke_valley_centreline_help PROPERTIES
     LABELS "smoke;cli"
-    PASS_REGULAR_EXPRESSION "valley_corridor_width_metres")
+    PASS_REGULAR_EXPRESSION "valley_mask_fname")
 
 add_lsdtt_cli_smoke_test(
     smoke_flat_surface_finder
@@ -3610,38 +3610,55 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(failure_fluvial_surfaces_bad_reference_field PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-add_lsdtt_cli_smoke_test(
-    smoke_valley_centreline
-    lsdtt-valley-centreline
-    valley_centreline_smoke.param.in
-    vc_valley_mask.tif
-    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
-    --expect vc_valley_break_metric.csv
-    --expect vc_valley_breaks.csv
-    --expect vc_valley_centreline.fgb
-    --expect-vector-feature-min vc_valley_centreline.fgb:1
-)
-set_tests_properties(smoke_valley_centreline PROPERTIES
+# Phase 5e. The two-command pipeline, which is the only way either tool can be
+# exercised end to end now: CLI 3 will not start without a mask, and CLI 2 is
+# the only supported source of one. What this pins is the HANDOVER - that stage
+# 2 says identification was supplied, which is the one line distinguishing "read
+# the mask" from "quietly derived its own".
+add_test(NAME smoke_fluvial_surfaces_pipeline
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fluvial_pipeline.py"
+        --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+        --centreline-exe "$<TARGET_FILE:lsdtt-valley-centreline>"
+        --surfaces-param "${LSDTT_TEST_PARAM_DIR}/fluvial_pipeline_surfaces.param.in"
+        --centreline-param "${LSDTT_TEST_PARAM_DIR}/valley_centreline_smoke.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fluvial_surfaces_pipeline"
+        --expect vcin_valley_mask.tif
+        --expect vc_valley_mask.tif
+        --expect vc_valley_centreline.fgb
+        --stage2-stdout-contains "Valley identification is supplied")
+set_tests_properties(smoke_fluvial_surfaces_pipeline PROPERTIES
+    LABELS "smoke;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# THE guard on find_population_breaks (plan finding C5). That function is shared
-# by the valley engine and the HAND-banding classifier, so the phase 0c ladder
-# engine must WRAP it rather than change it -- and this pin is what says whether
-# it moved. A single-row table, so the SHA is a real pin rather than a hash of
-# incidental float formatting; the readable assertion beside it is there so a
-# failure reports which number changed instead of only that one did.
+# The valley is now a required input, and the message must name where it comes
+# from - a user with an old parameter file needs to be told the tool, not just
+# that something is missing.
 add_lsdtt_cli_smoke_test(
-    rigorous_valley_centreline_break_pin
+    failure_valley_centreline_no_mask
     lsdtt-valley-centreline
-    valley_centreline_smoke.param.in
-    vc_valley_breaks.csv
+    valley_centreline_no_mask.param.in
+    unused.tif
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
-    --expect-sha256 "vc_valley_breaks.csv:c8a093a17a0cd4768bb4cb3e5400de7ebf0c42527e47ea9f7db14b8cacf132c0"
-    --expect-file-contains "vc_valley_breaks.csv:0,-0.500000,21.877136,true"
-    --expect-raster-checksum vc_valley_mask.tif:4707
+    --expect-failure
+    --stderr-contains "valley_mask_fname is required"
+    --stderr-contains "lsdtt-fluvial-surfaces"
 )
-set_tests_properties(rigorous_valley_centreline_break_pin PROPERTIES
+set_tests_properties(failure_valley_centreline_no_mask PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# rigorous_valley_centreline_break_pin was RETIRED at phase 5d, with the code it
+# pinned. It asserted the breaks lsdtt-valley-centreline derived for itself, and
+# that tool no longer derives any - identification moved to
+# lsdtt-fluvial-surfaces. Deleting a test along with the path it covers is the
+# intended outcome, not a lost guard.
+#
+# The C5 concern it existed for - that find_population_breaks is shared and must
+# not move underneath the ladder - is now carried by T5 in
+# unit_fluvial_surface_ladder, which calls that function directly and asserts the
+# ladder's k = 2 reproduces its first break bit-for-bit. T5 must be green in the
+# same run for this retirement to be safe.
 
 # The phase 1 baseline. Band-then-label rewrites exactly this raster: today the
 # labelling runs once over the whole broken flat mask, and after the reordering

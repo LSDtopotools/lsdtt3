@@ -15,14 +15,14 @@ channel_threshold_contributing_pixels: 200
 
 # The DEM is a 2 km square, so the 5000 m default corridor would swallow it
 # whole and the HAND population would stop being a valley population.
-valley_corridor_width_metres: 400
 
 # Global break, not reach-adaptive: one 2 km channel does not carry enough
 # along-channel windows for the reach-relative path to mean anything, and the
 # global break is the behaviour the phase 0c ladder engine must reproduce.
-valley_break_reach_window_metres: -1
 
 write_valley_mask_raster: true
-write_valley_break_metric: true
 write_valley_centreline: true
 write_valley_cross_sections: false
+
+# Phase 5: the valley is identified by lsdtt-fluvial-surfaces and supplied here.
+valley_mask_fname: vcin_valley_mask.tif

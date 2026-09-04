@@ -441,193 +441,6 @@ void clean_valley_patches(
     }
 }
 
-// Valley break from a corridor HAND histogram (log10 bins over [lo_log,
-// hi_log]). Corridor populations differ from flat-mask populations: the
-// valley-floor mode sits AT the low edge (values clamp at the log floor) and
-// hillslopes form a continuum, so the generic antimode finder fails. Rule
-// used here: identify the dominant wall/upland peak (the largest-HAND peak
-// whose density reaches wall_peak_fraction of the histogram maximum) and
-// return the LAST local minimum below it whose density dips under
-// valley_fraction of that wall peak - i.e. the valley is everything below
-// the rise into the valley walls. Returns <= 0 when no such structure exists.
-// Diagnostics captured from a break decision so a reviewer figure can show
-// the ACTUAL metric the break is chosen on - the smoothed log10-HAND density
-// (not the raw, bumpy histogram) - plus the surviving mode segmentation and
-// the chosen break bin. Populated by find_valley_break when a non-null
-// pointer is supplied; left in a partial state on the degenerate early
-// returns (smoothed filled if it got that far; break_bin stays -1).
-struct valley_break_diagnostics
-{
-    std::vector<double> smoothed;       // per bin: the decision metric
-    std::vector<int>    raw_peak_bins;  // candidate mode peaks BEFORE merging
-    std::vector<int>    seg_peak_bins;  // surviving mode peak bins (post-merge)
-    std::vector<int>    seg_bound_bins; // surviving inter-mode boundary bins
-    int                 break_bin = -1; // chosen boundary bin (segs[0].hi)
-};
-
-double find_valley_break(
-    const std::vector<std::int64_t>& hist,
-    double lo_log, double hi_log,
-    double valley_fraction, double wall_peak_fraction,
-    valley_break_diagnostics* diag = nullptr)
-{
-    const int nb = static_cast<int>(hist.size());
-    if (nb < 8 || hi_log - lo_log < 1e-9) return -1.0;
-    const double bw = (hi_log - lo_log) / nb;
-
-    std::vector<double> sm;
-    sm.reserve(hist.size());
-    for (const std::int64_t h : hist)
-    {
-        sm.push_back(static_cast<double>(h));
-    }
-    std::vector<double> tmp(nb, 0.0);
-    for (int pass = 0; pass < 2; ++pass)
-    {
-        for (int b = 0; b < nb; ++b)
-        {
-            double acc = 0.0; int c = 0;
-            for (int k = -2; k <= 2; ++k)
-            {
-                const int j = b + k;
-                if (j >= 0 && j < nb) { acc += sm[j]; ++c; }
-            }
-            tmp[b] = acc / std::max(c, 1);
-        }
-        sm.swap(tmp);
-    }
-    // Record the decision metric now - it is defined even on the degenerate
-    // returns below, and it is what the reviewer figure plots.
-    if (diag) diag->smoothed.assign(sm.begin(), sm.end());
-
-    const double gmax = *std::max_element(sm.begin(), sm.end());
-    if (gmax <= 0.0) return -1.0;
-
-    // Segment the histogram into modes at its local minima (excluding the
-    // two lowest bins - the log-floor clamp spike of on-channel pixels),
-    // then clean the segmentation:
-    //  a. merge across NON-QUALIFYING dips (dip > valley_fraction * smaller
-    //     flanking peak) - this absorbs noise bumps;
-    //  b. merge modes whose mass is below wall_peak_fraction of the
-    //     population into their most-connected neighbour - EXCEPT a low
-    //     first mode (peak below ~4 m): the near-channel floor mode defines
-    //     the valley however small it is next to a mountain wall peak.
-    // The break is the boundary dip after the FIRST surviving mode. Taking a
-    // later dip admits intermediate benches and the valley climbs the risers
-    // (Mayoco failure mode); pure first-dip without the merging locks onto
-    // noise (Royalton failure mode).
-    struct seg_t { int lo, hi, peak_bin; double peak, mass; };
-    std::vector<seg_t> segs;
-    {
-        int lo = 2;
-        for (int b = 3; b < nb; ++b)
-        {
-            const bool is_min =
-                b + 1 < nb && sm[b] <= sm[b - 1] && sm[b] < sm[b + 1];
-            if (is_min || b == nb - 1)
-            {
-                seg_t s{lo, b, lo, 0.0, 0.0};
-                for (int k = lo; k <= b; ++k)
-                {
-                    if (sm[k] > s.peak) { s.peak = sm[k]; s.peak_bin = k; }
-                    s.mass += static_cast<double>(hist[k]);
-                }
-                segs.push_back(s);
-                lo = b;
-            }
-        }
-    }
-    // Snapshot the candidate mode peaks BEFORE any merging, so a reviewer
-    // figure can show which bumps were detected and then merged away (the
-    // surviving peaks are the post-merge subset in seg_peak_bins).
-    if (diag)
-        for (const seg_t& s : segs) diag->raw_peak_bins.push_back(s.peak_bin);
-    if (segs.size() < 2) return -1.0;
-
-    auto merge_at = [&](std::size_t i)
-    {
-        segs[i].hi = segs[i + 1].hi;
-        segs[i].mass += segs[i + 1].mass;
-        if (segs[i + 1].peak > segs[i].peak)
-        {
-            segs[i].peak     = segs[i + 1].peak;
-            segs[i].peak_bin = segs[i + 1].peak_bin;
-        }
-        segs.erase(segs.begin() + static_cast<std::ptrdiff_t>(i) + 1);
-    };
-    auto dip_between = [&](std::size_t i) { return sm[segs[i].hi]; };
-
-    // a. absorb noise bumps.
-    bool changed = true;
-    while (changed && segs.size() > 1)
-    {
-        changed = false;
-        for (std::size_t i = 0; i + 1 < segs.size(); ++i)
-        {
-            if (dip_between(i) >
-                valley_fraction * std::min(segs[i].peak, segs[i + 1].peak))
-            {
-                merge_at(i);
-                changed = true;
-                break;
-            }
-        }
-    }
-    if (segs.size() < 2) return -1.0;
-
-    // b. absorb insignificant-mass modes (low first mode exempt).
-    double total_mass = 0.0;
-    for (const seg_t& s : segs) total_mass += s.mass;
-    const double low_floor_hand = 4.0;   // m; "low first mode" exemption
-    changed = true;
-    while (changed && segs.size() > 1)
-    {
-        changed = false;
-        for (std::size_t i = 0; i < segs.size(); ++i)
-        {
-            if (segs[i].mass >= wall_peak_fraction * total_mass) continue;
-            if (i == 0)
-            {
-                // A low near-channel floor mode defines the valley even when
-                // it is small next to a mountain wall peak - but it must
-                // still be a real mode, not noise.
-                const double peak_hand = std::pow(
-                    10.0, lo_log + (segs[i].peak_bin + 0.5) * bw);
-                if (peak_hand <= low_floor_hand &&
-                    segs[i].mass >= 0.25 * wall_peak_fraction * total_mass)
-                    continue;
-                merge_at(0);
-            }
-            else if (i + 1 == segs.size())
-            {
-                merge_at(i - 1);
-            }
-            else
-            {
-                // Merge across the shallower dip (the more similar side).
-                if (dip_between(i - 1) >= dip_between(i)) merge_at(i - 1);
-                else                                      merge_at(i);
-            }
-            changed = true;
-            break;
-        }
-    }
-    if (segs.size() < 2) return -1.0;
-
-    const int vb = segs[0].hi;
-    if (diag)
-    {
-        diag->break_bin = vb;
-        for (std::size_t i = 0; i < segs.size(); ++i)
-        {
-            diag->seg_peak_bins.push_back(segs[i].peak_bin);
-            if (i + 1 < segs.size())
-                diag->seg_bound_bins.push_back(segs[i].hi);
-        }
-    }
-    return std::pow(10.0, lo_log + (vb + 0.5) * bw);
-}
-
 } // namespace
 
 
@@ -710,20 +523,6 @@ valley_centreline_result extract_valley_centrelines(
     std::vector<float>   vm_data(n, 0.0f);
     std::vector<uint8_t> vm_mask = dmask;
 
-    // Local topographic relief (max-min elevation in a moving window) drives
-    // the relief-adaptive acceptance fraction: a confined, high-relief reach
-    // has steep walls that produce a deep valley-floor/wall trough (so a more
-    // permissive fraction is warranted), whereas a low-relief plateau reach
-    // has only broad, shallow saddles that must NOT be read as valley walls
-    // (so it gets a stricter fraction). Computed once; sampled per reach.
-    // Only needed for the relief-adaptive method.
-    lsdtt_raster_cpu relief_raster =
-        (request.break_method == 1)
-            ? moving_window_local_relief(
-                  dem, std::max(request.break_relief_window_metres, cell))
-            : dem;   // placeholder, unused when method != 1
-    const std::vector<float>&   reld = relief_raster.get_data();
-    const std::vector<uint8_t>& relm = relief_raster.get_mask();
 
     for (std::size_t s = 0; s < scope.channel_node_lists.size(); ++s)
     {
@@ -755,10 +554,15 @@ valley_centreline_result extract_valley_centrelines(
         const std::vector<float>&   hd = hand.get_data();
         const std::vector<uint8_t>& hm = hand.get_mask();
 
-        // Filled only on the derived path; the trough reads them on both, so
-        // they are declared here and stay all-zero when a mask is supplied.
-        std::vector<float>   along_tilt(n, 0.0f);   // signed, for the trough
-        std::vector<uint8_t> along_mask(n, 0u);
+        // The trough's downstream-tilt test read the along-channel projection
+        // the break search computed. That search moved to
+        // lsdtt-fluvial-surfaces at phase 5d, so these stay zero and the test
+        // is inert. Kept rather than deleted because the trough carve IS this
+        // engine's own work: giving it back an along-channel coordinate is a
+        // real change to the carve and belongs in its own piece of work, not
+        // folded into a CLI split.
+        const std::vector<float>   along_tilt(n, 0.0f);
+        const std::vector<uint8_t> along_mask(n, 0u);
 
         // The break levels, and each corridor pixel's window index, are read
         // again by the baseline refinement and the reach-id raster further
@@ -813,369 +617,16 @@ valley_centreline_result extract_valley_centrelines(
         }
         else
         {
-            // ---------------------------------------------------------------------
-            // 2. Break search in the corridor HAND population.
-            // ---------------------------------------------------------------------
-            const int    nbins   = std::max(request.hand_hist_bins, 16);
-            const double floor_m = std::max(request.min_hand_metres, 1e-3);
-            const double lo_log  = std::log10(floor_m);
-            double hi_log = lo_log;
-
-
-            for (std::size_t i = 0; i < n; ++i)
-                if (in_corridor(i))
-                    hi_log = std::max(hi_log,
-                        std::log10(std::max<double>(hd[i], floor_m)));
-
-            // Along-channel position of every corridor pixel: inflate each
-            // channel node's cumulative along-channel distance across the
-            // corridor (nearest-node attribution), so breaks can adapt from
-            // confined upland reaches to broad valley bottoms.
-            std::vector<float> node_along(nodes.size(), 0.0f);
-            for (std::size_t k = 1; k < nodes.size(); ++k)
-            {
-                const std::int64_t a = nodes[k - 1], b = nodes[k];
-                const int dr2 = static_cast<int>(a / n_cols) -
-                                static_cast<int>(b / n_cols);
-                const int dc2 = static_cast<int>(a % n_cols) -
-                                static_cast<int>(b % n_cols);
-                node_along[k] = node_along[k - 1] + static_cast<float>(
-                    cell * std::sqrt(static_cast<double>(dr2 * dr2 + dc2 * dc2)));
-            }
-            const double channel_length =
-                static_cast<double>(node_along.back());
-
-            // Inflate the nearest channel NODE INDEX across the corridor, then
-            // derive (a) the unsigned along-channel distance for the reach
-            // windows and (b) a SIGNED along coordinate for the trough tilt: the
-            // node's along-distance plus the projection of the pixel offset onto
-            // the local downstream direction. Pixels lateral/behind the channel
-            // head get a negative projection, so the tilt raises them and the
-            // routed path cannot escape upstream out of the head's pocket.
-            std::vector<float> along_data(n, 0.0f);   // unsigned, for windows
-            along_tilt.assign(n, 0.0f);
-            along_mask.assign(n, 0u);
-            {
-                std::vector<float>   sv(n, 0.0f);
-                std::vector<uint8_t> sm(n, 0u);
-                std::vector<float>   pd2(n, 1.0f);
-                std::vector<uint8_t> pm2(n, 0u);
-                for (std::size_t k = 0; k < nodes.size(); ++k)
-                {
-                    const std::size_t f = static_cast<std::size_t>(nodes[k]);
-                    sv[f] = static_cast<float>(k);
-                    sm[f] = 1u;
-                }
-                for (std::size_t i = 0; i < n; ++i)
-                    pm2[i] = (in_corridor(i) || sm[i]) ? 1u : 0u;
-                lsdtt_raster_cpu inflated = inflate_values_to_nearest_source(
-                    lsdtt_raster_cpu(std::move(sv), std::move(sm), meta),
-                    lsdtt_raster_cpu(std::move(pd2), std::move(pm2), meta),
-                    request.n_threads);
-                const std::vector<float>&   idx_d = inflated.get_data();
-                const std::vector<uint8_t>& idx_m = inflated.get_mask();
-
-                const int span = 10;   // node window for the local direction
-                const int last = static_cast<int>(nodes.size()) - 1;
-                for (std::size_t i = 0; i < n; ++i)
-                {
-                    if (!idx_m[i]) continue;
-                    int k = std::clamp(static_cast<int>(
-                        std::llround(idx_d[i])), 0, last);
-                    along_mask[i] = 1u;
-                    along_data[i] = node_along[static_cast<std::size_t>(k)];
-
-                    const int ka = std::max(k - span, 0);
-                    const int kb = std::min(k + span, last);
-                    const std::int64_t fa = nodes[static_cast<std::size_t>(ka)];
-                    const std::int64_t fb = nodes[static_cast<std::size_t>(kb)];
-                    const std::int64_t fk = nodes[static_cast<std::size_t>(k)];
-                    double dx = static_cast<double>(
-                        (fb % n_cols) - (fa % n_cols));
-                    double dy = static_cast<double>(
-                        (fb / n_cols) - (fa / n_cols));
-                    const double len = std::hypot(dx, dy);
-                    double proj = 0.0;
-                    if (len > 0.0)
-                    {
-                        dx /= len; dy /= len;
-                        const double px2 = static_cast<double>(
-                            static_cast<std::int64_t>(i % n_cols) -
-                            (fk % n_cols));
-                        const double py2 = static_cast<double>(
-                            static_cast<std::int64_t>(i / n_cols) -
-                            (fk / n_cols));
-                        proj = (px2 * dx + py2 * dy) * cell;
-                    }
-                    along_tilt[i] = along_data[i] + static_cast<float>(proj);
-                }
-            }
-
-            double wstep = request.break_reach_window_metres;
-            bool reach_adaptive = wstep >= 0.0;
-            if (wstep == 0.0)
-                wstep = std::max(2000.0, channel_length / 8.0);
-            const int n_windows = reach_adaptive
-                ? std::max(1, static_cast<int>(channel_length / wstep) + 1)
-                : 1;
-            auto window_of = [&](std::size_t i) -> int
-            {
-                if (!reach_adaptive || !along_mask[i]) return 0;
-                return std::clamp(
-                    static_cast<int>(along_data[i] / wstep), 0, n_windows - 1);
-            };
-
-            // Whole-corridor + per-window histograms.
-            const bool force_break = request.force_valley_hand_metres > 0.0;
-            double break_hand = force_break
-                ? request.force_valley_hand_metres
-                : request.fallback_valley_hand_metres;
-            rec.used_fallback_break = !force_break;
-            window_break.assign(static_cast<std::size_t>(n_windows), -1.0);
-            if (force_break)
-            {
-                break_hand = std::max(break_hand, request.min_valley_hand_metres);
-                window_break.assign(n_windows, break_hand);
-            }
-            else if (hi_log > lo_log + 1e-6)
-            {
-                hi_log += 1e-6;
-                std::vector<std::int64_t> ghist(nbins, 0);
-                std::vector<std::int64_t> whist(
-                    static_cast<std::size_t>(n_windows) * nbins, 0);
-                std::vector<std::int64_t> wcount(n_windows, 0);
-                // Per-window local-relief accumulation for the adaptive fraction.
-                std::vector<double>       wrelief_sum(n_windows, 0.0);
-                std::vector<std::int64_t> wrelief_cnt(n_windows, 0);
-                for (std::size_t i = 0; i < n; ++i)
-                {
-                    if (!in_corridor(i)) continue;
-                    const double l =
-                        std::log10(std::max<double>(hd[i], floor_m));
-                    const int b = std::clamp(static_cast<int>(
-                        (l - lo_log) / (hi_log - lo_log) * nbins), 0, nbins - 1);
-                    ++ghist[b];
-                    const int w = window_of(i);
-                    ++whist[static_cast<std::size_t>(w) * nbins + b];
-                    ++wcount[w];
-                    if (request.break_method == 1 && relm[i] &&
-                        std::isfinite(reld[i]))
-                    {
-                        wrelief_sum[w] += static_cast<double>(reld[i]);
-                        ++wrelief_cnt[w];
-                    }
-                }
-
-                // Reach relief -> acceptance fraction. Mean local relief per
-                // window; the scale is the median of those means (self-calibrating
-                // per tile), so the midpoint fraction lands at typical relief.
-                std::vector<double> window_relief(n_windows, -1.0);
-                double relief_sum_all = 0.0; std::int64_t relief_cnt_all = 0;
-                for (int w = 0; w < n_windows; ++w)
-                    if (wrelief_cnt[w] > 0)
-                    {
-                        window_relief[w] = wrelief_sum[w] / wrelief_cnt[w];
-                        relief_sum_all += wrelief_sum[w];
-                        relief_cnt_all += wrelief_cnt[w];
-                    }
-                double relief_scale = 0.0;
-                {
-                    std::vector<double> vals;
-                    for (int w = 0; w < n_windows; ++w)
-                        if (window_relief[w] >= 0.0) vals.push_back(window_relief[w]);
-                    if (!vals.empty())
-                    {
-                        std::sort(vals.begin(), vals.end());
-                        relief_scale = vals[vals.size() / 2];
-                    }
-                }
-                const double global_relief =
-                    relief_cnt_all > 0
-                        ? relief_sum_all / static_cast<double>(relief_cnt_all)
-                        : 0.0;
-                const double fmin = std::min(request.break_fraction_min,
-                                             request.break_fraction_max);
-                const double fmax = std::max(request.break_fraction_min,
-                                             request.break_fraction_max);
-                auto fraction_for = [&](double relief) -> double
-                {
-                    if (request.break_method != 1)
-                        return request.break_valley_fraction;
-                    if (relief_scale <= 0.0) return 0.5 * (fmin + fmax);
-                    const double t = relief / (relief + relief_scale);
-                    return fmin + (fmax - fmin) * t;
-                };
-                const double global_frac = fraction_for(global_relief);
-                rec.hand_break_fraction = global_frac;
-
-                valley_break_diagnostics gdiag;
-                const double gbrk = find_valley_break(
-                    ghist, lo_log, hi_log, global_frac,
-                    request.wall_peak_fraction, &gdiag);
-                if (gbrk > 0.0)
-                {
-                    break_hand =
-                        std::max(gbrk, request.min_valley_hand_metres);
-                    rec.used_fallback_break = false;
-                }
-                rec.hand_smoothed          = std::move(gdiag.smoothed);
-                rec.hand_seg_peak_bins     = std::move(gdiag.seg_peak_bins);
-                rec.hand_seg_boundary_bins = std::move(gdiag.seg_bound_bins);
-                rec.hand_raw_peak_bins     = std::move(gdiag.raw_peak_bins);
-                rec.hand_break_bin         = gdiag.break_bin;
-
-                // Per-window decision metric (all-zero rows for inherited windows).
-                rec.window_hand_smoothed.assign(
-                    static_cast<std::size_t>(n_windows) * nbins, 0.0);
-                rec.window_break_bin.assign(n_windows, -1);
-                rec.window_is_peak.assign(
-                    static_cast<std::size_t>(n_windows) * nbins, 0);
-                rec.window_is_boundary.assign(
-                    static_cast<std::size_t>(n_windows) * nbins, 0);
-                rec.window_is_raw_peak.assign(
-                    static_cast<std::size_t>(n_windows) * nbins, 0);
-
-                std::vector<char> own(n_windows, 0);
-                // Per-window relief and the fraction it maps to (a window with no
-                // relief samples falls back to the corridor mean relief).
-                std::vector<double> window_frac(n_windows, global_frac);
-                std::vector<double> window_rel(n_windows, global_relief);
-                for (int w = 0; w < n_windows; ++w)
-                {
-                    window_rel[w] =
-                        (window_relief[w] >= 0.0) ? window_relief[w] : global_relief;
-                    window_frac[w] = fraction_for(window_rel[w]);
-                    // Pool each window with its neighbours (sliding window).
-                    std::vector<std::int64_t> h(nbins, 0);
-                    std::int64_t cnt = 0;
-                    for (int k = std::max(w - 1, 0);
-                         k <= std::min(w + 1, n_windows - 1); ++k)
-                    {
-                        cnt += wcount[k];
-                        const std::int64_t* src =
-                            &whist[static_cast<std::size_t>(k) * nbins];
-                        for (int b = 0; b < nbins; ++b) h[b] += src[b];
-                    }
-                    if (cnt >= request.break_min_window_pixels)
-                    {
-                        valley_break_diagnostics wdiag;
-                        const double brk = find_valley_break(
-                            h, lo_log, hi_log, window_frac[w],
-                            request.wall_peak_fraction, &wdiag);
-                        // Store the pooled+smoothed decision metric for this window
-                        // (defined even when no break was found).
-                        if (!wdiag.smoothed.empty())
-                            std::copy(wdiag.smoothed.begin(), wdiag.smoothed.end(),
-                                      rec.window_hand_smoothed.begin() +
-                                      static_cast<std::ptrdiff_t>(w) * nbins);
-                        // Candidate (pre-merge) peaks for every populated window,
-                        // even one that produced no own break.
-                        {
-                            const std::size_t base =
-                                static_cast<std::size_t>(w) * nbins;
-                            for (int pb : wdiag.raw_peak_bins)
-                                if (pb >= 0 && pb < nbins)
-                                    rec.window_is_raw_peak[base + pb] = 1;
-                        }
-                        if (brk > 0.0)
-                        {
-                            window_break[w] =
-                                std::max(brk, request.min_valley_hand_metres);
-                            own[w] = 1;
-                            rec.window_break_bin[w] = wdiag.break_bin;
-                            const std::size_t base =
-                                static_cast<std::size_t>(w) * nbins;
-                            for (int pb : wdiag.seg_peak_bins)
-                                if (pb >= 0 && pb < nbins)
-                                    rec.window_is_peak[base + pb] = 1;
-                            for (int bb : wdiag.seg_bound_bins)
-                                if (bb >= 0 && bb < nbins)
-                                    rec.window_is_boundary[base + bb] = 1;
-                        }
-                    }
-                }
-                // Windows without their own break inherit the nearest window's
-                // break, then the whole-corridor break.
-                for (int w = 0; w < n_windows; ++w)
-                {
-                    if (own[w]) continue;
-                    int best = -1;
-                    for (int k = 0; k < n_windows; ++k)
-                        if (own[k] && (best < 0 ||
-                                       std::abs(k - w) < std::abs(best - w)))
-                            best = k;
-                    window_break[w] =
-                        (best >= 0) ? window_break[best] : break_hand;
-                }
-                // Median-of-three across windows: a single window whose own
-                // break detection locked onto the wrong population mode (e.g. a
-                // terrace level) otherwise admits a huge block of false valley;
-                // genuine confined -> broad transitions survive the median.
-                if (n_windows >= 3)
-                {
-                    std::vector<double> smoothed(window_break);
-                    for (int w = 1; w + 1 < n_windows; ++w)
-                    {
-                        double a = window_break[w - 1];
-                        double b = window_break[w];
-                        double c = window_break[w + 1];
-                        smoothed[w] = std::max(std::min(a, b),
-                                               std::min(std::max(a, b), c));
-                    }
-                    window_break.swap(smoothed);
-                }
-                for (int w = 0; w < n_windows; ++w)
-                {
-                    if (request.max_valley_hand_metres > 0.0)
-                        window_break[w] = std::min(
-                            window_break[w], request.max_valley_hand_metres);
-                    rec.window_centre_m.push_back((w + 0.5) * wstep);
-                    rec.window_break_m.push_back(window_break[w]);
-                    rec.window_break_own.push_back(own[w]);
-                    rec.window_break_fraction.push_back(window_frac[w]);
-                    rec.window_relief_m.push_back(window_rel[w]);
-                }
-
-                rec.hand_hist        = std::move(ghist);
-                rec.window_hand_hist = std::move(whist);
-                rec.hist_lo_log      = lo_log;
-                rec.hist_hi_log      = hi_log;
-            }
-            else
-            {
-                window_break.assign(n_windows, break_hand);
-            }
-            if (request.max_valley_hand_metres > 0.0)
-            {
-                break_hand = std::min(break_hand, request.max_valley_hand_metres);
-                for (double& wb : window_break)
-                    wb = std::min(wb, request.max_valley_hand_metres);
-            }
-            if (rec.window_centre_m.empty())
-            {
-                for (int w = 0; w < n_windows; ++w)
-                {
-                    rec.window_centre_m.push_back((w + 0.5) * wstep);
-                    rec.window_break_m.push_back(window_break[w]);
-                    rec.window_break_own.push_back(0);
-                    rec.window_break_fraction.push_back(rec.hand_break_fraction);
-                    rec.window_relief_m.push_back(0.0);
-                }
-            }
-            rec.valley_hand_break_metres = break_hand;
-
-            // Freeze the window lookup for the call sites below.
-            window_index.assign(n, 0);
-            for (std::size_t i = 0; i < n; ++i)
-                if (in_corridor(i)) window_index[i] = window_of(i);
-
-            for (std::size_t i = 0; i < n; ++i)
-            {
-                if (!in_corridor(i)) continue;
-                const double brk_i = window_break[window_of(i)];
-                if (static_cast<double>(hd[i]) <= brk_i)
-                    valley[i] = k_on;
-            }
+            // The corridor HAND break search used to live here: about 360
+            // lines that found a break per along-channel window and thresholded
+            // the corridor against it. It moved to lsdtt-fluvial-surfaces at
+            // phase 5d, where the same job is done by banding a reference field
+            // and taking band 0 - a method that also works on a fan, which a
+            // corridor HAND break does not.
+            throw std::invalid_argument(
+                "extract_valley_centrelines: no valley mask supplied. This tool "
+                "no longer identifies the valley; run lsdtt-fluvial-surfaces "
+                "first and pass its <stem>_valley_mask.tif.");
         }
 
         for (const std::int64_t f : nodes)
@@ -1439,14 +890,17 @@ valley_centreline_result extract_valley_centrelines(
         //    nearest-channel-pixel test grows onto downstream-sloping
         //    terraces wherever the channel veers away.
         // ---------------------------------------------------------------------
-        // Skipped when the valley was supplied: the refinement re-thresholds
-        // elevation-above-baseline against the SAME break the corridor search
-        // found, and there is no such break when the mask came from outside.
-        // Inventing one would be a worse answer than not refining. This is also
-        // the no-feed-back rule seen from the other side - CLI 3 refines only a
-        // valley it derived itself.
+        // The refinement re-thresholds height-above-baseline. It used to reuse
+        // the per-window break this engine derived; identification has moved
+        // out, so the threshold is now an explicit request field and the
+        // refinement simply does not run without one. Refusing rather than
+        // inventing a number is the same rule the ladder applies to an
+        // unresolvable level count.
+        //
+        // NO FEED-BACK: the refined mask is written for the user and is never
+        // returned to lsdtt-fluvial-surfaces.
         if (request.refine_valley_with_baseline &&
-            request.supplied_valley_mask == nullptr &&
+            request.refine_max_height_metres > 0.0 &&
             rec.routing_succeeded &&
             !rec.centreline_baseline_elevation.empty())
         {
@@ -1481,7 +935,7 @@ valley_centreline_result extract_valley_centrelines(
                     const double rel =
                         static_cast<double>(elev[i]) -
                         static_cast<double>(bd[i]);
-                    if (rel <= window_break[static_cast<std::size_t>(window_index[i])])
+                    if (rel <= request.refine_max_height_metres)
                         refined[i] = k_on;
                 }
                 // The channel itself is always valley (and anchors the
@@ -1518,25 +972,6 @@ valley_centreline_result extract_valley_centrelines(
                 if (valley[i]) md[i] = 1.0f;
             rec.valley_mask = lsdtt_raster_cpu(
                 std::move(md), std::vector<uint8_t>(dmask), meta);
-
-            // Reach-id raster: every corridor pixel tagged with the reach
-            // (window) of its nearest channel node - the exact population each
-            // per-reach HAND histogram is built from. There are no reaches when
-            // no histogram was built, so a supplied mask leaves this empty
-            // rather than emitting a raster of zeros that looks like one reach.
-            if (request.supplied_valley_mask == nullptr)
-            {
-                std::vector<float>   rd(n, 0.0f);
-                std::vector<uint8_t> rmask(n, 0u);
-                for (std::size_t i = 0; i < n; ++i)
-                    if (in_corridor(i))
-                    {
-                        rd[i] = static_cast<float>(window_index[i]);
-                        rmask[i] = 1u;
-                    }
-                rec.reach_id = lsdtt_raster_cpu(
-                    std::move(rd), std::move(rmask), meta);
-            }
         }
 
         result.channels.push_back(std::move(rec));
