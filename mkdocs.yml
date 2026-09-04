@@ -92,6 +92,7 @@ nav:
       - Channel extraction: cli_reference/cli_reference_lsdtt_channel_extraction.md
       - Water line repair: cli_reference/cli_reference_lsdtt_water_line_repair.md
       - Stream burning: cli_reference/cli_reference_lsdtt_stream_burning.md
+      - Fluvial surfaces: cli_reference/cli_reference_lsdtt_fluvial_surfaces.md
       - Valley centreline: cli_reference/cli_reference_lsdtt_valley_centreline.md
       - Basin extraction: cli_reference/cli_reference_lsdtt_basin_extraction.md
       - Basin statistics: cli_reference/cli_reference_lsdtt_basin_stats.md

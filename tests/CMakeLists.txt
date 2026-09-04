@@ -28,6 +28,13 @@ set(LSDTT_INTERNAL_DRAINAGE_FIXTURE_DIR
 set(LSDTT_HILLTOP_COUPLING_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/hilltop_coupling_fixture")
 
+# Written by lsdtt-test-fluvial-surfaces (the fixture_fluvial_surfaces_cli
+# CTest fixture): a projected 200x200 linear-range DEM with flat piedmont and
+# a rough mountain zone, plus the channel source point that
+# lsdtt-valley-centreline requires.
+set(LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/fluvial_surfaces_fixture")
+
 function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
     set(work_dir "${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}")
 
@@ -3311,6 +3318,365 @@ if(_lsdtt_unit_guard_files)
 endif()
 
 # =============================================================================
+# lsdtt-flat-surface-finder and lsdtt-valley-centreline
+#
+# Phase 0a of docs/plan_docs/plan_fluvial_surfaces_cli_split.md. Both CLIs
+# shipped with no coverage of any kind, so there was nothing to refactor
+# against. These tests exist to pin CURRENT behaviour before the split moves it.
+#
+# The fixture is a projected 200x200 linear-range DEM: rough mountains, flat
+# piedmont, and a channel network shed onto the piedmont. tests/data has no
+# projected DEM large enough (tiny_dem.asc is 5x5, tiny30_dem.tif is geographic
+# and both CLIs refuse it via check_projected_metres()).
+# =============================================================================
+
+add_executable(lsdtt-test-fluvial-surfaces cpp/test_fluvial_surfaces.cpp)
+target_link_libraries(lsdtt-test-fluvial-surfaces PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_fluvial_surfaces_fixture
+         COMMAND lsdtt-test-fluvial-surfaces)
+set_tests_properties(unit_fluvial_surfaces_fixture PROPERTIES
+    LABELS "unit")
+
+# Phase 0c. T2, T4, T5 and T7 of the plan's section 7: the resolvability floor
+# reports UNRESOLVED rather than fabricating levels, labels are a globally
+# unique running counter whose band map is single-valued, k = 2 reproduces the
+# legacy valley cut bit-for-bit, and k selection is a constraint with an
+# extremum rather than a trade-off.
+add_test(NAME unit_fluvial_surface_ladder
+         COMMAND lsdtt-test-fluvial-surfaces --ladder)
+set_tests_properties(unit_fluvial_surface_ladder PROPERTIES
+    LABELS "unit")
+
+# Phase 2. T3: the fitted-surface reference field. Both arms run the SAME ladder
+# with the SAME auto k selection over the SAME admitted set, and only the banded
+# raster differs, so what the test measures is the field rather than the tuning.
+# HAND shreds the fan into radial arcs; the residual to a fitted cone does not.
+add_test(NAME unit_fluvial_surface_fitted_field
+         COMMAND lsdtt-test-fluvial-surfaces --fitted-surface)
+set_tests_properties(unit_fluvial_surface_fitted_field PROPERTIES
+    LABELS "unit")
+
+add_test(NAME fixture_fluvial_surfaces_cli
+         COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
+                 ${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR})
+set_tests_properties(fixture_fluvial_surfaces_cli PROPERTIES
+    LABELS "fixture"
+    FIXTURES_SETUP fluvial_surfaces_fixture)
+
+# The generators are reachable from the user-facing CLI, not only from the test
+# binary. Five rasters, because the ground-truth tread_id / lobe_id layers are
+# what every later assertion about purity is scored against.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_generators
+    lsdtt-raster-synthetic-tests
+    synthetic_terrace_fan.param.in
+    synfs_terrace_staircase.tif
+    --expect synfs_terrace_staircase_tread_id.tif
+    --expect synfs_terrace_staircase_channel_mask.tif
+    --expect synfs_alluvial_fan.tif
+    --expect synfs_alluvial_fan_lobe_id.tif
+    --expect-raster-size synfs_terrace_staircase.tif:300x200
+    --expect-raster-stat synfs_terrace_staircase_tread_id.tif:max:4.0:4.0
+    --expect-raster-stat synfs_alluvial_fan_lobe_id.tif:max:2.0:2.0
+)
+
+add_test(NAME smoke_flat_surface_finder_help
+         COMMAND lsdtt-flat-surface-finder -h)
+set_tests_properties(smoke_flat_surface_finder_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "relief_threshold_metres")
+
+add_test(NAME smoke_valley_centreline_help
+         COMMAND lsdtt-valley-centreline -h)
+set_tests_properties(smoke_valley_centreline_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "valley_mask_fname")
+
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder
+    lsdtt-flat-surface-finder
+    flat_surface_finder_smoke.param.in
+    fsf_labelled_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsf_combined_flat_mask.tif
+    --expect fsf_relief_cdf.csv
+)
+set_tests_properties(smoke_flat_surface_finder PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Phase 1. The reordering through the CLI: the ladder must resolve the flight,
+# every patch must carry a band, and the run must report which windows resolved.
+# Phase 1's reordering, now driven through lsdtt-fluvial-surfaces: phase 4 moved
+# the whole height-reference half of the pipeline out of CLI 1.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_band_then_label
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_band_then_label.param.in
+    btl_banded_labels.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect btl_band_index.tif
+    --expect btl_surface_patches.csv
+    --expect btl_ladder_windows.csv
+    --expect btl_surface_class.tif
+    --stdout-contains "Ladder and band-then-label"
+    --expect-raster-values "btl_band_index.tif:0,1,2,3"
+    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
+    --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
+)
+set_tests_properties(smoke_fluvial_surfaces_band_then_label PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The label is the join key for everything band-then-label emits (plan section
+# 4.3), and that is exactly the property no per-file assertion can see: the
+# smoke test pins each table's SCHEMA, but a schema says nothing about whether a
+# label in the raster has a row in the patch table, or whether the two agree
+# about which band it is in. So these two run the CLI and then check ACROSS the
+# outputs.
+#
+# The join arm also carries the only coverage of
+# write_reference_field_profile_csv. It is off by default and no other fixture
+# turns it on, so its label and band columns had never been checked against the
+# rasters they claim to describe.
+add_test(NAME rigorous_fluvial_surfaces_label_band_identity
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_fluvial_surface_joins.py"
+        --exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/fluvial_surfaces_join_check.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_label_band_identity"
+        --stem join)
+set_tests_properties(rigorous_fluvial_surfaces_label_band_identity PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# A table with no rows and a table that was never written look identical to a
+# downstream reader. This pins that the empty result is the former.
+add_test(NAME rigorous_fluvial_surfaces_empty_result
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_fluvial_surface_joins.py"
+        --exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/fluvial_surfaces_empty_result.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_empty_result"
+        --stem empty
+        --expect-empty-tables)
+set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_test(NAME unit_fluvial_surfaces_band_then_label
+         COMMAND lsdtt-test-fluvial-surfaces --band-then-label)
+set_tests_properties(unit_fluvial_surfaces_band_then_label PROPERTIES
+    LABELS "unit")
+
+# Phase 4. The two retirement groups must behave DIFFERENTLY and visibly so: a
+# key that turned an analysis on stops the run, a key that merely tuned a
+# vanished mechanism warns and continues. If these two ever became confusable
+# the whole two-group design would be pointless.
+add_lsdtt_cli_smoke_test(
+    failure_flat_surface_finder_removed_parameter
+    lsdtt-flat-surface-finder
+    flat_surface_finder_removed_parameter.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "find_floodplain has moved to lsdtt-fluvial-surfaces"
+)
+set_tests_properties(failure_flat_surface_finder_removed_parameter PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_ignored_parameter
+    lsdtt-flat-surface-finder
+    flat_surface_finder_ignored_parameter.param.in
+    ign_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stderr-contains "enable_hand_banding is ignored"
+    --stderr-contains "the reference-field ladder in lsdtt-fluvial-surfaces is now unconditional"
+    --stderr-contains "terrace_min_height_metres has moved to lsdtt-fluvial-surfaces"
+    --stderr-contains "'write_combined_flat_mask' is deprecated"
+)
+set_tests_properties(smoke_flat_surface_finder_ignored_parameter PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# =============================================================================
+# Parameter key policy (phase 3b): deprecated, removed and unknown keys
+#
+# The prerequisite for phase 4, where CLI 1 first sheds parameters. Until this
+# existed a removed key was silently a no-op - the typed parses iterate over the
+# DEFAULTS MAPS, so a key in the file that no map declares is never looked at by
+# anything, and an old parameter file would run happily having done none of what
+# it asked for.
+#
+# The driver re-executes itself as a child for each arm, because the removed-key
+# case exits the process.
+# =============================================================================
+add_executable(lsdtt-test-param-deprecation cpp/test_param_deprecation.cpp)
+target_link_libraries(lsdtt-test-param-deprecation PRIVATE lsdtt3_core)
+
+add_test(NAME unit_param_parser_deprecation
+         COMMAND lsdtt-test-param-deprecation
+                 "${CMAKE_CURRENT_BINARY_DIR}/param_deprecation")
+# The domain label is explicit: the compartmentalisation block at the foot of
+# this file assigns domains by NAME match, and this test is called
+# param_parser rather than fluvial_surface. It is nonetheless the guard on a
+# facility built for this workstream, so it belongs in that compartment.
+set_tests_properties(unit_param_parser_deprecation PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# =============================================================================
+# lsdtt-fluvial-surfaces (phase 3 of the plan: the new CLI)
+#
+# The tool between lsdtt-flat-surface-finder (which ground is flat?) and
+# lsdtt-valley-centreline (trace this valley): it does everything that needs a
+# height reference, and it writes the valley mask CLI 3 consumes.
+# =============================================================================
+add_test(NAME smoke_fluvial_surfaces_help
+         COMMAND lsdtt-fluvial-surfaces -h)
+set_tests_properties(smoke_fluvial_surfaces_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "reference_field_algorithm_choice")
+
+# End to end, with no flat_mask_fname, so the built-in fallback admission is
+# exercised too: the tool has to work on its own as well as downstream of CLI 1.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_smoke.param.in
+    fsurf_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsurf_banded_labels.tif
+    --expect fsurf_valley_mask.tif
+    --expect fsurf_surface_class.tif
+    --expect fsurf_surface_patches.csv
+    --expect fsurf_ladder_windows.csv
+    --expect fsurf_reference_field.tif
+    --stdout-contains "Ladder and band-then-label"
+    --stdout-contains "window(s) resolved"
+    --expect-raster-values "fsurf_band_index.tif:0,1,2,3"
+    --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
+    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
+)
+set_tests_properties(smoke_fluvial_surfaces PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# THE composability guarantee: HAND is the expensive stage and the level count
+# is what gets iterated on, so a supplied HAND must reproduce the computed path
+# exactly or every iteration is a different experiment from the final run.
+# Two runs compared by checksum, which no single-run assertion can express.
+add_test(NAME smoke_fluvial_surfaces_hand_input
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_fluvial_surfaces_hand_roundtrip.py"
+        --exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/fluvial_surfaces_hand_input.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fluvial_surfaces_hand_input"
+        --stem fsin)
+set_tests_properties(smoke_fluvial_surfaces_hand_input PROPERTIES
+    LABELS "smoke;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The fitted-surface field through the CLI. The param file deliberately does not
+# name a break algorithm, so this also pins that selecting fitted_surface
+# switches the finder to jenks on its own and says so - antimode bins on log10
+# and cannot band a signed residual.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_fitted_surface
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_fitted_surface.param.in
+    fsfan_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsfan_banded_labels.tif
+    --expect fsfan_valley_mask.tif
+    --expect fsfan_surface_patches.csv
+    --expect fsfan_reference_field.tif
+    --stdout-contains "the break finder is jenks"
+    --stdout-contains "cone fit"
+    --expect-raster-values "fsfan_band_index.tif:0,1"
+)
+set_tests_properties(smoke_fluvial_surfaces_fitted_surface PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_bad_reference_field
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_bad_reference_field.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "unknown reference_field_algorithm_choice 'elevation'. Valid: hand, fitted_surface."
+)
+set_tests_properties(failure_fluvial_surfaces_bad_reference_field PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Phase 5e. The two-command pipeline, which is the only way either tool can be
+# exercised end to end now: CLI 3 will not start without a mask, and CLI 2 is
+# the only supported source of one. What this pins is the HANDOVER - that stage
+# 2 says identification was supplied, which is the one line distinguishing "read
+# the mask" from "quietly derived its own".
+add_test(NAME smoke_fluvial_surfaces_pipeline
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fluvial_pipeline.py"
+        --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+        --centreline-exe "$<TARGET_FILE:lsdtt-valley-centreline>"
+        --surfaces-param "${LSDTT_TEST_PARAM_DIR}/fluvial_pipeline_surfaces.param.in"
+        --centreline-param "${LSDTT_TEST_PARAM_DIR}/valley_centreline_smoke.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fluvial_surfaces_pipeline"
+        --expect vcin_valley_mask.tif
+        --expect vc_valley_mask.tif
+        --expect vc_valley_centreline.fgb
+        --stage2-stdout-contains "Valley identification is supplied")
+set_tests_properties(smoke_fluvial_surfaces_pipeline PROPERTIES
+    LABELS "smoke;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The valley is now a required input, and the message must name where it comes
+# from - a user with an old parameter file needs to be told the tool, not just
+# that something is missing.
+add_lsdtt_cli_smoke_test(
+    failure_valley_centreline_no_mask
+    lsdtt-valley-centreline
+    valley_centreline_no_mask.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "valley_mask_fname is required"
+    --stderr-contains "lsdtt-fluvial-surfaces"
+)
+set_tests_properties(failure_valley_centreline_no_mask PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# rigorous_valley_centreline_break_pin was RETIRED at phase 5d, with the code it
+# pinned. It asserted the breaks lsdtt-valley-centreline derived for itself, and
+# that tool no longer derives any - identification moved to
+# lsdtt-fluvial-surfaces. Deleting a test along with the path it covers is the
+# intended outcome, not a lost guard.
+#
+# The C5 concern it existed for - that find_population_breaks is shared and must
+# not move underneath the ladder - is now carried by T5 in
+# unit_fluvial_surface_ladder, which calls that function directly and asserts the
+# ladder's k = 2 reproduces its first break bit-for-bit. T5 must be green in the
+# same run for this retirement to be safe.
+
+# The phase 1 baseline. Band-then-label rewrites exactly this raster: today the
+# labelling runs once over the whole broken flat mask, and after the reordering
+# it runs once per band. Without this checksum recorded BEFORE the change there
+# is nothing to say what the reordering actually did.
+add_lsdtt_cli_smoke_test(
+    rigorous_flat_surface_finder_label_baseline
+    lsdtt-flat-surface-finder
+    flat_surface_finder_smoke.param.in
+    fsf_labelled_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsf_labelled_flat_mask.tif:20987
+    --expect-raster-checksum fsf_combined_flat_mask.tif:13879
+)
+set_tests_properties(rigorous_flat_surface_finder_label_baseline PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# =============================================================================
 # COMPARTMENTALISATION: domain and cost labels
 #
 # Running all 100+ tests after every change is wasteful: most of them cannot be
@@ -3353,6 +3719,10 @@ set(LSDTT_DOMAIN_RULES
     "surface_metrics"        "surface_metrics"
     "hillslope"              "hillslope"
     "lem"                    "lem"
+    # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
+    # split writes a channel network, so tests named for that would otherwise be
+    # claimed by "network" and disappear from a fluvial_surfaces compartment run.
+    "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
     "chi|channel|drainage|basin|flow_properties|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret"           "core"

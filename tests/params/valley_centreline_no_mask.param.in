@@ -1,0 +1,26 @@
+# Phase 5e failure path: valley_mask_fname is required and must name CLI 2.
+# Same fixture DEM; fluvsurf_sources.fgb carries the single channel source,
+# chosen by the deterministic rule in tests/cpp/test_fluvial_surfaces.cpp.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: vc
+
+n_threads: 1
+write_output_format: gtiff
+
+source_points_path: __READ_PATH__/fluvsurf_sources.fgb
+source_points_input_format: ogr_vector_layer
+channel_threshold_contributing_pixels: 200
+
+# The DEM is a 2 km square, so the 5000 m default corridor would swallow it
+# whole and the HAND population would stop being a valley population.
+
+# Global break, not reach-adaptive: one 2 km channel does not carry enough
+# along-channel windows for the reach-relative path to mean anything, and the
+# global break is the behaviour the phase 0c ladder engine must reproduce.
+
+write_valley_mask_raster: true
+write_valley_centreline: true
+write_valley_cross_sections: false
+

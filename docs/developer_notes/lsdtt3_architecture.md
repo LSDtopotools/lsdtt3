@@ -47,6 +47,7 @@ lsdtt3/
 │   ├── lsdtt-feature-finder.cpp
 │   ├── lsdtt-fetch-raster.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
+│   ├── lsdtt-fluvial-surfaces.cpp
 │   ├── lsdtt-graphflood.cpp
 │   ├── lsdtt-internal-drainage.cpp
 │   ├── lsdtt-lem.cpp
@@ -165,7 +166,8 @@ lsdtt3/
 │   │   ├── lsdtt_landscape_equilibration_cpu.hpp/.cpp        — divide equilibration and landscape relaxation
 │   │   ├── lsdtt_flat_surface_finder.hpp/.cpp                — flat surface identification (MADk2, residual IQR, NVD)
 │   │   ├── lsdtt_flat_surface_plane_analysis.hpp/.cpp        — plane analysis on detected flat surfaces
-│   │   ├── lsdtt_flat_surface_channel_classify_cpu.hpp/.cpp  — classify channels in flat surface areas
+│   │   ├── lsdtt_flat_surface_channel_classify_cpu.hpp/.cpp  — classify flat surfaces against a channel; shared surface/patch/ladder CSV writers
+│   │   ├── lsdtt_reference_field_ladder_cpu.hpp/.cpp        — reference-field ladder: band a height field, label components WITHIN each band
 │   │   ├── lsdtt_hydraulic_graph_cpu.hpp/.cpp                — CPU hydraulic routing (lsdtt_hydraulic_base impl, Gailleton et al. 2024)
 │   │   ├── lsdtt_chi_extraction_cpu.hpp/.cpp                 — chi coordinate extraction (full raster, outlet-seeded, inherited-base)
 │   │   ├── lsdtt_chi_network_analysis_cpu.hpp/.cpp           — piecewise-linear fitting of chi channel networks
@@ -174,7 +176,7 @@ lsdtt3/
 │   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
 │   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
 │   │   ├── lsdtt_channel_sources_wiener_cpu.hpp/.cpp         — channel source detection via Wiener filtering
-│   │   ├── lsdtt_channel_scope_cpu.hpp/.cpp                  — channel scope analysis and classification
+│   │   ├── lsdtt_channel_scope_cpu.hpp/.cpp                  — channel scope resolution; shared CLI plumbing (point loading, scope diagnostics, network-layer writer)
 │   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity, junction area-ratio distribution
 │   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
 │   │   ├── lsdtt_ridgeline_cpu.hpp/.cpp                      — ridgeline extraction and analysis
@@ -296,6 +298,7 @@ the utility-layer numerical functions.
 - `lsdtt_basin_outline_cpu.cpp`
 - `lsdtt_flat_surface_finder.cpp`
 - `lsdtt_flat_surface_plane_analysis.cpp`
+- `lsdtt_reference_field_ladder_cpu.cpp`
 - `lsdtt_vector_rasterise_cpu.cpp`
 - `lsdtt_proximity_cpu.cpp`
 - `lsdtt_swath_cpu.cpp`
@@ -697,9 +700,46 @@ Current CLI programs are:
   per-scale relief diagnostic rasters.
 
 - **`lsdtt-flat-surface-finder.cpp`**  
-  Identifies flat (low-texture) surfaces using MADk2, residual IQR, and/or NVD
-  metrics. Outputs per-metric texture rasters, binary masks, and a combined mask.
-  Thresholds are set by percentile; masks can be combined with AND or OR logic.
+  **Pure morphometry: which ground is flat?** Identifies flat (low-texture)
+  surfaces using MADk2, residual IQR, and/or NVD metrics. Outputs per-metric
+  texture rasters, binary masks, and a combined mask. Thresholds are set by
+  percentile; masks can be combined with AND or OR logic. Also offers plane
+  analysis and the VEC break-of-slope skeleton as diagnostics.
+
+  No flow routing, no channel network, no height reference — everything that
+  needed one moved to `lsdtt-fluvial-surfaces`. Its `_combined_flat_mask.tif`
+  is that tool's `flat_mask_fname` input.
+
+- **`lsdtt-fluvial-surfaces.cpp`**  
+  **Which fluvial level is each flat surface on?** Takes a flat mask (or falls
+  back to a built-in relief/slope admission), resolves a channel scope, builds a
+  REFERENCE FIELD, bands it, and labels connected components WITHIN each band.
+
+  Two reference fields, one ladder. `hand` is height above the in-scope channel
+  network — the right field for a terrace flight, where treads sit at a roughly
+  constant height above the channel. `fitted_surface` is the signed residual to
+  a surface fitted to the flat ground — the right field for a fan, which climbs
+  continuously in HAND and would be cut into meaningless arcs by a HAND ladder.
+  The fitted surface may be a `cone` (the default, and the fan option), a
+  RANSAC `plane`, or a `poly2`.
+
+  **Band first, then label.** Two pixels can only share a label if they share a
+  band, so two treads at different heights cannot merge — and the riser between
+  them never has to be found or be continuous. This replaces four separate
+  repair mechanisms that existed to detect that merge after the fact.
+
+  **There is no valley mode and no terrace mode**, only a level count: the
+  valley floor is the lowest band of a two-band cut, a terrace flight is an
+  n-band ladder on the same population. Set `ladder_level_count` to 2, to n, or
+  leave it at 0 and let the resolvability floor decide how many levels the DEM
+  can carry — reporting UNRESOLVED where it cannot.
+
+  Outputs `_band_index.tif`, `_banded_labels.tif`, `_valley_mask.tif` (band 0,
+  the input to `lsdtt-valley-centreline`), `_surface_class.tif`,
+  `_surface_patches.csv` (the join key for everything downstream) and
+  `_ladder_windows.csv` (the resolvability report — read it first).
+  `hand_fname` lets a precomputed HAND be supplied, which is what makes
+  iterating on the level count affordable.
 
 - **`lsdtt-graphflood.cpp`**
   Graph-based hydraulic routing on a fixed D-inf or MFD flow graph. Constructs
@@ -802,9 +842,21 @@ Current CLI programs are:
   perpendicular to a baseline, outputs profiles as CSV or rasters.
 
 - **`lsdtt-valley-centreline.cpp`**  
-  Valley centreline extraction and tracing. Identifies valley networks from DEMs 
-  using SMAP (surface morphological classification) and traces centrelines through 
-  the identified valleys. Outputs centreline polylines.
+  **Trace a centreline through a supplied valley.** Takes a valley mask
+  (`valley_mask_fname`, REQUIRED — normally `_valley_mask.tif` from
+  `lsdtt-fluvial-surfaces`), carves a trough, and traces the medial-axis /
+  least-cost centreline through it. Also fits the pinned monotonic thalweg
+  baseline, extracts cross sections, and derives cross-section hydraulics.
+
+  It does **not** identify the valley. That moved to `lsdtt-fluvial-surfaces`,
+  where a valley is simply band 0 of a two-band ladder — a formulation that also
+  works on a fan, which a corridor HAND break does not. Running without a mask
+  is a hard error naming that tool.
+
+  `refine_valley_with_baseline` refines the supplied mask against the fitted
+  baseline and writes the result for the user; it is never fed back to
+  `lsdtt-fluvial-surfaces`. It requires an explicit `refine_max_height_metres`,
+  because there is no longer a derived break to reuse.
 
 - **`lsdtt-water-centreline.cpp`**  
   Water/floodplain centreline extraction. Combines multiple methods to identify 
@@ -1218,6 +1270,37 @@ other build reports a development string derived from `git describe`, e.g.
 `0.3.0-dev, git v0.2.0-14-g04460f4-dirty` — so distributed development
 builds self-identify. Captured at configure time (rerun cmake to refresh).
 Per-CLI `k_version` numbers are versioned independently of the package.
+
+### Deprecated, removed and unknown parameter keys
+
+The typed parse functions iterate over a CLI's **defaults maps** and pull
+matching keys out of the file, so a key present in the file but absent from
+every defaults map is never looked at by anything — silently a no-op. That is
+the worst available behaviour when a parameter is renamed or retired: an old
+file saying `find_floodplain: true` would run happily having done none of what
+it asked for.
+
+`parse_all_parameters` therefore scans the **raw keys present in the file**
+(never the defaults maps, which would silently re-accept everything) against
+three maps a CLI may populate:
+
+| setter | behaviour | for |
+|---|---|---|
+| `set_removed_keys` | prints the exact migration message, **exits 1** | keys that TURNED AN ANALYSIS ON, where ignoring one leaves the user believing it ran |
+| `set_deprecated_aliases` | copies the value to the new name, warns naming it | a parameter that still exists under a new name |
+| `set_ignored_keys` | prints a specific message, run continues | a parameter that moved to another tool, or whose mechanism no longer exists |
+
+Anything in none of the three and in no defaults map is reported as an unknown
+key — a warning, never fatal, since a CLI may legitimately read a key by another
+route. All three maps start empty, so a CLI that sets none behaves as before.
+
+A removed key **exits rather than throws**: almost no CLI guards
+`parse_all_parameters` with try/catch, so throwing would abort through
+`std::terminate` and bury the migration message under a crash trace. Exiting
+from the parser is what `parse_args_deferred` already does for `-v` and `-c`.
+
+**These maps are a one-release compatibility window and must actually be
+emptied**, or they become a permanent second spelling for every parameter.
 
 ---
 
@@ -2240,6 +2323,55 @@ surfaces qualify.
 - **NVD s3** — smallest eigenvalue of the surface-normal orientation tensor; requires FFTW for the wavelet quadratic fit; disabled by default
 
 **Thresholding:** each metric is thresholded at a user-specified percentile of its own distribution. The QQ-plot CSV output helps identify the break-point between flat and rough terrain in the lower tail. Metrics are combined with AND or OR logic.
+
+**Scope:** this module answers "which ground is flat?" and nothing more. Sorting flat ground into fluvial levels needs a channel and a height reference, and lives in `lsdtt_reference_field_ladder_cpu` behind `lsdtt-fluvial-surfaces`.
+
+---
+
+## lsdtt_reference_field_ladder_cpu
+
+File: `src/cpu/lsdtt_reference_field_ladder_cpu.hpp/.cpp`
+
+Stratifies a REFERENCE FIELD into height bands and labels connected components
+**within each band**. The engine behind `lsdtt-fluvial-surfaces`.
+
+**One operation, two tasks.** Finding a valley floor and segmenting a terrace
+flight are the same computation at different band counts: the valley floor is
+the lowest band of a two-band cut, a terrace flight an n-band ladder on the same
+population. There is deliberately no "valley mode" and no "terrace mode" — only
+`level_count`.
+
+**Why band before labelling.** The incumbent ordering labelled once over the
+whole flat mask and consulted height afterwards, which forces the riser network
+to be continuous: a road or gully through a riser lets two treads at different
+heights merge into one component, and nothing downstream can separate them
+again. Banding first makes that merge impossible rather than detectable.
+
+**Key API:**
+- `build_reference_field_ladder(field, admitted, request, source_id?, coord?)`
+  → `ladder_result` — the band index raster plus one `ladder_window` per
+  along-channel window, each carrying its status, breaks and band centres.
+- `label_components_within_bands(band_index, admitted, field, min_pixels, conn)`
+  → `banded_label_result` — labels are a GLOBAL RUNNING COUNTER 1..N assigned
+  band by band. The band is **not** packed into the label; it travels in the
+  band-index raster and in `patch_record`. Throws if the total patch count would
+  reach 2^24, above which a label cannot round-trip through the raster's float32
+  backing store and every join keyed on it would silently corrupt.
+- `build_fitted_surface_reference_field(dem, fit_mask, request)` — fits a
+  `cone`, RANSAC `plane` or `poly2` and returns the signed residual.
+
+**`ladder_status` is a reported output, not an internal detail:** `resolved`,
+`unresolved`, `forced`, `degenerate`. A ladder that could not resolve says so
+rather than returning a number, because what may be claimed about it depends on
+which branch was taken.
+
+**Two numerics decisions that must not be "tidied":** band centres are MEDIANS
+of each band's values rather than midpoints of the break edges, and every level
+count in range is scanned rather than searched downward (admissibility is not
+monotone under median centres). Both are argued in the header. This file WRAPS
+`find_population_breaks` from `lsdtt_flat_surface_channel_classify_cpu` and must
+not modify it — that function is shared, so a change there moves two tools at
+once.
 
 ---
 

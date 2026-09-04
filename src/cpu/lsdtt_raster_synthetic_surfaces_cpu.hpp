@@ -974,4 +974,216 @@ lsdtt_crater_field_surface generate_crater_field_surface(
     double background_elevation = 1000.0
 );
 
+// -----------------------------------------------------------------------------
+// lsdtt_terrace_staircase_surface
+//
+// dem          - synthetic elevation raster
+// tread_id     - 1..n_terraces on tread cells, 0 on the channel, on riser cells
+//                and inside a riser gap (a gap is a ramp, not a tread)
+// channel_mask - 1.0 on the trunk channel cells, 0.0 elsewhere
+// -----------------------------------------------------------------------------
+struct lsdtt_terrace_staircase_surface
+{
+    lsdtt_raster_cpu dem;
+    lsdtt_raster_cpu tread_id;
+    lsdtt_raster_cpu channel_mask;
+};
+
+// -----------------------------------------------------------------------------
+// generate_terrace_staircase_surface
+//
+// A symmetrical flight of fluvial terraces either side of a trunk channel, for
+// testing height stratification and the band-then-label ordering.
+//
+// GEOMETRY. The valley runs N-S: row 0 is upstream, row n_rows-1 downstream.
+// The channel occupies the centre column and falls downstream at
+// valley_gradient. Terrace j (j = 1..n_terraces) occupies the cross-valley band
+// x in [(j-1) * tread_width_m, j * tread_width_m) on BOTH flanks, where x is the
+// distance from the channel, and sits j riser heights above the local channel
+// elevation. Ground beyond the outermost tread rises as a steep valley wall, so
+// the flight is bounded and the wall is never mistaken for a tread.
+//
+// riser_height_downstream_taper
+//   Fraction of the riser height lost between the upstream and downstream ends:
+//     h(f) = riser_height_m * (1 - riser_height_downstream_taper * f)
+//   with f the downstream fraction in [0, 1]. 0 gives a flight of constant
+//   height; 0.667 with riser_height_m = 12 runs 12 m upstream to 4 m
+//   downstream. This exists so a reach-relative ladder can be shown to beat a
+//   single global partition, which is the whole argument for windowing.
+//
+// tread_cross_gradient
+//   Gradient (m/m) at which each tread falls TOWARD the channel.
+//
+//   THIS IS NOT COSMETIC. At 0 the treads fall only downstream, so water on a
+//   tread runs parallel to the channel and leaves the grid at the south edge
+//   without ever reaching a channel cell - and height-above-channel is then
+//   undefined over most of the DEM. Any test that computes HAND must set a
+//   positive value. 0.002 is ample and perturbs the tread height by only
+//   0.002 * tread_width_m across the tread.
+//
+//   Must be < riser_height_m / tread_width_m, otherwise the cross-fall exceeds
+//   the riser and the staircase stops being monotonic; this is checked.
+//
+//   It must ALSO exceed valley_gradient, and that one is not checked because
+//   it is a statement about what the caller wants rather than about a valid
+//   surface. Whichever gradient is steeper decides where water on a tread
+//   goes. Below valley_gradient the treads drain DOWNSTREAM to a far-away
+//   channel cell, and height above channel then measures how far downstream
+//   the flow path ran before it found the channel - not the height of the
+//   tread. The staircase still looks correct and the HAND field is still
+//   fully defined, so nothing warns: the ladder simply bands the wrong
+//   quantity. A low flight is the dangerous case, because the monotonicity
+//   cap above forces a small cross-fall exactly when riser_height_m is small.
+//
+// n_riser_gaps, riser_gap_width_m
+//   Road- or spill-like cuts that destroy riser continuity. At n_riser_gaps
+//   evenly spaced downstream stations, a band riser_gap_width_m long along the
+//   valley replaces the stepped cross-section with a CONTINUOUS RAMP: the
+//   terrace index is interpolated rather than floored, so elevation climbs
+//   smoothly from the channel to the outermost tread.
+//
+//   The ramp gradient is riser_height_m / tread_width_m - set by the tread
+//   width, NOT by riser_gap_width_m. That is what makes the gap a leak: at the
+//   defaults, 8 m over 300 m is 0.027 m/m, which reads as flat to any sensible
+//   roughness threshold, so the gap cells pass the flat test and connect treads
+//   that are metres apart in height. A gap only leaks if that gradient is below
+//   the detector's flat threshold; widen the treads or lower the risers if a
+//   test needs a more permissive leak.
+//
+//   SECOND, INDEPENDENT CONSTRAINT, and it bites at the default value.
+//   riser_gap_width_m must comfortably EXCEED the roughness window the detector
+//   uses, or the gap never reads as flat no matter how gentle its ramp is: a
+//   moving window centred in a narrow gap still reaches the stepped rows either
+//   side and returns their riser relief. Measured on the 4 x 300 m flight with
+//   8 m risers and a 5-cell (40 m) relief window, a 30 m gap returns 4.5 m of
+//   local relief - indistinguishable from the 7.6 m at a riser - while a 120 m
+//   gap returns well under a metre. Budget at least three window widths.
+//
+//   Note the second, independent way this surface leaks: set riser_height_m
+//   below the flat threshold and EVERY riser passes the flat test, so the whole
+//   valley floor becomes one component with no gaps at all. That is the
+//   wholesale under-segmentation case, and it needs n_riser_gaps = 0.
+//
+// noise_amplitude_m
+//   Symmetric per-pixel white noise, deterministic in seed. 0 gives an exact
+//   surface whose tread elevations can be asserted to the metre.
+// -----------------------------------------------------------------------------
+lsdtt_terrace_staircase_surface generate_terrace_staircase_surface(
+    const lsdtt_raster_meta& meta,
+    int    n_terraces                    = 4,
+    double tread_width_m                 = 300.0,
+    double riser_height_m                = 8.0,
+    double valley_gradient               = 0.002,
+    double riser_height_downstream_taper = 0.0,
+    double tread_cross_gradient          = 0.0,
+    int    n_riser_gaps                  = 0,
+    double riser_gap_width_m             = 30.0,
+    double noise_amplitude_m             = 0.0,
+    double channel_elevation             = 100.0,
+    double valley_wall_gradient          = 0.5,
+    int    seed                          = 1,
+    int    n_threads                     = 0
+);
+
+// Convenience overload
+lsdtt_terrace_staircase_surface generate_terrace_staircase_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    int    n_terraces                    = 4,
+    double tread_width_m                 = 300.0,
+    double riser_height_m                = 8.0,
+    double valley_gradient               = 0.002,
+    double riser_height_downstream_taper = 0.0,
+    double tread_cross_gradient          = 0.0,
+    int    n_riser_gaps                  = 0,
+    double riser_gap_width_m             = 30.0,
+    double noise_amplitude_m             = 0.0,
+    double channel_elevation             = 100.0,
+    double valley_wall_gradient          = 0.5,
+    int    seed                          = 1,
+    int    n_threads                     = 0
+);
+
+// -----------------------------------------------------------------------------
+// lsdtt_alluvial_fan_surface
+//
+// dem     - synthetic elevation raster
+// lobe_id - 0 on the older fan surface, 1..n_inset_lobes on the inset lobes
+// -----------------------------------------------------------------------------
+struct lsdtt_alluvial_fan_surface
+{
+    lsdtt_raster_cpu dem;
+    lsdtt_raster_cpu lobe_id;
+};
+
+// -----------------------------------------------------------------------------
+// generate_alluvial_fan_surface
+//
+// A radial fan with younger lobes inset below the older surface.
+//
+// WHY THIS SURFACE EXISTS. A fan climbs continuously in height above its
+// channel from toe to apex, so banding a HAND field over a fan cuts it into
+// concentric arcs that correspond to nothing - the failure that motivates a
+// second reference field. Inset lobes, by contrast, sit a roughly CONSTANT
+// depth below the projection of the older surface, so a residual to a fitted
+// fan surface separates them cleanly. This generator is built to show both.
+//
+// apex_x_fraction, apex_y_fraction
+//   Apex position as a fraction of the grid extent; (0, 0) is the north-west
+//   corner, y increasing southward. The default puts the apex near the south
+//   edge so the fan spreads north across the grid.
+//
+// fan_gradient
+//   Radial fall in m/m at the apex.
+//
+// fan_concavity
+//   Reduction of that gradient with distance, giving the concave-up profile a
+//   real fan has:
+//     z(r) = apex_elevation - fan_gradient * r + fan_concavity * r^2 / (2 * r_ref)
+//   with r_ref the grid diagonal. 0 gives a straight cone (the plane-fit case);
+//   a positive value gives a profile that a degree-2 polynomial fits and a
+//   plane does not. Must be < fan_gradient so the surface never rises with
+//   distance; this is checked.
+//
+// n_inset_lobes, lobe_half_angle_deg, lobe_inset_m
+//   Wedges radiating from the apex, spread evenly across the fan's downslope
+//   half-plane, each lowered lobe_inset_m below the older surface. A lobe is
+//   NOT a step in the radial direction: it is parallel to the older surface, so
+//   the residual to a fitted fan is flat within each lobe and offset between
+//   them, which is exactly the signal a ladder on the residual field bands.
+// -----------------------------------------------------------------------------
+lsdtt_alluvial_fan_surface generate_alluvial_fan_surface(
+    const lsdtt_raster_meta& meta,
+    double apex_x_fraction     = 0.5,
+    double apex_y_fraction     = 0.95,
+    double apex_elevation      = 500.0,
+    double fan_gradient        = 0.03,
+    double fan_concavity       = 0.0,
+    int    n_inset_lobes       = 2,
+    double lobe_inset_m        = 4.0,
+    double lobe_half_angle_deg = 25.0,
+    double noise_amplitude_m   = 0.0,
+    int    seed                = 1,
+    int    n_threads           = 0
+);
+
+// Convenience overload
+lsdtt_alluvial_fan_surface generate_alluvial_fan_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    double apex_x_fraction     = 0.5,
+    double apex_y_fraction     = 0.95,
+    double apex_elevation      = 500.0,
+    double fan_gradient        = 0.03,
+    double fan_concavity       = 0.0,
+    int    n_inset_lobes       = 2,
+    double lobe_inset_m        = 4.0,
+    double lobe_half_angle_deg = 25.0,
+    double noise_amplitude_m   = 0.0,
+    int    seed                = 1,
+    int    n_threads           = 0
+);
+
 } // namespace lsdtt

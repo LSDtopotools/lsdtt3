@@ -1,0 +1,35 @@
+# Phase 1's band-then-label configuration, now driven through
+# lsdtt-fluvial-surfaces: phase 4 moved the whole height-reference half of the
+# pipeline out of lsdtt-flat-surface-finder, so this is where it lives.
+#
+# Four treads, three road-like riser gaps - the geometry in which the old
+# label-then-band ordering merges every tread into one surface.
+#
+# jenks, not antimode: a terrace flight is spaced linearly in height above the
+# channel, and the antimode finder bins on log10, which compresses the upper
+# treads until they merge and it returns no breaks at all.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: btl
+
+n_threads: 1
+write_output_format: gtiff
+
+fallback_relief_window_pixels: 5
+fallback_relief_threshold_metres: 2.0
+min_component_pixels: 50
+
+
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+
+channel_threshold_contributing_pixels: 500
+floodplain_max_height_metres: 5.0
+terrace_min_height_metres: 5.0
+
+write_banded_labels_raster: true
+write_surface_patches_csv: true
+write_ladder_windows_csv: true
+ladder_resolvability_kappa: 3.0

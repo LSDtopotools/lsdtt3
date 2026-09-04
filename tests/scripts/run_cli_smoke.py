@@ -101,6 +101,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--expect-raster-values",
+        action="append",
+        default=[],
+        help=(
+            "Expected exact set of non-negative band-1 values as "
+            "rel_path:V1,V2,...; nodata and negative sentinels are ignored"
+        ),
+    )
+    parser.add_argument(
         "--expect-sha256",
         action="append",
         default=[],
@@ -343,6 +352,27 @@ def assert_raster_checksum(raster_path: pathlib.Path, expected: int) -> None:
         )
 
 
+def assert_raster_values(raster_path: pathlib.Path, expected: set[float]) -> None:
+    cmd = ["gdal_translate", "-q", "-of", "XYZ", str(raster_path), "/vsistdout/"]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"gdal_translate failed for {raster_path} (exit {result.returncode})."
+        )
+    got = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 3:
+            continue
+        value = float(fields[2])
+        if value >= 0.0:
+            got.add(value)
+    if got != expected:
+        raise AssertionError(
+            f"Raster values mismatch for {raster_path}: expected {sorted(expected)}, "
+            f"got {sorted(got)}."
+        )
+
 def assert_sha256(file_path: pathlib.Path, expected_hex: str) -> None:
     h = hashlib.sha256()
     with file_path.open("rb") as f:
@@ -493,6 +523,11 @@ def main() -> int:
         for spec in args.expect_raster_checksum:
             rel_path, checksum_spec = spec.rsplit(":", 1)
             assert_raster_checksum(out_dir / rel_path, int(checksum_spec))
+
+        for spec in args.expect_raster_values:
+            rel_path, values_spec = spec.rsplit(":", 1)
+            expected = {float(v) for v in values_spec.split(",") if v}
+            assert_raster_values(out_dir / rel_path, expected)
 
         for spec in args.expect_sha256:
             rel_path, hash_hex = spec.rsplit(":", 1)

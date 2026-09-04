@@ -5667,6 +5667,206 @@ one per 10 adds 13% and remains 10.8x faster than bare Newton. Export probabilit
 topographic exported thickness, trajectories are exact across one/four threads, and particle CSV
 restart round trips preserve all state exactly.
 
+## 10n. The fluvial-surfaces split, and band-then-label (2026-09-04)
+
+`lsdtt-flat-surface-finder` had grown from a morphometric detector into a
+109-parameter pipeline that also did flow routing, channel scope resolution,
+height above nearest drainage (HAND), floodplain/terrace classification and
+vector network output. `lsdtt-valley-centreline` independently re-derived most
+of the same channel-relative machinery to reach the part unique to it. The two
+overlapped over roughly a third of their parameter surface and disagreed about
+which one owned the valley.
+
+The work split them at the point where a channel network becomes necessary:
+
+| | before | after |
+|---|---|---|
+| `lsdtt-flat-surface-finder` | 109 params, 2696 lines | 52 params, 1422 lines |
+| `lsdtt-fluvial-surfaces` | did not exist | ~75 params |
+| `lsdtt-valley-centreline` | 68 params | 43 params |
+| `lsdtt_valley_centreline_cpu` | 1484 lines | 1051 lines |
+
+### The load-bearing change: band first, then label
+
+The incumbent ordering labelled connected components once over the whole flat
+mask and consulted height afterwards. That forces the riser network to be
+continuous: a road or gully cutting through a riser lets two treads at different
+heights merge into one component, and nothing downstream can separate them
+again. Four independent mechanisms had accumulated to attack that one leak.
+
+Banding the height reference FIRST and labelling within each band makes the
+merge impossible rather than detectable — two pixels can only share a label if
+they share a band, and two treads at different heights are by construction in
+different bands. The riser never has to be found and never has to be continuous.
+
+**Measured on a synthetic dissected staircase** (4 treads, 8 m risers, 3
+road-like gaps 30 m wide), recorded here because the old path was deleted and
+the comparison cannot be re-run:
+
+| | labels | worst label spans | tread purity |
+|---|---|---|---|
+| old ordering (label, then band) | 2 | all 4 true treads | 0 |
+| band-then-label | 8 in 4 bands | 1 tread | 1.0 |
+
+### A fan needs a cone, not a plane or a poly2
+
+HAND is the right reference field for a terrace flight, where treads sit at a
+roughly constant height above the channel. It is the wrong field for a fan: a
+fan climbs continuously in HAND from toe to apex, so a HAND ladder cuts one
+surface into arcs banded by distance from the apex rather than by age. What is
+constant on a fan is the depth of an inset lobe below the PROJECTION of the
+older surface, which is what a residual to a fitted surface measures.
+
+The obvious fitted surfaces do not work. A fan is radial about its apex, and a
+cone is not a low-order polynomial in x and y; over a fan spanning a wide range
+of azimuth the misfit is systematic, shaped like the fan, and larger than the
+depositional offsets the residual exists to isolate.
+
+**Measured on a synthetic fan** (2 km radius, 0.03 radial gradient, two lobes
+inset 4 m below the older surface). The figure is the spread of the OLDER
+SURFACE's own residual, which should be flat — so its spread is pure misfit:
+
+| fitted surface | older-surface residual p5..p95 | spread | vs the 4 m inset |
+|---|---|---|---|
+| plane (RANSAC, 1 m tolerance) | -31.6 .. +2.7 m | ~34 m | swamped |
+| poly2 (OLS) | -4.8 .. +5.2 m | ~10 m | swamped |
+| **cone (OLS, auto apex)** | **-0.15 .. +0.15 m** | **~0.3 m** | **resolved** |
+
+Consequence, with both arms running the SAME ladder and the same automatic level
+selection so that only the field differs: under HAND the ladder chose 12 levels
+and cut the older surface into 44 components; under the cone it chose 2, the
+older surface stayed 2 components, and each inset lobe came out as exactly one
+component at purity 1.0.
+
+`fitted_surface_algorithm_choice` therefore offers `cone | plane_ransac | poly2`
+and defaults to `cone`. Plane and poly2 remain right for a piedmont, a terrace
+tread, or a broadly curved surface with no single centre.
+
+### The antimode break finder cannot band a signed field
+
+The antimode finder builds its histogram on `log10` of the field with a small
+positive floor. That suits HAND, which is non-negative by construction, and
+destroys a signed one: every negative value is floored into the lowest bin, so
+on a fitted-surface residual the entire below-surface population — the inset
+lobes, the thing being looked for — collapses into a single spike and the breaks
+returned are meaningless.
+
+`build_reference_field_ladder` throws rather than banding a field containing
+negative values with the antimode finder, and `lsdtt-fluvial-surfaces` selects
+`jenks` automatically when `fitted_surface` is chosen and no break algorithm was
+named — while rejecting an explicit `antimode` with that explanation. Choosing
+silently only where nothing was asked for is the line: quietly running something
+other than what was requested is worse than refusing.
+
+### How many levels: a constraint, not a trade-off
+
+A level count is ADMISSIBLE when the tightest gap between consecutive band
+centres clears `kappa * E_v`, with `E_v` the vertical accuracy of the elevation
+product. The answer is the largest admissible count. Where none qualifies the
+engine reports UNRESOLVED rather than returning a number, because what may be
+claimed about the ladder depends on which branch was taken.
+
+Two decisions inside that are easy to get wrong and are pinned by tests:
+
+- **Band centres are MEDIANS of each band's values, not midpoints of the break
+  edges.** The midpoint is geometric and depends only on where the breaks fell;
+  the median is where the surface actually sits. Terrace correlation cares about
+  the elevation of the tread. This is a deliberate divergence from the published
+  source of the `3 * E_v` rule and is flagged in the header so it is not "fixed"
+  back.
+- **Every count in range is scanned, never searched downward.** Under median
+  centres admissibility is not monotone: merging two well-separated bands can
+  place the merged median next to a neighbour's, so a coarser partition can fail
+  where a finer one passed.
+
+There is deliberately **no additive score** of the form
+`w1 * GVF + w2 * (gap / gap_min)`. Goodness-of-variance-fit is bounded on [0, 1]
+while the band gap scales as `range / k` and is unbounded, so over a large
+vertical range the gap term dominates by orders of magnitude and the criterion
+collapses to the smallest count regardless of the data. `unit_fluvial_surface_
+ladder` includes an arithmetic arm demonstrating that the additive score changes
+its argmax on data where the shipped rule does not.
+
+### The parameter key policy
+
+Splitting the CLIs renamed or retired more than 50 parameters. The parser's
+typed parses iterate over a CLI's DEFAULTS MAPS and pull matching keys out of
+the file, so a key present in the file but absent from every defaults map was
+never looked at by anything — silently a no-op. An old parameter file saying
+`find_floodplain: true` would have run happily having done no classification at
+all, with no error and no warning.
+
+`lsdtt_param_parser` now scans the RAW KEYS PRESENT IN THE FILE (never the
+defaults maps, which would silently re-accept everything) against three maps:
+
+| group | behaviour | for |
+|---|---|---|
+| removed | exact migration message, exit 1 | keys that TURNED AN ANALYSIS ON, where ignoring one leaves the user believing it ran |
+| deprecated alias | value copied to the new name, warning names it | a parameter that still exists under a new name |
+| ignored | specific message, run continues | a parameter that moved to another tool, or whose mechanism no longer exists |
+
+Anything in none of the three and in no defaults map is reported as an unknown
+key — a warning, never fatal, since a tool may legitimately read a key by
+another route.
+
+**That scan found three stale committed parameter files on its first run**, each
+carrying a key no CLI declares and that had therefore been doing nothing:
+`hydraulic_run_mode` and `raster_is_filled` in the two hydraulic templates, and
+`n_timesteps` in the `lem_coupling_*` templates. It also explains two long-
+standing red tests: `failure_hydraulic_routing_invalid_mode` asserts a message
+`lsdtt-graphflood` cannot produce, because that CLI does not declare
+`hydraulic_run_mode` at all.
+
+### Testing regime
+
+Label `fluvial_surfaces`, 23 tests, run as
+`ctest -L fluvial_surfaces -LE heavy`. What counts as a genuine regression:
+
+- tread purity on the dissected staircase falling below 1.0;
+- any ladder window reporting `resolved` when its minimum band-centre gap is
+  below `kappa * E_v`;
+- the label -> band map becoming multi-valued;
+- the `hand_fname` path diverging from the computed path;
+- `find_population_breaks` output moving (T5) — it is shared, so that moves two
+  tools at once.
+
+Not regressions: absolute component counts on real DEMs, and timings.
+
+Three checks are worth singling out because no single-file assertion can express
+them, and each needed its own runner:
+
+- `rigorous_fluvial_surfaces_label_band_identity` checks the label JOIN across
+  outputs — that every label in the raster has exactly one patch row, that the
+  label -> band map is single-valued and agrees with the patch table, and that
+  every per-pixel profile row joins back and agrees with both rasters. A schema
+  assertion cannot see a join.
+- `smoke_fluvial_surfaces_hand_input` runs the tool twice and requires the
+  supplied-HAND path to produce bit-identical bands and labels to the computed
+  path. Both arms use a global ladder, and that is load-bearing: a raster
+  carries no HAND donor nodes, so a supplied HAND cannot be windowed, and
+  comparing a windowed run against a supplied one would fail for a reason that
+  has nothing to do with composability.
+- `smoke_fluvial_surfaces_pipeline` runs both CLIs and asserts the HANDOVER —
+  that stage 2 reports the valley was supplied, the one line separating "read
+  the mask" from "quietly derived its own".
+
+### A process note that cost real time
+
+During the split, an edit to `tests/CMakeLists.txt` that deleted a range between
+two named anchors silently removed six test registrations that happened to sit
+between them. Every run afterwards reported `100% tests passed`, because a
+deleted test cannot fail. The only visible symptom was the compartment count
+falling from 21 to 17, and that was not noticed for two phases.
+
+**A green run is not evidence when the run is a different set of tests.** Compare
+the test COUNT, and preferably the test SET, across any change that was not
+meant to remove tests. `tests/CMakeLists.txt` now carries a guard that refuses to
+configure when a test matches no domain rule and would be unreachable by a
+compartment run; that guard caught a badly-named test immediately in a later
+phase and is exactly the protection this failure needed.
+
+---
+
 ## 11. Adding a test
 
 1. **Can it be a property or an analytic oracle?** Prefer that over a

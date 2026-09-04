@@ -174,55 +174,39 @@ int main(int argc, char* argv[])
         "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
     // --- Valley identification ---
-    float_default_map["valley_corridor_width_metres"] = 5000.0f;
-    help_map["valley_corridor_width_metres"] = {"float","5000",
-        "Corridor half-width (m): pixels within this Euclidean distance of "
-        "the channel form the HAND population and can be valley pixels.",
-        "Deliberately wide; the HAND break, not the corridor, defines the "
-        "valley.",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_fallback_hand_metres"] = 10.0f;
-    help_map["valley_fallback_hand_metres"] = {"float","10",
-        "Valley HAND threshold used when the corridor population shows no "
-        "break.","",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_force_hand_metres"] = 0.0f;
-    help_map["valley_force_hand_metres"] = {"float","0",
-        "Force a constant valley HAND threshold (m).",
-        "When > 0, bypasses break detection and uses this threshold for all "
-        "reaches/channels. <= 0 disables forced mode.",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_min_hand_metres"] = 2.0f;
-    help_map["valley_min_hand_metres"] = {"float","2",
-        "Floor on a detected valley HAND break (m).",
-        "Stops a dip right after the valley-floor spike from producing a "
-        "degenerate channel-hugging valley.",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_max_hand_metres"] = 0.0f;
-    help_map["valley_max_hand_metres"] = {"float","0",
-        "Cap on the detected valley HAND break (m).","0 = no cap.",
-        "Valley identification", "param", ""};
 
-    int_default_map["valley_dilation_pixels"] = 4;
-    help_map["valley_dilation_pixels"] = {"int","4",
-        "Constrained dilation of valley patches (pixels).",
-        "Fills interior holes; dilated pixels are only retained when closer "
-        "to the channel than the farthest pixel of the patch they grow from, "
-        "so patches cannot extend outward away from the channel. Patches not "
-        "adjacent to the channel are then removed. 0 disables dilation.",
-        "Valley identification", "param", ""};
+    // --- Valley mask input (phase 5 of the fluvial-surfaces plan) ---
+    string_default_map["valley_mask_fname"] = "";
+    help_map["valley_mask_fname"] = {"string","",
+        "Valley mask raster from lsdtt-fluvial-surfaces, in read_path.",
+        "Cells > 0.5 are valley. Normally <stem>_valley_mask.tif from "
+        "lsdtt-fluvial-surfaces, which is band 0 of its reference-field ladder. "
+        "When supplied, this tool does NOT identify the valley: it skips the "
+        "corridor HAND break search entirely and goes straight to the medial-"
+        "axis centreline, the trough carve and the pinned baseline, which are "
+        "the parts that are genuinely its own. Every valley_* break parameter "
+        "is then ignored, and each channel reports no break rather than a "
+        "fabricated one. Leave empty to derive the valley here as before "
+        "(deprecated: that path moves out entirely at the next step).",
+        "Valley mask","io",""};
 
-    float_default_map["valley_max_detour_ratio"] = 3.0f;
-    help_map["valley_max_detour_ratio"] = {"float","3.0",
-        "Max ratio of through-valley (geodesic) to straight-line distance "
-        "from the channel for a valley pixel.",
-        "Prunes flats only reachable via a long corridor detour (e.g. a "
-        "neighbouring channel's floodplain). 0 disables.",
-        "Valley identification", "param", ""};
+
+
+    float_default_map["refine_max_height_metres"] = 0.0f;
+    help_map["refine_max_height_metres"] = {"float","0.0",
+        "Height above the pinned baseline below which a pixel is valley [m].",
+        "Required by refine_valley_with_baseline, which does nothing while this "
+        "is 0. It used to reuse the HAND break this tool derived itself; "
+        "identification has moved to lsdtt-fluvial-surfaces, so the threshold "
+        "is now stated rather than inherited. Refusing to run without one is "
+        "deliberate: a refinement against a fabricated threshold would look "
+        "like a result and be one only by accident. The refined mask is written "
+        "for you and is never fed back to lsdtt-fluvial-surfaces.",
+        "Valley mask","param","refine_valley_with_baseline"};
 
     bool_default_map["refine_valley_with_baseline"] = true;
     help_map["refine_valley_with_baseline"] = {"bool","true",
@@ -233,94 +217,14 @@ int main(int argc, char* argv[])
         "away.",
         "Valley identification", "param", ""};
 
-    float_default_map["valley_break_reach_window_metres"] = 0.0f;
-    help_map["valley_break_reach_window_metres"] = {"float","0",
-        "Along-channel window length (m) for reach-adaptive valley breaks.",
-        "The valley HAND break is detected per window, so a channel running "
-        "from a confined canyon onto a broad valley floor gets a different "
-        "threshold in each setting. 0 = auto (max of 2 km and channel "
-        "length / 8); negative = single whole-channel break.",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_wall_peak_fraction"] = 0.02f;
-    help_map["valley_wall_peak_fraction"] = {"float","0.02",
-        "Peak-detection floor for the HAND population, as a fraction of the "
-        "histogram maximum.",
-        "Low by design: a valley-floor mode is tiny next to a mountain wall "
-        "peak. The valley break is the FIRST qualifying dip after the first "
-        "mode above this floor.",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_break_fraction"] = 0.6f;
-    help_map["valley_break_fraction"] = {"float","0.6",
-        "Dip acceptance threshold for the HAND break: two adjacent modes of "
-        "the smoothed HAND density are kept SEPARATE (a valley break placed "
-        "in the trough between them) only when the trough falls below this "
-        "fraction of the smaller flanking peak; a shallower trough merges the "
-        "modes.",
-        "Raise it (e.g. 0.65-0.7) to accept shallower valley-floor/wall "
-        "separations, so more marginal valley-floor modes become breaks; "
-        "lower it to demand deeper, cleaner troughs. Used as-is by the 'fixed' "
-        "method; ignored by 'relief_adaptive' (which derives it per reach).",
-        "Valley identification", "param", ""};
 
-    string_default_map["valley_break_method"] = "fixed";
-    help_map["valley_break_method"] = {"string","fixed",
-        "HAND break acceptance-fraction method. 'fixed' uses "
-        "valley_break_fraction for every reach. 'relief_adaptive' derives the "
-        "fraction per reach from local topographic relief: confined, "
-        "high-relief reaches get a more permissive fraction (a real valley "
-        "wall makes a deep trough), low-relief plateau reaches get a stricter "
-        "fraction (a broad shallow saddle is not a valley wall). The "
-        "relative-depth test is unchanged; only the fraction varies.",
-        "Use 'relief_adaptive' when a single fraction over- or under-grows "
-        "different reaches of the same channel (e.g. a channel that runs from "
-        "a confined canyon onto a glacial plateau).",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_break_fraction_min"] = 0.5f;
-    help_map["valley_break_fraction_min"] = {"float","0.5",
-        "relief_adaptive method: acceptance fraction for the lowest-relief "
-        "reaches (strictest; resists growing valleys onto flat plateaus).",
-        "Lower it to make plateau reaches even stricter.",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_break_fraction_max"] = 0.7f;
-    help_map["valley_break_fraction_max"] = {"float","0.7",
-        "relief_adaptive method: acceptance fraction for the highest-relief "
-        "reaches (most permissive; captures shallow floors in confined "
-        "valleys).",
-        "Raise it to fill more of a confined valley floor.",
-        "Valley identification", "param", ""};
 
-    float_default_map["valley_break_relief_window_metres"] = 300.0f;
-    help_map["valley_break_relief_window_metres"] = {"float","300",
-        "relief_adaptive method: moving-window radius (m) for the local-relief "
-        "raster (max-min elevation) that drives the adaptive fraction. Should "
-        "span a valley wall.",
-        "Increase for broad valleys, decrease for narrow ones.",
-        "Valley identification", "param", ""};
 
-    bool_default_map["write_valley_hand_histogram"] = true;
-    help_map["write_valley_hand_histogram"] = {"bool","true",
-        "Write the per-channel corridor HAND histogram used for break "
-        "detection.",
-        "Output suffix: _valley_hand_hist.csv with source_id, hand_m (bin "
-        "centre), n_pixels.",
-        "Valley identification", "switch", ""};
 
-    bool_default_map["write_valley_break_metric"] = true;
-    help_map["write_valley_break_metric"] = {"bool","true",
-        "Write the actual break-decision metric (the SMOOTHED log10-HAND "
-        "density the mode segmentation and break run on, not the raw "
-        "histogram), with surviving mode peaks/boundaries and the chosen "
-        "break flagged.",
-        "Output suffix: _valley_break_metric.csv (long format) with "
-        "source_id, scope (global/window), window_centre_m, hand_m, "
-        "raw_count, smoothed, is_peak (surviving mode peak), is_boundary, "
-        "is_raw_peak (candidate peak before merging), is_break. Feeds the "
-        "reviewer break-logic figure (phase3_valley_break_metric.py).",
-        "Valley identification", "switch", ""};
 
     // --- Trough carving / routing ---
     float_default_map["trough_scaling_factor"] = 0.1f;
@@ -376,16 +280,6 @@ int main(int argc, char* argv[])
         "Output suffix: _valley_mask.tif",
         "Outputs", "switch", ""};
 
-    bool_default_map["write_valley_reach_id_raster"] = true;
-    help_map["write_valley_reach_id_raster"] = {"bool","true",
-        "Write a per-channel reach-id raster: every corridor pixel is tagged "
-        "with the along-channel reach (window) of its nearest channel node - "
-        "the exact population each per-reach HAND break histogram is built "
-        "from.",
-        "Output suffix: _valley_reach_id_ch<sid>.tif (Int16, nodata outside "
-        "the corridor). Feeds the reach map (phase3_valley_reach_map.py / "
-        "lsdviztools3.charts.plot_valley_reach_map).",
-        "Outputs", "switch", ""};
 
     bool_default_map["write_hillshade_raster"] = false;
     help_map["write_hillshade_raster"] = {"bool","false",
@@ -619,6 +513,54 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // -------------------------------------------------------------------------
+    // Parameter key policy
+    //
+    // Valley identification left this tool at phase 5 of the fluvial-surfaces
+    // plan, taking fifteen parameters with it. Without the maps below every one
+    // of them would sit in an existing parameter file doing nothing, silently,
+    // because the typed parses only look at keys a defaults map declares.
+    //
+    // NOTHING is in the removed (hard-error) group, and that is a decision
+    // rather than an oversight. The group exists for keys whose absence could
+    // be mistaken for a missing analysis - but `valley_mask_fname` is now
+    // REQUIRED, so a stale parameter file cannot get far enough to be misread:
+    // it stops on the missing mask, with a message naming where identification
+    // went. A second hard error would say the same thing twice.
+    // -------------------------------------------------------------------------
+    pp.set_deprecated_aliases({
+        {"valley_corridor_width_metres", "valley_corridor_half_width_metres"} });
+
+    {
+        std::map<std::string, std::string> ignored;
+        for (const char* k : {
+            "valley_fallback_hand_metres", "valley_force_hand_metres",
+            "valley_min_hand_metres", "valley_max_hand_metres",
+            "valley_wall_peak_fraction", "valley_break_fraction",
+            "valley_break_method", "valley_break_fraction_min",
+            "valley_break_fraction_max", "valley_break_relief_window_metres",
+            "valley_break_reach_window_metres", "valley_corridor_half_width_metres",
+            "write_valley_hand_histogram", "write_valley_break_metric",
+            "write_valley_reach_id_raster" })
+        {
+            ignored[k] = std::string(k) +
+                " is ignored: this tool no longer identifies the valley. "
+                "Set the equivalent in lsdtt-fluvial-surfaces and pass its "
+                "valley mask as valley_mask_fname";
+        }
+
+        // These two moved rather than vanished: the cleaning now happens where
+        // the mask is made, so the knobs live with it.
+        ignored["valley_dilation_pixels"] =
+            "valley_dilation_pixels is ignored: valley-mask cleaning moved to "
+            "lsdtt-fluvial-surfaces, which declares the same parameter";
+        ignored["valley_max_detour_ratio"] =
+            "valley_max_detour_ratio is ignored: valley-mask cleaning moved to "
+            "lsdtt-fluvial-surfaces, which declares the same parameter";
+
+        pp.set_ignored_keys(std::move(ignored));
+    }
+
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map,
         string_default_map);
@@ -689,42 +631,20 @@ int main(int argc, char* argv[])
     lsdtt::channel_scope_result scope;
     try
     {
-        auto resolve_pt_fmt =
-            [](const std::string& fmt) -> lsdtt::lsdtt_point_input_format
-        {
-            if (fmt == "auto_detect" || fmt == "auto")
-                return lsdtt::lsdtt_point_input_format::auto_detect;
-            if (fmt == "csv" || fmt == "csv_latitude_longitude_epsg4326")
-                return lsdtt::lsdtt_point_input_format::
-                    csv_latitude_longitude_epsg4326;
-            if (fmt == "ogr_vector_layer" || fmt == "vector" || fmt == "ogr")
-                return lsdtt::lsdtt_point_input_format::ogr_vector_layer;
-            throw std::runtime_error("Unknown point input format: " + fmt);
-        };
-
+        // Point loading is identical in every CLI that takes source and
+        // outlet points, so it lives in lsdtt_channel_scope_cpu. CLI 1 and
+        // lsdtt-fluvial-surfaces call the same function.
         auto load_role_flats = [&](const std::string& role)
             -> std::vector<std::int64_t>
         {
-            const std::string ppath = sf[role + "_points_path"];
-            if (ppath.empty()) return {};
-            lsdtt::lsdtt_point_input_options popts;
-            popts.input_format =
-                resolve_pt_fmt(sf[role + "_points_input_format"]);
-            popts.vector_layer_name = sf[role + "_points_layer_name"];
-            popts.csv_latitude_field_name =
-                sf[role + "_points_latitude_field_name"];
-            popts.csv_longitude_field_name =
-                sf[role + "_points_longitude_field_name"];
-            popts.keep_points_outside_raster = true;
-            std::cout << "Loading " << role << " points from: " << ppath << "\n";
-            std::vector<lsdtt::lsdtt_input_point> pts =
-                lsdtt::load_points_in_raster_crs(
-                    ppath, routing_dem.get_meta(), popts);
-            std::vector<std::int64_t> flats =
-                lsdtt::successfully_mapped_input_points_to_flats(pts);
-            std::cout << "  " << pts.size() << " point(s) loaded, "
-                      << flats.size() << " mapped to valid cells\n";
-            return flats;
+            lsdtt::point_role_input in;
+            in.role_name            = role;
+            in.path                 = sf[role + "_points_path"];
+            in.input_format         = sf[role + "_points_input_format"];
+            in.layer_name           = sf[role + "_points_layer_name"];
+            in.latitude_field_name  = sf[role + "_points_latitude_field_name"];
+            in.longitude_field_name = sf[role + "_points_longitude_field_name"];
+            return lsdtt::load_role_point_flats(in, routing_dem.get_meta());
         };
 
         lsdtt::channel_scope_request scope_req;
@@ -763,37 +683,12 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     std::cout << "\n--- Valley identification + centreline routing ---\n";
     lsdtt::valley_centreline_request vreq;
-    vreq.corridor_width_metres =
-        static_cast<double>(ff["valley_corridor_width_metres"]);
-    vreq.fallback_valley_hand_metres =
-        static_cast<double>(ff["valley_fallback_hand_metres"]);
-    vreq.force_valley_hand_metres =
-        static_cast<double>(ff["valley_force_hand_metres"]);
-    vreq.max_valley_hand_metres =
-        static_cast<double>(ff["valley_max_hand_metres"]);
-    vreq.wall_peak_fraction =
-        static_cast<double>(ff["valley_wall_peak_fraction"]);
-    vreq.break_valley_fraction =
-        static_cast<double>(ff["valley_break_fraction"]);
-    vreq.break_method =
-        (sf["valley_break_method"] == "relief_adaptive") ? 1 : 0;
-    vreq.break_fraction_min =
-        static_cast<double>(ff["valley_break_fraction_min"]);
-    vreq.break_fraction_max =
-        static_cast<double>(ff["valley_break_fraction_max"]);
-    vreq.break_relief_window_metres =
-        static_cast<double>(ff["valley_break_relief_window_metres"]);
-    vreq.min_valley_hand_metres =
-        static_cast<double>(ff["valley_min_hand_metres"]);
-    vreq.break_reach_window_metres =
-        static_cast<double>(ff["valley_break_reach_window_metres"]);
     vreq.refine_valley_with_baseline = bf["refine_valley_with_baseline"];
+    vreq.refine_max_height_metres =
+        static_cast<double>(ff["refine_max_height_metres"]);
     vreq.store_per_channel_valley_masks =
         bf["write_valley_mask_raster"] || bf["write_valley_cross_sections"] ||
         bf["write_valley_reach_id_raster"];
-    vreq.valley_dilation_pixels      = ifs["valley_dilation_pixels"];
-    vreq.valley_max_detour_ratio     =
-        static_cast<double>(ff["valley_max_detour_ratio"]);
     vreq.trough_scaling_factor =
         static_cast<double>(ff["trough_scaling_factor"]);
     vreq.trough_along_channel_slope =
@@ -805,6 +700,49 @@ int main(int argc, char* argv[])
     vreq.fill_min_slope = static_cast<double>(ff["trough_fill_min_slope"]);
     vreq.min_centreline_nodes = ifs["min_centreline_nodes"];
     vreq.n_threads = ifs["n_threads"];
+
+    // Load the supplied valley mask, if any. Held here so it outlives the
+    // request, which only stores a pointer.
+    lsdtt::lsdtt_raster_cpu supplied_valley;
+    if (sf["valley_mask_fname"].empty())
+    {
+        std::cerr << "FATAL: valley_mask_fname is required.\n"
+                     "  This tool no longer identifies the valley: that is now "
+                     "lsdtt-fluvial-surfaces, which bands a reference field and "
+                     "writes band 0 as <stem>_valley_mask.tif.\n"
+                     "  Run lsdtt-fluvial-surfaces first and pass that raster "
+                     "as valley_mask_fname.\n";
+        return 1;
+    }
+    {
+        const std::string vpath =
+            pp.add_read_path_if_needed(sf["valley_mask_fname"]);
+        std::cout << "Loading valley mask: " << vpath << "\n";
+        try
+        {
+            lsdtt::lsdtt_data_loader vloader;
+            vloader.open_raster(vpath);
+            supplied_valley = lsdtt::lsdtt_raster_cpu(vloader);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: loading valley mask: " << e.what() << "\n";
+            return 1;
+        }
+        const lsdtt::lsdtt_raster_meta& vm = supplied_valley.get_meta();
+        if (vm.n_rows != dem.get_meta().n_rows ||
+            vm.n_cols != dem.get_meta().n_cols)
+        {
+            std::cerr << "FATAL: valley mask is " << vm.n_rows << "x"
+                      << vm.n_cols << " but the DEM is "
+                      << dem.get_meta().n_rows << "x"
+                      << dem.get_meta().n_cols << ".\n";
+            return 1;
+        }
+        vreq.supplied_valley_mask = &supplied_valley;
+        std::cout << "  Valley identification is supplied, so the corridor "
+                     "HAND break search is skipped.\n";
+    }
 
     lsdtt::valley_centreline_result vres;
     try
@@ -836,11 +774,16 @@ int main(int argc, char* argv[])
             bmax = std::max(bmax, b);
         }
         std::cout << "  channel " << ch.source_id << ": "
-                  << ch.n_valley_pixels << " valley px, HAND break "
-                  << ch.valley_hand_break_metres << " m"
-                  << " (reach range " << bmin << "-" << bmax << " m, "
-                  << ch.window_break_m.size() << " windows)"
-                  << (ch.used_fallback_break ? " (fallback)" : "")
+                  << ch.n_valley_pixels << " valley px, ";
+        if (!ch.valley_break_derived)
+            std::cout << "break not derived (valley supplied)";
+        else
+            std::cout << "HAND break "
+                      << ch.valley_hand_break_metres << " m"
+                      << " (reach range " << bmin << "-" << bmax << " m, "
+                      << ch.window_break_m.size() << " windows)"
+                      << (ch.used_fallback_break ? " (fallback)" : "");
+        std::cout
                   << ", centreline "
                   << (ch.routing_succeeded
                           ? std::to_string(ch.centreline_flats.size()) +

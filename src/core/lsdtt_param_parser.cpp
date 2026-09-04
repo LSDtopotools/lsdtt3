@@ -19,6 +19,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -151,6 +152,105 @@ void lsdtt_param_parser::parse_file_io()
     }
 }
 
+// -----------------------------------------------------------------------------
+// apply_key_policy
+//
+// Runs against parameter_map_ - the RAW KEYS READ FROM THE FILE - not against
+// the defaults maps. See the header for why that distinction is the design.
+//
+// Order matters. Removed keys are checked first and stop the run, because there
+// is no point warning about aliases in a file that is going to be rejected
+// anyway. Aliases are then rewritten into parameter_map_ so the typed parses
+// that follow pick the value up under its new name, and the old key is erased
+// so it does not also surface as unknown. Whatever is left over is unknown.
+// -----------------------------------------------------------------------------
+void lsdtt_param_parser::apply_key_policy(
+    const std::vector<std::string>& declared_keys)
+{
+    // Keys the parser consumes itself in parse_file_io(). They never appear in
+    // a CLI's defaults maps, so without this they would every one of them be
+    // reported as unknown.
+    static const std::set<std::string> reserved = {
+        "read_path", "write_path", "read_fname", "write_fname",
+        "boundary_conditions"
+    };
+
+    // --- 1. Removed keys: print every one, then stop -------------------------
+    std::vector<std::string> removed_present;
+    for (const auto& [old_key, message] : removed_key_message_map_)
+    {
+        if (parameter_map_.count(old_key)) removed_present.push_back(old_key);
+    }
+    if (!removed_present.empty())
+    {
+        // All of them, not just the first: a user migrating an old file should
+        // get the whole list in one run rather than one key per attempt.
+        std::cerr << "\n";
+        for (const std::string& key : removed_present)
+        {
+            std::cerr << "FATAL: " << removed_key_message_map_[key] << "\n";
+        }
+        std::cerr << "  " << removed_present.size()
+                  << " removed parameter(s) in " << param_fname_
+                  << ". Remove or migrate them and run again.\n";
+        std::exit(1);
+    }
+
+    // --- 2. Deprecated aliases: carry the value across, name the replacement --
+    for (const auto& [old_key, new_key] : deprecated_alias_map_)
+    {
+        if (!parameter_map_.count(old_key)) continue;
+
+        if (parameter_map_.count(new_key))
+        {
+            std::cerr << "WARNING: '" << old_key << "' is deprecated and '"
+                      << new_key << "' was also supplied. Using '" << new_key
+                      << "'; the deprecated key is ignored.\n";
+        }
+        else
+        {
+            parameter_map_[new_key] = parameter_map_[old_key];
+            std::cerr << "WARNING: '" << old_key << "' is deprecated; use '"
+                      << new_key << "'. Its value has been applied to '"
+                      << new_key << "' for this run.\n";
+        }
+        parameter_map_.erase(old_key);
+    }
+
+    // --- 3. Ignored keys: named, explained, and survived ---------------------
+    // Erased after reporting so they do not also surface as unknown: the
+    // specific message is strictly better than "not recognised", and printing
+    // both for one key would read as two separate problems.
+    for (const auto& [old_key, message] : ignored_key_message_map_)
+    {
+        if (!parameter_map_.count(old_key)) continue;
+        std::cerr << "WARNING: " << message << "\n";
+        parameter_map_.erase(old_key);
+    }
+
+    // --- 4. Unknown keys: a warning, never fatal -----------------------------
+    if (!report_unknown_keys_) return;
+
+    const std::set<std::string> declared(declared_keys.begin(),
+                                         declared_keys.end());
+    std::vector<std::string> unknown;
+    for (const auto& [key, value] : parameter_map_)
+    {
+        (void)value;
+        if (reserved.count(key) || declared.count(key)) continue;
+        unknown.push_back(key);
+    }
+    if (unknown.empty()) return;
+
+    std::cerr << "WARNING: " << unknown.size()
+              << " parameter(s) in " << param_fname_
+              << " are not used by this tool and were ignored:\n";
+    for (const std::string& key : unknown)
+        std::cerr << "  " << key << "\n";
+    std::cerr << "  Check for a typo, or run with -h to list the parameters "
+                 "this tool accepts.\n";
+}
+
 void lsdtt_param_parser::parse_all_parameters(
     const std::map<std::string, float>&       defaults_f,
     const std::map<std::string, int>&         defaults_i,
@@ -158,6 +258,13 @@ void lsdtt_param_parser::parse_all_parameters(
     const std::map<std::string, std::string>& defaults_s
 )
 {
+    std::vector<std::string> declared;
+    for (const auto& kv : defaults_f) declared.push_back(kv.first);
+    for (const auto& kv : defaults_i) declared.push_back(kv.first);
+    for (const auto& kv : defaults_b) declared.push_back(kv.first);
+    for (const auto& kv : defaults_s) declared.push_back(kv.first);
+    apply_key_policy(declared);
+
     parse_float_parameters(defaults_f);
     parse_int_parameters(defaults_i);
     parse_bool_parameters(defaults_b);
@@ -172,6 +279,14 @@ void lsdtt_param_parser::parse_all_parameters(
     const std::map<std::string, double>&      defaults_d
 )
 {
+    std::vector<std::string> declared;
+    for (const auto& kv : defaults_f) declared.push_back(kv.first);
+    for (const auto& kv : defaults_i) declared.push_back(kv.first);
+    for (const auto& kv : defaults_b) declared.push_back(kv.first);
+    for (const auto& kv : defaults_s) declared.push_back(kv.first);
+    for (const auto& kv : defaults_d) declared.push_back(kv.first);
+    apply_key_policy(declared);
+
     parse_float_parameters(defaults_f);
     parse_int_parameters(defaults_i);
     parse_bool_parameters(defaults_b);
