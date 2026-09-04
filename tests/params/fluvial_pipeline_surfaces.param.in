@@ -1,0 +1,26 @@
+# Stage 1 of the two-command pipeline: identify the valley.
+#
+# ladder_level_count 2 is the valley cut - the lowest of two bands IS the valley
+# floor. There is no "valley mode" in lsdtt-fluvial-surfaces; a valley is just a
+# terrace ladder with k = 2, which is the whole point of section 4.6.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: vcin
+
+n_threads: 1
+write_output_format: gtiff
+
+fallback_admission_algorithm_choice: relief
+fallback_relief_window_pixels: 5
+fallback_relief_threshold_metres: 2.0
+min_component_pixels: 50
+
+reference_field_algorithm_choice: hand
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 2
+vertical_accuracy_metres: 0.5
+
+channel_threshold_contributing_pixels: 500
+write_valley_mask_raster: true
+clean_valley_mask: true

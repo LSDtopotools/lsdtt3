@@ -54,10 +54,16 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
+#include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_flow_base.hpp"
+#include "../core/lsdtt_junction_network_base.hpp"
+#include "../core/lsdtt_point_input.hpp"
+#include "../core/lsdtt_raster_meta.hpp"
 #include "lsdtt_flow_snapping_cpu.hpp"
+#include "lsdtt_raster_cpu.hpp"
 
 namespace lsdtt
 {
@@ -176,6 +182,121 @@ struct channel_scope_result
 [[nodiscard]] channel_scope_result resolve_channel_scope(
     const lsdtt_flow_base&       flow,
     const channel_scope_request& request
+);
+
+// =============================================================================
+// Shared CLI-side plumbing
+//
+// Everything below is here rather than in a CLI because more than one CLI needs
+// it and a function at file scope in a CLI is invisible to the rest of the
+// project. lsdtt-flat-surface-finder, lsdtt-fluvial-surfaces and
+// lsdtt-valley-centreline all resolve a channel scope from the same parameter
+// names, write the same scope diagnostics, and write the same three channel
+// network layers; before this they each carried their own copy.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// resolve_point_input_format
+//
+// Map a CLI *_points_input_format string onto the enum. Throws
+// std::runtime_error naming the offending value if it matches nothing.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_point_input_format resolve_point_input_format(
+    const std::string& format_name
+);
+
+// -----------------------------------------------------------------------------
+// point_role_input
+//
+// One role's worth of point-input parameters, as every CLI spells them:
+// <role>_points_fname, _input_format, _layer_name, _latitude_field_name,
+// _longitude_field_name.
+// -----------------------------------------------------------------------------
+struct point_role_input
+{
+    std::string role_name = "source";   // for the progress message only
+    std::string path;                   // empty = this role is not supplied
+    std::string input_format = "auto_detect";
+    std::string layer_name;
+    std::string latitude_field_name  = "latitude";
+    std::string longitude_field_name = "longitude";
+};
+
+// -----------------------------------------------------------------------------
+// load_role_point_flats
+//
+// Load one role's points in the raster's CRS and return the flat indices of
+// those that mapped onto valid cells. Returns empty for an empty path.
+// Progress goes to stdout, as it did in each CLI.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<std::int64_t> load_role_point_flats(
+    const point_role_input&  role,
+    const lsdtt_raster_meta& meta
+);
+
+// -----------------------------------------------------------------------------
+// channel_scope_diagnostic_request / write_channel_scope_diagnostics
+//
+// The scope-resolution diagnostics: which channels are in scope, which nodes
+// they run through, and where each supplied point snapped to. These stay with
+// every CLI that resolves a scope, because they answer "did the tool use the
+// channels I meant?" - a question the dedicated channel CLIs cannot answer for
+// someone else's run.
+//
+// output_stem is the full write path prefix; each writer appends its own
+// suffix. Failures are reported to stderr and do not throw: a diagnostic that
+// cannot be written must not lose the analysis it describes.
+// -----------------------------------------------------------------------------
+struct channel_scope_diagnostic_request
+{
+    bool write_scope_raster    = false;   // <stem>_channel_scope.tif
+    bool write_scope_nodes_csv = false;   // <stem>_channel_scope_nodes.csv
+    bool write_point_snap_csv  = false;   // <stem>_point_snaps.csv + 2 fgb layers
+
+    raster_output_format raster_format = raster_output_format::cog;
+};
+
+void write_channel_scope_diagnostics(
+    const channel_scope_result&             scope,
+    const lsdtt_flow_base&                  flow,
+    const lsdtt_raster_cpu&                 dem,
+    lsdtt_data_loader&                      loader,
+    const std::string&                      output_stem,
+    const channel_scope_diagnostic_request& request
+);
+
+// -----------------------------------------------------------------------------
+// channel_network_write_request / write_channel_network_layers
+//
+// The three channel-network vector layers. This lives here, with exactly one
+// implementation, because more than one CLI offers the parameters.
+//
+// That a tool which classifies fluvial surfaces also writes the channel network
+// it used is deliberate, not an oversight: a user should not have to chain a
+// second CLI to see the network their surfaces were measured against. The
+// overlap with lsdtt-channel-extraction is answered by sharing this writer, not
+// by removing the parameter - the parameter appears in several CLIs, the code
+// exists once. If you are about to write these three layers inline in a fourth
+// place, call this instead.
+//
+// Failures are reported to stderr and do not throw.
+// -----------------------------------------------------------------------------
+struct channel_network_write_request
+{
+    bool write_lines           = true;    // <stem>_channel_network_lines<ext>
+    bool write_channel_points  = false;   // <stem>_channel_network_points<ext>
+    bool write_junction_points = false;   // <stem>_junction_network_points<ext>
+
+    vector_output_format format = vector_output_format::flatgeobuf;
+
+    // Optional per-pixel source id written as a line attribute. Empty = none.
+    std::vector<std::int32_t> channel_source_id;
+};
+
+void write_channel_network_layers(
+    const lsdtt_junction_network_base&   jnet,
+    const std::string&                   output_stem,
+    const channel_network_write_request& request
 );
 
 } // namespace lsdtt

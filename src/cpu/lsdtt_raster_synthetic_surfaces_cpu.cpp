@@ -2915,4 +2915,420 @@ lsdtt_crater_field_surface generate_crater_field_surface(
         meta, craters, background_slope, background_elevation);
 }
 
+// =============================================================================
+// generate_terrace_staircase_surface
+// =============================================================================
+lsdtt_terrace_staircase_surface generate_terrace_staircase_surface(
+    const lsdtt_raster_meta& meta,
+    int    n_terraces,
+    double tread_width_m,
+    double riser_height_m,
+    double valley_gradient,
+    double riser_height_downstream_taper,
+    double tread_cross_gradient,
+    int    n_riser_gaps,
+    double riser_gap_width_m,
+    double noise_amplitude_m,
+    double channel_elevation,
+    double valley_wall_gradient,
+    int    seed,
+    int    n_threads)
+{
+    static const char* fn = "lsdtt::generate_terrace_staircase_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (n_terraces < 1)
+    {
+        throw std::runtime_error(std::string(fn) + ": n_terraces must be >= 1");
+    }
+    if (!(tread_width_m > 0.0))
+    {
+        throw std::runtime_error(std::string(fn) + ": tread_width_m must be > 0");
+    }
+    if (!(riser_height_m > 0.0))
+    {
+        throw std::runtime_error(std::string(fn) + ": riser_height_m must be > 0");
+    }
+    if (riser_height_downstream_taper < 0.0 || riser_height_downstream_taper >= 1.0)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": riser_height_downstream_taper must be in [0, 1)");
+    }
+    if (n_riser_gaps < 0)
+    {
+        throw std::runtime_error(std::string(fn) + ": n_riser_gaps must be >= 0");
+    }
+    if (n_riser_gaps > 0 && !(riser_gap_width_m > 0.0))
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": riser_gap_width_m must be > 0 when n_riser_gaps > 0");
+    }
+
+    // The cross-fall must not swallow the riser, or the staircase stops being
+    // monotonic and "terrace j" no longer means a height above the channel.
+    // Checked against the SMALLEST riser height, which is the downstream end
+    // when the taper is in use.
+    const double min_riser_height =
+        riser_height_m * (1.0 - riser_height_downstream_taper);
+    if (tread_cross_gradient < 0.0 ||
+        tread_cross_gradient * tread_width_m >= min_riser_height)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": tread_cross_gradient * tread_width_m must be "
+            ">= 0 and < the smallest riser height (" +
+            std::to_string(min_riser_height) + " m); otherwise the tread "
+            "cross-fall exceeds the riser it steps over");
+    }
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+
+    if (n_rows < 3 || n_cols < 3)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": grid must span at least 3x3 cells");
+    }
+
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    std::vector<float> dem_data(n_pixels, 0.0f);
+    std::vector<float> tread_data(n_pixels, 0.0f);
+    std::vector<float> chan_data(n_pixels, 0.0f);
+
+    // The channel occupies ONE WHOLE COLUMN, so the centre must be an integer
+    // column index. A fractional centre (0.5 * (n_cols - 1)) puts the axis
+    // between two cells on an even-width grid, and then no cell has x = 0 and
+    // the channel mask comes out empty -- taking every HAND-based test with it.
+    // On an even-width grid this leaves one more column on the east flank,
+    // which is immaterial to a symmetric flight.
+    const int    centre_col_i = (n_cols - 1) / 2;
+    const double centre_col   = static_cast<double>(centre_col_i);
+
+    // Gap band centres, evenly spaced down the valley and kept off both ends so
+    // a gap is never clipped by the grid edge.
+    std::vector<double> gap_centres_m;
+    gap_centres_m.reserve(static_cast<std::size_t>(n_riser_gaps));
+    const double valley_length_m = static_cast<double>(n_rows - 1) * cell_size;
+    for (int g = 0; g < n_riser_gaps; ++g)
+    {
+        const double f = (static_cast<double>(g) + 0.5) /
+                          static_cast<double>(n_riser_gaps);
+        gap_centres_m.push_back(f * valley_length_m);
+    }
+
+    const int threads = resolve_thread_count(n_threads);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const std::size_t idx = flat_index(row, col, n_cols);
+
+            const double downstream_m = static_cast<double>(row) * cell_size;
+            const double f_down       = (n_rows > 1)
+                ? downstream_m / valley_length_m
+                : 0.0;
+
+            const double z_channel =
+                channel_elevation - valley_gradient * downstream_m;
+
+            const double h_local =
+                riser_height_m * (1.0 - riser_height_downstream_taper * f_down);
+
+            // Cross-valley distance from the channel centre.
+            const double x = std::abs(static_cast<double>(col) - centre_col)
+                             * cell_size;
+
+            // Is this row inside a riser gap?
+            bool in_gap = false;
+            for (const double gc : gap_centres_m)
+            {
+                if (std::abs(downstream_m - gc) <= 0.5 * riser_gap_width_m)
+                {
+                    in_gap = true;
+                    break;
+                }
+            }
+
+            const double flight_width_m =
+                static_cast<double>(n_terraces) * tread_width_m;
+
+            double z          = 0.0;
+            int    tread_here = 0;
+            bool   is_channel = false;
+
+            if (x < 0.5 * cell_size)
+            {
+                // The channel itself: one cell wide at the centre column.
+                z          = z_channel;
+                is_channel = true;
+            }
+            else if (x >= flight_width_m)
+            {
+                // Valley wall beyond the outermost tread. Anchored to the top
+                // of the flight so the wall never dips below the last tread.
+                z = z_channel
+                  + static_cast<double>(n_terraces) * h_local
+                  + valley_wall_gradient * (x - flight_width_m);
+            }
+            else if (in_gap)
+            {
+                // A graded ramp instead of the stepped cross-section. The
+                // terrace index is interpolated rather than floored, so
+                // elevation climbs continuously from the channel to the top of
+                // the flight at gradient h_local / tread_width_m.
+                const double j_continuous = x / tread_width_m;
+                z = z_channel + j_continuous * h_local;
+            }
+            else
+            {
+                const int j = std::min(
+                    n_terraces,
+                    static_cast<int>(std::floor(x / tread_width_m)) + 1);
+
+                // Falls toward the channel across the tread, measured from the
+                // tread's outer edge so the outer edge sits exactly j risers up.
+                const double outer_edge_m =
+                    static_cast<double>(j) * tread_width_m;
+
+                z = z_channel
+                  + static_cast<double>(j) * h_local
+                  - tread_cross_gradient * (outer_edge_m - x);
+
+                tread_here = j;
+            }
+
+            if (noise_amplitude_m > 0.0)
+            {
+                const std::uint64_t key = make_hash_key(
+                    seed,
+                    0x5445525241434553ULL,   // "TERRACES"
+                    static_cast<std::uint64_t>(row),
+                    static_cast<std::uint64_t>(col));
+                z += noise_amplitude_m * symmetric_uniform(key);
+            }
+
+            dem_data[idx]   = static_cast<float>(z);
+            tread_data[idx] = static_cast<float>(tread_here);
+            chan_data[idx]  = is_channel ? 1.0f : 0.0f;
+        }
+    }
+
+    lsdtt_terrace_staircase_surface out;
+    out.dem          = make_raster(std::move(dem_data),   meta);
+    out.tread_id     = make_raster(std::move(tread_data), meta);
+    out.channel_mask = make_raster(std::move(chan_data),  meta);
+    return out;
+}
+
+lsdtt_terrace_staircase_surface generate_terrace_staircase_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    int    n_terraces,
+    double tread_width_m,
+    double riser_height_m,
+    double valley_gradient,
+    double riser_height_downstream_taper,
+    double tread_cross_gradient,
+    int    n_riser_gaps,
+    double riser_gap_width_m,
+    double noise_amplitude_m,
+    double channel_elevation,
+    double valley_wall_gradient,
+    int    seed,
+    int    n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_terrace_staircase_surface(
+        meta, n_terraces, tread_width_m, riser_height_m, valley_gradient,
+        riser_height_downstream_taper, tread_cross_gradient,
+        n_riser_gaps, riser_gap_width_m, noise_amplitude_m,
+        channel_elevation, valley_wall_gradient, seed, n_threads);
+}
+
+// =============================================================================
+// generate_alluvial_fan_surface
+// =============================================================================
+lsdtt_alluvial_fan_surface generate_alluvial_fan_surface(
+    const lsdtt_raster_meta& meta,
+    double apex_x_fraction,
+    double apex_y_fraction,
+    double apex_elevation,
+    double fan_gradient,
+    double fan_concavity,
+    int    n_inset_lobes,
+    double lobe_inset_m,
+    double lobe_half_angle_deg,
+    double noise_amplitude_m,
+    int    seed,
+    int    n_threads)
+{
+    static const char* fn = "lsdtt::generate_alluvial_fan_surface";
+
+    if (!meta.is_valid())
+    {
+        throw std::runtime_error(std::string(fn) + ": invalid raster metadata");
+    }
+    if (!(fan_gradient > 0.0))
+    {
+        throw std::runtime_error(std::string(fn) + ": fan_gradient must be > 0");
+    }
+    if (fan_concavity < 0.0 || fan_concavity >= fan_gradient)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": fan_concavity must be in [0, fan_gradient); "
+            "at or above fan_gradient the surface stops falling with distance "
+            "from the apex and is no longer a fan");
+    }
+    if (n_inset_lobes < 0)
+    {
+        throw std::runtime_error(std::string(fn) + ": n_inset_lobes must be >= 0");
+    }
+    if (n_inset_lobes > 0 &&
+        (!(lobe_half_angle_deg > 0.0) || lobe_half_angle_deg >= 90.0))
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": lobe_half_angle_deg must be in (0, 90)");
+    }
+
+    const int    n_rows    = meta.n_rows;
+    const int    n_cols    = meta.n_cols;
+    const double cell_size = meta.cell_size;
+
+    if (n_rows < 3 || n_cols < 3)
+    {
+        throw std::runtime_error(
+            std::string(fn) + ": grid must span at least 3x3 cells");
+    }
+
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(n_rows) * static_cast<std::size_t>(n_cols);
+
+    std::vector<float> dem_data(n_pixels, 0.0f);
+    std::vector<float> lobe_data(n_pixels, 0.0f);
+
+    // Apex in cell units. y increases southward, matching row order.
+    const double apex_col = apex_x_fraction * static_cast<double>(n_cols - 1);
+    const double apex_row = apex_y_fraction * static_cast<double>(n_rows - 1);
+
+    const double width_m  = static_cast<double>(n_cols - 1) * cell_size;
+    const double height_m = static_cast<double>(n_rows - 1) * cell_size;
+    const double r_ref    = std::sqrt(width_m * width_m + height_m * height_m);
+
+    // Lobe axes are spread evenly across the downslope half-plane. With the
+    // apex near the south edge the fan opens northward, so the half-plane is
+    // centred on -90 degrees in atan2(dy_north, dx_east) terms.
+    const double half_angle_rad = lobe_half_angle_deg * M_PI / 180.0;
+    std::vector<double> lobe_axis_rad;
+    lobe_axis_rad.reserve(static_cast<std::size_t>(n_inset_lobes));
+    for (int l = 0; l < n_inset_lobes; ++l)
+    {
+        const double f = (static_cast<double>(l) + 0.5) /
+                          static_cast<double>(n_inset_lobes);
+        // Spread across the 180 degree downslope fan, inset by the half angle
+        // so no lobe is clipped by the edge of the half-plane.
+        lobe_axis_rad.push_back(
+            -M_PI + half_angle_rad + f * (M_PI - 2.0 * half_angle_rad));
+    }
+
+    const int threads = resolve_thread_count(n_threads);
+
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+#endif
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const std::size_t idx = flat_index(row, col, n_cols);
+
+            const double dx = (static_cast<double>(col) - apex_col) * cell_size;
+            const double dy = (static_cast<double>(row) - apex_row) * cell_size;
+            const double r  = std::sqrt(dx * dx + dy * dy);
+
+            // The older fan surface: radial fall, slackening with distance when
+            // fan_concavity > 0.
+            double z = apex_elevation
+                     - fan_gradient * r
+                     + fan_concavity * r * r / (2.0 * r_ref);
+
+            int lobe_here = 0;
+
+            if (n_inset_lobes > 0 && r > 0.0)
+            {
+                const double theta = std::atan2(dy, dx);
+                for (int l = 0; l < n_inset_lobes; ++l)
+                {
+                    // Smallest signed angle between this cell and the lobe axis.
+                    double d_theta = theta - lobe_axis_rad[
+                        static_cast<std::size_t>(l)];
+                    while (d_theta >  M_PI) d_theta -= 2.0 * M_PI;
+                    while (d_theta < -M_PI) d_theta += 2.0 * M_PI;
+
+                    if (std::abs(d_theta) <= half_angle_rad)
+                    {
+                        // Parallel to the older surface, not a radial step:
+                        // the residual to a fitted fan is then flat within the
+                        // lobe and offset from the older surface by exactly
+                        // lobe_inset_m.
+                        z -= lobe_inset_m;
+                        lobe_here = l + 1;
+                        break;
+                    }
+                }
+            }
+
+            if (noise_amplitude_m > 0.0)
+            {
+                const std::uint64_t key = make_hash_key(
+                    seed,
+                    0x414C4C55564641ULL,   // "ALLUVFA"
+                    static_cast<std::uint64_t>(row),
+                    static_cast<std::uint64_t>(col));
+                z += noise_amplitude_m * symmetric_uniform(key);
+            }
+
+            dem_data[idx]  = static_cast<float>(z);
+            lobe_data[idx] = static_cast<float>(lobe_here);
+        }
+    }
+
+    lsdtt_alluvial_fan_surface out;
+    out.dem     = make_raster(std::move(dem_data),  meta);
+    out.lobe_id = make_raster(std::move(lobe_data), meta);
+    return out;
+}
+
+lsdtt_alluvial_fan_surface generate_alluvial_fan_surface(
+    int    n_rows,
+    int    n_cols,
+    double cell_size,
+    double apex_x_fraction,
+    double apex_y_fraction,
+    double apex_elevation,
+    double fan_gradient,
+    double fan_concavity,
+    int    n_inset_lobes,
+    double lobe_inset_m,
+    double lobe_half_angle_deg,
+    double noise_amplitude_m,
+    int    seed,
+    int    n_threads)
+{
+    const lsdtt_raster_meta meta = build_meta(n_rows, n_cols, cell_size);
+    return generate_alluvial_fan_surface(
+        meta, apex_x_fraction, apex_y_fraction, apex_elevation,
+        fan_gradient, fan_concavity, n_inset_lobes, lobe_inset_m,
+        lobe_half_angle_deg, noise_amplitude_m, seed, n_threads);
+}
+
 } // namespace lsdtt

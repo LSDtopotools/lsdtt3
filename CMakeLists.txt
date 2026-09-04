@@ -327,6 +327,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_flat_surface_finder.cpp
     src/cpu/lsdtt_slope_break_finder_cpu.cpp
     src/cpu/lsdtt_flat_surface_plane_analysis.cpp
+    src/cpu/lsdtt_reference_field_ladder_cpu.cpp
     src/cpu/lsdtt_vector_rasterise_cpu.cpp
     src/cpu/lsdtt_sti_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp
@@ -551,6 +552,7 @@ lsdtt_cli(lsdtt-mountain-front         cli/lsdtt-mountain-front.cpp)
 lsdtt_cli(lsdtt-basin-stats            cli/lsdtt-basin-stats.cpp)
 lsdtt_cli(lsdtt-basin-extraction       cli/lsdtt-basin-extraction.cpp)
 lsdtt_cli(lsdtt-flat-surface-finder    cli/lsdtt-flat-surface-finder.cpp)
+lsdtt_cli(lsdtt-fluvial-surfaces       cli/lsdtt-fluvial-surfaces.cpp)
 lsdtt_cli(lsdtt-valley-centreline      cli/lsdtt-valley-centreline.cpp)
 lsdtt_cli(lsdtt-graphflood             cli/lsdtt-graphflood.cpp)
 lsdtt_cli(lsdtt-channel-network-analysis cli/lsdtt-channel-network-analysis.cpp)

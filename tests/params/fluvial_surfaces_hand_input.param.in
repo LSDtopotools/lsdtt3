@@ -1,0 +1,33 @@
+# Phase 3: the composability guarantee. Identical to
+# fluvial_surfaces_smoke.param.in except that the HAND raster is READ rather
+# than computed, and both runs use a global ladder.
+#
+# The global ladder is not incidental. Reach-relative windowing needs the HAND
+# donor node of each pixel, which a raster cannot carry, so a supplied HAND is
+# necessarily banded globally. Pinning the guarantee therefore means running
+# both arms globally; comparing a windowed computed run against a supplied one
+# would be comparing two different ladders and failing for the wrong reason.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fsin
+
+n_threads: 1
+write_output_format: gtiff
+
+fallback_admission_algorithm_choice: relief
+fallback_relief_window_pixels: 5
+fallback_relief_threshold_metres: 2.0
+min_component_pixels: 50
+
+reference_field_algorithm_choice: hand
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+ladder_reach_window_metres: -1.0
+
+channel_threshold_contributing_pixels: 500
+floodplain_max_height_metres: 5.0
+terrace_min_height_metres: 5.0
+
+write_hand_raster: true

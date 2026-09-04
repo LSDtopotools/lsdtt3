@@ -1,0 +1,34 @@
+# The relational check, driven through lsdtt-fluvial-surfaces after phase 4.
+# Every joinable table switched on at once.
+#
+# write_reference_field_profile_csv is the reason this template is separate: it
+# is off by default and no other fixture enables it, so the profile join is
+# otherwise the one emitted table nothing checks.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: join
+
+n_threads: 1
+write_output_format: gtiff
+
+fallback_relief_window_pixels: 5
+fallback_relief_threshold_metres: 2.0
+min_component_pixels: 50
+
+
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+
+channel_threshold_contributing_pixels: 500
+floodplain_max_height_metres: 5.0
+terrace_min_height_metres: 5.0
+
+write_banded_labels_raster: true
+write_band_index_raster: true
+write_surface_class_raster: true
+write_surface_patches_csv: true
+write_ladder_windows_csv: true
+write_reference_field_profile_csv: true
+ladder_resolvability_kappa: 3.0

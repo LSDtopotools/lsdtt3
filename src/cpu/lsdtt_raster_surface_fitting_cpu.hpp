@@ -287,4 +287,113 @@ lsdtt_raster_cpu residual_from_fitted_poly2(
 // -----------------------------------------------------------------------------
 double poly2_max_principal_curvature(const lsdtt_poly2_coefficients& coeffs);
 
+// =============================================================================
+// Conical (radial) surface fitting
+//
+// Fits
+//
+//   z(x, y) = z_apex + gradient * r,   r = |(x, y) - apex|
+//
+// i.e. elevation falling linearly with distance from a single apex point.
+// `gradient` is normally NEGATIVE: the surface falls away from the apex.
+//
+// WHY THIS EXISTS, AND WHEN A PLANE OR A POLY2 WILL NOT DO. An alluvial fan or
+// a debris cone is radially symmetric about its apex, and a cone is not a
+// low-order polynomial in x and y. Over a fan spanning a wide range of azimuth
+// the misfit of the best plane, and of the best paraboloid, is not a small
+// correction: it is systematic, it is shaped like the fan, and it is routinely
+// LARGER than the depositional offsets the residual is meant to isolate.
+//
+// Measured on the synthetic fan fixture (2 km radius, 0.03 radial gradient,
+// lobes inset 4 m below the older surface), the older surface's own residual
+// spread was:
+//
+//   plane (RANSAC)  ~34 m   (p5 -31.6, p95 +2.7)
+//   poly2 (OLS)     ~10 m   (p5  -4.8, p95 +5.2)
+//   cone  (OLS)     ~0.3 m  (p5  -0.15, p95 +0.15)
+//
+// Only the cone leaves a residual in which a 4 m inset is the dominant
+// structure. Use plane_ols / plane_ransac for a piedmont or a terrace tread,
+// poly2 for a broadly curved surface with no single centre, and the cone for
+// anything built radially around an apex.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// lsdtt_cone_coefficients
+//
+// z = apex_elevation + gradient * distance_from_apex, in projected coordinates.
+// -----------------------------------------------------------------------------
+struct lsdtt_cone_coefficients
+{
+    double apex_x         = 0.0;
+    double apex_y         = 0.0;
+    double apex_elevation = 0.0;   // z at r = 0 (the fitted intercept)
+    double gradient       = 0.0;   // dz/dr; negative for a surface that falls
+};
+
+struct lsdtt_cone_fit_result
+{
+    lsdtt_cone_coefficients coeffs;
+    double rmse          = 0.0;
+    int    n_pixels_used = 0;
+    bool   valid         = false;
+};
+
+// -----------------------------------------------------------------------------
+// find_cone_apex
+//
+// Locate the apex of a radial surface within mask > 0.5, as the centroid of the
+// highest `apex_fraction` of masked cells (clamped to at least one cell).
+//
+// A centroid of the top few rather than the single highest cell, because the
+// single maximum of a real DEM is a noise spike as often as it is the fan head,
+// and the apex enters the fit as the origin of every radius. Returns false if
+// the mask selects no valid pixel.
+// -----------------------------------------------------------------------------
+bool find_cone_apex(
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_raster_cpu& mask,
+    double                  apex_fraction,
+    double&                 apex_x,
+    double&                 apex_y
+);
+
+// -----------------------------------------------------------------------------
+// fit_cone_to_mask
+//
+// Ordinary least squares of z on distance-from-apex, over mask > 0.5.
+//
+// The apex is supplied, not fitted: it is a strongly non-linear parameter, and
+// on a real fan the apex is a place the user can point at (the fan head at the
+// mountain front) far more reliably than a solver can find it. Use
+// find_cone_apex for a default.
+//
+// Requires at least 3 masked pixels spanning more than one radius.
+// -----------------------------------------------------------------------------
+lsdtt_cone_fit_result fit_cone_to_mask(
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_raster_cpu& mask,
+    double                  apex_x,
+    double                  apex_y
+);
+
+// -----------------------------------------------------------------------------
+// evaluate_fitted_cone / residual_from_fitted_cone
+//
+// residual_from_fitted_cone returns the signed residual z_dem - z_cone, so
+// positive is above the fitted cone. Output pixels are valid only where the
+// input DEM is valid.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu evaluate_fitted_cone(
+    const lsdtt_raster_meta&       meta,
+    const lsdtt_cone_coefficients& coeffs,
+    int n_threads = 0
+);
+
+lsdtt_raster_cpu residual_from_fitted_cone(
+    const lsdtt_raster_cpu&        dem,
+    const lsdtt_cone_coefficients& coeffs,
+    int n_threads = 0
+);
+
 } // namespace lsdtt

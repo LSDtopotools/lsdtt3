@@ -948,4 +948,236 @@ double poly2_max_principal_curvature(const lsdtt_poly2_coefficients& coeffs)
     return (a + b) + std::sqrt((a - b) * (a - b) + c * c);
 }
 
+// =============================================================================
+// Conical (radial) surface fitting
+//
+// See the header for why a fan needs this rather than a plane or a poly2: a
+// cone is not a low-order polynomial in x and y, and over a wide fan the misfit
+// of the best plane or paraboloid exceeds the depositional offsets the residual
+// is supposed to isolate.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// find_cone_apex
+// -----------------------------------------------------------------------------
+bool find_cone_apex(
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_raster_cpu& mask,
+    double                  apex_fraction,
+    double&                 apex_x,
+    double&                 apex_y)
+{
+    validate_dem_mask_pair("lsdtt::find_cone_apex", dem, mask);
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const std::vector<float>&   z  = dem.get_data();
+    const std::vector<uint8_t>& zm = dem.get_mask();
+    const std::vector<float>&   mv = mask.get_data();
+
+    // Gather (elevation, flat index) for every masked, valid pixel.
+    std::vector<std::pair<float, std::size_t>> live;
+    for (int row = 0; row < meta.n_rows; ++row)
+    {
+        for (int col = 0; col < meta.n_cols; ++col)
+        {
+            const std::size_t i =
+                static_cast<std::size_t>(row) * meta.n_cols + col;
+            if (!zm[i] || mv[i] <= 0.5f) continue;
+            if (!std::isfinite(z[i]) || meta.is_nodata(z[i])) continue;
+            live.emplace_back(z[i], i);
+        }
+    }
+    if (live.empty()) return false;
+
+    const double frac = (apex_fraction > 0.0 && apex_fraction <= 1.0)
+        ? apex_fraction : 0.001;
+    std::size_t n_top = static_cast<std::size_t>(
+        std::llround(frac * static_cast<double>(live.size())));
+    n_top = std::max<std::size_t>(1, std::min(n_top, live.size()));
+
+    // Partial sort is enough: only the top n_top matter, and their order
+    // within that set does not.
+    std::nth_element(
+        live.begin(), live.begin() + static_cast<std::ptrdiff_t>(n_top - 1),
+        live.end(),
+        [](const std::pair<float, std::size_t>& a,
+           const std::pair<float, std::size_t>& b) { return a.first > b.first; });
+
+    double sx = 0.0, sy = 0.0;
+    for (std::size_t k = 0; k < n_top; ++k)
+    {
+        const std::size_t i = live[k].second;
+        const int row = static_cast<int>(i / static_cast<std::size_t>(meta.n_cols));
+        const int col = static_cast<int>(i % static_cast<std::size_t>(meta.n_cols));
+        sx += pixel_x(col, meta);
+        sy += pixel_y(row, meta);
+    }
+    apex_x = sx / static_cast<double>(n_top);
+    apex_y = sy / static_cast<double>(n_top);
+    return true;
+}
+
+// -----------------------------------------------------------------------------
+// fit_cone_to_mask
+//
+// OLS of z on r. Two unknowns, so the 2x2 normal equations are solved directly;
+// radii are centred on their own mean for the same numerical-stability reason
+// the plane and poly2 fits centre their coordinates.
+// -----------------------------------------------------------------------------
+lsdtt_cone_fit_result fit_cone_to_mask(
+    const lsdtt_raster_cpu& dem,
+    const lsdtt_raster_cpu& mask,
+    double                  apex_x,
+    double                  apex_y)
+{
+    validate_dem_mask_pair("lsdtt::fit_cone_to_mask", dem, mask);
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const std::vector<float>&   z  = dem.get_data();
+    const std::vector<uint8_t>& zm = dem.get_mask();
+    const std::vector<float>&   mv = mask.get_data();
+
+    lsdtt_cone_fit_result out;
+    out.coeffs.apex_x = apex_x;
+    out.coeffs.apex_y = apex_y;
+
+    std::vector<double> radii;
+    std::vector<double> zs;
+    radii.reserve(z.size() / 4);
+    zs.reserve(z.size() / 4);
+
+    for (int row = 0; row < meta.n_rows; ++row)
+    {
+        const double y = pixel_y(row, meta);
+        for (int col = 0; col < meta.n_cols; ++col)
+        {
+            const std::size_t i =
+                static_cast<std::size_t>(row) * meta.n_cols + col;
+            if (!zm[i] || mv[i] <= 0.5f) continue;
+            if (!std::isfinite(z[i]) || meta.is_nodata(z[i])) continue;
+            const double dx = pixel_x(col, meta) - apex_x;
+            const double dy = y - apex_y;
+            radii.push_back(std::sqrt(dx * dx + dy * dy));
+            zs.push_back(static_cast<double>(z[i]));
+        }
+    }
+
+    if (radii.size() < 3) return out;   // valid stays false
+
+    const double n = static_cast<double>(radii.size());
+    double r_bar = 0.0;
+    for (const double r : radii) r_bar += r;
+    r_bar /= n;
+
+    double s_rr = 0.0, s_rz = 0.0, z_bar = 0.0;
+    for (const double v : zs) z_bar += v;
+    z_bar /= n;
+    for (std::size_t k = 0; k < radii.size(); ++k)
+    {
+        const double dr = radii[k] - r_bar;
+        s_rr += dr * dr;
+        s_rz += dr * (zs[k] - z_bar);
+    }
+
+    // Every masked pixel at the same radius: the gradient is unidentifiable.
+    if (!(s_rr > 0.0)) return out;
+
+    const double gradient = s_rz / s_rr;
+
+    out.coeffs.gradient       = gradient;
+    out.coeffs.apex_elevation = z_bar - gradient * r_bar;
+
+    double sse = 0.0;
+    for (std::size_t k = 0; k < radii.size(); ++k)
+    {
+        const double e =
+            zs[k] - (out.coeffs.apex_elevation + gradient * radii[k]);
+        sse += e * e;
+    }
+    out.rmse          = std::sqrt(sse / n);
+    out.n_pixels_used = static_cast<int>(radii.size());
+    out.valid         = true;
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// evaluate_fitted_cone
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu evaluate_fitted_cone(
+    const lsdtt_raster_meta&       meta,
+    const lsdtt_cone_coefficients& coeffs,
+    int n_threads)
+{
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+    std::vector<float>   out_data(n_pixels, 0.0f);
+    std::vector<uint8_t> out_mask(n_pixels, uint8_t{1});
+
+    const int nt = resolve_threads(n_threads);
+    (void)nt;
+
+#ifdef _OPENMP
+    #pragma omp parallel for num_threads(nt) schedule(static)
+#endif
+    for (int row = 0; row < meta.n_rows; ++row)
+    {
+        const double y = pixel_y(row, meta);
+        for (int col = 0; col < meta.n_cols; ++col)
+        {
+            const double dx = pixel_x(col, meta) - coeffs.apex_x;
+            const double dy = y - coeffs.apex_y;
+            const double r  = std::sqrt(dx * dx + dy * dy);
+            out_data[static_cast<std::size_t>(row) * meta.n_cols + col] =
+                static_cast<float>(coeffs.apex_elevation + coeffs.gradient * r);
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
+// -----------------------------------------------------------------------------
+// residual_from_fitted_cone
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu residual_from_fitted_cone(
+    const lsdtt_raster_cpu&        dem,
+    const lsdtt_cone_coefficients& coeffs,
+    int n_threads)
+{
+    const lsdtt_raster_meta&    meta = dem.get_meta();
+    const std::vector<float>&   z    = dem.get_data();
+    const std::vector<uint8_t>& zm   = dem.get_mask();
+
+    const std::size_t n_pixels =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+    std::vector<float>   out_data(n_pixels, static_cast<float>(meta.no_data_value));
+    std::vector<uint8_t> out_mask(n_pixels, uint8_t{0});
+
+    const int nt = resolve_threads(n_threads);
+    (void)nt;
+
+#ifdef _OPENMP
+    #pragma omp parallel for num_threads(nt) schedule(static)
+#endif
+    for (int row = 0; row < meta.n_rows; ++row)
+    {
+        const double y = pixel_y(row, meta);
+        for (int col = 0; col < meta.n_cols; ++col)
+        {
+            const std::size_t i =
+                static_cast<std::size_t>(row) * meta.n_cols + col;
+            if (!zm[i] || !std::isfinite(z[i]) || meta.is_nodata(z[i])) continue;
+
+            const double dx = pixel_x(col, meta) - coeffs.apex_x;
+            const double dy = y - coeffs.apex_y;
+            const double r  = std::sqrt(dx * dx + dy * dy);
+            out_data[i] = static_cast<float>(
+                static_cast<double>(z[i])
+                - (coeffs.apex_elevation + coeffs.gradient * r));
+            out_mask[i] = uint8_t{1};
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
+}
+
 } // namespace lsdtt
