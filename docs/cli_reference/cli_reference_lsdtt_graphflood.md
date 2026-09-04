@@ -1,142 +1,47 @@
 # CLI reference: lsdtt-graphflood
 
-Performs graph-based hydraulic routing on a DEM using D-infinity or MFD flow routing. Computes water depth, water-surface elevation, and discharge flux through time. Implements Gailleton et al. (2024) hydraulic algorithm.
+Runs stationary GraphFlood routing on a DEM. Routing is defined by the evolving
+hydraulic surface, with node states selecting the hydraulic domain and its
+outlets.
 
 ## Usage
 
 ```
-lsdtt-graphflood  <path> <parameter_file>
-lsdtt-graphflood  <parameter_file>        # path defaults to ./
-lsdtt-graphflood  -h                      # print help and exit
-lsdtt-graphflood  -v                      # print version and exit
-lsdtt-graphflood  -c                      # print citation and exit
+lsdtt-graphflood <path> <parameter_file>
+lsdtt-graphflood <parameter_file>
 ```
 
-## Parameter file format
+## Required inputs
 
-```
-# Lines beginning with # are comments.
-key: value
-```
-
-Keys use `snake_case`. All keys and their defaults are listed below.
-
----
-
-## Pipeline overview
-
-Steps run in this order:
-
-| Step | Description |
+| Parameter | Description |
 |---|---|
-| 1. DEM preparation | Load DEM, verify projection, fill pits |
-| 2. Flow graph construction | Build D-inf or MFD flow DAG (CSR layout) |
-| 3. Initial condition | Set water depth at sources or inlets |
-| 4. Time-stepping | Solve shallow-water equations for N timesteps |
-| 5. Outputs | Write water depth, surface, and flux rasters |
+| `read_fname` | Bed-elevation raster. |
+| `hydraulic_node_state_fname` | Co-registered node-state raster: `0` wall/nodata, `1` active, `3` outlet. |
+| `rainfall_rate_fname` | Co-registered rainfall/input-rate raster in m/s. |
+| `friction_coefficient_fname` | Co-registered coefficient raster for `q / width = coefficient * h^a * S^b`. Use `1 / n` for Manning friction. |
 
----
+`boundary_conditions` defaults to `oooo` (NESW). It controls whether an edge
+can communicate beyond the raster (`o`), is closed (`n`), or is periodic (`p`).
+It does not create an outlet: only a node-state value of `3` does that.
 
-## Input / output parameters
+## Hydraulic parameters
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the input DEM. |
-| `read_fname` | string | parameter file stem | Input DEM filename. Any GDAL-supported format. |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
-| `upstream_discharge_csv` | string | _(empty)_ | Optional CSV with upstream inflow points. Columns: `latitude`, `longitude`, `discharge_m3s`. |
+| Parameter | Default | Description |
+|---|---:|---|
+| `hydraulic_dt` | `1e-3` | Fixed timestep in seconds. |
+| `hydraulic_min_slope` | `1e-4` | Minimum hydraulic slope used in friction calculations. |
+| `hydraulic_fill_slope_epsilon` | `1e-8` | Requested minimum slope while priority-flooding `z + h`; a representable float32 rise is always enforced. |
+| `friction_depth_exponent` | `5/3` | Depth exponent `a`. |
+| `friction_slope_exponent` | `1/2` | Slope exponent `b`. |
+| `n_steps` | `100` | Iteration limit. |
 
----
+There is no scalar rainfall fallback, scalar Manning parameter, or water-depth
+rate limiter. Supply the forcing rasters explicitly.
 
-## Threading
+## Outputs
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_threads` | int | `0` | Number of OpenMP threads. `0` = all available hardware threads. |
-| `boundary_conditions` | string | `oooo` | Four-character boundary condition string (N, E, S, W). `o` = open, `n` = no-flux. |
-
----
-
-## DEM preparation
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `raster_is_filled` | bool | `false` | Set `true` if DEM is already pit-filled. |
-| `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. |
-
----
-
-## Flow routing
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `flow_routing_algorithm` | string | `dinf` | Flow routing method: `dinf` (D-infinity), `mfd` (multiple-flow-direction). |
-
----
-
-## Initial conditions
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `initial_water_depth_metres` | float | `0.1` | Uniform initial water depth (metres) across domain. |
-| `water_depth_at_channel_threshold_area_m2` | float | `10000.0` | Drainage area threshold (m²) defining channels. Channels get initial water depth. |
-
----
-
-## Time-stepping
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_timesteps` | int | `10` | Number of time steps to solve. |
-| `timestep_seconds` | float | `1.0` | Duration of each timestep (seconds). |
-| `manning_coefficient` | float | `0.03` | Manning's n roughness coefficient. |
-| `gravity_acceleration_m_s2` | float | `9.81` | Gravitational acceleration (m/s²). |
-
----
-
-## Solver options
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `solver_tolerance` | float | `1e-6` | Convergence tolerance for iterative solver. |
-| `max_solver_iterations` | int | `100` | Maximum iterations per timestep. |
-
----
-
-## Output: Water depth
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_water_depth` | bool | `true` | Write water depth raster for final timestep. |
-| `write_water_depth_all_timesteps` | bool | `false` | Write water depth raster for every timestep. |
-
-Output file: `<write_fname>_water_depth_final.tif` (or `_ts<N>.tif` for each timestep)
-
----
-
-## Output: Water surface elevation
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_water_surface` | bool | `true` | Write water-surface elevation raster. |
-
-Output file: `<write_fname>_water_surface_final.tif`
-
----
-
-## Output: Discharge flux
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_discharge_flux` | bool | `true` | Write discharge flux magnitude raster. |
-
-Output file: `<write_fname>_discharge_flux_final.tif`
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format: `cog`, `gtiff`, `same_as_input`. |
+`write_water_depth_raster` and `write_water_surface_raster` default to true.
+Optional outputs include `write_qin_raster`, `write_qout_raster`,
+`write_dhw_raster`, `write_hydraulic_slope_raster`,
+`write_specific_discharge_raster`, `write_total_discharge_raster`, and
+`write_effective_width_raster`.

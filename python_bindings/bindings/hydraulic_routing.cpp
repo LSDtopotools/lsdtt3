@@ -202,21 +202,18 @@ HydraulicSurfaceFill fill_hydraulic_surface(
 HydraulicResult run_graphflood(
     const Raster& bed,
     const Raster& node_state,
+    const Raster& rainfall_rate,
+    const Raster& friction_coefficient,
     const std::string& method,
     const std::string& boundary_conditions,
     float mfd_exponent,
     const std::string& condition_bed,
     float fill_slope_epsilon,
     bool check_valid_outlet,
-    double rainfall_rate,
-    nb::object rainfall_rate_field,
-    double mannings_n,
-    nb::object friction_coefficient,
     double friction_depth_exponent,
     double friction_slope_exponent,
     double dt,
     double min_slope,
-    double max_dh_rate,
     nb::object point_inflows,
     std::int64_t max_steps,
     bool run_until_converged,
@@ -248,10 +245,7 @@ HydraulicResult run_graphflood(
 
     lsdtt::lsdtt_hydraulic_options options;
     options.dt = dt;
-    options.mannings_n = mannings_n;
     options.min_slope = min_slope;
-    options.max_dh_rate = max_dh_rate;
-    options.uniform_rainfall_rate = rainfall_rate;
     options.friction_depth_exponent = friction_depth_exponent;
     options.friction_slope_exponent = friction_slope_exponent;
     options.print_startup_message = false;
@@ -259,16 +253,9 @@ HydraulicResult run_graphflood(
     lsdtt::lsdtt_hydraulic_graph_cpu solver(
         routed_bed, states, graph_options, options,
         fill_slope_epsilon, check_valid_outlet);
-    if (!rainfall_rate_field.is_none())
-    {
-        const auto& field = nb::cast<const Raster&>(rainfall_rate_field);
-        solver.set_rainfall_rate_field(field_values(bed, field, "rainfall_rate_field"));
-    }
-    if (!friction_coefficient.is_none())
-    {
-        const auto& field = nb::cast<const Raster&>(friction_coefficient);
-        solver.set_friction_coefficient_field(field_values(bed, field, "friction_coefficient"));
-    }
+    solver.set_rainfall_rate_field(field_values(bed, rainfall_rate, "rainfall_rate"));
+    solver.set_friction_coefficient_field(
+        field_values(bed, friction_coefficient, "friction_coefficient"));
     add_point_inflows(solver, bed, point_inflows);
 
     bool converged = false;
@@ -348,16 +335,15 @@ drains. Only outlets on an open (``o``) boundary edge may drain.
 
     module.def("run_graphflood", &run_graphflood,
         nb::arg("bed"), nb::arg("node_state"),
-        nb::arg("method") = "mfd", nb::arg("boundary_conditions") = "nnnn",
+        nb::arg("rainfall_rate"), nb::arg("friction_coefficient"),
+        nb::arg("method") = "mfd", nb::arg("boundary_conditions") = "oooo",
         nb::arg("mfd_exponent") = 1.0f,
         nb::arg("condition_bed") = "none", nb::arg("fill_slope_epsilon") = 1.0e-8f,
         nb::arg("check_valid_outlet") = true,
-        nb::arg("rainfall_rate") = 0.0, nb::arg("rainfall_rate_field") = nb::none(),
-        nb::arg("mannings_n") = 0.033, nb::arg("friction_coefficient") = nb::none(),
         nb::arg("friction_depth_exponent") = 5.0 / 3.0,
         nb::arg("friction_slope_exponent") = 0.5,
-        nb::arg("dt") = 1.0e-3, nb::arg("min_slope") = 1.0e-8,
-        nb::arg("max_dh_rate") = 1.0, nb::arg("point_inflows") = nb::none(),
+        nb::arg("dt") = 1.0e-3, nb::arg("min_slope") = 1.0e-4,
+        nb::arg("point_inflows") = nb::none(),
         nb::arg("max_steps") = 10000, nb::arg("run_until_converged") = true,
         nb::arg("convergence_check_every") = 100,
         nb::arg("tol_median_abs_dhw") = 1.0e-7,
@@ -371,10 +357,9 @@ open (``o``) boundary edge; open edges do not drain unless a cell is marked 3.
 Closed edges use ``n`` and periodic edges use paired ``p`` codes. By default,
 every connected active component must contain an outlet.
 
-Rainfall may be uniform or supplied as a same-grid raster. ``friction_coefficient``
-is an optional same-grid coefficient for ``q / width = coefficient * h**a *
-S**b``; absent it uses Manning ``1 / mannings_n``. Point inflows are an N by 3
-array of ``(row, col, discharge_m3_s)``.
+``rainfall_rate`` and ``friction_coefficient`` are required same-grid rasters.
+The friction law is ``q / width = coefficient * h**a * S**b``. Point inflows
+are an N by 3 array of ``(row, col, discharge_m3_s)``.
 )doc");
 }
 

@@ -150,17 +150,8 @@ public:
     void set_dt(double dt) override;
     [[nodiscard]] double dt() const noexcept override;
 
-    void set_mannings_n(double mannings_n) override;
-    [[nodiscard]] double mannings_n() const noexcept override;
-
     void set_min_slope(double min_slope) override;
     [[nodiscard]] double min_slope() const noexcept override;
-
-    void set_max_dh_rate(double max_dh_rate);
-    [[nodiscard]] double max_dh_rate() const noexcept;
-
-    void set_uniform_rainfall_rate(double rainfall_rate_m_per_s) override;
-    [[nodiscard]] double uniform_rainfall_rate() const noexcept override;
 
     void set_receiver_width(double receiver_width_m) override;
     [[nodiscard]] double receiver_width() const noexcept override;
@@ -313,11 +304,8 @@ private:
     // Hydraulic options / parameters
     // -------------------------------------------------------------------------
     double dt_                    = 1.0e-3;
-    double mannings_n_            = 0.033;
-    double min_slope_             = 1.0e-8;
-    double uniform_rainfall_rate_ = 0.0;
+    double min_slope_             = 1.0e-4;
     double receiver_width_        = -1.0;
-    double max_dh_rate_           = 1.0;
     double friction_depth_exponent_ = 5.0 / 3.0;
     double friction_slope_exponent_ = 0.5;
     bool   print_startup_message_ = true;

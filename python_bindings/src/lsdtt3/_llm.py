@@ -67,7 +67,7 @@ bounds_from_vector(V)->VectorBounds; utm_epsg_for_point(x,y)->int; cop30_tiles_f
 """,
     "hydraulic": """@hydraulic
 fill_hydraulic_surface(z:R,h:R,node_state:R,boundary_conditions='oooo',...)->HydraulicSurfaceFill
-run_graphflood(z:R,precipitation:R|float,friction:R|float,...)->HydraulicResult
+run_graphflood(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->HydraulicResult
 node_state: 0=outside/nodata,1=active,3=outlet; only 3 drains; each active component needs an outlet unless check_valid_outlet=False.
 ! hydraulic routing is on z+h; stationary workflow fills h, not bed elevation.
 """,

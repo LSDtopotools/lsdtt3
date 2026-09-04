@@ -1265,15 +1265,14 @@ class HydraulicSurfaceFill:
     """
 
 
-def run_graphflood(bed: Raster, node_state: Raster, method: str = "mfd",
-                   boundary_conditions: str = "nnnn", mfd_exponent: float = 1.0,
-                   condition_bed: str = "none", fill_slope_epsilon: float = 1e-8,
-                   check_valid_outlet: bool = True, rainfall_rate: float = 0.0,
-                   rainfall_rate_field: Any | None = None, mannings_n: float = 0.033,
-                   friction_coefficient: Any | None = None,
-                   friction_depth_exponent: float = 5 / 3,
+def run_graphflood(bed: Raster, node_state: Raster, rainfall_rate: Raster,
+                   friction_coefficient: Raster, method: str = "mfd",
+                   boundary_conditions: str = "oooo", mfd_exponent: float = 1.0,
+                   condition_bed: str = "none", fill_slope_epsilon: float = 1e-3,
+                   check_valid_outlet: bool = True,
+                   friction_depth_exponent: float = 5. / 3.,
                    friction_slope_exponent: float = 0.5, dt: float = 0.001,
-                   min_slope: float = 1e-8, max_dh_rate: float = 1.0,
+                   min_slope: float = 1e-4,
                    point_inflows: Any | None = None, max_steps: int = 10000,
                    run_until_converged: bool = True,
                    convergence_check_every: int = 100,
@@ -1290,23 +1289,24 @@ def run_graphflood(bed: Raster, node_state: Raster, method: str = "mfd",
         Node states: ``0`` excluded/wall, ``1`` active, ``3`` outlet.
     method : {"mfd", "dinfinity"}, default="mfd"
         Flow-partitioning method on the evolving hydraulic surface.
-    boundary_conditions, condition_bed, fill_slope_epsilon, check_valid_outlet
-        Boundary and hydraulic-surface conditioning controls. ``condition_bed``
-        is ``"none"``, ``"fill"``, or ``"breach"``.
+    boundary_conditions : str, default="oooo"
+        NESW neighbour-connectivity codes: ``o`` allows flow to leave through
+        that edge, ``n`` closes it, and paired ``p`` codes are periodic. These
+        codes do not define drainage cells: ``node_state`` does.
+    condition_bed : {"none", "fill"}, default="none"
+        Optional one-time bed conditioning before routing.
+    fill_slope_epsilon, check_valid_outlet
+        Hydraulic-surface conditioning controls.
     mfd_exponent : float, default=1
         MFD partitioning exponent.
-    rainfall_rate : float, default=0
-        Spatially uniform rainfall rate.
-    rainfall_rate_field : Raster, optional
-        Co-registered spatial rainfall-rate field; overrides uniform rainfall
-        where valid.
-    mannings_n : float, default=0.033
-        Manning roughness used when no friction-coefficient raster is given.
-    friction_coefficient : Raster, optional
-        Spatial friction-coefficient field.
+    rainfall_rate : Raster
+        Co-registered rainfall/input-rate field in m/s.
+    friction_coefficient : Raster
+        Co-registered friction-coefficient field in
+        ``q / width = coefficient * h**a * S**b``.
     friction_depth_exponent, friction_slope_exponent : float
         Exponents of the configurable friction law.
-    dt, min_slope, max_dh_rate : float
+    dt, min_slope : float
         Stationary solver step and stability controls.
     point_inflows : array-like, optional
         Point inflow specifications.

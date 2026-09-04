@@ -154,13 +154,18 @@ lsdtt::lsdtt_hydraulic_options make_options(double rainfall_rate_m_per_s,
 {
     lsdtt::lsdtt_hydraulic_options options;
     options.dt = dt;
-    options.mannings_n = 0.033;
-    options.min_slope = 1.0e-8;
-    options.uniform_rainfall_rate = rainfall_rate_m_per_s;
+    options.min_slope = 1.0e-4;
     options.receiver_width = -1.0;
-    options.max_dh_rate = 1.0e9;
     options.print_startup_message = false;
     return options;
+}
+
+void set_forcing(lsdtt::lsdtt_hydraulic_graph_cpu& solver,
+                 double rainfall_rate_m_per_s)
+{
+    const auto n = static_cast<std::size_t>(solver.n_cells());
+    solver.set_rainfall_rate_field(std::vector<double>(n, rainfall_rate_m_per_s));
+    solver.set_friction_coefficient_field(std::vector<double>(n, 1.0 / 0.033));
 }
 
 lsdtt::lsdtt_flowgraph_cpu make_flowgraph_centre_pit()
@@ -190,14 +195,12 @@ double run_one_step_centre_qin(lsdtt_hydraulic_run_mode mode)
 
     lsdtt::lsdtt_hydraulic_options options;
     options.dt = 0.1;
-    options.mannings_n = 0.033;
-    options.min_slope = 1.0e-8;
-    options.uniform_rainfall_rate = 1.0e-3;
+    options.min_slope = 1.0e-4;
     options.receiver_width = -1.0;
-    options.max_dh_rate = 1.0;
     options.print_startup_message = false;
 
     lsdtt::lsdtt_hydraulic_graph_cpu solver(fg, bed, options);
+    set_forcing(solver, 1.0e-3);
     solver.set_run_mode(mode);
     solver.set_reroute_every(1);
 
@@ -245,6 +248,7 @@ void test_non_negative_water_depth_all_modes()
             fx.flowgraph,
             fx.bed,
             make_options(5.0e-5, 0.2));
+        set_forcing(solver, 5.0e-5);
 
         solver.set_run_mode(mode);
         solver.set_reroute_every(2);
@@ -279,6 +283,7 @@ void test_closed_forcing_volume_non_increase()
         fx.flowgraph,
         fx.bed,
         make_options(0.0, 0.2));
+    set_forcing(solver, 0.0);
 
     solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
     solver.set_water_depth(make_initial_water_depth(fx.flowgraph, 0.2));
@@ -318,6 +323,7 @@ void test_rainfall_balance_with_outlet_export()
         fx.flowgraph,
         fx.bed,
         make_options(rainfall_rate, dt));
+    set_forcing(solver, rainfall_rate);
 
     solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
     solver.reset_water_depth(0.0);
@@ -369,6 +375,7 @@ void test_determinism_same_inputs_same_outputs()
         fx.flowgraph,
         fx.bed,
         make_options(1.5e-5, 0.1));
+    set_forcing(solver_a, 1.5e-5);
     solver_a.set_run_mode(lsdtt_hydraulic_run_mode::transient_dynamic_graph);
     solver_a.set_reroute_every(3);
     solver_a.set_water_depth(initial_depth);
@@ -379,6 +386,7 @@ void test_determinism_same_inputs_same_outputs()
         fx.flowgraph,
         fx.bed,
         make_options(1.5e-5, 0.1));
+    set_forcing(solver_b, 1.5e-5);
     solver_b.set_run_mode(lsdtt_hydraulic_run_mode::transient_dynamic_graph);
     solver_b.set_reroute_every(3);
     solver_b.set_water_depth(initial_depth);
@@ -418,6 +426,7 @@ void test_dynamic_mode_sets_dynamic_routing_flag()
         fx.flowgraph,
         fx.bed,
         make_options(1.0e-5, 0.1));
+    set_forcing(fixed_solver, 1.0e-5);
     fixed_solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_fixed_graph);
     fixed_solver.run_one_step();
 
@@ -425,6 +434,7 @@ void test_dynamic_mode_sets_dynamic_routing_flag()
         fx.flowgraph,
         fx.bed,
         make_options(1.0e-5, 0.1));
+    set_forcing(dynamic_solver, 1.0e-5);
     dynamic_solver.set_run_mode(lsdtt_hydraulic_run_mode::transient_dynamic_graph);
     dynamic_solver.set_reroute_every(1);
     dynamic_solver.run_one_step();
@@ -528,6 +538,50 @@ void test_hydraulic_domain_constructor_and_fields()
           outlet_is_the_only_drain);
 }
 
+void test_graphflood_mfd_uses_diagonal_effective_width()
+{
+    const auto meta = make_meta_3x3();
+    lsdtt::lsdtt_array2d_f data(3, 3, 0.0f);
+    lsdtt::lsdtt_array2d_u8 mask(3, 3, uint8_t{1});
+    data(1, 1) = 10.0f;
+    data(0, 1) = 9.0f;  // cardinal receiver
+    data(0, 0) = 9.0f;  // diagonal receiver; identical elevation drop
+    lsdtt::lsdtt_raster_cpu bed(std::move(data), std::move(mask), meta);
+
+    // Keep only the donor and its two outlet receivers in the hydraulic
+    // domain. The reference GraphFlood split is equal because both links have
+    // the same elevation drop: S*dx = S_diag*(sqrt(2)*dx).
+    lsdtt::lsdtt_array2d_u8 states(3, 3, uint8_t{0});
+    states(1, 1) = 1;
+    states(0, 1) = 3;
+    states(0, 0) = 3;
+
+    lsdtt::lsdtt_flowgraph_options graph_options;
+    graph_options.boundary_conditions = "oooo";
+    graph_options.method = lsdtt::lsdtt_flowgraph_method::mfd;
+    graph_options.mfd_exponent = 1.0f;
+
+    lsdtt::lsdtt_hydraulic_options options;
+    options.dt = 0.1;
+    options.print_startup_message = false;
+
+    lsdtt::lsdtt_hydraulic_graph_cpu solver(
+        bed, states, graph_options, options, 1.0e-3f, true);
+    std::vector<double> rainfall(9, 0.0);
+    rainfall[4] = 1.0;
+    solver.set_rainfall_rate_field(rainfall);
+    solver.set_friction_coefficient_field(std::vector<double>(9, 1.0 / 0.033));
+    solver.run_one_step();
+
+    const auto qin = solver.get_qin_raster();
+    const double cardinal = qin.data[1];
+    const double diagonal = qin.data[0];
+    check("H10 GraphFlood MFD corrects diagonal receiver width",
+          std::abs(cardinal - diagonal) < 1.0e-6,
+          "cardinal=" + std::to_string(cardinal) +
+          ", diagonal=" + std::to_string(diagonal));
+}
+
 } // namespace
 
 int main()
@@ -541,6 +595,7 @@ int main()
     test_hydraulic_surface_outlet_rules();
     test_explicit_flowgraph_outlet_mask();
     test_hydraulic_domain_constructor_and_fields();
+    test_graphflood_mfd_uses_diagonal_effective_width();
 
     if (g_n_failed == 0)
     {

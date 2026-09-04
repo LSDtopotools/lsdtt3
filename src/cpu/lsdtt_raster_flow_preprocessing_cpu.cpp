@@ -315,9 +315,17 @@ static void priority_flood_core(
             {
                 if (min_slope > 0.0f)
                 {
-                    nz = (n % 2 == 0)
-                       ? centre.zeta + min_slope * L
-                       : centre.zeta + min_slope * L * k_sqrt2;
+                    const float distance = (n % 2 == 0)
+                        ? L
+                        : L * k_sqrt2;
+                    const float requested = centre.zeta + min_slope * distance;
+                    // A small requested rise can round back to centre.zeta in
+                    // float32 (particularly for metre-scale epsilon values on
+                    // high-elevation DEMs). MFD requires strictly positive
+                    // slopes, so ensure a representable rise as well.
+                    const float strict_rise = std::nextafter(
+                        centre.zeta, std::numeric_limits<float>::infinity());
+                    nz = std::max(requested, strict_rise);
                 }
                 else
                 {
