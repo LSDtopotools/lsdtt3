@@ -98,8 +98,8 @@ lsdtt_hydraulic_graph_cpu::lsdtt_hydraulic_graph_cpu(
     qout_.resize(n_cells_, 0.0);
     dhw_.resize(n_cells_, 0.0);
     point_inflow_.resize(n_cells_, 0.0);
-    rainfall_rate_field_.resize(n_cells_, uniform_rainfall_rate_);
-    friction_coefficient_.resize(n_cells_, 1.0 / mannings_n_);
+    rainfall_rate_field_.resize(n_cells_, 0.0);
+    friction_coefficient_.resize(n_cells_, 0.0);
 
     source_q_.resize(n_cells_, 0.0);
     hydraulic_slope_.resize(n_cells_, 0.0);
@@ -170,8 +170,8 @@ lsdtt_hydraulic_graph_cpu::lsdtt_hydraulic_graph_cpu(
     qout_.resize(n_cells_, 0.0);
     dhw_.resize(n_cells_, 0.0);
     point_inflow_.resize(n_cells_, 0.0);
-    rainfall_rate_field_.resize(n_cells_, uniform_rainfall_rate_);
-    friction_coefficient_.resize(n_cells_, 1.0 / mannings_n_);
+    rainfall_rate_field_.resize(n_cells_, 0.0);
+    friction_coefficient_.resize(n_cells_, 0.0);
     source_q_.resize(n_cells_, 0.0);
     hydraulic_slope_.resize(n_cells_, 0.0);
     specific_discharge_.resize(n_cells_, 0.0);
@@ -286,27 +286,6 @@ double lsdtt_hydraulic_graph_cpu::dt() const noexcept
     return dt_;
 }
 
-void lsdtt_hydraulic_graph_cpu::set_mannings_n(double mannings_n)
-{
-    if (!std::isfinite(mannings_n) || mannings_n <= 0.0)
-    {
-        throw std::invalid_argument(
-            "lsdtt_hydraulic_graph_cpu::set_mannings_n: Manning's n must be finite and > 0");
-    }
-
-    mannings_n_ = mannings_n;
-    if (!friction_coefficient_.empty())
-    {
-        std::fill(friction_coefficient_.begin(), friction_coefficient_.end(),
-                  1.0 / mannings_n_);
-    }
-}
-
-double lsdtt_hydraulic_graph_cpu::mannings_n() const noexcept
-{
-    return mannings_n_;
-}
-
 void lsdtt_hydraulic_graph_cpu::set_min_slope(double min_slope)
 {
     if (!std::isfinite(min_slope) || min_slope < 0.0)
@@ -321,47 +300,6 @@ void lsdtt_hydraulic_graph_cpu::set_min_slope(double min_slope)
 double lsdtt_hydraulic_graph_cpu::min_slope() const noexcept
 {
     return min_slope_;
-}
-
-void lsdtt_hydraulic_graph_cpu::set_max_dh_rate(double max_dh_rate)
-{
-    if (!std::isfinite(max_dh_rate) || max_dh_rate <= 0.0)
-    {
-        throw std::invalid_argument(
-            "lsdtt_hydraulic_graph_cpu::set_max_dh_rate: max_dh_rate must be finite and > 0");
-    }
-
-    max_dh_rate_ = max_dh_rate;
-}
-
-double lsdtt_hydraulic_graph_cpu::max_dh_rate() const noexcept
-{
-    return max_dh_rate_;
-}
-
-void lsdtt_hydraulic_graph_cpu::set_uniform_rainfall_rate(
-    double rainfall_rate_m_per_s)
-{
-    if (!std::isfinite(rainfall_rate_m_per_s) || rainfall_rate_m_per_s < 0.0)
-    {
-        throw std::invalid_argument(
-            "lsdtt_hydraulic_graph_cpu::set_uniform_rainfall_rate: rainfall rate must be finite and >= 0");
-
-    }
-
-
-    uniform_rainfall_rate_ = rainfall_rate_m_per_s;
-    if (!rainfall_rate_field_.empty())
-    {
-        std::fill(rainfall_rate_field_.begin(), rainfall_rate_field_.end(),
-                  uniform_rainfall_rate_);
-    }
-    invalidate_stationary_qin_cache();
-}
-
-double lsdtt_hydraulic_graph_cpu::uniform_rainfall_rate() const noexcept
-{
-    return uniform_rainfall_rate_;
 }
 
 void lsdtt_hydraulic_graph_cpu::set_receiver_width(double receiver_width_m)
@@ -844,9 +782,7 @@ void lsdtt_hydraulic_graph_cpu::set_options_from_struct(
     const lsdtt_hydraulic_options& options)
 {
     set_dt(options.dt);
-    set_mannings_n(options.mannings_n);
     set_min_slope(options.min_slope);
-    set_uniform_rainfall_rate(options.uniform_rainfall_rate);
 
     if (!std::isfinite(options.receiver_width))
     {
@@ -855,7 +791,6 @@ void lsdtt_hydraulic_graph_cpu::set_options_from_struct(
     }
 
     receiver_width_ = options.receiver_width;
-    set_max_dh_rate(options.max_dh_rate);
     set_friction_power_exponents(
         options.friction_depth_exponent,
         options.friction_slope_exponent);
@@ -986,14 +921,15 @@ void lsdtt_hydraulic_graph_cpu::compute_receiver_geometry_from_snapshot()
             routing_.receiver_distances[e] =
                 (distance > 0.0) ? distance : meta_.cell_size;
 
-            double width = meta_.cell_size;
+            // GraphFlood's D8 MFD partition uses slope times the effective
+            // flow width.  The reference implementation takes that width as
+            // the centre-to-centre receiver distance: dx for cardinal links
+            // and sqrt(2) * dx for diagonal links.  The same width enters its
+            // wide-flow Manning discharge calculation.
+            double width = routing_.receiver_distances[e];
             if (receiver_width_ > 0.0)
             {
                 width = receiver_width_;
-            }
-            else
-            {
-                width = meta_.cell_size;
             }
 
             routing_.receiver_widths[e] = width;
@@ -1006,6 +942,41 @@ void lsdtt_hydraulic_graph_cpu::compute_receiver_geometry_from_snapshot()
 
         }
         donor_max_receiver_width_[donor] = max_width;
+    }
+
+    // lsdtt_flowgraph_cpu deliberately implements generic MFD, whose weights
+    // are slope^exponent. GraphFlood instead partitions by
+    // slope^exponent * effective_width. Reweight the copied hydraulic
+    // snapshot here, leaving general terrain-flow MFD unchanged. For the
+    // reference exponent of one this is S*dx on cardinal links and
+    // S*sqrt(2)*dx on diagonal links.
+    if (flowgraph_options_.method == lsdtt_flowgraph_method::mfd)
+    {
+        for (std::int64_t donor = 0; donor < n_cells_; ++donor)
+        {
+            const std::int64_t begin = routing_.receiver_offsets[donor];
+            const std::int64_t end   = routing_.receiver_offsets[donor + 1];
+            if (begin == end) continue;
+
+            double total_weight = 0.0;
+            for (std::int64_t e = begin; e < end; ++e)
+            {
+                const double width = routing_.receiver_widths[e];
+                const double weight = static_cast<double>(routing_.receiver_weights[e]) * width;
+                routing_.receiver_weights[e] = static_cast<float>(weight);
+                total_weight += weight;
+            }
+
+            if (total_weight > 0.0)
+            {
+                const double inverse_total = 1.0 / total_weight;
+                for (std::int64_t e = begin; e < end; ++e)
+                {
+                    routing_.receiver_weights[e] = static_cast<float>(
+                        static_cast<double>(routing_.receiver_weights[e]) * inverse_total);
+                }
+            }
+        }
     }
 }
 
@@ -1226,16 +1197,7 @@ void lsdtt_hydraulic_graph_cpu::apply_water_depth_update_from_balance()
 
     for (std::int64_t flat : valid_flats_)
     {
-        double dh_rate = (qin_[flat] - qout_[flat]) / cell_area;
-
-        // clamp the rate of change before multiplying by dt - prevents
-        // overshooting when large discharge imbalances exist early in the run
-        if (dh_rate > max_dh_rate_)
-            dh_rate = max_dh_rate_;
-        else if (dh_rate < -max_dh_rate_)
-            dh_rate = -max_dh_rate_;
-
-        dhw_[flat] = dt_ * dh_rate;
+        dhw_[flat] = dt_ * (qin_[flat] - qout_[flat]) / cell_area;
 
         water_depth_[flat] += dhw_[flat];
         if (water_depth_[flat] < 0.0)

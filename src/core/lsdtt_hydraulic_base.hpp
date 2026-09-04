@@ -56,15 +56,8 @@ namespace lsdtt
 // dt
 //   Fixed timestep in seconds.
 //
-// mannings_n
-//   Manning roughness coefficient.
-//
 // min_slope
 //   Minimum hydraulic slope used to avoid zero-gradient numerical stagnation.
-//
-// uniform_rainfall_rate
-//   Spatially uniform rainfall/input rate applied over valid cells
-//   in metres per second.
 //
 // receiver_width
 //   Effective receiver width in metres. If <= 0, implementations should fall
@@ -77,11 +70,8 @@ namespace lsdtt
 struct lsdtt_hydraulic_options
 {
     double dt                    = 1.0e-3;
-    double mannings_n            = 0.033;
-    double min_slope             = 1.0e-8;
-    double uniform_rainfall_rate = 0.0;
+    double min_slope             = 1.0e-4;
     double receiver_width        = -1.0;
-    double max_dh_rate           = 1.0;
 
     // Generic wide-flow resistance: q / width = coefficient * h^a * S^b.
     // Manning is represented by coefficient = 1 / n, a = 5/3, b = 1/2.
@@ -133,14 +123,8 @@ public:
     virtual void set_dt(double dt) = 0;
     [[nodiscard]] virtual double dt() const noexcept = 0;
 
-    virtual void set_mannings_n(double mannings_n) = 0;
-    [[nodiscard]] virtual double mannings_n() const noexcept = 0;
-
     virtual void set_min_slope(double min_slope) = 0;
     [[nodiscard]] virtual double min_slope() const noexcept = 0;
-
-    virtual void set_uniform_rainfall_rate(double rainfall_rate_m_per_s) = 0;
-    [[nodiscard]] virtual double uniform_rainfall_rate() const noexcept = 0;
 
     virtual void set_receiver_width(double receiver_width_m) = 0;
     [[nodiscard]] virtual double receiver_width() const noexcept = 0;

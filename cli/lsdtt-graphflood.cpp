@@ -153,16 +153,10 @@ int main(int argc, char* argv[])
         "Used for every hydraulic update.",
         "Hydraulic parameters", "param", ""};
 
-    float_default_map["mannings_n"] = 0.033f;
-    help_map["mannings_n"] = {"float","0.033",
-        "Manning roughness coefficient.",
-        "Uniform Manning's n for the hydraulic solver.",
-        "Hydraulic parameters", "param", ""};
-
     string_default_map["friction_coefficient_fname"] = "";
     help_map["friction_coefficient_fname"] = {"string","",
-        "Optional raster of wide-flow friction coefficient.",
-        "For Manning this is 1/n per cell. An empty filename uses mannings_n uniformly.",
+        "Raster of wide-flow friction coefficient.",
+        "Required. For Manning flow this is 1/n per cell.",
         "Hydraulic parameters", "io", ""};
 
     float_default_map["friction_depth_exponent"] = 5.0f / 3.0f;
@@ -174,29 +168,16 @@ int main(int argc, char* argv[])
         "Slope exponent in q/width = coefficient * h^a * S^b.",
         "Manning and Chézy both use 1/2.", "Hydraulic parameters", "param", ""};
 
-    float_default_map["hydraulic_min_slope"] = 1.0e-8f;
-    help_map["hydraulic_min_slope"] = {"float","1e-8",
+    float_default_map["hydraulic_min_slope"] = 1.0e-4f;
+    help_map["hydraulic_min_slope"] = {"float","1e-4",
         "Minimum hydraulic slope used internally.",
         "Prevents zero-gradient numerical stagnation.",
         "Hydraulic parameters", "param", ""};
 
-    float_default_map["max_dh_rate"] = 1.0f;
-    help_map["max_dh_rate"] = {"float","1.0",
-        "Maximum rate of water-depth change in m/s before applying dt.",
-        "Clamps (Qin-Qout)/A per iteration to prevent overshoot. "
-        "Reduce if the solver oscillates; increase to allow faster depth changes.",
-        "Hydraulic parameters", "param", ""};
-
-    float_default_map["uniform_rainfall_rate"] = 0.0f;
-    help_map["uniform_rainfall_rate"] = {"float","0.0",
-        "Uniform rainfall/input rate in m/s.",
-        "Applied to all valid cells at every timestep.",
-        "Hydraulic parameters", "param", ""};
-
     string_default_map["rainfall_rate_fname"] = "";
     help_map["rainfall_rate_fname"] = {"string","",
-        "Optional raster of rainfall/input rate in m/s.",
-        "An empty filename uses uniform_rainfall_rate; a supplied raster overrides it.",
+        "Raster of rainfall/input rate in m/s.",
+        "Required and co-registered with the DEM.",
         "Hydraulic parameters", "io", ""};
 
     float_default_map["receiver_width"] = -1.0f;
@@ -345,7 +326,6 @@ int main(int argc, char* argv[])
     bool_default_map["write_hydraulic_slope_raster"] = false;
     bool_default_map["write_specific_discharge_raster"] = false;
     bool_default_map["write_total_discharge_raster"] = false;
-    bool_default_map["write_specific_drainage_area_raster"] = false;
     bool_default_map["write_effective_width_raster"] = false;
 
 
@@ -415,6 +395,11 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: hydraulic_node_state_fname is required.\n";
         return 1;
     }
+    if (sf["rainfall_rate_fname"].empty() || sf["friction_coefficient_fname"].empty())
+    {
+        std::cerr << "FATAL: rainfall_rate_fname and friction_coefficient_fname are required.\n";
+        return 1;
+    }
 
     lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
@@ -429,7 +414,6 @@ int main(int argc, char* argv[])
         bf["write_hydraulic_slope_raster"]        ||
         bf["write_specific_discharge_raster"]     ||
         bf["write_total_discharge_raster"]        ||
-        bf["write_specific_drainage_area_raster"] ||
         bf["write_effective_width_raster"];
 
 
@@ -566,11 +550,8 @@ int main(int argc, char* argv[])
 
     lsdtt::lsdtt_hydraulic_options hyd_opts;
     hyd_opts.dt = ff["hydraulic_dt"];
-    hyd_opts.mannings_n = ff["mannings_n"];
     hyd_opts.min_slope = ff["hydraulic_min_slope"];
-    hyd_opts.uniform_rainfall_rate = ff["uniform_rainfall_rate"];
     hyd_opts.receiver_width = ff["receiver_width"];
-    hyd_opts.max_dh_rate = ff["max_dh_rate"];
     hyd_opts.friction_depth_exponent = ff["friction_depth_exponent"];
     hyd_opts.friction_slope_exponent = ff["friction_slope_exponent"];
     hyd_opts.adaptive_dt_enabled = bf["adaptive_dt_enabled"];
@@ -602,11 +583,9 @@ int main(int argc, char* argv[])
     };
     try
     {
-        if (!sf["rainfall_rate_fname"].empty())
-            hydraulic.set_rainfall_rate_field(load_field(sf["rainfall_rate_fname"], "rainfall"));
-        if (!sf["friction_coefficient_fname"].empty())
-            hydraulic.set_friction_coefficient_field(
-                load_field(sf["friction_coefficient_fname"], "friction coefficient"));
+        hydraulic.set_rainfall_rate_field(load_field(sf["rainfall_rate_fname"], "rainfall"));
+        hydraulic.set_friction_coefficient_field(
+            load_field(sf["friction_coefficient_fname"], "friction coefficient"));
     }
     catch (const std::exception& e)
     {
@@ -803,33 +782,6 @@ int main(int argc, char* argv[])
             std::cout << "Writing: " << out_file << "\n";
             loader.write_full(
                 hydraulic.get_total_discharge_raster(),
-                out_file,
-                out_fmt
-            );
-        }
-
-        if (bf["write_specific_drainage_area_raster"])
-        {
-            if (!sf["rainfall_rate_fname"].empty())
-            {
-                std::cerr << "FATAL: write_specific_drainage_area_raster requires "
-                          << "spatially uniform rainfall (rainfall_rate_fname must be empty).\n";
-                return 1;
-            }
-            if (ff["uniform_rainfall_rate"] <= 0.0f)
-            {
-                std::cerr << "FATAL: write_specific_drainage_area_raster requires "
-                          << "uniform_rainfall_rate > 0.\n";
-                return 1;
-            }
-
-            const std::string out_file =
-                pp.make_output_path( "_specific_drainage_area", ".tif");
-            std::cout << "Writing: " << out_file << "\n";
-            loader.write_full(
-                hydraulic.get_specific_drainage_area_raster(
-                    static_cast<double>(ff["uniform_rainfall_rate"])
-                ),
                 out_file,
                 out_fmt
             );
