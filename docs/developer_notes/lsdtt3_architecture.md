@@ -2382,6 +2382,22 @@ Generic binary mask operations (foreground = value > 0.5):
 - `binary_morphological_dilation`, `erosion`, `opening`, `closing` (structuring element radius in metres)
 - Reconstruction-based morphology, directional line-based closing
 - Hole filling, size-based component filtering and labelling
+- `filter_binary_components_by_seed_reachability` — a morphological opening
+  CONSTRAINED BY DISTANCE TO A SEED SET: erode, drop the patches a seed cannot
+  reach (either not adjacent to one, or only reachable by a detour longer than
+  `max_detour_ratio` times the straight-line distance), then regrow with each
+  patch capped at its own farthest distance from a seed. The seed is whatever
+  the caller supplies — a channel network, a coastline, a road centreline — and
+  nothing in the operation knows what the mask represents. Note it is **not** a
+  filter: the regrow fills enclosed holes, so the result can contain more set
+  pixels than the input. An in-place raw-vector overload exists for callers that
+  already hold a byte mask and a distance field in an inner loop.
+
+  This arrived from `lsdtt_valley_centreline_cpu`, where it had been cleaning
+  valley floors against the channel that carved them. **General raster
+  operations belong here and should be reusable, not duplicated in
+  task-specific module pairs** — that move is why the valley engine went from
+  1484 lines to 626.
 
 Does NOT perform DEM feature scoring, polygon conversion, or skeleton analysis — those are in the three separate files below.
 

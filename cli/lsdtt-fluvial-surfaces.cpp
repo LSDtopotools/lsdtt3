@@ -81,7 +81,6 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_reference_field_ladder_cpu.hpp"
-#include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"  // clean_valley_mask
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_version   = "0.1.0";
@@ -1391,19 +1390,29 @@ int main(int argc, char* argv[])
 
         if (bf["clean_valley_mask"] && scope_resolved)
         {
-            lsdtt::valley_mask_clean_request creq2;
-            creq2.dilation_pixels = ip["valley_dilation_pixels"];
-            creq2.restrict_to_channel_connected =
+            // Generic constrained morphology seeded by the channel network -
+            // erode, drop what the channel cannot reach, regrow. Nothing about
+            // it is valley-specific, so it lives with the rest of the binary
+            // mask operations rather than here.
+            lsdtt::seed_reachability_options sropt;
+            sropt.dilation_pixels = ip["valley_dilation_pixels"];
+            sropt.require_seed_adjacent =
                 bf["restrict_valley_to_channel_connected"];
-            creq2.max_detour_ratio =
+            sropt.max_detour_ratio =
                 static_cast<double>(ff["valley_max_detour_ratio"]);
-            creq2.n_threads = ip["n_threads"];
+            sropt.n_threads = ip["n_threads"];
             try
             {
-                std::vector<std::uint8_t> cmask2(scope.channel_mask.begin(),
-                                                 scope.channel_mask.end());
-                valley_raster = lsdtt::clean_valley_mask(
-                    valley_raster, cmask2, creq2);
+                std::vector<float>   sd(n_pixels, 0.0f);
+                std::vector<uint8_t> smk(n_pixels, 1u);
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (scope.channel_mask[i]) sd[i] = 1.0f;
+                const lsdtt::lsdtt_raster_cpu seed_raster(
+                    std::move(sd), std::move(smk), meta);
+
+                valley_raster =
+                    lsdtt::filter_binary_components_by_seed_reachability(
+                        valley_raster, seed_raster, sropt);
                 std::int64_t n_after = 0;
                 for (const float v : valley_raster.get_data())
                     if (v > 0.5f) ++n_after;

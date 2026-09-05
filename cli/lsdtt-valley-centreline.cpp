@@ -789,6 +789,10 @@ int main(int argc, char* argv[])
                           ? std::to_string(ch.centreline_flats.size()) +
                                 " nodes"
                           : std::string("FAILED"))
+                  << (ch.n_upstream_of_head_excluded > 0
+                          ? ", " + std::to_string(ch.n_upstream_of_head_excluded) +
+                                " px upstream of the head excluded from the trough"
+                          : std::string())
                   << (ch.trough_retries > 0
                           ? " after " + std::to_string(ch.trough_retries) +
                                 " retry(ies)"

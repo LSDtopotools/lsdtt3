@@ -10,12 +10,15 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <cstdint>
+#include <deque>
 #include <queue>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "lsdtt_proximity_cpu.hpp"  // euclidean_distance_transform
 
 namespace lsdtt
 {
@@ -1227,6 +1230,449 @@ lsdtt_raster_cpu label_binary_components_by_size(
     }
 
     return lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), out_meta);
+}
+
+// Set / unset sentinels for the byte masks this operation works on. Local to
+// the file: the public interface is rasters, where > 0.5 means set.
+namespace
+{
+constexpr std::uint8_t k_off = 0u;
+constexpr std::uint8_t k_on  = 1u;
+
+// 8-neighbour offsets, row then column.
+constexpr int k_dr[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
+constexpr int k_dc[8] = { -1,  0,  1, -1, 1, -1, 0, 1 };
+}
+
+// -----------------------------------------------------------------------------
+// filter_components_by_seed_reachability_in_place
+//
+// A morphological opening CONSTRAINED BY DISTANCE TO A SEED SET. Generic: the
+// seed is whatever the caller says it is (a channel network, a coastline, a
+// road centreline), and nothing here knows what the mask represents.
+//
+//   1. erode by n_dilate iterations (the seed and its immediate neighbours are
+//      pinned on, so the mask never detaches from what anchors it);
+//   2. label 8-connected patches and drop those with no pixel on or 8-adjacent
+//      to a seed, and those whose along-ground path to a seed exceeds
+//      max_detour_ratio times the straight-line distance - a patch that is NEAR
+//      a seed but only reachable the long way round is a different object;
+//   3. dilate 2 * n_dilate times (regrow the eroded rim and fill interior
+//      holes), retaining a dilated pixel only when its distance to a seed does
+//      not exceed the farthest pixel of the patch it grows from, plus a margin
+//      covering the erosion depth - so patches regrow and holes fill, but
+//      nothing extends outward away from the seed.
+//
+// Step 3's cap is what stops the regrow creeping outward: a distance cap alone
+// does not bind near the seed, where the rim would otherwise climb whatever
+// rises beside it.
+//
+// Operates in place on a 0/1 byte mask, because the callers that need it in the
+// inner loop already hold one. See the raster overload for the ordinary case.
+// -----------------------------------------------------------------------------
+void filter_components_by_seed_reachability_in_place(
+    std::vector<std::uint8_t>&       mask,
+    const std::vector<float>&        distance_to_seed,
+    const std::vector<std::uint8_t>& distance_mask,
+    const std::vector<std::int64_t>& seed_flats,
+    int n_dilate, bool require_seed_adjacent, double max_detour_ratio,
+    double cell, int n_rows, int n_cols)
+{
+    const std::size_t n = mask.size();
+    const int n_erode = n_dilate;
+
+    // Growth domain for the final dilation: the ORIGINAL (pre-erosion)
+    // footprint plus its enclosed holes. The dilation must never expand the
+    // mask's outer boundary - a distance cap alone does not bind near the
+    // seed and the regrow rim creeps up the risers. Enclosed holes =
+    // background not 4-connected to the tile border across non-mask
+    // ground.
+    std::vector<std::uint8_t> allowed(mask);
+    {
+        std::vector<std::uint8_t> outside(n, k_off);
+        std::deque<std::int64_t> oq;
+        auto push_bg = [&](int r, int c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            if (!mask[i] && !outside[i])
+            {
+                outside[i] = k_on;
+                oq.push_back(static_cast<std::int64_t>(i));
+            }
+        };
+        for (int c = 0; c < n_cols; ++c)
+        {
+            push_bg(0, c);
+            push_bg(n_rows - 1, c);
+        }
+        for (int r = 0; r < n_rows; ++r)
+        {
+            push_bg(r, 0);
+            push_bg(r, n_cols - 1);
+        }
+        while (!oq.empty())
+        {
+            const std::int64_t flat = oq.front();
+            oq.pop_front();
+            const int r = static_cast<int>(flat / n_cols);
+            const int c = static_cast<int>(flat % n_cols);
+            if (r > 0)          push_bg(r - 1, c);
+            if (r + 1 < n_rows) push_bg(r + 1, c);
+            if (c > 0)          push_bg(r, c - 1);
+            if (c + 1 < n_cols) push_bg(r, c + 1);
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            if (!mask[i] && !outside[i]) allowed[i] = k_on;
+    }
+
+    // 0. Erode (seed + neighbours protected) to sever connecting
+    //    corridors narrower than ~2 * n_erode + 1 pixels.
+    std::vector<std::uint8_t> protect(n, k_off);
+    for (const std::int64_t cf : seed_flats)
+    {
+        if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
+        protect[static_cast<std::size_t>(cf)] = k_on;
+        const int r = static_cast<int>(cf / n_cols);
+        const int c = static_cast<int>(cf % n_cols);
+        for (int k = 0; k < 8; ++k)
+        {
+            const int rr = r + k_dr[k], cc = c + k_dc[k];
+            if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) continue;
+            protect[static_cast<std::size_t>(rr) * n_cols + cc] = k_on;
+        }
+    }
+    for (int it = 0; it < n_erode; ++it)
+    {
+        std::vector<std::uint8_t> eroded = mask;
+        bool changed = false;
+        for (int r = 0; r < n_rows; ++r)
+        {
+            for (int c = 0; c < n_cols; ++c)
+            {
+                const std::size_t i =
+                    static_cast<std::size_t>(r) * n_cols + c;
+                if (!mask[i] || protect[i]) continue;
+                for (int k = 0; k < 8; ++k)
+                {
+                    const int rr = r + k_dr[k], cc = c + k_dc[k];
+                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols ||
+                        !mask[static_cast<std::size_t>(rr) * n_cols + cc])
+                    {
+                        eroded[i] = k_off;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        mask.swap(eroded);
+        if (!changed) break;
+    }
+    n_dilate = 2 * n_dilate;   // regrow the rim + fill holes
+
+    // 1. Label patches.
+    std::vector<std::int32_t> lbl(n, -1);
+    std::vector<double> patch_max_dist;
+    std::deque<std::int64_t> queue;
+    for (std::size_t seed = 0; seed < n; ++seed)
+    {
+        if (!mask[seed] || lbl[seed] >= 0) continue;
+        const std::int32_t id =
+            static_cast<std::int32_t>(patch_max_dist.size());
+        patch_max_dist.push_back(0.0);
+        lbl[seed] = id;
+        queue.push_back(static_cast<std::int64_t>(seed));
+        while (!queue.empty())
+        {
+            const std::int64_t flat = queue.front();
+            queue.pop_front();
+            const std::size_t fi = static_cast<std::size_t>(flat);
+            if (distance_mask[fi] && std::isfinite(distance_to_seed[fi]))
+                patch_max_dist[id] = std::max(
+                    patch_max_dist[id],
+                    static_cast<double>(distance_to_seed[fi]));
+            const int r = static_cast<int>(flat / n_cols);
+            const int c = static_cast<int>(flat % n_cols);
+            for (int k = 0; k < 8; ++k)
+            {
+                const int rr = r + k_dr[k], cc = c + k_dc[k];
+                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
+                    continue;
+                const std::size_t nf =
+                    static_cast<std::size_t>(rr) * n_cols + cc;
+                if (mask[nf] && lbl[nf] < 0)
+                {
+                    lbl[nf] = id;
+                    queue.push_back(static_cast<std::int64_t>(nf));
+                }
+            }
+        }
+    }
+
+    // 2. Remove patches not adjacent to a seed (before regrowth, so a
+    //    severed far-off patch cannot re-bridge during dilation).
+    if (require_seed_adjacent && !patch_max_dist.empty())
+    {
+        std::vector<char> adjacent(patch_max_dist.size(), 0);
+        for (const std::int64_t cf : seed_flats)
+        {
+            const int r = static_cast<int>(cf / n_cols);
+            const int c = static_cast<int>(cf % n_cols);
+            for (int k = -1; k < 8; ++k)
+            {
+                const int rr = (k < 0) ? r : r + k_dr[k];
+                const int cc = (k < 0) ? c : c + k_dc[k];
+                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
+                    continue;
+                const std::size_t nf =
+                    static_cast<std::size_t>(rr) * n_cols + cc;
+                if (mask[nf] && lbl[nf] >= 0) adjacent[lbl[nf]] = 1;
+            }
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            if (mask[i] && (lbl[i] < 0 || !adjacent[lbl[i]]))
+            {
+                mask[i] = k_off;
+                lbl[i] = -1;
+            }
+    }
+
+    // 2b. Detour-ratio pruning: geodesic distance from a seed THROUGH
+    //     the mask mask (Dijkstra, 8-connected) must not exceed
+    //     max_detour_ratio times the Euclidean distance to a seed.
+    //     Genuine floodplain is directly reachable (ratio ~1); a
+    //     neighbouring seed's floodplain hangs on a long corridor detour
+    //     and prunes away. A ten-cell floor keeps near-seed pixels behind
+    //     small obstructions.
+    if (max_detour_ratio > 0.0)
+    {
+        constexpr float k_unreached = std::numeric_limits<float>::infinity();
+        std::vector<float> geo(n, k_unreached);
+        using qnode = std::pair<float, std::int64_t>;
+        std::priority_queue<qnode, std::vector<qnode>,
+                            std::greater<qnode>> pq;
+        for (const std::int64_t cf : seed_flats)
+        {
+            if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
+            const std::size_t fi = static_cast<std::size_t>(cf);
+            if (!mask[fi]) continue;
+            geo[fi] = 0.0f;
+            pq.emplace(0.0f, cf);
+        }
+        const float straight = static_cast<float>(cell);
+        const float diag = static_cast<float>(cell * std::sqrt(2.0));
+        while (!pq.empty())
+        {
+            const auto [d, flat] = pq.top();
+            pq.pop();
+            const std::size_t fi = static_cast<std::size_t>(flat);
+            if (d > geo[fi]) continue;
+            const int r = static_cast<int>(flat / n_cols);
+            const int c = static_cast<int>(flat % n_cols);
+            for (int k = 0; k < 8; ++k)
+            {
+                const int rr = r + k_dr[k], cc = c + k_dc[k];
+                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
+                    continue;
+                const std::size_t nf =
+                    static_cast<std::size_t>(rr) * n_cols + cc;
+                if (!mask[nf]) continue;
+                const float nd =
+                    d + ((k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight);
+                if (nd < geo[nf])
+                {
+                    geo[nf] = nd;
+                    pq.emplace(nd, static_cast<std::int64_t>(nf));
+                }
+            }
+        }
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (!mask[i]) continue;
+            if (!std::isfinite(geo[i])) { mask[i] = k_off; continue; }
+            const double eu =
+                (distance_mask[i] && std::isfinite(distance_to_seed[i]))
+                    ? static_cast<double>(distance_to_seed[i]) : 0.0;
+            const double allowed_detour =
+                std::max(max_detour_ratio * eu, 10.0 * cell);
+            if (static_cast<double>(geo[i]) > allowed_detour) mask[i] = k_off;
+        }
+    }
+
+    // 2c. Line-of-sight pruning: a genuine mask pixel sees its nearest
+    //     seed pixel across low ground - the straight line between them
+    //     stays inside the mask mask (small gaps tolerated: roads,
+    //     embankments). A neighbouring mask's flat that is merely
+    //     CONNECTED to this mask (e.g. around a broad glacial col) has
+    //     intervening high ground on the direct line and prunes away.
+    {
+        // Nearest seed pixel per grid cell: multi-source Dijkstra over
+        // the full valid grid (grid distance ~ Euclidean), carrying the
+        // seed's flat index.
+        std::vector<float>        gdist(n,
+            std::numeric_limits<float>::infinity());
+        std::vector<std::int64_t> gsrc(n, -1);
+        using qnode = std::pair<float, std::int64_t>;
+        std::priority_queue<qnode, std::vector<qnode>,
+                            std::greater<qnode>> pq;
+        for (const std::int64_t cf : seed_flats)
+        {
+            if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
+            gdist[static_cast<std::size_t>(cf)] = 0.0f;
+            gsrc[static_cast<std::size_t>(cf)]  = cf;
+            pq.emplace(0.0f, cf);
+        }
+        const float straight = static_cast<float>(cell);
+        const float diag = static_cast<float>(cell * std::sqrt(2.0));
+        while (!pq.empty())
+        {
+            const auto [d, flat] = pq.top();
+            pq.pop();
+            const std::size_t fi = static_cast<std::size_t>(flat);
+            if (d > gdist[fi]) continue;
+            const int r = static_cast<int>(flat / n_cols);
+            const int c = static_cast<int>(flat % n_cols);
+            for (int k = 0; k < 8; ++k)
+            {
+                const int rr = r + k_dr[k], cc = c + k_dc[k];
+                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
+                    continue;
+                const std::size_t nf =
+                    static_cast<std::size_t>(rr) * n_cols + cc;
+                if (!distance_mask[nf]) continue;
+                const float nd =
+                    d + ((k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight);
+                if (nd < gdist[nf])
+                {
+                    gdist[nf] = nd;
+                    gsrc[nf]  = gsrc[fi];
+                    pq.emplace(nd, static_cast<std::int64_t>(nf));
+                }
+            }
+        }
+
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (!mask[i] || gsrc[i] < 0) continue;
+            const std::int64_t tgt = gsrc[i];
+            const int r0 = static_cast<int>(i / n_cols);
+            const int c0 = static_cast<int>(i % n_cols);
+            const int r1 = static_cast<int>(tgt / n_cols);
+            const int c1 = static_cast<int>(tgt % n_cols);
+            const int steps = std::max(std::abs(r1 - r0),
+                                       std::abs(c1 - c0));
+            if (steps <= 2) continue;
+            int miss = 0;
+            for (int t = 1; t < steps; ++t)
+            {
+                const int rr = r0 + (r1 - r0) * t / steps;
+                const int cc = c0 + (c1 - c0) * t / steps;
+                if (!mask[static_cast<std::size_t>(rr) * n_cols + cc])
+                    ++miss;
+            }
+            // Tolerate small gaps: two cells or 10% of the line.
+            if (miss > std::max(2, steps / 10)) mask[i] = k_off;
+        }
+    }
+
+    // 3. Constrained dilation (frontier-based, label-propagating), with a
+    //    margin on the cap covering the erosion depth so the rim can regrow.
+    const double cap_margin = (n_erode + 0.5) * cell;
+    for (int it = 0; it < n_dilate; ++it)
+    {
+        std::vector<std::pair<std::size_t, std::int32_t>> grown;
+        for (int r = 0; r < n_rows; ++r)
+        {
+            for (int c = 0; c < n_cols; ++c)
+            {
+                const std::size_t i =
+                    static_cast<std::size_t>(r) * n_cols + c;
+                if (mask[i] || !allowed[i]) continue;
+                if (!distance_mask[i] || !std::isfinite(distance_to_seed[i]))
+                    continue;
+                // Grow from the neighbouring patch with the largest reach.
+                std::int32_t best = -1;
+                double best_max = -1.0;
+                for (int k = 0; k < 8; ++k)
+                {
+                    const int rr = r + k_dr[k], cc = c + k_dc[k];
+                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
+                        continue;
+                    const std::size_t nf =
+                        static_cast<std::size_t>(rr) * n_cols + cc;
+                    if (mask[nf] && lbl[nf] >= 0 &&
+                        patch_max_dist[lbl[nf]] > best_max)
+                    {
+                        best_max = patch_max_dist[lbl[nf]];
+                        best = lbl[nf];
+                    }
+                }
+                if (best >= 0 &&
+                    static_cast<double>(distance_to_seed[i]) <=
+                        best_max + cap_margin)
+                    grown.emplace_back(i, best);
+            }
+        }
+        if (grown.empty()) break;
+        for (const auto& [i, id] : grown)
+        {
+            mask[i] = k_on;
+            lbl[i] = id;
+        }
+    }
+}
+// -----------------------------------------------------------------------------
+// filter_binary_components_by_seed_reachability (public - see header)
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu filter_binary_components_by_seed_reachability(
+    const lsdtt_raster_cpu&          mask,
+    const lsdtt_raster_cpu&          seed_mask,
+    const seed_reachability_options& options)
+{
+    static const char* fn = "lsdtt::filter_binary_components_by_seed_reachability";
+
+    const lsdtt_raster_meta& meta = mask.get_meta();
+    const std::size_t n =
+        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
+
+    if (seed_mask.get_data().size() != n)
+    {
+        throw std::invalid_argument(
+            std::string(fn) + ": seed_mask does not match mask");
+    }
+
+    const std::vector<float>&   mv = mask.get_data();
+    const std::vector<uint8_t>& mm = mask.get_mask();
+    const std::vector<float>&   sv = seed_mask.get_data();
+    const std::vector<uint8_t>& sm = seed_mask.get_mask();
+
+    std::vector<std::uint8_t> work(n, 0u);
+    for (std::size_t i = 0; i < n; ++i)
+        if (mm[i] && mv[i] > 0.5f) work[i] = 1u;
+
+    std::vector<std::int64_t> seed_flats;
+    for (std::size_t i = 0; i < n; ++i)
+        if (sm[i] && sv[i] > 0.5f) seed_flats.push_back(static_cast<std::int64_t>(i));
+
+    // Nothing to be reachable from. Returning the input unchanged is the honest
+    // answer; emptying it would look like the filter had rejected everything.
+    if (seed_flats.empty()) return mask;
+
+    const lsdtt_raster_cpu dist =
+        euclidean_distance_transform(seed_mask, options.n_threads);
+
+    filter_components_by_seed_reachability_in_place(
+        work, dist.get_data(), dist.get_mask(), seed_flats,
+        options.dilation_pixels, options.require_seed_adjacent,
+        options.max_detour_ratio,
+        meta.cell_size, meta.n_rows, meta.n_cols);
+
+    std::vector<float>   od(n, 0.0f);
+    std::vector<uint8_t> om(n, 1u);
+    for (std::size_t i = 0; i < n; ++i)
+        if (work[i]) od[i] = 1.0f;
+
+    return lsdtt_raster_cpu(std::move(od), std::move(om), meta);
 }
 
 } // end namespace lsdtt

@@ -81,6 +81,8 @@
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "lsdtt_valley_centreline_cpu.hpp"
+#include "lsdtt_channel_scope_cpu.hpp"
 #include "lsdtt_flat_surface_channel_classify_cpu.hpp"
 
 namespace
@@ -1783,6 +1785,173 @@ void run_fitted_surface_checks()
     }
 }
 
+// =============================================================================
+// The trough's upstream-of-head exclusion
+//
+// Terrain beyond the channel head is still valley ground and stays in the
+// valley mask, but it must not be carved into the trough. A broad pocket behind
+// the head forms a deep distance-to-wall bowl whose lowest spill is the
+// upstream tile edge, so the least-cost walk escapes that way and the centreline
+// runs off the top of the DEM instead of down the valley.
+//
+// The guard is a SIGNED along-channel coordinate: each corridor pixel takes the
+// along-channel distance of its nearest channel node plus its own offset from
+// that node projected onto the local channel direction. Pixels beyond the head
+// project backwards and go negative.
+//
+// This went inert at phase 5d, when the corridor HAND break search it happened
+// to live inside moved to lsdtt-fluvial-surfaces, and it was restored as its own
+// step afterwards. The fixtures in the smoke tests all have their channel head
+// at a DEM edge, where there is no ground beyond the head and the exclusion
+// count is legitimately zero - so none of them can tell a working guard from a
+// dead one. This test builds the geometry that can.
+// =============================================================================
+void run_trough_upstream_checks()
+{
+    std::cout << "lsdtt-test-fluvial-surfaces\n"
+              << "Trough upstream-of-head exclusion\n\n";
+
+    // A straight valley running down the grid: a flat floor incised into
+    // shoulders, falling to the south. Simple on purpose - the property under
+    // test is geometric, and a realistic surface would only add ways to fail
+    // for unrelated reasons.
+    constexpr int    n_rows = 120;
+    constexpr int    n_cols = 60;
+    constexpr double cell   = 10.0;
+    constexpr int    axis   = n_cols / 2;
+    constexpr int    half_w = 6;      // valley half-width in cells
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+    meta.set_default_synthetic_georeference();
+
+    const std::size_t n = static_cast<std::size_t>(n_rows) * n_cols;
+    std::vector<float>   z(n, 0.0f);
+    std::vector<uint8_t> zm(n, 1u);
+    // Above the head the valley opens into a POCKET - wider floor, and the
+    // ground stops falling southward. That is the geometry the guard exists
+    // for: a broad flat pocket makes a deeper distance-to-wall bowl than the
+    // narrow corridor below it, so the least-cost walk is drawn INTO the pocket
+    // and out over the northern tile edge. A uniformly-falling valley of
+    // constant width does not provoke it, and a test built on one would pass
+    // whether the guard worked or not.
+    constexpr int head_row  = n_rows / 3;
+    constexpr int pocket_w  = 22;     // pocket half-width in cells
+    for (int r = 0; r < n_rows; ++r)
+    {
+        const bool  in_pocket = r < head_row;
+        const int   w         = in_pocket ? pocket_w : half_w;
+        // The pocket does not drain: it sits at the head's elevation, so its
+        // floor is a genuine flat basin behind the channel.
+        const double fall = in_pocket ? (0.01 * head_row * cell)
+                                      : (0.01 * r * cell);
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const int    d    = std::abs(c - axis);
+            const double wall = (d <= w) ? 0.0 : 20.0 * (d - w);
+            z[static_cast<std::size_t>(r) * n_cols + c] =
+                static_cast<float>(200.0 - fall + wall);
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu dem(std::move(z), std::move(zm), meta);
+
+    // The valley mask is the whole floor, top to bottom - INCLUDING the stretch
+    // above where the channel starts. That is the point: the mask keeps it, the
+    // trough must not.
+    std::vector<float>   vm(n, 0.0f);
+    std::vector<uint8_t> vmm(n, 1u);
+    for (int r = 0; r < n_rows; ++r)
+    {
+        const int w = (r < head_row) ? pocket_w : half_w;
+        for (int c = axis - w; c <= axis + w; ++c)
+            vm[static_cast<std::size_t>(r) * n_cols + c] = 1.0f;
+    }
+    const lsdtt::lsdtt_raster_cpu valley_in(
+        std::move(vm), std::move(vmm), meta);
+
+    // The channel starts at the pocket's downstream lip. On every smoke fixture
+    // the head sits at a DEM edge and this region does not exist at all.
+    lsdtt::channel_scope_result scope;
+    scope.channel_mask.assign(n, 0u);
+    scope.channel_source_id.assign(n, -1);
+    std::vector<std::int64_t> nodes;
+    for (int r = head_row; r < n_rows; ++r)
+    {
+        const std::size_t f = static_cast<std::size_t>(r) * n_cols + axis;
+        nodes.push_back(static_cast<std::int64_t>(f));
+        scope.channel_mask[f] = 1u;
+        scope.channel_source_id[f] = 0;
+    }
+    scope.channel_node_lists.push_back(nodes);
+    scope.resolved_sources.push_back(nodes.front());
+
+    lsdtt::valley_centreline_request vreq;
+    vreq.supplied_valley_mask = &valley_in;
+    vreq.corridor_width_metres = 400.0;
+    vreq.nodata_buffer_pixels = 0;
+    vreq.min_centreline_nodes = 5;
+    vreq.n_threads = 1;
+
+    lsdtt::valley_centreline_result vres =
+        lsdtt::extract_valley_centrelines(dem, scope, vreq);
+
+    check(!vres.channels.empty(), "the engine returns a channel record");
+    if (vres.channels.empty()) return;
+
+    const lsdtt::valley_channel_centreline& ch = vres.channels.front();
+    std::cout << "      valley px = " << ch.n_valley_pixels
+              << ", excluded from trough (upstream of head) = "
+              << ch.n_upstream_of_head_excluded
+              << ", centreline = " << ch.centreline_flats.size() << " node(s)\n";
+
+    // The head is 40 rows up a 13-cell-wide floor, so there are on the order of
+    // 500 valley cells beyond it. Requiring a substantial count rather than
+    // "> 0" is what makes this fail if the signed coordinate degenerates to a
+    // handful of cells around the head itself.
+    check(ch.n_upstream_of_head_excluded > 200,
+          "valley ground beyond the channel head is excluded from the trough");
+
+    // ... and the exclusion is the TROUGH's, not the mask's. If this ever fails
+    // the guard has started deleting valley rather than protecting the carve.
+    const std::vector<float>& out_vm = vres.valley_mask.get_data();
+    std::int64_t n_above_head_in_mask = 0;
+    for (int r = 0; r < head_row - 2; ++r)
+        for (int c = axis - pocket_w; c <= axis + pocket_w; ++c)
+            if (out_vm[static_cast<std::size_t>(r) * n_cols + c] > 0.0f)
+                ++n_above_head_in_mask;
+    std::cout << "      valley cells above the head retained in the MASK = "
+              << n_above_head_in_mask << "\n";
+    check(n_above_head_in_mask > 200,
+          "and those cells are still in the valley mask");
+
+    check(ch.routing_succeeded && ch.centreline_flats.size() >= 5,
+          "the centreline still routes");
+
+    // A cheap invariant, NOT a demonstration. The centreline should never sit
+    // north of the head, and this catches it if it ever does.
+    //
+    // Stated plainly: it does NOT discriminate here. Disabling the guard leaves
+    // this assertion passing, because the walk starts at the head node and
+    // proceeds downstream, so it cannot reach the pocket on this geometry. The
+    // downstream escape the guard was written for needs the filled trough to
+    // spill north, which this fixture does not reproduce - the exclusion count
+    // above is what actually fails when the guard is broken (verified by
+    // disabling it: 1571 -> 0). If someone later builds a fixture where the
+    // routed path really does escape, this assertion is where it belongs.
+    int min_row = n_rows;
+    for (const std::int64_t f : ch.centreline_flats)
+        min_row = std::min(min_row, static_cast<int>(f / n_cols));
+    std::cout << "      northernmost centreline row = " << min_row
+              << " (channel head at row " << head_row << ")\n";
+    check(min_row >= head_row - 2,
+          "and it does not escape north past the channel head");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[])
@@ -1801,6 +1970,15 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--fitted-surface")
         {
             run_fitted_surface_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--trough-upstream")
+        {
+            run_trough_upstream_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

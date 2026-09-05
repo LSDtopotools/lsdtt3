@@ -263,4 +263,77 @@ lsdtt_raster_cpu label_binary_components_by_size(
     pixel_connectivity      connectivity = pixel_connectivity::d8
 );
 
+// =============================================================================
+// Seed-reachability component filtering
+//
+// A morphological opening constrained by distance to a SEED SET: erode, drop
+// the patches that a seed cannot reach, then regrow without letting the mask
+// creep outward.
+//
+// Generic on purpose. The seed is whatever the caller says it is - a channel
+// network, a coastline, a road centreline - and nothing here knows what the
+// mask represents. It arrived from the valley-centreline engine, where it was
+// cleaning valley floors against the channel that carved them; the operation is
+// ordinary constrained morphology and belongs with the rest of it.
+//
+// What each step is for:
+//   - the erosion breaks narrow threads joining a real patch to incidental
+//     ground that merely touches it;
+//   - the reachability test drops patches a seed cannot reach at all, and
+//     patches only reachable the long way round. Something NEAR a seed but
+//     reachable only by a large detour is usually a different object;
+//   - the regrow restores the eroded rim and fills enclosed holes, capped per
+//     patch at that patch's own farthest distance from a seed.
+//
+// NOTE it is not a filter: the regrow fills holes, so the result can contain
+// MORE set pixels than the input.
+// =============================================================================
+struct seed_reachability_options
+{
+    // Erosion radius in pixels; the regrow is twice this.
+    int    dilation_pixels       = 4;
+    // Drop patches with no pixel on or 8-adjacent to a seed.
+    bool   require_seed_adjacent = true;
+    // Maximum along-ground path to a seed as a multiple of the straight-line
+    // distance. 0 or negative disables the test.
+    double max_detour_ratio      = 3.0;
+    int    n_threads             = 0;
+};
+
+// -----------------------------------------------------------------------------
+// filter_binary_components_by_seed_reachability
+//
+// mask and seed_mask are binary rasters (> 0.5 = set), co-registered. The
+// distance field the detour test needs is computed from seed_mask internally.
+//
+// Returns a 0/1 mask raster. With no seed pixel at all there is nothing to be
+// reachable from, so the input is returned unchanged - emptying it would look
+// like the filter had rejected everything.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu filter_binary_components_by_seed_reachability(
+    const lsdtt_raster_cpu&          mask,
+    const lsdtt_raster_cpu&          seed_mask,
+    const seed_reachability_options& options
+);
+
+// -----------------------------------------------------------------------------
+// filter_components_by_seed_reachability_in_place
+//
+// The raw-vector core, for callers already holding a 0/1 byte mask and a
+// distance field in an inner loop. `mask` is modified in place. Prefer the
+// raster overload above unless you are one of those callers.
+// -----------------------------------------------------------------------------
+void filter_components_by_seed_reachability_in_place(
+    std::vector<std::uint8_t>&       mask,
+    const std::vector<float>&        distance_to_seed,
+    const std::vector<std::uint8_t>& distance_mask,
+    const std::vector<std::int64_t>& seed_flats,
+    int    n_dilate,
+    bool   require_seed_adjacent,
+    double max_detour_ratio,
+    double cell,
+    int    n_rows,
+    int    n_cols
+);
+
 } // namespace lsdtt

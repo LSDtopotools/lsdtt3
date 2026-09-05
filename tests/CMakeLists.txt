@@ -3465,6 +3465,20 @@ set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# The trough's upstream-of-head exclusion. Terrain beyond the channel head stays
+# in the valley MASK but must not be carved into the trough, or the pocket
+# behind the head becomes a distance-to-wall bowl that spills over the upstream
+# tile edge.
+#
+# This needs its own fixture because every smoke fixture has its channel head at
+# a DEM edge, where there is no ground beyond the head at all and the exclusion
+# count is legitimately zero - so none of them can tell a working guard from a
+# dead one. The guard went inert at phase 5d and nothing noticed.
+add_test(NAME unit_fluvial_surfaces_trough_upstream
+         COMMAND lsdtt-test-fluvial-surfaces --trough-upstream)
+set_tests_properties(unit_fluvial_surfaces_trough_upstream PROPERTIES
+    LABELS "unit")
+
 add_test(NAME unit_fluvial_surfaces_band_then_label
          COMMAND lsdtt-test-fluvial-surfaces --band-then-label)
 set_tests_properties(unit_fluvial_surfaces_band_then_label PROPERTIES
