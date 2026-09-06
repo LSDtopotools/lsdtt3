@@ -277,7 +277,11 @@ int main(int argc, char* argv[])
     help_map["write_valley_mask_raster"] = {"bool","true",
         "Write the valley mask raster (0 outside; source_id + 1 in each "
         "channel's valley).",
-        "Output suffix: _valley_mask.tif",
+        "Output suffix: _valley_mask_channels.tif (UInt32: source_id + 1, "
+        "0 = not valley). This is the SUPPLIED mask partitioned by which "
+        "channel claimed each cell, not a copy of it - and deliberately not "
+        "called _valley_mask.tif, which is lsdtt-fluvial-surfaces' output and "
+        "would be overwritten by this one under a shared write_fname.",
         "Outputs", "switch", ""};
 
 
@@ -805,7 +809,12 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     if (bf["write_valley_mask_raster"])
     {
-        const std::string p = pp.make_output_path("_valley_mask", ".tif");
+        // NOT "_valley_mask": lsdtt-fluvial-surfaces writes that name, and with
+        // a shared write_fname the two collided and this file silently replaced
+        // its own input. The content differs too - this is source_id + 1 per
+        // channel, not a 0/1 mask - so the name should say what it holds.
+        const std::string p =
+            pp.make_output_path("_valley_mask_channels", ".tif");
         std::cout << "Writing valley mask (UInt32): " << p << "\n";
         loader.write_full(vres.valley_mask.get_data(),
                           vres.valley_mask.get_meta(), p, out_format,

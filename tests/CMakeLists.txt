@@ -3421,7 +3421,7 @@ add_lsdtt_cli_smoke_test(
     --expect btl_surface_class.tif
     --stdout-contains "Ladder and band-then-label"
     --expect-raster-values "btl_band_index.tif:0,1,2,3"
-    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
+    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit,separation_ratio"
     --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
 )
 set_tests_properties(smoke_fluvial_surfaces_band_then_label PROPERTIES
@@ -3570,7 +3570,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "window(s) resolved"
     --expect-raster-values "fsurf_band_index.tif:0,1,2,3"
     --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
-    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
+    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit,separation_ratio"
 )
 set_tests_properties(smoke_fluvial_surfaces PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -3639,7 +3639,7 @@ add_test(NAME smoke_fluvial_surfaces_pipeline
         --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fluvial_surfaces_pipeline"
         --expect vcin_valley_mask.tif
-        --expect vc_valley_mask.tif
+        --expect vc_valley_mask_channels.tif
         --expect vc_valley_centreline.fgb
         --stage2-stdout-contains "Valley identification is supplied")
 set_tests_properties(smoke_fluvial_surfaces_pipeline PROPERTIES

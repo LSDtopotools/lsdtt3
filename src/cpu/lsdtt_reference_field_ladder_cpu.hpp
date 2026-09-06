@@ -213,6 +213,23 @@ struct fitted_surface_field
 // below-surface population - the inset lobes, the thing being looked for -
 // collapses into a single spike and the breaks returned are meaningless.
 //
+// gap - find the EMPTY SPACE between clusters, and put the break in it.
+//
+// This is what a reader's eye does on a HAND histogram: the active floodplain
+// is the cluster near zero, it stops somewhere, the next surface starts higher
+// up, and the break belongs in the space between. Neither of the others looks
+// for that space. Jenks minimises within-class variance, so on a distribution
+// dominated by one huge upland mode it puts the cut INSIDE that mode and misses
+// the floodplain entirely; antimode looks for a dip but does it on a log10 axis
+// that compresses everything above a few metres into a handful of bins.
+//
+// The finder bins linearly, calls a bin EMPTY when it holds less than
+// gap_empty_fraction of the tallest bin, takes contiguous runs of empty bins
+// wider than gap_min_width_metres, and returns the midpoint of each - ranked
+// widest first, since a wide clean gap is a stronger statement than a narrow
+// one. Where a landscape genuinely has separated levels this reproduces what a
+// human reads off the figure.
+//
 // build_reference_field_ladder therefore THROWS rather than banding a field
 // containing negative values with the antimode finder. Use jenks, which works
 // on the linear field and takes k directly. This is not a limitation of the
@@ -222,7 +239,17 @@ struct fitted_surface_field
 enum class ladder_break_choice
 {
     antimode,
-    jenks
+    jenks,
+    gap
+};
+
+// Where in a detected empty span the gap finder puts its break. See
+// ladder_request::gap_break_at.
+enum class gap_break_position
+{
+    lower,
+    midpoint,
+    upper
 };
 
 // =============================================================================
@@ -276,14 +303,60 @@ struct ladder_request
     double reach_window_metres = 0.0;
     int    min_window_pixels   = 1000;
 
+    // gap break finder. A bin holding less than gap_empty_fraction of the
+    // tallest bin counts as empty; runs of empty bins narrower than
+    // gap_min_width_metres are ignored as noise rather than read as separation.
+    // WHERE IN THE EMPTY SPAN THE BREAK GOES.
+    //
+    // The span between two clusters is nearly empty by construction, so any
+    // position in it separates the same two clusters - but the sparse pixels
+    // INSIDE the span (the bank, the riser, the floodplain margin) go to
+    // whichever side the break leaves them on, and that is not a small
+    // difference for a valley-floor mask.
+    //
+    //   upper    - the top of the span. Band 0 keeps the whole margin. This is
+    //              the end to use when the low band IS the valley floor.
+    //   midpoint - splits the margin between the two levels.
+    //   lower    - the bottom of the span. Band 0 is the cluster alone, which
+    //              is the strictest reading of "the active floodplain".
+    gap_break_position gap_break_at = gap_break_position::midpoint;
+
+    double gap_empty_fraction   = 0.02;
+    double gap_min_width_metres = 0.5;
+    int    gap_hist_bins        = 80;
+
     // Pass-through to find_population_breaks.
     int    hist_bins           = 64;
     double min_field_metres    = 0.05;
     double max_valley_fraction = 0.6;
 
+    // SEPARATION CONSTRAINT. Reject a partition whose worst break has a
+    // separation ratio above this - that is, a break sitting where the density
+    // is nearly as high as the populations either side of it, which is a cut
+    // through one surface rather than a boundary between two.
+    //
+    // A SECOND CONSTRAINT, never a score term blended with the resolvability
+    // floor. The floor asks whether the DEM can MEASURE a separation; this asks
+    // whether there IS one. Both are necessary and neither implies the other:
+    // two lidar terraces 30 cm apart pass the ratio and need a small E_v to
+    // pass the floor, while a 26 m cut through one broad mode passes any floor
+    // and fails the ratio outright.
+    //
+    // 0 disables it, which is the default, because turning it on changes which
+    // partitions are admissible and that is a numerical change a caller should
+    // make deliberately. 0.6 matches the antimode finder's own acceptance limit.
+    double max_separation_ratio = 0.0;
+
     // Hard bounds on any accepted break, in field units. 0 = unbounded.
     double min_break_metres = 0.0;
     double max_break_metres = 0.0;
+
+    // Record each window's LINEAR field histogram and the separation ratio at
+    // each break. Off by default because it costs a pass and a vector per
+    // window; on when a caller wants to SEE why a break was chosen rather than
+    // only what it was.
+    bool   record_window_histograms = false;
+    int    window_hist_bins         = 80;
 
     int    n_threads = 0;
 };
@@ -324,6 +397,54 @@ struct ladder_window
     double min_band_centre_gap_m    = 0.0;
     double required_gap_m           = 0.0;   // kappa * E_v
     double goodness_of_variance_fit = 0.0;   // reported only, never scored
+
+    // -------------------------------------------------------------------------
+    // Separation diagnostics
+    //
+    // WHY THESE EXIST, AND WHAT required_gap_m IS NOT. The resolvability floor
+    // is an INSTRUMENT floor: two levels cannot be claimed distinct if their
+    // centres sit closer than the DEM can measure. It is a necessary condition
+    // and it is not a sufficient one, and it says nothing at all about whether
+    // the field actually HAS two populations.
+    //
+    // On a lidar DEM two genuinely distinct terraces may sit tens of
+    // centimetres apart; with E_v set to that DEM's accuracy the floor admits
+    // them correctly, but the floor is not what tells you they are real. What
+    // tells you is how cleanly the HAND density separates - a deep, wide dip
+    // between two modes means two surfaces, and a shallow scoop through one
+    // broad mode means one surface and an arbitrary cut through it.
+    //
+    // separation_ratio is that, per break: the smoothed density AT the break
+    // divided by the smaller of the two flanking peak densities.
+    //
+    //     ~0.0  a clean split - almost nothing sits at the break
+    //     ~0.6  the acceptance limit the antimode finder uses by default
+    //     ~1.0  no dip at all; the break is a cut through one population
+    //
+    // Reported for BOTH break algorithms, including jenks, which has no notion
+    // of a dip and will happily split a single mode. It is a diagnostic and is
+    // NOT currently an admissibility criterion - see the note in the header.
+    // -------------------------------------------------------------------------
+    std::vector<double> separation_ratio;   // one per entry in breaks_m
+
+    // The window's own reference-field distribution, in LINEAR field units, so
+    // it can be plotted against the breaks directly. Empty when not requested.
+    double hist_lo_m = 0.0;
+    double hist_hi_m = 0.0;
+    std::vector<std::int64_t> hist_counts;
+
+    // THE DECISION, not just its outcome. hist_smoothed is the density the
+    // separation ratio is measured on; gap_lo_m / gap_hi_m are the empty spans
+    // the gap finder found, widest first; candidate_breaks_m is every break it
+    // offered, of which breaks_m is the subset actually taken.
+    //
+    // A reviewer figure needs all of this: the chosen break on a raw histogram
+    // looks arbitrary, and whether it was the best of several candidates or the
+    // only one is not recoverable from the answer alone.
+    std::vector<double> hist_smoothed;
+    std::vector<double> gap_lo_m;
+    std::vector<double> gap_hi_m;
+    std::vector<double> candidate_breaks_m;
 };
 
 // =============================================================================
@@ -332,6 +453,12 @@ struct ladder_window
 struct ladder_result
 {
     lsdtt_raster_cpu           band_index;   // 0..k-1 on admitted pixels, -1 else
+    // Which along-channel window each pixel's breaks came from: an index into
+    // `windows` after the deterministic sort, -1 where the global partition was
+    // used or the pixel is not banded. The reach populations every per-window
+    // histogram is built from, made visible - so a break that looks wrong can
+    // be traced to the ground that produced it.
+    lsdtt_raster_cpu           window_index; // -1 = global / not banded
     // Deterministic order: source_id, then window_centre_m.
     std::vector<ladder_window> windows;
     std::vector<double>        global_breaks_m;

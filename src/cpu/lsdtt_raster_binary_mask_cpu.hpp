@@ -297,6 +297,22 @@ struct seed_reachability_options
     // Maximum along-ground path to a seed as a multiple of the straight-line
     // distance. 0 or negative disables the test.
     double max_detour_ratio      = 3.0;
+
+    // Require the STRAIGHT LINE from a pixel to its nearest seed to stay inside
+    // the mask (small gaps tolerated). Written for separating one valley floor
+    // from a neighbouring one across a col, where connectivity alone is not
+    // enough: two floors joined around a broad col are connected, but the
+    // direct line between them crosses high ground.
+    //
+    // It is a STRONG filter and it is not always wanted. On a broad meandering
+    // floodplain a great deal of genuine valley floor has no straight line to
+    // the channel that stays inside the mask, and is pruned. Measured on the
+    // Royalton 10 m DEM it removed 82% of a HAND band-0 mask on its own, with
+    // every other filter disabled.
+    //
+    // Default true because that is the behaviour it was extracted with; a
+    // caller wanting a permissive valley floor should turn it off.
+    bool   require_seed_line_of_sight = true;
     int    n_threads             = 0;
 };
 
@@ -331,9 +347,77 @@ void filter_components_by_seed_reachability_in_place(
     int    n_dilate,
     bool   require_seed_adjacent,
     double max_detour_ratio,
+    bool   require_seed_line_of_sight,
     double cell,
     int    n_rows,
     int    n_cols
+);
+
+// =============================================================================
+// measure_mask_width_across_polyline
+//
+// The typical WIDTH of a binary mask, measured transverse to an ordered set of
+// nodes running through it (a channel, a centreline, a road).
+//
+// WHY IT EXISTS. Morphological radii are otherwise set by hand, in metres, and
+// a value tuned on one valley means nothing on the next: 80 m seals the slivers
+// in a 400 m floodplain and erases a 100 m one. A radius expressed as a
+// FRACTION OF THE MEASURED WIDTH travels between landscapes and between
+// resolutions; the number to hand-set becomes a ratio, which is a much weaker
+// thing to have to guess.
+//
+// HOW THE WIDTH IS MEASURED, and why not the obvious way. At each station the
+// section is cast both ways perpendicular to the local direction of the line,
+// and the width is the CUMULATIVE length of the set cells along it - not the
+// distance from the first set cell to the last. The two differ wherever a
+// section crosses the mask, leaves it over a bar or an island, and re-enters:
+// first-to-last would count the bar as valley floor and inflate the width by
+// however wide the bar is. Summing only what is actually set does not.
+//
+// The median across stations is returned, not the mean: a section that catches
+// a confluence or a tributary mouth is several times the typical width, and a
+// mean would follow it.
+// =============================================================================
+struct mask_width_result
+{
+    // Cumulative: the summed length of SET cells along each section. This is
+    // the floor actually present.
+    double median_width_metres = 0.0;
+    double p25_width_metres    = 0.0;
+    double p75_width_metres    = 0.0;
+
+    // Envelope: first set cell to last along each section, gaps included. This
+    // is the floor the valley WOULD have if its slivers were sealed.
+    //
+    // The two together say how broken the mask is: envelope / cumulative is 1.0
+    // for a solid floor and rises as scroll bars, levees and abandoned channels
+    // cut it up. It also settles which width a morphological radius should be a
+    // fraction of - a closing meant to seal the slivers is naturally a fraction
+    // of the ENVELOPE, since that is the width it is trying to reconstitute.
+    double median_envelope_metres = 0.0;
+    std::int64_t n_sections    = 0;
+    // One entry per station, in node order, for a caller that wants to see how
+    // the width changes downstream rather than only its typical value.
+    std::vector<double> section_width_metres;
+};
+
+// -----------------------------------------------------------------------------
+// nodes                    : ordered flat indices along the line
+// section_spacing_metres   : distance along the line between stations
+// max_half_length_metres   : how far to look each side before giving up. A
+//                            section that reaches this on both sides is
+//                            discarded, since the mask is wider than the
+//                            measurement and the value would be a floor, not a
+//                            width.
+// tangent_span_nodes       : nodes either side used for the local direction; a
+//                            larger span is less sensitive to a single kink.
+// -----------------------------------------------------------------------------
+[[nodiscard]] mask_width_result measure_mask_width_across_polyline(
+    const lsdtt_raster_cpu&          mask,
+    const std::vector<std::int64_t>& nodes,
+    double section_spacing_metres,
+    double max_half_length_metres,
+    int    tangent_span_nodes = 8
 );
 
 } // namespace lsdtt

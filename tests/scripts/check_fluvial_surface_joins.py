@@ -155,7 +155,8 @@ CLASS_HEADERS = [
 LADDER_HEADERS = [
     "source_id", "window_centre_m", "n_pixels", "k_selected",
     "status", "used_global_breaks", "breaks_m", "band_centres_m",
-    "min_band_centre_gap_m", "required_gap_m", "goodness_of_variance_fit"]
+    "min_band_centre_gap_m", "required_gap_m", "goodness_of_variance_fit",
+    "separation_ratio"]
 
 
 def check_empty_tables(out_dir: pathlib.Path, stem: str) -> int:

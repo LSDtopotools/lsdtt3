@@ -1276,6 +1276,7 @@ void filter_components_by_seed_reachability_in_place(
     const std::vector<std::uint8_t>& distance_mask,
     const std::vector<std::int64_t>& seed_flats,
     int n_dilate, bool require_seed_adjacent, double max_detour_ratio,
+    bool require_seed_line_of_sight,
     double cell, int n_rows, int n_cols)
 {
     const std::size_t n = mask.size();
@@ -1505,6 +1506,11 @@ void filter_components_by_seed_reachability_in_place(
     //     embankments). A neighbouring mask's flat that is merely
     //     CONNECTED to this mask (e.g. around a broad glacial col) has
     //     intervening high ground on the direct line and prunes away.
+    //
+    // Gated: this is a strong filter, and on a broad meandering floodplain it
+    // prunes genuine valley floor that simply has no straight line to the
+    // channel. See require_seed_line_of_sight in the header.
+    if (require_seed_line_of_sight)
     {
         // Nearest seed pixel per grid cell: multi-source Dijkstra over
         // the full valid grid (grid distance ~ Euclidean), carrying the
@@ -1664,7 +1670,7 @@ lsdtt_raster_cpu filter_binary_components_by_seed_reachability(
     filter_components_by_seed_reachability_in_place(
         work, dist.get_data(), dist.get_mask(), seed_flats,
         options.dilation_pixels, options.require_seed_adjacent,
-        options.max_detour_ratio,
+        options.max_detour_ratio, options.require_seed_line_of_sight,
         meta.cell_size, meta.n_rows, meta.n_cols);
 
     std::vector<float>   od(n, 0.0f);
@@ -1673,6 +1679,127 @@ lsdtt_raster_cpu filter_binary_components_by_seed_reachability(
         if (work[i]) od[i] = 1.0f;
 
     return lsdtt_raster_cpu(std::move(od), std::move(om), meta);
+}
+
+// -----------------------------------------------------------------------------
+// measure_mask_width_across_polyline (public - see header)
+// -----------------------------------------------------------------------------
+mask_width_result measure_mask_width_across_polyline(
+    const lsdtt_raster_cpu&          mask,
+    const std::vector<std::int64_t>& nodes,
+    double section_spacing_metres,
+    double max_half_length_metres,
+    int    tangent_span_nodes)
+{
+    mask_width_result out;
+    std::vector<double> envelopes;
+
+    const lsdtt_raster_meta& meta = mask.get_meta();
+    const int n_rows = meta.n_rows, n_cols = meta.n_cols;
+    const double cell = meta.cell_size;
+    const std::vector<float>& mv = mask.get_data();
+    if (nodes.size() < 2 || !(cell > 0.0)) return out;
+
+    const int last = static_cast<int>(nodes.size()) - 1;
+    const int span = std::max(1, tangent_span_nodes);
+    const int max_steps = std::max(
+        1, static_cast<int>(max_half_length_metres / cell));
+
+    // Stations every section_spacing_metres of along-line distance.
+    double since = section_spacing_metres;   // force one at the start
+    for (int k = 0; k <= last; ++k)
+    {
+        if (k > 0)
+        {
+            const std::int64_t a = nodes[static_cast<std::size_t>(k - 1)];
+            const std::int64_t b = nodes[static_cast<std::size_t>(k)];
+            const double dr = static_cast<double>(a / n_cols - b / n_cols);
+            const double dc = static_cast<double>(a % n_cols - b % n_cols);
+            since += cell * std::sqrt(dr * dr + dc * dc);
+        }
+        if (since < section_spacing_metres) continue;
+        since = 0.0;
+
+        // Local direction over +/- span nodes, then the perpendicular.
+        const int ka = std::max(k - span, 0);
+        const int kb = std::min(k + span, last);
+        const std::int64_t fa = nodes[static_cast<std::size_t>(ka)];
+        const std::int64_t fb = nodes[static_cast<std::size_t>(kb)];
+        double dx = static_cast<double>((fb % n_cols) - (fa % n_cols));
+        double dy = static_cast<double>((fb / n_cols) - (fa / n_cols));
+        const double len = std::hypot(dx, dy);
+        if (!(len > 0.0)) continue;
+        dx /= len; dy /= len;
+        const double px = -dy, py = dx;      // perpendicular
+
+        const std::int64_t fk = nodes[static_cast<std::size_t>(k)];
+        const double r0 = static_cast<double>(fk / n_cols);
+        const double c0 = static_cast<double>(fk % n_cols);
+
+        // Walk both ways, summing SET cells only. A section that runs to the
+        // limit on both sides is measuring the limit, not the mask.
+        std::int64_t n_set = 0;
+        int hit_limit = 0;
+        int far_set[2] = {0, 0};     // furthest set cell each way, in steps
+        for (int side = -1; side <= 1; side += 2)
+        {
+            int steps = 0;
+            for (int s = 1; s <= max_steps; ++s)
+            {
+                const int rr = static_cast<int>(std::llround(r0 + side * py * s));
+                const int cc = static_cast<int>(std::llround(c0 + side * px * s));
+                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) break;
+                const std::size_t i =
+                    static_cast<std::size_t>(rr) * n_cols + cc;
+                if (mv[i] > 0.5f)
+                {
+                    ++n_set;
+                    far_set[(side < 0) ? 0 : 1] = s;
+                }
+                steps = s;
+            }
+            if (steps >= max_steps) ++hit_limit;
+        }
+        if (hit_limit == 2) continue;
+
+        // The node's own cell counts once when it is inside the mask.
+        const std::size_t fi = static_cast<std::size_t>(fk);
+        if (fi < mv.size() && mv[fi] > 0.5f) ++n_set;
+
+        // Both recorded only for sections that actually cross the mask; an
+        // empty section is not a zero-width valley, it is no measurement at
+        // all, and averaging it in drags the median toward the cell size.
+        if (n_set > 0)
+        {
+            out.section_width_metres.push_back(
+                static_cast<double>(n_set) * cell);
+            envelopes.push_back(
+                static_cast<double>(far_set[0] + far_set[1] + 1) * cell);
+        }
+    }
+
+    out.n_sections = static_cast<std::int64_t>(out.section_width_metres.size());
+    if (out.n_sections == 0) return out;
+
+    std::vector<double> w = out.section_width_metres;
+    std::sort(w.begin(), w.end());
+    auto pct = [&](double p) -> double
+    {
+        const std::size_t idx = static_cast<std::size_t>(
+            std::clamp(p * static_cast<double>(w.size() - 1), 0.0,
+                       static_cast<double>(w.size() - 1)));
+        return w[idx];
+    };
+    out.median_width_metres = pct(0.5);
+    out.p25_width_metres    = pct(0.25);
+    out.p75_width_metres    = pct(0.75);
+
+    if (!envelopes.empty())
+    {
+        std::sort(envelopes.begin(), envelopes.end());
+        out.median_envelope_metres = envelopes[envelopes.size() / 2];
+    }
+    return out;
 }
 
 } // end namespace lsdtt

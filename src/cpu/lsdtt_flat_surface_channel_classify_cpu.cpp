@@ -309,6 +309,15 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         lr.min_field_metres        = request.band_min_hand_metres;
         lr.max_valley_fraction     = request.band_max_valley_fraction;
         lr.n_threads               = request.n_threads;
+        lr.gap_break_at         = request.ladder_gap_break_at;
+        lr.gap_empty_fraction   = request.ladder_gap_empty_fraction;
+        lr.gap_min_width_metres = request.ladder_gap_min_width_metres;
+        lr.gap_hist_bins        = request.ladder_gap_hist_bins;
+        lr.max_separation_ratio = request.ladder_max_separation_ratio;
+        lr.min_break_metres     = request.ladder_min_break_metres;
+        lr.max_break_metres     = request.ladder_max_break_metres;
+        lr.record_window_histograms = request.record_window_histograms;
+        lr.window_hist_bins         = request.window_hist_bins;
 
         // Reach-relative windowing needs each pixel placed ALONG the channel,
         // which means going through its HAND donor: the source id and the flow
@@ -944,6 +953,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         result.banded_labels_raster = std::move(banded.labels);
         result.patches              = std::move(banded.patches);
         result.ladder_windows       = lad.windows;
+        result.ladder_window_index  = lad.window_index;
         result.global_breaks_m      = lad.global_breaks_m;
         // The ladder's band index is the authoritative per-pixel band here;
         // the banding pre-pass did not run.
@@ -1014,12 +1024,14 @@ void write_ladder_windows_csv(
             join_doubles(w.band_centres_m),
             std::to_string(w.min_band_centre_gap_m),
             std::to_string(w.required_gap_m),
-            std::to_string(w.goodness_of_variance_fit) });
+            std::to_string(w.goodness_of_variance_fit),
+            join_doubles(w.separation_ratio) });
     }
     loader.write_csv(out_path,
         {"source_id","window_centre_m","n_pixels","k_selected",
          "status","used_global_breaks","breaks_m","band_centres_m",
-         "min_band_centre_gap_m","required_gap_m","goodness_of_variance_fit"},
+         "min_band_centre_gap_m","required_gap_m","goodness_of_variance_fit",
+         "separation_ratio"},
         rows);
 }
 
@@ -1054,6 +1066,88 @@ void write_surface_patches_csv(
     loader.write_csv(out_path,
         {"label","band","class","source_id","n_pixels",
          "area_m2","median_field_m","aspect_degrees","window_centre_m"},
+        rows);
+}
+
+void write_ladder_histogram_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows)
+{
+    std::vector<std::vector<std::string>> rows;
+    for (const ladder_window& w : windows)
+    {
+        const std::size_t nb = w.hist_counts.size();
+        if (nb == 0) continue;
+        const double span = (w.hist_hi_m - w.hist_lo_m);
+        const double bw   = span / static_cast<double>(nb);
+        for (std::size_t b = 0; b < nb; ++b)
+        {
+            const double lo = w.hist_lo_m + bw * static_cast<double>(b);
+            const double hi = lo + bw;
+            // Flag the bin each break falls in, so a plotter does not have to
+            // re-derive the binning to place them.
+            int is_break = 0;
+            for (const double brk : w.breaks_m)
+                if (brk >= lo && brk < hi) is_break = 1;
+            rows.push_back({
+                std::to_string(w.source_id),
+                std::to_string(w.window_centre_m),
+                std::to_string(lo),
+                std::to_string(hi),
+                std::to_string(w.hist_counts[b]),
+                std::to_string(is_break) });
+        }
+    }
+    loader.write_csv(out_path,
+        {"source_id","window_centre_m","bin_lo_m","bin_hi_m","count",
+         "is_break_bin"},
+        rows);
+}
+
+void write_ladder_break_metric_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows)
+{
+    std::vector<std::vector<std::string>> rows;
+    for (const ladder_window& w : windows)
+    {
+        const std::size_t nb = w.hist_counts.size();
+        if (nb == 0) continue;
+        const double bw = (w.hist_hi_m - w.hist_lo_m) / static_cast<double>(nb);
+        for (std::size_t b = 0; b < nb; ++b)
+        {
+            const double lo = w.hist_lo_m + bw * static_cast<double>(b);
+            const double hi = lo + bw;
+
+            int in_gap = -1;
+            for (std::size_t g = 0; g < w.gap_lo_m.size(); ++g)
+                if (lo >= w.gap_lo_m[g] && hi <= w.gap_hi_m[g])
+                    in_gap = static_cast<int>(g);
+
+            int is_cand = 0;
+            for (const double cb : w.candidate_breaks_m)
+                if (cb >= lo && cb < hi) is_cand = 1;
+            int is_chosen = 0;
+            for (const double cb : w.breaks_m)
+                if (cb >= lo && cb < hi) is_chosen = 1;
+
+            rows.push_back({
+                std::to_string(w.source_id),
+                std::to_string(w.window_centre_m),
+                std::to_string(lo), std::to_string(hi),
+                std::to_string(w.hist_counts[b]),
+                std::to_string(b < w.hist_smoothed.size()
+                               ? w.hist_smoothed[b] : 0.0),
+                std::to_string(in_gap),
+                std::to_string(is_cand),
+                std::to_string(is_chosen) });
+        }
+    }
+    loader.write_csv(out_path,
+        {"source_id","window_centre_m","bin_lo_m","bin_hi_m","count",
+         "smoothed","gap_id","is_candidate_break","is_chosen_break"},
         rows);
 }
 

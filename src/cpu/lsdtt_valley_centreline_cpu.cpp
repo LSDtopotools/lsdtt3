@@ -361,6 +361,7 @@ valley_centreline_result extract_valley_centrelines(
             request.valley_dilation_pixels,
             request.restrict_to_channel_connected,
             request.valley_max_detour_ratio,
+            /*require_seed_line_of_sight=*/true,
             cell, n_rows, n_cols);
 
         rec.n_valley_pixels = 0;
@@ -680,6 +681,7 @@ valley_centreline_result extract_valley_centrelines(
                                      request.valley_dilation_pixels,
                                      request.restrict_to_channel_connected,
                                      request.valley_max_detour_ratio,
+                                     /*require_seed_line_of_sight=*/true,
                                      cell, n_rows, n_cols);
                 valley.swap(refined);
                 rec.n_valley_pixels = 0;

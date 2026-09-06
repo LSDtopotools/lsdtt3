@@ -200,6 +200,18 @@ struct flat_surface_classify_request
     double vertical_accuracy_metres      = 0.0;  // E_v; 0 disables the floor
     double resolvability_kappa           = 3.0;
     int    band_min_component_pixels     = 1;
+    // Record each ladder window's linear field histogram, so a caller can plot
+    // the density the breaks were chosen from. The separation ratio is always
+    // computed; only the histogram is optional.
+    gap_break_position ladder_gap_break_at = gap_break_position::midpoint;
+    double ladder_gap_empty_fraction     = 0.02;
+    double ladder_gap_min_width_metres   = 0.5;
+    int    ladder_gap_hist_bins          = 80;
+    double ladder_max_separation_ratio   = 0.0;
+    double ladder_min_break_metres       = 0.0;
+    double ladder_max_break_metres       = 0.0;
+    bool   record_window_histograms      = false;
+    int    window_hist_bins              = 80;
 };
 
 // -----------------------------------------------------------------------------
@@ -305,6 +317,7 @@ struct flat_surface_classify_result
     // the result may be described as levels at all, so it is reported rather
     // than kept internal.
     std::vector<ladder_window> ladder_windows;
+    lsdtt_raster_cpu           ladder_window_index;
     bool                       used_band_then_label = false;
 };
 
@@ -378,6 +391,31 @@ void write_surface_patches_csv(
     const std::string&                            out_path,
     const std::vector<patch_record>&              patches,
     const std::vector<flat_surface_label_class>&  classes
+);
+
+// <stem>_ladder_histogram.csv - the DENSITY each window's breaks were chosen
+// from, one row per histogram bin, with the break flag on the bin a break falls
+// in. This is the diagnostic that says whether a break separates two
+// populations or merely cuts through one: the resolvability floor cannot, and
+// neither can the chosen break value on its own.
+void write_ladder_histogram_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows
+);
+
+// <stem>_ladder_break_metric.csv - THE DECISION, not just its outcome. Per bin:
+// the raw count, the smoothed density the separation ratio is measured on,
+// whether the bin sits in a detected gap, and whether a candidate or the chosen
+// break falls in it.
+//
+// The chosen break on a raw histogram looks arbitrary, and whether it was the
+// best of several candidates or the only one on offer is not recoverable from
+// the answer alone. This is what a reviewer figure needs.
+void write_ladder_break_metric_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows
 );
 
 // <stem>_surface_class.csv - one row per classification record.
