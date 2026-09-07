@@ -25,6 +25,25 @@ class RasterTest(unittest.TestCase):
         self.assertEqual(raster.metadata.y_min, 200.0)
         self.assertEqual(raster.metadata.cell_size, 10.0)
 
+    def test_raster_hierarchy_restricts_and_prolongs(self):
+        metadata = lsdtt3.RasterMeta.from_shape(8, 8, cell_size=10.0)
+        raster = lsdtt3.Raster.from_numpy(
+            np.arange(64, dtype=np.float32).reshape(8, 8),
+            np.ones((8, 8), dtype=bool), metadata,
+        )
+        hierarchy = lsdtt3.RasterHierarchy(raster)
+
+        self.assertEqual(hierarchy.n_levels, 4)
+        self.assertEqual(hierarchy.level_factor(2), 4)
+        self.assertEqual(hierarchy.level_shape(2), (2, 2))
+        coarse = hierarchy.restrict_to(2)
+        self.assertEqual(coarse.shape, (2, 2))
+        self.assertEqual(hierarchy.active_level, 2)
+        restored = hierarchy.prolong_to(0)
+        self.assertEqual(restored.shape, (8, 8))
+        factor = hierarchy.add_level_for_factor(8)
+        self.assertEqual(hierarchy.level_factor(factor), 8)
+
     def test_fill_interior_nodata_preserves_input_and_edge_nodata(self):
         raster = self.raster()
         with_holes = lsdtt3.set_nodata_rectangle(raster, 2, 3, 2, 3)
@@ -244,6 +263,57 @@ class RasterTest(unittest.TestCase):
         )
         regridded = lsdtt3.reproject_to_grid(raster, metadata)
         np.testing.assert_array_equal(regridded.to_numpy(), raster.to_numpy())
+
+    def test_in_memory_resampling(self):
+        metadata = lsdtt3.RasterMeta.from_shape(4, 4, cell_size=1.0)
+        values = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
+        raster = lsdtt3.Raster.from_numpy(values, np.ones((4, 4), bool), metadata)
+
+        expected = {
+            "nearest": np.array([[6, 8], [14, 16]], dtype=np.float32),
+            "linear": np.array([[3.5, 5.5], [11.5, 13.5]], dtype=np.float32),
+            "mean": np.array([[3.5, 5.5], [11.5, 13.5]], dtype=np.float32),
+            "sum": np.array([[14, 22], [46, 54]], dtype=np.float32),
+            "min": np.array([[1, 3], [9, 11]], dtype=np.float32),
+            "max": np.array([[6, 8], [14, 16]], dtype=np.float32),
+            "mode": np.array([[1, 3], [9, 11]], dtype=np.float32),
+            "conservative_mean": np.array([[3.5, 5.5], [11.5, 13.5]], dtype=np.float32),
+        }
+        for method, wanted in expected.items():
+            with self.subTest(method=method):
+                result = lsdtt3.halve_raster(raster, method)
+                np.testing.assert_allclose(result.to_numpy(), wanted)
+
+        cubic = lsdtt3.halve_raster(raster, "cubic")
+        self.assertEqual(cubic.shape, (2, 2))
+        self.assertTrue(cubic.mask_numpy().all())
+        self.assertEqual(lsdtt3.double_raster(raster, "nearest").shape, (8, 8))
+
+        arbitrary = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=4.0 / 3.0)
+        self.assertEqual(lsdtt3.resample_raster(raster, arbitrary, "linear").shape, (3, 3))
+
+    def test_power_of_two_helpers(self):
+        metadata = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=2.0)
+        values = np.arange(9, dtype=np.float32).reshape(3, 3)
+        raster = lsdtt3.Raster.from_numpy(values, np.ones((3, 3), bool), metadata)
+
+        padded = lsdtt3.pad_to_nearest_power_of_two(raster)
+        self.assertEqual(padded.shape, (4, 4))
+        self.assertFalse(padded.mask_numpy()[0].any())
+        np.testing.assert_array_equal(padded.to_numpy()[1:, :3], values)
+
+        self.assertEqual(
+            lsdtt3.interpolate_to_nearest_power_of_two(
+                raster, direction="lower", method="linear"
+            ).shape,
+            (2, 2),
+        )
+        self.assertEqual(
+            lsdtt3.interpolate_to_nearest_power_of_two(
+                raster, direction="higher", method="linear"
+            ).shape,
+            (4, 4),
+        )
 
 
 if __name__ == "__main__":

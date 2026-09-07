@@ -2,6 +2,8 @@ nanobind_add_module(_core
     module.cpp
     raster_types.cpp
     raster_basic_ops.cpp
+    raster_resampling.cpp
+    raster_hierarchy.cpp
     raster_pit_processing.cpp
     raster_surface_metrics.cpp
     raster_spectral.cpp

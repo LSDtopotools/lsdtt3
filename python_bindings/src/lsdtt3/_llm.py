@@ -25,6 +25,9 @@ _TOPICS = {
     "terrain": """@terrain
 R.read(path)->R; R.from_numpy(a,mask,M)->R; R.write(path,format='cog'); R.to_numpy(); R.mask_numpy()
 M.from_shape(rows,cols,x_min=0,y_min=0,cell_size=1,...)->M
+resample_raster(R,target_meta,method='linear')->R; double_raster|halve_raster(R,method)->R
+pad_to_nearest_power_of_two(R)->R; interpolate_to_nearest_power_of_two(R,direction='nearest',method='linear')->R
+H=RasterHierarchy(R,storage='retain_allocated',keep_finest=True,levels=0); H.restrict_to(level,method='conservative_mean')->R; H.prolong_to(level,method='linear')->R
 fill_pits(R,...)->R; breach_depressions(R,...)->R; slope(R)->R; multidirectional_hillshade(R,...)->R
 polyfit_metrics(R,[metric],lambda_metres=0,...)->{metric:R}; classify_surface_shape(R|kmax,kmin,...)->{...}
 spectral_analysis(R,...)->SpectralResult; frangi_filter(R,...)->FrangiResult; swath_profile(R,baseline:V,...)->SwathProfile
@@ -68,6 +71,10 @@ bounds_from_vector(V)->VectorBounds; utm_epsg_for_point(x,y)->int; cop30_tiles_f
     "hydraulic": """@hydraulic
 fill_hydraulic_surface(z:R,h:R,node_state:R,boundary_conditions='oooo',...)->HydraulicSurfaceFill
 run_graphflood(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->HydraulicResult
+run_graphflood_optimised(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->GraphFloodOptimisedResult
+run_graphflood_optimised_v2(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->GraphFloodOptimisedResult
+run_graphflood_multigrid(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,backend='optimised_v2',...)->GraphFloodMultigridResult
+run_graphflood_induced(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,qin_threshold,...)->GraphFloodInducedResult
 node_state: 0=outside/nodata,1=active,3=outlet; only 3 drains; each active component needs an outlet unless check_valid_outlet=False.
 ! hydraulic routing is on z+h; stationary workflow fills h, not bed elevation.
 """,

@@ -295,6 +295,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_usgs_elevation.cpp
     src/cpu/lsdtt_raster_cpu.cpp
     src/cpu/lsdtt_raster_algebra.cpp
+    src/cpu/lsdtt_raster_resampling_cpu.cpp
+    src/cpu/lsdtt_raster_hierarchy_cpu.cpp
     src/cpu/lsdtt_raster_coregistration_cpu.cpp
     src/cpu/lsdtt_raster_surface_metrics_cpu.cpp
     src/cpu/lsdtt_surface_texture_cpu.cpp
@@ -338,6 +340,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_mosaic_cpu.cpp
     src/cpu/lsdtt_connectivity_cpu.cpp
     src/cpu/lsdtt_hydraulic_graph_cpu.cpp
+    src/cpu/lsdtt_graphflood_optimised_cpu.cpp
     src/cpu/lsdtt_chi_extraction_cpu.cpp
     src/cpu/lsdtt_chi_network_analysis_cpu.cpp
     src/cpu/lsdtt_chi_disorder_cpu.cpp

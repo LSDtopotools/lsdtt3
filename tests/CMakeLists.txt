@@ -1574,6 +1574,20 @@ add_test(NAME unit_hydraulic_routing
          COMMAND lsdtt-test-hydraulic-routing)
 set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "unit;hydraulic")
 
+add_executable(lsdtt-test-raster-resampling cpp/test_raster_resampling.cpp)
+target_link_libraries(lsdtt-test-raster-resampling PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_raster_resampling
+         COMMAND lsdtt-test-raster-resampling)
+set_tests_properties(unit_raster_resampling PROPERTIES LABELS "unit;raster")
+
+add_executable(lsdtt-test-raster-hierarchy cpp/test_raster_hierarchy.cpp)
+target_link_libraries(lsdtt-test-raster-hierarchy PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_raster_hierarchy
+         COMMAND lsdtt-test-raster-hierarchy)
+set_tests_properties(unit_raster_hierarchy PROPERTIES LABELS "unit;raster")
+
 # Divide-migration compute layer (docs/plan_docs/divide_migration_cli_plan.md
 # §11.1I).  Covers the routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
 # nearest-divide geometry (mid-segment projection, zero-distance guard, negative

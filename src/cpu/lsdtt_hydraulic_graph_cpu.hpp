@@ -85,8 +85,8 @@ public:
 
     // Builds the routing graph from the evolving hydraulic surface. node_state
     // uses 0 = nodata/impermeable, 1 = active interior, 3 = explicit outlet.
-    // An explicit outlet must lie on an "o" boundary edge. Other boundaries
-    // are closed ("n") or periodic ("p") and never drain merely by location.
+    // Code-3 cells are prescribed sinks wherever they occur. With
+    // check_valid_outlet=true, every active connected component needs one.
     explicit lsdtt_hydraulic_graph_cpu(
         const lsdtt_raster_cpu&       bed,
         const lsdtt_array2d_u8&       node_state,
