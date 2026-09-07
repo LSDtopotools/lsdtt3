@@ -184,14 +184,14 @@ into a self-contained bundle. The script `tools/package_macos_backend.sh` automa
 From the repository root:
 
 ```bash
-tools/package_macos_backend.sh --version 0.3.0
+tools/package_macos_backend.sh --version 0.4.0
 ```
 
 This creates:
 
-- Staging directory: `dist/lsdtt3-backend-macos-<arch>-core-v0.3.0/` (where `<arch>` is
+- Staging directory: `dist/lsdtt3-backend-macos-<arch>-core-v0.4.0/` (where `<arch>` is
   `arm64` on Apple Silicon or `x86_64` on Intel)
-- Tarball: `dist/lsdtt3-backend-macos-<arch>-core-v0.3.0.tar.gz`
+- Tarball: `dist/lsdtt3-backend-macos-<arch>-core-v0.4.0.tar.gz`
 
 The bundle contains:
 
@@ -223,7 +223,7 @@ bundle missing `libgdal.so.30`, then silently failed for users).
 manually if needed:
 
 ```bash
-cd dist/lsdtt3-backend-macos-<arch>-core-v0.3.0
+cd dist/lsdtt3-backend-macos-<arch>-core-v0.4.0
 otool -L bin/lsdtt-raster-preprocessing
 ```
 
@@ -242,7 +242,7 @@ live in the dyld shared cache.)
 ### Test the bundle before distribution
 
 ```bash
-cd dist/lsdtt3-backend-macos-<arch>-core-v0.3.0
+cd dist/lsdtt3-backend-macos-<arch>-core-v0.4.0
 source setenv.sh
 lsdtt-raster-preprocessing --help
 ```
@@ -259,7 +259,7 @@ bundle README includes instructions for users, but during development you can cl
 
 ```bash
 # In the distribution directory
-xattr -dr com.apple.quarantine lsdtt3-backend-macos-<arch>-core-v0.3.0
+xattr -dr com.apple.quarantine lsdtt3-backend-macos-<arch>-core-v0.4.0
 ```
 
 After that, the bundle runs freely in the current Terminal session.

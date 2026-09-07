@@ -68,9 +68,9 @@ Packages are on the [Releases page](../../releases/latest) and at
 ### Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz
-source lsdtt3-backend-linux-x86_64-core-v0.3.0/setenv.sh
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
+source lsdtt3-backend-linux-x86_64-core-v0.4.0/setenv.sh
 lsdtt-channel-extraction --help
 ```
 

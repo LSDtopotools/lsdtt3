@@ -176,13 +176,13 @@ login` asks.
 ### Step 3 — Download the release tarball and install
 
 ```bash
-gh release download v0.3.0 --repo LSDtopotools/lsdtt3 \
+gh release download v0.4.0 --repo LSDtopotools/lsdtt3 \
     --pattern "lsdtt3-backend-linux-*.tar.gz" -D ~/
-tar -xzf ~/lsdtt3-backend-linux-x86_64-<profile>-v0.3.0.tar.gz -C ~/
-source ~/lsdtt3-backend-linux-x86_64-<profile>-v0.3.0/setenv.sh
+tar -xzf ~/lsdtt3-backend-linux-x86_64-<profile>-v0.4.0.tar.gz -C ~/
+source ~/lsdtt3-backend-linux-x86_64-<profile>-v0.4.0/setenv.sh
 ```
 
-Replace `v0.3.0` with the tag the developer told you to use. Then follow
+Replace `v0.4.0` with the tag the developer told you to use. Then follow
 Steps 3 and 4 from the section above (verify the installation and access your
 Windows files).
 
@@ -211,22 +211,22 @@ The workflow:
 ### Creating an official release
 
 1. Make sure `main` is in the state you want to release and all tests pass.
-2. Choose a version number following semantic versioning, e.g. `0.3.0`.
+2. Choose a version number following semantic versioning, e.g. `0.4.0`.
 3. Bump `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` to match and
    commit (the build fails on purpose if the tag and CMake version differ).
 4. Tag and push:
    ```bash
-   git tag v0.3.0
-   git push origin main v0.3.0
+   git tag v0.4.0
+   git push origin main v0.4.0
    ```
 5. Go to the repository on GitHub -> **Actions**. You will see the
    "Build and release" workflow running.
-6. When it finishes, go to **Releases**. A new release named `v0.3.0` will
+6. When it finishes, go to **Releases**. A new release named `v0.4.0` will
    have been created automatically with the Linux bundle attached.
 7. Optionally build and attach the Windows / macOS bundles from the
    respective machines (`tools/package_windows_backend.ps1`,
    `tools/package_macos_backend.sh`), then
-   `gh release upload v0.3.0 dist/<bundle>`.
+   `gh release upload v0.4.0 dist/<bundle>`.
 
 ### Test releases between versions (no Actions minutes)
 
@@ -235,14 +235,14 @@ experimental build with a beta tester without spending CI minutes on the
 private repo:
 
 ```bash
-tools/make_release.sh --version 0.3.0-rc1 --publish --prerelease
+tools/make_release.sh --version 0.4.0-rc1 --publish --prerelease
 ```
 
 This builds, smoke-checks, packages, and creates a GitHub **prerelease**
 with the bundle attached (uploading release assets costs no Actions
 minutes). Without `--publish` it stops at `dist/` and you can share the
 tarball by any other route. Development builds self-identify: their
-binaries report e.g. `lsdtt3 0.3.0-dev, git v0.2.0-14-g04460f4` from
+binaries report e.g. `lsdtt3 0.4.0-dev, git v0.2.0-14-g04460f4` from
 `-v` / `--version`.
 
 You can also trigger the CI workflow manually (Actions -> Build and
