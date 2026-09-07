@@ -454,6 +454,76 @@ int main(int argc, char* argv[])
         "Use breach_algorithm_choice to select the algorithm.",
         "Depression breaching", "switch", ""};
 
+    // --- Smoothing / conditioning ---
+    string_default_map["smooth_algorithm_choice"] = "none";
+    help_map["smooth_algorithm_choice"] = {"string","none",
+        "Edge-preserving smoothing applied BEFORE breaching and filling: none "
+        "or perona_malik.",
+        "For work that reads heights off surfaces - terrace treads, valley "
+        "floors, anything the fluvial-surface ladder bands - the riser is the "
+        "signal, not the noise. A mean or Gaussian filter removes DEM noise "
+        "and the tread/riser break in equal measure, which moves every height "
+        "break downstream. Perona-Malik (1990) diffuses within a facet and "
+        "stops at a gradient above K, so the riser survives. It is a "
+        "CONDITIONING step: the smoothed raster is written as its own file and "
+        "everything downstream should read that, so which DEM an analysis ran "
+        "on is visible rather than inferred.",
+        "Smoothing", "param", ""};
+
+    int_default_map["perona_malik_iterations"] = 10;
+    help_map["perona_malik_iterations"] = {"int","10",
+        "Explicit diffusion timesteps.",
+        "More iterations remove more within-facet noise. The riser is "
+        "preserved at every count, so this trades runtime against how quiet "
+        "the treads become rather than against how much structure survives.",
+        "Smoothing", "param", ""};
+
+    float_default_map["perona_malik_lambda"] = 0.20f;
+    help_map["perona_malik_lambda"] = {"float","0.20",
+        "Diffusion timestep. Must be in (0, 0.25].",
+        "0.25 is the stability limit of the explicit 4-neighbour stencil. A "
+        "value above it is REJECTED rather than warned about: an unstable run "
+        "does not give a worse DEM, it gives a meaningless one.",
+        "Smoothing", "param", ""};
+
+    string_default_map["perona_malik_conductance"] = "exponential";
+    help_map["perona_malik_conductance"] = {"string","exponential",
+        "Conductance function: exponential or quadratic.",
+        "exponential is exp(-(s/K)^2), Perona & Malik eq. 3, and falls away "
+        "faster above K, so it preserves a sharp riser more strictly. "
+        "quadratic is 1/(1+(s/K)^2), eq. 4, which keeps diffusing weakly "
+        "across strong edges and is the gentler choice on a noisy DEM.",
+        "Smoothing", "param", ""};
+
+    float_default_map["perona_malik_k_quantile"] = 0.90f;
+    help_map["perona_malik_k_quantile"] = {"float","0.90",
+        "Quantile of the DEM's own neighbour-difference distribution used to "
+        "set the edge threshold K. 0 = state K directly instead.",
+        "K is in metres of rise between adjacent cells, the same units as the "
+        "differences the stencil takes - not a central-difference gradient, "
+        "which averages across two cells and so cannot see the one-cell noise "
+        "the diffusion does. A K carried over from another landscape means "
+        "nothing, so following Black et al. (1998) it is read off the "
+        "distribution of the DEM in hand. The value actually used is printed.",
+        "Smoothing", "param", ""};
+
+    float_default_map["perona_malik_k_metres_per_cell"] = 0.0f;
+    help_map["perona_malik_k_metres_per_cell"] = {"float","0",
+        "Edge threshold K stated directly, in metres of rise per cell. Only "
+        "read when perona_malik_k_quantile is 0.",
+        "Use this to pin K across a set of DEMs that must be conditioned "
+        "identically; the quantile would otherwise give each one its own.",
+        "Smoothing", "param", ""};
+
+    bool_default_map["write_stencil_difference_raster"] = false;
+    help_map["write_stencil_difference_raster"] = {"bool","false",
+        "Write the neighbour-difference raster (metres) K was read from.",
+        "Per cell, the largest absolute elevation difference to a valid "
+        "4-neighbour - the exact quantity the conductance is evaluated on. "
+        "Write it the first time a DEM is conditioned: a quantile is only "
+        "interpretable against the distribution it was taken from.",
+        "Smoothing", "output", ""};
+
     bool_default_map["write_carve_diff_raster"] = false;
     help_map["write_carve_diff_raster"] = {"bool","false",
         "Write the difference raster: breached minus original.",
@@ -1472,9 +1542,101 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 5 - Depression breaching
+    // Step 4b - Edge-preserving smoothing (conditioning)
+    //
+    // Before breaching and filling, because it is conditioning: everything
+    // downstream should see one surface, and which one should be visible in the
+    // file name rather than inferred from a parameter file.
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu working_dem = dem;
+
+    {
+        const std::string& smooth_choice = sf["smooth_algorithm_choice"];
+        if (smooth_choice != "none" && smooth_choice != "perona_malik")
+        {
+            std::cerr << "FATAL: unknown smooth_algorithm_choice '"
+                      << smooth_choice << "'. Valid: none, perona_malik.\n";
+            return 1;
+        }
+
+        if (smooth_choice == "perona_malik")
+        {
+            std::cout << "\n--- Perona-Malik conditioning ---\n";
+
+            lsdtt::perona_malik_options pmo;
+            pmo.n_iterations = ifs["perona_malik_iterations"];
+            pmo.lambda = static_cast<double>(ff["perona_malik_lambda"]);
+            pmo.k_gradient_quantile =
+                static_cast<double>(ff["perona_malik_k_quantile"]);
+            pmo.k_metres_per_cell =
+                static_cast<double>(ff["perona_malik_k_metres_per_cell"]);
+            pmo.n_threads = ifs["n_threads"];
+
+            const std::string& cond = sf["perona_malik_conductance"];
+            if (cond == "exponential")
+                pmo.conductance = lsdtt::pm_conductance_choice::exponential;
+            else if (cond == "quadratic")
+                pmo.conductance = lsdtt::pm_conductance_choice::quadratic;
+            else
+            {
+                std::cerr << "FATAL: unknown perona_malik_conductance '"
+                          << cond << "'. Valid: exponential, quadratic.\n";
+                return 1;
+            }
+
+            if (bf["write_stencil_difference_raster"])
+            {
+                try
+                {
+                    const lsdtt::lsdtt_raster_cpu g =
+                        lsdtt::stencil_difference_magnitude(dem);
+                    const std::string o =
+                        pp.make_output_path("_stencil_difference.tif");
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(g.get_data(), g.get_meta(), o, out_fmt);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: neighbour-difference raster failed: "
+                              << e.what() << "\n";
+                }
+            }
+
+            const auto pm_t0 = std::chrono::steady_clock::now();
+            lsdtt::perona_malik_result pmr;
+            try
+            {
+                pmr = lsdtt::perona_malik_diffusion(dem, pmo);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: Perona-Malik failed: " << e.what() << "\n";
+                return 1;
+            }
+            const auto pm_t1 = std::chrono::steady_clock::now();
+
+            std::cout << "  " << pmr.n_iterations << " iteration(s), lambda "
+                      << pmo.lambda << ", c = " << cond << ", K = "
+                      << pmr.k_metres_per_cell << " m/cell";
+            if (pmo.k_gradient_quantile > 0.0)
+                std::cout << " (quantile " << pmo.k_gradient_quantile << ")";
+            std::cout << "\n";
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(pm_t1 - pm_t0).count()
+                      << " s\n";
+
+            const std::string o = pp.make_output_path("_smoothed.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(pmr.smoothed.get_data(),
+                              pmr.smoothed.get_meta(), o, out_fmt);
+
+            working_dem = pmr.smoothed;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 5 - Depression breaching
+    // -------------------------------------------------------------------------
 
     if (bf["breach_before_fill"] || bf["write_breached_raster"] ||
         bf["write_carve_diff_raster"])

@@ -1954,6 +1954,164 @@ void run_trough_upstream_checks()
 
 }  // namespace
 
+
+// =============================================================================
+// Perona-Malik conditioning (Phase 7b)
+//
+// THE CLAIM the filter is adopted on: it removes within-facet noise while
+// leaving the riser standing. Both halves have to be tested, because either one
+// alone is trivially satisfiable - a no-op preserves every riser, and a heavy
+// blur removes every bit of noise.
+//
+// So the fixture is a two-tread staircase: a lower tread at 100 m, a one-cell
+// riser, an upper tread at 130 m, with +/- 2 m of deterministic noise on both
+// treads. The mean filter is computed alongside as the CONTROL, because the
+// argument for anisotropic diffusion is not that it smooths - anything smooths -
+// but that it does so without moving the break. If a future change quietly
+// turned the conductance off, P-M and the mean filter would agree and the
+// step-preservation check would catch it.
+// =============================================================================
+void run_perona_malik_checks()
+{
+    std::cout << "\n--- Perona-Malik conditioning (7b) ---\n";
+
+    const int n_rows = 80, n_cols = 80;
+    const double cell = 10.0;
+    const int riser_col = 40;
+    const double lower = 100.0, upper = 130.0;
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+
+    std::vector<float>   d(static_cast<std::size_t>(n_rows) * n_cols, 0.0f);
+    std::vector<uint8_t> m(d.size(), uint8_t{1});
+
+    // Deterministic zig-zag noise: no RNG, so the numbers below are pinned.
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            const double base = (c < riser_col) ? lower : upper;
+            const double noise = 2.0 * (((r + c) % 2 == 0) ? 1.0 : -1.0);
+            d[i] = static_cast<float>(base + noise);
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu dem(std::move(d), std::move(m), meta);
+
+    lsdtt::perona_malik_options opt;
+    opt.n_iterations        = 10;
+    opt.lambda              = 0.20;
+    opt.conductance         = lsdtt::pm_conductance_choice::exponential;
+    opt.k_gradient_quantile = 0.90;
+
+    const lsdtt::perona_malik_result pmr =
+        lsdtt::perona_malik_diffusion(dem, opt);
+    const std::vector<float>& sd = pmr.smoothed.get_data();
+    const std::vector<float>& od = dem.get_data();
+
+    check(pmr.k_metres_per_cell > 0.0,
+          "PM1: K was estimated from the DEM's own gradients (K = "
+          + std::to_string(pmr.k_metres_per_cell) + " m/cell)");
+
+    // 3x3 mean filter as the control.
+    std::vector<float> mean(od.size(), 0.0f);
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            double acc = 0.0; int cnt = 0;
+            for (int dr = -1; dr <= 1; ++dr)
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    const int rr = r + dr, cc = c + dc;
+                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) continue;
+                    acc += od[static_cast<std::size_t>(rr) * n_cols + cc];
+                    ++cnt;
+                }
+            mean[static_cast<std::size_t>(r) * n_cols + c] =
+                static_cast<float>(acc / cnt);
+        }
+    }
+
+    // Tread roughness: mean |z - tread base|, well away from the riser.
+    auto tread_roughness = [&](const std::vector<float>& v) {
+        double acc = 0.0; int cnt = 0;
+        for (int r = 2; r < n_rows - 2; ++r)
+            for (int c = 5; c < riser_col - 5; ++c)
+            {
+                acc += std::fabs(v[static_cast<std::size_t>(r) * n_cols + c] - lower);
+                ++cnt;
+            }
+        return acc / cnt;
+    };
+
+    // Step height measured across the riser, one cell either side.
+    auto step_height = [&](const std::vector<float>& v) {
+        double acc = 0.0; int cnt = 0;
+        for (int r = 5; r < n_rows - 5; ++r)
+        {
+            const std::size_t l = static_cast<std::size_t>(r) * n_cols + (riser_col - 1);
+            const std::size_t h = static_cast<std::size_t>(r) * n_cols + riser_col;
+            acc += static_cast<double>(v[h]) - v[l];
+            ++cnt;
+        }
+        return acc / cnt;
+    };
+
+    const double rough_raw  = tread_roughness(od);
+    const double rough_pm   = tread_roughness(sd);
+    const double rough_mean = tread_roughness(mean);
+    const double step_raw   = step_height(od);
+    const double step_pm    = step_height(sd);
+    const double step_mean  = step_height(mean);
+
+    std::cout << "  tread roughness  raw " << rough_raw
+              << "  PM " << rough_pm << "  mean-filter " << rough_mean << "\n";
+    std::cout << "  step height      raw " << step_raw
+              << "  PM " << step_pm << "  mean-filter " << step_mean << "\n";
+
+    check(rough_pm < 0.2 * rough_raw,
+          "PM2: within-tread roughness falls to under a fifth of the raw DEM");
+    check(step_pm > 0.95 * step_raw,
+          "PM3: the riser keeps more than 95% of its height");
+    check(step_pm > step_mean + 1.0,
+          "PM4: the riser survives P-M by more than a metre over the mean "
+          "filter, so the conductance is doing something");
+
+    // Nodata must not be diffused into, and must not leak a value outward.
+    {
+        std::vector<float>   d2 = dem.get_data();
+        std::vector<uint8_t> m2 = dem.get_mask();
+        const std::size_t hole = static_cast<std::size_t>(40) * n_cols + 20;
+        d2[hole] = static_cast<float>(meta.no_data_value);
+        m2[hole] = uint8_t{0};
+        const lsdtt::lsdtt_raster_cpu holed(std::move(d2), std::move(m2), meta);
+        const lsdtt::perona_malik_result hr =
+            lsdtt::perona_malik_diffusion(holed, opt);
+        check(hr.smoothed.get_mask()[hole] == 0,
+              "PM5: a nodata cell stays nodata");
+        const double neigh = hr.smoothed.get_data()[hole - 1];
+        check(neigh > lower - 5.0 && neigh < lower + 5.0,
+              "PM6: the cell beside the hole is not pulled toward nodata");
+    }
+
+    // Stability guard is a refusal, not a warning.
+    {
+        bool threw = false;
+        lsdtt::perona_malik_options bad = opt;
+        bad.lambda = 0.30;
+        try { lsdtt::perona_malik_diffusion(dem, bad); }
+        catch (const std::exception&) { threw = true; }
+        check(threw, "PM7: lambda above the 0.25 stability limit is rejected");
+    }
+}
+
 int main(int argc, char* argv[])
 {
     try
@@ -1979,6 +2137,15 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--trough-upstream")
         {
             run_trough_upstream_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--perona-malik")
+        {
+            run_perona_malik_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

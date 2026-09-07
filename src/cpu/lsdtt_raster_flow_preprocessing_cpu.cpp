@@ -2045,4 +2045,202 @@ depressions_to_polygons(
     return result;
 }
 
+// =============================================================================
+// stencil_difference_magnitude (public - see header)
+// =============================================================================
+lsdtt_raster_cpu stencil_difference_magnitude(
+    const lsdtt_raster_cpu& raster)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    const int n_rows = meta.n_rows;
+    const int n_cols = meta.n_cols;
+
+    const std::vector<float>&   d = raster.get_data();
+    const std::vector<uint8_t>& m = raster.get_mask();
+    const float nodata = static_cast<float>(meta.no_data_value);
+
+    std::vector<float>   out(d.size(), nodata);
+    std::vector<uint8_t> omk(d.size(), uint8_t{0});
+
+    #pragma omp parallel for schedule(static)
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            if (!m[i]) continue;
+
+            const int dr[4] = {-1, 1, 0, 0};
+            const int dc[4] = { 0, 0,-1, 1};
+            double best = -1.0;
+            for (int nb = 0; nb < 4; ++nb)
+            {
+                const int rr = r + dr[nb];
+                const int cc = c + dc[nb];
+                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) continue;
+                const std::size_t j =
+                    static_cast<std::size_t>(rr) * n_cols + cc;
+                if (!m[j]) continue;
+                best = std::max(best,
+                                std::fabs(static_cast<double>(d[j]) - d[i]));
+            }
+            if (best < 0.0) continue;   // isolated cell, no valid neighbour
+            out[i] = static_cast<float>(best);
+            omk[i] = uint8_t{1};
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(out), std::move(omk), meta);
+}
+
+// =============================================================================
+// perona_malik_diffusion (public - see header)
+// =============================================================================
+namespace {
+
+inline double pm_conductance(double s, double k, pm_conductance_choice mode)
+{
+    const double t = s / k;
+    return (mode == pm_conductance_choice::quadratic)
+        ? 1.0 / (1.0 + t * t)
+        : std::exp(-(t * t));
+}
+
+}  // namespace
+
+perona_malik_result perona_malik_diffusion(
+    const lsdtt_raster_cpu&     raster,
+    const perona_malik_options& options)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    const int n_rows = meta.n_rows;
+    const int n_cols = meta.n_cols;
+    if (n_rows < 3 || n_cols < 3)
+    {
+        throw std::runtime_error(
+            "perona_malik_diffusion: raster is smaller than the stencil.");
+    }
+    if (options.n_iterations < 1)
+    {
+        throw std::runtime_error(
+            "perona_malik_diffusion: n_iterations must be >= 1.");
+    }
+    // Rejected, not warned about: past 0.25 the explicit 4-neighbour update is
+    // unconditionally unstable, and an unstable run does not give a worse DEM,
+    // it gives a meaningless one.
+    if (!(options.lambda > 0.0) || options.lambda > 0.25)
+    {
+        throw std::runtime_error(
+            "perona_malik_diffusion: lambda must be in (0, 0.25]; the "
+            "4-neighbour explicit update is unstable above 0.25.");
+    }
+
+    // ---- K -----------------------------------------------------------------
+    double k = 0.0;
+    if (options.k_gradient_quantile > 0.0)
+    {
+        if (options.k_gradient_quantile >= 1.0)
+        {
+            throw std::runtime_error(
+                "perona_malik_diffusion: k_gradient_quantile must be < 1.");
+        }
+        const lsdtt_raster_cpu g = stencil_difference_magnitude(raster);
+        const std::vector<float>&   gd = g.get_data();
+        const std::vector<uint8_t>& gm = g.get_mask();
+        std::vector<float> vals;
+        vals.reserve(gd.size() / 4 + 1);
+        for (std::size_t i = 0; i < gd.size(); ++i)
+        {
+            if (gm[i] && std::isfinite(gd[i])) vals.push_back(gd[i]);
+        }
+        if (vals.empty())
+        {
+            throw std::runtime_error(
+                "perona_malik_diffusion: no finite neighbour differences, so "
+                "K cannot be estimated. State k_metres_per_cell instead.");
+        }
+        std::size_t idx = static_cast<std::size_t>(
+            options.k_gradient_quantile * static_cast<double>(vals.size() - 1));
+        idx = std::min(idx, vals.size() - 1);
+        std::nth_element(vals.begin(), vals.begin() + static_cast<long>(idx),
+                         vals.end());
+        k = static_cast<double>(vals[idx]);
+    }
+    else
+    {
+        k = options.k_metres_per_cell;
+    }
+    if (!(k > 0.0) || !std::isfinite(k))
+    {
+        throw std::runtime_error(
+            "perona_malik_diffusion: K is not positive. Either the quantile "
+            "landed on a flat part of the neighbour-difference distribution "
+            "(raise perona_malik_k_quantile), or k_metres_per_cell was not "
+            "set.");
+    }
+
+    // ---- iterate -----------------------------------------------------------
+    const std::vector<uint8_t>& m = raster.get_mask();
+    std::vector<double> z(raster.get_data().size(), 0.0);
+    for (std::size_t i = 0; i < z.size(); ++i)
+    {
+        if (m[i]) z[i] = static_cast<double>(raster.get_data()[i]);
+    }
+    std::vector<double> next(z.size(), 0.0);
+
+    const int nthreads = options.n_threads;
+    (void)nthreads;
+
+    for (int it = 0; it < options.n_iterations; ++it)
+    {
+        #pragma omp parallel for schedule(static)
+        for (int r = 0; r < n_rows; ++r)
+        {
+            for (int c = 0; c < n_cols; ++c)
+            {
+                const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+                if (!m[i]) { next[i] = z[i]; continue; }
+
+                // No-flux (Neumann) at the grid edge AND at every nodata
+                // boundary: a difference is only taken when the neighbour
+                // exists and carries data. Skipping this is how a nodata hole
+                // would bleed a zero into the interior on the first step.
+                double acc = 0.0;
+                const int dr[4] = {-1, 1, 0, 0};
+                const int dc[4] = { 0, 0,-1, 1};
+                for (int nb = 0; nb < 4; ++nb)
+                {
+                    const int rr = r + dr[nb];
+                    const int cc = c + dc[nb];
+                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) continue;
+                    const std::size_t j =
+                        static_cast<std::size_t>(rr) * n_cols + cc;
+                    if (!m[j]) continue;
+                    const double diff = z[j] - z[i];
+                    acc += pm_conductance(std::fabs(diff), k,
+                                          options.conductance) * diff;
+                }
+                next[i] = z[i] + options.lambda * acc;
+            }
+        }
+        z.swap(next);
+    }
+
+    const float nodata = static_cast<float>(meta.no_data_value);
+    std::vector<float>   od(z.size(), nodata);
+    std::vector<uint8_t> omk(z.size(), uint8_t{0});
+    for (std::size_t i = 0; i < z.size(); ++i)
+    {
+        if (!m[i]) continue;
+        od[i]  = static_cast<float>(z[i]);
+        omk[i] = uint8_t{1};
+    }
+
+    perona_malik_result out;
+    out.smoothed          = lsdtt_raster_cpu(std::move(od), std::move(omk), meta);
+    out.k_metres_per_cell = k;
+    out.n_iterations      = options.n_iterations;
+    return out;
+}
+
 } // namespace lsdtt

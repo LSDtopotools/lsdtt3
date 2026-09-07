@@ -3357,6 +3357,18 @@ add_test(NAME unit_fluvial_surface_fitted_field
 set_tests_properties(unit_fluvial_surface_fitted_field PROPERTIES
     LABELS "unit")
 
+# Phase 7b. Perona-Malik is adopted on the claim that it removes within-facet
+# noise while leaving the riser standing, and BOTH halves need testing: a no-op
+# preserves every riser and a heavy blur removes every bit of noise, so either
+# assertion alone is trivially satisfiable. A 3x3 mean filter runs alongside as
+# the control - if the conductance were ever turned off, P-M and the mean filter
+# would agree and PM4 would catch it. Also pins that nodata is not diffused into
+# and that the lambda stability limit is a refusal rather than a warning.
+add_test(NAME unit_fluvial_surface_perona_malik
+         COMMAND lsdtt-test-fluvial-surfaces --perona-malik)
+set_tests_properties(unit_fluvial_surface_perona_malik PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_test(NAME fixture_fluvial_surfaces_cli
          COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
                  ${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR})
