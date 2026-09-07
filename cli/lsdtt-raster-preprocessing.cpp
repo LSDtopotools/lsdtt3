@@ -74,6 +74,7 @@
 #include "../src/cpu/lsdtt_usgs_elevation.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_mosaic_cpu.hpp"
@@ -457,8 +458,8 @@ int main(int argc, char* argv[])
     // --- Smoothing / conditioning ---
     string_default_map["smooth_algorithm_choice"] = "none";
     help_map["smooth_algorithm_choice"] = {"string","none",
-        "Edge-preserving smoothing applied BEFORE breaching and filling: none "
-        "or perona_malik.",
+        "Edge-preserving smoothing applied BEFORE breaching and filling: none, "
+        "perona_malik or coherence_diffusion.",
         "For work that reads heights off surfaces - terrace treads, valley "
         "floors, anything the fluvial-surface ladder bands - the riser is the "
         "signal, not the noise. A mean or Gaussian filter removes DEM noise "
@@ -523,6 +524,55 @@ int main(int argc, char* argv[])
         "Write it the first time a DEM is conditioned: a quantile is only "
         "interpretable against the distribution it was taken from.",
         "Smoothing", "output", ""};
+
+    int_default_map["coherence_iterations"] = 10;
+    help_map["coherence_iterations"] = {"int","10",
+        "Coherence-enhancing diffusion steps.",
+        "More iterations bridge longer breaks along a feature and smooth "
+        "further within a facet.",
+        "Smoothing", "param", ""};
+
+    float_default_map["coherence_time_step"] = 0.15f;
+    help_map["coherence_time_step"] = {"float","0.15",
+        "Diffusion timestep tau. Must be in (0, 0.25].",
+        "Same explicit-stencil stability limit as perona_malik_lambda, and "
+        "rejected the same way.",
+        "Smoothing", "param", ""};
+
+    float_default_map["coherence_derivative_radius_metres"] = 0.0f;
+    help_map["coherence_derivative_radius_metres"] = {"float","0",
+        "Gradient pre-smoothing radius before the structure tensor is formed. "
+        "0 = one cell.",
+        "Defaults are stated in CELLS, not metres, because a radius that is "
+        "sensible on 1 m lidar is sub-pixel on 30 m COP30 and the structure "
+        "tensor then has nothing to integrate over.",
+        "Smoothing", "param", ""};
+
+    float_default_map["coherence_integration_radius_metres"] = 0.0f;
+    help_map["coherence_integration_radius_metres"] = {"float","0",
+        "Structure-tensor integration radius. 0 = three cells.",
+        "This sets the length scale over which a feature has to look linear "
+        "before the filter will smooth along it. Too small and every noisy "
+        "streak reads as coherent; too large and a curving riser stops "
+        "registering as one feature. See the note on cells vs metres under "
+        "coherence_derivative_radius_metres.",
+        "Smoothing", "param", ""};
+
+    float_default_map["coherence_contrast"] = 0.2f;
+    help_map["coherence_contrast"] = {"float","0.2",
+        "Coherence contrast C: how selective the along-feature smoothing is.",
+        "The coherence it is compared against is normalised to [0, 1], so C is "
+        "scale-invariant and transfers between DEMs. Raise it to smooth only "
+        "the most coherent threads; lower it to smooth more of the field.",
+        "Smoothing", "param", ""};
+
+    float_default_map["coherence_min_diffusivity"] = 0.001f;
+    help_map["coherence_min_diffusivity"] = {"float","0.001",
+        "Across-feature diffusivity floor, in (0, 1).",
+        "The eigenvalue perpendicular to the feature. Near zero means no "
+        "smoothing at all across a riser, which is the point; raise it only to "
+        "deliberately soften the across-feature behaviour.",
+        "Smoothing", "param", ""};
 
     bool_default_map["write_carve_diff_raster"] = false;
     help_map["write_carve_diff_raster"] = {"bool","false",
@@ -1552,10 +1602,12 @@ int main(int argc, char* argv[])
 
     {
         const std::string& smooth_choice = sf["smooth_algorithm_choice"];
-        if (smooth_choice != "none" && smooth_choice != "perona_malik")
+        if (smooth_choice != "none" && smooth_choice != "perona_malik" &&
+            smooth_choice != "coherence_diffusion")
         {
             std::cerr << "FATAL: unknown smooth_algorithm_choice '"
-                      << smooth_choice << "'. Valid: none, perona_malik.\n";
+                      << smooth_choice
+                      << "'. Valid: none, perona_malik, coherence_diffusion.\n";
             return 1;
         }
 
@@ -1631,6 +1683,60 @@ int main(int argc, char* argv[])
                               pmr.smoothed.get_meta(), o, out_fmt);
 
             working_dem = pmr.smoothed;
+        }
+
+        if (smooth_choice == "coherence_diffusion")
+        {
+            std::cout << "\n--- Coherence-enhancing diffusion ---\n";
+
+            const double cell = dem.get_meta().cell_size;
+            double deriv_r =
+                static_cast<double>(ff["coherence_derivative_radius_metres"]);
+            double integ_r =
+                static_cast<double>(ff["coherence_integration_radius_metres"]);
+            // Stated in cells, not metres: a radius tuned on 1 m lidar is
+            // sub-pixel on 30 m COP30, and the structure tensor then has
+            // nothing to integrate over.
+            if (!(deriv_r > 0.0)) deriv_r = cell;
+            if (!(integ_r > 0.0)) integ_r = 3.0 * cell;
+
+            const int    iters = ifs["coherence_iterations"];
+            const double tau   = static_cast<double>(ff["coherence_time_step"]);
+            const double contr = static_cast<double>(ff["coherence_contrast"]);
+            const double mind  =
+                static_cast<double>(ff["coherence_min_diffusivity"]);
+
+            std::cout << "  " << iters << " iteration(s), tau " << tau
+                      << ", derivative radius " << deriv_r
+                      << " m, integration radius " << integ_r
+                      << " m, C = " << contr
+                      << ", min diffusivity " << mind << "\n";
+
+            const auto ce_t0 = std::chrono::steady_clock::now();
+            lsdtt::lsdtt_raster_cpu diffused;
+            try
+            {
+                diffused = lsdtt::coherence_enhancing_diffusion(
+                    dem, iters, tau, deriv_r, integ_r, contr, mind,
+                    ifs["n_threads"]);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: coherence-enhancing diffusion failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+            const auto ce_t1 = std::chrono::steady_clock::now();
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(ce_t1 - ce_t0).count()
+                      << " s\n";
+
+            const std::string o = pp.make_output_path("_smoothed.tif");
+            std::cout << "Writing: " << o << "\n";
+            loader.write_full(diffused.get_data(), diffused.get_meta(),
+                              o, out_fmt);
+
+            working_dem = diffused;
         }
     }
 

@@ -3369,6 +3369,17 @@ add_test(NAME unit_fluvial_surface_perona_malik
 set_tests_properties(unit_fluvial_surface_perona_malik PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Phase 7c. The justification for shipping a SECOND smoother is that it
+# preserves the riser for a different reason - Weickert keeps it because it is
+# linear, Perona-Malik because it is steep - so the test is a riser BROKEN BY
+# NOTCHES and the discriminating statistic is the step height in the notches.
+# Both leave the intact riser standing; only the orientation-aware one closes
+# the break. If a change ever made the two behave alike, CED3/CED4 fail.
+add_test(NAME unit_fluvial_surface_coherence_diffusion
+         COMMAND lsdtt-test-fluvial-surfaces --coherence-diffusion)
+set_tests_properties(unit_fluvial_surface_coherence_diffusion PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_test(NAME fixture_fluvial_surfaces_cli
          COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
                  ${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR})

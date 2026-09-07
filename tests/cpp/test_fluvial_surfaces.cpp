@@ -77,6 +77,7 @@
 #include "lsdtt_flow_base.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "lsdtt_raster_linear_features_cpu.hpp"
 #include "lsdtt_raster_geometry.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
@@ -2112,6 +2113,155 @@ void run_perona_malik_checks()
     }
 }
 
+
+// =============================================================================
+// Coherence-enhancing diffusion (Phase 7c)
+//
+// WHY A SECOND FILTER, AND WHAT SEPARATES IT FROM THE FIRST. Perona-Malik keys
+// on gradient MAGNITUDE, so it keeps a riser because the riser is steep - and
+// keeps a gully cut through that riser for exactly the same reason. Weickert
+// keys on the structure tensor: it smooths ALONG the dominant local orientation
+// and barely at all across it, so it keeps the riser because the riser is
+// LINEAR, and it will close a break in the riser rather than preserve it.
+//
+// That difference is the whole justification for shipping both, so the fixture
+// is a riser BROKEN BY NOTCHES: a two-tread staircase whose riser is cut back
+// to the lower tread every eighth row. The discriminating statistic is the
+// MINIMUM step height along the riser. Both filters should leave the intact
+// riser standing; only the orientation-aware one should raise the floor in the
+// notches. If a future change made the two behave alike, CED4 fails.
+// =============================================================================
+void run_coherence_diffusion_checks()
+{
+    std::cout << "\n--- Coherence-enhancing diffusion (7c) ---\n";
+
+    const int n_rows = 80, n_cols = 80;
+    const double cell = 10.0;
+    const int riser_col = 40;
+    const double lower = 100.0, upper = 130.0;
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+
+    std::vector<float>   d(static_cast<std::size_t>(n_rows) * n_cols, 0.0f);
+    std::vector<uint8_t> m(d.size(), uint8_t{1});
+    std::vector<int>     notched(n_rows, 0);
+
+    for (int r = 0; r < n_rows; ++r)
+    {
+        // Every 8th row the upper tread is cut back past the riser, so the
+        // riser line is interrupted. This is what gullying does to a flight.
+        notched[r] = (r % 8 == 0) ? 1 : 0;
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            double z = (c < riser_col) ? lower : upper;
+            if (notched[r] && c >= riser_col && c < riser_col + 6) z = lower;
+            const double noise = 1.0 * (((r + c) % 2 == 0) ? 1.0 : -1.0);
+            d[i] = static_cast<float>(z + noise);
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu dem(std::move(d), std::move(m), meta);
+
+    // Step height across the riser at one row. Averaged over four cells each
+    // side, not read off single cells: the checkerboard noise alternates with
+    // column parity, so a two-cell reading returns the noise amplitude rather
+    // than the step and a notched row scores 2 m instead of 0.
+    auto step_at = [&](const std::vector<float>& v, int r) {
+        double lo_sum = 0.0, hi_sum = 0.0;
+        for (int k = 1; k <= 4; ++k)
+        {
+            lo_sum += v[static_cast<std::size_t>(r) * n_cols + (riser_col - k)];
+            hi_sum += v[static_cast<std::size_t>(r) * n_cols + (riser_col + k)];
+        }
+        return (hi_sum - lo_sum) / 4.0;
+    };
+    auto step_stats = [&](const std::vector<float>& v, bool want_notched) {
+        double acc = 0.0; int cnt = 0;
+        for (int r = 5; r < n_rows - 5; ++r)
+        {
+            if ((notched[r] != 0) != want_notched) continue;
+            acc += step_at(v, r); ++cnt;
+        }
+        return cnt ? acc / cnt : 0.0;
+    };
+
+    lsdtt::perona_malik_options pmo;
+    pmo.n_iterations        = 20;
+    pmo.lambda              = 0.20;
+    pmo.k_gradient_quantile = 0.50;
+    // Hold the result: binding a reference straight to .smoothed.get_data() on
+    // the temporary dangles, and the freed buffer then reads back as whatever
+    // is written into it next - which made both filters report identical
+    // numbers and very nearly passed as agreement.
+    const lsdtt::perona_malik_result pm_res =
+        lsdtt::perona_malik_diffusion(dem, pmo);
+    const std::vector<float>& pm = pm_res.smoothed.get_data();
+
+    const lsdtt::lsdtt_raster_cpu ced_r =
+        lsdtt::coherence_enhancing_diffusion(
+            dem, /*n_iterations=*/20, /*time_step=*/0.15,
+            /*derivative_radius_metres=*/cell,
+            /*integration_radius_metres=*/3.0 * cell,
+            /*contrast=*/0.2, /*min_diffusivity=*/0.001, /*n_threads=*/1);
+    const std::vector<float>& ce = ced_r.get_data();
+    const std::vector<float>& raw = dem.get_data();
+
+    const double intact_raw = step_stats(raw, false);
+    const double intact_pm  = step_stats(pm,  false);
+    const double intact_ce  = step_stats(ce,  false);
+    const double notch_raw  = step_stats(raw, true);
+    const double notch_pm   = step_stats(pm,  true);
+    const double notch_ce   = step_stats(ce,  true);
+
+    std::cout << "  step at intact rows   raw " << intact_raw
+              << "  PM " << intact_pm << "  CED " << intact_ce << "\n";
+    std::cout << "  step at notched rows  raw " << notch_raw
+              << "  PM " << notch_pm << "  CED " << notch_ce << "\n";
+
+    check(intact_ce > 0.90 * intact_raw,
+          "CED1: the intact riser keeps more than 90% of its height");
+    check(notch_raw < 1.0,
+          "CED2: the fixture's notches really do cut the riser out (raw step "
+          "there = " + std::to_string(notch_raw) + " m)");
+    check(notch_ce > notch_pm,
+          "CED3: the orientation-aware filter closes the notch further than "
+          "the gradient-magnitude one");
+    check(notch_ce > notch_raw + 1.0,
+          "CED4: the notch is bridged by more than a metre, so smoothing ALONG "
+          "the riser is doing something a magnitude filter does not");
+
+    // Nodata and the stability guard, as for Perona-Malik.
+    {
+        std::vector<float>   d2 = dem.get_data();
+        std::vector<uint8_t> m2 = dem.get_mask();
+        const std::size_t hole = static_cast<std::size_t>(40) * n_cols + 20;
+        d2[hole] = static_cast<float>(meta.no_data_value);
+        m2[hole] = uint8_t{0};
+        const lsdtt::lsdtt_raster_cpu holed(std::move(d2), std::move(m2), meta);
+        const lsdtt::lsdtt_raster_cpu hr =
+            lsdtt::coherence_enhancing_diffusion(
+                holed, 5, 0.15, cell, 3.0 * cell, 0.2, 0.001, 1);
+        check(hr.get_mask()[hole] == 0, "CED5: a nodata cell stays nodata");
+    }
+    {
+        bool threw = false;
+        try
+        {
+            lsdtt::coherence_enhancing_diffusion(
+                dem, 5, 0.30, cell, 3.0 * cell, 0.2, 0.001, 1);
+        }
+        catch (const std::exception&) { threw = true; }
+        check(threw, "CED6: a time step above the 0.25 stability limit is "
+                     "rejected");
+    }
+}
+
 int main(int argc, char* argv[])
 {
     try
@@ -2137,6 +2287,15 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--trough-upstream")
         {
             run_trough_upstream_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--coherence-diffusion")
+        {
+            run_coherence_diffusion_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
