@@ -3465,6 +3465,23 @@ set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Phase 7a. `admission_mode` exists because local relief and a gradient cap
+# reject different ground; if a refactor ever collapsed them into one test, or
+# wired relief_or_slope back to the relief mask alone, every count would still
+# look plausible. The synthetic DEM is built to make the two disagree - a smooth
+# 8 percent ramp that only the cap admits, a rough flat that only relief could,
+# a smooth flat that both take and a 45 degree slope that neither does - and the
+# assertions are on the SET RELATIONS between the four modes, which survive the
+# morphological post-processing that the raw counts do not.
+add_test(NAME rigorous_flat_surface_finder_admission_modes
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_admission_modes.py"
+        --exe "$<TARGET_FILE:lsdtt-flat-surface-finder>"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_flat_surface_finder_admission_modes"
+        --cap 15.0)
+set_tests_properties(rigorous_flat_surface_finder_admission_modes PROPERTIES
+    LABELS "rigorous;cli;fluvial_surfaces")
+
 # The trough's upstream-of-head exclusion. Terrain beyond the channel head stays
 # in the valley MASK but must not be carved into the trough, or the pocket
 # behind the head becomes a distance-to-wall bowl that spills over the upstream

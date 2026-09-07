@@ -177,6 +177,52 @@ int main(int argc, char* argv[])
         "Only used when adaptive_relief_threshold = true.",
         "Relief (always on)", "param", ""};
 
+    // --- Admission: relief, gradient, or both ---
+    string_default_map["admission_mode"] = "relief";
+    help_map["admission_mode"] = {"string","relief",
+        "Which test admits a pixel as flat: relief, slope, relief_and_slope "
+        "or relief_or_slope.",
+        "Local relief is not a gradient test and the two reject different "
+        "ground. Relief charges a surface for its own tilt, so a smooth tread "
+        "that slopes downvalley fails it while a rough level surface passes; a "
+        "gradient cap does the opposite. On a Himalayan gorge the two select "
+        "nearly disjoint sets. `relief` is the historical behaviour. `slope` "
+        "uses the gradient cap alone. `relief_and_slope` requires both, which "
+        "is the strictest reading of flat. `relief_or_slope` admits either, "
+        "which is the one to use when the point is to find every candidate "
+        "surface and let the ladder sort them.",
+        "Admission", "param", ""};
+
+    float_default_map["admission_slope_cap_degrees"] = 0.0f;
+    help_map["admission_slope_cap_degrees"] = {"float","0",
+        "Gradient (degrees) below which a pixel is admitted. Required by every "
+        "admission_mode that names slope.",
+        "Measured from a polynomial surface fitted over "
+        "admission_slope_window_metres, not from a 3x3 difference: a 3-cell "
+        "operator on a 30 m DEM measures pixel noise, and the cap has to be "
+        "read at the scale of the surface being admitted. There is no default "
+        "worth guessing - 5 degrees is a valley floor, 15 degrees admits fan "
+        "and pediment - so run the census at more than one cap and report the "
+        "sensitivity rather than defending one number.",
+        "Admission", "param", ""};
+
+    float_default_map["admission_slope_window_metres"] = 0.0f;
+    help_map["admission_slope_window_metres"] = {"float","0",
+        "Window diameter (m) of the polynomial fit the admission gradient is "
+        "measured over. 0 = match the relief window.",
+        "Defaulting to relief_window_pixels x cell size keeps the two "
+        "admission tests commensurate: they then disagree about the ground, "
+        "not about the scale they are looking at.",
+        "Admission", "param", ""};
+
+    bool_default_map["write_admission_slope_raster"] = false;
+    help_map["write_admission_slope_raster"] = {"bool","false",
+        "Write the gradient raster the slope cap was applied to.",
+        "Write it the first time you set a cap on a new DEM. The cap is only "
+        "meaningful against the gradient distribution it is cutting, and that "
+        "distribution is not knowable in advance.",
+        "Admission", "output", ""};
+
     // --- Morphological post-processing of relief mask ---
     float_default_map["flat_closing_radius_metres"] = 0.0f;
     help_map["flat_closing_radius_metres"] = {"float","0",
@@ -775,6 +821,135 @@ int main(int argc, char* argv[])
     //   2. remove components below min_component_pixels
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu flat_mask = result.relief_flat_mask;
+
+    // -------------------------------------------------------------------------
+    // Admission: relief, gradient, or a combination of the two.
+    //
+    // The relief test charges a surface for its own tilt. Over a 150 m window a
+    // tread sloping at 10 percent has 15 m of relief before any roughness is
+    // counted, so it fails a threshold set for roughness while a level but
+    // rough surface passes. A gradient cap inverts that. Neither is a superset
+    // of the other, which is why the combination is named rather than assumed.
+    // -------------------------------------------------------------------------
+    {
+        const std::string& adm_mode = sf["admission_mode"];
+        const bool mode_relief     = (adm_mode == "relief");
+        const bool mode_slope      = (adm_mode == "slope");
+        const bool mode_and        = (adm_mode == "relief_and_slope");
+        const bool mode_or         = (adm_mode == "relief_or_slope");
+        if (!mode_relief && !mode_slope && !mode_and && !mode_or)
+        {
+            std::cerr << "FATAL: unknown admission_mode '" << adm_mode
+                      << "'. Valid: relief, slope, relief_and_slope, "
+                         "relief_or_slope.\n";
+            return 1;
+        }
+
+        if (!mode_relief)
+        {
+            const double cap_deg =
+                static_cast<double>(ff["admission_slope_cap_degrees"]);
+            if (!(cap_deg > 0.0))
+            {
+                std::cerr << "FATAL: admission_mode '" << adm_mode
+                          << "' needs admission_slope_cap_degrees > 0.\n";
+                return 1;
+            }
+
+            const double cell = dem.get_meta().cell_size;
+            double lambda =
+                static_cast<double>(ff["admission_slope_window_metres"]);
+            if (!(lambda > 0.0))
+            {
+                // Same scale as the relief test, so the two disagree about the
+                // ground rather than about the window they read it through.
+                lambda = static_cast<double>(ip["relief_window_pixels"]) * cell;
+            }
+            if (lambda < cell)
+            {
+                std::cerr << "FATAL: admission_slope_window_metres (" << lambda
+                          << " m) is below one cell (" << cell << " m).\n";
+                return 1;
+            }
+
+            std::cout << "Admission gradient: polyfit window " << lambda
+                      << " m, cap " << cap_deg << " degrees\n";
+
+            lsdtt::lsdtt_raster_cpu slope_deg;
+            try
+            {
+                const lsdtt::poly_fit_coeffs fit =
+                    lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
+                lsdtt::polyfit_metric_request mreq;
+                mreq.metrics   = {lsdtt::polyfit_metric::slope_degrees};
+                mreq.n_threads = ip["n_threads"];
+                lsdtt::polyfit_metric_result mres =
+                    lsdtt::compute_polyfit_metrics(fit, mreq);
+                slope_deg = mres.at(lsdtt::polyfit_metric::slope_degrees);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: admission gradient failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+
+            const lsdtt::lsdtt_raster_cpu slope_mask =
+                lsdtt::algebra::raster_binary_true_below_threshold(
+                    slope_deg, static_cast<float>(cap_deg));
+
+            if (bf["write_admission_slope_raster"])
+            {
+                const std::string sp = pp.get_full_write_path()
+                                       + "_admission_slope_degrees.tif";
+                std::cout << "Writing admission gradient: " << sp << "\n";
+                loader.write_full(slope_deg.get_data(), slope_deg.get_meta(),
+                                  sp, out_format);
+            }
+
+            // Combine. The polyfit is only valid where a full window fits with
+            // no nodata, so it is nodata on a margin the relief mask covers;
+            // a pixel the gradient could not be measured at is not admitted by
+            // any mode that names slope, including relief_or_slope. Claiming it
+            // on the strength of relief alone would silently reinstate the
+            // rejected test along every edge and around every hole.
+            const std::vector<float>&   rd = flat_mask.get_data();
+            const std::vector<uint8_t>& rm = flat_mask.get_mask();
+            const std::vector<float>&   sd = slope_mask.get_data();
+            const std::vector<uint8_t>& sm = slope_mask.get_mask();
+            const std::size_t npix = rd.size();
+
+            std::vector<float>   od(npix, 0.0f);
+            std::vector<uint8_t> om(npix, uint8_t{0});
+            std::int64_t n_relief = 0, n_slope = 0, n_out = 0, n_both = 0;
+
+            for (std::size_t i = 0; i < npix; ++i)
+            {
+                const bool rv = (rm[i] != 0) && (rd[i] > 0.5f);
+                const bool sv = (sm[i] != 0) && (sd[i] > 0.5f);
+                if (rv) ++n_relief;
+                if (sv) ++n_slope;
+                if (rv && sv) ++n_both;
+
+                if (sm[i] == 0) continue;          // gradient unmeasured
+                om[i] = uint8_t{1};
+                bool keep = false;
+                if (mode_slope) keep = sv;
+                else if (mode_and) keep = (rv && sv);
+                else              keep = (rv || sv);   // mode_or
+                if (keep) { od[i] = 1.0f; ++n_out; }
+            }
+
+            std::cout << "  relief admits " << n_relief
+                      << ", gradient admits " << n_slope
+                      << ", both " << n_both
+                      << " -> " << adm_mode << " admits " << n_out
+                      << " cell(s)\n\n";
+
+            flat_mask = lsdtt::lsdtt_raster_cpu(
+                std::move(od), std::move(om), dem.get_meta());
+        }
+    }
 
     {
         const double closing_r = static_cast<double>(ff["flat_closing_radius_metres"]);
