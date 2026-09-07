@@ -199,6 +199,17 @@ struct flat_surface_classify_request
     int    ladder_max_level_count        = 12;
     double vertical_accuracy_metres      = 0.0;  // E_v; 0 disables the floor
     double resolvability_kappa           = 3.0;
+    // k bootstrap; see ladder_request::k_bootstrap for what it costs.
+    int    k_bootstrap                   = 0;
+    int    k_bootstrap_seed              = 1;
+    // Slope-dependent E_v. Requires a gradient raster to be passed to
+    // classify_flat_surfaces_by_channel; without one the ladder falls back to
+    // vertical_accuracy_metres and says so in its notes.
+    vertical_accuracy_choice vertical_accuracy_mode =
+        vertical_accuracy_choice::fixed;
+    double vertical_accuracy_gentle_metres = 0.0;
+    double vertical_accuracy_steep_metres  = 0.0;
+    double vertical_accuracy_break_degrees = 11.31;
     int    band_min_component_pixels     = 1;
     // Record each ladder window's linear field histogram, so a caller can plot
     // the density the breaks were chosen from. The separation ratio is always
@@ -363,7 +374,9 @@ struct flat_surface_classify_result
     const std::vector<std::int32_t>&  channel_source_id,
     const flat_surface_classify_request& request,
     const std::vector<std::int64_t>*  donor_flat            = nullptr,
-    const lsdtt_raster_cpu*           channel_flow_distance = nullptr
+    const lsdtt_raster_cpu*           channel_flow_distance = nullptr,
+    const lsdtt_raster_cpu*           slope_degrees         = nullptr,
+    const lsdtt_raster_cpu*           terrain_aspect_degrees = nullptr
 );
 
 // =============================================================================

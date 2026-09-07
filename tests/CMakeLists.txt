@@ -3375,6 +3375,30 @@ set_tests_properties(unit_fluvial_surface_perona_malik PROPERTIES
 # NOTCHES and the discriminating statistic is the step height in the notches.
 # Both leave the intact riser standing; only the orientation-aware one closes
 # the break. If a change ever made the two behave alike, CED3/CED4 fail.
+# Phase 7d. E_v is resolved PER WINDOW, so the fixture is a channel whose
+# admitted ground is gentle over its first half and steep over its second with
+# everything else held identical: if the resolution ever collapsed back to one
+# global number both halves would report the same required_gap_m. The two
+# degenerate paths are pinned too, because each is a way for the feature to look
+# like it works while doing nothing - `fixed` must ignore a supplied gradient
+# raster, and `slope_dependent` with none must fall back AND say so.
+# Phase 7e. The bootstrap and R_bar both exist to say whether a number already
+# in the output is worth quoting, so each is tested at BOTH ends: a population
+# that should be stable and one that should not, a patch facing one way and one
+# facing every way. A test with only the positive half would pass on an
+# implementation that returned 1.0 unconditionally. RB5 additionally pins the
+# circular mean against the arithmetic one - averaging 350 and 10 degrees gives
+# 180, the opposite direction - and against reporting 360 rather than 0.
+add_test(NAME unit_fluvial_surface_bootstrap_rbar
+         COMMAND lsdtt-test-fluvial-surfaces --bootstrap-rbar)
+set_tests_properties(unit_fluvial_surface_bootstrap_rbar PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+add_test(NAME unit_fluvial_surface_slope_dependent_ev
+         COMMAND lsdtt-test-fluvial-surfaces --slope-dependent-ev)
+set_tests_properties(unit_fluvial_surface_slope_dependent_ev PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_test(NAME unit_fluvial_surface_coherence_diffusion
          COMMAND lsdtt-test-fluvial-surfaces --coherence-diffusion)
 set_tests_properties(unit_fluvial_surface_coherence_diffusion PROPERTIES
@@ -3444,8 +3468,8 @@ add_lsdtt_cli_smoke_test(
     --expect btl_surface_class.tif
     --stdout-contains "Ladder and band-then-label"
     --expect-raster-values "btl_band_index.tif:0,1,2,3"
-    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit,separation_ratio"
-    --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
+    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
+    --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
 )
 set_tests_properties(smoke_fluvial_surfaces_band_then_label PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -3609,8 +3633,8 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Ladder and band-then-label"
     --stdout-contains "window(s) resolved"
     --expect-raster-values "fsurf_band_index.tif:0,1,2,3"
-    --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
-    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit,separation_ratio"
+    --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
+    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
 )
 set_tests_properties(smoke_fluvial_surfaces PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)

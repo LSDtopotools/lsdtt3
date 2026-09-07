@@ -57,6 +57,8 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
+#include <string>
 #include <vector>
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"     // pixel_connectivity
@@ -268,6 +270,36 @@ enum class gap_break_position
     upper
 };
 
+// =============================================================================
+// vertical_accuracy_choice
+//
+// How E_v - the DEM's vertical accuracy, and so the resolvability floor
+// kappa * E_v - is arrived at.
+//
+//   fixed           - one number for the whole raster. The historical
+//                     behaviour, and the honest choice when the accuracy really
+//                     is uniform or is simply not known any better.
+//   slope_dependent - a gentle value below a break gradient and a steep value
+//                     above it. Photogrammetric and InSAR DEMs degrade on
+//                     slopes: TanDEM-X relative LE90 is roughly 2 m on gentle
+//                     ground and 4 m on steep, and quoting one number for a
+//                     raster spanning a valley floor and a 40-degree wall
+//                     states an accuracy that is wrong in both places.
+//
+// E_v IS RESOLVED PER WINDOW, NOT PER PIXEL. required_gap is a constraint on the
+// SEPARATION BETWEEN BAND CENTRES, and a band centre is a property of a
+// partition of a whole window's population - it does not sit anywhere in
+// particular, so it has no slope. The window takes the median gradient of its
+// own admitted cells and reads one E_v off that. The value used is reported in
+// ladder_window::vertical_accuracy_m, so a window that took the steep value is
+// visible rather than inferred.
+// =============================================================================
+enum class vertical_accuracy_choice
+{
+    fixed,
+    slope_dependent
+};
+
 // How the gap finder orders its candidates. See ladder_request::gap_rank.
 enum class gap_rank_choice
 {
@@ -315,6 +347,43 @@ struct ladder_request
     // carries no instrument guarantee at all. Callers should say so out loud.
     double vertical_accuracy_metres = 0.0;
     double resolvability_kappa      = 3.0;
+
+    // -------------------------------------------------------------------------
+    // k BOOTSTRAP. Resample each window's population k_bootstrap times, re-run
+    // the whole break search on each replicate, and report how often the same k
+    // comes back. 0 = off, and off is the default.
+    //
+    // WHAT IT BUYS. `k_selected` on its own says nothing about whether a
+    // different draw of the same landscape would have given the same answer. A
+    // ladder that returns k = 7 on every replicate and one that returns k = 7
+    // once and k = 4 the rest of the time are not the same claim, and nothing
+    // else in the output distinguishes them.
+    //
+    // WHAT IT COSTS. B times the break search per window, and the break search
+    // is where the cost sits: measured on a 3.58 M cell DEM with 41 windows,
+    // the whole ladder is 0.6 s under `gap`, 6.2 s under `antimode` and 37.7 s
+    // under `jenks`. So 15 replicates is +9 s, +93 s and +565 s respectively.
+    // Affordable on gap; think first on jenks.
+    //
+    // The cost scales with the BREAK FINDER and the level count, not with pixel
+    // count: every finder bins first, and compute_jenks_breaks reduces to a
+    // fixed 2048-bin weighted histogram before its DP runs. Resampling is
+    // capped at k_bootstrap_max_sample for the same reason - past that the
+    // extra values change no histogram this searches.
+    int    k_bootstrap            = 0;
+    int    k_bootstrap_seed       = 1;
+    int    k_bootstrap_max_sample = 20000;
+
+    // Slope-dependent E_v. Ignored under vertical_accuracy_choice::fixed, and
+    // ignored (with a fall back to vertical_accuracy_metres) when no gradient
+    // raster is supplied to build_reference_field_ladder.
+    vertical_accuracy_choice vertical_accuracy_mode =
+        vertical_accuracy_choice::fixed;
+    double vertical_accuracy_gentle_metres = 0.0;
+    double vertical_accuracy_steep_metres  = 0.0;
+    // Default 11.31 degrees is a 20 percent grade - the figure the TanDEM-X
+    // accuracy specification splits on.
+    double vertical_accuracy_break_degrees = 11.31;
 
     // Reach-relative windowing. The breaks are found per along-channel window,
     // so a break level can track downstream changes in incision rather than
@@ -437,7 +506,24 @@ struct ladder_window
     std::vector<double> band_centres_m;
 
     double min_band_centre_gap_m    = 0.0;
+    // k bootstrap. All -1 / 0 when k_bootstrap is 0.
+    //   k_bootstrap_mode - the k returned most often across replicates
+    //   k_stability      - the fraction of replicates returning that k, in
+    //                      (0, 1]. 1.0 means every replicate agreed.
+    //   k_ci_lo/k_ci_hi  - the 2.5 and 97.5 percentiles of the replicate k
+    //   n_bootstrap      - replicates actually run
+    int    k_bootstrap_mode = -1;
+    double k_stability      = 0.0;
+    int    k_ci_lo          = -1;
+    int    k_ci_hi          = -1;
+    int    n_bootstrap      = 0;
+
     double required_gap_m           = 0.0;   // kappa * E_v
+    // The E_v this window actually used, and the median gradient it was read
+    // from. Under vertical_accuracy_choice::fixed the gradient is NaN and E_v
+    // is the single supplied value.
+    double vertical_accuracy_m      = 0.0;
+    double median_slope_degrees     = std::numeric_limits<double>::quiet_NaN();
     double goodness_of_variance_fit = 0.0;   // reported only, never scored
 
     // -------------------------------------------------------------------------
@@ -509,6 +595,12 @@ struct ladder_result
     std::int64_t n_windows_unresolved = 0;
     std::int64_t n_windows_degenerate = 0;
     int          max_band_index       = 0;
+
+    // Anything the run did that the caller asked for but could not get, in
+    // words. A caller should print these: a request that silently degrades is
+    // worse than one that fails, because the output still looks like what was
+    // asked for.
+    std::vector<std::string> notes;
 };
 
 // -----------------------------------------------------------------------------
@@ -518,15 +610,21 @@ struct ladder_result
 // admitted_mask    : > 0.5 where a pixel may take part
 // window_source_id : per-pixel channel source id, full grid, -1 where none
 // window_coordinate: per-pixel along-channel coordinate (m), co-registered
+// slope_degrees    : per-pixel gradient, co-registered. Only read under
+//                    vertical_accuracy_choice::slope_dependent; a null pointer
+//                    there falls back to vertical_accuracy_metres and says so
+//                    in ladder_result::notes.
 //
-// Both window arguments are optional. Supply neither and the ladder is global.
+// All three trailing arguments are optional. Supply no window arguments and the
+// ladder is global.
 // -----------------------------------------------------------------------------
 [[nodiscard]] ladder_result build_reference_field_ladder(
     const lsdtt_raster_cpu&          reference_field,
     const lsdtt_raster_cpu&          admitted_mask,
     const ladder_request&            request,
     const std::vector<std::int32_t>* window_source_id  = nullptr,
-    const lsdtt_raster_cpu*          window_coordinate = nullptr
+    const lsdtt_raster_cpu*          window_coordinate = nullptr,
+    const lsdtt_raster_cpu*          slope_degrees     = nullptr
 );
 
 // =============================================================================
@@ -541,7 +639,31 @@ struct patch_record
     std::int64_t n_pixels       = 0;
     double       area_m2        = 0.0;
     double       median_field   = 0.0;
-    double       aspect_degrees = -1.0;   // compass convention; -1 = undefined
+
+    // THE DIRECTION THE BANDED FIELD CLIMBS, fitted as a plane through the
+    // field over the patch. On a HAND field that is roughly "away from the
+    // channel", NOT the direction the ground faces. The name matches
+    // lsdtt-surface-metrics; the quantity does not, and the two have been
+    // conflated by that name before. -1 = undefined.
+    double       aspect_degrees = -1.0;
+
+    // THE DIRECTION THE GROUND FACES, and how consistently it faces it.
+    // Populated only when a terrain aspect raster is supplied to
+    // label_components_within_bands; -1 / 0 otherwise.
+    //
+    //   terrain_aspect_degrees - CIRCULAR mean of the per-cell aspect, never
+    //                            the arithmetic mean of degrees. Averaging 350
+    //                            and 10 arithmetically gives 180, which is the
+    //                            opposite direction.
+    //   aspect_r_bar           - mean resultant length of the per-cell aspect
+    //                            unit vectors, in [0, 1]. 1 = every cell faces
+    //                            the same way; 0 = they face every way equally
+    //                            and the mean direction means nothing. This is
+    //                            the number that says whether the aspect above
+    //                            is worth quoting, and without it a circular
+    //                            mean is a number with no error bar.
+    double       terrain_aspect_degrees = -1.0;
+    double       aspect_r_bar           = 0.0;
 };
 
 struct banded_label_result
@@ -572,7 +694,11 @@ struct banded_label_result
     const lsdtt_raster_cpu& admitted_mask,
     const lsdtt_raster_cpu& reference_field,
     int                     min_component_pixels,
-    pixel_connectivity      connectivity = pixel_connectivity::d4
+    pixel_connectivity      connectivity = pixel_connectivity::d4,
+    // Per-pixel TERRAIN aspect in degrees, co-registered. Optional; when given,
+    // each patch gets a circular-mean aspect and a resultant length. See
+    // patch_record.
+    const lsdtt_raster_cpu* terrain_aspect_degrees = nullptr
 );
 
 } // namespace lsdtt

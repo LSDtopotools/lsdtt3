@@ -2262,6 +2262,365 @@ void run_coherence_diffusion_checks()
     }
 }
 
+
+// =============================================================================
+// Slope-dependent E_v (Phase 7d)
+//
+// WHAT IS BEING ASSERTED. The resolvability floor is kappa * E_v, and under
+// vertical_accuracy_choice::slope_dependent E_v is resolved PER WINDOW from the
+// median gradient of that window's own admitted cells. So the fixture is a
+// channel whose admitted ground is gentle over its first half and steep over
+// its second, with everything else - field, admitted mask, break algorithm -
+// held identical. If the per-window resolution ever collapsed back to one
+// global number, the two halves would report the same required_gap_m and EV2
+// would fail.
+//
+// The two degenerate paths are pinned as well, because both are ways for the
+// feature to appear to work while doing nothing: `fixed` must ignore a supplied
+// gradient raster entirely, and `slope_dependent` with NO gradient raster must
+// fall back to the fixed value AND say so, rather than silently using whatever
+// vertical_accuracy_metres happened to be left at.
+// =============================================================================
+void run_slope_dependent_ev_checks()
+{
+    std::cout << "\n--- slope-dependent E_v (7d) ---\n";
+
+    const int n_rows = 40, n_cols = 200;
+    const double cell = 10.0;
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+
+    const std::size_t npix = static_cast<std::size_t>(n_rows) * n_cols;
+    std::vector<float>   fd(npix, 0.0f), ad(npix, 0.0f), cdv(npix, 0.0f),
+                         sd(npix, 0.0f);
+    std::vector<uint8_t> mk(npix, uint8_t{1});
+    std::vector<std::int32_t> src(npix, 0);
+
+    // A four-tread flight in HAND, so there is something to resolve at all, and
+    // an along-channel coordinate running with the columns.
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            const int tread = r / 10;              // 0..3
+            fd[i]  = static_cast<float>(4.0 + 20.0 * tread);
+            ad[i]  = 1.0f;
+            cdv[i] = static_cast<float>(c * cell);
+            // Gentle over the first half of the channel, steep over the second.
+            sd[i]  = (c < n_cols / 2) ? 4.0f : 25.0f;
+        }
+    }
+
+    const lsdtt::lsdtt_raster_cpu field(std::vector<float>(fd), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu admitted(std::vector<float>(ad), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu coord(std::vector<float>(cdv), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu slope(std::vector<float>(sd), std::vector<uint8_t>(mk), meta);
+
+    lsdtt::ladder_request req;
+    req.reference_field     = lsdtt::reference_field_choice::hand;
+    req.break_algorithm     = lsdtt::ladder_break_choice::jenks;
+    req.reach_window_metres = 400.0;
+    req.min_window_pixels   = 50;
+    req.hist_bins           = 64;
+    req.resolvability_kappa = 3.0;
+    req.vertical_accuracy_metres = 1.0;          // the fixed fallback
+    req.vertical_accuracy_mode =
+        lsdtt::vertical_accuracy_choice::slope_dependent;
+    req.vertical_accuracy_gentle_metres = 2.0;
+    req.vertical_accuracy_steep_metres  = 4.0;
+    req.vertical_accuracy_break_degrees = 11.31;
+
+    const lsdtt::ladder_result res = lsdtt::build_reference_field_ladder(
+        field, admitted, req, &src, &coord, &slope);
+
+    int n_gentle = 0, n_steep = 0;
+    bool gap_matches = true;
+    for (const lsdtt::ladder_window& w : res.windows)
+    {
+        if (w.vertical_accuracy_m == 2.0) ++n_gentle;
+        else if (w.vertical_accuracy_m == 4.0) ++n_steep;
+        if (std::fabs(w.required_gap_m - 3.0 * w.vertical_accuracy_m) > 1e-9)
+            gap_matches = false;
+    }
+    std::cout << "  " << res.windows.size() << " window(s): "
+              << n_gentle << " gentle (E_v 2 m), "
+              << n_steep << " steep (E_v 4 m)\n";
+
+    check(n_gentle > 0 && n_steep > 0,
+          "EV1: both E_v values are in play across the reach");
+    check(gap_matches,
+          "EV2: every window's required_gap_m is kappa x its own E_v");
+
+    // The steep half must be the downstream half, not an arbitrary split.
+    {
+        double gentle_centre_sum = 0.0, steep_centre_sum = 0.0;
+        int ng = 0, ns = 0;
+        for (const lsdtt::ladder_window& w : res.windows)
+        {
+            if (w.vertical_accuracy_m == 2.0) { gentle_centre_sum += w.window_centre_m; ++ng; }
+            else { steep_centre_sum += w.window_centre_m; ++ns; }
+        }
+        check(ng > 0 && ns > 0 &&
+              (steep_centre_sum / ns) > (gentle_centre_sum / ng),
+              "EV3: the windows taking the steep E_v are the ones over the "
+              "steep ground, not an arbitrary subset");
+    }
+
+    // `fixed` must ignore the gradient raster entirely.
+    {
+        lsdtt::ladder_request fx = req;
+        fx.vertical_accuracy_mode = lsdtt::vertical_accuracy_choice::fixed;
+        const lsdtt::ladder_result fr = lsdtt::build_reference_field_ladder(
+            field, admitted, fx, &src, &coord, &slope);
+        bool all_fixed = true;
+        for (const lsdtt::ladder_window& w : fr.windows)
+            if (std::fabs(w.required_gap_m - 3.0) > 1e-9) all_fixed = false;
+        check(all_fixed,
+              "EV4: vertical_accuracy_mode fixed ignores a supplied gradient "
+              "raster and uses kappa x vertical_accuracy_metres everywhere");
+        check(fr.notes.empty(), "EV5: fixed emits no fallback note");
+    }
+
+    // slope_dependent with no gradient raster: fall back AND say so.
+    {
+        const lsdtt::ladder_result nr = lsdtt::build_reference_field_ladder(
+            field, admitted, req, &src, &coord, nullptr);
+        bool all_fixed = true;
+        for (const lsdtt::ladder_window& w : nr.windows)
+            if (std::fabs(w.required_gap_m - 3.0) > 1e-9) all_fixed = false;
+        check(all_fixed,
+              "EV6: slope_dependent without a gradient raster falls back to "
+              "vertical_accuracy_metres");
+        check(!nr.notes.empty(),
+              "EV7: and the fallback is reported rather than silent");
+    }
+}
+
+
+// =============================================================================
+// k bootstrap and the aspect resultant length (Phase 7e)
+//
+// Two things adopted from the R implementation, both of which exist to say
+// whether a number already in the output is worth quoting.
+//
+// THE BOOTSTRAP answers "would a different draw have given the same k?". So the
+// test needs both ends: a population where the answer is obviously yes must
+// come back stable, and one where it is obviously no must not. A test that only
+// checked the stable case would pass on an implementation that returned 1.0
+// unconditionally.
+//
+// R_BAR answers "does this patch face one way?". The trap it exists to catch is
+// the arithmetic mean of an angle: averaging 350 and 10 degrees gives 180, the
+// opposite direction. So one fixture faces one way, one faces two opposite
+// ways, and one straddles north - and the third is the one that fails if the
+// circular mean is ever replaced by an ordinary one.
+// =============================================================================
+void run_bootstrap_and_rbar_checks()
+{
+    std::cout << "\n--- k bootstrap and aspect R_bar (7e) ---\n";
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = 60;
+    meta.n_cols = 60;
+    meta.cell_size = 10.0;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+
+    // ---- the bootstrap ----------------------------------------------------
+    // A clean four-tread flight: 15 rows per tread, treads 40 m apart, no
+    // overlap. Any resample of this has the same four modes.
+    std::vector<float>   fd(npix, 0.0f), ad(npix, 1.0f);
+    std::vector<uint8_t> mk(npix, uint8_t{1});
+    for (int r = 0; r < meta.n_rows; ++r)
+        for (int c = 0; c < meta.n_cols; ++c)
+            fd[static_cast<std::size_t>(r) * meta.n_cols + c] =
+                static_cast<float>(5.0 + 40.0 * (r / 15));
+    const lsdtt::lsdtt_raster_cpu clean_field(
+        std::vector<float>(fd), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu admitted(
+        std::vector<float>(ad), std::vector<uint8_t>(mk), meta);
+
+    // The unstable case. A featureless RAMP is not it, and finding that out is
+    // worth recording: jenks on a uniform distribution puts its breaks at even
+    // quantiles, every resample of a uniform sample has the same quantiles, and
+    // the answer comes back at stability 1.0. Determinism is not the same thing
+    // as structure.
+    //
+    // What actually makes k unstable is a SMALL population with overlapping
+    // modes, where a resample changes which partitions clear the resolvability
+    // floor. Three broad lumps, drawn deterministically, only a few hundred
+    // values, and the modes wide enough to run into each other.
+    std::vector<float> rd(npix, 0.0f);
+    {
+        std::uint64_t st = 12345u;
+        auto u01 = [&st]() {
+            st = st * 6364136223846793005ull + 1442695040888963407ull;
+            return static_cast<double>((st >> 11) & 0xFFFFFFFFull) /
+                   static_cast<double>(0xFFFFFFFFull);
+        };
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            const double centre = 20.0 + 30.0 * static_cast<double>(i % 3);
+            // +/- 18 m of spread on centres 30 m apart: the lumps overlap.
+            rd[i] = static_cast<float>(centre + 36.0 * (u01() - 0.5));
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu ramp_field(
+        std::move(rd), std::vector<uint8_t>(mk), meta);
+
+    lsdtt::ladder_request req;
+    req.reference_field     = lsdtt::reference_field_choice::hand;
+    req.break_algorithm     = lsdtt::ladder_break_choice::jenks;
+    req.reach_window_metres = -1.0;      // global
+    req.resolvability_kappa = 3.0;
+    req.vertical_accuracy_metres = 1.0;
+    req.k_bootstrap         = 25;
+    req.k_bootstrap_seed    = 7;
+
+    const lsdtt::ladder_result cb =
+        lsdtt::build_reference_field_ladder(clean_field, admitted, req);
+    // The unstable arm also needs a SMALL population and a floor that actually
+    // bites. 3600 values resample almost identically whatever their shape, and
+    // a floor of 3 m over a 60 m range is cleared by every k, so the search
+    // returns the ceiling every time. Admit one cell in twelve - about 300
+    // values - and raise E_v until the floor is the binding constraint.
+    lsdtt::ladder_request sparse_req = req;
+    sparse_req.vertical_accuracy_metres = 2.5;   // floor = 7.5 m
+    std::vector<float> sp(npix, 0.0f);
+    for (std::size_t i = 0; i < npix; ++i) sp[i] = (i % 12 == 0) ? 1.0f : 0.0f;
+    const lsdtt::lsdtt_raster_cpu sparse_admitted(
+        std::move(sp), std::vector<uint8_t>(mk), meta);
+
+    const lsdtt::ladder_result rb =
+        lsdtt::build_reference_field_ladder(ramp_field, sparse_admitted,
+                                            sparse_req);
+    const lsdtt::ladder_window& cw = cb.windows.at(0);
+    const lsdtt::ladder_window& rw = rb.windows.at(0);
+
+    std::cout << "  clean flight: k = " << cw.k_selected
+              << ", mode = " << cw.k_bootstrap_mode
+              << ", stability = " << cw.k_stability << "\n";
+    std::cout << "  overlapping lumps: k = " << rw.k_selected
+              << ", mode = " << rw.k_bootstrap_mode
+              << ", stability = " << rw.k_stability << "\n";
+
+    check(cw.n_bootstrap == 25, "BS1: every replicate ran");
+    check(cw.k_bootstrap_mode == cw.k_selected,
+          "BS2: on a clean flight the modal bootstrap k is the chosen k");
+    check(cw.k_stability > 0.9,
+          "BS3: and it comes back on almost every replicate");
+    check(cw.k_ci_lo <= cw.k_selected && cw.k_selected <= cw.k_ci_hi,
+          "BS4: the chosen k lies inside the reported interval");
+    check(rw.k_stability < cw.k_stability,
+          "BS5: a population with overlapping modes is LESS stable than a "
+          "clean flight - the statistic discriminates rather than always "
+          "reporting agreement");
+
+    // Reproducible, and actually driven by the seed.
+    {
+        const lsdtt::ladder_result again =
+            lsdtt::build_reference_field_ladder(ramp_field, sparse_admitted,
+                                                sparse_req);
+        check(again.windows.at(0).k_stability == rw.k_stability,
+              "BS6: the same seed reproduces the same stability exactly");
+
+        lsdtt::ladder_request other = sparse_req;
+        other.k_bootstrap_seed = 99;
+        const lsdtt::ladder_result diff =
+            lsdtt::build_reference_field_ladder(ramp_field, sparse_admitted,
+                                                other);
+        check(diff.windows.at(0).n_bootstrap == 25,
+              "BS7: a different seed still runs every replicate");
+    }
+
+    // Off by default, and off means the fields say "not measured".
+    {
+        lsdtt::ladder_request off = req;
+        off.k_bootstrap = 0;
+        const lsdtt::ladder_result nr =
+            lsdtt::build_reference_field_ladder(clean_field, admitted, off);
+        check(nr.windows.at(0).n_bootstrap == 0 &&
+              nr.windows.at(0).k_bootstrap_mode == -1,
+              "BS8: k_bootstrap = 0 leaves the fields at their sentinels");
+    }
+
+    // ---- R_bar ------------------------------------------------------------
+    // Three patches in three bands, so the labeller keeps them apart, each
+    // given a different aspect pattern.
+    std::vector<float>   bi(npix, -1.0f), am(npix, 0.0f), asp(npix, 0.0f);
+    std::vector<uint8_t> bm(npix, uint8_t{1});
+    for (int r = 0; r < meta.n_rows; ++r)
+    {
+        for (int c = 0; c < meta.n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * meta.n_cols + c;
+            if (r < 18)        { bi[i] = 0.0f; asp[i] = 90.0f; }        // one way
+            else if (r < 38)   { bi[i] = 1.0f;                          // two opposite ways
+                                 asp[i] = (c % 2 == 0) ? 0.0f : 180.0f; }
+            else               { bi[i] = 2.0f;                          // straddling north
+                                 asp[i] = (c % 2 == 0) ? 350.0f : 10.0f; }
+            am[i] = 1.0f;
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu bands(
+        std::move(bi), std::vector<uint8_t>(bm), meta);
+    const lsdtt::lsdtt_raster_cpu amask(
+        std::move(am), std::vector<uint8_t>(bm), meta);
+    const lsdtt::lsdtt_raster_cpu aspect(
+        std::move(asp), std::vector<uint8_t>(bm), meta);
+
+    const lsdtt::banded_label_result bl = lsdtt::label_components_within_bands(
+        bands, amask, clean_field, 10, lsdtt::pixel_connectivity::d4, &aspect);
+
+    double rb0 = -1.0, rb1 = -1.0, rb2 = -1.0, a0 = -1.0, a2 = -1.0;
+    for (const lsdtt::patch_record& pr : bl.patches)
+    {
+        if (pr.band == 0 && pr.n_pixels > 100) { rb0 = pr.aspect_r_bar; a0 = pr.terrain_aspect_degrees; }
+        if (pr.band == 1 && pr.n_pixels > 100)   rb1 = pr.aspect_r_bar;
+        if (pr.band == 2 && pr.n_pixels > 100) { rb2 = pr.aspect_r_bar; a2 = pr.terrain_aspect_degrees; }
+    }
+    std::cout << "  R_bar: one way " << rb0
+              << ", two opposite ways " << rb1
+              << ", straddling north " << rb2
+              << " (mean aspect there = " << a2 << " deg)\n";
+
+    check(rb0 > 0.99, "RB1: a patch whose cells all face one way has R_bar ~ 1");
+    check(std::fabs(a0 - 90.0) < 1e-3, "RB2: and its mean aspect is that way");
+    check(rb1 < 0.05,
+          "RB3: a patch facing two opposite ways has R_bar ~ 0, so its mean "
+          "direction is correctly reported as meaningless");
+    check(rb2 > 0.98,
+          "RB4: cells at 350 and 10 degrees are nearly the same direction, so "
+          "R_bar stays near 1");
+    check(a2 >= 0.0 && a2 < 360.0 && (a2 < 5.0 || a2 > 355.0),
+          "RB5: and their circular mean is near north, not the 180 degrees an "
+          "arithmetic mean would give - and is reported in [0, 360), never as "
+          "360");
+
+    // No aspect raster: the columns must say "not measured", not "undefined".
+    {
+        const lsdtt::banded_label_result nb =
+            lsdtt::label_components_within_bands(
+                bands, amask, clean_field, 10,
+                lsdtt::pixel_connectivity::d4, nullptr);
+        bool all_unset = true;
+        for (const lsdtt::patch_record& pr : nb.patches)
+            if (pr.terrain_aspect_degrees >= 0.0) all_unset = false;
+        check(all_unset,
+              "RB6: with no aspect raster the terrain-aspect columns stay unset");
+    }
+}
+
 int main(int argc, char* argv[])
 {
     try
@@ -2287,6 +2646,24 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--trough-upstream")
         {
             run_trough_upstream_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--bootstrap-rbar")
+        {
+            run_bootstrap_and_rbar_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--slope-dependent-ev")
+        {
+            run_slope_dependent_ev_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

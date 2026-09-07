@@ -397,6 +397,102 @@ int main(int argc, char* argv[])
         "dominate the population.",
         "Ladder","param",""};
 
+    int_default_map["ladder_k_bootstrap"] = 0;
+    help_map["ladder_k_bootstrap"] = {"int","0",
+        "Resample each window and re-run the break search this many times, to "
+        "report how stable the chosen level count is. 0 = off.",
+        "`k_selected` on its own says nothing about whether a different draw "
+        "of the same landscape would have given the same answer, and a ladder "
+        "that returns k = 7 every time is not the same claim as one that "
+        "returns it once in fifteen. This costs B times the break search per "
+        "window, and the break search is where the cost sits, not the pixel "
+        "count - every finder bins before it searches. Measured on a 3.58 M "
+        "cell DEM with 41 windows, 15 replicates added 4.9 s under `gap` "
+        "(16.4 to 21.3 s). The same DEM's whole ladder is 6.2 s under "
+        "`antimode` and 37.7 s under `jenks`, so scale accordingly: affordable "
+        "on gap, think first on jenks. Results go to _ladder_windows.csv as "
+        "k_bootstrap_mode, k_stability, k_ci_lo, k_ci_hi and n_bootstrap.",
+        "Ladder", "param", ""};
+
+    int_default_map["ladder_k_bootstrap_seed"] = 1;
+    help_map["ladder_k_bootstrap_seed"] = {"int","1",
+        "Seed for the k bootstrap, so a stability figure is reproducible.",
+        "Each window is seeded from this plus its own source and index, so a "
+        "window's stability does not shift because a neighbouring reach "
+        "changed. The generator is specified in the source rather than taken "
+        "from the standard library, so the number reproduces across platforms.",
+        "Ladder", "param", "ladder_k_bootstrap"};
+
+    bool_default_map["write_patch_terrain_aspect"] = false;
+    help_map["write_patch_terrain_aspect"] = {"bool","false",
+        "Add the terrain aspect and its resultant length to the patch table.",
+        "The existing `aspect_degrees` column is the direction the BANDED "
+        "FIELD climbs, fitted as a plane through it - on a HAND field that is "
+        "roughly `away from the channel`, not the direction the ground faces. "
+        "This adds the topographic aspect as a CIRCULAR mean (the arithmetic "
+        "mean of 350 and 10 degrees is 180, the opposite way) together with "
+        "`aspect_r_bar`, the mean resultant length in [0, 1]. R_bar is the "
+        "number that says whether the mean direction is worth quoting: 1 means "
+        "every cell in the patch faces the same way, 0 means they face every "
+        "way equally and the aspect is meaningless. Costs one polynomial fit.",
+        "Outputs", "output", ""};
+
+    float_default_map["patch_aspect_window_metres"] = 0.0f;
+    help_map["patch_aspect_window_metres"] = {"float","0",
+        "Window diameter [m] of the polynomial fit the terrain aspect is "
+        "measured over. 0 = five cells.",
+        "Stated in cells by default because a length tuned on lidar is "
+        "sub-pixel on 30 m COP30.",
+        "Outputs", "output", "write_patch_terrain_aspect"};
+
+    string_default_map["vertical_accuracy_mode"] = "fixed";
+    help_map["vertical_accuracy_mode"] = {"string","fixed",
+        "How E_v is arrived at: fixed or slope_dependent.",
+        "Photogrammetric and InSAR DEMs degrade on slopes - TanDEM-X relative "
+        "LE90 is roughly 2 m on gentle ground and 4 m on steep - so a single "
+        "number for a raster spanning a valley floor and a 40-degree wall "
+        "states an accuracy that is wrong in both places. Under "
+        "slope_dependent each along-channel WINDOW reads one E_v off the "
+        "median gradient of its own admitted cells. Per window, not per pixel: "
+        "the resolvability floor constrains the separation between band "
+        "CENTRES, and a band centre is a property of a partition rather than "
+        "of a place, so it has no slope of its own. The value each window used "
+        "is written to _ladder_windows.csv.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_gentle_metres"] = 0.0f;
+    help_map["vertical_accuracy_gentle_metres"] = {"float","0.0",
+        "E_v [m] for windows at or below the break gradient. "
+        "slope_dependent only.",
+        "For TanDEM-X this is the quoted relative LE90 on gentle ground, "
+        "about 2 m.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_steep_metres"] = 0.0f;
+    help_map["vertical_accuracy_steep_metres"] = {"float","0.0",
+        "E_v [m] for windows above the break gradient. slope_dependent only.",
+        "About 4 m for TanDEM-X. It must be the LARGER of the two or the mode "
+        "is doing nothing useful.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_break_degrees"] = 11.31f;
+    help_map["vertical_accuracy_break_degrees"] = {"float","11.31",
+        "Gradient [degrees] separating the gentle and steep E_v.",
+        "11.31 degrees is a 20 percent grade, which is where the TanDEM-X "
+        "accuracy specification splits.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_slope_window_metres"] = 0.0f;
+    help_map["vertical_accuracy_slope_window_metres"] = {"float","0",
+        "Window diameter [m] of the polynomial fit the window gradient is "
+        "measured over. 0 = five cells. slope_dependent only.",
+        "Stated in cells by default because a length tuned on lidar is "
+        "sub-pixel on 30 m COP30. This is the same measurement "
+        "lsdtt-flat-surface-finder makes for admission_slope_cap_degrees, and "
+        "it is worth using the same window in both so the gradient a surface "
+        "was admitted on is the gradient its E_v was read from.",
+        "Ladder", "param", ""};
+
     float_default_map["vertical_accuracy_metres"] = 0.0f;
     help_map["vertical_accuracy_metres"] = {"float","0.0",
         "Vertical accuracy of the DEM, E_v [m]. 0 disables the floor.",
@@ -1091,7 +1187,36 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (ff["vertical_accuracy_metres"] <= 0.0f)
+    const std::string& ev_mode_name = sf["vertical_accuracy_mode"];
+    const bool ev_slope_dependent = (ev_mode_name == "slope_dependent");
+    if (ev_mode_name != "fixed" && !ev_slope_dependent)
+    {
+        std::cerr << "FATAL: unknown vertical_accuracy_mode '" << ev_mode_name
+                  << "'. Valid: fixed, slope_dependent.\n";
+        return 1;
+    }
+    if (ev_slope_dependent)
+    {
+        const double eg = static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
+        const double es = static_cast<double>(ff["vertical_accuracy_steep_metres"]);
+        if (!(eg > 0.0) || !(es > 0.0))
+        {
+            std::cerr << "FATAL: vertical_accuracy_mode slope_dependent needs "
+                         "both vertical_accuracy_gentle_metres and "
+                         "vertical_accuracy_steep_metres > 0.\n";
+            return 1;
+        }
+        if (es < eg)
+        {
+            std::cerr << "FATAL: vertical_accuracy_steep_metres (" << es
+                      << ") is below vertical_accuracy_gentle_metres (" << eg
+                      << "). A DEM does not get MORE accurate on a slope; if "
+                         "that is really what you mean, use fixed.\n";
+            return 1;
+        }
+    }
+
+    if (!ev_slope_dependent && ff["vertical_accuracy_metres"] <= 0.0f)
     {
         std::cerr << "WARNING: vertical_accuracy_metres is 0, so the "
                      "resolvability floor is disabled.\n"
@@ -1518,6 +1643,17 @@ int main(int argc, char* argv[])
         creq.ladder_max_level_count      = ip["ladder_max_level_count"];
         creq.vertical_accuracy_metres =
             static_cast<double>(ff["vertical_accuracy_metres"]);
+        creq.k_bootstrap      = ip["ladder_k_bootstrap"];
+        creq.k_bootstrap_seed = ip["ladder_k_bootstrap_seed"];
+        creq.vertical_accuracy_mode = ev_slope_dependent
+            ? lsdtt::vertical_accuracy_choice::slope_dependent
+            : lsdtt::vertical_accuracy_choice::fixed;
+        creq.vertical_accuracy_gentle_metres =
+            static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
+        creq.vertical_accuracy_steep_metres =
+            static_cast<double>(ff["vertical_accuracy_steep_metres"]);
+        creq.vertical_accuracy_break_degrees =
+            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
         creq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         creq.band_reach_window_metres =
@@ -1593,13 +1729,79 @@ int main(int argc, char* argv[])
                                  scope.channel_mask.end())
                            : std::vector<std::uint8_t>(n_pixels, 0);
 
+        // Slope-dependent E_v needs a gradient. Computed here rather than in
+        // the engine so the fit window is a stated parameter and the same
+        // measurement lsdtt-flat-surface-finder makes for admission.
+        lsdtt::lsdtt_raster_cpu ev_slope;
+        bool have_ev_slope = false;
+        if (ev_slope_dependent)
+        {
+            const double cell = dem.get_meta().cell_size;
+            double lambda = static_cast<double>(
+                ff["vertical_accuracy_slope_window_metres"]);
+            if (!(lambda > 0.0)) lambda = 5.0 * cell;
+            std::cout << "Window gradient for E_v: polyfit window " << lambda
+                      << " m, break at "
+                      << ff["vertical_accuracy_break_degrees"] << " degrees\n";
+            try
+            {
+                const lsdtt::poly_fit_coeffs fit =
+                    lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
+                lsdtt::polyfit_metric_request mreq;
+                mreq.metrics   = {lsdtt::polyfit_metric::slope_degrees};
+                mreq.n_threads = ip["n_threads"];
+                lsdtt::polyfit_metric_result mres =
+                    lsdtt::compute_polyfit_metrics(fit, mreq);
+                ev_slope = mres.at(lsdtt::polyfit_metric::slope_degrees);
+                have_ev_slope = true;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: gradient for slope-dependent E_v failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        lsdtt::lsdtt_raster_cpu patch_aspect;
+        bool have_patch_aspect = false;
+        if (bf["write_patch_terrain_aspect"])
+        {
+            const double cell = dem.get_meta().cell_size;
+            double lambda =
+                static_cast<double>(ff["patch_aspect_window_metres"]);
+            if (!(lambda > 0.0)) lambda = 5.0 * cell;
+            std::cout << "Terrain aspect for the patch table: polyfit window "
+                      << lambda << " m\n";
+            try
+            {
+                const lsdtt::poly_fit_coeffs fit =
+                    lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
+                lsdtt::polyfit_metric_request mreq;
+                mreq.metrics   = {lsdtt::polyfit_metric::aspect_degrees};
+                mreq.n_threads = ip["n_threads"];
+                lsdtt::polyfit_metric_result mres =
+                    lsdtt::compute_polyfit_metrics(fit, mreq);
+                patch_aspect = mres.at(lsdtt::polyfit_metric::aspect_degrees);
+                have_patch_aspect = true;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: terrain aspect failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+        }
+
         lsdtt::flat_surface_classify_result cres;
         try
         {
             cres = lsdtt::classify_flat_surfaces_by_channel(
                 admitted, reference_field, cmask, src_ids, creq,
                 have_donors ? &donor_flat  : nullptr,
-                have_donors ? &flow_distance : nullptr);
+                have_donors ? &flow_distance : nullptr,
+                have_ev_slope ? &ev_slope : nullptr,
+                have_patch_aspect ? &patch_aspect : nullptr);
         }
         catch (const std::exception& e)
         {
@@ -1629,6 +1831,17 @@ int main(int argc, char* argv[])
         lreq.max_level_count  = ip["ladder_max_level_count"];
         lreq.vertical_accuracy_metres =
             static_cast<double>(ff["vertical_accuracy_metres"]);
+        lreq.k_bootstrap      = ip["ladder_k_bootstrap"];
+        lreq.k_bootstrap_seed = ip["ladder_k_bootstrap_seed"];
+        lreq.vertical_accuracy_mode = ev_slope_dependent
+            ? lsdtt::vertical_accuracy_choice::slope_dependent
+            : lsdtt::vertical_accuracy_choice::fixed;
+        lreq.vertical_accuracy_gentle_metres =
+            static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
+        lreq.vertical_accuracy_steep_metres =
+            static_cast<double>(ff["vertical_accuracy_steep_metres"]);
+        lreq.vertical_accuracy_break_degrees =
+            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
         lreq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         lreq.reach_window_metres = -1.0;   // no reach on a fitted surface (C6)
@@ -1702,9 +1915,26 @@ int main(int argc, char* argv[])
                   << "  ladder: " << n_res << " window(s) resolved, "
                   << n_unres << " unresolved, " << n_deg << " degenerate";
         if (!ladder.windows.empty())
-            std::cout << "  (required band-centre gap = "
-                      << ladder.windows[0].required_gap_m << " m)";
+        {
+            // Under slope_dependent the floor is per window, so reporting one
+            // number would be a lie about the other windows. Print the range
+            // when they differ and the single value when they do not.
+            double gmin = ladder.windows[0].required_gap_m;
+            double gmax = gmin;
+            for (const auto& w : ladder.windows)
+            {
+                gmin = std::min(gmin, w.required_gap_m);
+                gmax = std::max(gmax, w.required_gap_m);
+            }
+            if (gmax > gmin)
+                std::cout << "  (required band-centre gap = " << gmin
+                          << " to " << gmax << " m across windows)";
+            else
+                std::cout << "  (required band-centre gap = " << gmin << " m)";
+        }
         std::cout << "\n";
+        for (const std::string& note : ladder.notes)
+            std::cout << "  NOTE: " << note << "\n";
         if (n_unres > 0)
             std::cout << "  NOTE: an unresolved window means the DEM cannot "
                          "separate the requested levels there; do not describe "

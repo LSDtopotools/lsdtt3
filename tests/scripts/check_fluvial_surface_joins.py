@@ -142,7 +142,8 @@ def run_cli(args) -> pathlib.Path:
 
 PATCH_HEADERS = [
     "label", "band", "class", "source_id", "n_pixels",
-    "area_m2", "median_field_m", "aspect_degrees", "window_centre_m"]
+    "area_m2", "median_field_m", "aspect_degrees",
+    "terrain_aspect_degrees", "aspect_r_bar", "window_centre_m"]
 
 CLASS_HEADERS = [
     "label", "class", "source_id", "n_pixels",
@@ -155,7 +156,9 @@ CLASS_HEADERS = [
 LADDER_HEADERS = [
     "source_id", "window_centre_m", "n_pixels", "k_selected",
     "status", "used_global_breaks", "breaks_m", "band_centres_m",
-    "min_band_centre_gap_m", "required_gap_m", "goodness_of_variance_fit",
+    "min_band_centre_gap_m", "required_gap_m",
+    "k_bootstrap_mode", "k_stability", "k_ci_lo", "k_ci_hi", "n_bootstrap",
+    "vertical_accuracy_m", "median_slope_degrees", "goodness_of_variance_fit",
     "separation_ratio"]
 
 
