@@ -1739,11 +1739,9 @@ mask_width_result measure_mask_width_across_polyline(
         // Walk both ways, summing SET cells only. A section that runs to the
         // limit on both sides is measuring the limit, not the mask.
         std::int64_t n_set = 0;
-        int hit_limit = 0;
         int far_set[2] = {0, 0};     // furthest set cell each way, in steps
         for (int side = -1; side <= 1; side += 2)
         {
-            int steps = 0;
             for (int s = 1; s <= max_steps; ++s)
             {
                 const int rr = static_cast<int>(std::llround(r0 + side * py * s));
@@ -1756,11 +1754,15 @@ mask_width_result measure_mask_width_across_polyline(
                     ++n_set;
                     far_set[(side < 0) ? 0 : 1] = s;
                 }
-                steps = s;
             }
-            if (steps >= max_steps) ++hit_limit;
         }
-        if (hit_limit == 2) continue;
+        // A section still inside the mask at the search limit on BOTH sides is
+        // measuring max_half_length, not the valley, so it is no measurement.
+        // The test is on the furthest SET cell, not on how far the walk got:
+        // walking the full half-length over ground that left the mask 100 m out
+        // is exactly the ordinary case, and rejecting those leaves only the few
+        // sections whose walk was cut short by the grid edge.
+        if (far_set[0] >= max_steps && far_set[1] >= max_steps) continue;
 
         // The node's own cell counts once when it is inside the mask.
         const std::size_t fi = static_cast<std::size_t>(fk);

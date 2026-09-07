@@ -223,12 +223,28 @@ struct fitted_surface_field
 // the floodplain entirely; antimode looks for a dip but does it on a log10 axis
 // that compresses everything above a few metres into a handful of bins.
 //
-// The finder bins linearly, calls a bin EMPTY when it holds less than
-// gap_empty_fraction of the tallest bin, takes contiguous runs of empty bins
-// wider than gap_min_width_metres, and returns the midpoint of each - ranked
-// widest first, since a wide clean gap is a stronger statement than a narrow
-// one. Where a landscape genuinely has separated levels this reproduces what a
-// human reads off the figure.
+// The finder bins linearly and offers each candidate break to the partition
+// tests. Two kinds of candidate:
+//
+//   EMPTY RUNS  - contiguous bins each holding less than gap_empty_fraction of
+//                 the tallest bin, spanning at least gap_min_width_metres. The
+//                 clean case: nothing at all between two levels.
+//   TROUGHS     - interior local minima of the smoothed histogram. Needed
+//                 because "empty" is measured against the TALLEST bin, and in a
+//                 mountain catchment the floodplain bin is enormous: a real dip
+//                 between the floor and the first terrace can hold 5-20% of that
+//                 peak and never register as empty, while the sparse tail 150 m
+//                 up is empty everywhere. Without troughs the finder has no
+//                 candidate anywhere near the valley floor and takes a break out
+//                 in the tail instead - which bands the whole terrace staircase
+//                 as valley floor. A trough is only a break if it also passes
+//                 max_separation_ratio, so the weak ones are still rejected.
+//
+// RANKING is the other half of the same problem, and is set by gap_rank.
+// Ranking by width prefers the widest empty span, which in a landscape with a
+// long sparse tail is always high up. Ranking lowest-first walks the ladder from
+// the bottom, which is the order the levels physically sit in and the order a
+// reader's eye takes them.
 //
 // build_reference_field_ladder therefore THROWS rather than banding a field
 // containing negative values with the antimode finder. Use jenks, which works
@@ -250,6 +266,13 @@ enum class gap_break_position
     lower,
     midpoint,
     upper
+};
+
+// How the gap finder orders its candidates. See ladder_request::gap_rank.
+enum class gap_rank_choice
+{
+    lowest,
+    width
 };
 
 // =============================================================================
@@ -321,9 +344,28 @@ struct ladder_request
     //              is the strictest reading of "the active floodplain".
     gap_break_position gap_break_at = gap_break_position::midpoint;
 
+    // HOW CANDIDATES ARE ORDERED. select_partition consumes them in this
+    // order, so this decides which break wins when several are admissible.
+    //
+    //   lowest - lowest break first. The ladder is walked from the bottom, so
+    //            the valley cut is taken before any terrace or hillslope cut.
+    //            This is the default because a wide gap is NOT evidence that a
+    //            break is the valley: the widest empty span in a mountain
+    //            catchment sits in the sparse tail 150 m above the river.
+    //   width  - widest empty span first. Only meaningful where the whole field
+    //            range is a few metres and every gap is a real level boundary.
+    gap_rank_choice gap_rank = gap_rank_choice::lowest;
+
     double gap_empty_fraction   = 0.02;
     double gap_min_width_metres = 0.5;
     int    gap_hist_bins        = 80;
+
+    // A trough counts as a candidate only if the smoothed count at its floor is
+    // below this fraction of the smaller flanking peak. This is the same
+    // quantity as max_separation_ratio and is deliberately looser: it only has
+    // to be loose enough to OFFER the candidate, since max_separation_ratio
+    // still has to accept it before it becomes a break. 0 disables troughs.
+    double gap_trough_max_ratio = 0.6;
 
     // Pass-through to find_population_breaks.
     int    hist_bins           = 64;

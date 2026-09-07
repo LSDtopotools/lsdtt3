@@ -320,6 +320,31 @@ int main(int argc, char* argv[])
         "the active floodplain; `midpoint` splits the difference.",
         "Ladder","param","ladder_break_algorithm_choice"};
 
+    string_default_map["ladder_gap_rank"] = "lowest";
+    help_map["ladder_gap_rank"] = {"string","lowest",
+        "Order the gap finder offers its candidate breaks in: lowest or width.",
+        "gap algorithm only, and it decides which break wins when more than one "
+        "is admissible. `lowest` walks the ladder from the bottom, so the "
+        "valley cut is taken before any terrace or hillslope cut. `width` "
+        "prefers the widest empty span, which is only a good guide where the "
+        "whole field range is a few metres: in a mountain catchment the widest "
+        "empty span sits in the sparse tail a hundred metres above the river, "
+        "and taking it bands the entire terrace staircase as valley floor.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
+    float_default_map["ladder_gap_trough_max_ratio"] = 0.6f;
+    help_map["ladder_gap_trough_max_ratio"] = {"float","0.6",
+        "Offer a local minimum as a candidate break when its floor is below "
+        "this fraction of the smaller flanking peak. 0 = empty spans only.",
+        "gap algorithm only. `ladder_gap_empty_fraction` measures emptiness "
+        "against the TALLEST bin, so where one level dominates the population "
+        "a real dip above it never reads as empty and the finder has no "
+        "candidate anywhere near the valley floor. This offers those dips as "
+        "candidates; `ladder_max_separation_ratio` still has to accept them "
+        "before any becomes a break, which is why this is the looser of the "
+        "two numbers.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
     float_default_map["ladder_gap_empty_fraction"] = 0.02f;
     help_map["ladder_gap_empty_fraction"] = {"float","0.02",
         "A histogram bin below this fraction of the tallest bin counts as empty.",
@@ -1518,6 +1543,19 @@ int main(int argc, char* argv[])
                 return 1;
             }
         }
+        {
+            const std::string& gr = sf["ladder_gap_rank"];
+            if (gr == "lowest")     creq.ladder_gap_rank = lsdtt::gap_rank_choice::lowest;
+            else if (gr == "width") creq.ladder_gap_rank = lsdtt::gap_rank_choice::width;
+            else
+            {
+                std::cerr << "FATAL: unknown ladder_gap_rank '" << gr
+                          << "'. Valid: lowest, width.\n";
+                return 1;
+            }
+        }
+        creq.ladder_gap_trough_max_ratio =
+            static_cast<double>(ff["ladder_gap_trough_max_ratio"]);
         creq.ladder_gap_empty_fraction =
             static_cast<double>(ff["ladder_gap_empty_fraction"]);
         creq.ladder_gap_min_width_metres =
@@ -1600,6 +1638,19 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["ladder_min_field_metres"]);
         lreq.max_valley_fraction =
             static_cast<double>(ff["ladder_max_valley_fraction"]);
+        {
+            const std::string& gr = sf["ladder_gap_rank"];
+            if (gr == "lowest")     lreq.gap_rank = lsdtt::gap_rank_choice::lowest;
+            else if (gr == "width") lreq.gap_rank = lsdtt::gap_rank_choice::width;
+            else
+            {
+                std::cerr << "FATAL: unknown ladder_gap_rank '" << gr
+                          << "'. Valid: lowest, width.\n";
+                return 1;
+            }
+        }
+        lreq.gap_trough_max_ratio =
+            static_cast<double>(ff["ladder_gap_trough_max_ratio"]);
         lreq.gap_empty_fraction =
             static_cast<double>(ff["ladder_gap_empty_fraction"]);
         lreq.gap_min_width_metres =

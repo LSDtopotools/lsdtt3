@@ -423,14 +423,22 @@ selection select_partition(
 // uses on a HAND histogram and what neither other finder looks for. See
 // ladder_break_choice in the header for why jenks and antimode both miss it.
 //
-// Bins linearly, calls a bin empty when it holds less than empty_fraction of the
-// tallest bin, takes contiguous runs of empty bins wider than min_width, and
-// returns each run's MIDPOINT. Ranked widest-run first, because select_partition
-// consumes candidates in strength order and a wide clean gap is a stronger
-// statement of separation than a narrow one.
+// Bins linearly and emits two kinds of candidate (see the header for why both
+// are needed):
+//
+//   EMPTY RUNS - contiguous bins below empty_fraction of the tallest bin,
+//                spanning at least min_width. Break placed per gap_break_at.
+//   TROUGHS    - interior local minima of the 3-bin-smoothed histogram whose
+//                floor sits below gap_trough_max_ratio of the smaller flanking
+//                peak. "Empty" is relative to the TALLEST bin, so where one
+//                level dominates the population - a mountain floodplain, say -
+//                a genuine dip above it never reads as empty and only the
+//                sparse tail does. Without troughs the finder then has no
+//                candidate below 100 m and bands the terraces as valley floor.
 //
 // Leading and trailing runs are dropped: the empty space below the lowest datum
-// and above the highest is not a boundary between two populations.
+// and above the highest is not a boundary between two populations. Ranking is
+// gap_rank: lowest break first by default, so the ladder is walked bottom-up.
 // -----------------------------------------------------------------------------
 std::vector<double> gap_break_candidates(
     const std::vector<double>& values, const ladder_request& request,
@@ -461,6 +469,9 @@ std::vector<double> gap_break_candidates(
     const double empty_at =
         std::max(0.0, request.gap_empty_fraction) * static_cast<double>(peak);
 
+    struct cand { double at; double width; double lo; double hi; };
+    std::vector<cand> cands;
+
     // Contiguous runs of empty bins.
     struct run { int lo_bin; int hi_bin; };
     std::vector<run> runs;
@@ -473,8 +484,7 @@ std::vector<double> gap_break_candidates(
     }
     if (start >= 0) runs.push_back({start, nb - 1});
 
-    struct cand { double mid; double width; double lo; double hi; };
-    std::vector<cand> cands;
+    std::vector<char> in_run(static_cast<std::size_t>(nb), 0);
     for (const run& r : runs)
     {
         // Drop runs touching either end: empty space below the lowest datum or
@@ -484,17 +494,78 @@ std::vector<double> gap_break_candidates(
         const double ghi = lo + bw * static_cast<double>(r.hi_bin + 1);
         const double w   = ghi - glo;
         if (w < request.gap_min_width_metres) continue;
+        for (int i = r.lo_bin; i <= r.hi_bin; ++i)
+            in_run[static_cast<std::size_t>(i)] = 1;
         double at = 0.5 * (glo + ghi);
         if (request.gap_break_at == gap_break_position::lower)      at = glo;
         else if (request.gap_break_at == gap_break_position::upper) at = ghi;
         cands.push_back({at, w, glo, ghi});
     }
 
-    std::sort(cands.begin(), cands.end(),
-              [](const cand& a, const cand& b) { return a.width > b.width; });
+    // Troughs: interior local minima of the smoothed histogram. Smoothed with
+    // the same 3-bin average separation_ratio_at uses, so a candidate offered
+    // here is scored on the same curve it will later be judged against.
+    if (request.gap_trough_max_ratio > 0.0)
+    {
+        std::vector<double> s(static_cast<std::size_t>(nb), 0.0);
+        for (int i = 0; i < nb; ++i)
+        {
+            double acc = 0.0; int m = 0;
+            for (int d = -1; d <= 1; ++d)
+            {
+                const int j = i + d;
+                if (j < 0 || j >= nb) continue;
+                acc += static_cast<double>(counts[static_cast<std::size_t>(j)]);
+                ++m;
+            }
+            s[static_cast<std::size_t>(i)] = (m > 0) ? acc / m : 0.0;
+        }
+
+        for (int i = 1; i < nb - 1; ++i)
+        {
+            if (in_run[static_cast<std::size_t>(i)]) continue;   // already a gap
+            const double c = s[static_cast<std::size_t>(i)];
+            if (c > s[static_cast<std::size_t>(i - 1)]) continue;
+            if (c > s[static_cast<std::size_t>(i + 1)]) continue;
+            // A flat shoulder is not a trough: require a strict fall on one side.
+            if (!(c < s[static_cast<std::size_t>(i - 1)] ||
+                  c < s[static_cast<std::size_t>(i + 1)])) continue;
+
+            double peak_lo = 0.0, peak_hi = 0.0;
+            for (int j = 0; j < i; ++j)
+                peak_lo = std::max(peak_lo, s[static_cast<std::size_t>(j)]);
+            for (int j = i + 1; j < nb; ++j)
+                peak_hi = std::max(peak_hi, s[static_cast<std::size_t>(j)]);
+            const double flank = std::min(peak_lo, peak_hi);
+            if (!(flank > 0.0)) continue;
+            if (c / flank > request.gap_trough_max_ratio) continue;
+
+            // The trough has no span, so lo and hi are the bin it sits in and
+            // gap_break_at has nothing to choose between.
+            const double blo = lo + bw * static_cast<double>(i);
+            const double bhi = blo + bw;
+            cands.push_back({0.5 * (blo + bhi), 0.0, blo, bhi});
+        }
+    }
+
+    if (request.gap_rank == gap_rank_choice::width)
+    {
+        std::sort(cands.begin(), cands.end(),
+                  [](const cand& a, const cand& b) { return a.width > b.width; });
+    }
+    else
+    {
+        // Bottom-up. Ties (a trough sitting at the same height as a run) go to
+        // the wider one, which is the better-separated statement of the two.
+        std::sort(cands.begin(), cands.end(),
+                  [](const cand& a, const cand& b) {
+                      if (a.at != b.at) return a.at < b.at;
+                      return a.width > b.width;
+                  });
+    }
     for (const cand& c : cands)
     {
-        out.push_back(c.mid);
+        out.push_back(c.at);
         if (gap_lo) gap_lo->push_back(c.lo);
         if (gap_hi) gap_hi->push_back(c.hi);
     }

@@ -310,6 +310,8 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         lr.max_valley_fraction     = request.band_max_valley_fraction;
         lr.n_threads               = request.n_threads;
         lr.gap_break_at         = request.ladder_gap_break_at;
+        lr.gap_rank             = request.ladder_gap_rank;
+        lr.gap_trough_max_ratio = request.ladder_gap_trough_max_ratio;
         lr.gap_empty_fraction   = request.ladder_gap_empty_fraction;
         lr.gap_min_width_metres = request.ladder_gap_min_width_metres;
         lr.gap_hist_bins        = request.ladder_gap_hist_bins;

@@ -204,6 +204,8 @@ struct flat_surface_classify_request
     // the density the breaks were chosen from. The separation ratio is always
     // computed; only the histogram is optional.
     gap_break_position ladder_gap_break_at = gap_break_position::midpoint;
+    gap_rank_choice ladder_gap_rank      = gap_rank_choice::lowest;
+    double ladder_gap_trough_max_ratio   = 0.6;
     double ladder_gap_empty_fraction     = 0.02;
     double ladder_gap_min_width_metres   = 0.5;
     int    ladder_gap_hist_bins          = 80;
