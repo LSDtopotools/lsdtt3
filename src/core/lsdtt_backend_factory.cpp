@@ -15,6 +15,7 @@
 #include <cuda_runtime.h>
 #endif
 
+#include <memory>
 #include <stdexcept>
 
 namespace lsdtt {

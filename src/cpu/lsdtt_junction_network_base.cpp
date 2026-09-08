@@ -17,6 +17,8 @@
 #include "../core/lsdtt_junction_network_base.hpp"
 #include "lsdtt_junction_network_cpu.hpp"
 
+#include <memory>
+
 namespace lsdtt
 {
 

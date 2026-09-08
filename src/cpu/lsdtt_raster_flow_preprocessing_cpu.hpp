@@ -442,4 +442,127 @@ depressions_to_polygons(
     float min_depth  = 0.0f
 );
 
+// =============================================================================
+// PERONA-MALIK ANISOTROPIC DIFFUSION
+//
+// Perona, P. & Malik, J. (1990) Scale-space and edge detection using anisotropic
+// diffusion. IEEE PAMI 12(7), 629-639. Applied to topography by Passalacqua et
+// al. (2010) WRR 46:W11535 (GeoNet) and Clubb et al. (2017) ESurf 5:369-385.
+//
+//     dz/dt = div( c(|grad z|) grad z )
+//
+//     c(s) = exp(-(s/K)^2)      [P&M eq. 3, `exponential`]
+//     c(s) = 1 / (1 + (s/K)^2)  [P&M eq. 4, `quadratic`]
+//
+// Discretised on the 4-neighbour stencil (P&M eq. 8):
+//
+//     z(i,j)^{t+1} = z(i,j)^t + lambda * SUM_d c(|nabla_d z|) * nabla_d z
+//
+// for d in {N, S, E, W}, where nabla_d z is the neighbour difference.
+//
+// WHY THIS AND NOT A LOW-PASS FILTER. A mean or Gaussian filter removes DEM
+// noise and the tread/riser break in equal measure. For terrace and valley-floor
+// work the riser IS the signal: it is what a HAND break sits on, and blurring it
+// moves every break the ladder finds. Anisotropic diffusion suppresses
+// within-facet noise while leaving a high-gradient riser essentially untouched,
+// because c(s) collapses toward zero wherever the local difference exceeds K.
+//
+// WHAT K MEANS AND WHY IT IS NOT GUESSED. K is the edge threshold in the SAME
+// units as the stencil differences - metres of rise between adjacent cells. A
+// difference above K is preserved, one below it is smoothed. A number carried
+// over from another landscape is meaningless, so following Black et al. (1998)
+// it is set to a high quantile of the DEM's own distribution of those
+// differences - see stencil_difference_magnitude, and note that a
+// central-difference gradient is NOT the right quantity to read it from. The
+// value actually used comes back in the result, because it is the one number a
+// reader needs to reproduce the conditioning.
+//
+// STABILITY. lambda <= 0.25 on this stencil. Above that the explicit update
+// diverges, so it is REJECTED rather than warned about: an unstable run does not
+// produce a worse DEM, it produces a meaningless one.
+//
+// This is a CONDITIONING step. Run it before filling or breaching, keep the
+// smoothed raster as its own file, and let everything downstream read that -
+// so which DEM an analysis was run on is visible rather than inferred.
+// =============================================================================
+
+// Which conductance function c(s) is used. See the block comment above.
+enum class pm_conductance_choice
+{
+    exponential,   // exp(-(s/K)^2)      - P&M eq. 3
+    quadratic      // 1 / (1 + (s/K)^2)  - P&M eq. 4
+};
+
+// -----------------------------------------------------------------------------
+// perona_malik_options
+//
+// n_iterations        - explicit timesteps. More smooths further; the riser is
+//                       preserved at every count, so this trades runtime for
+//                       how much within-facet noise goes.
+// lambda              - timestep. Must be in (0, 0.25]; see STABILITY above.
+// conductance         - which c(s).
+// k_gradient_quantile - quantile of the stencil-difference distribution (metres,
+//                       see stencil_difference_magnitude) used to set K. 0 or
+//                       negative means "use k_metres_per_cell instead".
+// k_metres_per_cell   - K stated directly. Only read when k_gradient_quantile
+//                       is not positive. Must then be > 0.
+// n_threads           - OpenMP threads; 0 = runtime default.
+// -----------------------------------------------------------------------------
+struct perona_malik_options
+{
+    int    n_iterations        = 10;
+    double lambda              = 0.20;
+    pm_conductance_choice conductance = pm_conductance_choice::exponential;
+    double k_gradient_quantile = 0.90;
+    double k_metres_per_cell   = 0.0;
+    int    n_threads           = 0;
+};
+
+// -----------------------------------------------------------------------------
+// perona_malik_result
+//
+// smoothed          - the conditioned raster. Nodata cells are untouched and
+//                     never diffused into.
+// k_metres_per_cell - the K actually used, whether stated or estimated.
+// n_iterations      - iterations actually run.
+// -----------------------------------------------------------------------------
+struct perona_malik_result
+{
+    lsdtt_raster_cpu smoothed;
+    double k_metres_per_cell = 0.0;
+    int    n_iterations      = 0;
+};
+
+// -----------------------------------------------------------------------------
+// stencil_difference_magnitude
+//
+// Per cell, the LARGEST absolute elevation difference to a valid 4-neighbour,
+// in metres. Nodata where the cell itself is nodata or has no valid neighbour.
+//
+// This is the exact quantity the conductance function is evaluated on, which is
+// the point: K has to be a threshold on what the stencil actually sees. A
+// central-difference gradient is the intuitive choice and is WRONG here,
+// because it averages across two cells and so cancels one-cell noise the
+// diffusion does see - on a checkerboard DEM it reports zero gradient
+// everywhere and the estimated K collapses to nothing.
+//
+// Exposed because a K quantile is only interpretable against the distribution
+// it was taken from.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu stencil_difference_magnitude(
+    const lsdtt_raster_cpu& raster
+);
+
+// -----------------------------------------------------------------------------
+// perona_malik_diffusion
+//
+// Throws:
+//   std::runtime_error if n_iterations < 1, if lambda is outside (0, 0.25], if
+//   neither K source is usable, or if the raster metadata are invalid.
+// -----------------------------------------------------------------------------
+[[nodiscard]] perona_malik_result perona_malik_diffusion(
+    const lsdtt_raster_cpu&      raster,
+    const perona_malik_options&  options
+);
+
 } // namespace lsdtt

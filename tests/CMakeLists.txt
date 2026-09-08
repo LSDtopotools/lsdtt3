@@ -3371,6 +3371,53 @@ add_test(NAME unit_fluvial_surface_fitted_field
 set_tests_properties(unit_fluvial_surface_fitted_field PROPERTIES
     LABELS "unit")
 
+# Phase 7b. Perona-Malik is adopted on the claim that it removes within-facet
+# noise while leaving the riser standing, and BOTH halves need testing: a no-op
+# preserves every riser and a heavy blur removes every bit of noise, so either
+# assertion alone is trivially satisfiable. A 3x3 mean filter runs alongside as
+# the control - if the conductance were ever turned off, P-M and the mean filter
+# would agree and PM4 would catch it. Also pins that nodata is not diffused into
+# and that the lambda stability limit is a refusal rather than a warning.
+add_test(NAME unit_fluvial_surface_perona_malik
+         COMMAND lsdtt-test-fluvial-surfaces --perona-malik)
+set_tests_properties(unit_fluvial_surface_perona_malik PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# Phase 7c. The justification for shipping a SECOND smoother is that it
+# preserves the riser for a different reason - Weickert keeps it because it is
+# linear, Perona-Malik because it is steep - so the test is a riser BROKEN BY
+# NOTCHES and the discriminating statistic is the step height in the notches.
+# Both leave the intact riser standing; only the orientation-aware one closes
+# the break. If a change ever made the two behave alike, CED3/CED4 fail.
+# Phase 7d. E_v is resolved PER WINDOW, so the fixture is a channel whose
+# admitted ground is gentle over its first half and steep over its second with
+# everything else held identical: if the resolution ever collapsed back to one
+# global number both halves would report the same required_gap_m. The two
+# degenerate paths are pinned too, because each is a way for the feature to look
+# like it works while doing nothing - `fixed` must ignore a supplied gradient
+# raster, and `slope_dependent` with none must fall back AND say so.
+# Phase 7e. The bootstrap and R_bar both exist to say whether a number already
+# in the output is worth quoting, so each is tested at BOTH ends: a population
+# that should be stable and one that should not, a patch facing one way and one
+# facing every way. A test with only the positive half would pass on an
+# implementation that returned 1.0 unconditionally. RB5 additionally pins the
+# circular mean against the arithmetic one - averaging 350 and 10 degrees gives
+# 180, the opposite direction - and against reporting 360 rather than 0.
+add_test(NAME unit_fluvial_surface_bootstrap_rbar
+         COMMAND lsdtt-test-fluvial-surfaces --bootstrap-rbar)
+set_tests_properties(unit_fluvial_surface_bootstrap_rbar PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+add_test(NAME unit_fluvial_surface_slope_dependent_ev
+         COMMAND lsdtt-test-fluvial-surfaces --slope-dependent-ev)
+set_tests_properties(unit_fluvial_surface_slope_dependent_ev PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+add_test(NAME unit_fluvial_surface_coherence_diffusion
+         COMMAND lsdtt-test-fluvial-surfaces --coherence-diffusion)
+set_tests_properties(unit_fluvial_surface_coherence_diffusion PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_test(NAME fixture_fluvial_surfaces_cli
          COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
                  ${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR})
@@ -3435,8 +3482,8 @@ add_lsdtt_cli_smoke_test(
     --expect btl_surface_class.tif
     --stdout-contains "Ladder and band-then-label"
     --expect-raster-values "btl_band_index.tif:0,1,2,3"
-    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
-    --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
+    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
+    --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
 )
 set_tests_properties(smoke_fluvial_surfaces_band_then_label PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -3478,6 +3525,37 @@ add_test(NAME rigorous_fluvial_surfaces_empty_result
 set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Phase 7a. `admission_mode` exists because local relief and a gradient cap
+# reject different ground; if a refactor ever collapsed them into one test, or
+# wired relief_or_slope back to the relief mask alone, every count would still
+# look plausible. The synthetic DEM is built to make the two disagree - a smooth
+# 8 percent ramp that only the cap admits, a rough flat that only relief could,
+# a smooth flat that both take and a 45 degree slope that neither does - and the
+# assertions are on the SET RELATIONS between the four modes, which survive the
+# morphological post-processing that the raw counts do not.
+add_test(NAME rigorous_flat_surface_finder_admission_modes
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_admission_modes.py"
+        --exe "$<TARGET_FILE:lsdtt-flat-surface-finder>"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_flat_surface_finder_admission_modes"
+        --cap 15.0)
+set_tests_properties(rigorous_flat_surface_finder_admission_modes PROPERTIES
+    LABELS "rigorous;cli;fluvial_surfaces")
+
+# The trough's upstream-of-head exclusion. Terrain beyond the channel head stays
+# in the valley MASK but must not be carved into the trough, or the pocket
+# behind the head becomes a distance-to-wall bowl that spills over the upstream
+# tile edge.
+#
+# This needs its own fixture because every smoke fixture has its channel head at
+# a DEM edge, where there is no ground beyond the head at all and the exclusion
+# count is legitimately zero - so none of them can tell a working guard from a
+# dead one. The guard went inert at phase 5d and nothing noticed.
+add_test(NAME unit_fluvial_surfaces_trough_upstream
+         COMMAND lsdtt-test-fluvial-surfaces --trough-upstream)
+set_tests_properties(unit_fluvial_surfaces_trough_upstream PROPERTIES
+    LABELS "unit")
 
 add_test(NAME unit_fluvial_surfaces_band_then_label
          COMMAND lsdtt-test-fluvial-surfaces --band-then-label)
@@ -3569,8 +3647,8 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Ladder and band-then-label"
     --stdout-contains "window(s) resolved"
     --expect-raster-values "fsurf_band_index.tif:0,1,2,3"
-    --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,window_centre_m"
-    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,goodness_of_variance_fit"
+    --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
+    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
 )
 set_tests_properties(smoke_fluvial_surfaces PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -3639,7 +3717,7 @@ add_test(NAME smoke_fluvial_surfaces_pipeline
         --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fluvial_surfaces_pipeline"
         --expect vcin_valley_mask.tif
-        --expect vc_valley_mask.tif
+        --expect vc_valley_mask_channels.tif
         --expect vc_valley_centreline.fgb
         --stage2-stdout-contains "Valley identification is supplied")
 set_tests_properties(smoke_fluvial_surfaces_pipeline PROPERTIES

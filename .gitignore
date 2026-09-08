@@ -5,11 +5,20 @@
 # -----------------------------------------------------------------------------
 # Build and output directories
 # -----------------------------------------------------------------------------
+# build_*/ as well as build/: out-of-tree build directories get suffixed names
+# (build_ws1, build_gpu, build_asan) and a bare `build/` catches none of them.
+# A `git add -A` in a tree with one of these in it stages a couple of thousand
+# object files, and that is how it is normally noticed.
 build/
+build_*/
 bin/
 for_elm/
 site/
 .ccls-cache/
+
+# CTest scratch: `ctest` writes Testing/Temporary/ (LastTest.log and friends)
+# into whatever directory it is run from, which includes the repository root.
+Testing/
 
 # -----------------------------------------------------------------------------
 # Compiled object files and static libraries
@@ -50,6 +59,9 @@ _deps/
 
 # VS Code
 .vscode/
+
+# Visual Studio
+.vs/
 
 # CLion / JetBrains
 .idea/
@@ -134,3 +146,30 @@ benchmark_campaigns/
 
 # Slurm job logs written by tests/scripts/slurm_benchmark.sbatch.
 slurm_logs/
+
+# -----------------------------------------------------------------------------
+# Planning documents
+#
+# docs/plan_docs/ holds working plans - they are drafted, revised and abandoned
+# during a piece of work and are not the durable record. What survives a plan
+# goes into docs/ proper (see docs/testing_and_benchmarking.md for the pattern:
+# the committed document is the record, the plan is the scaffolding). A
+# committed file must never cite a plan doc, because the plan may not exist.
+# -----------------------------------------------------------------------------
+docs/plan_docs/
+
+# -----------------------------------------------------------------------------
+# Run output written into the repository root
+#
+# Analysis runs driven from the repo root drop their rasters, tables and vectors
+# beside the source. They are outputs of a particular run on a particular DEM,
+# not fixtures: test fixtures live under tests/data/ and are added deliberately.
+# -----------------------------------------------------------------------------
+internal_drainage_detect_output/
+point_input_test_output/
+
+# -----------------------------------------------------------------------------
+# Agent tooling and scratch
+# -----------------------------------------------------------------------------
+.claude/
+src/resume_claude.txt

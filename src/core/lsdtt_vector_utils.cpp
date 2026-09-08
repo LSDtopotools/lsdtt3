@@ -8,6 +8,7 @@
 
 #include "lsdtt_vector_utils.hpp"
 
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <utility>

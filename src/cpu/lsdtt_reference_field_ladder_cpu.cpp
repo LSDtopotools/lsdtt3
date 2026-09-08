@@ -143,6 +143,75 @@ std::vector<double> jenks_breaks_for_k(
 }
 
 // -----------------------------------------------------------------------------
+// window_histogram / separation_ratio_at
+//
+// The separation diagnostic. See ladder_window::separation_ratio for what the
+// number means and why the resolvability floor does not replace it.
+//
+// The histogram is LINEAR in field units, not log10, because it is meant to be
+// read against the breaks - and a break at 2 m and a break at 20 m have to sit
+// on the same axis as the data. It is smoothed with a small moving average
+// before the ratio is taken, for the same reason the antimode finder smooths:
+// a raw histogram is bumpy enough that a single empty bin beside a break would
+// otherwise read as a perfect separation.
+// -----------------------------------------------------------------------------
+void window_histogram(const std::vector<double>& values, int nbins,
+                      double& lo, double& hi, std::vector<std::int64_t>& counts)
+{
+    counts.assign(static_cast<std::size_t>(std::max(nbins, 4)), 0);
+    if (values.empty()) { lo = hi = 0.0; return; }
+
+    lo = *std::min_element(values.begin(), values.end());
+    hi = *std::max_element(values.begin(), values.end());
+    if (!(hi > lo)) { hi = lo + 1e-6; }
+
+    const double span = hi - lo;
+    const int nb = static_cast<int>(counts.size());
+    for (const double v : values)
+    {
+        int b = static_cast<int>((v - lo) / span * nb);
+        b = std::clamp(b, 0, nb - 1);
+        ++counts[static_cast<std::size_t>(b)];
+    }
+}
+
+double separation_ratio_at(const std::vector<std::int64_t>& counts,
+                           double lo, double hi, double break_value)
+{
+    const int nb = static_cast<int>(counts.size());
+    if (nb < 4 || !(hi > lo)) return 1.0;
+
+    // Smooth with a 3-bin moving average; the raw histogram is too bumpy for a
+    // ratio taken at a single bin to mean anything.
+    std::vector<double> s(static_cast<std::size_t>(nb), 0.0);
+    for (int i = 0; i < nb; ++i)
+    {
+        double acc = 0.0; int m = 0;
+        for (int d = -1; d <= 1; ++d)
+        {
+            const int j = i + d;
+            if (j < 0 || j >= nb) continue;
+            acc += static_cast<double>(counts[static_cast<std::size_t>(j)]);
+            ++m;
+        }
+        s[static_cast<std::size_t>(i)] = (m > 0) ? acc / m : 0.0;
+    }
+
+    int bb = static_cast<int>((break_value - lo) / (hi - lo) * nb);
+    bb = std::clamp(bb, 0, nb - 1);
+
+    // Tallest peak on each side of the break. If either side is empty there is
+    // no dip to speak of, so the break is not a separation.
+    double peak_lo = 0.0, peak_hi = 0.0;
+    for (int i = 0; i < bb; ++i)  peak_lo = std::max(peak_lo, s[static_cast<std::size_t>(i)]);
+    for (int i = bb + 1; i < nb; ++i) peak_hi = std::max(peak_hi, s[static_cast<std::size_t>(i)]);
+    const double flank = std::min(peak_lo, peak_hi);
+    if (!(flank > 0.0)) return 1.0;
+
+    return s[static_cast<std::size_t>(bb)] / flank;
+}
+
+// -----------------------------------------------------------------------------
 // select_partition
 //
 // The k rule, and the whole reason this engine exists.
@@ -203,11 +272,31 @@ selection select_partition(
 
     const int max_k = std::max(1, request.max_level_count);
 
+    // The window's own density, so a candidate partition can be tested for
+    // whether its breaks sit in real gaps and not only for whether the DEM
+    // could measure them. Built once per selection rather than per candidate.
+    double sep_lo = 0.0, sep_hi = 0.0;
+    std::vector<std::int64_t> sep_counts;
+    if (request.max_separation_ratio > 0.0)
+        window_histogram(values, request.window_hist_bins,
+                         sep_lo, sep_hi, sep_counts);
+
     auto try_partition = [&](const std::vector<double>& brk) -> bool
     {
         const partition_metrics pm = evaluate_partition(values, brk);
         if (!pm.usable) return false;
-        return pm.min_centre_gap >= required_gap;
+        // Constraint 1: the instrument floor - can the DEM measure it.
+        if (pm.min_centre_gap < required_gap) return false;
+        // Constraint 2: separation - is there anything there to measure.
+        // Two constraints, never blended into a score; see max_separation_ratio.
+        if (request.max_separation_ratio > 0.0 && !sep_counts.empty())
+        {
+            for (const double b : brk)
+                if (separation_ratio_at(sep_counts, sep_lo, sep_hi, b) >
+                    request.max_separation_ratio)
+                    return false;
+        }
+        return true;
     };
 
     // ---------------------------------------------------------------------
@@ -266,7 +355,7 @@ selection select_partition(
         best.min_centre_gap = pm.usable ? pm.min_centre_gap : 0.0;
         best.gvf            = gvf;
         best.k              = static_cast<int>(brk.size()) + 1;
-        best.status         = (pm.usable && pm.min_centre_gap >= required_gap)
+        best.status         = (pm.usable && try_partition(brk))
             ? ladder_status::forced
             : ladder_status::unresolved;
         return best;
@@ -294,7 +383,11 @@ selection select_partition(
 
         const partition_metrics pm = evaluate_partition(values, brk);
         if (!pm.usable) continue;
-        if (pm.min_centre_gap < required_gap) continue;
+        // BOTH constraints, via the one predicate. Checking the floor inline
+        // here is how the separation constraint came to be silently bypassed on
+        // the auto path: it applied to the explicit-k branch and to nothing
+        // else. Any new admissibility rule belongs in try_partition, not here.
+        if (!try_partition(brk)) continue;
 
         // Admissible. Keep it and keep going: a larger k may also be
         // admissible, and the rule wants the largest.
@@ -320,6 +413,165 @@ selection select_partition(
     return best;
 }
 
+
+
+
+// -----------------------------------------------------------------------------
+// gap_break_candidates
+//
+// Breaks from the EMPTY SPACE between clusters, which is what a reader's eye
+// uses on a HAND histogram and what neither other finder looks for. See
+// ladder_break_choice in the header for why jenks and antimode both miss it.
+//
+// Bins linearly and emits two kinds of candidate (see the header for why both
+// are needed):
+//
+//   EMPTY RUNS - contiguous bins below empty_fraction of the tallest bin,
+//                spanning at least min_width. Break placed per gap_break_at.
+//   TROUGHS    - interior local minima of the 3-bin-smoothed histogram whose
+//                floor sits below gap_trough_max_ratio of the smaller flanking
+//                peak. "Empty" is relative to the TALLEST bin, so where one
+//                level dominates the population - a mountain floodplain, say -
+//                a genuine dip above it never reads as empty and only the
+//                sparse tail does. Without troughs the finder then has no
+//                candidate below 100 m and bands the terraces as valley floor.
+//
+// Leading and trailing runs are dropped: the empty space below the lowest datum
+// and above the highest is not a boundary between two populations. Ranking is
+// gap_rank: lowest break first by default, so the ladder is walked bottom-up.
+// -----------------------------------------------------------------------------
+std::vector<double> gap_break_candidates(
+    const std::vector<double>& values, const ladder_request& request,
+    std::vector<double>* gap_lo, std::vector<double>* gap_hi)
+{
+    std::vector<double> out;
+    if (gap_lo) gap_lo->clear();
+    if (gap_hi) gap_hi->clear();
+    if (values.size() < 2) return out;
+
+    const int nb = std::max(request.gap_hist_bins, 8);
+    const double lo = *std::min_element(values.begin(), values.end());
+    const double hi = *std::max_element(values.begin(), values.end());
+    if (!(hi > lo)) return out;
+    const double span = hi - lo;
+    const double bw   = span / static_cast<double>(nb);
+
+    std::vector<std::int64_t> counts(static_cast<std::size_t>(nb), 0);
+    for (const double v : values)
+    {
+        int b = static_cast<int>((v - lo) / span * nb);
+        b = std::clamp(b, 0, nb - 1);
+        ++counts[static_cast<std::size_t>(b)];
+    }
+
+    const std::int64_t peak = *std::max_element(counts.begin(), counts.end());
+    if (peak <= 0) return out;
+    const double empty_at =
+        std::max(0.0, request.gap_empty_fraction) * static_cast<double>(peak);
+
+    struct cand { double at; double width; double lo; double hi; };
+    std::vector<cand> cands;
+
+    // Contiguous runs of empty bins.
+    struct run { int lo_bin; int hi_bin; };
+    std::vector<run> runs;
+    int start = -1;
+    for (int i = 0; i < nb; ++i)
+    {
+        const bool empty = static_cast<double>(counts[static_cast<std::size_t>(i)]) <= empty_at;
+        if (empty && start < 0) start = i;
+        if (!empty && start >= 0) { runs.push_back({start, i - 1}); start = -1; }
+    }
+    if (start >= 0) runs.push_back({start, nb - 1});
+
+    std::vector<char> in_run(static_cast<std::size_t>(nb), 0);
+    for (const run& r : runs)
+    {
+        // Drop runs touching either end: empty space below the lowest datum or
+        // above the highest is not a boundary between two populations.
+        if (r.lo_bin == 0 || r.hi_bin == nb - 1) continue;
+        const double glo = lo + bw * static_cast<double>(r.lo_bin);
+        const double ghi = lo + bw * static_cast<double>(r.hi_bin + 1);
+        const double w   = ghi - glo;
+        if (w < request.gap_min_width_metres) continue;
+        for (int i = r.lo_bin; i <= r.hi_bin; ++i)
+            in_run[static_cast<std::size_t>(i)] = 1;
+        double at = 0.5 * (glo + ghi);
+        if (request.gap_break_at == gap_break_position::lower)      at = glo;
+        else if (request.gap_break_at == gap_break_position::upper) at = ghi;
+        cands.push_back({at, w, glo, ghi});
+    }
+
+    // Troughs: interior local minima of the smoothed histogram. Smoothed with
+    // the same 3-bin average separation_ratio_at uses, so a candidate offered
+    // here is scored on the same curve it will later be judged against.
+    if (request.gap_trough_max_ratio > 0.0)
+    {
+        std::vector<double> s(static_cast<std::size_t>(nb), 0.0);
+        for (int i = 0; i < nb; ++i)
+        {
+            double acc = 0.0; int m = 0;
+            for (int d = -1; d <= 1; ++d)
+            {
+                const int j = i + d;
+                if (j < 0 || j >= nb) continue;
+                acc += static_cast<double>(counts[static_cast<std::size_t>(j)]);
+                ++m;
+            }
+            s[static_cast<std::size_t>(i)] = (m > 0) ? acc / m : 0.0;
+        }
+
+        for (int i = 1; i < nb - 1; ++i)
+        {
+            if (in_run[static_cast<std::size_t>(i)]) continue;   // already a gap
+            const double c = s[static_cast<std::size_t>(i)];
+            if (c > s[static_cast<std::size_t>(i - 1)]) continue;
+            if (c > s[static_cast<std::size_t>(i + 1)]) continue;
+            // A flat shoulder is not a trough: require a strict fall on one side.
+            if (!(c < s[static_cast<std::size_t>(i - 1)] ||
+                  c < s[static_cast<std::size_t>(i + 1)])) continue;
+
+            double peak_lo = 0.0, peak_hi = 0.0;
+            for (int j = 0; j < i; ++j)
+                peak_lo = std::max(peak_lo, s[static_cast<std::size_t>(j)]);
+            for (int j = i + 1; j < nb; ++j)
+                peak_hi = std::max(peak_hi, s[static_cast<std::size_t>(j)]);
+            const double flank = std::min(peak_lo, peak_hi);
+            if (!(flank > 0.0)) continue;
+            if (c / flank > request.gap_trough_max_ratio) continue;
+
+            // The trough has no span, so lo and hi are the bin it sits in and
+            // gap_break_at has nothing to choose between.
+            const double blo = lo + bw * static_cast<double>(i);
+            const double bhi = blo + bw;
+            cands.push_back({0.5 * (blo + bhi), 0.0, blo, bhi});
+        }
+    }
+
+    if (request.gap_rank == gap_rank_choice::width)
+    {
+        std::sort(cands.begin(), cands.end(),
+                  [](const cand& a, const cand& b) { return a.width > b.width; });
+    }
+    else
+    {
+        // Bottom-up. Ties (a trough sitting at the same height as a run) go to
+        // the wider one, which is the better-separated statement of the two.
+        std::sort(cands.begin(), cands.end(),
+                  [](const cand& a, const cand& b) {
+                      if (a.at != b.at) return a.at < b.at;
+                      return a.width > b.width;
+                  });
+    }
+    for (const cand& c : cands)
+    {
+        out.push_back(c.at);
+        if (gap_lo) gap_lo->push_back(c.lo);
+        if (gap_hi) gap_hi->push_back(c.hi);
+    }
+    return out;
+}
+
 // -----------------------------------------------------------------------------
 // clamp_breaks
 //
@@ -338,6 +590,131 @@ std::vector<double> clamp_breaks(
     }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// bootstrap_k
+//
+// Resample a window's population and re-run the whole break search on each
+// replicate, so k_selected can be reported with a stability rather than on its
+// own. See ladder_request::k_bootstrap for what this costs and why it is off by
+// default.
+//
+// Resampling is WITH REPLACEMENT at the population's own size, capped at
+// max_sample. The cap is not an approximation to apologise for: every finder
+// bins before it searches, so past a few thousand values the extra draws change
+// no histogram this looks at, and the cost would be spent for nothing.
+//
+// The generator is a fixed-seed LCG rather than <random>, so a replicate count
+// reproduces exactly across platforms and standard libraries. A stability
+// figure that moved with the toolchain would be worse than none.
+// -----------------------------------------------------------------------------
+struct bootstrap_summary
+{
+    int    mode      = -1;
+    double stability = 0.0;
+    int    ci_lo     = -1;
+    int    ci_hi     = -1;
+    int    n_run     = 0;
+};
+
+bootstrap_summary bootstrap_k(
+    const std::vector<double>& values,
+    const ladder_request&      request,
+    double                     required_gap,
+    std::uint64_t              seed)
+{
+    bootstrap_summary out;
+    if (request.k_bootstrap < 1 || values.size() < 2) return out;
+
+    const std::size_t cap = static_cast<std::size_t>(
+        std::max(2, request.k_bootstrap_max_sample));
+    const std::size_t draw = std::min(values.size(), cap);
+
+    std::uint64_t state = seed ? seed : 1u;
+    auto next = [&state]() -> std::uint64_t
+    {
+        // splitmix64: cheap, well-distributed, and fully specified here so the
+        // sequence does not depend on the standard library.
+        state += 0x9E3779B97F4A7C15ull;
+        std::uint64_t z = state;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+
+    std::vector<int> ks;
+    ks.reserve(static_cast<std::size_t>(request.k_bootstrap));
+    std::vector<double> sample(draw, 0.0);
+
+    for (int b = 0; b < request.k_bootstrap; ++b)
+    {
+        for (std::size_t i = 0; i < draw; ++i)
+            sample[i] = values[next() % values.size()];
+
+        std::vector<double> cand;
+        if (request.break_algorithm == ladder_break_choice::gap)
+        {
+            cand = clamp_breaks(
+                gap_break_candidates(sample, request, nullptr, nullptr),
+                request);
+        }
+        else if (request.break_algorithm == ladder_break_choice::antimode)
+        {
+            const int nb = std::max(request.hist_bins, 16);
+            const double floor_m = std::max(request.min_field_metres, 1e-3);
+            const double lo_l = std::log10(floor_m);
+            double hi_l = lo_l;
+            for (const double v : sample)
+                hi_l = std::max(hi_l, std::log10(std::max(v, floor_m)));
+            hi_l += 1e-6;
+            std::vector<std::int64_t> h(static_cast<std::size_t>(nb), 0);
+            for (const double v : sample)
+            {
+                const double l = std::log10(std::max(v, floor_m));
+                int bb = static_cast<int>((l - lo_l) / (hi_l - lo_l) * nb);
+                bb = std::clamp(bb, 0, nb - 1);
+                ++h[static_cast<std::size_t>(bb)];
+            }
+            cand = clamp_breaks(
+                find_population_breaks(h, lo_l, hi_l,
+                                       request.max_valley_fraction),
+                request);
+        }
+        // jenks takes k directly, so select_partition builds its own breaks.
+
+        const selection sel =
+            select_partition(sample, cand, request, required_gap);
+        ks.push_back(sel.k);
+    }
+
+    if (ks.empty()) return out;
+    out.n_run = static_cast<int>(ks.size());
+
+    std::unordered_map<int, int> tally;
+    for (const int k : ks) ++tally[k];
+    int best_k = ks.front(), best_n = 0;
+    for (const auto& [k, cnt] : tally)
+    {
+        if (cnt > best_n || (cnt == best_n && k < best_k))
+        {
+            best_k = k; best_n = cnt;
+        }
+    }
+    out.mode      = best_k;
+    out.stability = static_cast<double>(best_n) / static_cast<double>(ks.size());
+
+    std::sort(ks.begin(), ks.end());
+    auto pct = [&](double f) -> int
+    {
+        std::size_t i = static_cast<std::size_t>(
+            f * static_cast<double>(ks.size() - 1) + 0.5);
+        if (i >= ks.size()) i = ks.size() - 1;
+        return ks[i];
+    };
+    out.ci_lo = pct(0.025);
+    out.ci_hi = pct(0.975);
     return out;
 }
 
@@ -427,7 +804,8 @@ ladder_result build_reference_field_ladder(
     const lsdtt_raster_cpu&          admitted_mask,
     const ladder_request&            request,
     const std::vector<std::int32_t>* window_source_id,
-    const lsdtt_raster_cpu*          window_coordinate)
+    const lsdtt_raster_cpu*          window_coordinate,
+    const lsdtt_raster_cpu*          slope_degrees)
 {
     static const char* fn = "lsdtt::build_reference_field_ladder";
 
@@ -475,8 +853,76 @@ ladder_result build_reference_field_ladder(
         hi = std::max(hi, v);
     }
 
-    const double required_gap =
-        std::max(0.0, request.resolvability_kappa * request.vertical_accuracy_metres);
+    // -------------------------------------------------------------------------
+    // The resolvability floor. Under `fixed` this is one number for the whole
+    // raster; under `slope_dependent` each window reads its own E_v off the
+    // median gradient of its OWN admitted cells, because required_gap
+    // constrains the separation between band CENTRES and a band centre is a
+    // property of a partition, not of a place - it has no slope of its own.
+    // -------------------------------------------------------------------------
+    const bool want_slope_ev =
+        request.vertical_accuracy_mode ==
+            vertical_accuracy_choice::slope_dependent;
+
+    const std::vector<float>*   sld = nullptr;
+    const std::vector<uint8_t>* slm = nullptr;
+    if (want_slope_ev && slope_degrees != nullptr &&
+        slope_degrees->get_data().size() == n)
+    {
+        sld = &slope_degrees->get_data();
+        slm = &slope_degrees->get_mask();
+    }
+    else if (want_slope_ev)
+    {
+        result.notes.push_back(
+            "vertical_accuracy_mode is slope_dependent but no usable gradient "
+            "raster was supplied, so the fixed vertical_accuracy_metres was "
+            "used for every window.");
+    }
+
+    // E_v for a population, given the gradients of the same cells.
+    auto ev_for = [&](const std::vector<double>& slopes) -> double
+    {
+        if (sld == nullptr || slopes.empty())
+            return request.vertical_accuracy_metres;
+        std::vector<double> s = slopes;
+        const std::size_t mid = s.size() / 2;
+        std::nth_element(s.begin(), s.begin() + static_cast<long>(mid), s.end());
+        const double med = s[mid];
+        return (med <= request.vertical_accuracy_break_degrees)
+            ? request.vertical_accuracy_gentle_metres
+            : request.vertical_accuracy_steep_metres;
+    };
+    auto median_slope_of = [&](const std::vector<double>& slopes) -> double
+    {
+        if (sld == nullptr || slopes.empty())
+            return std::numeric_limits<double>::quiet_NaN();
+        std::vector<double> s = slopes;
+        const std::size_t mid = s.size() / 2;
+        std::nth_element(s.begin(), s.begin() + static_cast<long>(mid), s.end());
+        return s[mid];
+    };
+    auto gap_from_ev = [&](double ev) -> double
+    {
+        return std::max(0.0, request.resolvability_kappa * ev);
+    };
+
+    // Gradients of the whole admitted population, for the global partition and
+    // for every window that has to fall back on it.
+    std::vector<double> all_slopes;
+    if (sld != nullptr)
+    {
+        all_slopes.reserve(all_values.size());
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (!is_live(i)) continue;
+            if (!(*slm)[i] || !std::isfinite((*sld)[i])) continue;
+            all_slopes.push_back(static_cast<double>((*sld)[i]));
+        }
+    }
+
+    const double global_ev  = ev_for(all_slopes);
+    const double required_gap = gap_from_ev(global_ev);
 
     // The antimode finder bins on log10 with a small positive floor, so every
     // negative value lands in the lowest bin. On a signed field - a
@@ -484,6 +930,7 @@ ladder_result build_reference_field_ladder(
     // the entire below-surface population into one spike and the breaks that
     // come back mean nothing. Refuse rather than return a plausible-looking
     // ladder built on a destroyed histogram. See ladder_break_choice.
+    // gap and jenks both work on the linear field, so only antimode is caught.
     if (request.break_algorithm == ladder_break_choice::antimode &&
         std::isfinite(lo) && lo < 0.0)
     {
@@ -505,6 +952,7 @@ ladder_result build_reference_field_ladder(
         w.n_pixels      = static_cast<std::int64_t>(all_values.size());
         w.status        = ladder_status::degenerate;
         w.required_gap_m = required_gap;
+        w.vertical_accuracy_m = global_ev;
         result.windows.push_back(std::move(w));
         result.n_windows_degenerate = 1;
         result.band_index = lsdtt_raster_cpu(
@@ -535,8 +983,10 @@ ladder_result build_reference_field_ladder(
         std::vector<std::int64_t> ghist(static_cast<std::size_t>(nbins), 0);
         for (const double v : all_values) ++ghist[static_cast<std::size_t>(log_bin(v))];
         result.global_breaks_m = clamp_breaks(
-            find_population_breaks(ghist, lo_log, hi_log,
-                                   request.max_valley_fraction),
+            request.break_algorithm == ladder_break_choice::gap
+                ? gap_break_candidates(all_values, request, nullptr, nullptr)
+                : find_population_breaks(ghist, lo_log, hi_log,
+                                         request.max_valley_fraction),
             request);
     }
     const selection global_selection = select_partition(
@@ -574,10 +1024,37 @@ ladder_result build_reference_field_ladder(
         w.status                = sel.status;
         w.used_global_breaks    = true;
         w.breaks_m              = sel.breaks;
+        {
+            double hlo = 0.0, hhi = 0.0;
+            std::vector<std::int64_t> hc;
+            window_histogram(all_values, request.window_hist_bins,
+                             hlo, hhi, hc);
+            for (const double b : sel.breaks)
+                w.separation_ratio.push_back(
+                    separation_ratio_at(hc, hlo, hhi, b));
+            if (request.record_window_histograms)
+            {
+                w.hist_lo_m   = hlo;
+                w.hist_hi_m   = hhi;
+                w.hist_counts = std::move(hc);
+            }
+        }
         w.band_centres_m        = sel.band_centres;
         w.min_band_centre_gap_m = sel.min_centre_gap;
         w.required_gap_m        = required_gap;
+        w.vertical_accuracy_m   = global_ev;
+        w.median_slope_degrees  = median_slope_of(all_slopes);
         w.goodness_of_variance_fit = sel.gvf;
+        {
+            const bootstrap_summary bs = bootstrap_k(
+                all_values, request, required_gap,
+                static_cast<std::uint64_t>(request.k_bootstrap_seed));
+            w.k_bootstrap_mode = bs.mode;
+            w.k_stability      = bs.stability;
+            w.k_ci_lo          = bs.ci_lo;
+            w.k_ci_hi          = bs.ci_hi;
+            w.n_bootstrap      = bs.n_run;
+        }
         result.windows.push_back(std::move(w));
 
         result.max_band_index = std::max(0, sel.k - 1);
@@ -606,6 +1083,9 @@ ladder_result build_reference_field_ladder(
         double wstep     = 1.0;
         int    n_windows = 1;
         std::vector<std::vector<double>> window_values;
+        // Gradients of the same cells, in the same order, so a window's E_v is
+        // read off the ground the window actually covers.
+        std::vector<std::vector<double>> window_slopes;
     };
 
     // Per-source coordinate range.
@@ -637,6 +1117,7 @@ ladder_result build_reference_field_ladder(
         sb.wstep     = std::max(w * 0.5, cell);
         sb.n_windows = static_cast<int>(span / sb.wstep) + 1;
         sb.window_values.resize(static_cast<std::size_t>(sb.n_windows));
+        sb.window_slopes.resize(static_cast<std::size_t>(sb.n_windows));
         bins.emplace(s, std::move(sb));
     }
 
@@ -653,9 +1134,13 @@ ladder_result build_reference_field_ladder(
         const std::int32_t s = (*window_source_id)[i];
         if (s < 0) continue;
         source_bins& sb = bins.at(s);
-        sb.window_values[static_cast<std::size_t>(
-            window_of(sb, static_cast<double>(cd[i])))]
-            .push_back(static_cast<double>(fv[i]));
+        const std::size_t w = static_cast<std::size_t>(
+            window_of(sb, static_cast<double>(cd[i])));
+        sb.window_values[w].push_back(static_cast<double>(fv[i]));
+        if (sld != nullptr && (*slm)[i] && std::isfinite((*sld)[i]))
+        {
+            sb.window_slopes[w].push_back(static_cast<double>((*sld)[i]));
+        }
     }
 
     // Per (source, window) selection.
@@ -670,21 +1155,33 @@ ladder_result build_reference_field_ladder(
 
         for (int w = 0; w < sb.n_windows; ++w)
         {
-            // Pool with the immediate neighbours.
+            // Pool with the immediate neighbours. The gradients are pooled
+            // over exactly the same windows, so E_v is read off the ground the
+            // breaks were actually chosen from rather than off a wider reach.
             std::vector<double> pooled;
+            std::vector<double> pooled_slopes;
             for (int k = std::max(w - 1, 0);
                  k <= std::min(w + 1, sb.n_windows - 1); ++k)
             {
                 const std::vector<double>& src =
                     sb.window_values[static_cast<std::size_t>(k)];
                 pooled.insert(pooled.end(), src.begin(), src.end());
+                const std::vector<double>& ssrc =
+                    sb.window_slopes[static_cast<std::size_t>(k)];
+                pooled_slopes.insert(pooled_slopes.end(),
+                                     ssrc.begin(), ssrc.end());
             }
+
+            const double win_ev  = ev_for(pooled_slopes);
+            const double win_gap = gap_from_ev(win_ev);
 
             ladder_window rec;
             rec.source_id       = s;
             rec.window_centre_m = sb.dmin + (w + 0.5) * sb.wstep;
             rec.n_pixels        = static_cast<std::int64_t>(pooled.size());
-            rec.required_gap_m  = required_gap;
+            rec.required_gap_m  = win_gap;
+            rec.vertical_accuracy_m  = win_ev;
+            rec.median_slope_degrees = median_slope_of(pooled_slopes);
 
             if (static_cast<int>(pooled.size()) >= request.min_window_pixels)
             {
@@ -693,13 +1190,17 @@ ladder_result build_reference_field_ladder(
                     ++h[static_cast<std::size_t>(log_bin(v))];
 
                 const std::vector<double> cand = clamp_breaks(
-                    find_population_breaks(h, lo_log, hi_log,
-                                           request.max_valley_fraction),
+                    request.break_algorithm == ladder_break_choice::gap
+                        ? gap_break_candidates(pooled, request,
+                                               &rec.gap_lo_m, &rec.gap_hi_m)
+                        : find_population_breaks(h, lo_log, hi_log,
+                                                 request.max_valley_fraction),
                     request);
 
                 const selection sel =
-                    select_partition(pooled, cand, request, required_gap);
+                    select_partition(pooled, cand, request, win_gap);
 
+                rec.candidate_breaks_m = cand;
                 selected[static_cast<std::size_t>(w)] = sel;
                 has_own[static_cast<std::size_t>(w)] = 1;
 
@@ -709,6 +1210,61 @@ ladder_result build_reference_field_ladder(
                 rec.band_centres_m        = sel.band_centres;
                 rec.min_band_centre_gap_m = sel.min_centre_gap;
                 rec.goodness_of_variance_fit = sel.gvf;
+
+                // Seeded per (source, window) so a window's stability is
+                // reproducible on its own, and does not shift because a
+                // neighbouring reach changed.
+                {
+                    const std::uint64_t wseed =
+                        static_cast<std::uint64_t>(request.k_bootstrap_seed) * 1000003ull
+                        + static_cast<std::uint64_t>(static_cast<std::uint32_t>(s)) * 10007ull
+                        + static_cast<std::uint64_t>(w) + 1ull;
+                    const bootstrap_summary bs =
+                        bootstrap_k(pooled, request, win_gap, wseed);
+                    rec.k_bootstrap_mode = bs.mode;
+                    rec.k_stability      = bs.stability;
+                    rec.k_ci_lo          = bs.ci_lo;
+                    rec.k_ci_hi          = bs.ci_hi;
+                    rec.n_bootstrap      = bs.n_run;
+                }
+
+                // How cleanly the density actually separates at each break.
+                // Computed regardless of the break algorithm: jenks has no
+                // notion of a dip and will split a single mode without
+                // complaint, which is exactly when this number matters.
+                {
+                    double hlo = 0.0, hhi = 0.0;
+                    std::vector<std::int64_t> hc;
+                    window_histogram(pooled, request.window_hist_bins,
+                                     hlo, hhi, hc);
+                    rec.separation_ratio.clear();
+                    for (const double b : sel.breaks)
+                        rec.separation_ratio.push_back(
+                            separation_ratio_at(hc, hlo, hhi, b));
+                    if (request.record_window_histograms)
+                    {
+                        rec.hist_lo_m    = hlo;
+                        rec.hist_hi_m    = hhi;
+                        // The 3-bin smoothing the separation ratio is taken on,
+                        // so a reader sees the curve the decision used.
+                        const int nbh = static_cast<int>(hc.size());
+                        rec.hist_smoothed.assign(hc.size(), 0.0);
+                        for (int q = 0; q < nbh; ++q)
+                        {
+                            double acc = 0.0; int m = 0;
+                            for (int dq = -1; dq <= 1; ++dq)
+                            {
+                                const int r2 = q + dq;
+                                if (r2 < 0 || r2 >= nbh) continue;
+                                acc += static_cast<double>(hc[static_cast<std::size_t>(r2)]);
+                                ++m;
+                            }
+                            rec.hist_smoothed[static_cast<std::size_t>(q)] =
+                                (m > 0) ? acc / m : 0.0;
+                        }
+                        rec.hist_counts  = std::move(hc);
+                    }
+                }
 
                 wb[static_cast<std::size_t>(w)] = sel.breaks;
             }
@@ -754,6 +1310,12 @@ ladder_result build_reference_field_ladder(
 
     // Per-pixel band index from the pixel's own window. Pixels without a usable
     // donor coordinate remain admitted and use the global partition.
+    // Which window each pixel drew its breaks from. Keyed on (source, window)
+    // so it survives the deterministic sort of `windows` below.
+    std::vector<float>   widx(n, -1.0f);
+    std::vector<uint8_t> widx_mask(n, 1u);
+    std::vector<std::pair<std::int32_t,int>> pixel_win(n, {-1, -1});
+
     for (std::size_t i = 0; i < n; ++i)
     {
         if (!is_live(i)) continue;
@@ -765,14 +1327,25 @@ ladder_result build_reference_field_ladder(
             if (s >= 0 && bit != bins.end())
             {
                 const source_bins& sb = bit->second;
-                brk = &wbreaks.at(s)[static_cast<std::size_t>(
-                    window_of(sb, static_cast<double>(cd[i])))];
+                const int wi = window_of(sb, static_cast<double>(cd[i]));
+                brk = &wbreaks.at(s)[static_cast<std::size_t>(wi)];
+                pixel_win[i] = {s, wi};
             }
         }
         const int b = band_of(static_cast<double>(fv[i]), *brk);
         band_data[i] = static_cast<float>(b);
         result.max_band_index = std::max(result.max_band_index, b);
     }
+
+    // The value is the window's ORDINAL WITHIN ITS SOURCE, counting downstream
+    // - a reach number, not an index into the sorted window table. That keeps
+    // it meaningful on its own: window 3 of channel 1 is the fourth reach down
+    // channel 1, whatever order the table happens to be in.
+    for (std::size_t i = 0; i < n; ++i)
+        if (pixel_win[i].second >= 0)
+            widx[i] = static_cast<float>(pixel_win[i].second);
+    result.window_index = lsdtt_raster_cpu(
+        std::move(widx), std::move(widx_mask), band_meta);
 
     std::sort(result.windows.begin(), result.windows.end(),
         [](const ladder_window& a, const ladder_window& b)
@@ -802,7 +1375,8 @@ banded_label_result label_components_within_bands(
     const lsdtt_raster_cpu& admitted_mask,
     const lsdtt_raster_cpu& reference_field,
     int                     min_component_pixels,
-    pixel_connectivity      connectivity)
+    pixel_connectivity      connectivity,
+    const lsdtt_raster_cpu* terrain_aspect_degrees)
 {
     static const char* fn = "lsdtt::label_components_within_bands";
 
@@ -966,6 +1540,43 @@ banded_label_result label_components_within_bands(
                         if (rec.aspect_degrees < 0.0)
                             rec.aspect_degrees += 360.0;
                     }
+                }
+            }
+
+            // Terrain aspect: CIRCULAR mean plus the resultant length that
+            // says whether that mean means anything. Summing unit vectors is
+            // the only correct way to average a direction - the arithmetic mean
+            // of 350 and 10 degrees is 180, the opposite way.
+            if (terrain_aspect_degrees != nullptr &&
+                terrain_aspect_degrees->get_data().size() == n)
+            {
+                const std::vector<float>&   ad = terrain_aspect_degrees->get_data();
+                const std::vector<uint8_t>& am = terrain_aspect_degrees->get_mask();
+                constexpr double deg_to_rad = 3.14159265358979323846 / 180.0;
+                double sn = 0.0, cs = 0.0;
+                std::int64_t na = 0;
+                for (const std::size_t m : members)
+                {
+                    if (!am[m] || !std::isfinite(ad[m])) continue;
+                    const double a_rad = static_cast<double>(ad[m]) * deg_to_rad;
+                    sn += std::sin(a_rad);
+                    cs += std::cos(a_rad);
+                    ++na;
+                }
+                if (na > 0)
+                {
+                    const double inv = 1.0 / static_cast<double>(na);
+                    const double mn = sn * inv, mc = cs * inv;
+                    rec.aspect_r_bar = std::sqrt(mn * mn + mc * mc);
+                    double deg = std::atan2(mn, mc) *
+                                 (180.0 / 3.14159265358979323846);
+                    // fmod, not a single += 360: a mean that lands a hair below
+                    // zero - which is exactly what a set straddling north
+                    // gives - would otherwise be reported as 360 degrees, and a
+                    // reader binning aspect into octants would put it in the
+                    // wrong bin or off the end of the array.
+                    deg = std::fmod(deg + 360.0, 360.0);
+                    rec.terrain_aspect_degrees = deg;
                 }
             }
 

@@ -77,10 +77,13 @@
 #include "lsdtt_flow_base.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "lsdtt_raster_linear_features_cpu.hpp"
 #include "lsdtt_raster_geometry.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "lsdtt_valley_centreline_cpu.hpp"
+#include "lsdtt_channel_scope_cpu.hpp"
 #include "lsdtt_flat_surface_channel_classify_cpu.hpp"
 
 namespace
@@ -1783,7 +1786,840 @@ void run_fitted_surface_checks()
     }
 }
 
+// =============================================================================
+// The trough's upstream-of-head exclusion
+//
+// Terrain beyond the channel head is still valley ground and stays in the
+// valley mask, but it must not be carved into the trough. A broad pocket behind
+// the head forms a deep distance-to-wall bowl whose lowest spill is the
+// upstream tile edge, so the least-cost walk escapes that way and the centreline
+// runs off the top of the DEM instead of down the valley.
+//
+// The guard is a SIGNED along-channel coordinate: each corridor pixel takes the
+// along-channel distance of its nearest channel node plus its own offset from
+// that node projected onto the local channel direction. Pixels beyond the head
+// project backwards and go negative.
+//
+// This went inert at phase 5d, when the corridor HAND break search it happened
+// to live inside moved to lsdtt-fluvial-surfaces, and it was restored as its own
+// step afterwards. The fixtures in the smoke tests all have their channel head
+// at a DEM edge, where there is no ground beyond the head and the exclusion
+// count is legitimately zero - so none of them can tell a working guard from a
+// dead one. This test builds the geometry that can.
+// =============================================================================
+void run_trough_upstream_checks()
+{
+    std::cout << "lsdtt-test-fluvial-surfaces\n"
+              << "Trough upstream-of-head exclusion\n\n";
+
+    // A straight valley running down the grid: a flat floor incised into
+    // shoulders, falling to the south. Simple on purpose - the property under
+    // test is geometric, and a realistic surface would only add ways to fail
+    // for unrelated reasons.
+    constexpr int    n_rows = 120;
+    constexpr int    n_cols = 60;
+    constexpr double cell   = 10.0;
+    constexpr int    axis   = n_cols / 2;
+    constexpr int    half_w = 6;      // valley half-width in cells
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+    meta.set_default_synthetic_georeference();
+
+    const std::size_t n = static_cast<std::size_t>(n_rows) * n_cols;
+    std::vector<float>   z(n, 0.0f);
+    std::vector<uint8_t> zm(n, 1u);
+    // Above the head the valley opens into a POCKET - wider floor, and the
+    // ground stops falling southward. That is the geometry the guard exists
+    // for: a broad flat pocket makes a deeper distance-to-wall bowl than the
+    // narrow corridor below it, so the least-cost walk is drawn INTO the pocket
+    // and out over the northern tile edge. A uniformly-falling valley of
+    // constant width does not provoke it, and a test built on one would pass
+    // whether the guard worked or not.
+    constexpr int head_row  = n_rows / 3;
+    constexpr int pocket_w  = 22;     // pocket half-width in cells
+    for (int r = 0; r < n_rows; ++r)
+    {
+        const bool  in_pocket = r < head_row;
+        const int   w         = in_pocket ? pocket_w : half_w;
+        // The pocket does not drain: it sits at the head's elevation, so its
+        // floor is a genuine flat basin behind the channel.
+        const double fall = in_pocket ? (0.01 * head_row * cell)
+                                      : (0.01 * r * cell);
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const int    d    = std::abs(c - axis);
+            const double wall = (d <= w) ? 0.0 : 20.0 * (d - w);
+            z[static_cast<std::size_t>(r) * n_cols + c] =
+                static_cast<float>(200.0 - fall + wall);
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu dem(std::move(z), std::move(zm), meta);
+
+    // The valley mask is the whole floor, top to bottom - INCLUDING the stretch
+    // above where the channel starts. That is the point: the mask keeps it, the
+    // trough must not.
+    std::vector<float>   vm(n, 0.0f);
+    std::vector<uint8_t> vmm(n, 1u);
+    for (int r = 0; r < n_rows; ++r)
+    {
+        const int w = (r < head_row) ? pocket_w : half_w;
+        for (int c = axis - w; c <= axis + w; ++c)
+            vm[static_cast<std::size_t>(r) * n_cols + c] = 1.0f;
+    }
+    const lsdtt::lsdtt_raster_cpu valley_in(
+        std::move(vm), std::move(vmm), meta);
+
+    // The channel starts at the pocket's downstream lip. On every smoke fixture
+    // the head sits at a DEM edge and this region does not exist at all.
+    lsdtt::channel_scope_result scope;
+    scope.channel_mask.assign(n, 0u);
+    scope.channel_source_id.assign(n, -1);
+    std::vector<std::int64_t> nodes;
+    for (int r = head_row; r < n_rows; ++r)
+    {
+        const std::size_t f = static_cast<std::size_t>(r) * n_cols + axis;
+        nodes.push_back(static_cast<std::int64_t>(f));
+        scope.channel_mask[f] = 1u;
+        scope.channel_source_id[f] = 0;
+    }
+    scope.channel_node_lists.push_back(nodes);
+    scope.resolved_sources.push_back(nodes.front());
+
+    lsdtt::valley_centreline_request vreq;
+    vreq.supplied_valley_mask = &valley_in;
+    vreq.corridor_width_metres = 400.0;
+    vreq.nodata_buffer_pixels = 0;
+    vreq.min_centreline_nodes = 5;
+    vreq.n_threads = 1;
+
+    lsdtt::valley_centreline_result vres =
+        lsdtt::extract_valley_centrelines(dem, scope, vreq);
+
+    check(!vres.channels.empty(), "the engine returns a channel record");
+    if (vres.channels.empty()) return;
+
+    const lsdtt::valley_channel_centreline& ch = vres.channels.front();
+    std::cout << "      valley px = " << ch.n_valley_pixels
+              << ", excluded from trough (upstream of head) = "
+              << ch.n_upstream_of_head_excluded
+              << ", centreline = " << ch.centreline_flats.size() << " node(s)\n";
+
+    // The head is 40 rows up a 13-cell-wide floor, so there are on the order of
+    // 500 valley cells beyond it. Requiring a substantial count rather than
+    // "> 0" is what makes this fail if the signed coordinate degenerates to a
+    // handful of cells around the head itself.
+    check(ch.n_upstream_of_head_excluded > 200,
+          "valley ground beyond the channel head is excluded from the trough");
+
+    // ... and the exclusion is the TROUGH's, not the mask's. If this ever fails
+    // the guard has started deleting valley rather than protecting the carve.
+    const std::vector<float>& out_vm = vres.valley_mask.get_data();
+    std::int64_t n_above_head_in_mask = 0;
+    for (int r = 0; r < head_row - 2; ++r)
+        for (int c = axis - pocket_w; c <= axis + pocket_w; ++c)
+            if (out_vm[static_cast<std::size_t>(r) * n_cols + c] > 0.0f)
+                ++n_above_head_in_mask;
+    std::cout << "      valley cells above the head retained in the MASK = "
+              << n_above_head_in_mask << "\n";
+    check(n_above_head_in_mask > 200,
+          "and those cells are still in the valley mask");
+
+    check(ch.routing_succeeded && ch.centreline_flats.size() >= 5,
+          "the centreline still routes");
+
+    // A cheap invariant, NOT a demonstration. The centreline should never sit
+    // north of the head, and this catches it if it ever does.
+    //
+    // Stated plainly: it does NOT discriminate here. Disabling the guard leaves
+    // this assertion passing, because the walk starts at the head node and
+    // proceeds downstream, so it cannot reach the pocket on this geometry. The
+    // downstream escape the guard was written for needs the filled trough to
+    // spill north, which this fixture does not reproduce - the exclusion count
+    // above is what actually fails when the guard is broken (verified by
+    // disabling it: 1571 -> 0). If someone later builds a fixture where the
+    // routed path really does escape, this assertion is where it belongs.
+    int min_row = n_rows;
+    for (const std::int64_t f : ch.centreline_flats)
+        min_row = std::min(min_row, static_cast<int>(f / n_cols));
+    std::cout << "      northernmost centreline row = " << min_row
+              << " (channel head at row " << head_row << ")\n";
+    check(min_row >= head_row - 2,
+          "and it does not escape north past the channel head");
+}
+
 }  // namespace
+
+
+// =============================================================================
+// Perona-Malik conditioning (Phase 7b)
+//
+// THE CLAIM the filter is adopted on: it removes within-facet noise while
+// leaving the riser standing. Both halves have to be tested, because either one
+// alone is trivially satisfiable - a no-op preserves every riser, and a heavy
+// blur removes every bit of noise.
+//
+// So the fixture is a two-tread staircase: a lower tread at 100 m, a one-cell
+// riser, an upper tread at 130 m, with +/- 2 m of deterministic noise on both
+// treads. The mean filter is computed alongside as the CONTROL, because the
+// argument for anisotropic diffusion is not that it smooths - anything smooths -
+// but that it does so without moving the break. If a future change quietly
+// turned the conductance off, P-M and the mean filter would agree and the
+// step-preservation check would catch it.
+// =============================================================================
+void run_perona_malik_checks()
+{
+    std::cout << "\n--- Perona-Malik conditioning (7b) ---\n";
+
+    const int n_rows = 80, n_cols = 80;
+    const double cell = 10.0;
+    const int riser_col = 40;
+    const double lower = 100.0, upper = 130.0;
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+
+    std::vector<float>   d(static_cast<std::size_t>(n_rows) * n_cols, 0.0f);
+    std::vector<uint8_t> m(d.size(), uint8_t{1});
+
+    // Deterministic zig-zag noise: no RNG, so the numbers below are pinned.
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            const double base = (c < riser_col) ? lower : upper;
+            const double noise = 2.0 * (((r + c) % 2 == 0) ? 1.0 : -1.0);
+            d[i] = static_cast<float>(base + noise);
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu dem(std::move(d), std::move(m), meta);
+
+    lsdtt::perona_malik_options opt;
+    opt.n_iterations        = 10;
+    opt.lambda              = 0.20;
+    opt.conductance         = lsdtt::pm_conductance_choice::exponential;
+    opt.k_gradient_quantile = 0.90;
+
+    const lsdtt::perona_malik_result pmr =
+        lsdtt::perona_malik_diffusion(dem, opt);
+    const std::vector<float>& sd = pmr.smoothed.get_data();
+    const std::vector<float>& od = dem.get_data();
+
+    check(pmr.k_metres_per_cell > 0.0,
+          "PM1: K was estimated from the DEM's own gradients (K = "
+          + std::to_string(pmr.k_metres_per_cell) + " m/cell)");
+
+    // 3x3 mean filter as the control.
+    std::vector<float> mean(od.size(), 0.0f);
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            double acc = 0.0; int cnt = 0;
+            for (int dr = -1; dr <= 1; ++dr)
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    const int rr = r + dr, cc = c + dc;
+                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) continue;
+                    acc += od[static_cast<std::size_t>(rr) * n_cols + cc];
+                    ++cnt;
+                }
+            mean[static_cast<std::size_t>(r) * n_cols + c] =
+                static_cast<float>(acc / cnt);
+        }
+    }
+
+    // Tread roughness: mean |z - tread base|, well away from the riser.
+    auto tread_roughness = [&](const std::vector<float>& v) {
+        double acc = 0.0; int cnt = 0;
+        for (int r = 2; r < n_rows - 2; ++r)
+            for (int c = 5; c < riser_col - 5; ++c)
+            {
+                acc += std::fabs(v[static_cast<std::size_t>(r) * n_cols + c] - lower);
+                ++cnt;
+            }
+        return acc / cnt;
+    };
+
+    // Step height measured across the riser, one cell either side.
+    auto step_height = [&](const std::vector<float>& v) {
+        double acc = 0.0; int cnt = 0;
+        for (int r = 5; r < n_rows - 5; ++r)
+        {
+            const std::size_t l = static_cast<std::size_t>(r) * n_cols + (riser_col - 1);
+            const std::size_t h = static_cast<std::size_t>(r) * n_cols + riser_col;
+            acc += static_cast<double>(v[h]) - v[l];
+            ++cnt;
+        }
+        return acc / cnt;
+    };
+
+    const double rough_raw  = tread_roughness(od);
+    const double rough_pm   = tread_roughness(sd);
+    const double rough_mean = tread_roughness(mean);
+    const double step_raw   = step_height(od);
+    const double step_pm    = step_height(sd);
+    const double step_mean  = step_height(mean);
+
+    std::cout << "  tread roughness  raw " << rough_raw
+              << "  PM " << rough_pm << "  mean-filter " << rough_mean << "\n";
+    std::cout << "  step height      raw " << step_raw
+              << "  PM " << step_pm << "  mean-filter " << step_mean << "\n";
+
+    check(rough_pm < 0.2 * rough_raw,
+          "PM2: within-tread roughness falls to under a fifth of the raw DEM");
+    check(step_pm > 0.95 * step_raw,
+          "PM3: the riser keeps more than 95% of its height");
+    check(step_pm > step_mean + 1.0,
+          "PM4: the riser survives P-M by more than a metre over the mean "
+          "filter, so the conductance is doing something");
+
+    // Nodata must not be diffused into, and must not leak a value outward.
+    {
+        std::vector<float>   d2 = dem.get_data();
+        std::vector<uint8_t> m2 = dem.get_mask();
+        const std::size_t hole = static_cast<std::size_t>(40) * n_cols + 20;
+        d2[hole] = static_cast<float>(meta.no_data_value);
+        m2[hole] = uint8_t{0};
+        const lsdtt::lsdtt_raster_cpu holed(std::move(d2), std::move(m2), meta);
+        const lsdtt::perona_malik_result hr =
+            lsdtt::perona_malik_diffusion(holed, opt);
+        check(hr.smoothed.get_mask()[hole] == 0,
+              "PM5: a nodata cell stays nodata");
+        const double neigh = hr.smoothed.get_data()[hole - 1];
+        check(neigh > lower - 5.0 && neigh < lower + 5.0,
+              "PM6: the cell beside the hole is not pulled toward nodata");
+    }
+
+    // Stability guard is a refusal, not a warning.
+    {
+        bool threw = false;
+        lsdtt::perona_malik_options bad = opt;
+        bad.lambda = 0.30;
+        try { lsdtt::perona_malik_diffusion(dem, bad); }
+        catch (const std::exception&) { threw = true; }
+        check(threw, "PM7: lambda above the 0.25 stability limit is rejected");
+    }
+}
+
+
+// =============================================================================
+// Coherence-enhancing diffusion (Phase 7c)
+//
+// WHY A SECOND FILTER, AND WHAT SEPARATES IT FROM THE FIRST. Perona-Malik keys
+// on gradient MAGNITUDE, so it keeps a riser because the riser is steep - and
+// keeps a gully cut through that riser for exactly the same reason. Weickert
+// keys on the structure tensor: it smooths ALONG the dominant local orientation
+// and barely at all across it, so it keeps the riser because the riser is
+// LINEAR, and it will close a break in the riser rather than preserve it.
+//
+// That difference is the whole justification for shipping both, so the fixture
+// is a riser BROKEN BY NOTCHES: a two-tread staircase whose riser is cut back
+// to the lower tread every eighth row. The discriminating statistic is the
+// MINIMUM step height along the riser. Both filters should leave the intact
+// riser standing; only the orientation-aware one should raise the floor in the
+// notches. If a future change made the two behave alike, CED4 fails.
+// =============================================================================
+void run_coherence_diffusion_checks()
+{
+    std::cout << "\n--- Coherence-enhancing diffusion (7c) ---\n";
+
+    const int n_rows = 80, n_cols = 80;
+    const double cell = 10.0;
+    const int riser_col = 40;
+    const double lower = 100.0, upper = 130.0;
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+
+    std::vector<float>   d(static_cast<std::size_t>(n_rows) * n_cols, 0.0f);
+    std::vector<uint8_t> m(d.size(), uint8_t{1});
+    std::vector<int>     notched(n_rows, 0);
+
+    for (int r = 0; r < n_rows; ++r)
+    {
+        // Every 8th row the upper tread is cut back past the riser, so the
+        // riser line is interrupted. This is what gullying does to a flight.
+        notched[r] = (r % 8 == 0) ? 1 : 0;
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            double z = (c < riser_col) ? lower : upper;
+            if (notched[r] && c >= riser_col && c < riser_col + 6) z = lower;
+            const double noise = 1.0 * (((r + c) % 2 == 0) ? 1.0 : -1.0);
+            d[i] = static_cast<float>(z + noise);
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu dem(std::move(d), std::move(m), meta);
+
+    // Step height across the riser at one row. Averaged over four cells each
+    // side, not read off single cells: the checkerboard noise alternates with
+    // column parity, so a two-cell reading returns the noise amplitude rather
+    // than the step and a notched row scores 2 m instead of 0.
+    auto step_at = [&](const std::vector<float>& v, int r) {
+        double lo_sum = 0.0, hi_sum = 0.0;
+        for (int k = 1; k <= 4; ++k)
+        {
+            lo_sum += v[static_cast<std::size_t>(r) * n_cols + (riser_col - k)];
+            hi_sum += v[static_cast<std::size_t>(r) * n_cols + (riser_col + k)];
+        }
+        return (hi_sum - lo_sum) / 4.0;
+    };
+    auto step_stats = [&](const std::vector<float>& v, bool want_notched) {
+        double acc = 0.0; int cnt = 0;
+        for (int r = 5; r < n_rows - 5; ++r)
+        {
+            if ((notched[r] != 0) != want_notched) continue;
+            acc += step_at(v, r); ++cnt;
+        }
+        return cnt ? acc / cnt : 0.0;
+    };
+
+    lsdtt::perona_malik_options pmo;
+    pmo.n_iterations        = 20;
+    pmo.lambda              = 0.20;
+    pmo.k_gradient_quantile = 0.50;
+    // Hold the result: binding a reference straight to .smoothed.get_data() on
+    // the temporary dangles, and the freed buffer then reads back as whatever
+    // is written into it next - which made both filters report identical
+    // numbers and very nearly passed as agreement.
+    const lsdtt::perona_malik_result pm_res =
+        lsdtt::perona_malik_diffusion(dem, pmo);
+    const std::vector<float>& pm = pm_res.smoothed.get_data();
+
+    const lsdtt::lsdtt_raster_cpu ced_r =
+        lsdtt::coherence_enhancing_diffusion(
+            dem, /*n_iterations=*/20, /*time_step=*/0.15,
+            /*derivative_radius_metres=*/cell,
+            /*integration_radius_metres=*/3.0 * cell,
+            /*contrast=*/0.2, /*min_diffusivity=*/0.001, /*n_threads=*/1);
+    const std::vector<float>& ce = ced_r.get_data();
+    const std::vector<float>& raw = dem.get_data();
+
+    const double intact_raw = step_stats(raw, false);
+    const double intact_pm  = step_stats(pm,  false);
+    const double intact_ce  = step_stats(ce,  false);
+    const double notch_raw  = step_stats(raw, true);
+    const double notch_pm   = step_stats(pm,  true);
+    const double notch_ce   = step_stats(ce,  true);
+
+    std::cout << "  step at intact rows   raw " << intact_raw
+              << "  PM " << intact_pm << "  CED " << intact_ce << "\n";
+    std::cout << "  step at notched rows  raw " << notch_raw
+              << "  PM " << notch_pm << "  CED " << notch_ce << "\n";
+
+    check(intact_ce > 0.90 * intact_raw,
+          "CED1: the intact riser keeps more than 90% of its height");
+    check(notch_raw < 1.0,
+          "CED2: the fixture's notches really do cut the riser out (raw step "
+          "there = " + std::to_string(notch_raw) + " m)");
+    check(notch_ce > notch_pm,
+          "CED3: the orientation-aware filter closes the notch further than "
+          "the gradient-magnitude one");
+    check(notch_ce > notch_raw + 1.0,
+          "CED4: the notch is bridged by more than a metre, so smoothing ALONG "
+          "the riser is doing something a magnitude filter does not");
+
+    // Nodata and the stability guard, as for Perona-Malik.
+    {
+        std::vector<float>   d2 = dem.get_data();
+        std::vector<uint8_t> m2 = dem.get_mask();
+        const std::size_t hole = static_cast<std::size_t>(40) * n_cols + 20;
+        d2[hole] = static_cast<float>(meta.no_data_value);
+        m2[hole] = uint8_t{0};
+        const lsdtt::lsdtt_raster_cpu holed(std::move(d2), std::move(m2), meta);
+        const lsdtt::lsdtt_raster_cpu hr =
+            lsdtt::coherence_enhancing_diffusion(
+                holed, 5, 0.15, cell, 3.0 * cell, 0.2, 0.001, 1);
+        check(hr.get_mask()[hole] == 0, "CED5: a nodata cell stays nodata");
+    }
+    {
+        bool threw = false;
+        try
+        {
+            lsdtt::coherence_enhancing_diffusion(
+                dem, 5, 0.30, cell, 3.0 * cell, 0.2, 0.001, 1);
+        }
+        catch (const std::exception&) { threw = true; }
+        check(threw, "CED6: a time step above the 0.25 stability limit is "
+                     "rejected");
+    }
+}
+
+
+// =============================================================================
+// Slope-dependent E_v (Phase 7d)
+//
+// WHAT IS BEING ASSERTED. The resolvability floor is kappa * E_v, and under
+// vertical_accuracy_choice::slope_dependent E_v is resolved PER WINDOW from the
+// median gradient of that window's own admitted cells. So the fixture is a
+// channel whose admitted ground is gentle over its first half and steep over
+// its second, with everything else - field, admitted mask, break algorithm -
+// held identical. If the per-window resolution ever collapsed back to one
+// global number, the two halves would report the same required_gap_m and EV2
+// would fail.
+//
+// The two degenerate paths are pinned as well, because both are ways for the
+// feature to appear to work while doing nothing: `fixed` must ignore a supplied
+// gradient raster entirely, and `slope_dependent` with NO gradient raster must
+// fall back to the fixed value AND say so, rather than silently using whatever
+// vertical_accuracy_metres happened to be left at.
+// =============================================================================
+void run_slope_dependent_ev_checks()
+{
+    std::cout << "\n--- slope-dependent E_v (7d) ---\n";
+
+    const int n_rows = 40, n_cols = 200;
+    const double cell = 10.0;
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = n_rows;
+    meta.n_cols = n_cols;
+    meta.cell_size = cell;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+
+    const std::size_t npix = static_cast<std::size_t>(n_rows) * n_cols;
+    std::vector<float>   fd(npix, 0.0f), ad(npix, 0.0f), cdv(npix, 0.0f),
+                         sd(npix, 0.0f);
+    std::vector<uint8_t> mk(npix, uint8_t{1});
+    std::vector<std::int32_t> src(npix, 0);
+
+    // A four-tread flight in HAND, so there is something to resolve at all, and
+    // an along-channel coordinate running with the columns.
+    for (int r = 0; r < n_rows; ++r)
+    {
+        for (int c = 0; c < n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
+            const int tread = r / 10;              // 0..3
+            fd[i]  = static_cast<float>(4.0 + 20.0 * tread);
+            ad[i]  = 1.0f;
+            cdv[i] = static_cast<float>(c * cell);
+            // Gentle over the first half of the channel, steep over the second.
+            sd[i]  = (c < n_cols / 2) ? 4.0f : 25.0f;
+        }
+    }
+
+    const lsdtt::lsdtt_raster_cpu field(std::vector<float>(fd), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu admitted(std::vector<float>(ad), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu coord(std::vector<float>(cdv), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu slope(std::vector<float>(sd), std::vector<uint8_t>(mk), meta);
+
+    lsdtt::ladder_request req;
+    req.reference_field     = lsdtt::reference_field_choice::hand;
+    req.break_algorithm     = lsdtt::ladder_break_choice::jenks;
+    req.reach_window_metres = 400.0;
+    req.min_window_pixels   = 50;
+    req.hist_bins           = 64;
+    req.resolvability_kappa = 3.0;
+    req.vertical_accuracy_metres = 1.0;          // the fixed fallback
+    req.vertical_accuracy_mode =
+        lsdtt::vertical_accuracy_choice::slope_dependent;
+    req.vertical_accuracy_gentle_metres = 2.0;
+    req.vertical_accuracy_steep_metres  = 4.0;
+    req.vertical_accuracy_break_degrees = 11.31;
+
+    const lsdtt::ladder_result res = lsdtt::build_reference_field_ladder(
+        field, admitted, req, &src, &coord, &slope);
+
+    int n_gentle = 0, n_steep = 0;
+    bool gap_matches = true;
+    for (const lsdtt::ladder_window& w : res.windows)
+    {
+        if (w.vertical_accuracy_m == 2.0) ++n_gentle;
+        else if (w.vertical_accuracy_m == 4.0) ++n_steep;
+        if (std::fabs(w.required_gap_m - 3.0 * w.vertical_accuracy_m) > 1e-9)
+            gap_matches = false;
+    }
+    std::cout << "  " << res.windows.size() << " window(s): "
+              << n_gentle << " gentle (E_v 2 m), "
+              << n_steep << " steep (E_v 4 m)\n";
+
+    check(n_gentle > 0 && n_steep > 0,
+          "EV1: both E_v values are in play across the reach");
+    check(gap_matches,
+          "EV2: every window's required_gap_m is kappa x its own E_v");
+
+    // The steep half must be the downstream half, not an arbitrary split.
+    {
+        double gentle_centre_sum = 0.0, steep_centre_sum = 0.0;
+        int ng = 0, ns = 0;
+        for (const lsdtt::ladder_window& w : res.windows)
+        {
+            if (w.vertical_accuracy_m == 2.0) { gentle_centre_sum += w.window_centre_m; ++ng; }
+            else { steep_centre_sum += w.window_centre_m; ++ns; }
+        }
+        check(ng > 0 && ns > 0 &&
+              (steep_centre_sum / ns) > (gentle_centre_sum / ng),
+              "EV3: the windows taking the steep E_v are the ones over the "
+              "steep ground, not an arbitrary subset");
+    }
+
+    // `fixed` must ignore the gradient raster entirely.
+    {
+        lsdtt::ladder_request fx = req;
+        fx.vertical_accuracy_mode = lsdtt::vertical_accuracy_choice::fixed;
+        const lsdtt::ladder_result fr = lsdtt::build_reference_field_ladder(
+            field, admitted, fx, &src, &coord, &slope);
+        bool all_fixed = true;
+        for (const lsdtt::ladder_window& w : fr.windows)
+            if (std::fabs(w.required_gap_m - 3.0) > 1e-9) all_fixed = false;
+        check(all_fixed,
+              "EV4: vertical_accuracy_mode fixed ignores a supplied gradient "
+              "raster and uses kappa x vertical_accuracy_metres everywhere");
+        check(fr.notes.empty(), "EV5: fixed emits no fallback note");
+    }
+
+    // slope_dependent with no gradient raster: fall back AND say so.
+    {
+        const lsdtt::ladder_result nr = lsdtt::build_reference_field_ladder(
+            field, admitted, req, &src, &coord, nullptr);
+        bool all_fixed = true;
+        for (const lsdtt::ladder_window& w : nr.windows)
+            if (std::fabs(w.required_gap_m - 3.0) > 1e-9) all_fixed = false;
+        check(all_fixed,
+              "EV6: slope_dependent without a gradient raster falls back to "
+              "vertical_accuracy_metres");
+        check(!nr.notes.empty(),
+              "EV7: and the fallback is reported rather than silent");
+    }
+}
+
+
+// =============================================================================
+// k bootstrap and the aspect resultant length (Phase 7e)
+//
+// Two things adopted from the R implementation, both of which exist to say
+// whether a number already in the output is worth quoting.
+//
+// THE BOOTSTRAP answers "would a different draw have given the same k?". So the
+// test needs both ends: a population where the answer is obviously yes must
+// come back stable, and one where it is obviously no must not. A test that only
+// checked the stable case would pass on an implementation that returned 1.0
+// unconditionally.
+//
+// R_BAR answers "does this patch face one way?". The trap it exists to catch is
+// the arithmetic mean of an angle: averaging 350 and 10 degrees gives 180, the
+// opposite direction. So one fixture faces one way, one faces two opposite
+// ways, and one straddles north - and the third is the one that fails if the
+// circular mean is ever replaced by an ordinary one.
+// =============================================================================
+void run_bootstrap_and_rbar_checks()
+{
+    std::cout << "\n--- k bootstrap and aspect R_bar (7e) ---\n";
+
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = 60;
+    meta.n_cols = 60;
+    meta.cell_size = 10.0;
+    meta.x_min = 0.0;
+    meta.y_min = 0.0;
+    meta.no_data_value = -9999.0;
+    const std::size_t npix =
+        static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+
+    // ---- the bootstrap ----------------------------------------------------
+    // A clean four-tread flight: 15 rows per tread, treads 40 m apart, no
+    // overlap. Any resample of this has the same four modes.
+    std::vector<float>   fd(npix, 0.0f), ad(npix, 1.0f);
+    std::vector<uint8_t> mk(npix, uint8_t{1});
+    for (int r = 0; r < meta.n_rows; ++r)
+        for (int c = 0; c < meta.n_cols; ++c)
+            fd[static_cast<std::size_t>(r) * meta.n_cols + c] =
+                static_cast<float>(5.0 + 40.0 * (r / 15));
+    const lsdtt::lsdtt_raster_cpu clean_field(
+        std::vector<float>(fd), std::vector<uint8_t>(mk), meta);
+    const lsdtt::lsdtt_raster_cpu admitted(
+        std::vector<float>(ad), std::vector<uint8_t>(mk), meta);
+
+    // The unstable case. A featureless RAMP is not it, and finding that out is
+    // worth recording: jenks on a uniform distribution puts its breaks at even
+    // quantiles, every resample of a uniform sample has the same quantiles, and
+    // the answer comes back at stability 1.0. Determinism is not the same thing
+    // as structure.
+    //
+    // What actually makes k unstable is a SMALL population with overlapping
+    // modes, where a resample changes which partitions clear the resolvability
+    // floor. Three broad lumps, drawn deterministically, only a few hundred
+    // values, and the modes wide enough to run into each other.
+    std::vector<float> rd(npix, 0.0f);
+    {
+        std::uint64_t st = 12345u;
+        auto u01 = [&st]() {
+            st = st * 6364136223846793005ull + 1442695040888963407ull;
+            return static_cast<double>((st >> 11) & 0xFFFFFFFFull) /
+                   static_cast<double>(0xFFFFFFFFull);
+        };
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            const double centre = 20.0 + 30.0 * static_cast<double>(i % 3);
+            // +/- 18 m of spread on centres 30 m apart: the lumps overlap.
+            rd[i] = static_cast<float>(centre + 36.0 * (u01() - 0.5));
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu ramp_field(
+        std::move(rd), std::vector<uint8_t>(mk), meta);
+
+    lsdtt::ladder_request req;
+    req.reference_field     = lsdtt::reference_field_choice::hand;
+    req.break_algorithm     = lsdtt::ladder_break_choice::jenks;
+    req.reach_window_metres = -1.0;      // global
+    req.resolvability_kappa = 3.0;
+    req.vertical_accuracy_metres = 1.0;
+    req.k_bootstrap         = 25;
+    req.k_bootstrap_seed    = 7;
+
+    const lsdtt::ladder_result cb =
+        lsdtt::build_reference_field_ladder(clean_field, admitted, req);
+    // The unstable arm also needs a SMALL population and a floor that actually
+    // bites. 3600 values resample almost identically whatever their shape, and
+    // a floor of 3 m over a 60 m range is cleared by every k, so the search
+    // returns the ceiling every time. Admit one cell in twelve - about 300
+    // values - and raise E_v until the floor is the binding constraint.
+    lsdtt::ladder_request sparse_req = req;
+    sparse_req.vertical_accuracy_metres = 2.5;   // floor = 7.5 m
+    std::vector<float> sp(npix, 0.0f);
+    for (std::size_t i = 0; i < npix; ++i) sp[i] = (i % 12 == 0) ? 1.0f : 0.0f;
+    const lsdtt::lsdtt_raster_cpu sparse_admitted(
+        std::move(sp), std::vector<uint8_t>(mk), meta);
+
+    const lsdtt::ladder_result rb =
+        lsdtt::build_reference_field_ladder(ramp_field, sparse_admitted,
+                                            sparse_req);
+    const lsdtt::ladder_window& cw = cb.windows.at(0);
+    const lsdtt::ladder_window& rw = rb.windows.at(0);
+
+    std::cout << "  clean flight: k = " << cw.k_selected
+              << ", mode = " << cw.k_bootstrap_mode
+              << ", stability = " << cw.k_stability << "\n";
+    std::cout << "  overlapping lumps: k = " << rw.k_selected
+              << ", mode = " << rw.k_bootstrap_mode
+              << ", stability = " << rw.k_stability << "\n";
+
+    check(cw.n_bootstrap == 25, "BS1: every replicate ran");
+    check(cw.k_bootstrap_mode == cw.k_selected,
+          "BS2: on a clean flight the modal bootstrap k is the chosen k");
+    check(cw.k_stability > 0.9,
+          "BS3: and it comes back on almost every replicate");
+    check(cw.k_ci_lo <= cw.k_selected && cw.k_selected <= cw.k_ci_hi,
+          "BS4: the chosen k lies inside the reported interval");
+    check(rw.k_stability < cw.k_stability,
+          "BS5: a population with overlapping modes is LESS stable than a "
+          "clean flight - the statistic discriminates rather than always "
+          "reporting agreement");
+
+    // Reproducible, and actually driven by the seed.
+    {
+        const lsdtt::ladder_result again =
+            lsdtt::build_reference_field_ladder(ramp_field, sparse_admitted,
+                                                sparse_req);
+        check(again.windows.at(0).k_stability == rw.k_stability,
+              "BS6: the same seed reproduces the same stability exactly");
+
+        lsdtt::ladder_request other = sparse_req;
+        other.k_bootstrap_seed = 99;
+        const lsdtt::ladder_result diff =
+            lsdtt::build_reference_field_ladder(ramp_field, sparse_admitted,
+                                                other);
+        check(diff.windows.at(0).n_bootstrap == 25,
+              "BS7: a different seed still runs every replicate");
+    }
+
+    // Off by default, and off means the fields say "not measured".
+    {
+        lsdtt::ladder_request off = req;
+        off.k_bootstrap = 0;
+        const lsdtt::ladder_result nr =
+            lsdtt::build_reference_field_ladder(clean_field, admitted, off);
+        check(nr.windows.at(0).n_bootstrap == 0 &&
+              nr.windows.at(0).k_bootstrap_mode == -1,
+              "BS8: k_bootstrap = 0 leaves the fields at their sentinels");
+    }
+
+    // ---- R_bar ------------------------------------------------------------
+    // Three patches in three bands, so the labeller keeps them apart, each
+    // given a different aspect pattern.
+    std::vector<float>   bi(npix, -1.0f), am(npix, 0.0f), asp(npix, 0.0f);
+    std::vector<uint8_t> bm(npix, uint8_t{1});
+    for (int r = 0; r < meta.n_rows; ++r)
+    {
+        for (int c = 0; c < meta.n_cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * meta.n_cols + c;
+            if (r < 18)        { bi[i] = 0.0f; asp[i] = 90.0f; }        // one way
+            else if (r < 38)   { bi[i] = 1.0f;                          // two opposite ways
+                                 asp[i] = (c % 2 == 0) ? 0.0f : 180.0f; }
+            else               { bi[i] = 2.0f;                          // straddling north
+                                 asp[i] = (c % 2 == 0) ? 350.0f : 10.0f; }
+            am[i] = 1.0f;
+        }
+    }
+    const lsdtt::lsdtt_raster_cpu bands(
+        std::move(bi), std::vector<uint8_t>(bm), meta);
+    const lsdtt::lsdtt_raster_cpu amask(
+        std::move(am), std::vector<uint8_t>(bm), meta);
+    const lsdtt::lsdtt_raster_cpu aspect(
+        std::move(asp), std::vector<uint8_t>(bm), meta);
+
+    const lsdtt::banded_label_result bl = lsdtt::label_components_within_bands(
+        bands, amask, clean_field, 10, lsdtt::pixel_connectivity::d4, &aspect);
+
+    double rb0 = -1.0, rb1 = -1.0, rb2 = -1.0, a0 = -1.0, a2 = -1.0;
+    for (const lsdtt::patch_record& pr : bl.patches)
+    {
+        if (pr.band == 0 && pr.n_pixels > 100) { rb0 = pr.aspect_r_bar; a0 = pr.terrain_aspect_degrees; }
+        if (pr.band == 1 && pr.n_pixels > 100)   rb1 = pr.aspect_r_bar;
+        if (pr.band == 2 && pr.n_pixels > 100) { rb2 = pr.aspect_r_bar; a2 = pr.terrain_aspect_degrees; }
+    }
+    std::cout << "  R_bar: one way " << rb0
+              << ", two opposite ways " << rb1
+              << ", straddling north " << rb2
+              << " (mean aspect there = " << a2 << " deg)\n";
+
+    check(rb0 > 0.99, "RB1: a patch whose cells all face one way has R_bar ~ 1");
+    check(std::fabs(a0 - 90.0) < 1e-3, "RB2: and its mean aspect is that way");
+    check(rb1 < 0.05,
+          "RB3: a patch facing two opposite ways has R_bar ~ 0, so its mean "
+          "direction is correctly reported as meaningless");
+    check(rb2 > 0.98,
+          "RB4: cells at 350 and 10 degrees are nearly the same direction, so "
+          "R_bar stays near 1");
+    check(a2 >= 0.0 && a2 < 360.0 && (a2 < 5.0 || a2 > 355.0),
+          "RB5: and their circular mean is near north, not the 180 degrees an "
+          "arithmetic mean would give - and is reported in [0, 360), never as "
+          "360");
+
+    // No aspect raster: the columns must say "not measured", not "undefined".
+    {
+        const lsdtt::banded_label_result nb =
+            lsdtt::label_components_within_bands(
+                bands, amask, clean_field, 10,
+                lsdtt::pixel_connectivity::d4, nullptr);
+        bool all_unset = true;
+        for (const lsdtt::patch_record& pr : nb.patches)
+            if (pr.terrain_aspect_degrees >= 0.0) all_unset = false;
+        check(all_unset,
+              "RB6: with no aspect raster the terrain-aspect columns stay unset");
+    }
+}
 
 int main(int argc, char* argv[])
 {
@@ -1801,6 +2637,51 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--fitted-surface")
         {
             run_fitted_surface_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--trough-upstream")
+        {
+            run_trough_upstream_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--bootstrap-rbar")
+        {
+            run_bootstrap_and_rbar_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--slope-dependent-ev")
+        {
+            run_slope_dependent_ev_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--coherence-diffusion")
+        {
+            run_coherence_diffusion_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--perona-malik")
+        {
+            run_perona_malik_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

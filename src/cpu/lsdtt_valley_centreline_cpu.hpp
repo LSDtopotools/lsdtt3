@@ -233,6 +233,14 @@ struct valley_channel_centreline
     // Median local relief (m) per window that drove the adaptive fraction.
     std::vector<double> window_relief_m;
     std::int64_t n_valley_pixels          = 0;
+    // Valley pixels EXCLUDED FROM THE TROUGH for sitting upstream of the
+    // channel head. They stay in the valley mask; only the carve ignores them,
+    // because a pocket behind the head forms a distance-to-wall bowl whose
+    // spill is the upstream tile edge and the routed path escapes that way.
+    // Reported so the exclusion is visible rather than silent: a large count
+    // on a channel whose head is mid-DEM usually means the head is in the
+    // wrong place.
+    std::int64_t n_upstream_of_head_excluded = 0;
     int          trough_retries           = 0;
     bool         routing_succeeded        = false;
     // Ordered upstream -> downstream global flat indices of the centreline.
@@ -364,44 +372,5 @@ struct valley_centreline_result
     const valley_centreline_request& request
 );
 
-// =============================================================================
-// clean_valley_mask
-//
-// The valley-mask tidy-up, exposed so that whichever tool IDENTIFIES the valley
-// can also clean it. Phase 5 of the fluvial-surfaces plan moves identification
-// to lsdtt-fluvial-surfaces, which bands a reference field and takes band 0;
-// band 0 straight off a ladder is speckled and contains patches that have
-// nothing to do with the channel, so it is not a drop-in for this engine until
-// it has been through the same cleaning the engine used to apply itself.
-//
-// Three operations, in order:
-//   1. erode by dilation_pixels, to break threads joining real valley floor to
-//      incidental flat ground;
-//   2. drop patches with no pixel on or 8-adjacent to the channel (optional,
-//      restrict_to_channel_connected) and patches whose along-ground path to
-//      the channel exceeds max_detour_ratio times the straight-line distance -
-//      a flat that is NEAR the channel but only reachable the long way round is
-//      a different landform;
-//   3. dilate by 2 * dilation_pixels to regrow the eroded rim and fill enclosed
-//      holes, with each regrown pixel capped at its patch's own farthest
-//      distance from the channel, so nothing creeps outward up the risers.
-//
-// channel_mask is the per-pixel channel network (non-zero on channel cells);
-// the distance field the detour test needs is computed from it internally.
-// Returns a mask raster with the same geometry: 1 = valley, 0 = not.
-// =============================================================================
-struct valley_mask_clean_request
-{
-    int    dilation_pixels               = 4;
-    bool   restrict_to_channel_connected = true;
-    double max_detour_ratio              = 3.0;
-    int    n_threads                     = 0;
-};
-
-[[nodiscard]] lsdtt_raster_cpu clean_valley_mask(
-    const lsdtt_raster_cpu&          valley_mask,
-    const std::vector<std::uint8_t>& channel_mask,
-    const valley_mask_clean_request& request
-);
 
 } // namespace lsdtt

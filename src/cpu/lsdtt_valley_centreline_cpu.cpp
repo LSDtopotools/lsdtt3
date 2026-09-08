@@ -15,6 +15,8 @@
 
 #include "lsdtt_valley_centreline_cpu.hpp"
 
+#include "lsdtt_raster_binary_mask_cpu.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -75,371 +77,6 @@ void dilate_mask(
     }
 }
 
-// Valley-mask cleanup (see request comment in the header). This is a
-// morphological opening constrained by distance to the channel:
-// 1. erode by n_dilate iterations (the channel and its immediate neighbours
-//    are protected, so the trunk valley cannot be disconnected) - this
-//    severs the corridors that creep along tributary floodplains and connect
-//    far-off flats (e.g. a neighbouring channel's floodplain) into the
-//    valley;
-// 2. label 8-connected patches and drop those with no pixel on or 8-adjacent
-//    to the channel;
-// 3. dilate 2 * n_dilate times (regrow the eroded rim + fill interior
-//    holes), retaining a dilated pixel only when its distance to the channel
-//    does not exceed the farthest pixel of the patch it grows from, plus a
-//    margin covering the erosion depth - so patches regrow and holes fill,
-//    but nothing extends outward away from the channel.
-void clean_valley_patches(
-    std::vector<std::uint8_t>&       valley,
-    const std::vector<float>&        dist_to_channel,
-    const std::vector<std::uint8_t>& dist_mask,
-    const std::vector<std::int64_t>& channel_nodes,
-    int n_dilate, bool remove_non_adjacent, double max_detour_ratio,
-    double cell, int n_rows, int n_cols)
-{
-    const std::size_t n = valley.size();
-    const int n_erode = n_dilate;
-
-    // Growth domain for the final dilation: the ORIGINAL (pre-erosion)
-    // footprint plus its enclosed holes. The dilation must never expand the
-    // valley's outer boundary - a distance cap alone does not bind near the
-    // channel and the regrow rim creeps up the risers. Enclosed holes =
-    // background not 4-connected to the tile border across non-valley
-    // ground.
-    std::vector<std::uint8_t> allowed(valley);
-    {
-        std::vector<std::uint8_t> outside(n, k_off);
-        std::deque<std::int64_t> oq;
-        auto push_bg = [&](int r, int c)
-        {
-            const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
-            if (!valley[i] && !outside[i])
-            {
-                outside[i] = k_on;
-                oq.push_back(static_cast<std::int64_t>(i));
-            }
-        };
-        for (int c = 0; c < n_cols; ++c)
-        {
-            push_bg(0, c);
-            push_bg(n_rows - 1, c);
-        }
-        for (int r = 0; r < n_rows; ++r)
-        {
-            push_bg(r, 0);
-            push_bg(r, n_cols - 1);
-        }
-        while (!oq.empty())
-        {
-            const std::int64_t flat = oq.front();
-            oq.pop_front();
-            const int r = static_cast<int>(flat / n_cols);
-            const int c = static_cast<int>(flat % n_cols);
-            if (r > 0)          push_bg(r - 1, c);
-            if (r + 1 < n_rows) push_bg(r + 1, c);
-            if (c > 0)          push_bg(r, c - 1);
-            if (c + 1 < n_cols) push_bg(r, c + 1);
-        }
-        for (std::size_t i = 0; i < n; ++i)
-            if (!valley[i] && !outside[i]) allowed[i] = k_on;
-    }
-
-    // 0. Erode (channel + neighbours protected) to sever connecting
-    //    corridors narrower than ~2 * n_erode + 1 pixels.
-    std::vector<std::uint8_t> protect(n, k_off);
-    for (const std::int64_t cf : channel_nodes)
-    {
-        if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
-        protect[static_cast<std::size_t>(cf)] = k_on;
-        const int r = static_cast<int>(cf / n_cols);
-        const int c = static_cast<int>(cf % n_cols);
-        for (int k = 0; k < 8; ++k)
-        {
-            const int rr = r + k_dr[k], cc = c + k_dc[k];
-            if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols) continue;
-            protect[static_cast<std::size_t>(rr) * n_cols + cc] = k_on;
-        }
-    }
-    for (int it = 0; it < n_erode; ++it)
-    {
-        std::vector<std::uint8_t> eroded = valley;
-        bool changed = false;
-        for (int r = 0; r < n_rows; ++r)
-        {
-            for (int c = 0; c < n_cols; ++c)
-            {
-                const std::size_t i =
-                    static_cast<std::size_t>(r) * n_cols + c;
-                if (!valley[i] || protect[i]) continue;
-                for (int k = 0; k < 8; ++k)
-                {
-                    const int rr = r + k_dr[k], cc = c + k_dc[k];
-                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols ||
-                        !valley[static_cast<std::size_t>(rr) * n_cols + cc])
-                    {
-                        eroded[i] = k_off;
-                        changed = true;
-                        break;
-                    }
-                }
-            }
-        }
-        valley.swap(eroded);
-        if (!changed) break;
-    }
-    n_dilate = 2 * n_dilate;   // regrow the rim + fill holes
-
-    // 1. Label patches.
-    std::vector<std::int32_t> lbl(n, -1);
-    std::vector<double> patch_max_dist;
-    std::deque<std::int64_t> queue;
-    for (std::size_t seed = 0; seed < n; ++seed)
-    {
-        if (!valley[seed] || lbl[seed] >= 0) continue;
-        const std::int32_t id =
-            static_cast<std::int32_t>(patch_max_dist.size());
-        patch_max_dist.push_back(0.0);
-        lbl[seed] = id;
-        queue.push_back(static_cast<std::int64_t>(seed));
-        while (!queue.empty())
-        {
-            const std::int64_t flat = queue.front();
-            queue.pop_front();
-            const std::size_t fi = static_cast<std::size_t>(flat);
-            if (dist_mask[fi] && std::isfinite(dist_to_channel[fi]))
-                patch_max_dist[id] = std::max(
-                    patch_max_dist[id],
-                    static_cast<double>(dist_to_channel[fi]));
-            const int r = static_cast<int>(flat / n_cols);
-            const int c = static_cast<int>(flat % n_cols);
-            for (int k = 0; k < 8; ++k)
-            {
-                const int rr = r + k_dr[k], cc = c + k_dc[k];
-                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                    continue;
-                const std::size_t nf =
-                    static_cast<std::size_t>(rr) * n_cols + cc;
-                if (valley[nf] && lbl[nf] < 0)
-                {
-                    lbl[nf] = id;
-                    queue.push_back(static_cast<std::int64_t>(nf));
-                }
-            }
-        }
-    }
-
-    // 2. Remove patches not adjacent to the channel (before regrowth, so a
-    //    severed far-off patch cannot re-bridge during dilation).
-    if (remove_non_adjacent && !patch_max_dist.empty())
-    {
-        std::vector<char> adjacent(patch_max_dist.size(), 0);
-        for (const std::int64_t cf : channel_nodes)
-        {
-            const int r = static_cast<int>(cf / n_cols);
-            const int c = static_cast<int>(cf % n_cols);
-            for (int k = -1; k < 8; ++k)
-            {
-                const int rr = (k < 0) ? r : r + k_dr[k];
-                const int cc = (k < 0) ? c : c + k_dc[k];
-                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                    continue;
-                const std::size_t nf =
-                    static_cast<std::size_t>(rr) * n_cols + cc;
-                if (valley[nf] && lbl[nf] >= 0) adjacent[lbl[nf]] = 1;
-            }
-        }
-        for (std::size_t i = 0; i < n; ++i)
-            if (valley[i] && (lbl[i] < 0 || !adjacent[lbl[i]]))
-            {
-                valley[i] = k_off;
-                lbl[i] = -1;
-            }
-    }
-
-    // 2b. Detour-ratio pruning: geodesic distance from the channel THROUGH
-    //     the valley mask (Dijkstra, 8-connected) must not exceed
-    //     max_detour_ratio times the Euclidean distance to the channel.
-    //     Genuine floodplain is directly reachable (ratio ~1); a
-    //     neighbouring channel's floodplain hangs on a long corridor detour
-    //     and prunes away. A ten-cell floor keeps near-channel pixels behind
-    //     small obstructions.
-    if (max_detour_ratio > 0.0)
-    {
-        constexpr float k_unreached = std::numeric_limits<float>::infinity();
-        std::vector<float> geo(n, k_unreached);
-        using qnode = std::pair<float, std::int64_t>;
-        std::priority_queue<qnode, std::vector<qnode>,
-                            std::greater<qnode>> pq;
-        for (const std::int64_t cf : channel_nodes)
-        {
-            if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
-            const std::size_t fi = static_cast<std::size_t>(cf);
-            if (!valley[fi]) continue;
-            geo[fi] = 0.0f;
-            pq.emplace(0.0f, cf);
-        }
-        const float straight = static_cast<float>(cell);
-        const float diag = static_cast<float>(cell * std::sqrt(2.0));
-        while (!pq.empty())
-        {
-            const auto [d, flat] = pq.top();
-            pq.pop();
-            const std::size_t fi = static_cast<std::size_t>(flat);
-            if (d > geo[fi]) continue;
-            const int r = static_cast<int>(flat / n_cols);
-            const int c = static_cast<int>(flat % n_cols);
-            for (int k = 0; k < 8; ++k)
-            {
-                const int rr = r + k_dr[k], cc = c + k_dc[k];
-                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                    continue;
-                const std::size_t nf =
-                    static_cast<std::size_t>(rr) * n_cols + cc;
-                if (!valley[nf]) continue;
-                const float nd =
-                    d + ((k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight);
-                if (nd < geo[nf])
-                {
-                    geo[nf] = nd;
-                    pq.emplace(nd, static_cast<std::int64_t>(nf));
-                }
-            }
-        }
-        for (std::size_t i = 0; i < n; ++i)
-        {
-            if (!valley[i]) continue;
-            if (!std::isfinite(geo[i])) { valley[i] = k_off; continue; }
-            const double eu =
-                (dist_mask[i] && std::isfinite(dist_to_channel[i]))
-                    ? static_cast<double>(dist_to_channel[i]) : 0.0;
-            const double allowed_detour =
-                std::max(max_detour_ratio * eu, 10.0 * cell);
-            if (static_cast<double>(geo[i]) > allowed_detour) valley[i] = k_off;
-        }
-    }
-
-    // 2c. Line-of-sight pruning: a genuine valley pixel sees its nearest
-    //     channel pixel across low ground - the straight line between them
-    //     stays inside the valley mask (small gaps tolerated: roads,
-    //     embankments). A neighbouring valley's flat that is merely
-    //     CONNECTED to this valley (e.g. around a broad glacial col) has
-    //     intervening high ground on the direct line and prunes away.
-    {
-        // Nearest channel pixel per grid cell: multi-source Dijkstra over
-        // the full valid grid (grid distance ~ Euclidean), carrying the
-        // seed's flat index.
-        std::vector<float>        gdist(n,
-            std::numeric_limits<float>::infinity());
-        std::vector<std::int64_t> gsrc(n, -1);
-        using qnode = std::pair<float, std::int64_t>;
-        std::priority_queue<qnode, std::vector<qnode>,
-                            std::greater<qnode>> pq;
-        for (const std::int64_t cf : channel_nodes)
-        {
-            if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
-            gdist[static_cast<std::size_t>(cf)] = 0.0f;
-            gsrc[static_cast<std::size_t>(cf)]  = cf;
-            pq.emplace(0.0f, cf);
-        }
-        const float straight = static_cast<float>(cell);
-        const float diag = static_cast<float>(cell * std::sqrt(2.0));
-        while (!pq.empty())
-        {
-            const auto [d, flat] = pq.top();
-            pq.pop();
-            const std::size_t fi = static_cast<std::size_t>(flat);
-            if (d > gdist[fi]) continue;
-            const int r = static_cast<int>(flat / n_cols);
-            const int c = static_cast<int>(flat % n_cols);
-            for (int k = 0; k < 8; ++k)
-            {
-                const int rr = r + k_dr[k], cc = c + k_dc[k];
-                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                    continue;
-                const std::size_t nf =
-                    static_cast<std::size_t>(rr) * n_cols + cc;
-                if (!dist_mask[nf]) continue;
-                const float nd =
-                    d + ((k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight);
-                if (nd < gdist[nf])
-                {
-                    gdist[nf] = nd;
-                    gsrc[nf]  = gsrc[fi];
-                    pq.emplace(nd, static_cast<std::int64_t>(nf));
-                }
-            }
-        }
-
-        for (std::size_t i = 0; i < n; ++i)
-        {
-            if (!valley[i] || gsrc[i] < 0) continue;
-            const std::int64_t tgt = gsrc[i];
-            const int r0 = static_cast<int>(i / n_cols);
-            const int c0 = static_cast<int>(i % n_cols);
-            const int r1 = static_cast<int>(tgt / n_cols);
-            const int c1 = static_cast<int>(tgt % n_cols);
-            const int steps = std::max(std::abs(r1 - r0),
-                                       std::abs(c1 - c0));
-            if (steps <= 2) continue;
-            int miss = 0;
-            for (int t = 1; t < steps; ++t)
-            {
-                const int rr = r0 + (r1 - r0) * t / steps;
-                const int cc = c0 + (c1 - c0) * t / steps;
-                if (!valley[static_cast<std::size_t>(rr) * n_cols + cc])
-                    ++miss;
-            }
-            // Tolerate small gaps: two cells or 10% of the line.
-            if (miss > std::max(2, steps / 10)) valley[i] = k_off;
-        }
-    }
-
-    // 3. Constrained dilation (frontier-based, label-propagating), with a
-    //    margin on the cap covering the erosion depth so the rim can regrow.
-    const double cap_margin = (n_erode + 0.5) * cell;
-    for (int it = 0; it < n_dilate; ++it)
-    {
-        std::vector<std::pair<std::size_t, std::int32_t>> grown;
-        for (int r = 0; r < n_rows; ++r)
-        {
-            for (int c = 0; c < n_cols; ++c)
-            {
-                const std::size_t i =
-                    static_cast<std::size_t>(r) * n_cols + c;
-                if (valley[i] || !allowed[i]) continue;
-                if (!dist_mask[i] || !std::isfinite(dist_to_channel[i]))
-                    continue;
-                // Grow from the neighbouring patch with the largest reach.
-                std::int32_t best = -1;
-                double best_max = -1.0;
-                for (int k = 0; k < 8; ++k)
-                {
-                    const int rr = r + k_dr[k], cc = c + k_dc[k];
-                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                        continue;
-                    const std::size_t nf =
-                        static_cast<std::size_t>(rr) * n_cols + cc;
-                    if (valley[nf] && lbl[nf] >= 0 &&
-                        patch_max_dist[lbl[nf]] > best_max)
-                    {
-                        best_max = patch_max_dist[lbl[nf]];
-                        best = lbl[nf];
-                    }
-                }
-                if (best >= 0 &&
-                    static_cast<double>(dist_to_channel[i]) <=
-                        best_max + cap_margin)
-                    grown.emplace_back(i, best);
-            }
-        }
-        if (grown.empty()) break;
-        for (const auto& [i, id] : grown)
-        {
-            valley[i] = k_on;
-            lbl[i] = id;
-        }
-    }
-}
 
 } // namespace
 
@@ -554,16 +191,6 @@ valley_centreline_result extract_valley_centrelines(
         const std::vector<float>&   hd = hand.get_data();
         const std::vector<uint8_t>& hm = hand.get_mask();
 
-        // The trough's downstream-tilt test read the along-channel projection
-        // the break search computed. That search moved to
-        // lsdtt-fluvial-surfaces at phase 5d, so these stay zero and the test
-        // is inert. Kept rather than deleted because the trough carve IS this
-        // engine's own work: giving it back an along-channel coordinate is a
-        // real change to the carve and belongs in its own piece of work, not
-        // folded into a CLI split.
-        const std::vector<float>   along_tilt(n, 0.0f);
-        const std::vector<uint8_t> along_mask(n, 0u);
-
         // The break levels, and each corridor pixel's window index, are read
         // again by the baseline refinement and the reach-id raster further
         // down. They are materialised as plain data rather than left as a
@@ -581,6 +208,100 @@ valley_centreline_result extract_valley_centrelines(
                    std::isfinite(dd[i]) && std::isfinite(hd[i]) &&
                    static_cast<double>(dd[i]) <= request.corridor_width_metres;
         };
+
+        // Signed along-channel coordinate, for the trough's upstream test below.
+        //
+        // WHAT IT IS. Each corridor pixel is assigned the along-channel distance
+        // of its nearest channel node, PLUS its own offset from that node
+        // projected onto the local channel direction. The projection is what
+        // makes it signed: a pixel beyond the channel head projects backwards
+        // and lands negative, and the size of the negative number says how far
+        // beyond the head it sits.
+        //
+        // WHY THE TROUGH NEEDS IT. Terrain upstream of the channel head is
+        // still valley ground and stays in the valley mask, but it must not be
+        // carved into the trough. A broad pocket behind the head forms a deep
+        // distance-to-wall bowl whose lowest spill is the upstream tile edge,
+        // so the least-cost walk escapes the wrong way and the centreline runs
+        // off the top of the DEM instead of down the valley.
+        //
+        // This used to be computed inside the corridor HAND break search, which
+        // is why it went inert when identification moved to
+        // lsdtt-fluvial-surfaces at phase 5d. It never actually depended on
+        // that search - it needs only the channel nodes and the corridor - so it
+        // is computed here, next to the one thing that reads it.
+        std::vector<float>   along_tilt(n, 0.0f);
+        std::vector<uint8_t> along_mask(n, 0u);
+        {
+            // Cumulative along-channel distance at each node, from the head.
+            std::vector<float> node_along(nodes.size(), 0.0f);
+            for (std::size_t k = 1; k < nodes.size(); ++k)
+            {
+                const std::int64_t a2 = nodes[k - 1], b2 = nodes[k];
+                const int dr2 = static_cast<int>(a2 / n_cols) -
+                                static_cast<int>(b2 / n_cols);
+                const int dc2 = static_cast<int>(a2 % n_cols) -
+                                static_cast<int>(b2 % n_cols);
+                node_along[k] = node_along[k - 1] + static_cast<float>(
+                    cell * std::sqrt(
+                        static_cast<double>(dr2 * dr2 + dc2 * dc2)));
+            }
+
+            // Inflate the nearest channel NODE INDEX across the corridor.
+            std::vector<float>   sv(n, 0.0f);
+            std::vector<uint8_t> sm(n, 0u);
+            std::vector<float>   pd(n, 1.0f);
+            std::vector<uint8_t> pm(n, 0u);
+            for (std::size_t k = 0; k < nodes.size(); ++k)
+            {
+                const std::size_t f = static_cast<std::size_t>(nodes[k]);
+                sv[f] = static_cast<float>(k);
+                sm[f] = 1u;
+            }
+            for (std::size_t i = 0; i < n; ++i)
+                pm[i] = (in_corridor(i) || sm[i]) ? 1u : 0u;
+
+            const lsdtt_raster_cpu inflated = inflate_values_to_nearest_source(
+                lsdtt_raster_cpu(std::move(sv), std::move(sm), meta),
+                lsdtt_raster_cpu(std::move(pd), std::move(pm), meta),
+                request.n_threads);
+            const std::vector<float>&   idx_d = inflated.get_data();
+            const std::vector<uint8_t>& idx_m = inflated.get_mask();
+
+            // Local channel direction over +/- span nodes, so a single kinked
+            // node cannot flip the sign of everything beside it.
+            const int span = 10;
+            const int last = static_cast<int>(nodes.size()) - 1;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                if (!idx_m[i]) continue;
+                const int k = std::clamp(
+                    static_cast<int>(std::llround(idx_d[i])), 0, last);
+                along_mask[i] = 1u;
+
+                const int ka = std::max(k - span, 0);
+                const int kb = std::min(k + span, last);
+                const std::int64_t fa = nodes[static_cast<std::size_t>(ka)];
+                const std::int64_t fb = nodes[static_cast<std::size_t>(kb)];
+                const std::int64_t fk = nodes[static_cast<std::size_t>(k)];
+
+                double dx = static_cast<double>((fb % n_cols) - (fa % n_cols));
+                double dy = static_cast<double>((fb / n_cols) - (fa / n_cols));
+                const double len = std::hypot(dx, dy);
+                double proj = 0.0;
+                if (len > 0.0)
+                {
+                    dx /= len; dy /= len;
+                    const double px = static_cast<double>(
+                        static_cast<std::int64_t>(i % n_cols) - (fk % n_cols));
+                    const double py = static_cast<double>(
+                        static_cast<std::int64_t>(i / n_cols) - (fk / n_cols));
+                    proj = (px * dx + py * dy) * cell;
+                }
+                along_tilt[i] = node_along[static_cast<std::size_t>(k)] +
+                                static_cast<float>(proj);
+            }
+        }
 
         // ---------------------------------------------------------------------
         // 2/3. The valley for this channel.
@@ -633,11 +354,15 @@ valley_centreline_result extract_valley_centrelines(
             if (dmask[static_cast<std::size_t>(f)])
                 valley[static_cast<std::size_t>(f)] = k_on;
 
-        clean_valley_patches(valley, dd, dm, nodes,
-                             request.valley_dilation_pixels,
-                             request.restrict_to_channel_connected,
-                             request.valley_max_detour_ratio,
-                             cell, n_rows, n_cols);
+        // Generic constrained morphology, seeded by this channel: see
+        // lsdtt_raster_binary_mask_cpu.
+        filter_components_by_seed_reachability_in_place(
+            valley, dd, dm, nodes,
+            request.valley_dilation_pixels,
+            request.restrict_to_channel_connected,
+            request.valley_max_detour_ratio,
+            /*require_seed_line_of_sight=*/true,
+            cell, n_rows, n_cols);
 
         rec.n_valley_pixels = 0;
         for (std::size_t i = 0; i < n; ++i)
@@ -665,10 +390,17 @@ valley_centreline_result extract_valley_centrelines(
         // spill is the upstream tile edge, and the routed path escapes the
         // wrong way. The valley MASK keeps those pixels; only the trough
         // ignores them.
+        std::int64_t n_upstream_excluded = 0;
         for (std::size_t i = 0; i < n; ++i)
+        {
             if (hole[i] && along_mask[i] &&
                 along_tilt[i] < -2.0f * static_cast<float>(cell))
+            {
                 hole[i] = k_off;
+                ++n_upstream_excluded;
+            }
+        }
+        rec.n_upstream_of_head_excluded = n_upstream_excluded;
         if (request.nodata_buffer_pixels > 0)
             dilate_mask(hole, dmask, request.nodata_buffer_pixels,
                         n_rows, n_cols);
@@ -944,10 +676,12 @@ valley_centreline_result extract_valley_centrelines(
                     if (dmask[static_cast<std::size_t>(f)])
                         refined[static_cast<std::size_t>(f)] = k_on;
 
-                clean_valley_patches(refined, dd, dm, nodes,
+                filter_components_by_seed_reachability_in_place(
+                                     refined, dd, dm, nodes,
                                      request.valley_dilation_pixels,
                                      request.restrict_to_channel_connected,
                                      request.valley_max_detour_ratio,
+                                     /*require_seed_line_of_sight=*/true,
                                      cell, n_rows, n_cols);
                 valley.swap(refined);
                 rec.n_valley_pixels = 0;
@@ -980,72 +714,6 @@ valley_centreline_result extract_valley_centrelines(
     result.valley_mask =
         lsdtt_raster_cpu(std::move(vm_data), std::move(vm_mask), meta);
     return result;
-}
-
-// =============================================================================
-// clean_valley_mask (public - see header)
-// =============================================================================
-lsdtt_raster_cpu clean_valley_mask(
-    const lsdtt_raster_cpu&          valley_mask,
-    const std::vector<std::uint8_t>& channel_mask,
-    const valley_mask_clean_request& request)
-{
-    static const char* fn = "lsdtt::clean_valley_mask";
-
-    const lsdtt_raster_meta& meta = valley_mask.get_meta();
-    const std::size_t n =
-        static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(meta.n_cols);
-
-    if (channel_mask.size() != n)
-    {
-        throw std::invalid_argument(
-            std::string(fn) + ": channel_mask does not match valley_mask");
-    }
-
-    const std::vector<float>&   vv = valley_mask.get_data();
-    const std::vector<uint8_t>& vm = valley_mask.get_mask();
-
-    std::vector<std::uint8_t> valley(n, k_off);
-    for (std::size_t i = 0; i < n; ++i)
-        if (vm[i] && vv[i] > 0.5f) valley[i] = k_on;
-
-    // The channel nodes seed the adjacency test, and the distance transform to
-    // them is what the detour ratio is measured against.
-    std::vector<std::int64_t> nodes;
-    std::vector<float>   cd(n, 0.0f);
-    std::vector<uint8_t> cm(n, 1u);
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        if (channel_mask[i])
-        {
-            cd[i] = 1.0f;
-            nodes.push_back(static_cast<std::int64_t>(i));
-        }
-    }
-    if (nodes.empty())
-    {
-        // Nothing to be adjacent to, so no cleaning is meaningful. Returning
-        // the input unchanged is the honest answer; silently emptying the mask
-        // would look like the cleaning had rejected everything.
-        return valley_mask;
-    }
-
-    const lsdtt_raster_cpu chan_binary(std::move(cd), std::move(cm), meta);
-    const lsdtt_raster_cpu dist =
-        euclidean_distance_transform(chan_binary, request.n_threads);
-
-    clean_valley_patches(valley, dist.get_data(), dist.get_mask(), nodes,
-                         request.dilation_pixels,
-                         request.restrict_to_channel_connected,
-                         request.max_detour_ratio,
-                         meta.cell_size, meta.n_rows, meta.n_cols);
-
-    std::vector<float>   od(n, 0.0f);
-    std::vector<uint8_t> om(n, 1u);
-    for (std::size_t i = 0; i < n; ++i)
-        if (valley[i]) od[i] = 1.0f;
-
-    return lsdtt_raster_cpu(std::move(od), std::move(om), meta);
 }
 
 } // namespace lsdtt

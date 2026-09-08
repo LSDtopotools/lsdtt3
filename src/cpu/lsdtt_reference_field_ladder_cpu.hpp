@@ -57,6 +57,8 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
+#include <string>
 #include <vector>
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"     // pixel_connectivity
@@ -213,6 +215,39 @@ struct fitted_surface_field
 // below-surface population - the inset lobes, the thing being looked for -
 // collapses into a single spike and the breaks returned are meaningless.
 //
+// gap - find the EMPTY SPACE between clusters, and put the break in it.
+//
+// This is what a reader's eye does on a HAND histogram: the active floodplain
+// is the cluster near zero, it stops somewhere, the next surface starts higher
+// up, and the break belongs in the space between. Neither of the others looks
+// for that space. Jenks minimises within-class variance, so on a distribution
+// dominated by one huge upland mode it puts the cut INSIDE that mode and misses
+// the floodplain entirely; antimode looks for a dip but does it on a log10 axis
+// that compresses everything above a few metres into a handful of bins.
+//
+// The finder bins linearly and offers each candidate break to the partition
+// tests. Two kinds of candidate:
+//
+//   EMPTY RUNS  - contiguous bins each holding less than gap_empty_fraction of
+//                 the tallest bin, spanning at least gap_min_width_metres. The
+//                 clean case: nothing at all between two levels.
+//   TROUGHS     - interior local minima of the smoothed histogram. Needed
+//                 because "empty" is measured against the TALLEST bin, and in a
+//                 mountain catchment the floodplain bin is enormous: a real dip
+//                 between the floor and the first terrace can hold 5-20% of that
+//                 peak and never register as empty, while the sparse tail 150 m
+//                 up is empty everywhere. Without troughs the finder has no
+//                 candidate anywhere near the valley floor and takes a break out
+//                 in the tail instead - which bands the whole terrace staircase
+//                 as valley floor. A trough is only a break if it also passes
+//                 max_separation_ratio, so the weak ones are still rejected.
+//
+// RANKING is the other half of the same problem, and is set by gap_rank.
+// Ranking by width prefers the widest empty span, which in a landscape with a
+// long sparse tail is always high up. Ranking lowest-first walks the ladder from
+// the bottom, which is the order the levels physically sit in and the order a
+// reader's eye takes them.
+//
 // build_reference_field_ladder therefore THROWS rather than banding a field
 // containing negative values with the antimode finder. Use jenks, which works
 // on the linear field and takes k directly. This is not a limitation of the
@@ -222,7 +257,54 @@ struct fitted_surface_field
 enum class ladder_break_choice
 {
     antimode,
-    jenks
+    jenks,
+    gap
+};
+
+// Where in a detected empty span the gap finder puts its break. See
+// ladder_request::gap_break_at.
+enum class gap_break_position
+{
+    lower,
+    midpoint,
+    upper
+};
+
+// =============================================================================
+// vertical_accuracy_choice
+//
+// How E_v - the DEM's vertical accuracy, and so the resolvability floor
+// kappa * E_v - is arrived at.
+//
+//   fixed           - one number for the whole raster. The historical
+//                     behaviour, and the honest choice when the accuracy really
+//                     is uniform or is simply not known any better.
+//   slope_dependent - a gentle value below a break gradient and a steep value
+//                     above it. Photogrammetric and InSAR DEMs degrade on
+//                     slopes: TanDEM-X relative LE90 is roughly 2 m on gentle
+//                     ground and 4 m on steep, and quoting one number for a
+//                     raster spanning a valley floor and a 40-degree wall
+//                     states an accuracy that is wrong in both places.
+//
+// E_v IS RESOLVED PER WINDOW, NOT PER PIXEL. required_gap is a constraint on the
+// SEPARATION BETWEEN BAND CENTRES, and a band centre is a property of a
+// partition of a whole window's population - it does not sit anywhere in
+// particular, so it has no slope. The window takes the median gradient of its
+// own admitted cells and reads one E_v off that. The value used is reported in
+// ladder_window::vertical_accuracy_m, so a window that took the steep value is
+// visible rather than inferred.
+// =============================================================================
+enum class vertical_accuracy_choice
+{
+    fixed,
+    slope_dependent
+};
+
+// How the gap finder orders its candidates. See ladder_request::gap_rank.
+enum class gap_rank_choice
+{
+    lowest,
+    width
 };
 
 // =============================================================================
@@ -266,6 +348,43 @@ struct ladder_request
     double vertical_accuracy_metres = 0.0;
     double resolvability_kappa      = 3.0;
 
+    // -------------------------------------------------------------------------
+    // k BOOTSTRAP. Resample each window's population k_bootstrap times, re-run
+    // the whole break search on each replicate, and report how often the same k
+    // comes back. 0 = off, and off is the default.
+    //
+    // WHAT IT BUYS. `k_selected` on its own says nothing about whether a
+    // different draw of the same landscape would have given the same answer. A
+    // ladder that returns k = 7 on every replicate and one that returns k = 7
+    // once and k = 4 the rest of the time are not the same claim, and nothing
+    // else in the output distinguishes them.
+    //
+    // WHAT IT COSTS. B times the break search per window, and the break search
+    // is where the cost sits: measured on a 3.58 M cell DEM with 41 windows,
+    // the whole ladder is 0.6 s under `gap`, 6.2 s under `antimode` and 37.7 s
+    // under `jenks`. So 15 replicates is +9 s, +93 s and +565 s respectively.
+    // Affordable on gap; think first on jenks.
+    //
+    // The cost scales with the BREAK FINDER and the level count, not with pixel
+    // count: every finder bins first, and compute_jenks_breaks reduces to a
+    // fixed 2048-bin weighted histogram before its DP runs. Resampling is
+    // capped at k_bootstrap_max_sample for the same reason - past that the
+    // extra values change no histogram this searches.
+    int    k_bootstrap            = 0;
+    int    k_bootstrap_seed       = 1;
+    int    k_bootstrap_max_sample = 20000;
+
+    // Slope-dependent E_v. Ignored under vertical_accuracy_choice::fixed, and
+    // ignored (with a fall back to vertical_accuracy_metres) when no gradient
+    // raster is supplied to build_reference_field_ladder.
+    vertical_accuracy_choice vertical_accuracy_mode =
+        vertical_accuracy_choice::fixed;
+    double vertical_accuracy_gentle_metres = 0.0;
+    double vertical_accuracy_steep_metres  = 0.0;
+    // Default 11.31 degrees is a 20 percent grade - the figure the TanDEM-X
+    // accuracy specification splits on.
+    double vertical_accuracy_break_degrees = 11.31;
+
     // Reach-relative windowing. The breaks are found per along-channel window,
     // so a break level can track downstream changes in incision rather than
     // being averaged into a single basin-wide ladder.
@@ -276,14 +395,79 @@ struct ladder_request
     double reach_window_metres = 0.0;
     int    min_window_pixels   = 1000;
 
+    // gap break finder. A bin holding less than gap_empty_fraction of the
+    // tallest bin counts as empty; runs of empty bins narrower than
+    // gap_min_width_metres are ignored as noise rather than read as separation.
+    // WHERE IN THE EMPTY SPAN THE BREAK GOES.
+    //
+    // The span between two clusters is nearly empty by construction, so any
+    // position in it separates the same two clusters - but the sparse pixels
+    // INSIDE the span (the bank, the riser, the floodplain margin) go to
+    // whichever side the break leaves them on, and that is not a small
+    // difference for a valley-floor mask.
+    //
+    //   upper    - the top of the span. Band 0 keeps the whole margin. This is
+    //              the end to use when the low band IS the valley floor.
+    //   midpoint - splits the margin between the two levels.
+    //   lower    - the bottom of the span. Band 0 is the cluster alone, which
+    //              is the strictest reading of "the active floodplain".
+    gap_break_position gap_break_at = gap_break_position::midpoint;
+
+    // HOW CANDIDATES ARE ORDERED. select_partition consumes them in this
+    // order, so this decides which break wins when several are admissible.
+    //
+    //   lowest - lowest break first. The ladder is walked from the bottom, so
+    //            the valley cut is taken before any terrace or hillslope cut.
+    //            This is the default because a wide gap is NOT evidence that a
+    //            break is the valley: the widest empty span in a mountain
+    //            catchment sits in the sparse tail 150 m above the river.
+    //   width  - widest empty span first. Only meaningful where the whole field
+    //            range is a few metres and every gap is a real level boundary.
+    gap_rank_choice gap_rank = gap_rank_choice::lowest;
+
+    double gap_empty_fraction   = 0.02;
+    double gap_min_width_metres = 0.5;
+    int    gap_hist_bins        = 80;
+
+    // A trough counts as a candidate only if the smoothed count at its floor is
+    // below this fraction of the smaller flanking peak. This is the same
+    // quantity as max_separation_ratio and is deliberately looser: it only has
+    // to be loose enough to OFFER the candidate, since max_separation_ratio
+    // still has to accept it before it becomes a break. 0 disables troughs.
+    double gap_trough_max_ratio = 0.6;
+
     // Pass-through to find_population_breaks.
     int    hist_bins           = 64;
     double min_field_metres    = 0.05;
     double max_valley_fraction = 0.6;
 
+    // SEPARATION CONSTRAINT. Reject a partition whose worst break has a
+    // separation ratio above this - that is, a break sitting where the density
+    // is nearly as high as the populations either side of it, which is a cut
+    // through one surface rather than a boundary between two.
+    //
+    // A SECOND CONSTRAINT, never a score term blended with the resolvability
+    // floor. The floor asks whether the DEM can MEASURE a separation; this asks
+    // whether there IS one. Both are necessary and neither implies the other:
+    // two lidar terraces 30 cm apart pass the ratio and need a small E_v to
+    // pass the floor, while a 26 m cut through one broad mode passes any floor
+    // and fails the ratio outright.
+    //
+    // 0 disables it, which is the default, because turning it on changes which
+    // partitions are admissible and that is a numerical change a caller should
+    // make deliberately. 0.6 matches the antimode finder's own acceptance limit.
+    double max_separation_ratio = 0.0;
+
     // Hard bounds on any accepted break, in field units. 0 = unbounded.
     double min_break_metres = 0.0;
     double max_break_metres = 0.0;
+
+    // Record each window's LINEAR field histogram and the separation ratio at
+    // each break. Off by default because it costs a pass and a vector per
+    // window; on when a caller wants to SEE why a break was chosen rather than
+    // only what it was.
+    bool   record_window_histograms = false;
+    int    window_hist_bins         = 80;
 
     int    n_threads = 0;
 };
@@ -322,8 +506,73 @@ struct ladder_window
     std::vector<double> band_centres_m;
 
     double min_band_centre_gap_m    = 0.0;
+    // k bootstrap. All -1 / 0 when k_bootstrap is 0.
+    //   k_bootstrap_mode - the k returned most often across replicates
+    //   k_stability      - the fraction of replicates returning that k, in
+    //                      (0, 1]. 1.0 means every replicate agreed.
+    //   k_ci_lo/k_ci_hi  - the 2.5 and 97.5 percentiles of the replicate k
+    //   n_bootstrap      - replicates actually run
+    int    k_bootstrap_mode = -1;
+    double k_stability      = 0.0;
+    int    k_ci_lo          = -1;
+    int    k_ci_hi          = -1;
+    int    n_bootstrap      = 0;
+
     double required_gap_m           = 0.0;   // kappa * E_v
+    // The E_v this window actually used, and the median gradient it was read
+    // from. Under vertical_accuracy_choice::fixed the gradient is NaN and E_v
+    // is the single supplied value.
+    double vertical_accuracy_m      = 0.0;
+    double median_slope_degrees     = std::numeric_limits<double>::quiet_NaN();
     double goodness_of_variance_fit = 0.0;   // reported only, never scored
+
+    // -------------------------------------------------------------------------
+    // Separation diagnostics
+    //
+    // WHY THESE EXIST, AND WHAT required_gap_m IS NOT. The resolvability floor
+    // is an INSTRUMENT floor: two levels cannot be claimed distinct if their
+    // centres sit closer than the DEM can measure. It is a necessary condition
+    // and it is not a sufficient one, and it says nothing at all about whether
+    // the field actually HAS two populations.
+    //
+    // On a lidar DEM two genuinely distinct terraces may sit tens of
+    // centimetres apart; with E_v set to that DEM's accuracy the floor admits
+    // them correctly, but the floor is not what tells you they are real. What
+    // tells you is how cleanly the HAND density separates - a deep, wide dip
+    // between two modes means two surfaces, and a shallow scoop through one
+    // broad mode means one surface and an arbitrary cut through it.
+    //
+    // separation_ratio is that, per break: the smoothed density AT the break
+    // divided by the smaller of the two flanking peak densities.
+    //
+    //     ~0.0  a clean split - almost nothing sits at the break
+    //     ~0.6  the acceptance limit the antimode finder uses by default
+    //     ~1.0  no dip at all; the break is a cut through one population
+    //
+    // Reported for BOTH break algorithms, including jenks, which has no notion
+    // of a dip and will happily split a single mode. It is a diagnostic and is
+    // NOT currently an admissibility criterion - see the note in the header.
+    // -------------------------------------------------------------------------
+    std::vector<double> separation_ratio;   // one per entry in breaks_m
+
+    // The window's own reference-field distribution, in LINEAR field units, so
+    // it can be plotted against the breaks directly. Empty when not requested.
+    double hist_lo_m = 0.0;
+    double hist_hi_m = 0.0;
+    std::vector<std::int64_t> hist_counts;
+
+    // THE DECISION, not just its outcome. hist_smoothed is the density the
+    // separation ratio is measured on; gap_lo_m / gap_hi_m are the empty spans
+    // the gap finder found, widest first; candidate_breaks_m is every break it
+    // offered, of which breaks_m is the subset actually taken.
+    //
+    // A reviewer figure needs all of this: the chosen break on a raw histogram
+    // looks arbitrary, and whether it was the best of several candidates or the
+    // only one is not recoverable from the answer alone.
+    std::vector<double> hist_smoothed;
+    std::vector<double> gap_lo_m;
+    std::vector<double> gap_hi_m;
+    std::vector<double> candidate_breaks_m;
 };
 
 // =============================================================================
@@ -332,6 +581,12 @@ struct ladder_window
 struct ladder_result
 {
     lsdtt_raster_cpu           band_index;   // 0..k-1 on admitted pixels, -1 else
+    // Which along-channel window each pixel's breaks came from: an index into
+    // `windows` after the deterministic sort, -1 where the global partition was
+    // used or the pixel is not banded. The reach populations every per-window
+    // histogram is built from, made visible - so a break that looks wrong can
+    // be traced to the ground that produced it.
+    lsdtt_raster_cpu           window_index; // -1 = global / not banded
     // Deterministic order: source_id, then window_centre_m.
     std::vector<ladder_window> windows;
     std::vector<double>        global_breaks_m;
@@ -340,6 +595,12 @@ struct ladder_result
     std::int64_t n_windows_unresolved = 0;
     std::int64_t n_windows_degenerate = 0;
     int          max_band_index       = 0;
+
+    // Anything the run did that the caller asked for but could not get, in
+    // words. A caller should print these: a request that silently degrades is
+    // worse than one that fails, because the output still looks like what was
+    // asked for.
+    std::vector<std::string> notes;
 };
 
 // -----------------------------------------------------------------------------
@@ -349,15 +610,21 @@ struct ladder_result
 // admitted_mask    : > 0.5 where a pixel may take part
 // window_source_id : per-pixel channel source id, full grid, -1 where none
 // window_coordinate: per-pixel along-channel coordinate (m), co-registered
+// slope_degrees    : per-pixel gradient, co-registered. Only read under
+//                    vertical_accuracy_choice::slope_dependent; a null pointer
+//                    there falls back to vertical_accuracy_metres and says so
+//                    in ladder_result::notes.
 //
-// Both window arguments are optional. Supply neither and the ladder is global.
+// All three trailing arguments are optional. Supply no window arguments and the
+// ladder is global.
 // -----------------------------------------------------------------------------
 [[nodiscard]] ladder_result build_reference_field_ladder(
     const lsdtt_raster_cpu&          reference_field,
     const lsdtt_raster_cpu&          admitted_mask,
     const ladder_request&            request,
     const std::vector<std::int32_t>* window_source_id  = nullptr,
-    const lsdtt_raster_cpu*          window_coordinate = nullptr
+    const lsdtt_raster_cpu*          window_coordinate = nullptr,
+    const lsdtt_raster_cpu*          slope_degrees     = nullptr
 );
 
 // =============================================================================
@@ -372,7 +639,31 @@ struct patch_record
     std::int64_t n_pixels       = 0;
     double       area_m2        = 0.0;
     double       median_field   = 0.0;
-    double       aspect_degrees = -1.0;   // compass convention; -1 = undefined
+
+    // THE DIRECTION THE BANDED FIELD CLIMBS, fitted as a plane through the
+    // field over the patch. On a HAND field that is roughly "away from the
+    // channel", NOT the direction the ground faces. The name matches
+    // lsdtt-surface-metrics; the quantity does not, and the two have been
+    // conflated by that name before. -1 = undefined.
+    double       aspect_degrees = -1.0;
+
+    // THE DIRECTION THE GROUND FACES, and how consistently it faces it.
+    // Populated only when a terrain aspect raster is supplied to
+    // label_components_within_bands; -1 / 0 otherwise.
+    //
+    //   terrain_aspect_degrees - CIRCULAR mean of the per-cell aspect, never
+    //                            the arithmetic mean of degrees. Averaging 350
+    //                            and 10 arithmetically gives 180, which is the
+    //                            opposite direction.
+    //   aspect_r_bar           - mean resultant length of the per-cell aspect
+    //                            unit vectors, in [0, 1]. 1 = every cell faces
+    //                            the same way; 0 = they face every way equally
+    //                            and the mean direction means nothing. This is
+    //                            the number that says whether the aspect above
+    //                            is worth quoting, and without it a circular
+    //                            mean is a number with no error bar.
+    double       terrain_aspect_degrees = -1.0;
+    double       aspect_r_bar           = 0.0;
 };
 
 struct banded_label_result
@@ -403,7 +694,11 @@ struct banded_label_result
     const lsdtt_raster_cpu& admitted_mask,
     const lsdtt_raster_cpu& reference_field,
     int                     min_component_pixels,
-    pixel_connectivity      connectivity = pixel_connectivity::d4
+    pixel_connectivity      connectivity = pixel_connectivity::d4,
+    // Per-pixel TERRAIN aspect in degrees, co-registered. Optional; when given,
+    // each patch gets a circular-mean aspect and a resultant length. See
+    // patch_record.
+    const lsdtt_raster_cpu* terrain_aspect_degrees = nullptr
 );
 
 } // namespace lsdtt
