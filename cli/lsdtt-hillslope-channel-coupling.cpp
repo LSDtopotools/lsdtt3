@@ -438,10 +438,16 @@ int main(int argc, char* argv[])
         "this value is written into the summary.",
         "Chi", "param", "run_chi_analysis"};
 
-    float_default_map["chi_A_0"] = 1.0f;
-    help_map["chi_A_0"] = {"float", "1.0",
-        "Reference drainage area A_0 for the chi integration.",
-        "Changes the units of chi and therefore of k_sn.",
+    float_default_map["chi_A0"] = 1.0f;
+    help_map["chi_A0"] = {"float", "1.0",
+        "Reference drainage area A0 for the chi integration (m2).",
+        "LEAVE THIS AT 1.0 UNLESS YOU KNOW WHY YOU ARE CHANGING IT. The slope "
+        "of a chi-elevation profile equals the channel steepness index k_sn "
+        "ONLY when A0 = 1 m2; for any other A0 the gradient is k_sn scaled by "
+        "A0^(m/n). The rescaling is silent and large - A0 = 1e6 m2 at "
+        "m/n = 0.45 scales every gradient by about 631. Other packages default "
+        "differently (TopoToolbox's chitransform uses a0 = 1e6), so state A0 "
+        "explicitly whenever a value is compared across tools.",
         "Chi", "param", "run_chi_analysis"};
 
     float_default_map["chi_critical_divergence_m"] = 5.0f;
@@ -563,6 +569,10 @@ int main(int argc, char* argv[])
     try
     {
         lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
+        // Renamed 2026-09-08 for consistency: the chi reference area is
+        // `chi_A0` in every CLI that has one. One-release compatibility window.
+        pp.set_deprecated_aliases({ {"chi_A_0", "chi_A0"} });
+
         pp.parse_all_parameters(float_default_map, int_default_map,
                                 bool_default_map, string_default_map);
         const auto bf = pp.get_bool_parameters();
@@ -1227,7 +1237,7 @@ int main(int argc, char* argv[])
             std::cout << "\n--- Chi ---\n";
             lsdtt::lsdtt_chi_options chi_opts;
             chi_opts.m_over_n = ff.at("m_over_n");
-            chi_opts.A_0      = ff.at("chi_A_0");
+            chi_opts.A_0      = ff.at("chi_A0");
 
             // Seed from the basin outlets of the junction network, so chi is
             // computed on the same channels the traces terminate on.

@@ -673,7 +673,7 @@ int main(int argc, char* argv[])
     float_default_map["upslope_tagging_distance"] = 1.0e12f;
     float_default_map["fill_min_slope"] = 0.0001f;
     float_default_map["m_over_n"] = 0.45f;
-    float_default_map["A_0"] = 1.0f;
+    float_default_map["chi_A0"] = 1.0f;
 
     bool_default_map["sink_leaves_only"] = true;
     bool_default_map["breach_before_fill"] = false;
@@ -756,8 +756,13 @@ int main(int argc, char* argv[])
     help_map["m_over_n"] = {"float", "0.45", "Chi theta.",
         "Chi is descriptive for multi-elevation moulins, not an erosion-rate proxy.",
         "Chi", "param", "calculate_sink_chi"};
-    help_map["A_0"] = {"float", "1.0", "Chi reference area.",
-        "Positive reference area in square metres.", "Chi", "param", "calculate_sink_chi"};
+    help_map["chi_A0"] = {"float", "1.0",
+        "Reference drainage area A0 for the chi integration (m2).",
+        "Positive reference area in square metres. LEAVE THIS AT 1.0 UNLESS "
+        "YOU KNOW WHY YOU ARE CHANGING IT: a chi-elevation gradient equals the "
+        "channel steepness index k_sn only when A0 = 1 m2, and any other value "
+        "silently rescales it by A0^(m/n).",
+        "Chi", "param", "calculate_sink_chi"};
 
     const auto add_bool_help = [&](const std::string& name, bool value,
                                    const std::string& short_description,
@@ -805,6 +810,10 @@ int main(int argc, char* argv[])
     try
     {
         lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
+        // Renamed 2026-09-08 for consistency: the chi reference area is
+        // `chi_A0` in every CLI that has one. One-release compatibility window.
+        pp.set_deprecated_aliases({ {"A_0", "chi_A0"} });
+
         pp.parse_all_parameters(float_default_map, int_default_map,
                                 bool_default_map, string_default_map);
         const auto bf = pp.get_bool_parameters();
@@ -856,7 +865,7 @@ int main(int argc, char* argv[])
         if (bf.at("extract_sink_channel_networks") &&
             ip.at("threshold_contributing_pixels") < 1)
             throw std::invalid_argument("threshold_contributing_pixels must be >= 1");
-        if (ff.at("A_0") <= 0.0f)
+        if (ff.at("chi_A0") <= 0.0f)
             throw std::invalid_argument("A_0 must be > 0");
 
         const lsdtt::raster_output_format raster_format =
@@ -1065,7 +1074,7 @@ int main(int argc, char* argv[])
         {
             lsdtt::lsdtt_chi_options chi_options;
             chi_options.m_over_n = ff.at("m_over_n");
-            chi_options.A_0 = ff.at("A_0");
+            chi_options.A_0 = ff.at("chi_A0");
             chi = std::make_unique<lsdtt::lsdtt_raster_cpu>(
                 lsdtt::get_chi_raster(*flow, chi_options));
             if (bf.at("write_chi_raster"))

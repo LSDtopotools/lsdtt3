@@ -138,7 +138,7 @@ Behaviour:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `fit_chi_networks` | bool | `false` | Run the piecewise-linear chi-network fitting and disorder sweep over the m/n range. |
-| `chi_A0` | float | `1.0` | Reference drainage area A₀ (m²) for chi integration. χ = ∫(A₀/A)^(m/n) ds from outlet. |
+| `chi_A0` | float | `1.0` | Reference drainage area A₀ (m²) for chi integration. χ = ∫(A₀/A)^(m/n) ds from outlet. **Leave at 1.0** unless you know why: the gradient of a chi-elevation profile equals `k_sn` only when `A0 = 1 m²`; any other value silently rescales it by `A0^(m/n)` (≈631× at `A0 = 1e6`, `m/n = 0.45`). |
 | `m_over_n` | string | _(empty)_ | Optional explicit m/n value(s) for chi extraction and fitting. Comma-separated list (e.g. `0.45` or `0.35,0.45,0.55`). When set, it overrides `mn_min`, `mn_max`, and `mn_step`. |
 | `mn_min` | float | `0.3` | Minimum m/n ratio for the disorder sweep. |
 | `mn_max` | float | `0.6` | Maximum m/n ratio for the disorder sweep. |
