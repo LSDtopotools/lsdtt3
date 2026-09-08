@@ -75,7 +75,7 @@ run_graphflood_optimised(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R
 run_graphflood_optimised_v2(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,prescribed_qin:R|None=None,...)->GraphFloodOptimisedResult
 run_graphflood_multigrid(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,backend='optimised_v2',...)->GraphFloodMultigridResult
 run_graphflood_induced(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,qin_threshold,...)->GraphFloodInducedResult
-node_state: 0=outside/nodata,1=active,2=ghost,3=outlet; ghosts retain initial depth and route prescribed_qin, only 3 drains; each active component needs an outlet unless check_valid_outlet=False.
+node_state: 0=outside/nodata,1=active,2=flux-only ghost,3=outlet; ghosts route prescribed_qin but evolve depth/qout from initial depth, only 3 drains; each active component needs an outlet unless check_valid_outlet=False.
 ! hydraulic routing is on z+h; stationary workflow fills h, not bed elevation.
 """,
     "landscape": """@landscape

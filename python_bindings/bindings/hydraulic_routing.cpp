@@ -776,9 +776,9 @@ V2 uses a monotone radix heap in Priority-Flood, a bounds-free interior MFD
 loop, specialised Manning exponents, and exact dirty-tile topology validation.
 It falls back to a full Priority-Flood whenever a checked edge invalidates the
 cached order. ``full_validation_every=0`` disables periodic full audits.
-``node_state=2`` is a ghost cell: its depth is held at ``initial_water_depth``
-and it routes its fixed ``prescribed_qin`` downslope. ``prescribed_qin=None``
-means zero at ghost cells.
+``node_state=2`` is a flux-only ghost cell: it routes its fixed
+``prescribed_qin`` downslope while its depth and capacity-limited ``qout``
+evolve normally. ``prescribed_qin=None`` means zero at ghost cells.
 )doc");
 
     module.def("_run_graphflood_optimised_v2_multigrid_native",
