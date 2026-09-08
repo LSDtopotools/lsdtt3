@@ -474,6 +474,14 @@ void test_periodic_fill()
         lsdtt::fill_pits(dem, 0.0001f, 0);
     const lsdtt::lsdtt_raster_cpu per_filled =
         lsdtt::fill_pits(dem, 0.0001f, std::string("opop"), 0);
+    const lsdtt::lsdtt_raster_cpu per_radix =
+        lsdtt::fill_pits(dem, 0.0001f, std::string("opop"), 0,
+                          lsdtt::priority_flood_queue_backend::radix_hybrid);
+
+    const diff_stats periodic_radix_diff = compare(per_filled, per_radix, 0.0);
+    check("PP0 radix periodic fill matches binary",
+          periodic_radix_diff.max_abs == 0.0,
+          "max |diff| = " + std::to_string(periodic_radix_diff.max_abs));
 
     // -- PP1: the periodic fill differs from the open one -------------------
     // Without this the option could be accepted and ignored, and every other
@@ -979,6 +987,38 @@ void test_reconstruction_matches_priority_flood(const fixture& fx)
           "most negative (vincent - original) = " + std::to_string(d.signed_min));
 }
 
+// The radix queue is an internal queue substitution. Both true-flat and
+// epsilon-gradient fills must reproduce the vanilla surface exactly.
+void test_radix_priority_flood(const fixture& fx)
+{
+    const lsdtt::lsdtt_raster_cpu vanilla =
+        lsdtt::fill_pits_priority_flood(fx.dem, 0.0f, 0, false);
+    const lsdtt::lsdtt_raster_cpu radix =
+        lsdtt::fill_pits_priority_flood(fx.dem, 0.0f, 0, true);
+    const diff_stats flat_diff = compare(vanilla, radix, 0.0);
+
+    check("P11 radix Priority-Flood matches vanilla on flats: " + fx.name,
+          flat_diff.max_abs == 0.0,
+          "max |diff| = " + std::to_string(flat_diff.max_abs));
+
+    const lsdtt::lsdtt_raster_cpu epsilon_vanilla =
+        lsdtt::fill_pits_priority_flood(fx.dem, 0.0001f, 0, false);
+    const lsdtt::lsdtt_raster_cpu epsilon =
+        lsdtt::fill_pits_priority_flood(fx.dem, 0.0001f, 0, true);
+    const diff_stats epsilon_diff = compare(epsilon_vanilla, epsilon, 0.0);
+    const diff_stats non_lowering = compare(epsilon, fx.dem, 0.0);
+
+    check("P11 radix epsilon fill matches vanilla: " + fx.name,
+          epsilon_diff.max_abs == 0.0,
+          "max |diff| = " + std::to_string(epsilon_diff.max_abs));
+    check("P11 radix epsilon fill is depression-free: " + fx.name,
+          count_interior_minima(epsilon) == 0,
+          "interior minima = " + std::to_string(count_interior_minima(epsilon)));
+    check("P11 radix epsilon fill is non-lowering: " + fx.name,
+          non_lowering.signed_min >= -1e-6,
+          "most negative change = " + std::to_string(non_lowering.signed_min));
+}
+
 
 // =============================================================================
 // P8 -- exact D8 accumulation on a planar ramp (analytic oracle)
@@ -1252,6 +1292,7 @@ int main(int argc, char** argv)
         test_breach_properties(fx);
         test_d8_accumulation_properties(fx);
         test_reconstruction_matches_priority_flood(fx);
+        test_radix_priority_flood(fx);
         test_reconstruction_gradient_is_routable(fx);
         test_flowgraph_weight_properties(fx);
         std::cout << "\n";

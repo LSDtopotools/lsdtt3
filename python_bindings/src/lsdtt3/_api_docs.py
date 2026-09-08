@@ -357,7 +357,8 @@ class RasterHierarchy:
         ...
 
 
-def fill_pits(raster: Raster, min_slope: float = 1e-4, n_threads: int = 0) -> Raster:
+def fill_pits(raster: Raster, min_slope: float = 1e-4, n_threads: int = 0,
+              priority_flood_backend: str = "binary") -> Raster:
     """Fill depressions, optionally imposing a minimum drainage slope.
 
     Parameters
@@ -368,6 +369,9 @@ def fill_pits(raster: Raster, min_slope: float = 1e-4, n_threads: int = 0) -> Ra
         Minimum imposed drainage gradient.
     n_threads : int, default=0
         OpenMP thread count; zero uses the runtime default.
+    priority_flood_backend : {"binary", "radix"}, default="binary"
+        Queue used when ``min_slope > 0`` dispatches to Priority-Flood.
+        ``min_slope <= 0`` uses reconstruction instead.
 
     Returns
     -------
@@ -377,6 +381,31 @@ def fill_pits(raster: Raster, min_slope: float = 1e-4, n_threads: int = 0) -> Ra
     Authors
     -------
     B. Gailleton
+    """
+    ...
+
+
+def fill_pits_priority_flood(raster: Raster, min_slope: float = 1e-4,
+                             n_threads: int = 0,
+                             use_radix_heap: bool = False) -> Raster:
+    """Explicitly run the Improved Priority-Flood depression fill.
+
+    Parameters
+    ----------
+    raster : Raster
+        Elevation raster.
+    min_slope : float, default=1e-4
+        Minimum slope imposed across filled flats. Zero keeps true flats.
+    n_threads : int, default=0
+        Reserved for API compatibility; Priority-Flood is serial.
+    use_radix_heap : bool, default=False
+        Replace the vanilla binary heap with the radix-hybrid queue. The
+        filling algorithm and flat FIFO are otherwise unchanged.
+
+    Returns
+    -------
+    Raster
+        Filled raster.
     """
     ...
 
@@ -1389,9 +1418,10 @@ class CRNColumnSample:
 
 
 def fill_hydraulic_surface(surface: Raster, node_state: Raster,
-                           boundary_conditions: str = "nnnn",
-                           slope_epsilon: float = 1e-8,
-                           check_valid_outlet: bool = True) -> HydraulicSurfaceFill:
+                            boundary_conditions: str = "nnnn",
+                            slope_epsilon: float = 1e-8,
+                            check_valid_outlet: bool = True,
+                            priority_flood_backend: str = "binary") -> HydraulicSurfaceFill:
     """Priority-flood a hydraulic ``z + h`` surface towards selected outlets.
 
     Parameters
@@ -1409,6 +1439,8 @@ def fill_hydraulic_surface(surface: Raster, node_state: Raster,
         Positive drainage slope imposed across filled flats.
     check_valid_outlet : bool, default=True
         Require every connected active component to contain a state-3 sink.
+    priority_flood_backend : {"binary", "radix"}, default="binary"
+        Queue used to project the hydraulic surface.
 
     Returns
     -------

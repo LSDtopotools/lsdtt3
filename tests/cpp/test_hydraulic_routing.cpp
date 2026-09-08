@@ -458,11 +458,16 @@ void test_hydraulic_surface_outlet_rules()
     states(2, 1) = 3;
     const auto filled = lsdtt::fill_hydraulic_surface(
         surface, states, "oooo", 0.0f, true);
+    const auto filled_radix = lsdtt::fill_hydraulic_surface(
+        surface, states, "oooo", 0.0f, true,
+        lsdtt::priority_flood_queue_backend::radix_hybrid);
 
     const bool pit_filled = std::abs(
         static_cast<double>(filled.filled_surface.get_data_array()(1, 1)) - 10.0) < 1.0e-6;
     check("H7 hydraulic fill uses selected outlet", pit_filled,
           "centre hydraulic surface should fill to selected outlet spill level");
+    check("H7 radix hydraulic fill matches binary",
+          filled.filled_surface.get_data() == filled_radix.filled_surface.get_data());
 
     const auto internally_drained = lsdtt::fill_hydraulic_surface(
         surface, states, "nnnn", 0.0f, true);

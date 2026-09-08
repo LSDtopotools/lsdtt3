@@ -662,6 +662,7 @@ int main(int argc, char* argv[])
     string_default_map["sink_candidate_layer_name"] = "";
     string_default_map["write_output_format"] = "cog";
     string_default_map["sink_vector_format"] = "flatgeobuf";
+    string_default_map["priority_flood_queue"] = "binary";
 
     int_default_map["minimum_pixels_in_patch"] = 1;
     int_default_map["n_threads"] = 0;
@@ -752,6 +753,9 @@ int main(int argc, char* argv[])
         "Routing", "param", ""};
     help_map["fill_min_slope"] = {"float", "0.0001", "Fill slope.",
         "Minimum gradient imposed while preserving retained sinks.",
+        "Routing", "param", ""};
+    help_map["priority_flood_queue"] = {"string", "binary", "Priority-Flood queue.",
+        "binary (default) or radix. Used for retained-sink and punched-sink routing.",
         "Routing", "param", ""};
     help_map["m_over_n"] = {"float", "0.45", "Chi theta.",
         "Chi is descriptive for multi-elevation moulins, not an erosion-rate proxy.",
@@ -973,6 +977,12 @@ int main(int argc, char* argv[])
         const lsdtt::sink_mode mode = mode_name == "nodata_hole"
             ? lsdtt::sink_mode::nodata_hole
             : lsdtt::sink_mode::forced_outlet;
+        const std::string& queue_name = sf.at("priority_flood_queue");
+        const lsdtt::priority_flood_queue_backend queue_backend =
+            queue_name == "binary" ? lsdtt::priority_flood_queue_backend::binary_heap :
+            queue_name == "radix"  ? lsdtt::priority_flood_queue_backend::radix_hybrid :
+            throw std::invalid_argument(
+                "priority_flood_queue must be 'binary' or 'radix'");
         lsdtt::lsdtt_raster_cpu routed_dem;
         lsdtt::lsdtt_raster_cpu punched;
         lsdtt::lsdtt_flowinfo_options flow_options;
@@ -986,14 +996,16 @@ int main(int argc, char* argv[])
         if (mode == lsdtt::sink_mode::forced_outlet)
         {
             routed_dem = lsdtt::fill_pits_with_sinks(
-                dem, pit_flats, ff.at("fill_min_slope"), ip.at("n_threads"));
+                dem, pit_flats, ff.at("fill_min_slope"), ip.at("n_threads"),
+                queue_backend);
             flow_options.forced_outlet_flats = pit_flats;
         }
         else
         {
             punched = lsdtt::punch_sink_holes(dem, sinks);
             routed_dem = lsdtt::fill_pits_priority_flood(
-                punched, ff.at("fill_min_slope"), ip.at("n_threads"));
+                punched, ff.at("fill_min_slope"), ip.at("n_threads"),
+                queue_backend);
             if (bf.at("write_sink_punched_raster"))
                 loader.write_full(
                     punched.get_data(), punched.get_meta(),

@@ -28,8 +28,10 @@
 #include "../core/lsdtt_data_loader.hpp" 
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <deque>
 #include <iostream>
@@ -58,6 +60,185 @@ using pf_heap  = std::priority_queue<pf_node,
                                      std::vector<pf_node>,
                                      std::greater<pf_node>>;
 using pf_fifo  = std::deque<pf_node>;
+
+// Monotone radix component for Priority-Flood. The wrapper below preserves the
+// improved algorithm's FIFO semantics when that FIFO exposes an older low cell.
+class pf_radix_heap
+{
+public:
+    pf_radix_heap()
+    {
+        bucket_min_.fill((std::numeric_limits<std::uint32_t>::max)());
+    }
+
+    bool empty() const noexcept { return size_ == 0; }
+
+    bool accepts(float value) const noexcept
+    {
+        return ordered_key(value) >= last_;
+    }
+
+    void push(const pf_node& node)
+    {
+        const std::uint32_t key = ordered_key(node.zeta);
+        if (key < last_)
+            throw std::runtime_error("priority-flood radix heap received a non-monotone key");
+        const int target = bucket(key, last_);
+        buckets_[target].push_back(node);
+        bucket_min_[target] = std::min(bucket_min_[target], key);
+        if (has_top_ && key < top_key_) has_top_ = false;
+        ++size_;
+    }
+
+    const pf_node& top()
+    {
+        if (has_top_) return top_node_;
+        const int source = minimum_bucket();
+        const std::uint32_t key = bucket_min_[source];
+        for (const pf_node& node : buckets_[source])
+        {
+            if (ordered_key(node.zeta) != key) continue;
+            top_node_ = node;
+            top_key_ = key;
+            has_top_ = true;
+            return top_node_;
+        }
+        throw std::runtime_error("priority-flood radix heap lost its minimum");
+    }
+
+    void pop()
+    {
+        make_current_bucket();
+        std::size_t index = buckets_[0].size() - 1;
+        if (has_top_)
+        {
+            if (top_key_ != last_)
+                throw std::runtime_error("priority-flood radix heap lost pop order");
+            for (std::size_t i = 0; i < buckets_[0].size(); ++i)
+            {
+                const pf_node& node = buckets_[0][i];
+                if (node.row == top_node_.row && node.col == top_node_.col)
+                {
+                    index = i;
+                    break;
+                }
+            }
+        }
+        buckets_[0][index] = buckets_[0].back();
+        buckets_[0].pop_back();
+        if (buckets_[0].empty())
+            bucket_min_[0] = (std::numeric_limits<std::uint32_t>::max)();
+        has_top_ = false;
+        --size_;
+    }
+
+private:
+    static std::uint32_t ordered_key(float value) noexcept
+    {
+        std::uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return bits ^ ((bits & 0x80000000u) ? 0xffffffffu : 0x80000000u);
+    }
+
+    static int bucket(std::uint32_t key, std::uint32_t last) noexcept
+    {
+        const std::uint32_t different = key ^ last;
+        if (different == 0) return 0;
+#if defined(__GNUC__) || defined(__clang__)
+        return 32 - __builtin_clz(different);
+#else
+        int result = 0;
+        for (; different >> result != 0; ++result) {}
+        return result;
+#endif
+    }
+
+    int minimum_bucket() const
+    {
+        int source = 0;
+        for (int i = 1; i < static_cast<int>(bucket_min_.size()); ++i)
+            if (bucket_min_[i] < bucket_min_[source]) source = i;
+        if (bucket_min_[source] == (std::numeric_limits<std::uint32_t>::max)())
+            throw std::runtime_error("priority-flood radix heap is empty");
+        return source;
+    }
+
+    void make_current_bucket()
+    {
+        if (!buckets_[0].empty()) return;
+
+        const int source = minimum_bucket();
+        last_ = bucket_min_[source];
+
+        auto nodes = std::move(buckets_[source]);
+        buckets_[source].clear();
+        bucket_min_[source] = (std::numeric_limits<std::uint32_t>::max)();
+        for (const pf_node& node : nodes)
+        {
+            const std::uint32_t key = ordered_key(node.zeta);
+            const int target = bucket(key, last_);
+            buckets_[target].push_back(node);
+            bucket_min_[target] = std::min(bucket_min_[target], key);
+        }
+    }
+
+    std::array<std::vector<pf_node>, 33> buckets_;
+    std::array<std::uint32_t, 33> bucket_min_;
+    std::uint32_t last_ = 0;
+    std::size_t size_ = 0;
+    pf_node top_node_{};
+    std::uint32_t top_key_ = 0;
+    bool has_top_ = false;
+};
+
+// Barnes's improved Priority-Flood drains flooded cells through a FIFO. That
+// FIFO is not globally ordered, so it can occasionally insert a key below the
+// last spill key. Keep those cells in a binary fallback; all ordinary monotone
+// work uses the radix component.
+class pf_radix_priority_queue
+{
+public:
+    bool empty() const noexcept { return radix_.empty() && fallback_.empty(); }
+
+    void push(const pf_node& node)
+    {
+        has_top_ = false;
+        if (radix_.accepts(node.zeta)) radix_.push(node);
+        else                            fallback_.push(node);
+    }
+
+    const pf_node& top()
+    {
+        if (has_top_) return top_node_;
+        if (!fallback_.empty())
+        {
+            top_node_ = fallback_.top();
+            top_from_fallback_ = true;
+        }
+        else
+        {
+            top_node_ = radix_.top();
+            top_from_fallback_ = false;
+        }
+        has_top_ = true;
+        return top_node_;
+    }
+
+    void pop()
+    {
+        if (!has_top_) (void)top();
+        if (top_from_fallback_) fallback_.pop();
+        else                    radix_.pop();
+        has_top_ = false;
+    }
+
+private:
+    pf_radix_heap radix_;
+    pf_heap fallback_;
+    pf_node top_node_{};
+    bool top_from_fallback_ = false;
+    bool has_top_ = false;
+};
 
 // fill_index values
 static constexpr int k_open    =  0;
@@ -232,9 +413,10 @@ static lsdtt_array2d<int> build_fill_index(
 // try_seed
 // -----------------------------------------------------------------------------
 
+template <class PriorityQueue>
 static void try_seed(const lsdtt_array2d<float>& dem,
                      lsdtt_array2d<int>&          idx,
-                     pf_heap&                     pq,
+                     PriorityQueue&                pq,
                      int r, int c)
 {
     if (idx(r, c) == k_open)
@@ -248,10 +430,11 @@ static void try_seed(const lsdtt_array2d<float>& dem,
 // priority_flood_core
 // -----------------------------------------------------------------------------
 
+template <class PriorityQueue>
 static void priority_flood_core(
     lsdtt_array2d<float>&    filled,
     lsdtt_array2d<int>&      idx,
-    pf_heap&                 pq,
+    PriorityQueue&           pq,
     const lsdtt_raster_meta& meta,
     float                    min_slope,
     int r0, int r1,
@@ -349,10 +532,11 @@ static void priority_flood_core(
 // seed_raster_boundary
 // -----------------------------------------------------------------------------
 
+template <class PriorityQueue>
 static void seed_raster_boundary(
     const lsdtt_array2d<float>&   filled,
     lsdtt_array2d<int>&           idx,
-    pf_heap&                      pq,
+    PriorityQueue&                pq,
     int nrows, int ncols,
     int r0, int r1,
     bool per_ns,
@@ -426,11 +610,13 @@ static void seed_raster_boundary(
 // fill_serial
 // -----------------------------------------------------------------------------
 
-static void fill_serial(
+template <class PriorityQueue>
+static void fill_serial_impl(
     lsdtt_array2d<float>&         filled,
     lsdtt_array2d<int>&           idx,
     const lsdtt_raster_meta&      meta,
     float                         min_slope,
+    PriorityQueue&                 pq,
     bool                          per_ns     = false,
     bool                          per_ew     = false,
     const lsdtt_array2d<uint8_t>* sink_plane = nullptr)
@@ -438,11 +624,35 @@ static void fill_serial(
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;
 
-    pf_heap pq;
     seed_raster_boundary(filled, idx, pq, nrows, ncols, 0, nrows,
                          per_ns, per_ew, sink_plane);
     priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols,
                         per_ns, per_ew);
+}
+
+static void fill_serial(
+    lsdtt_array2d<float>&         filled,
+    lsdtt_array2d<int>&           idx,
+    const lsdtt_raster_meta&      meta,
+    float                         min_slope,
+    bool                          per_ns = false,
+    bool                          per_ew = false,
+    const lsdtt_array2d<uint8_t>* sink_plane = nullptr,
+    priority_flood_queue_backend  queue_backend =
+        priority_flood_queue_backend::binary_heap)
+{
+    if (queue_backend == priority_flood_queue_backend::radix_hybrid)
+    {
+        pf_radix_priority_queue pq;
+        fill_serial_impl(filled, idx, meta, min_slope, pq, per_ns, per_ew,
+                         sink_plane);
+    }
+    else
+    {
+        pf_heap pq;
+        fill_serial_impl(filled, idx, meta, min_slope, pq, per_ns, per_ew,
+                         sink_plane);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -502,7 +712,8 @@ lsdtt_raster_cpu mask_to_nodata_using_threshold(
 lsdtt_raster_cpu fill_pits(
     const lsdtt_raster_cpu& raster,
     float min_slope,
-    int   n_threads)
+    int   n_threads,
+    priority_flood_queue_backend queue_backend)
 {
     // Reconstruction is 2-3x faster and bit-identical, but it fills to exactly
     // the spill level and so cannot impose a gradient across flats. Use it only
@@ -511,7 +722,7 @@ lsdtt_raster_cpu fill_pits(
     {
         return fill_pits_reconstruction(raster, n_threads);
     }
-    return fill_pits_priority_flood(raster, min_slope, n_threads);
+    return fill_pits_priority_flood(raster, min_slope, n_threads, queue_backend);
 }
 
 // -----------------------------------------------------------------------------
@@ -522,7 +733,8 @@ lsdtt_raster_cpu fill_pits(
     const lsdtt_raster_cpu& raster,
     float                   min_slope,
     const std::string&      boundary_conditions,
-    int                     n_threads)
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
 {
     const std::string& bc = boundary_conditions;
     auto is_p = [&](std::size_t i)
@@ -552,7 +764,7 @@ lsdtt_raster_cpu fill_pits(
     // No periodic direction: nothing here differs from the plain overload, so
     // defer to it and keep its reconstruction fast path.
     if (!per_ns && !per_ew)
-        return fill_pits(raster, min_slope, n_threads);
+        return fill_pits(raster, min_slope, n_threads, queue_backend);
 
     // Periodic always takes the priority-flood backend. The reconstruction
     // backend is a separate implementation with its own neighbour walk and has
@@ -564,7 +776,8 @@ lsdtt_raster_cpu fill_pits(
             "lsdtt::fill_pits: invalid raster metadata");
 
     fill_inputs inputs = make_fill_inputs(raster);
-    fill_serial(inputs.dem, inputs.idx, meta, min_slope, per_ns, per_ew);
+    fill_serial(inputs.dem, inputs.idx, meta, min_slope, per_ns, per_ew,
+                nullptr, queue_backend);
 
     return lsdtt_raster_cpu(
         std::move(inputs.dem.get_vector()),
@@ -580,7 +793,8 @@ lsdtt_raster_cpu fill_pits(
 lsdtt_raster_cpu fill_pits_priority_flood(
     const lsdtt_raster_cpu& raster,
     float min_slope,
-    int   /*n_threads*/)
+    int   /*n_threads*/,
+    priority_flood_queue_backend queue_backend)
 {
     const lsdtt_raster_meta& meta = raster.get_meta();
     if (!meta.is_valid())
@@ -595,7 +809,8 @@ lsdtt_raster_cpu fill_pits_priority_flood(
     lsdtt_array2d<uint8_t>& mask_arr = inputs.mask;
     lsdtt_array2d<int>&     idx      = inputs.idx;
 
-    fill_serial(filled, idx, meta, min_slope);
+    fill_serial(filled, idx, meta, min_slope, false, false, nullptr,
+                queue_backend);
 
     return lsdtt_raster_cpu(
         std::move(filled.get_vector()),
@@ -616,7 +831,8 @@ lsdtt_raster_cpu fill_pits_with_sinks(
     const lsdtt_raster_cpu&          raster,
     const std::vector<std::int64_t>& sink_flats,
     float min_slope,
-    int   n_threads)
+    int   n_threads,
+    priority_flood_queue_backend queue_backend)
 {
     const lsdtt_raster_meta& meta = raster.get_meta();
     if (!meta.is_valid())
@@ -630,7 +846,7 @@ lsdtt_raster_cpu fill_pits_with_sinks(
     // Deferring keeps that equivalence structural rather than incidental.
     if (sink_flats.empty())
     {
-        return fill_pits_priority_flood(raster, min_slope, n_threads);
+        return fill_pits_priority_flood(raster, min_slope, n_threads, queue_backend);
     }
 
     const int         nrows = meta.n_rows;
@@ -678,7 +894,8 @@ lsdtt_raster_cpu fill_pits_with_sinks(
         sink_plane(r, c) = uint8_t{1};
     }
 
-    fill_serial(filled, idx, meta, min_slope, false, false, &sink_plane);
+    fill_serial(filled, idx, meta, min_slope, false, false, &sink_plane,
+                queue_backend);
 
     return lsdtt_raster_cpu(
         std::move(filled.get_vector()),
@@ -695,7 +912,8 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
     const lsdtt_array2d_u8& node_state,
     const std::string&      boundary_conditions,
     float                   fill_slope_epsilon,
-    bool                    check_valid_outlet)
+    bool                    check_valid_outlet,
+    priority_flood_queue_backend queue_backend)
 {
     const lsdtt_raster_meta& meta = surface.get_meta();
     if (!meta.is_valid())
@@ -738,7 +956,6 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
     lsdtt_array2d<float> filled(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> output_mask(nrows, ncols, uint8_t{0});
     lsdtt_array2d<int> idx(nrows, ncols, k_nodata);
-    pf_heap pq;
 
     std::int64_t outlet_count = 0;
     for (int row = 0; row < nrows; ++row)
@@ -760,7 +977,6 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
 
             if (state == 3)
             {
-                try_seed(filled, idx, pq, row, col);
                 ++outlet_count;
             }
         }
@@ -823,8 +1039,26 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
     }
 
     if (outlet_count > 0)
-        priority_flood_core(filled, idx, pq, meta, fill_slope_epsilon,
-                            0, nrows, 0, ncols, per_ns, per_ew);
+    {
+        if (queue_backend == priority_flood_queue_backend::radix_hybrid)
+        {
+            pf_radix_priority_queue pq;
+            for (int row = 0; row < nrows; ++row)
+                for (int col = 0; col < ncols; ++col)
+                    if (node_state(row, col) == 3) try_seed(filled, idx, pq, row, col);
+            priority_flood_core(filled, idx, pq, meta, fill_slope_epsilon,
+                                0, nrows, 0, ncols, per_ns, per_ew);
+        }
+        else
+        {
+            pf_heap pq;
+            for (int row = 0; row < nrows; ++row)
+                for (int col = 0; col < ncols; ++col)
+                    if (node_state(row, col) == 3) try_seed(filled, idx, pq, row, col);
+            priority_flood_core(filled, idx, pq, meta, fill_slope_epsilon,
+                                0, nrows, 0, ncols, per_ns, per_ew);
+        }
+    }
 
     lsdtt_array2d<float> added(nrows, ncols, nodata);
     double added_volume_m3 = 0.0;
@@ -1267,7 +1501,8 @@ lsdtt_raster_cpu fill_pits_with_boundary(
     const std::vector<std::vector<int>>& boundary_cols,
     const std::vector<std::string>&      boundary_conditions,
     const std::string&                   outlet_label,
-    int                                  /*n_threads*/)
+    int                                  /*n_threads*/,
+    priority_flood_queue_backend         queue_backend)
 {
     const lsdtt_raster_meta& meta = raster.get_meta();
     if (!meta.is_valid())
@@ -1311,20 +1546,25 @@ lsdtt_raster_cpu fill_pits_with_boundary(
         }
     }
 
-    pf_heap pq;
-    for (int r = 0; r < nrows; ++r)
+    auto fill_from_selected_outlets = [&](auto& pq)
     {
-        for (int c = 0; c < ncols; ++c)
-        {
-            if (idx(r, c) != k_nodata && is_seed(r, c) == 1)
-            {
-                try_seed(filled, idx, pq, r, c);
-            }
-        }
+        for (int r = 0; r < nrows; ++r)
+            for (int c = 0; c < ncols; ++c)
+                if (idx(r, c) != k_nodata && is_seed(r, c) == 1)
+                    try_seed(filled, idx, pq, r, c);
+        priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols,
+                            false, false);
+    };
+    if (queue_backend == priority_flood_queue_backend::radix_hybrid)
+    {
+        pf_radix_priority_queue pq;
+        fill_from_selected_outlets(pq);
     }
-
-    priority_flood_core(filled, idx, pq, meta, min_slope, 0, nrows, 0, ncols,
-                        false, false);
+    else
+    {
+        pf_heap pq;
+        fill_from_selected_outlets(pq);
+    }
 
     return lsdtt_raster_cpu(
         std::move(filled.get_vector()),
