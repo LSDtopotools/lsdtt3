@@ -529,6 +529,13 @@ int main(int argc, char* argv[])
         "filled.",
         "Filling", "param", ""};
 
+    string_default_map["priority_flood_queue"] = "binary";
+    help_map["priority_flood_queue"] = {"string", "binary",
+        "Spill-queue backend for Barnes 2014 filling.",
+        "binary (default) uses the historic heap. radix uses the equivalent "
+        "hybrid radix queue. Only used when fill_algorithm_choice is barnes2014.",
+        "Pit filling", "param", "write_fill_raster"};
+
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum gradient imposed between adjacent filled cells.",
@@ -1577,6 +1584,12 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Pit filling ---\n";
         std::string algo = sf["fill_algorithm_choice"];
+        const std::string& queue_name = sf["priority_flood_queue"];
+        const lsdtt::priority_flood_queue_backend queue_backend =
+            queue_name == "binary" ? lsdtt::priority_flood_queue_backend::binary_heap :
+            queue_name == "radix"  ? lsdtt::priority_flood_queue_backend::radix_hybrid :
+            throw std::invalid_argument(
+                "priority_flood_queue must be 'binary' or 'radix'");
 
         // Timed so the cost of the fill itself can be separated from process
         // startup, GDAL raster I/O and every other stage this CLI runs. The
@@ -1597,7 +1610,8 @@ int main(int argc, char* argv[])
                 filled_dem = lsdtt::fill_pits_priority_flood(
                     working_dem,
                     ff["fill_min_slope"],
-                    n_threads
+                    n_threads,
+                    queue_backend
                 );
             }
             else if (algo == "vincent1993")

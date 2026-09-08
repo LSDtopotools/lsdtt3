@@ -79,6 +79,12 @@
 
 namespace lsdtt {
 
+enum class priority_flood_queue_backend : uint8_t
+{
+    binary_heap,
+    radix_hybrid,
+};
+
 // -----------------------------------------------------------------------------
 // mask_to_nodata_using_threshold
 // -----------------------------------------------------------------------------
@@ -110,7 +116,9 @@ lsdtt_raster_cpu mask_to_nodata_using_threshold(
 lsdtt_raster_cpu fill_pits(
     const lsdtt_raster_cpu& raster,
     float min_slope = 0.0001f,
-    int   n_threads = 0
+    int   n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
 );
 
 // -----------------------------------------------------------------------------
@@ -139,7 +147,9 @@ lsdtt_raster_cpu fill_pits(
     const lsdtt_raster_cpu& raster,
     float                   min_slope,
     const std::string&      boundary_conditions,
-    int                     n_threads = 0
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
 );
 
 // -----------------------------------------------------------------------------
@@ -149,12 +159,29 @@ lsdtt_raster_cpu fill_pits(
 // of min_slope. This is what fill_pits() used to be unconditionally; it is
 // exposed so that the reconstruction backend can be compared against it without
 // the comparison becoming circular once fill_pits() started dispatching.
+//
+// use_radix_heap
+//   false (default) uses the historic binary spill heap. true uses the
+//   experimental radix-accelerated queue, with an internal binary fallback
+//   required to preserve the improved algorithm's FIFO-flat semantics.
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu fill_pits_priority_flood(
     const lsdtt_raster_cpu& raster,
     float min_slope = 0.0001f,
-    int   n_threads = 0
+    int   n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
 );
+
+inline lsdtt_raster_cpu fill_pits_priority_flood(
+    const lsdtt_raster_cpu& raster, float min_slope, int n_threads,
+    bool use_radix_heap)
+{
+    return fill_pits_priority_flood(
+        raster, min_slope, n_threads,
+        use_radix_heap ? priority_flood_queue_backend::radix_hybrid
+                       : priority_flood_queue_backend::binary_heap);
+}
 
 // -----------------------------------------------------------------------------
 // fill_pits_with_sinks
@@ -201,7 +228,9 @@ lsdtt_raster_cpu fill_pits_with_sinks(
     const lsdtt_raster_cpu&          raster,
     const std::vector<std::int64_t>& sink_flats,
     float min_slope = 0.0001f,
-    int   n_threads = 0
+    int   n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
 );
 
 // -----------------------------------------------------------------------------
@@ -233,7 +262,9 @@ struct hydraulic_surface_fill_result
     const lsdtt_array2d_u8& node_state,
     const std::string&      boundary_conditions,
     float                   fill_slope_epsilon = 1.0e-8f,
-    bool                    check_valid_outlet = true
+    bool                    check_valid_outlet = true,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
 );
 
 // -----------------------------------------------------------------------------
@@ -344,7 +375,9 @@ lsdtt_raster_cpu fill_pits_with_boundary(
     const std::vector<std::vector<int>>& boundary_cols,
     const std::vector<std::string>&      boundary_conditions,
     const std::string&                   outlet_label = "outlet",
-    int                                  n_threads    = 0
+    int                                  n_threads    = 0,
+    priority_flood_queue_backend         queue_backend =
+        priority_flood_queue_backend::binary_heap
 );
 
 // -----------------------------------------------------------------------------

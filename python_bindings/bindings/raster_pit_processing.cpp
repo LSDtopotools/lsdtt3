@@ -34,6 +34,13 @@
 
 namespace lsdtt3_python {
 namespace {
+lsdtt::priority_flood_queue_backend priority_flood_backend(const std::string& name)
+{
+    if (name == "binary") return lsdtt::priority_flood_queue_backend::binary_heap;
+    if (name == "radix") return lsdtt::priority_flood_queue_backend::radix_hybrid;
+    throw std::invalid_argument("priority_flood_backend must be 'binary' or 'radix'");
+}
+
 void require_compatible(const Raster& first, const Raster& second, const char* name)
 {
     const auto& a = first.native().get_meta();
@@ -209,7 +216,8 @@ Raster fill_pits_with_outlets(
     const Raster& raster,
     const Raster& outlet_mask,
     float min_slope,
-    int n_threads)
+    int n_threads,
+    const std::string& backend)
 {
     const std::vector<std::int64_t> outlets = selected_flat_indices(
         raster, outlet_mask, "outlet_mask"
@@ -225,7 +233,8 @@ Raster fill_pits_with_outlets(
         cols.push_back(static_cast<int>(index % metadata.n_cols));
     }
     return Raster(lsdtt::fill_pits_with_boundary(
-        raster.native(), min_slope, {rows}, {cols}, {"outlet"}, "outlet", n_threads
+        raster.native(), min_slope, {rows}, {cols}, {"outlet"}, "outlet", n_threads,
+        priority_flood_backend(backend)
     ));
 }
 
@@ -233,10 +242,12 @@ Raster fill_pits_with_sinks_mask(
     const Raster& raster,
     const Raster& sink_mask,
     float min_slope,
-    int n_threads)
+    int n_threads,
+    const std::string& backend)
 {
     return Raster(lsdtt::fill_pits_with_sinks(
-        raster.native(), selected_flat_indices(raster, sink_mask, "sink_mask"), min_slope, n_threads
+        raster.native(), selected_flat_indices(raster, sink_mask, "sink_mask"), min_slope,
+        n_threads, priority_flood_backend(backend)
     ));
 }
 
@@ -244,10 +255,12 @@ Raster fill_pits_with_sinks_points(
     const Raster& raster,
     nb::object points,
     float min_slope,
-    int n_threads)
+    int n_threads,
+    const std::string& backend)
 {
     return Raster(lsdtt::fill_pits_with_sinks(
-        raster.native(), row_col_points_to_flat_indices(raster, points, "sinks"), min_slope, n_threads
+        raster.native(), row_col_points_to_flat_indices(raster, points, "sinks"), min_slope,
+        n_threads, priority_flood_backend(backend)
     ));
 }
 
@@ -255,7 +268,8 @@ Raster fill_pits_boundary_aware(
     const Raster& raster,
     const std::string& boundary_conditions,
     float min_slope,
-    int n_threads)
+    int n_threads,
+    const std::string& backend)
 {
     const std::string boundary = validate_boundary_conditions(boundary_conditions);
     const bool periodic = boundary.find('p') != std::string::npos;
@@ -270,14 +284,16 @@ Raster fill_pits_boundary_aware(
                 );
             }
         }
-        return Raster(lsdtt::fill_pits(raster.native(), min_slope, boundary, n_threads));
+        return Raster(lsdtt::fill_pits(
+            raster.native(), min_slope, boundary, n_threads,
+            priority_flood_backend(backend)));
     }
 
     Raster outlets = make_outlet_mask(
         raster, boundary[0] != 'n', boundary[1] != 'n',
         boundary[2] != 'n', boundary[3] != 'n'
     );
-    return fill_pits_with_outlets(raster, outlets, min_slope, n_threads);
+    return fill_pits_with_outlets(raster, outlets, min_slope, n_threads, backend);
 }
 
 Raster breach_least_cost(
@@ -311,9 +327,18 @@ Raster least_cost_carve_depth(
     return Raster(lsdtt::algebra::raster_positive_difference(raster.native(), breached));
 }
 
-Raster fill_pits(const Raster& raster, float min_slope, int n_threads)
+Raster fill_pits(const Raster& raster, float min_slope, int n_threads,
+                 const std::string& backend)
 {
-    return Raster(lsdtt::fill_pits(raster.native(), min_slope, n_threads));
+    return Raster(lsdtt::fill_pits(
+        raster.native(), min_slope, n_threads, priority_flood_backend(backend)));
+}
+
+Raster fill_pits_priority_flood(
+    const Raster& raster, float min_slope, int n_threads, bool use_radix_heap)
+{
+    return Raster(lsdtt::fill_pits_priority_flood(
+        raster.native(), min_slope, n_threads, use_radix_heap));
 }
 
 Raster fill_depth(const Raster& raster, float min_slope, int n_threads)
@@ -342,7 +367,12 @@ void bind_raster_pit_processing(nb::module_& m)
 {
     m.def("fill_pits", &fill_pits, nb::arg("raster"),
         nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
+        nb::arg("priority_flood_backend") = "binary",
         "Fill depressions while imposing an optional minimum drainage slope.");
+    m.def("fill_pits_priority_flood", &fill_pits_priority_flood,
+        nb::arg("raster"), nb::arg("min_slope") = 0.0001f,
+        nb::arg("n_threads") = 0, nb::arg("use_radix_heap") = false,
+        "Explicit Improved Priority-Flood; optionally use its radix-heap queue.");
     m.def("fill_depth", &fill_depth, nb::arg("raster"),
         nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
         "Return the non-negative elevation added by pit filling.");
@@ -375,16 +405,19 @@ points : array-like, shape (n, 2)
 )doc");
     m.def("fill_pits_with_outlets", &fill_pits_with_outlets, nb::arg("raster"),
         nb::arg("outlet_mask"), nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
+        nb::arg("priority_flood_backend") = "binary",
         "Fill pits using positive cells in outlet_mask as drainage outlets.");
     m.def("fill_pits_with_sinks", &fill_pits_with_sinks_mask, nb::arg("raster"),
         nb::arg("sinks"), nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
+        nb::arg("priority_flood_backend") = "binary",
         "Fill pits while retaining positive cells in sinks as declared sinks.");
     m.def("fill_pits_with_sinks", &fill_pits_with_sinks_points, nb::arg("raster"),
         nb::arg("sinks"), nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
+        nb::arg("priority_flood_backend") = "binary",
         "Fill pits while retaining zero-based (row, col) sinks.");
     m.def("fill_pits_boundary_aware", &fill_pits_boundary_aware, nb::arg("raster"),
         nb::arg("boundary_conditions") = "oooo", nb::arg("min_slope") = 0.0001f,
-        nb::arg("n_threads") = 0,
+        nb::arg("n_threads") = 0, nb::arg("priority_flood_backend") = "binary",
         "Fill pits with NESW open, closed, periodic, or base-level boundaries.");
     m.def("breach_least_cost", &breach_least_cost, nb::arg("raster"),
         nb::arg("max_distance") = 1000,

@@ -54,6 +54,13 @@ std::string hydraulic_boundaries(const std::string& value)
     return value;
 }
 
+lsdtt::priority_flood_queue_backend hydraulic_fill_backend(const std::string& value)
+{
+    if (value == "binary") return lsdtt::priority_flood_queue_backend::binary_heap;
+    if (value == "radix") return lsdtt::priority_flood_queue_backend::radix_hybrid;
+    throw std::invalid_argument("priority_flood_backend must be 'binary' or 'radix'");
+}
+
 lsdtt::lsdtt_flowgraph_method hydraulic_method(const std::string& value)
 {
     if (value == "mfd") return lsdtt::lsdtt_flowgraph_method::mfd;
@@ -302,12 +309,13 @@ HydraulicSurfaceFill fill_hydraulic_surface(
     const Raster& node_state,
     const std::string& boundary_conditions,
     float slope_epsilon,
-    bool check_valid_outlet)
+    bool check_valid_outlet,
+    const std::string& backend)
 {
     return HydraulicSurfaceFill(lsdtt::fill_hydraulic_surface(
         surface.native(), hydraulic_states(surface, node_state),
         hydraulic_boundaries(boundary_conditions), slope_epsilon,
-        check_valid_outlet));
+        check_valid_outlet, hydraulic_fill_backend(backend)));
 }
 
 HydraulicResult run_graphflood(
@@ -644,6 +652,7 @@ the evolving ``z + h`` surface.
         nb::arg("boundary_conditions") = "nnnn",
         nb::arg("slope_epsilon") = 1.0e-8f,
         nb::arg("check_valid_outlet") = true,
+        nb::arg("priority_flood_backend") = "binary",
         R"doc(
 Priority-flood a hydraulic ``z + h`` surface towards selected outlets.
 
