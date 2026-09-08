@@ -27,6 +27,7 @@
 //   lsdtt-basin-extraction -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
+#include <chrono>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -986,7 +987,18 @@ int main(int argc, char* argv[])
     fi_opts.build_s_vector            = true;
     fi_opts.n_threads                 = ifs["n_threads"];
 
+    // Timed so the routing build can be separated from process startup and
+    // GDAL I/O. The "Compute time:" wording matches lsdtt-drainage-analysis and
+    // lsdtt-surface-metrics, and is what the benchmark drivers parse.
+    //
+    // Without these lines a benchmark comparing this CLI against an in-process
+    // library call has nothing to read but WHOLE-PROCESS wall clock, which on a
+    // small raster is overwhelmingly startup and file I/O -- it compares
+    // loaders, not algorithms. Each phase is reported separately because the
+    // reference implementations do not all build the same things: they route
+    // flow and delineate basins, but none of them builds a junction network.
     std::unique_ptr<lsdtt::lsdtt_flow_base> flow;
+    const auto flow_t0 = std::chrono::steady_clock::now();
     try
     {
         flow = lsdtt::make_flow_base(
@@ -1001,6 +1013,11 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: flow routing failed: " << e.what() << "\n";
         return 1;
     }
+
+    std::cout << "  Compute time: "
+              << std::chrono::duration<double>(
+                     std::chrono::steady_clock::now() - flow_t0).count()
+              << " s\n";
 
     // -------------------------------------------------------------------------
     // Step 2b - Optional side-tributary basin extraction from supplied points
@@ -1235,6 +1252,7 @@ int main(int argc, char* argv[])
     jn_opts.build_s_vector          = true;
 
     std::unique_ptr<lsdtt::lsdtt_junction_network_base> channel_network;
+    const auto jn_t0 = std::chrono::steady_clock::now();
     try
     {
         channel_network =
@@ -1246,6 +1264,11 @@ int main(int argc, char* argv[])
                   << e.what() << "\n";
         return 1;
     }
+
+    std::cout << "  Compute time: "
+              << std::chrono::duration<double>(
+                     std::chrono::steady_clock::now() - jn_t0).count()
+              << " s\n";
 
     std::cout << "Channel cells : " << channel_network->n_channel_cells() << "\n";
     std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
@@ -1341,6 +1364,13 @@ int main(int argc, char* argv[])
     if (do_basin_selection)
     {
         std::cout << "\n--- Basin selection ---\n";
+
+        // Timed: this is the phase the reference implementations DO have an
+        // equivalent of (TopoToolbox dependencemap, Whitebox watershed), so it
+        // is the one a cross-package comparison can put in a ratio. The
+        // junction-network phase above is timed separately precisely because
+        // they do not build one.
+        const auto basin_sel_t0 = std::chrono::steady_clock::now();
 
         // initiate basin manager, this is the free function that deals with the different flavours of 
         // basin selection
@@ -1504,6 +1534,18 @@ int main(int argc, char* argv[])
         {
             const std::string basin_outlet_file_path =
                 pp.add_read_path_if_needed(sf["basin_outlet_file"]);
+
+            // The selection proper ends here. Everything below is reading
+            // the outlet file and printing coordinate diagnostics, which is
+            // reporting rather than basin work -- and it is SLOW: it dominated
+            // this phase at ~2.1 s against ~0.03 s of flow routing on a 256^2
+            // raster. Timing it as "basin selection" made the phase name a lie
+            // and made lsdtt3 look two orders of magnitude slower than it is.
+            std::cout << "  Compute time: "
+                      << std::chrono::duration<double>(
+                             std::chrono::steady_clock::now()
+                             - basin_sel_t0).count()
+                      << " s\n";
 
             std::cout << "Reading basin outlet file: "
                       << basin_outlet_file_path << "\n";
