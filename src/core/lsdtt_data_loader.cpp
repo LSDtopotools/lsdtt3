@@ -805,7 +805,12 @@ void lsdtt_data_loader::create_output_raster(
         options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
         options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
         options = CSLSetNameValue(options, "COMPRESS",   "DEFLATE");
-        options = CSLSetNameValue(options, "PREDICTOR",  "2");
+        // Predictor chosen from the band type, never hardcoded: see
+        // tiff_predictor_for(). 2 on float data is spec-invalid and reads as
+        // NaN in strict TIFF readers.
+        options = CSLSetNameValue(
+            options, "PREDICTOR",
+            std::to_string(tiff_predictor_for(out_type)).c_str());
     }
 
     GDALDataset* raw = driver->Create(
@@ -1103,7 +1108,16 @@ void lsdtt_data_loader::finalise_output(const std::string& out_path)
 
             char** options = nullptr;
             options = CSLSetNameValue(options, "COMPRESS",  "DEFLATE");
-            options = CSLSetNameValue(options, "PREDICTOR", "2");
+            // Read the type off the source band rather than assuming: this is
+            // a CreateCopy of a file this class wrote a moment ago, but the
+            // predictor must still match what is actually in it.
+            const GDALDataType copy_type =
+                (src->GetRasterCount() > 0 && src->GetRasterBand(1))
+                    ? src->GetRasterBand(1)->GetRasterDataType()
+                    : GDT_Float32;
+            options = CSLSetNameValue(
+                options, "PREDICTOR",
+                std::to_string(tiff_predictor_for(copy_type)).c_str());
 
             GDALDataset* cog = cog_driver->CreateCopy(
                 tmp_path.c_str(), src, FALSE, options, nullptr, nullptr

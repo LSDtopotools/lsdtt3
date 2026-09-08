@@ -290,6 +290,21 @@ int main(int argc, char* argv[])
         "MFD options", "param", ""};
 
     // --- Drainage area outputs ---
+    bool_default_map["build_flow_s_vector"] = true;
+    help_map["build_flow_s_vector"] = {"bool","true",
+        "Build the D8 s-vector during flow routing.",
+        "The s-vector stores each cell's upslope set as a contiguous interval, "
+        "which makes is_upslope_of an O(1) test and is what chi analysis, basin "
+        "summaries, source finding and the cosmogenic routines rely on. It also "
+        "costs about 57 percent of the D8 build (~106 ms of ~186 ms on a 1000x1000 "
+        "tile) and roughly 24 bytes per cell of the flowinfo object's ~43. "
+        "Drainage area does NOT need it: accumulating over the topological order "
+        "produces a bit-identical raster for less work. Set false when drainage "
+        "area is all you want, or to measure lsdtt3 against tools that build no "
+        "equivalent structure. Ignored, with a warning, when another requested "
+        "output needs it.",
+        "Flow routing", "param", ""};
+
     bool_default_map["write_d8_drainage_area_raster"] = false;
     help_map["write_d8_drainage_area_raster"] = {"bool","false",
         "Write a D8 drainage area raster.",
@@ -909,7 +924,32 @@ int main(int argc, char* argv[])
         fi_opts.interior_nodata_is_outlet = true;
         fi_opts.require_acyclic_graph     = true;
         fi_opts.build_topological_order   = true;
-        fi_opts.build_s_vector            = true;
+
+        // The s-vector is only optional when drainage area is the ONLY D8
+        // product asked for. Connectivity routing and height-above-channel
+        // both traverse upslope sets, so dropping it there would trade a
+        // measurable saving for a runtime failure -- refuse rather than let
+        // that happen, and say why.
+        bool build_s_vector = bf["build_flow_s_vector"];
+        if (!build_s_vector)
+        {
+            const bool needs_s_vector = bf["write_connectivity_raster"] ||
+                                        bf["write_height_above_channel_raster"];
+            if (needs_s_vector)
+            {
+                std::cout << "  NOTE: build_flow_s_vector: false was ignored - "
+                             "connectivity and height-above-channel need the "
+                             "s-vector. Building it.\n";
+                build_s_vector = true;
+            }
+            else
+            {
+                std::cout << "  s-vector           : NOT built "
+                             "(drainage area accumulates over the topological "
+                             "order instead; identical result)\n";
+            }
+        }
+        fi_opts.build_s_vector            = build_s_vector;
         fi_opts.n_threads                 = ifs["n_threads"];
 
         // Timed so the routing build can be separated from process startup

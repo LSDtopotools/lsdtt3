@@ -87,6 +87,8 @@ import argparse
 import contextlib
 import json
 import os
+import shutil
+import tempfile
 import resource
 import statistics
 import sys
@@ -121,6 +123,7 @@ SURFACE_ROUTINES = (
 DEPRESSION_ROUTINES = (
     "depression_sink",      # sink: labels depressions
     "depression_fill_wl",   # Wang & Liu fill -- a second fill lineage
+    "depression_fill_wl_epsilon",  # ... with a constant flat gradient
 )
 
 ROUTINES = FLOW_ROUTINES + SURFACE_ROUTINES + DEPRESSION_ROUTINES
@@ -142,7 +145,11 @@ REPORT_ONLY_ROUTINES = frozenset({
 # All surface routines are timing-only; kept separate from REPORT_ONLY because
 # a timing comparison IS meaningful for slope and curvature (same 3x3-scale
 # work), it is only the VALUES that must never be asserted.
-VALUE_COMPARABLE = frozenset({"fill", "fill_epsilon", "depression_fill_wl"})
+VALUE_COMPARABLE = frozenset({"fill", "depression_fill_wl",
+                              "depression_fill_wl_epsilon"})
+# `fill_epsilon` is NOT here: it calls the Barnes tool, which is the one whose
+# boundary convention is unresolved (see the module docstring). Use
+# `depression_fill_wl_epsilon` for a constant-gradient value comparison.
 
 
 def peak_rss_mb() -> float:
@@ -295,8 +302,87 @@ def _make_call(wbe, routine: str, dem, args):
     if routine == "depression_fill_wl":
         fn = H.fill_depressions_wang_and_liu
         return lambda: fn(dem=dem, fix_flats=False)
+    if routine == "depression_fill_wl_epsilon":
+        # Wang & Liu WITH a constant gradient across flats -- the same operation
+        # lsdtt3's fill_min_slope performs.
+        #
+        # Routed through wang_and_liu rather than through `fill_epsilon`, which
+        # uses Whitebox's Barnes tool. Measured on alpine_small, that tool
+        # disagrees with lsdtt3 by 9.78 m -- exactly the offset by which it
+        # disagrees with Whitebox's OWN wang_and_liu -- so `fill_epsilon` is
+        # contaminated by that tool's boundary convention rather than by any
+        # difference in the increment scheme. See VALUE_COMPARABLE below.
+        fn = H.fill_depressions_wang_and_liu
+        return lambda: fn(dem=dem, fix_flats=True,
+                          flat_increment=args.flat_increment)
 
     raise ValueError(f"unknown routine {routine!r}")
+
+
+# -----------------------------------------------------------------------------
+# WHITEBOX CANNOT READ A DEFLATE-PREDICTOR GeoTIFF.
+#
+# Measured against whitebox-workflows 2.0.6: a Float32 tiled DEFLATE GeoTIFF
+# written with PREDICTOR=2 *or* PREDICTOR=3 is read back as ALL NaN, silently.
+# The same data written with no predictor reads correctly, tiled or striped.
+# This is a limitation of Whitebox's own TIFF reader, not of the file: GDAL,
+# TopoToolbox and RichDEM all read those files without complaint.
+#
+# It fails in the worst possible way -- no error, no warning, just NaN -- and
+# what surfaces downstream is a plausible-looking *result*. It was found because
+# `accum_d8@whitebox` reported a maximum flow accumulation of 36 cells against
+# lsdtt3's 41,437: Whitebox was faithfully routing a raster of NaN, and it read
+# as a routing disagreement rather than as a failure to load the DEM.
+#
+# lsdtt3 writes tiled DEFLATE with a predictor by design (it is 18% smaller than
+# no predictor on float terrain), and it should not give that up for one
+# reader's limitation. So the fix belongs here: if the input carries a
+# predictor, transcode it to a predictor-free temporary and hand Whitebox that.
+# The pixel values are bit-identical -- only the compression of the bytes on
+# disk changes -- so nothing about the measurement is affected.
+#
+# Staging happens before the timing starts, and read time is reported separately
+# from compute in any case, so this costs the benchmark nothing.
+# -----------------------------------------------------------------------------
+def stage_predictor_free(in_path: str, tmp_dir: str) -> tuple[str, bool]:
+    """Return a path Whitebox can read, and whether a copy had to be made."""
+    try:
+        from osgeo import gdal
+        gdal.UseExceptions()
+    except Exception:
+        # No GDAL here: hand back the original. If it does carry a predictor
+        # the guard below still catches the all-NaN read.
+        return in_path, False
+
+    ds = gdal.Open(in_path)
+    if ds is None:
+        return in_path, False
+    predictor = (ds.GetMetadata("IMAGE_STRUCTURE") or {}).get("PREDICTOR")
+    if predictor in (None, "", "1"):
+        ds = None
+        return in_path, False
+
+    out = os.path.join(tmp_dir, "wb_nopredictor_" + os.path.basename(in_path))
+    gdal.Translate(out, ds, creationOptions=["COMPRESS=DEFLATE", "TILED=YES"])
+    ds = None
+    return out, True
+
+
+def assert_readable(arr, in_path: str) -> None:
+    """Refuse to time a routine on a raster that did not load.
+
+    An all-NaN read is indistinguishable from a real result once it reaches a
+    summary table, so it has to be caught here, at the only point where the
+    cause is still visible.
+    """
+    import numpy as np
+    a = np.asarray(arr)
+    if a.size and np.isnan(a).all():
+        raise RuntimeError(
+            f"Whitebox read {in_path} as ALL NaN. This is the DEFLATE-predictor "
+            f"limitation described above; the predictor-free staging should have "
+            f"prevented it. Do NOT report timings from this run."
+        )
 
 
 def run(routine: str, in_path: str, out_path, args):
@@ -321,12 +407,36 @@ def run(routine: str, in_path: str, out_path, args):
     wbe.max_procs = int(args.threads)
 
     in_dir = os.path.dirname(os.path.abspath(in_path)) or "."
-    wbe.working_directory = in_dir
 
-    t0 = time.perf_counter()
-    with suppressed_output():
-        dem = wbe.read_raster(os.path.basename(in_path))
-    seconds_read = time.perf_counter() - t0
+    # See stage_predictor_free(): a predictor-compressed input reads as all NaN.
+    #
+    # The staging directory must outlive every TOOL CALL, not just the read.
+    # Whitebox's Raster object keeps a handle to the file on disk and the tools
+    # re-read it, so deleting the staged copy after read_raster() returns fails
+    # later with "GeoTIFF read error: No such file or directory" from inside the
+    # timing loop. Hence mkdtemp plus a finally, rather than a with-block around
+    # the read.
+    stage_dir = tempfile.mkdtemp(prefix="wb_stage_")
+    try:
+        read_path, staged = stage_predictor_free(in_path, stage_dir)
+        wbe.working_directory = (os.path.dirname(os.path.abspath(read_path))
+                                 or in_dir)
+
+        t0 = time.perf_counter()
+        with suppressed_output():
+            dem = wbe.read_raster(os.path.basename(read_path))
+        seconds_read = time.perf_counter() - t0
+        assert_readable(dem.to_numpy(), in_path)
+
+        return _run_timed(wbe, routine, dem, in_path, out_path, args,
+                          seconds_read, staged)
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def _run_timed(wbe, routine: str, dem, in_path: str, out_path, args,
+               seconds_read: float, staged: bool):
+    """The timing loop, split out so the staged input stays alive around it."""
 
     rss_after_load = peak_rss_mb()
 
@@ -358,6 +468,10 @@ def run(routine: str, in_path: str, out_path, args):
 
     info = {
         "reference": "whitebox",
+        # True when the input carried a DEFLATE predictor and had to be
+        # transcoded before Whitebox could read it. Recorded so a campaign can
+        # be audited for it rather than it being invisible.
+        "staged_predictor_free": bool(staged),
         "routine": routine,
         "seconds": min(timings),
         "seconds_median": statistics.median(timings),

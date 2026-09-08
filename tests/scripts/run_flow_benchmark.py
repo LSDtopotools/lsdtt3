@@ -53,13 +53,32 @@ REPORT_ONLY = {
 #                (Corrected 2026-08-21: its tie-break prefers CARDINALS, and it
 #                passes a planar-ramp oracle -- the divergence is the selection
 #                rule, not ties. See docs/testing_and_benchmarking.md 5.1.)
-# topotoolbox -- true steepest descent, same rule as lsdtt3; the reference that
-#                accumulation comparisons are actually asserted against.
+# topotoolbox -- true steepest descent, same rule as lsdtt3.
+# whitebox    -- ALSO true steepest descent. MEASURED, not assumed:
+#                tests/scripts/check_whitebox_d8_rule.py builds a cell sitting
+#                between a LOWER diagonal (10 m drop over 42.43 m) and a STEEPER
+#                cardinal (8 m over 30 m), so the two rules MUST disagree there,
+#                and scores the whole accumulation raster against a reference
+#                implementation of each rule. Whitebox matched steepest descent
+#                on every cell; a d8_pointer read, with the direction codes
+#                calibrated on a planar ramp rather than assumed, confirmed it
+#                independently.
+#
+#                A planar ramp on its own would NOT have established this, which
+#                is why the discriminating fixture exists: on a ramp the S/SE/SW
+#                neighbours are TIED in elevation, so a lowest-elevation rule
+#                that breaks ties toward cardinals passes it. RichDEM does
+#                exactly that.
+#
+# D8 accumulation is therefore asserted against TWO independent implementations,
+# and RichDEM's exclusion is a statement about its selection rule rather than a
+# hole in the comparison.
 #
 # See docs/testing_and_benchmarking.md.
 REFERENCE_SCRIPTS = {
     "richdem":     "richdem_reference.py",
     "topotoolbox": "topotoolbox_reference.py",
+    "whitebox":    "whitebox_reference.py",
 }
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -170,14 +189,35 @@ def ensure_fixture(fixture_key: str, fetch_exe: pathlib.Path) -> pathlib.Path:
 # is why the epsilon tolerances below differ so wildly between fixtures.
 COMPARISONS = {
     "fill": {
-        "references": {"richdem": "fill", "topotoolbox": "fill"},
+        # Whitebox enters this comparison through `depression_fill_wl`
+        # (Wang & Liu, fix_flats=False), NOT through its Barnes tool. On
+        # alpine_small the Barnes tool returns a global minimum 6.45 m above the
+        # border minimum where wang_and_liu returns exactly the border minimum,
+        # and the two Whitebox fills differ by up to 9.78 m. lsdtt3 is bit-exact
+        # against both RichDEM and TopoToolbox on this same operation, so the
+        # odd one out is that tool -- most likely an edge-cell boundary
+        # convention. Until that is understood it stays out of the value
+        # comparison; `fill@whitebox` remains a TIMING row in the campaign.
+        "references": {"richdem": "fill", "topotoolbox": "fill",
+                       "whitebox": "depression_fill_wl"},
         "lsdtt_suffix": "_fill.tif",
         "params": {"write_fill_raster": "true", "fill_min_slope": "0"},
         "kind": "elevation",
         "note": "Barnes 2014, no epsilon -- the tight comparison",
     },
     "fill_epsilon": {
-        "references": {"richdem": "fill_epsilon"},
+        # WHITEBOX IS THE BETTER REFERENCE HERE, and the reason is the whole
+        # point of splitting this case out. lsdtt3 imposes a CONSTANT
+        # fill_min_slope across flats. RichDEM's epsilon=True raises each cell
+        # by one ULP of std::nextafter, which scales with elevation magnitude --
+        # a different operation, which is why the pinned richdem tolerances
+        # differ ~40x between the two fixtures (volume ratio 1.005 vs 45.0).
+        # Whitebox's fill_depressions(fix_flats=True, flat_increment=e) is a
+        # constant increment, i.e. the same operation lsdtt3 performs, and
+        # whitebox_reference.py defaults --flat-increment to 1e-4 to match
+        # fill_min_slope below.
+        "references": {"richdem": "fill_epsilon",
+                       "whitebox": "depression_fill_wl_epsilon"},
         "lsdtt_suffix": "_fill.tif",
         "params": {"write_fill_raster": "true", "fill_min_slope": "0.0001"},
         "kind": "elevation",
@@ -201,20 +241,32 @@ COMPARISONS = {
     # algorithm: any difference here cannot be blamed on the fill, which the
     # `fill` comparison has already shown to be bit-exact.
     #
-    # *** REPORT-ONLY, NOT ASSERTED ***
+    # THREE references, and they are NOT interchangeable.
+    #
+    #   topotoolbox  ASSERTED. Steepest descent, same rule as lsdtt3.
+    #   whitebox     ASSERTED. Steepest descent, MEASURED not assumed -- see
+    #                REFERENCE_SCRIPTS above and check_whitebox_d8_rule.py.
+    #   richdem      REPORT-ONLY. Different selection rule; see below.
+    #
+    # *** RICHDEM IS REPORT-ONLY, NOT ASSERTED ***
     # RichDEM is not a valid reference for D8 flow direction: its D8 picks the
-    # neighbour with the LOWEST ELEVATION and breaks ties toward diagonals
-    # (richdem/flowmet/d8_flowdirs.hpp:63-71) rather than the steepest DESCENT
-    # (drop / distance). On a planar ramp with a known analytic answer it routes
-    # diagonally and gets the accumulation wrong, where lsdtt3 is exact. Pinning
+    # neighbour with the LOWEST ELEVATION (richdem/flowmet/d8_flowdirs.hpp:63-71)
+    # rather than the steepest DESCENT (drop / distance), so it takes a diagonal
+    # wherever the diagonal is lower but a cardinal is steeper. Pinning
     # tolerances against it would enshrine that as if it were lsdtt3 error.
     #
-    # The real assertions live in tests/cpp/test_flow_properties.cpp: P4 mass
-    # conservation, P5 monotonicity, P8 exact planar-ramp oracle -- none of
-    # which need a reference implementation.
+    # Note it is NOT ties that separate them -- RichDEM's tie-break prefers
+    # cardinals and it passes a planar-ramp oracle. The divergence needs a case
+    # where the lowest neighbour is diagonal AND a cardinal is steeper.
+    #
+    # The reference-free assertions live in tests/cpp/test_flow_properties.cpp:
+    # P4 mass conservation, P5 monotonicity, P8 exact planar-ramp oracle. Those
+    # remain the primary evidence; agreement with two independent
+    # implementations is corroboration on real terrain, not a substitute.
     # -------------------------------------------------------------------------
     "accum_d8": {
-        "references": {"richdem": "accum_d8", "topotoolbox": "accum_d8"},
+        "references": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
+                       "whitebox": "accum_d8"},
         "lsdtt_suffix": "_d8_drainage_area.tif",
         "params": {"write_d8_drainage_area_raster": "true",
                    "raster_is_filled": "true"},
@@ -284,8 +336,19 @@ TOLERANCES = {
         # genuinely independent implementation rather than a sibling port.
         "fill@topotoolbox":     {"max_abs": 0.0,  "frac_differing": 0.0,
                                  "volume_ratio_max": 1.0},
+        # ... and bit-exact against Whitebox's wang_and_liu as well. THREE
+        # independent implementations reproducing lsdtt3's fill cell-for-cell.
+        # Measured 2026-09-08.
+        "fill@whitebox":        {"max_abs": 0.0,  "frac_differing": 0.0,
+                                 "volume_ratio_max": 1.0},
         "fill_epsilon@richdem": {"max_abs": 0.12, "frac_differing": 0.006,
                                  "volume_ratio_max": 1.005},
+        # Whitebox, with flat_increment matched to fill_min_slope * cell_size,
+        # is 4x closer than RichDEM on every metric (0.0246 m vs 0.1052 m;
+        # 0.105 % vs 0.523 % of cells; volume 1.00037 vs 1.00230). Measured
+        # 2026-09-08. Pinned just above observed.
+        "fill_epsilon@whitebox": {"max_abs": 0.026, "frac_differing": 0.0012,
+                                  "volume_ratio_max": 1.001},
         "breach@richdem":       {"max_abs": 0.0,  "frac_differing": 0.0,
                                  "volume_ratio_max": 1.0},
         # D8 accumulation is IDENTICAL to TopoToolbox on this fixture -- same
@@ -293,14 +356,38 @@ TOLERANCES = {
         # break. Pinned tight so any divergence fails.
         "accum_d8@topotoolbox": {"rank_correlation_min": 0.9999,
                                  "top_channels_rel": 1e-6, "total_rel": 1e-6},
+        # Whitebox is EXACT here too, on all three metrics: rank correlation
+        # 1.0000000000, top-channel and total agreement 0.0. Measured
+        # 2026-09-08. Two independent implementations reproducing lsdtt3's D8
+        # cell-for-cell on high relief is the strongest statement this
+        # comparison can make, so it is pinned as tight as topotoolbox's.
+        "accum_d8@whitebox":    {"rank_correlation_min": 0.9999,
+                                 "top_channels_rel": 1e-6, "total_rel": 1e-6},
     },
     "lakeland_small": {
         "fill@richdem":         {"max_abs": 0.0,  "frac_differing": 0.0,
                                  "volume_ratio_max": 1.0},
         "fill@topotoolbox":     {"max_abs": 0.0,  "frac_differing": 0.0,
                                  "volume_ratio_max": 1.0},
+        # Bit-exact on the low-relief fixture too, where the flats that make
+        # every other comparison diverge are at their worst. Measured 2026-09-08.
+        "fill@whitebox":        {"max_abs": 0.0,  "frac_differing": 0.0,
+                                 "volume_ratio_max": 1.0},
         "fill_epsilon@richdem": {"max_abs": 0.55, "frac_differing": 0.92,
                                  "volume_ratio_max": 45.0},
+        # THE ROW THAT JUSTIFIES SPLITTING THIS CASE. On flat-dominated terrain
+        # RichDEM's one-ULP scheme moves 40.5x the material lsdtt3 does; with a
+        # matched constant increment Whitebox moves 1.39x. Same fixture, same
+        # lsdtt3 output -- the 40x was the epsilon SCHEME, not lsdtt3.
+        #
+        # 1.39 is still not 1.0, and should not be forced to be: the two impose
+        # the gradient differently along a flat (lsdtt3 scales by distance, so a
+        # diagonal step rises by sqrt(2) more). That is a real operational
+        # difference, so the pin sits above what was measured rather than at a
+        # number that would assert the two schemes are identical.
+        # Measured 2026-09-08.
+        "fill_epsilon@whitebox": {"max_abs": 0.15, "frac_differing": 0.82,
+                                  "volume_ratio_max": 1.40},
         "breach@richdem":       {"max_abs": 0.95, "frac_differing": 0.032,
                                  "volume_ratio_max": 4.0},
         # Low relief does NOT reproduce exactly, and that is expected rather
@@ -312,6 +399,23 @@ TOLERANCES = {
         # agreement.
         "accum_d8@topotoolbox": {"rank_correlation_min": 0.93,
                                  "top_channels_rel": 0.17, "total_rel": 0.002},
+        # Whitebox agrees with lsdtt3 MORE CLOSELY than TopoToolbox does on low
+        # relief, which is worth stating because it is the opposite of what the
+        # alpine row would lead you to expect. Measured 2026-09-08:
+        #
+        #                  rank corr    top 1% channels    total
+        #   whitebox       0.99968          0.60 %        0.0051 %
+        #   topotoolbox    0.94018         15.11 %        0.1466 %
+        #
+        # Same D8 rule in all three, so the spread is tie-breaking among the
+        # near-ties that survive an epsilon fill on flat ground -- and Whitebox
+        # happens to break them the way lsdtt3 does. That is a coincidence of
+        # implementation, not a correctness result, so the pins are set just
+        # above what was measured rather than at the round numbers the alpine
+        # row can afford.
+        "accum_d8@whitebox":    {"rank_correlation_min": 0.999,
+                                 "top_channels_rel": 0.0065,
+                                 "total_rel": 0.00006},
     },
 }
 
@@ -440,6 +544,14 @@ def cell_area_of(path: pathlib.Path) -> float:
     gdal.UseExceptions()
     gt = gdal.Open(str(path)).GetGeoTransform()
     return abs(gt[1] * gt[5])
+
+
+def cell_size_of(path: pathlib.Path) -> float:
+    """Cell size in projection units (the N-S and E-W pitch are equal here)."""
+    from osgeo import gdal
+    gdal.UseExceptions()
+    gt = gdal.Open(str(path)).GetGeoTransform()
+    return abs(gt[1])
 
 
 def accumulation_metrics(lsdtt_path, richdem_path, cell_area, top_fraction=0.01):
@@ -612,7 +724,8 @@ def run_lsdtt(exe: pathlib.Path, fixture: pathlib.Path, out_dir: pathlib.Path,
 
 
 def run_reference(reference: str, routine: str, fixture: pathlib.Path,
-                  out_path: pathlib.Path, cache: bool = True):
+                  out_path: pathlib.Path, cache: bool = True,
+                  extra_args: list | None = None):
     """Run one reference implementation. Returns (seconds, cached_bool)."""
     if cache and out_path.exists():
         meta_path = out_path.with_suffix(".json")
@@ -622,7 +735,8 @@ def run_reference(reference: str, routine: str, fixture: pathlib.Path,
     out_path.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
         [sys.executable, str(SCRIPT_DIR / REFERENCE_SCRIPTS[reference]),
-         "--routine", routine, "--in", str(fixture), "--out", str(out_path)],
+         "--routine", routine, "--in", str(fixture), "--out", str(out_path)]
+        + list(extra_args or []),
         capture_output=True, text=True)
 
     if proc.returncode == SKIP_EXIT:
@@ -750,9 +864,33 @@ def main() -> int:
             # happened when fixture generation moved from pixi's GDAL to the C++
             # tool's, and produced a bogus "99.9 % of cells differ" instead of
             # the true 0 %.
+            # lsdtt3's `fill_min_slope` is a GRADIENT: the rise imposed across a
+            # flat is `min_slope * distance`, so on a 30 m grid a min_slope of
+            # 1e-4 raises a cardinal neighbour by 3e-3 m. Whitebox's
+            # `flat_increment` is metres per cell directly. Handing it the raw
+            # min_slope compares two different increments -- measured at 30x
+            # apart, which showed up as a volume ratio of 25 on the flat-dominated
+            # lakeland fixture. Convert.
+            #
+            # RichDEM is deliberately NOT converted: its epsilon=True steps by
+            # one ULP of std::nextafter, which is not an increment in metres at
+            # all and has no matching value.
+            extra: list[str] = []
+            if (reference == "whitebox"
+                    and "fill_min_slope" in spec.get("params", {})):
+                min_slope = float(spec["params"]["fill_min_slope"])
+                if min_slope > 0.0:
+                    cell = cell_size_of(stage_input)
+                    extra = ["--flat-increment", repr(min_slope * cell)]
+
+            # Cache key must include the extra args, or a run with a different
+            # increment silently reuses the previous raster.
+            suffix = ("_" + "_".join(extra).replace("-", "").replace(".", "p")
+                      if extra else "")
             ref_out = (work_dir / f"{reference}_cache" /
-                       f"{args.fixture}_{fixture_digest}_{routine}.tif")
-            ref_s, cached = run_reference(reference, routine, stage_input, ref_out)
+                       f"{args.fixture}_{fixture_digest}_{routine}{suffix}.tif")
+            ref_s, cached = run_reference(reference, routine, stage_input,
+                                          ref_out, extra_args=extra)
 
             if spec["kind"] == "accumulation":
                 m = accumulation_metrics(lsdtt_out, ref_out,

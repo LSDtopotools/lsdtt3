@@ -1409,8 +1409,9 @@ Current investigation order:
 4. Test padded carry storage last. Static scheduling limits cross-thread carry
    sharing to partition boundaries, and carries are written only once per strip.
 
-The detailed implementation and validation steps are in
-`docs/plan_docs/plan_surface_metrics_parallelisation.md`, §9.5 and §10.
+These are outstanding work rather than findings, so they are tracked in the
+benchmarking plan (uncommitted scratch) rather than here. This document records
+what was measured; it is not a to-do list.
 
 #### Sequential cases are no longer swept (changed 2026-09-01)
 
@@ -1432,8 +1433,7 @@ table, and `SUMMARY.md` states why in that section. This cut the `laptop`
 profile from 308 measurements to 200 with no loss of information.
 
 The surface-metric cases stay in the sweep. They are genuinely parallel code, so
-their poor scaling is a defect worth tracking rather than an expected result —
-see `docs/plan_docs/plan_surface_metrics_parallelisation.md`.
+their poor scaling is a defect worth tracking rather than an expected result.
 
 !!! warning "Do not add a case to `SEQUENTIAL_CASES` because its scaling is poor"
     The flag means "this algorithm has no parallelism to measure", not "this
@@ -1441,8 +1441,7 @@ see `docs/plan_docs/plan_surface_metrics_parallelisation.md`.
     exactly the finding the benchmark exists to surface.
 
 Whether these algorithms *could* be parallelised bit-identically is a separate
-question, researched in
-`docs/plan_docs/research_parallel_flow_routing.md`.
+question, and an open one.
 
 #### Consequences for reading and running the benchmark
 
@@ -5864,6 +5863,200 @@ meant to remove tests. `tests/CMakeLists.txt` now carries a guard that refuses t
 configure when a test matches no domain rule and would be unreachable by a
 compartment run; that guard caught a badly-named test immediately in a later
 phase and is exactly the protection this failure needed.
+
+---
+
+## 10o. Whitebox as a second D8 reference, and a raster-writer defect (2026-09-08)
+
+Wiring `accum_d8@whitebox` into the flow benchmark's asserted comparisons. The
+wiring itself was three lines; everything below is what it exposed.
+
+### Whitebox uses steepest descent - measured, not assumed
+
+D8 accumulation was asserted against ONE independent implementation
+(TopoToolbox). RichDEM is excluded because it selects the LOWEST-ELEVATION
+neighbour rather than the steepest DESCENT. Whitebox had never been
+characterised, so it carried timing rows only.
+
+`tests/scripts/check_whitebox_d8_rule.py` settles it against two analytic
+fixtures.
+
+**A planar ramp cannot answer this question**, and assuming otherwise is the
+trap. On a ramp the S, SE and SW neighbours are TIED in elevation, so a
+lowest-elevation rule that breaks ties toward cardinals passes it - RichDEM does
+exactly that (corrected at `test_flow_properties.cpp:996`). The ramp is still
+run, because it calibrates the counting convention: Whitebox's
+`out_type="cells"` was measured to INCLUDE the cell itself.
+
+The second fixture removes the tie. One cell is given a diagonal neighbour that
+is lower and a cardinal neighbour that is steeper:
+
+| receiver | drop | distance | gradient | |
+|---|---|---|---|---|
+| cardinal S | 8 m | 30.00 m | 0.2667 | steeper |
+| diagonal SE | 10 m | 42.43 m | 0.2357 | lower |
+
+The script computes the whole expected accumulation raster twice - once per rule
+- with its own reference D8, rather than hand-deriving what the surrounding
+cells do. The two rules differ on 11 of 441 cells. Whitebox matched steepest
+descent on every one, and a `d8_pointer` read (direction codes calibrated on the
+ramp, not assumed) confirmed it independently. The script reports INCONCLUSIVE
+if accumulation and pointer ever disagree.
+
+**Note the headline cells did not decide it.** At the two candidate receivers
+the steepest-descent expectation is S 24 / SE 24 - equal, because SE inherits
+its own feeder column. The whole-raster comparison is what discriminates. A
+check reading only the two neighbours would have concluded nothing while
+appearing to.
+
+### The raster writer set a TIFF predictor that does not apply to float data
+
+`lsdtt_data_loader.cpp` (2 sites) and `lsdtt_raster_warp.cpp` (1) hardcoded
+`PREDICTOR=2` on every tiled DEFLATE output. Predictor 2 is horizontal
+differencing, which TIFF 6.0 defines for INTEGER data; float data takes
+predictor 3. lsdtt3 writes Float32 almost everywhere. GDAL accepts the pairing
+and reads it back without complaint, so nothing inside this project noticed.
+
+Measured on alpine_1000 (1000x1000 Float32, 3.81 MB raw), tiled DEFLATE:
+
+| predictor | size | |
+|---|---|---|
+| 2 | 2.68 MB | what shipped; spec-invalid on float |
+| 3 | 2.19 MB | correct, and 18 % smaller |
+| none | 3.14 MB | |
+
+Not a trade-off: the conforming choice is also the smaller one. Fixed by
+`tiff_predictor_for()` in `lsdtt_data_loader.hpp`, which selects from the band
+type and is used at all three sites. The other DEFLATE writers
+(`lsdtt_raster_fetch.cpp`, `lsdtt_raster_reproject.cpp`) set no predictor and
+were never affected - which is why fetched FIXTURES always read correctly while
+lsdtt3-written outputs did not.
+
+**This defect is in every raster lsdtt3 has written to date.** Any consumer
+using a strict TIFF reader has been getting garbage from lsdtt3 outputs
+silently.
+
+### What the predictor fix did NOT fix
+
+The obvious inference - invalid predictor causes the bad read - is wrong, and
+was tested rather than assumed. A creation-option matrix on identical data:
+
+| creation options | Whitebox read |
+|---|---|
+| `COMPRESS=DEFLATE` | correct |
+| `COMPRESS=DEFLATE, PREDICTOR=2` | all NaN |
+| `COMPRESS=DEFLATE, PREDICTOR=3` | all NaN |
+| `COMPRESS=DEFLATE, TILED=YES` (no predictor) | correct |
+| uncompressed | correct |
+
+**Whitebox Workflows cannot read a DEFLATE-predictor GeoTIFF at all**, valid
+predictor or not; tiling is irrelevant. That is a limitation of its TIFF reader.
+Going predictor-free globally would cost every user 43 % on every float raster
+to accommodate one reader, so `whitebox_reference.py` transcodes a
+predictor-free temporary instead. Pixel values are bit-identical; only the
+compression of the bytes changes. Staging precedes the timing and read time is
+reported separately, so it costs the measurement nothing.
+
+Two implementation notes worth keeping: Whitebox's `Raster` holds a file handle
+and the TOOLS re-read from disk, so the staged copy must outlive every tool
+call, not just `read_raster()`; and `assert_readable()` now refuses to time an
+all-NaN raster, because that is the failure mode here.
+
+### How it presented, which is the reason this section exists
+
+The first run reported `accum_d8@whitebox` with a maximum accumulation of **123
+cells against lsdtt3's 41,437**. It read as a catastrophic routing
+disagreement. Whitebox was routing a grid of NaN, faithfully, and reporting a
+number. No error, no warning.
+
+The diagnostic that broke it open was not the accumulation raster but the
+POINTER raster: 53,155 of 65,536 cells with no receiver, on a filled DEM
+measured to contain zero flat cells. That is not a routing difference, and it
+is what said "this tool is not seeing the surface".
+
+**A silent all-NaN read is indistinguishable from a result once it reaches a
+summary table.** Every reference wrapper should assert its input loaded.
+
+### Measured agreement, and the pinned tolerances
+
+With the DEM actually loading:
+
+| fixture | reference | rank corr | top 1 % channels | total |
+|---|---|---:|---:|---:|
+| alpine_small | topotoolbox | 1.0000000000 | 0.0 | 0.0 |
+| alpine_small | **whitebox** | **1.0000000000** | **0.0** | **0.0** |
+| alpine_small | richdem *(report-only)* | 0.5088829645 | 16.56 % | 4.592 % |
+| lakeland_small | topotoolbox | 0.9401849288 | 15.11 % | 0.1466 % |
+| lakeland_small | **whitebox** | **0.9996777158** | **0.60 %** | **0.0051 %** |
+| lakeland_small | richdem *(report-only)* | 0.7927508258 | 6.58 % | 0.0991 % |
+
+Three implementations agree cell-for-cell on high relief. Pinned just above
+observed: alpine `0.9999 / 1e-6 / 1e-6`, lakeland `0.999 / 0.0065 / 6e-5`.
+
+**Whitebox tracks lsdtt3 more closely than TopoToolbox does on LOW relief**
+(0.60 % vs 15.11 % on top channels), which is the opposite of what the alpine
+row suggests. All three use the same selection rule, so the spread is
+tie-breaking among the near-ties that survive an epsilon fill on flat ground.
+That is a coincidence of implementation, not a correctness result, and must not
+be quoted as one.
+
+### Whitebox as a value reference for fill (same session)
+
+With the raster now loading, Whitebox was added to two more value comparisons.
+
+`fill@whitebox`, routed through `fill_depressions_wang_and_liu` (`fix_flats=
+False`), is **bit-exact on both fixtures** — 0.0 m, 0 differing cells, volume
+ratio 1.0. lsdtt3's fill now reproduces cell-for-cell against three independent
+implementations.
+
+`fill_epsilon` needed a units correction first. **`fill_min_slope` is a
+GRADIENT** — `lsdtt_raster_flow_preprocessing_cpu.cpp` imposes
+`min_slope * distance`, so on a 30 m grid 1e-4 raises a cardinal neighbour by
+3e-3 m and a diagonal by sqrt(2) more — whereas Whitebox's `flat_increment` is
+metres per cell. Comparing them directly compares increments 30x apart. With
+`--flat-increment` set to `fill_min_slope * cell_size`:
+
+| fixture | reference | max abs | cells >1cm | volume ratio |
+|---|---|---:|---:|---:|
+| alpine | richdem | 0.1052 m | 0.523 % | 1.0023 |
+| alpine | **whitebox** | **0.0246 m** | **0.105 %** | **1.00037** |
+| lakeland | richdem | 0.4995 m | 91.29 % | **40.54** |
+| lakeland | **whitebox** | **0.1459 m** | 81.36 % | **1.39** |
+
+The lakeland volume ratio is the point: RichDEM's one-ULP scheme moves 40.5x the
+material lsdtt3 does on flat-dominated terrain; a matched constant increment
+moves 1.39x. Same fixture, same lsdtt3 output — **the 40x was the epsilon
+scheme, not lsdtt3.** 1.39 is not forced to 1.0 and should not be: lsdtt3 scales
+the gradient by distance and Whitebox does not, which is a real operational
+difference.
+
+One discrepancy remains open. Whitebox's Barnes `fill_depressions` disagrees
+with lsdtt3 by up to 9.78 m on alpine — the same offset by which it disagrees
+with Whitebox's *own* `wang_and_liu`, which is bit-exact. So the disagreement is
+that tool, not the increment scheme, and `fill@whitebox` in the timing campaign
+still calls it. **Why it disagrees with three other implementations is
+unresolved.**
+
+### Drainage area without the s-vector (same session)
+
+`get_drainage_area_raster()` now falls back to `accumulate_raster()` when the
+s-vector was not built, rather than throwing, and `lsdtt-drainage-analysis`
+exposes `build_flow_s_vector` (default true, ignored with a warning when
+connectivity or height-above-channel is requested). **P11** in
+`test_flow_properties.cpp` asserts the two paths give a bit-identical raster —
+exact, not a tolerance — on all four fixtures.
+
+This exists so the benchmark can report a like-for-like D8 row against tools
+that build no equivalent structure. The timing that justifies it is NOT recorded
+here: it must be measured on a server, not on a thermally limited laptop.
+
+### Consequence for recorded campaigns
+
+`run_benchmark_suite.py`'s `accum_d8` case is `needs_filled`, so its Whitebox
+rows were reading an lsdtt3-written filled DEM and were also routing NaN. The
+fix is shared (both drivers call `whitebox_reference.py`), but **any campaign
+recorded before 2026-09-08 is invalid for Whitebox flow rows and must be
+re-run.**
 
 ---
 
