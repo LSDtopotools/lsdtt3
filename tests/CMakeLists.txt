@@ -1097,7 +1097,14 @@ add_lsdtt_cli_smoke_test(
     lsdtt-chi-analysis
     chi_analysis_smoke.param.in
     tiny_chi_fit_nodes_mn_0p500.csv
-    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:5ef85f68c63b5bd16d45051be2a2a645fd48c73a98123024724e58987902adab
+    # Re-pinned 2026-09-08 when the chi integral moved from a left-endpoint
+    # rectangle rule to a TRAPEZOIDAL one. Chi is lower everywhere on this
+    # fixture (max 4.0297 -> 3.6297) because the old rule evaluated the
+    # integrand at the upstream end of every segment, where it is largest.
+    # Verified against TopoToolbox before re-pinning: the per-basin regression
+    # slope went from 1.00377 to 1.00000. See chi_increment() and
+    # docs/testing_and_benchmarking.md.
+    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:b64aa1266abc09369b423534d44ec5ed8a3ceac52d7d31e9f8637c8893c26ad3
 )
 
 # -----------------------------------------------------------------------------

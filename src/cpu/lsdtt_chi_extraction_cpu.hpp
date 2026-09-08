@@ -46,9 +46,17 @@ namespace lsdtt
 //
 // Shared parameters controlling the chi integral.
 //
-// chi increment at a pixel is:
+// chi increment along the segment from a pixel to its receiver is TRAPEZOIDAL,
+// evaluating the integrand at both ends:
 //
-//   d_chi = dx * pow(A_0 / denominator, m_over_n)
+//   d_chi = dx * 0.5 * ( pow(A_0 / denom_here, m_over_n)
+//                      + pow(A_0 / denom_receiver, m_over_n) )
+//
+// Second-order accurate. It replaced a left-endpoint rectangle rule on
+// 2026-09-08: that rule was O(h) and biased chi HIGH on every segment, because
+// the denominator grows downstream so the upstream integrand always exceeds the
+// segment average. Measured at ~0.4 % on a 30 m grid, growing with cell size.
+// See chi_increment() in the .cpp and docs/testing_and_benchmarking.md.
 //
 // where denominator is either:
 //

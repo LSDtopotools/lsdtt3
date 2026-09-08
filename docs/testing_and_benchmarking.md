@@ -6050,6 +6050,122 @@ This exists so the benchmark can report a like-for-like D8 row against tools
 that build no equivalent structure. The timing that justifies it is NOT recorded
 here: it must be measured on a server, not on a thermally limited laptop.
 
+### Chi agrees with TopoToolbox to sub-percent (2026-09-08)
+
+The first value comparison in lsdtt3's ANALYSIS layer rather than its
+preprocessing layer. Both implement the Perron & Royden (2013) integral
+`chi = int (A0/A)^(m/n) ds`; lsdtt3 follows Mudd et al. (2014) with the same
+definition.
+
+**Method.** Same DEM, same channel-defining threshold, `A0 = 1 m^2` and
+`m/n = 0.45` on both sides. lsdtt3's chi fit node table is joined to
+TopoToolbox's chi grid on the FLAT INDEX, then regressed per basin.
+
+Per basin rather than as a difference, because **chi is baselevel-relative**:
+each tool seeds from its own outlet, so a raw difference is dominated by a
+constant offset that says nothing about the integrand. The regression separates
+the two: the SLOPE is the ratio of the integrands and must be 1, the INTERCEPT
+is the baselevel offset and is free.
+
+Measured on a synthetic island (400^2, 57 % land), 9 complete basins,
+804 matched nodes:
+
+| basin | n | slope | intercept | R^2 | max abs residual |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 50 | 1.006378 | -2.57999 | 0.9999863 | 0.004928 |
+| 1 | 167 | 1.003793 | -0.41878 | 0.9999826 | 0.011923 |
+| 2 | 58 | 1.004604 | -3.30436 | 0.9999706 | 0.008226 |
+| 3 | 25 | 1.002134 | -1.35847 | 0.9999025 | 0.008481 |
+| 4 | 42 | 1.003935 | -3.09087 | 0.9999748 | 0.007555 |
+| 5 | 101 | 1.004117 | -1.53699 | 0.9999673 | 0.009011 |
+| 6 | 69 | 1.001952 | -1.94635 | 0.9999708 | 0.009110 |
+| 7 | 231 | 1.003246 | -0.41685 | 0.9999959 | 0.011733 |
+| 8 | 61 | 1.003783 | -1.11684 | 0.9999903 | 0.006219 |
+
+Slope within **0.2-0.6 % of 1** on every basin, `R^2 >= 0.9999`, residuals below
+0.012 chi units. Two independent implementations of the chi integral agree to
+sub-percent on the same terrain.
+
+**The residual slope is SYSTEMATIC, not noise** -- all nine basins between
+1.0020 and 1.0064, all positive. Run down 2026-09-08, and it is entirely the
+QUADRATURE RULE:
+
+| | rule | increment over one segment of length L |
+|---|---|---|
+| lsdtt3 | left-endpoint rectangle | `L * f(A_upstream)` |
+| TopoToolbox | trapezoidal (`streamquad_trapz`) | `L * (f(A_up) + f(A_down)) / 2` |
+
+with `f(A) = (A0/A)^(m/n)`. Drainage area increases downstream, so `f`
+decreases, so `f(A_up)` is always greater than the trapezoidal average.
+**lsdtt3's increment is therefore larger on EVERY segment** -- which is why the
+bias is systematic and one-signed rather than scatter.
+
+Proved rather than argued. `chitransform` was reimplemented in numpy from
+TopoToolbox's own `source`/`target`/`node_to_node_distance` arrays; the
+trapezoidal version reproduces `chitransform` to **max difference 0.0**, which
+establishes the edge handling is right. Swapping only the quadrature rule to
+left-endpoint and re-running the same per-basin regression:
+
+| regression | slope range | mean |
+|---|---|---|
+| lsdtt3 vs TopoToolbox (trapezoidal) | 1.00195 - 1.00638 | 1.00377 |
+| lsdtt3 vs left-endpoint variant | **1.00000 - 1.00000** | **1.00000** |
+
+Exact on all nine basins. So the two implementations agree EXACTLY once the
+quadrature rule is matched: same integrand, same drainage area, same path
+lengths (including the sqrt(2) on diagonals), same `A0`, same `m/n`. The 0.4 %
+was never a disagreement about chi.
+
+**RESOLVED: lsdtt3 adopted the trapezoidal rule (2026-09-08).** Trapezoidal is
+second-order accurate and left-endpoint first-order, so the old rule carried an
+O(h) bias that grows with cell size -- ~0.4 % at 30 m, worse on a coarse DEM.
+The package is a development version with no released results, so continuity
+with past output was not a reason to keep a known first-order error.
+
+`chi_increment()` in `lsdtt_chi_extraction_cpu.cpp` now holds the rule in ONE
+place, used by all three extraction paths (full-raster, outlet-seeded
+zero-base, outlet-seeded inherited-base) -- previously the expression was
+written out three times.
+
+Verified after the change, same island fixture, same 9 basins, 804 nodes:
+
+| | slope range | mean | R^2 | max abs residual |
+|---|---|---|---|---|
+| before (rectangle) | 1.00195 - 1.00638 | 1.00377 | >= 0.9999 | 0.012 |
+| **after (trapezoid)** | **0.999999 - 1.000001** | **1.000000** | **1.00000000** | **5e-6** |
+
+The residual is float32 rounding in the CSV, not a difference in the value.
+**lsdtt3 and TopoToolbox now agree on chi to the precision the output format
+carries.**
+
+Direction of the change, on the committed `tiny` fixture: every chi value fell
+(max 4.0297 -> 3.6297), and chi = 0 is preserved at the outlet. That is the
+predicted sign -- the old rule evaluated the integrand at the upstream end of
+each segment, where it is largest.
+
+`rigorous_chi_nodes_sha256` caught this, which is exactly what a hash pin is
+for. It was re-pinned only after the direction and the magnitude were checked
+against TopoToolbox; the CMakeLists entry records why the hash moved.
+
+**Every chi and k_sn produced before this date is ~0.4 % high at 30 m
+resolution**, more at coarser cell sizes. Anything carried forward from an
+earlier run should be regenerated rather than compared against new output.
+
+**What this rules out.** A mismatched `A0` would show as a slope of
+`A0_ratio^(m/n)` -- at `m/n = 0.45`, TopoToolbox's own default of `a0 = 1e6`
+against lsdtt3's 1.0 would appear as ~631. Slope 1.004 confirms both sides ran
+at `A0 = 1 m^2`, which is the condition for a chi gradient to be k_sn.
+
+**The fixture requirement is itself a finding.** lsdtt3 drops any basin whose
+upslope area is `is_influenced_by_invalid` -- a cell with ANY of its 8
+neighbours nodata, or on an open boundary. On a cropped DEM every basin's
+headwaters reach an edge, so all chi outputs are empty. TopoToolbox does not
+decline, and returns chi for edge-truncated basins whose drainage area is wrong
+by construction. The comparison therefore needs a DEM containing a whole
+catchment; a synthetic island supplies one, but only a fat, smooth one
+(`island_fill_fraction: 0.95`, 3 harmonics gave 57 % land; 0.55 with the
+defaults gave 16 % in lobes, and no complete basins at all).
+
 ### Consequence for recorded campaigns
 
 `run_benchmark_suite.py`'s `accum_d8` case is `needs_filled`, so its Whitebox

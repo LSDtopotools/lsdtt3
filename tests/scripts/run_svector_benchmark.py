@@ -357,6 +357,36 @@ def chi_value_compare(build_dir: pathlib.Path, filled: pathlib.Path,
 
     Node join is on the flat index (row * n_cols + col), so no coordinate
     matching and no tolerance on position.
+
+    *** THIS NEEDS A FIXTURE WITH A COMPLETE CATCHMENT. ***
+
+    lsdtt3 drops any basin whose upslope area is `is_influenced_by_invalid`,
+    and that test flags a cell if ANY of its 8 neighbours is nodata, or if it
+    sits on an open boundary (lsdtt_flowinfo_cpu.cpp:690-728). On a cropped DEM
+    every basin's headwaters reach an edge, so EVERY chi output is empty --
+    raster, fit nodes, segments and ksn summary alike. That is a deliberate
+    stance (a truncated basin has the wrong drainage area, so its chi is wrong)
+    and TopoToolbox does not take it, which is itself worth reporting.
+
+    A synthetic island works, but only a FAT one. Measured while building this:
+    `island_fill_fraction: 0.55` with the default harmonics produced 16% land in
+    a lobate shape whose basins all still reached the coast, and zero complete
+    basins. The recipe that works:
+
+        lsdtt-synthetic-networks
+            n_rows/n_cols        400
+            domain_type          efd_island
+            island_fill_fraction 0.95      -> ~57% land, 150 px of interior
+            efd_n_harmonics      3         -> smooth coast, few lobes
+            efd_roughness        3.0
+            steady_state_mode    relief
+            target_relief        900
+
+    then chi with `basin_outlet_snapping_method: none` -- the default
+    `downstream` snapping drags supplied outlets back onto the trunk near the
+    coast, which reintroduces the very problem the inland outlet avoids.
+
+    That gave 9 complete basins and 804 chi nodes on a 400^2 island.
     """
     import math
 
