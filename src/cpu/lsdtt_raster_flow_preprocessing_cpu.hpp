@@ -208,9 +208,10 @@ lsdtt_raster_cpu fill_pits_with_sinks(
 // hydraulic_surface_fill_result / fill_hydraulic_surface
 //
 // A priority-flood projection of a hydraulic water surface.  `node_state`
-// uses 0 = nodata/outside, 1 = active, and 3 = selected outlet.  A selected
-// outlet drains only when it lies on an `o` (open) edge of the NESW boundary
-// string.  `n` edges are closed and `p` edges wrap periodically.
+// uses 0 = nodata/outside, 1 = active, and 3 = selected outlet. Code-3 cells
+// are prescribed sinks wherever they occur. With check_valid_outlet=true,
+// every connected active component needs one. `n` edges are closed and `p`
+// edges wrap periodically.
 //
 // Unlike the historic terrain-fill helpers, nodata does NOT create drainage
 // exits here: it is an impermeable excluded cell.  This distinction is needed

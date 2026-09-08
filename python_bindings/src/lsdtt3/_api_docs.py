@@ -182,6 +182,181 @@ class Raster:
         ...
 
 
+def resample_raster(source: Raster, target_metadata: RasterMeta,
+                    method: str = "linear") -> Raster:
+    """Resample a raster onto an explicit grid without GDAL.
+
+    Parameters
+    ----------
+    source : Raster
+        Source values and validity mask.
+    target_metadata : RasterMeta
+        Destination dimensions, extent, resolution, and CRS.
+    method : str, default="linear"
+        ``nearest``, ``linear``, ``cubic``, ``mean``, ``sum``, ``min``,
+        ``max``, ``mode``, or ``conservative_mean``.
+
+    Returns
+    -------
+    Raster
+        Resampled values on the requested grid.
+
+    Notes
+    -----
+    ``mean`` weights intersecting cells equally. ``conservative_mean`` weights
+    them by overlap area. ``sum`` distributes each source-cell value according
+    to the fraction of its area covered by the destination cell.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+def double_raster(source: Raster, method: str = "linear") -> Raster:
+    """Double both dimensions using the optimized same-extent path.
+
+    Parameters
+    ----------
+    source : Raster
+        Source raster.
+    method : str, default="linear"
+        Resampling method accepted by :func:`resample_raster`.
+
+    Returns
+    -------
+    Raster
+        Raster with twice as many rows and columns and half-sized cells.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+def halve_raster(source: Raster, method: str = "conservative_mean") -> Raster:
+    """Halve both even dimensions using the optimized same-extent path.
+
+    Parameters
+    ----------
+    source : Raster
+        Source raster with even row and column counts.
+    method : str, default="conservative_mean"
+        Resampling method accepted by :func:`resample_raster`.
+
+    Returns
+    -------
+    Raster
+        Raster with half as many rows and columns and double-sized cells.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+def pad_to_nearest_power_of_two(source: Raster) -> Raster:
+    """Pad north and east with nodata to power-of-two dimensions.
+
+    Parameters
+    ----------
+    source : Raster
+        Source raster.
+
+    Returns
+    -------
+    Raster
+        Padded raster retaining the source cell size and south-west origin.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+def interpolate_to_nearest_power_of_two(
+    source: Raster, direction: str = "nearest", method: str = "linear",
+) -> Raster:
+    """Resize to compatible power-of-two dimensions over the same extent.
+
+    Parameters
+    ----------
+    source : Raster
+        Source raster.
+    direction : {"lower", "higher", "nearest"}, default="nearest"
+        Power-of-two selection for both dimensions.
+    method : str, default="linear"
+        Resampling method accepted by :func:`resample_raster`.
+
+    Returns
+    -------
+    Raster
+        Resampled power-of-two raster.
+
+    Notes
+    -----
+    The row and column scale factors must match because raster cells are square.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+class RasterHierarchy:
+    """Manage same-extent resolutions for one float raster.
+
+    Level zero is the input, finest grid. The hierarchy retains only the
+    buffers selected by ``storage``; restriction and prolongation transfer
+    from the active level.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+
+    def __init__(self, finest: Raster, storage: str = "retain_allocated",
+                 keep_finest: bool = True, levels: int = 0) -> None:
+        """Create a hierarchy.
+
+        Parameters
+        ----------
+        finest : Raster
+            Finest raster. Its dimensions must support each requested exact
+            factor-two level. Add arbitrary integer factors later with
+            :meth:`add_level_for_factor`.
+        storage : {"active_only", "retain_allocated", "preallocated"}
+            Buffer retention policy.
+        keep_finest : bool, default=True
+            Keep level zero when using ``active_only``.
+        levels : int, default=0
+            Number of levels including level zero; zero uses all exact levels.
+        """
+        ...
+
+    def restrict_to(self, level: int,
+                    method: str = "conservative_mean") -> Raster:
+        """Transfer the active grid to a coarser level and activate it."""
+        ...
+
+    def prolong_to(self, level: int, method: str = "linear") -> Raster:
+        """Transfer the active grid to a finer level and activate it."""
+        ...
+
+    def level_factor(self, level: int) -> int:
+        """Return the integer coarsening factor relative to level zero."""
+        ...
+
+    def level_shape(self, level: int) -> tuple[int, int]:
+        """Return ``(n_rows, n_cols)`` for a hierarchy level."""
+        ...
+
+
 def fill_pits(raster: Raster, min_slope: float = 1e-4, n_threads: int = 0) -> Raster:
     """Fill depressions, optionally imposing a minimum drainage slope.
 
@@ -1229,11 +1404,11 @@ def fill_hydraulic_surface(surface: Raster, node_state: Raster,
     boundary_conditions : str, default="nnnn"
         Four-character north/east/south/west boundary code. ``"o"`` opens an
         edge; ``"n"`` closes it; periodic codes are supported by FlowInfo.
-        Only state-3 cells on an open edge can drain.
+        These codes define neighbour connectivity, not outlet locations.
     slope_epsilon : float, default=1e-8
         Positive drainage slope imposed across filled flats.
     check_valid_outlet : bool, default=True
-        Require every connected active component to contain a valid outlet.
+        Require every connected active component to contain a state-3 sink.
 
     Returns
     -------
@@ -1268,7 +1443,7 @@ class HydraulicSurfaceFill:
 def run_graphflood(bed: Raster, node_state: Raster, rainfall_rate: Raster,
                    friction_coefficient: Raster, method: str = "mfd",
                    boundary_conditions: str = "oooo", mfd_exponent: float = 1.0,
-                   condition_bed: str = "none", fill_slope_epsilon: float = 1e-3,
+                   condition_bed: str = "none", fill_slope_epsilon: float = 1e-8,
                    check_valid_outlet: bool = True,
                    friction_depth_exponent: float = 5. / 3.,
                    friction_slope_exponent: float = 0.5, dt: float = 0.001,
@@ -1278,7 +1453,8 @@ def run_graphflood(bed: Raster, node_state: Raster, rainfall_rate: Raster,
                    convergence_check_every: int = 100,
                    tol_median_abs_dhw: float = 1e-7,
                    tol_median_rel_dhw: float = 1e-5,
-                   n_threads: int = 0) -> HydraulicResult:
+                   n_threads: int = 0,
+                   initial_water_depth: Raster | None = None) -> HydraulicResult:
     """Run stationary GraphFlood hydraulic routing on a selected domain.
 
     Parameters
@@ -1337,6 +1513,136 @@ def run_graphflood(bed: Raster, node_state: Raster, rainfall_rate: Raster,
     B. Gailleton
     """
     ...
+
+
+def run_graphflood_optimised(
+        bed: Raster, node_state: Raster, rainfall_rate: Raster,
+        friction_coefficient: Raster, boundary_conditions: str = "oooo",
+        mfd_exponent: float = 1.0, condition_bed: str = "none",
+        fill_slope_epsilon: float = 1e-8,
+        check_valid_outlet: bool = True,
+        friction_depth_exponent: float = 5. / 3.,
+        friction_slope_exponent: float = 0.5, dt: float = 1e-3,
+        min_slope: float = 1e-4, point_inflows: Any | None = None,
+        max_steps: int = 10000, run_until_converged: bool = True,
+        convergence_check_every: int = 20,
+        tol_median_abs_dhw: float = 1e-7,
+        tol_median_rel_dhw: float = 1e-5, reuse_topology: bool = True,
+        initial_water_depth: Raster | None = None) -> GraphFloodOptimisedResult:
+    """Run the separate CPU-optimised stationary MFD GraphFlood solver.
+
+    This function does not replace :func:`run_graphflood`. It uses a compact
+    raster traversal and validates topology before reuse.
+
+    ``performance`` on the returned result contains cumulative stage timings,
+    topology rebuild/reuse counts, processed-cell counts, and persistent
+    working bytes.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+def run_graphflood_optimised_v2(
+        bed: Raster, node_state: Raster, rainfall_rate: Raster,
+        friction_coefficient: Raster, boundary_conditions: str = "oooo",
+        mfd_exponent: float = 1.0, condition_bed: str = "none",
+        fill_slope_epsilon: float = 1e-8,
+        check_valid_outlet: bool = True,
+        friction_depth_exponent: float = 5. / 3.,
+        friction_slope_exponent: float = 0.5, dt: float = 1e-3,
+        min_slope: float = 1e-4, point_inflows: Any | None = None,
+        max_steps: int = 10000, run_until_converged: bool = True,
+        convergence_check_every: int = 20,
+        tol_median_abs_dhw: float = 1e-7,
+        tol_median_rel_dhw: float = 1e-5, reuse_topology: bool = True,
+        dirty_tile_size: int = 64, full_validation_every: int = 128,
+        initial_water_depth: Raster | None = None) -> GraphFloodOptimisedResult:
+    """Run the incremental v2 CPU GraphFlood solver.
+
+    V2 adds a monotone radix-heap Priority-Flood, a bounds-free interior MFD
+    kernel, specialised Manning exponents, and dirty-tile topology validation.
+    A failed local validation always falls back to a complete Priority-Flood.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+def run_graphflood_multigrid(
+        bed: Raster, node_state: Raster, rainfall_rate: Raster,
+        friction_coefficient: Raster, *, backend: Any = "optimised_v2",
+        factors: Any = (8, 4, 2, 1), steps_per_level: Any = 100,
+        point_inflows: Any | None = None,
+        initial_water_depth: Raster | None = None,
+        **backend_options: Any) -> Any:
+    """Warm-start GraphFlood over an integer coarse-to-fine grid hierarchy.
+
+    ``backend`` accepts ``"reference"``, ``"optimised"``,
+    ``"optimised_v2"``, or a compatible callable. Factors must divide the
+    original shape and form a descending integer refinement sequence ending
+    at one. The built-in v2 path performs field transfer and depth hand-off
+    natively; other backends use the transparent ``RasterHierarchy`` driver.
+    All hydraulic fields must be co-registered and valid on active cells.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+def run_graphflood_induced(
+        bed: Raster, node_state: Raster, rainfall_rate: Raster,
+        friction_coefficient: Raster, qin_threshold: float, *,
+        backend: Any = "optimised_v2", halo_cells: int = 3,
+        edge_depth_threshold: float = 1e-4, max_expansions: int = 2,
+        point_inflows: Any | None = None, **backend_options: Any) -> Any:
+    """Route on a discharge-selected channel and floodplain domain.
+
+    A one-step full-domain prepass selects cells by ``qin_threshold``. Flux
+    crossing from excluded hillslopes is accumulated as point discharge on
+    the retained domain, and wet domain edges can expand by ``halo_cells``.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    ...
+
+
+class GraphFloodOptimisedPerformance:
+    """Cumulative performance counters from the optimised solvers.
+
+    Attributes
+    ----------
+    topology_check_seconds, projection_seconds, routing_seconds : float
+        Cumulative routing-stage wall times.
+    friction_seconds, depth_update_seconds, convergence_seconds : float
+        Cumulative hydraulic-stage wall times.
+    topology_rebuilds, topology_reuses, dirty_tiles_checked : int
+        Topology work counters.
+    radix_redistributions, interior_routed_cells, boundary_routed_cells : int
+        V2 kernel counters; zero for v1 where they do not apply.
+    persistent_working_bytes : int
+        Capacity-based estimate of retained solver storage.
+    """
+
+
+class GraphFloodOptimisedResult:
+    """Raster outputs and diagnostics from the optimised MFD solver."""
+
+
+class GraphFloodMultigridResult:
+    """Final GraphFlood result and results from every grid factor."""
+
+
+class GraphFloodInducedResult:
+    """Reduced-domain result, full prepass, mask, and expansion history."""
 
 
 class HydraulicResult:

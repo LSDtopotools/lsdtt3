@@ -7,8 +7,10 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <cpu/lsdtt_raster_flow_preprocessing_cpu.hpp>
+#include <cpu/lsdtt_graphflood_optimised_cpu.hpp>
 
 #include "binding_common.hpp"
 
@@ -130,6 +132,49 @@ void add_point_inflows(lsdtt::lsdtt_hydraulic_graph_cpu& solver,
     }
 }
 
+std::vector<double> point_inflow_field(const Raster& bed, nb::object inflows)
+{
+    const auto& meta = bed.native().get_meta();
+    std::vector<double> result(
+        static_cast<std::size_t>(meta.n_rows) * meta.n_cols, 0.0);
+    if (inflows.is_none()) return result;
+    nb::object numpy = nb::module_::import_("numpy");
+    nb::object array = numpy.attr("asarray")(inflows, nb::arg("dtype") = "float64");
+    if (nb::cast<std::size_t>(array.attr("size")) == 0) return result;
+    if (nb::cast<int>(array.attr("ndim")) != 2)
+        throw std::invalid_argument("point_inflows must be an N x 3 array of (row, col, discharge_m3_s)");
+    const nb::tuple shape = nb::cast<nb::tuple>(array.attr("shape"));
+    if (nb::cast<int>(shape[1]) != 3)
+        throw std::invalid_argument("point_inflows must be an N x 3 array of (row, col, discharge_m3_s)");
+    const auto values = nb::cast<std::vector<double>>(array.attr("ravel")());
+    for (std::size_t i = 0; i < values.size(); i += 3)
+    {
+        const double row_value = values[i];
+        const double col_value = values[i + 1];
+        const double discharge = values[i + 2];
+        if (!std::isfinite(row_value) || !std::isfinite(col_value) ||
+            std::floor(row_value) != row_value || std::floor(col_value) != col_value ||
+            !std::isfinite(discharge) || discharge < 0.0)
+            throw std::invalid_argument("point_inflows must contain integral coordinates and non-negative discharge");
+        const auto row = static_cast<std::int64_t>(row_value);
+        const auto col = static_cast<std::int64_t>(col_value);
+        if (row < 0 || row >= meta.n_rows || col < 0 || col >= meta.n_cols)
+            throw std::invalid_argument("point_inflows contains a point outside the bed grid");
+        result[static_cast<std::size_t>(row * meta.n_cols + col)] += discharge;
+    }
+    return result;
+}
+
+std::vector<double> initial_depth_field(const Raster& bed, nb::object value)
+{
+    const auto& meta = bed.native().get_meta();
+    if (value.is_none())
+        return std::vector<double>(
+            static_cast<std::size_t>(meta.n_rows) * meta.n_cols, 0.0);
+    const auto& raster = nb::cast<const Raster&>(value);
+    return field_values(bed, raster, "initial_water_depth");
+}
+
 class HydraulicResult
 {
 public:
@@ -186,6 +231,72 @@ private:
     double added_volume_;
 };
 
+class GraphFloodOptimisedPerformance
+{
+public:
+    explicit GraphFloodOptimisedPerformance(
+        lsdtt::graphflood_optimised_performance value) : value_(value) {}
+    double topology_check_seconds() const { return value_.topology_check_seconds; }
+    double projection_seconds() const { return value_.projection_seconds; }
+    double routing_seconds() const { return value_.routing_seconds; }
+    double friction_seconds() const { return value_.friction_seconds; }
+    double depth_update_seconds() const { return value_.depth_update_seconds; }
+    double convergence_seconds() const { return value_.convergence_seconds; }
+    std::int64_t topology_rebuilds() const { return value_.topology_rebuilds; }
+    std::int64_t topology_reuses() const { return value_.topology_reuses; }
+    std::int64_t routed_cells() const { return value_.routed_cells; }
+    std::int64_t projected_cells() const { return value_.projected_cells; }
+    std::int64_t scratch_reallocations() const { return value_.scratch_reallocations; }
+    std::int64_t dirty_tiles_checked() const { return value_.dirty_tiles_checked; }
+    std::int64_t full_topology_checks() const { return value_.full_topology_checks; }
+    std::int64_t radix_redistributions() const { return value_.radix_redistributions; }
+    std::int64_t interior_routed_cells() const { return value_.interior_routed_cells; }
+    std::int64_t boundary_routed_cells() const { return value_.boundary_routed_cells; }
+    std::uint64_t persistent_working_bytes() const { return value_.persistent_working_bytes; }
+private:
+    lsdtt::graphflood_optimised_performance value_;
+};
+
+class GraphFloodOptimisedResult
+{
+public:
+    explicit GraphFloodOptimisedResult(lsdtt::graphflood_optimised_result result)
+        : bed_(as_raster(std::move(result.bed))),
+          water_depth_(as_raster(std::move(result.water_depth))),
+          water_surface_(as_raster(std::move(result.water_surface))),
+          qin_(as_raster(std::move(result.qin))), qout_(as_raster(std::move(result.qout))),
+          dhw_(as_raster(std::move(result.dhw))),
+          slope_(as_raster(std::move(result.hydraulic_slope))),
+          specific_discharge_(as_raster(std::move(result.specific_discharge))),
+          total_discharge_(as_raster(std::move(result.total_discharge))),
+          performance_(result.performance), converged_(result.converged),
+          step_count_(result.step_count),
+          total_water_volume_(result.total_water_volume_m3),
+          projection_volume_(result.projection_volume_m3) {}
+
+    const Raster& bed() const { return bed_; }
+    const Raster& water_depth() const { return water_depth_; }
+    const Raster& water_surface() const { return water_surface_; }
+    const Raster& qin() const { return qin_; }
+    const Raster& qout() const { return qout_; }
+    const Raster& dhw() const { return dhw_; }
+    const Raster& slope() const { return slope_; }
+    const Raster& specific_discharge() const { return specific_discharge_; }
+    const Raster& total_discharge() const { return total_discharge_; }
+    const GraphFloodOptimisedPerformance& performance() const { return performance_; }
+    bool converged() const { return converged_; }
+    std::int64_t step_count() const { return step_count_; }
+    double total_water_volume() const { return total_water_volume_; }
+    double projection_volume() const { return projection_volume_; }
+private:
+    Raster bed_, water_depth_, water_surface_, qin_, qout_, dhw_, slope_;
+    Raster specific_discharge_, total_discharge_;
+    GraphFloodOptimisedPerformance performance_;
+    bool converged_;
+    std::int64_t step_count_;
+    double total_water_volume_, projection_volume_;
+};
+
 HydraulicSurfaceFill fill_hydraulic_surface(
     const Raster& surface,
     const Raster& node_state,
@@ -220,7 +331,8 @@ HydraulicResult run_graphflood(
     int convergence_check_every,
     double tol_median_abs_dhw,
     double tol_median_rel_dhw,
-    int n_threads)
+    int n_threads,
+    nb::object initial_water_depth)
 {
     if (mfd_exponent <= 0.0f)
         throw std::invalid_argument("mfd_exponent must be positive");
@@ -257,6 +369,8 @@ HydraulicResult run_graphflood(
     solver.set_friction_coefficient_field(
         field_values(bed, friction_coefficient, "friction_coefficient"));
     add_point_inflows(solver, bed, point_inflows);
+    if (!initial_water_depth.is_none())
+        solver.set_water_depth(initial_depth_field(bed, initial_water_depth));
 
     bool converged = false;
     if (run_until_converged)
@@ -284,10 +398,215 @@ HydraulicResult run_graphflood(
         solver.total_water_volume(), solver.cumulative_surface_projection_volume());
 }
 
+GraphFloodOptimisedResult run_graphflood_optimised(
+    const Raster& bed,
+    const Raster& node_state,
+    const Raster& rainfall_rate,
+    const Raster& friction_coefficient,
+    const std::string& boundary_conditions,
+    float mfd_exponent,
+    const std::string& condition_bed,
+    float fill_slope_epsilon,
+    bool check_valid_outlet,
+    double friction_depth_exponent,
+    double friction_slope_exponent,
+    double dt,
+    double min_slope,
+    nb::object point_inflows,
+    std::int64_t max_steps,
+    bool run_until_converged,
+    int convergence_check_every,
+    double tol_median_abs_dhw,
+    double tol_median_rel_dhw,
+    bool reuse_topology,
+    nb::object initial_water_depth)
+{
+    if (mfd_exponent <= 0.0f)
+        throw std::invalid_argument("mfd_exponent must be positive");
+    if (condition_bed != "none" && condition_bed != "fill")
+        throw std::invalid_argument("condition_bed must be 'none' or 'fill'");
+
+    const auto states = hydraulic_states(bed, node_state);
+    lsdtt::lsdtt_raster_cpu routed_bed = bed.native();
+    if (condition_bed == "fill")
+    {
+        routed_bed = lsdtt::fill_hydraulic_surface(
+            routed_bed, states, hydraulic_boundaries(boundary_conditions),
+            fill_slope_epsilon, check_valid_outlet).filled_surface;
+    }
+
+    lsdtt::graphflood_optimised_options options;
+    options.boundary_conditions = hydraulic_boundaries(boundary_conditions);
+    options.mfd_exponent = mfd_exponent;
+    options.fill_slope_epsilon = fill_slope_epsilon;
+    options.check_valid_outlet = check_valid_outlet;
+    options.friction_depth_exponent = friction_depth_exponent;
+    options.friction_slope_exponent = friction_slope_exponent;
+    options.dt = dt;
+    options.min_slope = min_slope;
+    options.reuse_topology = reuse_topology;
+
+    return GraphFloodOptimisedResult(lsdtt::run_graphflood_optimised_cpu(
+        routed_bed, states,
+        field_values(bed, rainfall_rate, "rainfall_rate"),
+        field_values(bed, friction_coefficient, "friction_coefficient"),
+        point_inflow_field(bed, point_inflows),
+        initial_depth_field(bed, initial_water_depth), options, max_steps,
+        run_until_converged, convergence_check_every,
+        tol_median_abs_dhw, tol_median_rel_dhw));
+}
+
+GraphFloodOptimisedResult run_graphflood_optimised_v2(
+    const Raster& bed,
+    const Raster& node_state,
+    const Raster& rainfall_rate,
+    const Raster& friction_coefficient,
+    const std::string& boundary_conditions,
+    float mfd_exponent,
+    const std::string& condition_bed,
+    float fill_slope_epsilon,
+    bool check_valid_outlet,
+    double friction_depth_exponent,
+    double friction_slope_exponent,
+    double dt,
+    double min_slope,
+    nb::object point_inflows,
+    std::int64_t max_steps,
+    bool run_until_converged,
+    int convergence_check_every,
+    double tol_median_abs_dhw,
+    double tol_median_rel_dhw,
+    bool reuse_topology,
+    int dirty_tile_size,
+    int full_validation_every,
+    nb::object initial_water_depth)
+{
+    if (mfd_exponent <= 0.0f)
+        throw std::invalid_argument("mfd_exponent must be positive");
+    if (condition_bed != "none" && condition_bed != "fill")
+        throw std::invalid_argument("condition_bed must be 'none' or 'fill'");
+
+    const auto states = hydraulic_states(bed, node_state);
+    lsdtt::lsdtt_raster_cpu routed_bed = bed.native();
+    if (condition_bed == "fill")
+    {
+        routed_bed = lsdtt::fill_hydraulic_surface(
+            routed_bed, states, hydraulic_boundaries(boundary_conditions),
+            fill_slope_epsilon, check_valid_outlet).filled_surface;
+    }
+
+    lsdtt::graphflood_optimised_options options;
+    options.boundary_conditions = hydraulic_boundaries(boundary_conditions);
+    options.mfd_exponent = mfd_exponent;
+    options.fill_slope_epsilon = fill_slope_epsilon;
+    options.check_valid_outlet = check_valid_outlet;
+    options.friction_depth_exponent = friction_depth_exponent;
+    options.friction_slope_exponent = friction_slope_exponent;
+    options.dt = dt;
+    options.min_slope = min_slope;
+    options.reuse_topology = reuse_topology;
+    options.dirty_tile_size = dirty_tile_size;
+    options.full_validation_every = full_validation_every;
+
+    return GraphFloodOptimisedResult(lsdtt::run_graphflood_optimised_v2_cpu(
+        routed_bed, states,
+        field_values(bed, rainfall_rate, "rainfall_rate"),
+        field_values(bed, friction_coefficient, "friction_coefficient"),
+        point_inflow_field(bed, point_inflows),
+        initial_depth_field(bed, initial_water_depth), options, max_steps,
+        run_until_converged, convergence_check_every,
+        tol_median_abs_dhw, tol_median_rel_dhw));
+}
+
+nb::tuple run_graphflood_optimised_v2_multigrid_native(
+    const Raster& bed, const Raster& node_state, const Raster& rainfall_rate,
+    const Raster& friction_coefficient, const std::vector<int>& factors,
+    const std::vector<std::int64_t>& steps_per_level,
+    const std::string& boundary_conditions, float mfd_exponent,
+    const std::string& condition_bed, float fill_slope_epsilon,
+    bool check_valid_outlet, double friction_depth_exponent,
+    double friction_slope_exponent, double dt, double min_slope,
+    nb::object point_inflows, bool run_until_converged,
+    int convergence_check_every, double tol_median_abs_dhw,
+    double tol_median_rel_dhw, bool reuse_topology, int dirty_tile_size,
+    int full_validation_every, nb::object initial_water_depth)
+{
+    if (mfd_exponent <= 0.0f)
+        throw std::invalid_argument("mfd_exponent must be positive");
+    if (condition_bed != "none" && condition_bed != "fill")
+        throw std::invalid_argument("condition_bed must be 'none' or 'fill'");
+    const auto states = hydraulic_states(bed, node_state);
+    lsdtt::lsdtt_raster_cpu routed_bed = bed.native();
+    const auto boundaries = hydraulic_boundaries(boundary_conditions);
+    if (condition_bed == "fill")
+        routed_bed = lsdtt::fill_hydraulic_surface(
+            routed_bed, states, boundaries, fill_slope_epsilon,
+            check_valid_outlet).filled_surface;
+    lsdtt::graphflood_optimised_options options;
+    options.boundary_conditions = boundaries;
+    options.mfd_exponent = mfd_exponent;
+    options.fill_slope_epsilon = fill_slope_epsilon;
+    options.check_valid_outlet = check_valid_outlet;
+    options.friction_depth_exponent = friction_depth_exponent;
+    options.friction_slope_exponent = friction_slope_exponent;
+    options.dt = dt;
+    options.min_slope = min_slope;
+    options.reuse_topology = reuse_topology;
+    options.dirty_tile_size = dirty_tile_size;
+    options.full_validation_every = full_validation_every;
+    auto native = lsdtt::run_graphflood_optimised_v2_multigrid_cpu(
+        routed_bed, states,
+        field_values(bed, rainfall_rate, "rainfall_rate"),
+        field_values(bed, friction_coefficient, "friction_coefficient"),
+        point_inflow_field(bed, point_inflows), initial_depth_field(bed, initial_water_depth),
+        options, {}, factors, steps_per_level, run_until_converged,
+        convergence_check_every, tol_median_abs_dhw, tol_median_rel_dhw);
+    nb::list results;
+    for (auto& result : native.level_results)
+        results.append(nb::cast(GraphFloodOptimisedResult(std::move(result))));
+    return nb::make_tuple(results, native.factors);
+}
+
 } // namespace
 
 void bind_hydraulic_routing(nb::module_& module)
 {
+    nb::class_<GraphFloodOptimisedPerformance>(
+        module, "GraphFloodOptimisedPerformance")
+        .def_prop_ro("topology_check_seconds", &GraphFloodOptimisedPerformance::topology_check_seconds)
+        .def_prop_ro("projection_seconds", &GraphFloodOptimisedPerformance::projection_seconds)
+        .def_prop_ro("routing_seconds", &GraphFloodOptimisedPerformance::routing_seconds)
+        .def_prop_ro("friction_seconds", &GraphFloodOptimisedPerformance::friction_seconds)
+        .def_prop_ro("depth_update_seconds", &GraphFloodOptimisedPerformance::depth_update_seconds)
+        .def_prop_ro("convergence_seconds", &GraphFloodOptimisedPerformance::convergence_seconds)
+        .def_prop_ro("topology_rebuilds", &GraphFloodOptimisedPerformance::topology_rebuilds)
+        .def_prop_ro("topology_reuses", &GraphFloodOptimisedPerformance::topology_reuses)
+        .def_prop_ro("routed_cells", &GraphFloodOptimisedPerformance::routed_cells)
+        .def_prop_ro("projected_cells", &GraphFloodOptimisedPerformance::projected_cells)
+        .def_prop_ro("scratch_reallocations", &GraphFloodOptimisedPerformance::scratch_reallocations)
+        .def_prop_ro("dirty_tiles_checked", &GraphFloodOptimisedPerformance::dirty_tiles_checked)
+        .def_prop_ro("full_topology_checks", &GraphFloodOptimisedPerformance::full_topology_checks)
+        .def_prop_ro("radix_redistributions", &GraphFloodOptimisedPerformance::radix_redistributions)
+        .def_prop_ro("interior_routed_cells", &GraphFloodOptimisedPerformance::interior_routed_cells)
+        .def_prop_ro("boundary_routed_cells", &GraphFloodOptimisedPerformance::boundary_routed_cells)
+        .def_prop_ro("persistent_working_bytes", &GraphFloodOptimisedPerformance::persistent_working_bytes);
+
+    nb::class_<GraphFloodOptimisedResult>(module, "GraphFloodOptimisedResult")
+        .def_prop_ro("bed", &GraphFloodOptimisedResult::bed)
+        .def_prop_ro("water_depth", &GraphFloodOptimisedResult::water_depth)
+        .def_prop_ro("water_surface", &GraphFloodOptimisedResult::water_surface)
+        .def_prop_ro("qin", &GraphFloodOptimisedResult::qin)
+        .def_prop_ro("qout", &GraphFloodOptimisedResult::qout)
+        .def_prop_ro("dhw", &GraphFloodOptimisedResult::dhw)
+        .def_prop_ro("hydraulic_slope", &GraphFloodOptimisedResult::slope)
+        .def_prop_ro("specific_discharge", &GraphFloodOptimisedResult::specific_discharge)
+        .def_prop_ro("total_discharge", &GraphFloodOptimisedResult::total_discharge)
+        .def_prop_ro("performance", &GraphFloodOptimisedResult::performance)
+        .def_prop_ro("converged", &GraphFloodOptimisedResult::converged)
+        .def_prop_ro("step_count", &GraphFloodOptimisedResult::step_count)
+        .def_prop_ro("total_water_volume", &GraphFloodOptimisedResult::total_water_volume)
+        .def_prop_ro("projection_volume", &GraphFloodOptimisedResult::projection_volume);
+
     nb::class_<HydraulicSurfaceFill>(module, "HydraulicSurfaceFill", R"doc(
 Priority-flood projection of a hydraulic surface towards selected outlets.
 
@@ -330,7 +649,7 @@ Priority-flood a hydraulic ``z + h`` surface towards selected outlets.
 
 The node-state raster uses 0 for excluded cells, 1 for active cells, and 3
 for outlets. Unlike terrain pit filling, excluded/nodata cells are walls, not
-drains. Only outlets on an open (``o``) boundary edge may drain.
+drains. Code-3 cells are prescribed sinks wherever they occur.
 )doc");
 
     module.def("run_graphflood", &run_graphflood,
@@ -348,12 +667,14 @@ drains. Only outlets on an open (``o``) boundary edge may drain.
         nb::arg("convergence_check_every") = 100,
         nb::arg("tol_median_abs_dhw") = 1.0e-7,
         nb::arg("tol_median_rel_dhw") = 1.0e-5, nb::arg("n_threads") = 0,
+        nb::arg("initial_water_depth") = nb::none(),
         R"doc(
 Run stationary graph-based hydraulic routing on an evolving ``z + h`` surface.
 
 ``node_state`` is a raster on the bed grid: 0 means excluded/impermeable, 1
-means active, and 3 is a selected outlet. A selected outlet must sit on an
-open (``o``) boundary edge; open edges do not drain unless a cell is marked 3.
+means active, and 3 is a selected outlet/sink. Open edges do not drain unless
+a cell is marked 3. With ``check_valid_outlet=True``, every connected active
+component must contain a code-3 cell.
 Closed edges use ``n`` and periodic edges use paired ``p`` codes. By default,
 every connected active component must contain an outlet.
 
@@ -361,6 +682,81 @@ every connected active component must contain an outlet.
 The friction law is ``q / width = coefficient * h**a * S**b``. Point inflows
 are an N by 3 array of ``(row, col, discharge_m3_s)``.
 )doc");
+
+    module.def("run_graphflood_optimised", &run_graphflood_optimised,
+        nb::arg("bed"), nb::arg("node_state"),
+        nb::arg("rainfall_rate"), nb::arg("friction_coefficient"),
+        nb::arg("boundary_conditions") = "oooo",
+        nb::arg("mfd_exponent") = 1.0f,
+        nb::arg("condition_bed") = "none",
+        nb::arg("fill_slope_epsilon") = 1.0e-8f,
+        nb::arg("check_valid_outlet") = true,
+        nb::arg("friction_depth_exponent") = 5.0 / 3.0,
+        nb::arg("friction_slope_exponent") = 0.5,
+        nb::arg("dt") = 1.0e-3, nb::arg("min_slope") = 1.0e-4,
+        nb::arg("point_inflows") = nb::none(),
+        nb::arg("max_steps") = 10000,
+        nb::arg("run_until_converged") = true,
+        nb::arg("convergence_check_every") = 20,
+        nb::arg("tol_median_abs_dhw") = 1.0e-7,
+        nb::arg("tol_median_rel_dhw") = 1.0e-5,
+        nb::arg("reuse_topology") = true,
+        nb::arg("initial_water_depth") = nb::none(),
+        R"doc(
+Run the separate CPU-optimised stationary MFD GraphFlood implementation.
+
+The reference ``run_graphflood`` path is unchanged. This implementation uses
+direct raster MFD routing and validates a cached topology before reuse.
+)doc");
+
+    module.def("run_graphflood_optimised_v2", &run_graphflood_optimised_v2,
+        nb::arg("bed"), nb::arg("node_state"),
+        nb::arg("rainfall_rate"), nb::arg("friction_coefficient"),
+        nb::arg("boundary_conditions") = "oooo",
+        nb::arg("mfd_exponent") = 1.0f,
+        nb::arg("condition_bed") = "none",
+        nb::arg("fill_slope_epsilon") = 1.0e-8f,
+        nb::arg("check_valid_outlet") = true,
+        nb::arg("friction_depth_exponent") = 5.0 / 3.0,
+        nb::arg("friction_slope_exponent") = 0.5,
+        nb::arg("dt") = 1.0e-3, nb::arg("min_slope") = 1.0e-4,
+        nb::arg("point_inflows") = nb::none(),
+        nb::arg("max_steps") = 10000,
+        nb::arg("run_until_converged") = true,
+        nb::arg("convergence_check_every") = 20,
+        nb::arg("tol_median_abs_dhw") = 1.0e-7,
+        nb::arg("tol_median_rel_dhw") = 1.0e-5,
+        nb::arg("reuse_topology") = true,
+        nb::arg("dirty_tile_size") = 64,
+        nb::arg("full_validation_every") = 128,
+        nb::arg("initial_water_depth") = nb::none(),
+        R"doc(
+Run GraphFlood with the incremental v2 CPU kernels.
+
+V2 uses a monotone radix heap in Priority-Flood, a bounds-free interior MFD
+loop, specialised Manning exponents, and exact dirty-tile topology validation.
+It falls back to a full Priority-Flood whenever a checked edge invalidates the
+cached order. ``full_validation_every=0`` disables periodic full audits.
+)doc");
+
+    module.def("_run_graphflood_optimised_v2_multigrid_native",
+        &run_graphflood_optimised_v2_multigrid_native,
+        nb::arg("bed"), nb::arg("node_state"), nb::arg("rainfall_rate"),
+        nb::arg("friction_coefficient"), nb::arg("factors"), nb::arg("steps_per_level"),
+        nb::arg("boundary_conditions") = "oooo", nb::arg("mfd_exponent") = 1.0f,
+        nb::arg("condition_bed") = "none", nb::arg("fill_slope_epsilon") = 1.0e-8f,
+        nb::arg("check_valid_outlet") = true,
+        nb::arg("friction_depth_exponent") = 5.0 / 3.0,
+        nb::arg("friction_slope_exponent") = 0.5,
+        nb::arg("dt") = 1.0e-3, nb::arg("min_slope") = 1.0e-4,
+        nb::arg("point_inflows") = nb::none(),
+        nb::arg("run_until_converged") = true,
+        nb::arg("convergence_check_every") = 20,
+        nb::arg("tol_median_abs_dhw") = 1.0e-7,
+        nb::arg("tol_median_rel_dhw") = 1.0e-5,
+        nb::arg("reuse_topology") = true, nb::arg("dirty_tile_size") = 64,
+        nb::arg("full_validation_every") = 128,
+        nb::arg("initial_water_depth") = nb::none());
 }
 
 } // namespace lsdtt3_python

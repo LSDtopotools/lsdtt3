@@ -16,6 +16,32 @@
     options:
       members: false
 
+## Optimised stationary MFD routing
+
+::: lsdtt3._api_docs.run_graphflood_optimised
+
+::: lsdtt3._api_docs.run_graphflood_optimised_v2
+
+::: lsdtt3._api_docs.run_graphflood_multigrid
+
+::: lsdtt3._api_docs.run_graphflood_induced
+
+::: lsdtt3._api_docs.GraphFloodMultigridResult
+    options:
+      members: false
+
+::: lsdtt3._api_docs.GraphFloodInducedResult
+    options:
+      members: false
+
+::: lsdtt3._api_docs.GraphFloodOptimisedResult
+    options:
+      members: false
+
+::: lsdtt3._api_docs.GraphFloodOptimisedPerformance
+    options:
+      members: false
+
 `node_state` is explicit: valid active nodes use `1`, selected outlet nodes
 use `3`, and excluded/nodata nodes use `0`. Open boundaries alone do not make a
 cell drain; an outlet selection is required.

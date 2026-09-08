@@ -16,6 +16,7 @@
 
 #include "lsdtt_array2d.hpp"
 #include "lsdtt_flowgraph_cpu.hpp"
+#include "lsdtt_graphflood_optimised_cpu.hpp"
 #include "lsdtt_hydraulic_graph_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -463,16 +464,10 @@ void test_hydraulic_surface_outlet_rules()
     check("H7 hydraulic fill uses selected outlet", pit_filled,
           "centre hydraulic surface should fill to selected outlet spill level");
 
-    bool rejected_closed_outlet = false;
-    try
-    {
-        (void)lsdtt::fill_hydraulic_surface(surface, states, "nnnn", 0.0f, true);
-    }
-    catch (const std::invalid_argument&)
-    {
-        rejected_closed_outlet = true;
-    }
-    check("H7 closed boundary cannot drain", rejected_closed_outlet);
+    const auto internally_drained = lsdtt::fill_hydraulic_surface(
+        surface, states, "nnnn", 0.0f, true);
+    check("H7 selected outlets drain independently of boundary geometry",
+          internally_drained.filled_surface.full_grid_size() == 9);
 
     states(2, 1) = 1;
     bool rejected_missing_outlet = false;
@@ -582,6 +577,83 @@ void test_graphflood_mfd_uses_diagonal_effective_width()
           ", diagonal=" + std::to_string(diagonal));
 }
 
+void test_optimised_graphflood_mass_and_reuse()
+{
+    auto meta = make_meta_3x3();
+    meta.n_rows = 5;
+    meta.n_cols = 5;
+    lsdtt::lsdtt_array2d_f data(5, 5, 0.0f);
+    lsdtt::lsdtt_array2d_u8 mask(5, 5, uint8_t{1});
+    lsdtt::lsdtt_array2d_u8 states(5, 5, uint8_t{1});
+    for (int row = 0; row < 5; ++row)
+    for (int col = 0; col < 5; ++col)
+        data(row, col) = static_cast<float>(100.0 - 10.0 * row + 0.37 * col);
+    for (int col = 0; col < 5; ++col) states(4, col) = 3;
+    lsdtt::lsdtt_raster_cpu bed(std::move(data), std::move(mask), meta);
+
+    const std::size_t n = 25;
+    std::vector<double> rain(n, 1.0e-4);
+    std::vector<double> friction(n, 1.0 / 0.033);
+    std::vector<double> points(n, 0.0);
+    lsdtt::graphflood_optimised_options options;
+    options.boundary_conditions = "nnon";
+    options.dt = 1.0e-3;
+
+    const auto result = lsdtt::run_graphflood_optimised_cpu(
+        bed, states, rain, friction, points, options,
+        1, false, 1, 1.0e-9, 1.0e-9);
+    double outlet_qin = 0.0;
+    for (int col = 0; col < 5; ++col) outlet_qin += result.qin.data[20 + col];
+    const double source = 25.0 * 1.0e-4 * meta.cell_size * meta.cell_size;
+    check("H11 optimised MFD conserves source discharge",
+          std::abs(outlet_qin - source) < 1.0e-8,
+          "outlet=" + std::to_string(outlet_qin) +
+          ", source=" + std::to_string(source));
+    check("H11 optimised MFD validates and reuses topology",
+          result.performance.topology_rebuilds == 1 &&
+          result.performance.topology_reuses == 1);
+}
+
+void test_optimised_v2_kernels()
+{
+    auto meta = make_meta_3x3();
+    meta.n_rows = 9;
+    meta.n_cols = 9;
+    lsdtt::lsdtt_array2d_f data(9, 9, 0.0f);
+    lsdtt::lsdtt_array2d_u8 mask(9, 9, uint8_t{1});
+    lsdtt::lsdtt_array2d_u8 states(9, 9, uint8_t{1});
+    for (int row = 0; row < 9; ++row)
+    for (int col = 0; col < 9; ++col)
+        data(row, col) = static_cast<float>(100.0 - row + 0.01 * col);
+    for (int col = 0; col < 9; ++col) states(8, col) = 3;
+    lsdtt::lsdtt_raster_cpu bed(std::move(data), std::move(mask), meta);
+
+    const std::size_t n = 81;
+    std::vector<double> rain(n, 1.0e-3);
+    std::vector<double> friction(n, 1.0 / 0.033);
+    std::vector<double> points(n, 0.0);
+    std::vector<double> initial_depth(n, 1.0e-4);
+    lsdtt::graphflood_optimised_options options;
+    options.boundary_conditions = "nnon";
+    options.dt = 1.0;
+    options.dirty_tile_size = 3;
+    options.full_validation_every = 0;
+
+    const auto result = lsdtt::run_graphflood_optimised_v2_cpu(
+        bed, states, rain, friction, points, initial_depth, options,
+        2, false, 1, 1.0e-9, 1.0e-9);
+    double outlet_qin = 0.0;
+    for (int col = 0; col < 9; ++col) outlet_qin += result.qin.data[72 + col];
+    const double source = 81.0 * 1.0e-3 * meta.cell_size * meta.cell_size;
+    check("H13 optimised v2 conserves MFD discharge",
+          std::abs(outlet_qin - source) < 1.0e-7);
+    check("H13 optimised v2 exercises radix and interior kernels",
+          result.performance.radix_redistributions > 0 &&
+          result.performance.interior_routed_cells > 0);
+    check("H13 optimised v2 checks dirty tiles",
+          result.performance.dirty_tiles_checked > 0);
+}
+
 } // namespace
 
 int main()
@@ -596,6 +668,8 @@ int main()
     test_explicit_flowgraph_outlet_mask();
     test_hydraulic_domain_constructor_and_fields();
     test_graphflood_mfd_uses_diagonal_effective_width();
+    test_optimised_graphflood_mass_and_reuse();
+    test_optimised_v2_kernels();
 
     if (g_n_failed == 0)
     {

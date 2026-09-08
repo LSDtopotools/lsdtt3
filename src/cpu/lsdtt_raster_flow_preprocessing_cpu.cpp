@@ -740,14 +740,6 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
     lsdtt_array2d<int> idx(nrows, ncols, k_nodata);
     pf_heap pq;
 
-    const auto is_open_outlet_location = [&](int row, int col)
-    {
-        return (row == 0         && bn == 'o') ||
-               (row == nrows - 1 && bs == 'o') ||
-               (col == 0         && bw == 'o') ||
-               (col == ncols - 1 && be == 'o');
-    };
-
     std::int64_t outlet_count = 0;
     for (int row = 0; row < nrows; ++row)
     {
@@ -768,9 +760,6 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
 
             if (state == 3)
             {
-                if (!is_open_outlet_location(row, col))
-                    throw std::invalid_argument(
-                        "fill_hydraulic_surface: code-3 outlet must lie on an open ('o') boundary");
                 try_seed(filled, idx, pq, row, col);
                 ++outlet_count;
             }

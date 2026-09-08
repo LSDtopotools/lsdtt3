@@ -18,6 +18,18 @@
 
 ## Core raster operations
 
+::: lsdtt3._api_docs.resample_raster
+
+::: lsdtt3._api_docs.double_raster
+
+::: lsdtt3._api_docs.halve_raster
+
+::: lsdtt3._api_docs.pad_to_nearest_power_of_two
+
+::: lsdtt3._api_docs.interpolate_to_nearest_power_of_two
+
+::: lsdtt3._api_docs.RasterHierarchy
+
 ::: lsdtt3._api_docs.fill_pits
 
 ::: lsdtt3._api_docs.breach_depressions
