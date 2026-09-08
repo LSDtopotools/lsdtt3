@@ -206,7 +206,11 @@ int main(int argc, char* argv[])
         "deliberate: a refinement against a fabricated threshold would look "
         "like a result and be one only by accident. The refined mask is written "
         "for you and is never fed back to lsdtt-fluvial-surfaces.",
-        "Valley mask","param","refine_valley_with_baseline"};
+        // Group MUST match refine_valley_with_baseline's group. print_terminal_help
+        // renders a parented entry only inside its parent's group block, so a child
+        // declaring a different group is silently absent from -h, -h html and the
+        // README files. This one was.
+        "Valley identification","param","refine_valley_with_baseline"};
 
     bool_default_map["refine_valley_with_baseline"] = true;
     help_map["refine_valley_with_baseline"] = {"bool","true",
@@ -215,7 +219,10 @@ int main(int argc, char* argv[])
         "Removes the stale-reference wedges the nearest-channel-pixel test "
         "grows onto downstream-sloping terraces where the channel veers "
         "away.",
-        "Valley identification", "param", ""};
+        // "switch", not "param": it enables an analysis, and print_terminal_help
+        // only nests dependent parameters under a parent whose role is "switch".
+        // Declared as "param" it took refine_max_height_metres out of -h with it.
+        "Valley identification", "switch", ""};
 
 
 
@@ -277,7 +284,11 @@ int main(int argc, char* argv[])
     help_map["write_valley_mask_raster"] = {"bool","true",
         "Write the valley mask raster (0 outside; source_id + 1 in each "
         "channel's valley).",
-        "Output suffix: _valley_mask.tif",
+        "Output suffix: _valley_mask_channels.tif (UInt32: source_id + 1, "
+        "0 = not valley). This is the SUPPLIED mask partitioned by which "
+        "channel claimed each cell, not a copy of it - and deliberately not "
+        "called _valley_mask.tif, which is lsdtt-fluvial-surfaces' output and "
+        "would be overwritten by this one under a shared write_fname.",
         "Outputs", "switch", ""};
 
 
@@ -789,6 +800,10 @@ int main(int argc, char* argv[])
                           ? std::to_string(ch.centreline_flats.size()) +
                                 " nodes"
                           : std::string("FAILED"))
+                  << (ch.n_upstream_of_head_excluded > 0
+                          ? ", " + std::to_string(ch.n_upstream_of_head_excluded) +
+                                " px upstream of the head excluded from the trough"
+                          : std::string())
                   << (ch.trough_retries > 0
                           ? " after " + std::to_string(ch.trough_retries) +
                                 " retry(ies)"
@@ -801,7 +816,12 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     if (bf["write_valley_mask_raster"])
     {
-        const std::string p = pp.make_output_path("_valley_mask", ".tif");
+        // NOT "_valley_mask": lsdtt-fluvial-surfaces writes that name, and with
+        // a shared write_fname the two collided and this file silently replaced
+        // its own input. The content differs too - this is source_id + 1 per
+        // channel, not a 0/1 mask - so the name should say what it holds.
+        const std::string p =
+            pp.make_output_path("_valley_mask_channels", ".tif");
         std::cout << "Writing valley mask (UInt32): " << p << "\n";
         loader.write_full(vres.valley_mask.get_data(),
                           vres.valley_mask.get_meta(), p, out_format,

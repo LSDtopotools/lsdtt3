@@ -630,34 +630,43 @@ int main(int argc, char* argv[])
     float_default_map["cellular_r_match"] = 0.85f;
     help_map["cellular_r_match"] = {"float","0.85",
         "Slope ratio below which cellular transport exactly follows Roering.",
-        "Above this ratio the mobility follows a finite tangent continuation.",
-        "Cellular hillslopes", "param", "hillslope_model=cellular"};
+        "Above this ratio the mobility follows a finite tangent continuation. "
+        "Only used when hillslope_model is cellular.",
+        // The parent slot names the PARAMETER this one depends on, so the help
+        // renderer can nest it. A condition on that parameter's value belongs
+        // in the guidance text above, not here.
+        "Cellular hillslopes", "param", "hillslope_model"};
     float_default_map["cellular_cfl_safety"] = 0.8f;
     help_map["cellular_cfl_safety"] = {"float","0.8",
-        "Explicit cellular stability safety factor in (0,1].", "",
-        "Cellular hillslopes", "param", "hillslope_model=cellular"};
+        "Explicit cellular stability safety factor in (0,1].",
+        "Only used when hillslope_model is cellular.",
+        "Cellular hillslopes", "param", "hillslope_model"};
     float_default_map["cellular_nonlocal_fraction"] = 0.0f;
     help_map["cellular_nonlocal_fraction"] = {"float","0",
         "Fraction [0,1] of near-critical excess flux routed nonlocally.",
-        "Zero gives local soft-critical transport.",
-        "Cellular hillslopes", "param", "hillslope_model=cellular"};
+        "Zero gives local soft-critical transport. Only used when "
+        "hillslope_model is cellular.",
+        "Cellular hillslopes", "param", "hillslope_model"};
     float_default_map["cellular_nonlocal_activation_ratio"] = 0.8f;
     help_map["cellular_nonlocal_activation_ratio"] = {"float","0.8",
-        "Slope ratio at which nonlocal routing begins.", "",
-        "Cellular hillslopes", "param", "cellular_nonlocal_fraction>0"};
+        "Slope ratio at which nonlocal routing begins.",
+        "Only used when cellular_nonlocal_fraction is greater than 0.",
+        "Cellular hillslopes", "param", "cellular_nonlocal_fraction"};
     float_default_map["cellular_nonlocal_deposition_probability"] = 0.5f;
     help_map["cellular_nonlocal_deposition_probability"] = {"float","0.5",
-        "Per-cell geometric deposition probability for nonlocal volume.", "",
-        "Cellular hillslopes", "param", "cellular_nonlocal_fraction>0"};
+        "Per-cell geometric deposition probability for nonlocal volume.",
+        "Only used when cellular_nonlocal_fraction is greater than 0.",
+        "Cellular hillslopes", "param", "cellular_nonlocal_fraction"};
     int_default_map["cellular_nonlocal_max_hops"] = 4;
     help_map["cellular_nonlocal_max_hops"] = {"int","4",
-        "Maximum nonlocal travel distance in cells (>=2).", "",
-        "Cellular hillslopes", "param", "cellular_nonlocal_fraction>0"};
+        "Maximum nonlocal travel distance in cells (>=2).",
+        "Only used when cellular_nonlocal_fraction is greater than 0.",
+        "Cellular hillslopes", "param", "cellular_nonlocal_fraction"};
     bool_default_map["enable_cellular_particles"] = false;
     help_map["enable_cellular_particles"] = {"bool","false",
         "Track sparse Lagrangian sediment superparticles.",
-        "Only valid with hillslope_model=cellular.",
-        "Cellular particle tracing", "switch", "hillslope_model=cellular"};
+        "Only valid when hillslope_model is cellular.",
+        "Cellular particle tracing", "switch", "hillslope_model"};
     int_default_map["cellular_particle_inverse_density"] = 100;
     help_map["cellular_particle_inverse_density"] = {"int","100",
         "Active cells represented per seeded superparticle.",
@@ -895,7 +904,9 @@ int main(int argc, char* argv[])
         "coupled regime: it needs a Dirichlet set, so the most robust hillslope "
         "solver is the one that cannot do the emergent-drainage-density "
         "experiment.",
-        "Process parameters", "param", "auto|coupled|channels_as_boundaries"};
+        // No parent: this depends on nothing. The allowed values are stated
+        // in the description; the parent slot names a parameter, not a value set.
+        "Process parameters", "param", ""};
 
     bool_default_map["divide_area_by_dx"] = true;
     help_map["divide_area_by_dx"] = {"bool","true",
@@ -906,7 +917,7 @@ int main(int argc, char* argv[])
         "(specific area, grid-independent); false is the Perron et al. (2008) "
         "total-area convention. The choice also changes the exponent in the "
         "landscape Peclet number, so it is not a free setting.",
-        "Process parameters", "param", "true|false"};
+        "Process parameters", "param", ""};
 
     float_default_map["slope_clamp"] = 1e-5f;
     help_map["slope_clamp"] = {"float","1e-5",

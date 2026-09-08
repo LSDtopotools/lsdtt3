@@ -287,6 +287,175 @@ void test_json_help()
           "json output starts with an opening brace");
 }
 
+
+// -----------------------------------------------------------------------------
+// EVERY DECLARED PARAMETER RENDERS EXACTLY ONCE.
+//
+// A `parent` is a presentation hint. It must never be able to delete a
+// parameter from the help output, and it must never be able to show one twice.
+// Both used to happen: an entry was nested only when its parent was a switch in
+// the SAME group, and every other parented entry fell through both passes and
+// appeared nowhere. That silently hid 68 declared parameters across 8 CLIs -
+// including every ladder_gap_* control in lsdtt-fluvial-surfaces - from -h,
+// -h html and the per-run README files, while the CLI reference pages told
+// users those outputs listed every parameter.
+//
+// The registry below reproduces every shape that broke it. Each case is a real
+// declaration pattern found in the tree, named after where it was found.
+// -----------------------------------------------------------------------------
+lsdtt::lsdtt_help_registry make_awkward_parent_registry()
+{
+    lsdtt::lsdtt_help_registry help;
+
+    help["write_thing_raster"] = {"bool","false",
+        "A switch.", "", "Group A", "switch", ""};
+
+    // 1. Parent is a switch in a DIFFERENT group (lsdtt-internal-drainage's
+    //    sink_candidate_fname, lsdtt-hillslope-channel-coupling's trace_thinning).
+    help["cross_group_child"] = {"int","1",
+        "Parent is a switch, but in another group.", "",
+        "Group B", "param", "write_thing_raster"};
+
+    // 2. Parent is a "param", not a switch (lsdtt-lem's steady_state_* chain,
+    //    lsdtt-fluvial-surfaces' ladder_gap_* under an algorithm choice).
+    help["plain_parent"] = {"string","auto",
+        "An algorithm choice, declared as a param.", "",
+        "Group A", "param", ""};
+    help["child_of_a_param"] = {"float","0.5",
+        "Parent has role param.", "",
+        "Group A", "param", "plain_parent"};
+
+    // 3. A chain: child of a child of a param. The nesting pass descends
+    //    through roles, so anything that re-derives "was this nested?" from the
+    //    immediate parent's role disagrees with it and prints the middle twice.
+    help["grandchild_of_a_param"] = {"int","3",
+        "Two levels below a non-switch.", "",
+        "Group A", "param", "child_of_a_param"};
+
+    // 4. Parent is not a declared key at all: several CLIs put the ALLOWED
+    //    VALUES or a CONDITION in the parent slot (lsdtt-raster-preprocessing's
+    //    vertical_units, lsdtt-lem's cellular_* under "hillslope_model=cellular").
+    help["parent_is_an_enum_list"] = {"string","metres",
+        "Parent slot holds allowed values, not a key.", "",
+        "Group A", "param", "metres|feet|us_survey_feet"};
+
+    // 5. A switch nested under another switch (lsdtt-fluvial-surfaces'
+    //    clean_valley_mask), itself carrying a child.
+    help["nested_switch"] = {"bool","true",
+        "A switch that depends on another switch.", "",
+        "Group A", "switch", "write_thing_raster"};
+    help["child_of_nested_switch"] = {"float","1.0",
+        "Two levels down, under switches.", "",
+        "Group A", "param", "nested_switch"};
+
+    // 6. An io entry claimed as a parent. io is listed in its own block up
+    //    front, so a tree must not print it a second time inside a group
+    //    (lsdtt-fluvial-surfaces' fitted_surface_mask_fname).
+    help["some_input_fname"] = {"string","",
+        "An input path.", "", "Group A", "io", ""};
+    help["child_of_an_io_key"] = {"int","2",
+        "Parent has role io.", "",
+        "Group A", "param", "some_input_fname"};
+
+    return help;
+}
+
+// Count how many overview lines name `key`. The overview writes the key
+// followed by " (" and its type, at some indent, so anchoring on that pair
+// avoids matching the key where it is merely mentioned in prose.
+int count_overview_entries(const std::string& rendered, const std::string& key)
+{
+    const std::string needle = key + " (";
+    int n = 0;
+    for (std::size_t pos = rendered.find(needle);
+         pos != std::string::npos;
+         pos = rendered.find(needle, pos + 1))
+    {
+        // Must be at the start of a line apart from indentation.
+        std::size_t line_start = rendered.rfind('\n', pos);
+        line_start = (line_start == std::string::npos) ? 0 : line_start + 1;
+        bool only_spaces = true;
+        for (std::size_t i = line_start; i < pos; ++i)
+        {
+            if (rendered[i] != ' ') { only_spaces = false; break; }
+        }
+        if (only_spaces) ++n;
+    }
+    return n;
+}
+
+void test_every_parameter_renders_exactly_once()
+{
+    const lsdtt::lsdtt_help_registry help = make_awkward_parent_registry();
+    const std::string out = render_overview(help);
+
+    for (const auto& key : help.key_order())
+    {
+        const int n = count_overview_entries(out, key);
+        check(n == 1,
+              "'" + key + "' renders exactly once (rendered " +
+              std::to_string(n) + " times)");
+    }
+
+    // The nesting that DOES work must keep working: a switch's dependants stay
+    // indented under it rather than being flattened out to fix the above.
+    check(appears_before(out, "write_thing_raster", "nested_switch"),
+          "a nested switch still renders beneath its parent switch");
+    check(out.find("    nested_switch (") != std::string::npos,
+          "a nested switch is indented, not promoted to the top level");
+    check(out.find("      child_of_nested_switch (") != std::string::npos,
+          "a grandchild is indented one level deeper again");
+
+    // A dependency on a non-switch parameter must nest too. This is the shape
+    // lsdtt-lem's cellular_nonlocal_* parameters have: they depend on
+    // cellular_nonlocal_fraction, which is a float, not a switch. Before the
+    // parent slot was corrected they declared "cellular_nonlocal_fraction>0" -
+    // a CONDITION, not a key - and rendered nowhere at all.
+    check(out.find("    child_of_a_param (") != std::string::npos,
+          "a dependant of a non-switch parameter nests under it");
+    check(out.find("      grandchild_of_a_param (") != std::string::npos,
+          "the chain keeps nesting below a non-switch parameter");
+    check(appears_before(out, "plain_parent", "child_of_a_param"),
+          "a non-switch parent still precedes its dependants");
+}
+
+// -----------------------------------------------------------------------------
+// THE PARENT SLOT NAMES A PARAMETER, NOT A VALUE SET OR A CONDITION.
+//
+// Several CLIs used to put allowed values ("metres|feet|us_survey_feet",
+// "true|false") or a condition ("hillslope_model=cellular",
+// "cellular_nonlocal_fraction>0") in the parent slot. Both read naturally and
+// both were wrong: the renderer looks the parent up as a key, so those entries
+// matched nothing and vanished from the help. They are fixed at the
+// declarations - allowed values moved to the description, conditions to the
+// guidance with the parent pointing at the actual key - and this test states
+// the contract so the shape does not come back.
+//
+// A parent that names no declared key is not an error the parser can reject
+// (a CLI may legitimately reference a key it declares conditionally), so the
+// guarantee is the weaker but sufficient one: it never costs the parameter its
+// place in the documentation.
+// -----------------------------------------------------------------------------
+void test_parent_slot_naming_a_non_key_still_renders()
+{
+    lsdtt::lsdtt_help_registry help;
+    help["real_switch"] = {"bool","false",
+        "A real switch.", "", "Group A", "switch", ""};
+    help["values_in_parent_slot"] = {"string","metres",
+        "Allowed values wrongly placed in the parent slot.", "",
+        "Group A", "param", "metres|feet|us_survey_feet"};
+    help["condition_in_parent_slot"] = {"float","0.85",
+        "A condition wrongly placed in the parent slot.", "",
+        "Group A", "param", "some_model=cellular"};
+
+    const std::string out = render_overview(help);
+    for (const auto& key : help.key_order())
+    {
+        check(count_overview_entries(out, key) == 1,
+              "'" + key + "' survives a malformed parent slot");
+    }
+}
+
 } // anonymous namespace
 
 int main()
@@ -297,6 +466,8 @@ int main()
     test_topic_rendering();
     test_builtin_io_topic_and_override();
     test_json_help();
+    test_every_parameter_renders_exactly_once();
+    test_parent_slot_naming_a_non_key_still_renders();
 
     if (g_failures > 0)
     {

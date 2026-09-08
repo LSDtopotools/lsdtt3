@@ -239,7 +239,9 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     const std::vector<std::int32_t>&     channel_source_id,
     const flat_surface_classify_request& request,
     const std::vector<std::int64_t>*     donor_flat,
-    const lsdtt_raster_cpu*              channel_flow_distance)
+    const lsdtt_raster_cpu*              channel_flow_distance,
+    const lsdtt_raster_cpu*              slope_degrees,
+    const lsdtt_raster_cpu*              terrain_aspect_degrees)
 {
     const lsdtt_raster_meta& meta = labelled_flat_mask.get_meta();
     const std::vector<float>&   hand = height_above_channel.get_data();
@@ -303,12 +305,32 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         lr.max_level_count         = request.ladder_max_level_count;
         lr.vertical_accuracy_metres = request.vertical_accuracy_metres;
         lr.resolvability_kappa     = request.resolvability_kappa;
+        lr.k_bootstrap             = request.k_bootstrap;
+        lr.k_bootstrap_seed        = request.k_bootstrap_seed;
+        lr.vertical_accuracy_mode  = request.vertical_accuracy_mode;
+        lr.vertical_accuracy_gentle_metres =
+            request.vertical_accuracy_gentle_metres;
+        lr.vertical_accuracy_steep_metres =
+            request.vertical_accuracy_steep_metres;
+        lr.vertical_accuracy_break_degrees =
+            request.vertical_accuracy_break_degrees;
         lr.reach_window_metres     = request.band_reach_window_metres;
         lr.min_window_pixels       = request.band_min_window_pixels;
         lr.hist_bins               = request.band_hist_bins;
         lr.min_field_metres        = request.band_min_hand_metres;
         lr.max_valley_fraction     = request.band_max_valley_fraction;
         lr.n_threads               = request.n_threads;
+        lr.gap_break_at         = request.ladder_gap_break_at;
+        lr.gap_rank             = request.ladder_gap_rank;
+        lr.gap_trough_max_ratio = request.ladder_gap_trough_max_ratio;
+        lr.gap_empty_fraction   = request.ladder_gap_empty_fraction;
+        lr.gap_min_width_metres = request.ladder_gap_min_width_metres;
+        lr.gap_hist_bins        = request.ladder_gap_hist_bins;
+        lr.max_separation_ratio = request.ladder_max_separation_ratio;
+        lr.min_break_metres     = request.ladder_min_break_metres;
+        lr.max_break_metres     = request.ladder_max_break_metres;
+        lr.record_window_histograms = request.record_window_histograms;
+        lr.window_hist_bins         = request.window_hist_bins;
 
         // Reach-relative windowing needs each pixel placed ALONG the channel,
         // which means going through its HAND donor: the source id and the flow
@@ -346,12 +368,13 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         }
 
         lad = build_reference_field_ladder(
-            height_above_channel, admitted, lr, src_ptr, dist_ptr);
+            height_above_channel, admitted, lr, src_ptr, dist_ptr,
+            slope_degrees);
 
         banded = label_components_within_bands(
             lad.band_index, admitted, height_above_channel,
             std::max(1, request.band_min_component_pixels),
-            pixel_connectivity::d4);
+            pixel_connectivity::d4, terrain_aspect_degrees);
 
         banded_labels = banded.labels;
         used_ladder   = true;
@@ -944,6 +967,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         result.banded_labels_raster = std::move(banded.labels);
         result.patches              = std::move(banded.patches);
         result.ladder_windows       = lad.windows;
+        result.ladder_window_index  = lad.window_index;
         result.global_breaks_m      = lad.global_breaks_m;
         // The ladder's band index is the authoritative per-pixel band here;
         // the banding pre-pass did not run.
@@ -1014,12 +1038,28 @@ void write_ladder_windows_csv(
             join_doubles(w.band_centres_m),
             std::to_string(w.min_band_centre_gap_m),
             std::to_string(w.required_gap_m),
-            std::to_string(w.goodness_of_variance_fit) });
+            std::to_string(w.k_bootstrap_mode),
+            std::to_string(w.k_stability),
+            std::to_string(w.k_ci_lo),
+            std::to_string(w.k_ci_hi),
+            std::to_string(w.n_bootstrap),
+            // The E_v this window used and the gradient it was read from.
+            // Beside required_gap_m rather than replacing it, because the floor
+            // is the constraint and E_v is where the constraint came from.
+            std::to_string(w.vertical_accuracy_m),
+            std::isfinite(w.median_slope_degrees)
+                ? std::to_string(w.median_slope_degrees) : std::string(),
+            std::to_string(w.goodness_of_variance_fit),
+            join_doubles(w.separation_ratio) });
     }
     loader.write_csv(out_path,
         {"source_id","window_centre_m","n_pixels","k_selected",
          "status","used_global_breaks","breaks_m","band_centres_m",
-         "min_band_centre_gap_m","required_gap_m","goodness_of_variance_fit"},
+         "min_band_centre_gap_m","required_gap_m",
+         "k_bootstrap_mode","k_stability","k_ci_lo","k_ci_hi","n_bootstrap",
+         "vertical_accuracy_m",
+         "median_slope_degrees","goodness_of_variance_fit",
+         "separation_ratio"},
         rows);
 }
 
@@ -1049,11 +1089,101 @@ void write_surface_patches_csv(
             std::to_string(pr.area_m2),
             std::to_string(pr.median_field),
             std::to_string(pr.aspect_degrees),
+            // Terrain aspect and its resultant length. Blank rather than a
+            // sentinel when no aspect raster was supplied: a reader must be
+            // able to tell "not measured" from "measured as undefined".
+            pr.terrain_aspect_degrees >= 0.0
+                ? std::to_string(pr.terrain_aspect_degrees) : std::string(),
+            pr.terrain_aspect_degrees >= 0.0
+                ? std::to_string(pr.aspect_r_bar) : std::string(),
             std::to_string(cr ? cr->ladder_window_centre_metres : -1.0) });
     }
     loader.write_csv(out_path,
         {"label","band","class","source_id","n_pixels",
-         "area_m2","median_field_m","aspect_degrees","window_centre_m"},
+         "area_m2","median_field_m","aspect_degrees",
+         "terrain_aspect_degrees","aspect_r_bar","window_centre_m"},
+        rows);
+}
+
+void write_ladder_histogram_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows)
+{
+    std::vector<std::vector<std::string>> rows;
+    for (const ladder_window& w : windows)
+    {
+        const std::size_t nb = w.hist_counts.size();
+        if (nb == 0) continue;
+        const double span = (w.hist_hi_m - w.hist_lo_m);
+        const double bw   = span / static_cast<double>(nb);
+        for (std::size_t b = 0; b < nb; ++b)
+        {
+            const double lo = w.hist_lo_m + bw * static_cast<double>(b);
+            const double hi = lo + bw;
+            // Flag the bin each break falls in, so a plotter does not have to
+            // re-derive the binning to place them.
+            int is_break = 0;
+            for (const double brk : w.breaks_m)
+                if (brk >= lo && brk < hi) is_break = 1;
+            rows.push_back({
+                std::to_string(w.source_id),
+                std::to_string(w.window_centre_m),
+                std::to_string(lo),
+                std::to_string(hi),
+                std::to_string(w.hist_counts[b]),
+                std::to_string(is_break) });
+        }
+    }
+    loader.write_csv(out_path,
+        {"source_id","window_centre_m","bin_lo_m","bin_hi_m","count",
+         "is_break_bin"},
+        rows);
+}
+
+void write_ladder_break_metric_csv(
+    lsdtt_data_loader&                loader,
+    const std::string&                out_path,
+    const std::vector<ladder_window>& windows)
+{
+    std::vector<std::vector<std::string>> rows;
+    for (const ladder_window& w : windows)
+    {
+        const std::size_t nb = w.hist_counts.size();
+        if (nb == 0) continue;
+        const double bw = (w.hist_hi_m - w.hist_lo_m) / static_cast<double>(nb);
+        for (std::size_t b = 0; b < nb; ++b)
+        {
+            const double lo = w.hist_lo_m + bw * static_cast<double>(b);
+            const double hi = lo + bw;
+
+            int in_gap = -1;
+            for (std::size_t g = 0; g < w.gap_lo_m.size(); ++g)
+                if (lo >= w.gap_lo_m[g] && hi <= w.gap_hi_m[g])
+                    in_gap = static_cast<int>(g);
+
+            int is_cand = 0;
+            for (const double cb : w.candidate_breaks_m)
+                if (cb >= lo && cb < hi) is_cand = 1;
+            int is_chosen = 0;
+            for (const double cb : w.breaks_m)
+                if (cb >= lo && cb < hi) is_chosen = 1;
+
+            rows.push_back({
+                std::to_string(w.source_id),
+                std::to_string(w.window_centre_m),
+                std::to_string(lo), std::to_string(hi),
+                std::to_string(w.hist_counts[b]),
+                std::to_string(b < w.hist_smoothed.size()
+                               ? w.hist_smoothed[b] : 0.0),
+                std::to_string(in_gap),
+                std::to_string(is_cand),
+                std::to_string(is_chosen) });
+        }
+    }
+    loader.write_csv(out_path,
+        {"source_id","window_centre_m","bin_lo_m","bin_hi_m","count",
+         "smoothed","gap_id","is_candidate_break","is_chosen_break"},
         rows);
 }
 

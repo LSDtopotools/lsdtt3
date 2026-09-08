@@ -76,12 +76,12 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
+#include "../src/cpu/lsdtt_proximity_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_reference_field_ladder_cpu.hpp"
-#include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"  // clean_valley_mask
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_version   = "0.1.0";
@@ -297,7 +297,7 @@ int main(int argc, char* argv[])
 
     string_default_map["ladder_break_algorithm_choice"] = "antimode";
     help_map["ladder_break_algorithm_choice"] = {"string","antimode",
-        "Break finder: antimode or jenks.",
+        "Break finder: gap, antimode or jenks.",
         "antimode finds dips in a smoothed log10 density and is shared with "
         "the valley engine. jenks is Fisher-Jenks on the linear field; it "
         "takes the level count directly and is the source of the reported "
@@ -307,6 +307,191 @@ int main(int argc, char* argv[])
         "automatically when you select fitted_surface without naming a break "
         "algorithm, and rejects the combination if you ask for it explicitly.",
         "Ladder","param",""};
+
+    string_default_map["ladder_gap_break_position"] = "midpoint";
+    help_map["ladder_gap_break_position"] = {"string","midpoint",
+        "Where in the empty span between clusters the break goes: lower, "
+        "midpoint or upper.",
+        "The span is nearly empty by construction, so any position separates "
+        "the same two clusters - but the sparse pixels INSIDE it (the bank, "
+        "the riser, the floodplain margin) go to whichever side the break "
+        "leaves them on. Use `upper` when the low band IS the valley floor and "
+        "you want the whole margin in it; `lower` for the strictest reading of "
+        "the active floodplain; `midpoint` splits the difference.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
+    string_default_map["ladder_gap_rank"] = "lowest";
+    help_map["ladder_gap_rank"] = {"string","lowest",
+        "Order the gap finder offers its candidate breaks in: lowest or width.",
+        "gap algorithm only, and it decides which break wins when more than one "
+        "is admissible. `lowest` walks the ladder from the bottom, so the "
+        "valley cut is taken before any terrace or hillslope cut. `width` "
+        "prefers the widest empty span, which is only a good guide where the "
+        "whole field range is a few metres: in a mountain catchment the widest "
+        "empty span sits in the sparse tail a hundred metres above the river, "
+        "and taking it bands the entire terrace staircase as valley floor.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
+    float_default_map["ladder_gap_trough_max_ratio"] = 0.6f;
+    help_map["ladder_gap_trough_max_ratio"] = {"float","0.6",
+        "Offer a local minimum as a candidate break when its floor is below "
+        "this fraction of the smaller flanking peak. 0 = empty spans only.",
+        "gap algorithm only. `ladder_gap_empty_fraction` measures emptiness "
+        "against the TALLEST bin, so where one level dominates the population "
+        "a real dip above it never reads as empty and the finder has no "
+        "candidate anywhere near the valley floor. This offers those dips as "
+        "candidates; `ladder_max_separation_ratio` still has to accept them "
+        "before any becomes a break, which is why this is the looser of the "
+        "two numbers.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
+    float_default_map["ladder_gap_empty_fraction"] = 0.02f;
+    help_map["ladder_gap_empty_fraction"] = {"float","0.02",
+        "A histogram bin below this fraction of the tallest bin counts as empty.",
+        "gap algorithm only. Raise it to treat sparsely-populated ground as a "
+        "gap; lower it to require a near-total absence of pixels before calling "
+        "a space between clusters.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
+    float_default_map["ladder_gap_min_width_metres"] = 0.5f;
+    help_map["ladder_gap_min_width_metres"] = {"float","0.5",
+        "Narrowest empty span the gap finder will call a separation [m].",
+        "gap algorithm only. Below this a run of empty bins is noise, not the "
+        "space between two surfaces.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
+    int_default_map["ladder_gap_hist_bins"] = 80;
+    help_map["ladder_gap_hist_bins"] = {"int","80",
+        "Linear histogram bins the gap finder searches for empty runs.",
+        "Too few and a real gap is bridged by a single populated bin; too many "
+        "and ordinary sampling noise fragments a cluster into false gaps.",
+        "Ladder","param","ladder_break_algorithm_choice"};
+
+    float_default_map["ladder_max_separation_ratio"] = 0.0f;
+    help_map["ladder_max_separation_ratio"] = {"float","0.0",
+        "Reject a partition whose worst break sits where the density is above "
+        "this fraction of the populations either side. 0 disables.",
+        "A SECOND CONSTRAINT alongside the resolvability floor, never blended "
+        "with it into a score. The floor asks whether the DEM can MEASURE a "
+        "separation; this asks whether there IS one. Both are necessary and "
+        "neither implies the other: two lidar terraces 30 cm apart pass this "
+        "and need a small vertical_accuracy_metres to pass the floor, while a "
+        "26 m cut through one broad mode passes any floor and fails this "
+        "outright. 0.6 matches the antimode finder's own acceptance limit. "
+        "Off by default because turning it on changes which partitions are "
+        "admissible.",
+        "Ladder","param",""};
+
+    float_default_map["ladder_min_break_metres"] = 0.0f;
+    help_map["ladder_min_break_metres"] = {"float","0.0",
+        "Reject any break below this height [m]. 0 = unbounded.",
+        "A hard bound applied to every candidate before selection, for when the "
+        "lowest plausible level boundary is known independently.",
+        "Ladder","param",""};
+
+    float_default_map["ladder_max_break_metres"] = 0.0f;
+    help_map["ladder_max_break_metres"] = {"float","0.0",
+        "Reject any break above this height [m]. 0 = unbounded.",
+        "The companion to ladder_min_break_metres, and the direct lever against "
+        "a break landing far above the valley in a landscape whose flat uplands "
+        "dominate the population.",
+        "Ladder","param",""};
+
+    int_default_map["ladder_k_bootstrap"] = 0;
+    help_map["ladder_k_bootstrap"] = {"int","0",
+        "Resample each window and re-run the break search this many times, to "
+        "report how stable the chosen level count is. 0 = off.",
+        "`k_selected` on its own says nothing about whether a different draw "
+        "of the same landscape would have given the same answer, and a ladder "
+        "that returns k = 7 every time is not the same claim as one that "
+        "returns it once in fifteen. This costs B times the break search per "
+        "window, and the break search is where the cost sits, not the pixel "
+        "count - every finder bins before it searches. Measured on a 3.58 M "
+        "cell DEM with 41 windows, 15 replicates added 4.9 s under `gap` "
+        "(16.4 to 21.3 s). The same DEM's whole ladder is 6.2 s under "
+        "`antimode` and 37.7 s under `jenks`, so scale accordingly: affordable "
+        "on gap, think first on jenks. Results go to _ladder_windows.csv as "
+        "k_bootstrap_mode, k_stability, k_ci_lo, k_ci_hi and n_bootstrap.",
+        "Ladder", "param", ""};
+
+    int_default_map["ladder_k_bootstrap_seed"] = 1;
+    help_map["ladder_k_bootstrap_seed"] = {"int","1",
+        "Seed for the k bootstrap, so a stability figure is reproducible.",
+        "Each window is seeded from this plus its own source and index, so a "
+        "window's stability does not shift because a neighbouring reach "
+        "changed. The generator is specified in the source rather than taken "
+        "from the standard library, so the number reproduces across platforms.",
+        "Ladder", "param", "ladder_k_bootstrap"};
+
+    bool_default_map["write_patch_terrain_aspect"] = false;
+    help_map["write_patch_terrain_aspect"] = {"bool","false",
+        "Add the terrain aspect and its resultant length to the patch table.",
+        "The existing `aspect_degrees` column is the direction the BANDED "
+        "FIELD climbs, fitted as a plane through it - on a HAND field that is "
+        "roughly `away from the channel`, not the direction the ground faces. "
+        "This adds the topographic aspect as a CIRCULAR mean (the arithmetic "
+        "mean of 350 and 10 degrees is 180, the opposite way) together with "
+        "`aspect_r_bar`, the mean resultant length in [0, 1]. R_bar is the "
+        "number that says whether the mean direction is worth quoting: 1 means "
+        "every cell in the patch faces the same way, 0 means they face every "
+        "way equally and the aspect is meaningless. Costs one polynomial fit.",
+        "Outputs", "output", ""};
+
+    float_default_map["patch_aspect_window_metres"] = 0.0f;
+    help_map["patch_aspect_window_metres"] = {"float","0",
+        "Window diameter [m] of the polynomial fit the terrain aspect is "
+        "measured over. 0 = five cells.",
+        "Stated in cells by default because a length tuned on lidar is "
+        "sub-pixel on 30 m COP30.",
+        "Outputs", "output", "write_patch_terrain_aspect"};
+
+    string_default_map["vertical_accuracy_mode"] = "fixed";
+    help_map["vertical_accuracy_mode"] = {"string","fixed",
+        "How E_v is arrived at: fixed or slope_dependent.",
+        "Photogrammetric and InSAR DEMs degrade on slopes - TanDEM-X relative "
+        "LE90 is roughly 2 m on gentle ground and 4 m on steep - so a single "
+        "number for a raster spanning a valley floor and a 40-degree wall "
+        "states an accuracy that is wrong in both places. Under "
+        "slope_dependent each along-channel WINDOW reads one E_v off the "
+        "median gradient of its own admitted cells. Per window, not per pixel: "
+        "the resolvability floor constrains the separation between band "
+        "CENTRES, and a band centre is a property of a partition rather than "
+        "of a place, so it has no slope of its own. The value each window used "
+        "is written to _ladder_windows.csv.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_gentle_metres"] = 0.0f;
+    help_map["vertical_accuracy_gentle_metres"] = {"float","0.0",
+        "E_v [m] for windows at or below the break gradient. "
+        "slope_dependent only.",
+        "For TanDEM-X this is the quoted relative LE90 on gentle ground, "
+        "about 2 m.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_steep_metres"] = 0.0f;
+    help_map["vertical_accuracy_steep_metres"] = {"float","0.0",
+        "E_v [m] for windows above the break gradient. slope_dependent only.",
+        "About 4 m for TanDEM-X. It must be the LARGER of the two or the mode "
+        "is doing nothing useful.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_break_degrees"] = 11.31f;
+    help_map["vertical_accuracy_break_degrees"] = {"float","11.31",
+        "Gradient [degrees] separating the gentle and steep E_v.",
+        "11.31 degrees is a 20 percent grade, which is where the TanDEM-X "
+        "accuracy specification splits.",
+        "Ladder", "param", ""};
+
+    float_default_map["vertical_accuracy_slope_window_metres"] = 0.0f;
+    help_map["vertical_accuracy_slope_window_metres"] = {"float","0",
+        "Window diameter [m] of the polynomial fit the window gradient is "
+        "measured over. 0 = five cells. slope_dependent only.",
+        "Stated in cells by default because a length tuned on lidar is "
+        "sub-pixel on 30 m COP30. This is the same measurement "
+        "lsdtt-flat-surface-finder makes for admission_slope_cap_degrees, and "
+        "it is worth using the same window in both so the gradient a surface "
+        "was admitted on is the gradient its E_v was read from.",
+        "Ladder", "param", ""};
 
     float_default_map["vertical_accuracy_metres"] = 0.0f;
     help_map["vertical_accuracy_metres"] = {"float","0.0",
@@ -437,6 +622,34 @@ int main(int argc, char* argv[])
         "Flow routing","param",""};
 
     // --- Channel scope: source and outlet points ---
+    bool_default_map["break_flats_with_channels"] = false;
+    help_map["break_flats_with_channels"] = {"bool","false",
+        "Remove in-scope channel pixels from the admitted set before banding.",
+        "Default FALSE, changed from the old flat-surface-finder behaviour. It "
+        "used to be needed to stop one surface spanning a channel; banding by "
+        "height does that on its own, since the two banks of an incised channel "
+        "are not in the same band as the channel. All it does now is keep the "
+        "channel itself out of a surface, which matters for area statistics and "
+        "little else.",
+        "Channel scope","switch",""};
+
+    bool_default_map["connect_surfaces_to_channels"] = false;
+    help_map["connect_surfaces_to_channels"] = {"bool","false",
+        "Record which in-scope channel each surface is linked to.",
+        "Adds the connection diagnostics used to attribute a surface to a "
+        "reach. The patch table already carries source_id from the height "
+        "reference's donor, so this is for the cases where the linkage itself "
+        "is the question.",
+        "Channel scope","switch",""};
+
+    string_default_map["drainage_injection_points_fname"] = "";
+    help_map["drainage_injection_points_fname"] = {"string","",
+        "Vector of points injecting extra drainage area, in read_path.",
+        "For a channel entering the DEM from outside it, where the "
+        "contributing-pixel threshold alone would not start a channel at the "
+        "boundary. Empty = no injection.",
+        "Channel scope","io",""};
+
     string_default_map["source_points_fname"] = "";
     help_map["source_points_fname"] = {"string","",
         "Channel source points (CSV or vector), in read_path.",
@@ -569,6 +782,88 @@ int main(int argc, char* argv[])
         "Outputs","switch",""};
 
     // --- Valley mask cleaning ---
+    float_default_map["valley_mask_closing_width_fraction"] = 0.0f;
+    help_map["valley_mask_closing_width_fraction"] = {"float","0.0",
+        "Set the closing radius as a fraction of the measured valley width. "
+        "0 = use valley_mask_closing_radius_metres instead.",
+        "A radius in metres does not travel: a value that seals the slivers in "
+        "a 400 m floodplain erases a 100 m one, so it has to be re-guessed for "
+        "every DEM. This measures the width instead - cross sections cast "
+        "perpendicular to each channel, the CUMULATIVE length of valley cells "
+        "along each (so a bar or an island does not count as floor), median "
+        "across sections - and takes the radius as this fraction of it. About "
+        "0.2 is a reasonable starting point. Overrides "
+        "valley_mask_closing_radius_metres when set.",
+        "Outputs","param","clean_valley_mask"};
+
+    float_default_map["valley_width_section_spacing_metres"] = 200.0f;
+    help_map["valley_width_section_spacing_metres"] = {"float","200.0",
+        "Spacing of the cross sections used to measure the valley width [m].",
+        "Only used when valley_mask_closing_width_fraction is set. Closer "
+        "spacing gives a better-sampled median at more cost.",
+        "Outputs","param","valley_mask_closing_width_fraction"};
+
+    float_default_map["valley_width_max_half_length_metres"] = 3000.0f;
+    help_map["valley_width_max_half_length_metres"] = {"float","3000.0",
+        "How far each cross section looks either side before giving up [m].",
+        "A section reaching this on BOTH sides is discarded rather than "
+        "counted, because it is measuring the search limit and not the valley. "
+        "Set it comfortably wider than the widest valley expected.",
+        "Outputs","param","valley_mask_closing_width_fraction"};
+
+    float_default_map["valley_mask_closing_radius_metres"] = 0.0f;
+    help_map["valley_mask_closing_radius_metres"] = {"float","0.0",
+        "Seal narrow gaps in the valley mask with a morphological closing [m]. "
+        "0 = off.",
+        "A dilation followed by an erosion of the same radius. It bridges thin "
+        "OPEN-ENDED gaps - the parallel slivers left by scroll bars, levees, "
+        "abandoned channels and field boundaries lying a little above the "
+        "surrounding floor - which hole filling cannot touch, because a finger "
+        "open at one end is not an enclosed hole. Because the erosion undoes "
+        "the dilation, the outer extent is left about where it was rather than "
+        "grown. Set it to roughly the width of the widest sliver you want "
+        "closed; too large and it will bridge across a genuine terrace riser.",
+        "Outputs","param","clean_valley_mask"};
+
+    bool_default_map["fill_valley_mask_holes"] = true;
+    help_map["fill_valley_mask_holes"] = {"bool","true",
+        "Fill enclosed holes in the valley mask before writing it.",
+        "A hole in the valley floor - a rise the ladder put in a higher band, a "
+        "patch the size filter dropped - is a hole in the DOMAIN the centreline "
+        "is traced through, and the least-cost walk goes around it. The "
+        "centreline then hugs one wall instead of running down the middle. "
+        "Filling enclosed holes is what makes the mask a valley rather than a "
+        "valley with islands. Only affects <stem>_valley_mask.tif; the band "
+        "index and the patch table keep the holes, because there the rise is a "
+        "real observation.",
+        "Outputs","switch","write_valley_mask_raster"};
+
+    // --- Forced valley floor: state the threshold instead of finding it ---
+    float_default_map["force_valley_hand_metres"] = 0.0f;
+    help_map["force_valley_hand_metres"] = {"float","0.0",
+        "Define the valley floor directly as height above channel below this "
+        "[m], instead of using the ladder's break. 0 = use the ladder.",
+        "The ladder finds a break from the data; sometimes you already know the "
+        "answer - from field mapping, a flood stage, a published terrace "
+        "height - and want it applied rather than rediscovered. Combined with "
+        "force_valley_max_distance_metres this defines the valley floor "
+        "outright: HAND below the threshold AND within the distance. The band "
+        "index, labels and patch table are UNAFFECTED and still come from the "
+        "ladder; only <stem>_valley_mask.tif is forced, so the two can be "
+        "compared.",
+        "Valley floor","param",""};
+
+    float_default_map["force_valley_max_distance_metres"] = 0.0f;
+    help_map["force_valley_max_distance_metres"] = {"float","0.0",
+        "Euclidean distance to an in-scope channel bounding the forced valley "
+        "floor [m]. 0 = no distance limit.",
+        "The companion to force_valley_hand_metres, and the reason the pair is "
+        "useful: a HAND threshold alone admits every low patch in the DEM, "
+        "including ground belonging to other drainages entirely. The distance "
+        "limit is what confines it to this channel's valley. Usable on its own "
+        "as well, if the ladder is finding the break but reaching too far.",
+        "Valley floor","param",""};
+
     bool_default_map["clean_valley_mask"] = true;
     help_map["clean_valley_mask"] = {"bool","true",
         "Tidy band 0 before writing it as the valley mask.",
@@ -580,21 +875,47 @@ int main(int argc, char* argv[])
         "index, the labels and the patch table are untouched.",
         "Outputs","switch","write_valley_mask_raster"};
 
-    int_default_map["valley_dilation_pixels"] = 4;
-    help_map["valley_dilation_pixels"] = {"int","4",
-        "Erosion / regrow radius used when cleaning the valley mask [pixels].",
-        "The erosion breaks threads joining real valley floor to incidental "
-        "flat ground; the regrow is twice this, which restores the rim and "
-        "fills enclosed holes without letting the mask creep outward.",
+    int_default_map["valley_dilation_pixels"] = 0;
+    help_map["valley_dilation_pixels"] = {"int","0",
+        "Erosion / regrow radius used when cleaning the valley mask [pixels]. "
+        "0 = no erosion.",
+        "DEFAULT 0, and erosion is usually the wrong tool here. It exists to "
+        "SEVER thin threads of flat ground joining one valley floor to a "
+        "neighbour's across a col, so that connected-component filtering can "
+        "tell them apart - it is a means of making connectivity discriminating, "
+        "not a way to shrink the mask. The cost is that a reach narrower than "
+        "2 * this + 1 pixels erodes to nothing and cannot regrow: on the "
+        "Royalton 10 m DEM a value of 4 (64 m) destroyed 30% of a valley floor "
+        "that connectivity alone had got right. Raise it only when two valleys "
+        "are genuinely merging through a col.",
         "Outputs","param","clean_valley_mask"};
 
-    float_default_map["valley_max_detour_ratio"] = 3.0f;
-    help_map["valley_max_detour_ratio"] = {"float","3.0",
+    float_default_map["valley_max_detour_ratio"] = 0.0f;
+    help_map["valley_max_detour_ratio"] = {"float","0.0",
         "Maximum along-ground path to the channel, as a multiple of the "
         "straight-line distance.",
         "A flat that sits NEAR the channel but is only reachable the long way "
         "round is a different landform, not this channel's valley floor. 0 or "
-        "negative disables the test.",
+        "negative disables the test, which is the DEFAULT: on a meandering "
+        "floodplain the along-ground path around a bend legitimately exceeds "
+        "the straight line several times over, and the test removes real "
+        "valley floor. Turn it on where flats from separate drainages are "
+        "connected by a long corridor.",
+        "Outputs","param","clean_valley_mask"};
+
+    bool_default_map["restrict_valley_to_line_of_sight"] = false;
+    help_map["restrict_valley_to_line_of_sight"] = {"bool","false",
+        "Require a straight line from each valley pixel to the channel to stay "
+        "inside the mask.",
+        "A STRONG filter, written for separating one valley floor from a "
+        "neighbouring one across a broad col, where connectivity alone is not "
+        "enough. Default FALSE here: on a meandering floodplain a great deal of "
+        "genuine valley floor has no straight line to the channel that stays "
+        "inside the mask. On the Royalton 10 m DEM it removed 82% of band 0 on "
+        "its own, with every other filter disabled - which made the valley mask "
+        "SMALLER than the floodplain class computed from the same field. Turn "
+        "it on where two valleys meet around a col and connectivity alone "
+        "merges them.",
         "Outputs","param","clean_valley_mask"};
 
     bool_default_map["restrict_valley_to_channel_connected"] = true;
@@ -642,6 +963,59 @@ int main(int argc, char* argv[])
         "and class tables. Requires the hand field with a computed HAND, since "
         "the along-channel distance comes from the pixel's HAND donor node.",
         "Outputs","switch",""};
+
+    bool_default_map["write_nearest_source_id_raster"] = false;
+    help_map["write_nearest_source_id_raster"] = {"bool","false",
+        "Write which channel each pixel's height is measured to.",
+        "Output file: <stem>_nearest_source_id.tif (Int32, -1 off-network). "
+        "The value is the source id of the pixel's HAND DONOR - the channel "
+        "node it actually drains to - not the nearest channel by straight-line "
+        "distance, so it partitions the DEM the same way the height reference "
+        "does. Use it to look at one channel's results in isolation. Needs a "
+        "computed HAND: a supplied hand_fname carries no donor nodes.",
+        "Outputs","switch",""};
+
+    bool_default_map["write_ladder_break_metric_csv"] = false;
+    help_map["write_ladder_break_metric_csv"] = {"bool","false",
+        "Write the break DECISION, not just the break.",
+        "Output file: <stem>_ladder_break_metric.csv, one row per histogram bin "
+        "per window: the raw count, the smoothed density the separation ratio "
+        "is measured on, which detected gap the bin falls in, and whether a "
+        "candidate or the chosen break lands there. The chosen break on a raw "
+        "histogram looks arbitrary, and whether it beat several candidates or "
+        "was the only one on offer cannot be recovered from the answer alone.",
+        "Outputs","switch",""};
+
+    bool_default_map["write_ladder_window_id_raster"] = false;
+    help_map["write_ladder_window_id_raster"] = {"bool","false",
+        "Write which along-channel window each pixel's breaks came from.",
+        "Output file: <stem>_ladder_window_id.tif (Int16, -1 where the global "
+        "partition was used or the pixel is not banded). The value is the "
+        "window's ordinal within its channel, counting downstream - a reach "
+        "number. Use it to trace a break that looks wrong back to the ground "
+        "that produced it.",
+        "Outputs","switch",""};
+
+    bool_default_map["write_ladder_histogram_csv"] = false;
+    help_map["write_ladder_histogram_csv"] = {"bool","false",
+        "Write the reference-field density each window's breaks were chosen "
+        "from.",
+        "Output file: <stem>_ladder_histogram.csv, one row per histogram bin "
+        "per window, with the bin containing each break flagged. THIS is the "
+        "diagnostic that says whether a break separates two populations or "
+        "merely cuts through one - a deep, wide dip between two modes means two "
+        "surfaces; a shallow scoop through one broad mode means one surface and "
+        "an arbitrary cut. Neither the resolvability floor nor the chosen break "
+        "value can tell you which you have. Plot it with lsdviz3-ladder-density.",
+        "Outputs","switch",""};
+
+    int_default_map["ladder_hist_plot_bins"] = 80;
+    help_map["ladder_hist_plot_bins"] = {"int","80",
+        "Bin count for the per-window density in write_ladder_histogram_csv.",
+        "Linear in field units, not log10, so it can be read directly against "
+        "the breaks. Distinct from ladder_hist_bins, which is the log10 "
+        "histogram the antimode finder searches for dips.",
+        "Outputs","param","write_ladder_histogram_csv"};
 
     bool_default_map["write_ladder_windows_csv"] = true;
     help_map["write_ladder_windows_csv"] = {"bool","true",
@@ -782,10 +1156,11 @@ int main(int argc, char* argv[])
         const std::string& ba = sf["ladder_break_algorithm_choice"];
         if (ba == "antimode")   break_choice = lsdtt::ladder_break_choice::antimode;
         else if (ba == "jenks") break_choice = lsdtt::ladder_break_choice::jenks;
+        else if (ba == "gap")   break_choice = lsdtt::ladder_break_choice::gap;
         else
         {
             std::cerr << "FATAL: unknown ladder_break_algorithm_choice '" << ba
-                      << "'. Valid: antimode, jenks.\n";
+                      << "'. Valid: antimode, jenks, gap.\n";
             return 1;
         }
 
@@ -812,7 +1187,36 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (ff["vertical_accuracy_metres"] <= 0.0f)
+    const std::string& ev_mode_name = sf["vertical_accuracy_mode"];
+    const bool ev_slope_dependent = (ev_mode_name == "slope_dependent");
+    if (ev_mode_name != "fixed" && !ev_slope_dependent)
+    {
+        std::cerr << "FATAL: unknown vertical_accuracy_mode '" << ev_mode_name
+                  << "'. Valid: fixed, slope_dependent.\n";
+        return 1;
+    }
+    if (ev_slope_dependent)
+    {
+        const double eg = static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
+        const double es = static_cast<double>(ff["vertical_accuracy_steep_metres"]);
+        if (!(eg > 0.0) || !(es > 0.0))
+        {
+            std::cerr << "FATAL: vertical_accuracy_mode slope_dependent needs "
+                         "both vertical_accuracy_gentle_metres and "
+                         "vertical_accuracy_steep_metres > 0.\n";
+            return 1;
+        }
+        if (es < eg)
+        {
+            std::cerr << "FATAL: vertical_accuracy_steep_metres (" << es
+                      << ") is below vertical_accuracy_gentle_metres (" << eg
+                      << "). A DEM does not get MORE accurate on a slope; if "
+                         "that is really what you mean, use fixed.\n";
+            return 1;
+        }
+    }
+
+    if (!ev_slope_dependent && ff["vertical_accuracy_metres"] <= 0.0f)
     {
         std::cerr << "WARNING: vertical_accuracy_metres is 0, so the "
                      "resolvability floor is disabled.\n"
@@ -1239,6 +1643,17 @@ int main(int argc, char* argv[])
         creq.ladder_max_level_count      = ip["ladder_max_level_count"];
         creq.vertical_accuracy_metres =
             static_cast<double>(ff["vertical_accuracy_metres"]);
+        creq.k_bootstrap      = ip["ladder_k_bootstrap"];
+        creq.k_bootstrap_seed = ip["ladder_k_bootstrap_seed"];
+        creq.vertical_accuracy_mode = ev_slope_dependent
+            ? lsdtt::vertical_accuracy_choice::slope_dependent
+            : lsdtt::vertical_accuracy_choice::fixed;
+        creq.vertical_accuracy_gentle_metres =
+            static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
+        creq.vertical_accuracy_steep_metres =
+            static_cast<double>(ff["vertical_accuracy_steep_metres"]);
+        creq.vertical_accuracy_break_degrees =
+            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
         creq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         creq.band_reach_window_metres =
@@ -1249,16 +1664,134 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["ladder_min_field_metres"]);
         creq.band_max_valley_fraction =
             static_cast<double>(ff["ladder_max_valley_fraction"]);
+        {
+            const std::string& gp = sf["ladder_gap_break_position"];
+            if (gp == "lower")
+                creq.ladder_gap_break_at = lsdtt::gap_break_position::lower;
+            else if (gp == "upper")
+                creq.ladder_gap_break_at = lsdtt::gap_break_position::upper;
+            else if (gp == "midpoint")
+                creq.ladder_gap_break_at = lsdtt::gap_break_position::midpoint;
+            else
+            {
+                std::cerr << "FATAL: unknown ladder_gap_break_position '" << gp
+                          << "'. Valid: lower, midpoint, upper.\n";
+                return 1;
+            }
+        }
+        {
+            const std::string& gr = sf["ladder_gap_rank"];
+            if (gr == "lowest")     creq.ladder_gap_rank = lsdtt::gap_rank_choice::lowest;
+            else if (gr == "width") creq.ladder_gap_rank = lsdtt::gap_rank_choice::width;
+            else
+            {
+                std::cerr << "FATAL: unknown ladder_gap_rank '" << gr
+                          << "'. Valid: lowest, width.\n";
+                return 1;
+            }
+        }
+        creq.ladder_gap_trough_max_ratio =
+            static_cast<double>(ff["ladder_gap_trough_max_ratio"]);
+        creq.ladder_gap_empty_fraction =
+            static_cast<double>(ff["ladder_gap_empty_fraction"]);
+        creq.ladder_gap_min_width_metres =
+            static_cast<double>(ff["ladder_gap_min_width_metres"]);
+        creq.ladder_gap_hist_bins    = ip["ladder_gap_hist_bins"];
+        creq.ladder_max_separation_ratio =
+            static_cast<double>(ff["ladder_max_separation_ratio"]);
+        creq.ladder_min_break_metres =
+            static_cast<double>(ff["ladder_min_break_metres"]);
+        creq.ladder_max_break_metres =
+            static_cast<double>(ff["ladder_max_break_metres"]);
         creq.band_min_component_pixels   = ip["min_component_pixels"];
+        creq.record_window_histograms    = bf["write_ladder_histogram_csv"] ||
+                                           bf["write_ladder_break_metric_csv"];
+        creq.window_hist_bins            = ip["ladder_hist_plot_bins"];
 
         std::vector<std::int32_t> src_ids =
             scope_resolved ? scope.channel_source_id
                            : std::vector<std::int32_t>(n_pixels, -1);
+        // break_flats_with_channels: drop channel cells from the admitted set.
+        if (bf["break_flats_with_channels"] && scope_resolved)
+        {
+            std::vector<float>& ad = admitted.get_data();
+            std::int64_t n_dropped = 0;
+            for (std::size_t i = 0; i < n_pixels; ++i)
+                if (scope.channel_mask[i] && ad[i] > 0.5f)
+                { ad[i] = 0.0f; ++n_dropped; }
+            std::cout << "  break_flats_with_channels: " << n_dropped
+                      << " channel cell(s) removed from the admitted set\n";
+        }
+
         std::vector<std::uint8_t> cmask =
             scope_resolved ? std::vector<std::uint8_t>(
                                  scope.channel_mask.begin(),
                                  scope.channel_mask.end())
                            : std::vector<std::uint8_t>(n_pixels, 0);
+
+        // Slope-dependent E_v needs a gradient. Computed here rather than in
+        // the engine so the fit window is a stated parameter and the same
+        // measurement lsdtt-flat-surface-finder makes for admission.
+        lsdtt::lsdtt_raster_cpu ev_slope;
+        bool have_ev_slope = false;
+        if (ev_slope_dependent)
+        {
+            const double cell = dem.get_meta().cell_size;
+            double lambda = static_cast<double>(
+                ff["vertical_accuracy_slope_window_metres"]);
+            if (!(lambda > 0.0)) lambda = 5.0 * cell;
+            std::cout << "Window gradient for E_v: polyfit window " << lambda
+                      << " m, break at "
+                      << ff["vertical_accuracy_break_degrees"] << " degrees\n";
+            try
+            {
+                const lsdtt::poly_fit_coeffs fit =
+                    lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
+                lsdtt::polyfit_metric_request mreq;
+                mreq.metrics   = {lsdtt::polyfit_metric::slope_degrees};
+                mreq.n_threads = ip["n_threads"];
+                lsdtt::polyfit_metric_result mres =
+                    lsdtt::compute_polyfit_metrics(fit, mreq);
+                ev_slope = mres.at(lsdtt::polyfit_metric::slope_degrees);
+                have_ev_slope = true;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: gradient for slope-dependent E_v failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        lsdtt::lsdtt_raster_cpu patch_aspect;
+        bool have_patch_aspect = false;
+        if (bf["write_patch_terrain_aspect"])
+        {
+            const double cell = dem.get_meta().cell_size;
+            double lambda =
+                static_cast<double>(ff["patch_aspect_window_metres"]);
+            if (!(lambda > 0.0)) lambda = 5.0 * cell;
+            std::cout << "Terrain aspect for the patch table: polyfit window "
+                      << lambda << " m\n";
+            try
+            {
+                const lsdtt::poly_fit_coeffs fit =
+                    lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
+                lsdtt::polyfit_metric_request mreq;
+                mreq.metrics   = {lsdtt::polyfit_metric::aspect_degrees};
+                mreq.n_threads = ip["n_threads"];
+                lsdtt::polyfit_metric_result mres =
+                    lsdtt::compute_polyfit_metrics(fit, mreq);
+                patch_aspect = mres.at(lsdtt::polyfit_metric::aspect_degrees);
+                have_patch_aspect = true;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: terrain aspect failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+        }
 
         lsdtt::flat_surface_classify_result cres;
         try
@@ -1266,7 +1799,9 @@ int main(int argc, char* argv[])
             cres = lsdtt::classify_flat_surfaces_by_channel(
                 admitted, reference_field, cmask, src_ids, creq,
                 have_donors ? &donor_flat  : nullptr,
-                have_donors ? &flow_distance : nullptr);
+                have_donors ? &flow_distance : nullptr,
+                have_ev_slope ? &ev_slope : nullptr,
+                have_patch_aspect ? &patch_aspect : nullptr);
         }
         catch (const std::exception& e)
         {
@@ -1282,6 +1817,7 @@ int main(int argc, char* argv[])
         class_raster         = cres.surface_class_raster;
         floodplain_mask      = cres.floodplain_mask;
         ladder.band_index    = cres.hand_band_raster;
+        ladder.window_index  = cres.ladder_window_index;
 
         std::cout << "  " << cres.n_floodplain_labels << " floodplain, "
                   << cres.n_terrace_labels << " terrace surface(s)\n";
@@ -1295,6 +1831,17 @@ int main(int argc, char* argv[])
         lreq.max_level_count  = ip["ladder_max_level_count"];
         lreq.vertical_accuracy_metres =
             static_cast<double>(ff["vertical_accuracy_metres"]);
+        lreq.k_bootstrap      = ip["ladder_k_bootstrap"];
+        lreq.k_bootstrap_seed = ip["ladder_k_bootstrap_seed"];
+        lreq.vertical_accuracy_mode = ev_slope_dependent
+            ? lsdtt::vertical_accuracy_choice::slope_dependent
+            : lsdtt::vertical_accuracy_choice::fixed;
+        lreq.vertical_accuracy_gentle_metres =
+            static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
+        lreq.vertical_accuracy_steep_metres =
+            static_cast<double>(ff["vertical_accuracy_steep_metres"]);
+        lreq.vertical_accuracy_break_degrees =
+            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
         lreq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         lreq.reach_window_metres = -1.0;   // no reach on a fitted surface (C6)
@@ -1304,7 +1851,34 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["ladder_min_field_metres"]);
         lreq.max_valley_fraction =
             static_cast<double>(ff["ladder_max_valley_fraction"]);
+        {
+            const std::string& gr = sf["ladder_gap_rank"];
+            if (gr == "lowest")     lreq.gap_rank = lsdtt::gap_rank_choice::lowest;
+            else if (gr == "width") lreq.gap_rank = lsdtt::gap_rank_choice::width;
+            else
+            {
+                std::cerr << "FATAL: unknown ladder_gap_rank '" << gr
+                          << "'. Valid: lowest, width.\n";
+                return 1;
+            }
+        }
+        lreq.gap_trough_max_ratio =
+            static_cast<double>(ff["ladder_gap_trough_max_ratio"]);
+        lreq.gap_empty_fraction =
+            static_cast<double>(ff["ladder_gap_empty_fraction"]);
+        lreq.gap_min_width_metres =
+            static_cast<double>(ff["ladder_gap_min_width_metres"]);
+        lreq.gap_hist_bins        = ip["ladder_gap_hist_bins"];
+        lreq.max_separation_ratio =
+            static_cast<double>(ff["ladder_max_separation_ratio"]);
+        lreq.min_break_metres =
+            static_cast<double>(ff["ladder_min_break_metres"]);
+        lreq.max_break_metres =
+            static_cast<double>(ff["ladder_max_break_metres"]);
         lreq.n_threads = ip["n_threads"];
+        lreq.record_window_histograms = bf["write_ladder_histogram_csv"] ||
+                                        bf["write_ladder_break_metric_csv"];
+        lreq.window_hist_bins         = ip["ladder_hist_plot_bins"];
 
         try
         {
@@ -1341,9 +1915,26 @@ int main(int argc, char* argv[])
                   << "  ladder: " << n_res << " window(s) resolved, "
                   << n_unres << " unresolved, " << n_deg << " degenerate";
         if (!ladder.windows.empty())
-            std::cout << "  (required band-centre gap = "
-                      << ladder.windows[0].required_gap_m << " m)";
+        {
+            // Under slope_dependent the floor is per window, so reporting one
+            // number would be a lie about the other windows. Print the range
+            // when they differ and the single value when they do not.
+            double gmin = ladder.windows[0].required_gap_m;
+            double gmax = gmin;
+            for (const auto& w : ladder.windows)
+            {
+                gmin = std::min(gmin, w.required_gap_m);
+                gmax = std::max(gmax, w.required_gap_m);
+            }
+            if (gmax > gmin)
+                std::cout << "  (required band-centre gap = " << gmin
+                          << " to " << gmax << " m across windows)";
+            else
+                std::cout << "  (required band-centre gap = " << gmin << " m)";
+        }
         std::cout << "\n";
+        for (const std::string& note : ladder.notes)
+            std::cout << "  NOTE: " << note << "\n";
         if (n_unres > 0)
             std::cout << "  NOTE: an unresolved window means the DEM cannot "
                          "separate the requested levels there; do not describe "
@@ -1382,6 +1973,54 @@ int main(int argc, char* argv[])
         std::vector<float>   vm(n_pixels, 0.0f);
         std::vector<uint8_t> vmm(n_pixels, 1);
         std::int64_t n_valley = 0;
+
+        const double force_h = static_cast<double>(ff["force_valley_hand_metres"]);
+        const double force_d =
+            static_cast<double>(ff["force_valley_max_distance_metres"]);
+
+        if (force_h > 0.0 || force_d > 0.0)
+        {
+            // Stated, not discovered. The ladder still ran, and the band index,
+            // labels and patch table are untouched - only this raster is
+            // forced, so the two answers can be laid side by side.
+            const std::vector<float>&   rf  = reference_field.get_data();
+            const std::vector<uint8_t>& rfm = reference_field.get_mask();
+            const std::vector<float>&   am  = admitted.get_data();
+
+            std::vector<float> dist;
+            if (force_d > 0.0 && scope_resolved)
+            {
+                std::vector<float>   cdv(n_pixels, 0.0f);
+                std::vector<uint8_t> cmv(n_pixels, 1u);
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (scope.channel_mask[i]) cdv[i] = 1.0f;
+                const lsdtt::lsdtt_raster_cpu chan(
+                    std::move(cdv), std::move(cmv), meta);
+                dist = lsdtt::euclidean_distance_transform(
+                    chan, ip["n_threads"]).get_data();
+            }
+            else if (force_d > 0.0)
+            {
+                std::cerr << "WARNING: force_valley_max_distance_metres needs a "
+                             "channel scope; the distance limit is ignored.\n";
+            }
+
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                if (!(am[i] > 0.5f)) continue;
+                if (!rfm[i] || !std::isfinite(rf[i])) continue;
+                if (force_h > 0.0 && static_cast<double>(rf[i]) > force_h) continue;
+                if (!dist.empty() && static_cast<double>(dist[i]) > force_d) continue;
+                vm[i] = 1.0f; ++n_valley;
+            }
+            std::cout << "  valley floor FORCED: ";
+            if (force_h > 0.0) std::cout << "field <= " << force_h << " m";
+            if (force_h > 0.0 && force_d > 0.0) std::cout << " and ";
+            if (force_d > 0.0) std::cout << "within " << force_d
+                                         << " m of a channel";
+            std::cout << " -> " << n_valley << " cell(s)\n";
+        }
+        else
         for (std::size_t i = 0; i < n_pixels; ++i)
         {
             if (bi[i] >= -0.5f && bi[i] < 0.5f) { vm[i] = 1.0f; ++n_valley; }
@@ -1391,19 +2030,31 @@ int main(int argc, char* argv[])
 
         if (bf["clean_valley_mask"] && scope_resolved)
         {
-            lsdtt::valley_mask_clean_request creq2;
-            creq2.dilation_pixels = ip["valley_dilation_pixels"];
-            creq2.restrict_to_channel_connected =
+            // Generic constrained morphology seeded by the channel network -
+            // erode, drop what the channel cannot reach, regrow. Nothing about
+            // it is valley-specific, so it lives with the rest of the binary
+            // mask operations rather than here.
+            lsdtt::seed_reachability_options sropt;
+            sropt.dilation_pixels = ip["valley_dilation_pixels"];
+            sropt.require_seed_adjacent =
                 bf["restrict_valley_to_channel_connected"];
-            creq2.max_detour_ratio =
+            sropt.max_detour_ratio =
                 static_cast<double>(ff["valley_max_detour_ratio"]);
-            creq2.n_threads = ip["n_threads"];
+            sropt.require_seed_line_of_sight =
+                bf["restrict_valley_to_line_of_sight"];
+            sropt.n_threads = ip["n_threads"];
             try
             {
-                std::vector<std::uint8_t> cmask2(scope.channel_mask.begin(),
-                                                 scope.channel_mask.end());
-                valley_raster = lsdtt::clean_valley_mask(
-                    valley_raster, cmask2, creq2);
+                std::vector<float>   sd(n_pixels, 0.0f);
+                std::vector<uint8_t> smk(n_pixels, 1u);
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (scope.channel_mask[i]) sd[i] = 1.0f;
+                const lsdtt::lsdtt_raster_cpu seed_raster(
+                    std::move(sd), std::move(smk), meta);
+
+                valley_raster =
+                    lsdtt::filter_binary_components_by_seed_reachability(
+                        valley_raster, seed_raster, sropt);
                 std::int64_t n_after = 0;
                 for (const float v : valley_raster.get_data())
                     if (v > 0.5f) ++n_after;
@@ -1421,6 +2072,114 @@ int main(int argc, char* argv[])
         {
             std::cout << "  valley mask not cleaned: cleaning needs a channel "
                          "network, and no channel scope was resolved.\n";
+        }
+
+        // Closing BEFORE hole filling, and both after the connectivity filter:
+        // closing turns an open-ended sliver into either solid ground or an
+        // enclosed hole, and the fill then takes whatever is left.
+        {
+            double cr =
+                static_cast<double>(ff["valley_mask_closing_radius_metres"]);
+
+            // A fraction of the MEASURED width, when asked for. Measured on the
+            // mask as it stands now - after connectivity, before closing - so
+            // the radius is derived from the valley the run actually found.
+            const double wfrac =
+                static_cast<double>(ff["valley_mask_closing_width_fraction"]);
+            if (wfrac > 0.0 && scope_resolved)
+            {
+                // Measure on a HOLE-FILLED copy, not on the mask as it stands.
+                // The slivers this closing exists to seal are exactly what
+                // makes the cumulative width undercount: a section crossing
+                // floor / sliver / floor counts only the floor, so the width
+                // comes out narrower than the valley and the radius derived
+                // from it comes out too small to seal the slivers that caused
+                // the undercount. Filling first breaks that circularity.
+                lsdtt::lsdtt_raster_cpu width_mask = valley_raster;
+                try { width_mask = lsdtt::binary_fill_holes(width_mask); }
+                catch (const std::exception&) { /* measure on what we have */ }
+
+                std::vector<double> widths;
+                for (const std::vector<std::int64_t>& nodes :
+                         scope.channel_node_lists)
+                {
+                    const lsdtt::mask_width_result mw =
+                        lsdtt::measure_mask_width_across_polyline(
+                            width_mask, nodes,
+                            static_cast<double>(
+                                ff["valley_width_section_spacing_metres"]),
+                            static_cast<double>(
+                                ff["valley_width_max_half_length_metres"]));
+                    if (mw.n_sections > 0)
+                    {
+                        std::cout << "  valley width, channel "
+                                  << widths.size() << ": floor "
+                                  << mw.median_width_metres
+                                  << " m, envelope "
+                                  << mw.median_envelope_metres << " m (broken "
+                                  << (mw.median_width_metres > 0.0
+                                      ? mw.median_envelope_metres /
+                                        mw.median_width_metres : 0.0)
+                                  << "x, " << mw.n_sections << " sections)\n";
+                        // The closing is trying to reconstitute the ENVELOPE,
+                        // so that is the width its radius is a fraction of.
+                        widths.push_back(mw.median_envelope_metres);
+                    }
+                }
+                if (!widths.empty())
+                {
+                    std::sort(widths.begin(), widths.end());
+                    const double w = widths[widths.size() / 2];
+                    cr = wfrac * w;
+                    std::cout << "  closing radius = " << wfrac << " x " << w
+                              << " m = " << cr << " m\n";
+                }
+                else
+                {
+                    std::cerr << "WARNING: no usable cross section, so the "
+                                 "valley width could not be measured; falling "
+                                 "back to valley_mask_closing_radius_metres.\n";
+                }
+            }
+            if (cr > 0.0)
+            {
+                try
+                {
+                    valley_raster =
+                        lsdtt::binary_morphological_closing(valley_raster, cr);
+                    std::int64_t n_closed = 0;
+                    for (const float v : valley_raster.get_data())
+                        if (v > 0.5f) ++n_closed;
+                    std::cout << "  valley mask closed (radius " << cr
+                              << " m): " << n_valley << " -> " << n_closed
+                              << " cell(s)\n";
+                    n_valley = n_closed;
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: closing the valley mask failed: "
+                              << e.what() << "\n";
+                }
+            }
+        }
+
+        if (bf["fill_valley_mask_holes"])
+        {
+            try
+            {
+                valley_raster = lsdtt::binary_fill_holes(valley_raster);
+                std::int64_t n_filled = 0;
+                for (const float v : valley_raster.get_data())
+                    if (v > 0.5f) ++n_filled;
+                std::cout << "  valley mask holes filled: " << n_valley
+                          << " -> " << n_filled << " cell(s)\n";
+                n_valley = n_filled;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: filling valley mask holes failed: "
+                          << e.what() << "\n";
+            }
         }
 
         const std::string p = stem + "_valley_mask.tif";
@@ -1467,6 +2226,56 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_ladder_windows.csv";
         std::cout << "Writing ladder windows: " << p << "\n";
         lsdtt::write_ladder_windows_csv(loader, p, ladder.windows);
+    }
+
+    if (bf["write_nearest_source_id_raster"])
+    {
+        if (!have_donors || !scope_resolved)
+        {
+            std::cerr << "WARNING: write_nearest_source_id_raster needs a "
+                         "computed HAND (a supplied hand_fname carries no donor "
+                         "nodes), so no raster was written.\n";
+        }
+        else
+        {
+            std::vector<float>   sid(n_pixels, -1.0f);
+            std::vector<uint8_t> sidm(n_pixels, 1u);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const std::int64_t d = donor_flat[i];
+                if (d < 0) continue;
+                const std::size_t di = static_cast<std::size_t>(d);
+                if (di >= n_pixels) continue;
+                sid[i] = static_cast<float>(scope.channel_source_id[di]);
+            }
+            const std::string p = stem + "_nearest_source_id.tif";
+            std::cout << "Writing nearest source id (Int32): " << p << "\n";
+            loader.write_full(sid, meta, p, out_format, GDT_Int32);
+        }
+    }
+
+    if (bf["write_ladder_window_id_raster"] &&
+        !ladder.window_index.get_data().empty())
+    {
+        const std::string p = stem + "_ladder_window_id.tif";
+        std::cout << "Writing ladder window id (Int16): " << p << "\n";
+        loader.write_full(ladder.window_index.get_data(),
+                          ladder.window_index.get_meta(), p, out_format,
+                          GDT_Int16);
+    }
+
+    if (bf["write_ladder_break_metric_csv"])
+    {
+        const std::string p = stem + "_ladder_break_metric.csv";
+        std::cout << "Writing break decision metric: " << p << "\n";
+        lsdtt::write_ladder_break_metric_csv(loader, p, ladder.windows);
+    }
+
+    if (bf["write_ladder_histogram_csv"])
+    {
+        const std::string p = stem + "_ladder_histogram.csv";
+        std::cout << "Writing ladder densities: " << p << "\n";
+        lsdtt::write_ladder_histogram_csv(loader, p, ladder.windows);
     }
 
     if (bf["write_reference_field_profile_csv"])

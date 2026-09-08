@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <set>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -828,34 +829,84 @@ void write_overview_help(std::ostream& os,
         }
     }
 
+    // EVERY declared parameter must appear exactly once.
+    //
+    // A `parent` is a hint about presentation: it lets a dependent parameter be
+    // shown indented under the switch that enables it. It must never be able to
+    // delete a parameter from the documentation, and it must never be able to
+    // show one twice. Both used to happen. A parented entry was rendered only
+    // when its parent was a switch in the same group; every other parented
+    // entry was skipped by the nesting pass and then excluded from the flat
+    // pass because it had a parent, so it appeared nowhere at all. That hid 68
+    // declared parameters across 8 CLIs - including every ladder_gap_* control
+    // in lsdtt-fluvial-surfaces - from -h, -h html and the per-run README
+    // files, while the CLI reference pages told users those outputs were
+    // complete.
+    //
+    // The flat pass therefore skips exactly what the nesting pass WROTE,
+    // recorded as it goes, rather than re-deriving that from the parent's role
+    // and group. Re-deriving it is what drifted: the nesting pass descends
+    // through a chain of any roles, so a predicate that only looked one level
+    // up and demanded role == "switch" disagreed with it and printed the
+    // middle of every chain twice. `written` cannot disagree with itself.
+    std::set<std::string> written;
+
+    // Seed with the io entries: they were listed above under "File I/O and run
+    // control", and a tree would otherwise print an io child a second time
+    // inside its group.
+    for (const auto& key : order)
+    {
+        if (role_of(entries.at(key)) == "io") written.insert(key);
+    }
+
     for (const auto& group : group_order)
     {
         os << "\n" << group << ":\n";
 
-        // Switches first, each followed by its dependent parameters.
-        for (const auto& key : order)
+        // Print a switch and, beneath it, everything that depends on it,
+        // recursively: a switch may itself depend on a switch (clean_valley_mask
+        // under write_valley_mask_raster, with six parameters under that), and a
+        // dependent parameter may have dependants of its own. `written` doubles
+        // as the cycle guard for a parent chain that loops back on itself.
+        std::function<void(const std::string&, const std::string&)> write_tree =
+            [&](const std::string& key, const std::string& indent)
         {
-            const auto& e = entries.at(key);
-            if (role_of(e) == "io" || group_of(e) != group) continue;
-            if (role_of(e) != "switch") continue;
-            write_overview_line(os, "  ", key, e);
+            if (!written.insert(key).second) return;
+            write_overview_line(os, indent, key, entries.at(key));
             for (const auto& child_key : order)
             {
                 const auto& c = entries.at(child_key);
                 if (parent_of(c) == key && group_of(c) == group)
                 {
-                    write_overview_line(os, "    ", child_key, c);
+                    write_tree(child_key, indent + "  ");
                 }
             }
-        }
+        };
 
-        // Remaining parameters in the group (no parent switch, not io).
+        // Switches that nothing else claims as a dependant, with their trees.
         for (const auto& key : order)
         {
             const auto& e = entries.at(key);
             if (role_of(e) == "io" || group_of(e) != group) continue;
-            if (role_of(e) == "switch" || !parent_of(e).empty()) continue;
-            write_overview_line(os, "  ", key, e);
+            if (role_of(e) != "switch") continue;
+            const std::string p = parent_of(e);
+            const auto pit = entries.find(p);
+            if (!p.empty() && pit != entries.end() &&
+                group_of(pit->second) == group) continue;   // renders as a child
+            write_tree(key, "  ");
+        }
+
+        // Everything else in the group that the trees did not already write.
+        // Also via write_tree, so a dependency chain nests whatever the roles
+        // along it are: a parameter may depend on an algorithm choice rather
+        // than on a switch (cellular_nonlocal_max_hops on
+        // cellular_nonlocal_fraction), and that dependency is worth showing.
+        for (const auto& key : order)
+        {
+            const auto& e = entries.at(key);
+            if (role_of(e) == "io" || group_of(e) != group) continue;
+            if (written.count(key)) continue;
+            write_tree(key, "  ");
         }
     }
 
@@ -1210,31 +1261,51 @@ void lsdtt_param_parser::write_reference_files(
         }
     }
 
+    // Exactly as print_terminal_help: skip what the trees WROTE, never what a
+    // predicate over parent role and group says they should have written. See
+    // the long comment there for why the two must not be derived separately.
+    std::set<std::string> written;
+    for (const auto& key : order)
+    {
+        if (role_of(entries.at(key)) == "io") written.insert(key);
+    }
+
     for (const auto& group : group_order)
     {
         html << "<h2>" << html_escape(group) << "</h2>\n" << table_header;
-        // Switches with their children directly beneath, then loose params.
-        for (const auto& key : order)
+
+        std::function<void(const std::string&, bool)> write_tree =
+            [&](const std::string& key, bool indent)
         {
-            const auto& e = entries.at(key);
-            if (role_of(e) == "io" || group_of(e) != group) continue;
-            if (role_of(e) != "switch") continue;
-            write_row(key, e);
+            if (!written.insert(key).second) return;
+            write_row(key, entries.at(key), indent);
             for (const auto& child_key : order)
             {
                 const auto& c = entries.at(child_key);
                 if (parent_of(c) == key && group_of(c) == group)
                 {
-                    write_row(child_key, c, true);
+                    write_tree(child_key, true);
                 }
             }
+        };
+
+        for (const auto& key : order)
+        {
+            const auto& e = entries.at(key);
+            if (role_of(e) == "io" || group_of(e) != group) continue;
+            if (role_of(e) != "switch") continue;
+            const std::string p = parent_of(e);
+            const auto pit = entries.find(p);
+            if (!p.empty() && pit != entries.end() &&
+                group_of(pit->second) == group) continue;
+            write_tree(key, false);
         }
         for (const auto& key : order)
         {
             const auto& e = entries.at(key);
             if (role_of(e) == "io" || group_of(e) != group) continue;
-            if (role_of(e) == "switch" || !parent_of(e).empty()) continue;
-            write_row(key, e);
+            if (written.count(key)) continue;
+            write_tree(key, false);
         }
         html << "</table>\n";
     }
