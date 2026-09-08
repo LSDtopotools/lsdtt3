@@ -124,6 +124,7 @@ DEPRESSION_ROUTINES = (
     "depression_sink",      # sink: labels depressions
     "depression_fill_wl",   # Wang & Liu fill -- a second fill lineage
     "depression_fill_wl_epsilon",  # ... with a constant flat gradient
+    "basins_from_seeds",    # nested basins, one pass per nesting level
 )
 
 ROUTINES = FLOW_ROUTINES + SURFACE_ROUTINES + DEPRESSION_ROUTINES
@@ -344,6 +345,102 @@ def _make_call(wbe, routine: str, dem, args):
 # Staging happens before the timing starts, and read time is reported separately
 # from compute in any case, so this costs the benchmark nothing.
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Nested basins, one pass per nesting level
+#
+# `unnest_basins` is the literal analogue -- it exists precisely because
+# Whitebox cannot put nested basins in ONE raster and emits one per nesting
+# level. `watershed` is used here instead because it returns a single
+# predictable raster per call, so calling it once per level measures the same
+# per-level cost without a variable-length output to handle. Either way the
+# shape is the point: cost linear in DEPTH, where lsdtt3 reads a sub-interval.
+#
+# Do not "optimise" this into a single call with all seeds. That would measure
+# the disjoint-basin case, which every tool does in one pass and which
+# therefore distinguishes nothing. See run_svector_benchmark.py.
+# -----------------------------------------------------------------------------
+def _seeds_to_vector(seeds_csv: str, dem_path: str, out_path: str) -> int:
+    """Reproject lat/lon seeds into the DEM's CRS and write a point shapefile."""
+    import csv as _csv
+    from osgeo import gdal, ogr, osr
+    gdal.UseExceptions(); osr.UseExceptions()
+
+    ds = gdal.Open(dem_path)
+    dst = osr.SpatialReference(); dst.ImportFromWkt(ds.GetProjection())
+    ds = None
+    src = osr.SpatialReference(); src.ImportFromEPSG(4326)
+    for srs in (src, dst):
+        try:
+            srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        except Exception:
+            pass
+    tr = osr.CoordinateTransformation(src, dst)
+
+    drv = ogr.GetDriverByName("ESRI Shapefile")
+    if os.path.exists(out_path):
+        drv.DeleteDataSource(out_path)
+    vds = drv.CreateDataSource(out_path)
+    layer = vds.CreateLayer("seeds", dst, ogr.wkbPoint)
+    layer.CreateField(ogr.FieldDefn("id", ogr.OFTInteger))
+
+    n = 0
+    with open(seeds_csv) as fh:
+        for i, row in enumerate(_csv.DictReader(fh)):
+            x, y, *_ = tr.TransformPoint(float(row["longitude"]),
+                                         float(row["latitude"]))
+            pt = ogr.Geometry(ogr.wkbPoint); pt.AddPoint(x, y)
+            feat = ogr.Feature(layer.GetLayerDefn())
+            feat.SetGeometry(pt); feat.SetField("id", i)
+            layer.CreateFeature(feat); feat = None
+            n += 1
+    vds = None
+    return n
+
+
+def run_basins_from_seeds(wbe, dem, dem_path: str, seeds_csv: str,
+                          levels: int, repeats: int):
+    import numpy as np
+
+    stage = tempfile.mkdtemp(prefix="wb_seeds_")
+    try:
+        shp = os.path.join(stage, "seeds.shp")
+        n_seeds = _seeds_to_vector(seeds_csv, dem_path, shp)
+
+        with suppressed_output():
+            pour = wbe.read_vector(shp)
+
+        def one_pass():
+            # The D8 pointer is built INSIDE the timed region: lsdtt-basin-
+            # extraction builds its flow routing on every invocation, so both
+            # sides must include it or the comparison is between different
+            # operations.
+            pntr = wbe.hydrology.d8_pointer(dem=dem)
+            out = None
+            for _ in range(max(1, levels)):
+                out = wbe.hydrology.watershed(d8_pntr=pntr, pour_pts=pour)
+            return out
+
+        with suppressed_output():
+            one_pass()                              # warm-up, discarded
+        times = []
+        for _ in range(max(1, repeats)):
+            t0 = time.perf_counter()
+            with suppressed_output():
+                result = one_pass()
+            times.append(time.perf_counter() - t0)
+
+        arr = np.asarray(result.to_numpy())
+        assert_readable(arr, dem_path)
+        return {"reference": "whitebox", "routine": "basins_from_seeds",
+                "seconds": min(times), "seconds_all": times,
+                "seconds_median": statistics.median(times),
+                "levels": levels, "n_seeds": n_seeds,
+                "threads": 1, "timing_scope": "in_process_routine",
+                "peak_rss_mb": peak_rss_mb()}
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 def stage_predictor_free(in_path: str, tmp_dir: str) -> tuple[str, bool]:
     """Return a path Whitebox can read, and whether a copy had to be made."""
     try:
@@ -427,6 +524,15 @@ def run(routine: str, in_path: str, out_path, args):
             dem = wbe.read_raster(os.path.basename(read_path))
         seconds_read = time.perf_counter() - t0
         assert_readable(dem.to_numpy(), in_path)
+
+        # Returns its own dict: it produces no single comparable raster and the
+        # shared timing path below assumes one.
+        if routine == "basins_from_seeds":
+            out = run_basins_from_seeds(wbe, dem, read_path, args.seeds,
+                                        args.levels, args.repeats)
+            out["seconds_read"] = seconds_read
+            out["staged_predictor_free"] = bool(staged)
+            return out
 
         return _run_timed(wbe, routine, dem, in_path, out_path, args,
                           seconds_read, staged)
@@ -528,6 +634,10 @@ def main() -> int:
                     help="pinned thread count (WbEnvironment.max_procs). "
                          "Default 1, NOT Whitebox's own -1 = all cores, so an "
                          "unconfigured run is comparable rather than flattering.")
+    ap.add_argument("--seeds", default="",
+                    help="basins_from_seeds: CSV of latitude,longitude seeds")
+    ap.add_argument("--levels", type=int, default=1,
+                    help="basins_from_seeds: nesting levels to resolve")
     ap.add_argument("--repeats", type=int, default=1,
                     help="timed repeats after a discarded warm-up")
     ap.add_argument("--mfd-exponent", type=float, default=1.0)
