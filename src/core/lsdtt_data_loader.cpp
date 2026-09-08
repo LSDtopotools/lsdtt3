@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>

@@ -9,6 +9,8 @@
 #include "lsdtt_raster_base.hpp"
 #include "lsdtt_backend_factory.hpp"
 
+#include <memory>
+
 namespace lsdtt
 {
 

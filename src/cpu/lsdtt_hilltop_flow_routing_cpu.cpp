@@ -11,6 +11,7 @@
 #include "lsdtt_hilltop_flow_routing_cpu.hpp"
 
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <cmath>
