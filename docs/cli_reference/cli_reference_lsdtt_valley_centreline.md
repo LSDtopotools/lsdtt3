@@ -1,361 +1,243 @@
 # CLI reference: lsdtt-valley-centreline
 
-Identifies a broad per-channel valley mask and extracts a medial-axis valley centreline for each source channel. The tool can also export reach-adaptive HAND-break diagnostics, regularly spaced valley cross sections, and optional cross-section-derived products.
+**Trace a centreline through a supplied valley, and measure it.** Takes a valley
+mask, carves a synthetic trough through it, routes the centreline down that
+trough, fits a pinned monotonic thalweg baseline, and casts cross sections
+orthogonal to the centreline to measure valley width and cross-section
+hydraulics.
 
-Unlike `lsdtt-flat-surface-finder`, this tool is intentionally broad: it aims to map "the valley" around each channel and one centreline per channel, not detailed floodplain/terrace label classes.
+**It does not identify the valley.** That moved to
+[`lsdtt-fluvial-surfaces`](cli_reference_lsdtt_fluvial_surfaces.md), where a
+valley is band 0 of a reference-field ladder — a formulation that also works on a
+fan, which a corridor HAND break does not. `valley_mask_fname` is **required**;
+running without it is a hard error naming that tool. For the algorithms and their
+provenance in Clubb et al. (2022), see
+[Floodplains, terraces and valleys](../fluvial_surfaces_and_valleys.md).
 
 ## Usage
 
 ```bash
 lsdtt-valley-centreline <path> <parameter_file>
 lsdtt-valley-centreline <parameter_file>      # path defaults to ./
-lsdtt-valley-centreline -h                    # print help and exit
-lsdtt-valley-centreline -v                    # print version and exit
-lsdtt-valley-centreline -c                    # print citation and exit
+lsdtt-valley-centreline -h                    # parameter help, then exit
+lsdtt-valley-centreline -h <parameter_name>   # full guidance on one parameter
+lsdtt-valley-centreline -h html               # write an HTML/CSV reference
+lsdtt-valley-centreline --help-json           # machine-readable parameter list
+lsdtt-valley-centreline -v                    # version
+lsdtt-valley-centreline -c                    # citation
 ```
 
-## Parameter file format
-
-```text
-# Lines beginning with # are comments.
-key: value
-```
+Parameter file lines are `key: value`; `#` starts a comment.
 
 ---
 
-## Pipeline overview
+## Pipeline
 
-| Step | Description |
+| Step | What happens |
 |---|---|
-| 1 | Load DEM and pit-fill (`fill_min_slope_for_routing`) for robust routing |
-| 2 | Build D8 flow object (`boundary_conditions`) |
-| 3 | Load and map source/outlet points to raster pixels |
-| 4 | Resolve channel scope (source snapping, optional outlet truncation, optional auto source/outlet role detection) |
-| 5 | For each channel: build a wide corridor and compute Euclidean HAND above that single channel |
-| 6 | Detect HAND break globally and by along-channel reach; classify valley pixels below break |
-| 7 | Clean valley mask (opening/channel-adjacency/detour checks) |
-| 8 | Route centreline as least-cost path that maximizes distance to valley walls (medial-axis behavior) |
-| 9 | Fit pinned monotonic baseline along centreline |
-| 10 | Optionally extract cross sections, feature picks, and hydraulic diagnostics |
-| 11 | Write rasters/tables/vectors (`.tif`, `.csv`, `.fgb`) |
+| 1 | Load DEM, pit-fill for routing (`fill_min_slope_for_routing`) |
+| 2 | Build the D8 flow object (`boundary_conditions`) |
+| 3 | Load source and outlet points, map them to pixels |
+| 4 | Resolve channel scope: snapping, optional outlet truncation, optional auto role detection |
+| 5 | Load `valley_mask_fname`; each channel's valley is that mask intersected with its corridor |
+| 6 | Carve the synthetic trough and route the centreline down it |
+| 7 | Fit the pinned monotonic thalweg baseline |
+| 8 | Optionally refine the supplied mask against that baseline |
+| 9 | Cast cross sections, measure width, detect features, derive hydraulics |
+| 10 | Write rasters, tables and vectors |
+
+**One centreline per resolved source.** There is no threshold-only all-channel
+mode; `source_points_path` is required.
 
 ---
 
-## Required and core I/O parameters
+## File I/O and run control
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the DEM. |
-| `read_fname` | string | parameter-file stem | Input raster filename (with or without extension). |
+| `read_path` | string | `./` | Directory from which input files are read. |
+| `read_fname` | string | | Input DEM, with or without extension. |
 | `write_path` | string | same as `read_path` | Output directory. |
-| `write_fname` | string | same as `read_fname` | Output stem used for all products. |
-| `source_points_path` | string | `` | **Required.** Source point file. One centreline is produced per resolved source. |
+| `write_fname` | string | stem of `read_fname` | Output prefix for all products. |
+| `valley_mask_fname` | string | | **Required.** Valley mask raster, in `read_path`. Cells > 0.5 are valley. Normally `<stem>_valley_mask.tif` from `lsdtt-fluvial-surfaces`. |
+| `n_threads` | int | `0` | OpenMP threads. `0` = all available. |
 | `write_output_format` | string | `gtiff` | Raster format: `cog`, `gtiff`, `same_as_input`. |
 
-Important: this CLI currently requires `source_points_path`; threshold-only all-channel mode is not supported here.
-
 ---
 
-## Adding sources and endpoints
+## Source and outlet points
 
-### Source and outlet files
-
-Use either:
-- a **source-only** file, or
-- a source file plus an explicit **outlet** file, or
-- a **single combined source file** with `auto_detect_outlet_points: true` (default).
-
-Point files can be CSV (`latitude`/`longitude` in EPSG:4326 by default) or OGR vectors (`.gpkg`, `.fgb`, etc.).
+Supply either a source-only file, a source file plus an explicit outlet file, or
+a single combined file with `auto_detect_outlet_points: true` (the default),
+which classifies the downstream points as outlets. Point files may be CSV
+(`latitude` / `longitude` in EPSG:4326) or any OGR vector (`.gpkg`, `.fgb`, …).
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `source_points_path` | string | `` | Source points file (required). |
+| `source_points_path` | string | | **Required.** Vector or CSV file with source points. |
 | `source_points_input_format` | string | `auto_detect` | `auto_detect`, `csv_latitude_longitude_epsg4326`, `ogr_vector_layer`. |
-| `source_points_layer_name` | string | `` | Optional vector layer name. |
-| `source_points_latitude_field_name` | string | `latitude` | CSV latitude field. |
-| `source_points_longitude_field_name` | string | `longitude` | CSV longitude field. |
-| `outlet_points_path` | string | `` | Optional outlet points file to truncate channels. |
-| `outlet_points_input_format` | string | `auto_detect` | Same choices as source input format. |
-| `outlet_points_layer_name` | string | `` | Optional vector layer name for outlet file. |
-| `outlet_points_latitude_field_name` | string | `latitude` | CSV latitude field for outlets. |
-| `outlet_points_longitude_field_name` | string | `longitude` | CSV longitude field for outlets. |
-| `auto_detect_outlet_points` | bool | `true` | If no explicit outlet file is given, classify supplied points: downstream points become outlets. |
+| `source_points_layer_name` | string | | Optional layer name for vector input. |
+| `source_points_latitude_field_name` | string | `latitude` | CSV latitude column. |
+| `source_points_longitude_field_name` | string | `longitude` | CSV longitude column. |
+| `outlet_points_path` | string | | Optional outlet points file, to truncate channels. |
+| `outlet_points_input_format` | string | `auto_detect` | As the source format. |
+| `outlet_points_layer_name` | string | | Optional layer name. |
+| `outlet_points_latitude_field_name` | string | `latitude` | CSV latitude column. |
+| `outlet_points_longitude_field_name` | string | `longitude` | CSV longitude column. |
 
-### Snapping and scope controls
+> **Naming note.** This tool still spells these `source_points_path` /
+> `outlet_points_path`, while `lsdtt-fluvial-surfaces` spells the same concept
+> `source_points_fname` / `outlet_points_fname`. The two are not interchangeable;
+> use the spelling of the tool you are running.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `channel_threshold_contributing_pixels` | int | `1000` | Drainage threshold used to define channel cells for source snapping. |
-| `snap_sources_to_channel_threshold` | bool | `true` | Snap source points onto threshold channel cells. |
-| `source_snap_max_radius_pixels` | int | `25` | Max expanding-square snap search radius. |
-| `outlet_snap_max_distance_metres` | float | `0` | Max raw-outlet to traced-path snap distance (`0` = unlimited). |
-
----
-
-## Valley extraction controls
+## Channel scope
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `valley_corridor_width_metres` | float | `5000` | Corridor half-width around channel used for HAND populations and candidate valley pixels. |
-| `valley_fallback_hand_metres` | float | `10` | Fallback HAND break if no clear break is detected. |
-| `valley_force_hand_metres` | float | `0` | Force a constant HAND threshold for valley extraction (`>0` enables; bypasses break detection). |
-| `valley_min_hand_metres` | float | `2` | Floor on detected break to avoid channel-hugging degenerate valleys. |
-| `valley_max_hand_metres` | float | `0` | Optional cap on break (`0` = no cap). |
-| `valley_break_reach_window_metres` | float | `0` | Reach window length for adaptive breaks (`0` auto, `<0` single global break). |
-| `refine_valley_with_baseline` | bool | `true` | Re-test valley mask against nearest-centreline baseline to remove stale-reference wedges. |
-| `valley_dilation_pixels` | int | `4` | Cleanup dilation/opening strength (`0` disables dilation). |
-| `valley_max_detour_ratio` | float | `3.0` | Prune pixels with long geodesic detours from channel (`0` disables). |
+| `channel_threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel cells for source snapping. |
+| `auto_detect_outlet_points` | bool | `true` | Classify points in `source_points_path` into sources and outlets. Disabled when an explicit outlet file is given. |
+| `snap_sources_to_channel_threshold` | bool | `true` | Snap source points to the nearest cell meeting the threshold. |
+| `source_snap_max_radius_pixels` | int | `25` | Maximum expanding-square search radius for snapping. |
+| `outlet_snap_max_distance_metres` | float | `0` | Maximum distance between a raw outlet point and its traced-path node. `0` = unlimited. |
+| `boundary_conditions` | string | `oooo` | Flow boundary conditions (N, E, S, W). |
+| `fill_min_slope_for_routing` | float | `0.0001` | Minimum slope imposed when pit-filling for routing. |
 
 ---
 
-## Reach HAND statistics and break detection
-
-The valley threshold is derived from HAND populations in two levels:
-- **global per channel** (all corridor pixels for that channel), and
-- **per reach window** (corridor pixels grouped by nearest channel node window).
-
-The core statistic path is:
-1. Compute Euclidean HAND above the single target channel.
-2. Build log10(HAND) histogram (128 bins; low HAND floor clamp).
-3. Smooth histogram with a 2-pass moving average.
-4. Segment modes at local minima.
-5. Merge weak/noisy mode splits based on dip depth and mode mass.
-6. Take the first surviving dip after the first surviving mode as the valley break.
-7. For reach windows without their own break: inherit nearest window break, then global break, then fallback.
-
-Controls:
+## Valley refinement
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `valley_wall_peak_fraction` | float | `0.02` | Minimum mode mass/peak floor (keeps small valley-floor mode detectable next to high wall mode). |
-| `valley_break_method` | string | `fixed` | `fixed` or `relief_adaptive`. |
-| `valley_break_fraction` | float | `0.6` | Fixed dip-depth acceptance fraction. Used only in `fixed`. |
-| `valley_break_fraction_min` | float | `0.5` | `relief_adaptive`: strict end for low-relief reaches. |
-| `valley_break_fraction_max` | float | `0.7` | `relief_adaptive`: permissive end for high-relief reaches. |
-| `valley_break_relief_window_metres` | float | `300` | Radius for local-relief raster driving adaptive fraction. |
+| `refine_valley_with_baseline` | bool | `true` | Re-test the supplied mask against the centreline baseline after routing, removing the stale-reference wedges a nearest-channel-pixel test grows onto downstream-sloping terraces where the channel veers away. |
+| `refine_max_height_metres` | float | `0.0` | Height above the pinned baseline below which a pixel is valley [m]. **Required by the refinement, which does nothing while this is 0.** |
 
-`relief_adaptive` uses a saturating relief-to-fraction mapping per reach, then applies the same relative dip-depth logic with that local fraction.
-
-Diagnostics:
-- `*_valley_breaks.csv` (always written): applied break per window, own/inherited flag, plus applied fraction and relief.
-- `write_valley_hand_histogram: true`: `*_valley_hand_hist.csv` and `*_valley_hand_window_hist.csv`.
-- `write_valley_break_metric: true`: `*_valley_break_metric.csv` with smoothed decision metric, peaks/boundaries, and chosen break bin.
-- `write_valley_reach_id_raster: true`: `*_valley_reach_id_ch<sid>.tif` showing which pixels fed each reach histogram.
+The threshold must be stated rather than inherited: this tool no longer derives a
+HAND break of its own, and a refinement run against a fabricated threshold would
+look like a result and be one only by accident. The refined mask is written for
+you and is **never fed back** to `lsdtt-fluvial-surfaces`.
 
 ---
 
-## Centreline controls and outputs
+## Trough carving and routing
 
-Centreline extraction now uses least-cost medial-axis routing inside the valley mask. Some legacy trough parameters remain exposed for compatibility.
+The valley is punched out of the DEM, each valley pixel is set to the minimum
+bank elevation nearby and then depressed in proportion to its distance from the
+wall, and the result is breached, filled and re-carved. The D8 path down the
+resulting V-shaped trough is the centreline. This follows Clubb et al. (2022).
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `min_centreline_nodes` | int | `10` | Minimum acceptable routed centreline length. |
-| `trough_scaling_factor` | float | `0.1` | Legacy trough parameter (retained in interface). |
-| `trough_along_channel_slope` | float | `0.02` | Legacy trough parameter (retained in interface). |
-| `centreline_loops` | int | `5` | Legacy trough iteration parameter (retained in interface). |
-| `min_bank_elevation_window_radius_metres` | float | `200` | Legacy trough bank filter radius (retained in interface). |
-| `trough_nodata_buffer_pixels` | int | `2` | Dilates valley hole before wall-distance field. |
-| `trough_fill_min_slope` | float | `0.0001` | Legacy trough-fill slope parameter (retained in interface). |
-
-Primary centreline outputs:
-- `write_valley_centreline: true` -> `*_valley_centreline.fgb`
-  - fields: `source_id`, `n_nodes`, `valley_hand_break_m`, `routing_ok`
-- `write_valley_centreline_nodes: true` -> `*_valley_centreline_nodes.csv`
-  - columns: `source_id`, `node_seq`, `x`, `y`, `elevation`, `trough_elevation`, `baseline_elevation`, `is_pin`, `distance_m`
-
----
-
-## Valley mask outputs
-
-| Parameter | Type | Default | Output |
-|---|---|---|---|
-| `write_valley_mask_raster` | bool | `true` | `*_valley_mask.tif` (UInt32, value `source_id + 1`) and `*_valley_mask_ch<sid>.tif` (Byte 0/1 per channel). |
-| `write_valley_reach_id_raster` | bool | `true` | `*_valley_reach_id_ch<sid>.tif` (Int16 reach window IDs in corridor). |
-
-Optional context rasters:
-- `write_hillshade_raster` -> `*_hillshade.tif`
-- `write_multidirectional_hillshade_raster` -> `*_multidirectional_hillshade.tif`
+| `trough_scaling_factor` | float | `0.1` | Trough depth per metre of distance to the valley wall (α in Clubb et al. 2022, Eq. 2). Doubled automatically on routing failure, up to 2 retries. |
+| `trough_along_channel_slope` | float | `0.02` | Synthetic downstream tilt of the trough (m per m along channel). Stops a near-flat or through valley routing its centreline out of the wrong tile edge. |
+| `centreline_loops` | int | `5` | Trough carve / breach / fill iterations. |
+| `min_bank_elevation_window_radius_metres` | float | `200` | Radius of the local-minimum filter on the nearest-wall elevation field. |
+| `trough_nodata_buffer_pixels` | int | `2` | The valley hole is dilated by this many pixels before bank elevations are sampled. |
+| `trough_fill_min_slope` | float | `0.0001` | Minimum slope for pit filling of the trough surface. |
+| `min_centreline_nodes` | int | `10` | A routed centreline shorter than this counts as a failure. |
 
 ---
 
 ## Cross sections
 
-Enable with `write_valley_cross_sections: true` (default).
-
-### Geometry and spacing
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `cross_section_spacing_metres` | float | `500` | Along-centreline station spacing. |
-| `cross_section_length_multiplier` | float | `1.5` | Total section length = multiplier x widest bounded valley width on channel. |
-| `cross_section_tangent_window_nodes` | int | `8` | Tangent smoothing window for orthogonal direction. |
-| `cross_section_min_half_length_metres` | float | `0` | Optional floor for half-length. |
-| `cross_section_max_half_length_metres` | float | `5000` | Hard cap for side search and half-length. |
-
-### Overlap control and curved sections
+Stations are placed along the centreline and a transect is cast across it,
+orthogonal to a direction smoothed over `cross_section_tangent_window_nodes`
+nodes each side. Valley width at a station is the span of the contiguous
+in-valley run through the centreline; a side not found before the transect runs
+out marks the station not-found and excludes it from the per-channel statistic.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `clip_overlapping_sections` | bool | `true` | Straight-section non-overlap via local Voronoi/bisector clipping. |
-| `neighbour_clip_window` | int | `2` | Number of neighboring stations checked on each side for clipping. |
-| `min_section_reach_fraction` | float | `0.35` | Drop sections clipped below this fraction of nominal length. |
-| `curved_cross_sections` | bool | `false` | Use boundary-fitted curved sections (streamwise isocontours). |
-| `curved_wall_clearance_fraction` | float | `0.10` | Curved mode minimum wall clearance margin. |
-| `curved_streamwise_smoothing_passes` | int | `40` | Curved mode smoothing passes for streamwise field. |
-| `curved_coarse_spacing_metres` | float | `700` | Curved mode coarse-to-fine station placement spacing. |
+| `write_valley_cross_sections` | bool | `true` | Write regularly spaced cross sections orthogonal to each centreline. |
+| `cross_section_spacing_metres` | float | `500` | Along-centreline spacing between stations (m). |
+| `cross_section_tangent_window_nodes` | int | `8` | Nodes each side used to smooth the local direction the transect is drawn orthogonal to. |
+| `cross_section_length_multiplier` | float | `1.5` | Transect total length as a multiple of the widest valley width for the channel. |
+| `cross_section_min_half_length_metres` | float | `0` | Minimum transect half-length (m), so a narrow channel's sections still show wall and upland context. |
+| `cross_section_max_half_length_metres` | float | `5000` | Hard cap (m) on the outward march when finding a valley side. |
+| `clip_overlapping_sections` | bool | `true` | Clip each transect side where the ray becomes closer to a neighbouring station centre than to its own (local Voronoi bisector clipping). |
+| `neighbour_clip_window` | int | `2` | Neighbouring stations each side considered for overlap clipping. |
+| `min_section_reach_fraction` | float | `0.35` | Drop a station whose clipped transect falls below this fraction of the nominal length. |
 
-### Cross-section outputs
+### Curved cross sections
 
-- `*_valley_cross_sections.fgb`: section lines with `source_id`, `station_seq`, `along_distance_m`, `valley_width_m`, endpoint coords.
-- `*_valley_cross_section_sides.fgb`: left/right wall points.
-- `*_valley_cross_section_boundaries.fgb`: `wall_left`, `wall_right`, and `hydraulic_edge` boundary points.
-- `*_valley_cross_section_samples.csv`: sampled profile rows (`offset_m`, `elevation`, `in_valley`, optional feature rasters).
+Straight rays are correct in straight reaches and cross one another in tight
+bends. Curved sections are traced as isocontours of a smooth along-valley
+coordinate field — straight where the valley is straight, curving gradually
+through bends like the grid lines of a boundary-fitted mesh.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `curved_cross_sections` | bool | `false` | Trace sections as streamwise isocontours instead of straight rays. |
+| `curved_wall_clearance_fraction` | float | `0.10` | A shortened side never clips below (1 + this) × the distance to the valley wall. |
+| `curved_streamwise_smoothing_passes` | int | `40` | Anchored Laplacian smoothing passes on the streamwise coordinate field. Higher = smoother sections, fewer creases at bends. |
+| `curved_coarse_spacing_metres` | float | `700` | Sections are placed coarse-to-fine: a sparse backbone at this spacing, then midpoints down to `cross_section_spacing_metres`. Keeps coverage even instead of clustering next to gaps. |
+
+### Features and hydraulics
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_cross_section_features` | bool | `true` | Detect and write, along each section: D8 channel crossings, left/right valley walls, hydraulic-step boundaries, maximum-curvature peaks and multidirectional-hillshade peaks. |
+| `cross_section_curvature_window_metres` | float | `60` | Polynomial-fit window diameter (m) for the maximum-curvature raster used to find slope-break peaks. |
+| `cross_section_feature_prominence_fraction` | float | `0.15` | Minimum peak prominence, as a fraction of that profile's range over the transect. |
+| `write_cross_section_hydraulics` | bool | `false` | Flood each profile stage by stage and record flow width, wetted area, wetted perimeter and hydraulic depth (A/W). Breakpoints in hydraulic depth against elevation above thalweg mark bankfull and inset flat-surface levels (Delchiaro et al. 2025, *Computers & Geosciences*, doi:10.1016/j.cageo.2025.106001). |
+| `write_cross_section_informed_valley_mask` | bool | `false` | Build a valley-floor mask from the sections' hydraulic breaks: each corridor pixel's height above the nearest node's thalweg baseline is compared with the channel's **median** lowest hydraulic break, so one anomalous section cannot streak onto the plateau. Requires `write_cross_section_features`. |
 
 ---
 
-## Cross-section feature and hydraulic products
+## Other outputs
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_cross_section_features` | bool | `true` | Enables feature extraction and writes `*_valley_cross_section_features.csv`. |
-| `cross_section_curvature_window_metres` | float | `60` | Polyfit window for maximum-curvature raster used in feature picks. |
-| `cross_section_feature_prominence_fraction` | float | `0.15` | Minimum prominence for curvature/hillshade peak reporting. |
-| `write_cross_section_hydraulics` | bool | `false` | Writes BankfullMapper-style stage table `*_valley_cross_section_hydraulics.csv`. |
-| `write_cross_section_informed_valley_mask` | bool | `false` | Builds `*_cross_section_informed_valley_mask.tif` (requires feature path). |
+| `write_valley_mask_raster` | bool | `true` | Write the valley mask actually used (0 outside; `source_id + 1` in each channel's valley). |
+| `write_valley_centreline` | bool | `true` | Write the centrelines as vector lines. |
+| `write_valley_centreline_nodes` | bool | `true` | Write the per-node centreline table. |
+| `write_hillshade_raster` | bool | `false` | Standard single-azimuth hillshade of the DEM — a terrain backdrop for the section figures. |
+| `write_multidirectional_hillshade_raster` | bool | `false` | Mean of hillshades from several evenly spaced azimuths. Reduces directional bias and picks out valley and terrace margins. |
+| `multidirectional_hillshade_n_directions` | int | `8` | Number of azimuths for the multidirectional hillshade. |
 
-Additional feature/hydraulic outputs:
-- `*_valley_cross_section_features.csv`
-- `*_valley_cross_section_hydraulic_breaks.csv`
-- `*_cross_section_informed_valley_mask.tif` and `*_cross_section_informed_valley_mask_ch<sid>.tif`
+### Files written
+
+| File | Contents |
+|---|---|
+| `<write_fname>_valley_centreline.fgb` | Centrelines as polylines |
+| `<write_fname>_valley_centreline_nodes.csv` | Per-node table: position, flow distance, baseline elevation |
+| `<write_fname>_valley_cross_sections.*` | Section geometries |
+| `<write_fname>_valley_cross_section_samples.csv` | Per-sample elevation along each section |
+| `<write_fname>_valley_cross_section_features.*` | Detected walls, channel crossings, curvature and hillshade peaks |
+| `<write_fname>_valley_cross_section_sides.*`, `_boundaries.*` | Per-side extents and clipping outcome |
+| `<write_fname>_valley_cross_section_hydraulics.csv` | Stage / width / area / wetted perimeter / hydraulic depth |
+| `<write_fname>_valley_cross_section_hydraulic_breaks.csv` | Breakpoints in the hydraulic-depth curve |
+| `<write_fname>_valley_mask.tif` | The mask used, per channel |
+| `<write_fname>_cross_section_informed_valley_mask.tif` | Hydraulic-break valley mask, when enabled |
+| `<write_fname>_hillshade.tif`, `_multidirectional_hillshade.tif` | Backdrops |
+| `<write_fname>_README.csv` / `.html` | The resolved parameters for that run |
 
 ---
 
-## Threading and routing options
+## Retired parameters
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_threads` | int | `0` | OpenMP threads (`0` uses all available). |
-| `boundary_conditions` | string | `oooo` | Flow-routing boundary conditions (N,E,S,W). |
-| `fill_min_slope_for_routing` | float | `0.0001` | Minimum slope when pit-filling DEM used for routing. |
-| `multidirectional_hillshade_n_directions` | int | `8` | Number of azimuths for multidirectional hillshade. |
+Valley identification moved out. These keys are **accepted for one release and
+ignored**, with a message naming where the equivalent now lives; they do not stop
+the run, because a missing `valley_mask_fname` stops it first with a message that
+says the same thing once.
+
+| Ignored key | Now |
+|---|---|
+| `valley_fallback_hand_metres` | **no successor.** There is no fallback break: where no level count is admissible the ladder in `lsdtt-fluvial-surfaces` reports `unresolved` rather than substituting a number |
+| `valley_force_hand_metres` | `force_valley_hand_metres` in `lsdtt-fluvial-surfaces` |
+| `valley_min_hand_metres`, `valley_max_hand_metres` | `ladder_min_break_metres`, `ladder_max_break_metres` there |
+| `valley_wall_peak_fraction`, `valley_break_fraction`, `valley_break_fraction_min`, `valley_break_fraction_max`, `valley_break_method`, `valley_break_relief_window_metres` | the ladder's break-finder parameters there |
+| `valley_break_reach_window_metres` | `ladder_reach_window_metres` there |
+| `valley_corridor_width_metres` | renamed to `valley_corridor_half_width_metres`, then moved there |
+| `valley_dilation_pixels`, `valley_max_detour_ratio` | same names, in `lsdtt-fluvial-surfaces` — mask cleaning happens where the mask is made |
+| `write_valley_hand_histogram`, `write_valley_break_metric`, `write_valley_reach_id_raster` | the ladder diagnostics there |
 
 ---
 
-## Example parameter files
+## See also
 
-### 1) Single channel from one source point
-
-```text
-read_path:  /data/royalton/
-read_fname: ry_utm.tif
-write_path: /data/royalton/
-write_fname: ry_valley_single
-
-source_points_path: /data/royalton/channel_sources.gpkg
-source_points_input_format: ogr_vector_layer
-source_points_layer_name: channel_sources
-
-auto_detect_outlet_points: false
-snap_sources_to_channel_threshold: true
-channel_threshold_contributing_pixels: 1000
-
-valley_break_method: relief_adaptive
-valley_corridor_width_metres: 5000
-valley_break_reach_window_metres: 0
-valley_min_hand_metres: 2
-valley_fallback_hand_metres: 10
-
-write_valley_centreline: true
-write_valley_centreline_nodes: true
-write_valley_mask_raster: true
-write_valley_cross_sections: false
-```
-
-### 2) Source + explicit endpoint bounding
-
-```text
-read_path:  /data/mayoco/
-read_fname: mayoco_COP30_utm.tif
-write_path: /data/mayoco/
-write_fname: mayoco_valley_bounded
-
-source_points_path: /data/mayoco/channel_sources.gpkg
-source_points_input_format: ogr_vector_layer
-source_points_layer_name: sources
-
-outlet_points_path: /data/mayoco/channel_outlets.gpkg
-outlet_points_input_format: ogr_vector_layer
-outlet_points_layer_name: outlets
-
-auto_detect_outlet_points: false
-outlet_snap_max_distance_metres: 200
-
-valley_break_method: fixed
-valley_break_fraction: 0.6
-valley_max_hand_metres: 25
-
-write_valley_centreline: true
-write_valley_centreline_nodes: true
-write_valley_hand_histogram: true
-write_valley_break_metric: true
-```
-
-### 3) Combined point file with automatic outlet detection
-
-```text
-read_path:  /data/salinas/
-read_fname: seco_utm.tif
-write_path: /data/salinas/
-write_fname: salinas_valley_autorole
-
-source_points_path: /data/salinas/sources_for_fp.gpkg
-source_points_input_format: ogr_vector_layer
-
-auto_detect_outlet_points: true
-snap_sources_to_channel_threshold: true
-source_snap_max_radius_pixels: 30
-
-valley_break_method: relief_adaptive
-valley_break_fraction_min: 0.5
-valley_break_fraction_max: 0.7
-valley_break_relief_window_metres: 300
-
-write_valley_mask_raster: true
-write_valley_reach_id_raster: true
-write_valley_hand_histogram: true
-write_valley_break_metric: true
-```
-
-### 4) Dense cross sections, curved mode, and hydraulic outputs
-
-```text
-read_path:  /data/royalton/
-read_fname: ry_utm.tif
-write_path: /data/royalton/
-write_fname: ry_valley_xs_curved
-
-source_points_path: /data/royalton/sources_for_fp.gpkg
-source_points_input_format: ogr_vector_layer
-auto_detect_outlet_points: true
-
-write_valley_cross_sections: true
-cross_section_spacing_metres: 150
-cross_section_length_multiplier: 1.5
-cross_section_max_half_length_metres: 5000
-
-curved_cross_sections: true
-curved_coarse_spacing_metres: 700
-curved_streamwise_smoothing_passes: 40
-curved_wall_clearance_fraction: 0.10
-
-clip_overlapping_sections: true
-neighbour_clip_window: 2
-min_section_reach_fraction: 0.35
-
-write_cross_section_features: true
-cross_section_curvature_window_metres: 60
-cross_section_feature_prominence_fraction: 0.15
-write_cross_section_hydraulics: true
-write_cross_section_informed_valley_mask: true
-```
+- [Floodplains, terraces and valleys](../fluvial_surfaces_and_valleys.md) — the
+  trough construction, its origin in Clubb et al. (2022), and where lsdtt3
+  departs from it
+- [CLI reference: lsdtt-fluvial-surfaces](cli_reference_lsdtt_fluvial_surfaces.md)
+- [CLI reference: lsdtt-flat-surface-finder](cli_reference_lsdtt_flat_surface_finder.md)
+- [CLI reference: lsdtt-swath-profile](cli_reference_lsdtt_swath_profile.md)

@@ -204,7 +204,7 @@ int main(int argc, char* argv[])
         "are all wrong by 3.28 and NOTHING downstream looks broken - the "
         "landscape merely appears far steeper than it is. Establish the vertical "
         "datum from the data provider before setting this.",
-        "Input", "param", "metres|feet|us_survey_feet"};
+        "Input", "param", ""};   // no parent; allowed values are in the description
 
     float_default_map["minimum_elevation"] = -9999.0f;
     help_map["minimum_elevation"] = {"float","-9999",

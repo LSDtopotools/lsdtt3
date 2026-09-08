@@ -367,7 +367,10 @@ int main(int argc, char* argv[])
         "curvature and relief is too large by 3.28. Establish the vertical datum "
         "from the data provider before setting this - a wrong setting silently "
         "corrupts correct data. The tool warns when slopes look implausible.",
-        "Vertical units", "param", "metres|feet|us_survey_feet"};
+        // No parent: this depends on nothing. The allowed values belong in
+        // the description (they are stated there) and in the type, never in
+        // the parent slot, which names the parameter this one depends on.
+        "Vertical units", "param", ""};
 
     bool_default_map["check_vertical_units_against_usgs"] = true;
     help_map["check_vertical_units_against_usgs"] = {"bool","true",
@@ -380,7 +383,7 @@ int main(int argc, char* argv[])
         "feet-on-a-metre-grid is a US delivery convention. Sends 5 pixel "
         "coordinates to epqs.nationalmap.gov. Set false to keep the run offline. "
         "Nothing is ever converted automatically.",
-        "Vertical units", "param", "true|false"};
+        "Vertical units", "param", ""};
 
     // --- Threshold masking ---
     float_default_map["minimum_elevation"] = 0.0f;

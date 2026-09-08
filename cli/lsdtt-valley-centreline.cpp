@@ -206,7 +206,11 @@ int main(int argc, char* argv[])
         "deliberate: a refinement against a fabricated threshold would look "
         "like a result and be one only by accident. The refined mask is written "
         "for you and is never fed back to lsdtt-fluvial-surfaces.",
-        "Valley mask","param","refine_valley_with_baseline"};
+        // Group MUST match refine_valley_with_baseline's group. print_terminal_help
+        // renders a parented entry only inside its parent's group block, so a child
+        // declaring a different group is silently absent from -h, -h html and the
+        // README files. This one was.
+        "Valley identification","param","refine_valley_with_baseline"};
 
     bool_default_map["refine_valley_with_baseline"] = true;
     help_map["refine_valley_with_baseline"] = {"bool","true",
@@ -215,7 +219,10 @@ int main(int argc, char* argv[])
         "Removes the stale-reference wedges the nearest-channel-pixel test "
         "grows onto downstream-sloping terraces where the channel veers "
         "away.",
-        "Valley identification", "param", ""};
+        // "switch", not "param": it enables an analysis, and print_terminal_help
+        // only nests dependent parameters under a parent whose role is "switch".
+        // Declared as "param" it took refine_max_height_metres out of -h with it.
+        "Valley identification", "switch", ""};
 
 
 
