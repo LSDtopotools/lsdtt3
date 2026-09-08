@@ -6166,6 +6166,104 @@ catchment; a synthetic island supplies one, but only a fat, smooth one
 (`island_fill_fraction: 0.95`, 3 harmonics gave 57 % land; 0.55 with the
 defaults gave 16 % in lobes, and no complete basins at all).
 
+### Chi value tolerances, pinned (2026-09-08)
+
+`tests/scripts/run_svector_benchmark.py --cases chi_value --check` now enforces
+the comparison. Value metrics only: nothing in that driver asserts a timing,
+which would be meaningless off a dedicated machine.
+
+**The fixture is generated, not committed.** `lsdtt-synthetic-networks` is
+deterministic -- the same `random_seed` gives a byte-identical DEM (verified,
+two runs, matching sha256) -- so the island is built from a recipe held in the
+driver and its sha256 is checked before any tolerance is applied. A mismatch
+SKIPS rather than fails, because a different GDAL or compiler is an environment
+difference, not a defect. Applying a pinned tolerance to a different raster is
+how a benchmark comes to assert nothing.
+
+Measured from the driver's own run (threshold 100, no explicit outlets),
+5 basins / 783 nodes:
+
+| metric | observed | pinned |
+|---|---|---|
+| slope | 0.999999666 - 1.000000146 | [0.999999, 1.000001] |
+| R^2 | 1.0000000000 | >= 0.999999999 |
+| max abs residual | 5.428e-06 | <= 1.0e-05 chi units |
+| basins | 5 | >= 5 (floor) |
+| matched nodes | 783 | >= 780 (floor) |
+
+The residual is float32 rounding in lsdtt3's CSV, not a difference in value.
+Basin and node counts are FLOORS: a change that REDUCES the comparison is the
+failure worth catching, and more basins is not a problem.
+
+**A pinning mistake worth recording.** The first pin used 9 basins / 804 nodes,
+taken from an earlier hand-run that supplied explicit outlets and
+`n_largest_basins`. It failed immediately against the driver's own output.
+Pin what the thing being checked actually produces, not what a
+differently-configured run produced.
+
+**The pin was verified to fail.** Running both sides at `a0 = 1e6` instead of
+1.0 exits 1. Note WHICH bound caught it: `--a0` moves both sides together, so
+the slope stayed 1.000000 and the RESIDUAL fired (5.45e-3 against the 1e-5
+limit -- chi values grow ~170x and float32 precision degrades with them). The
+slope bound guards the other failure mode independently: the pre-trapezoid
+left-endpoint rule measured 1.00195-1.00638, far outside the pinned window.
+
+### The CLI-vs-in-process asymmetry, and what it was hiding (2026-09-08)
+
+The s-vector basin case compared an lsdtt3 CLI against reference routines timed
+in-process. Three separate problems, each hiding the next.
+
+**1. `lsdtt-basin-extraction` printed no `Compute time:` lines at all.** The
+driver fell back to whole-process wall clock -- and labelled it
+`cli_reported_compute` in the CSV anyway, which is the one thing the
+timing-scope discipline exists to prevent. Fixed on both sides: the CLI now
+reports its phases, and the driver reports `whole_process` honestly when it
+finds none.
+
+The scale of what that hid: flow routing measures **0.029 s** on a 256^2
+raster inside a **~4.4 s process**. Over 99 % of the "lsdtt3 basin time" was
+process startup, GDAL initialisation and file I/O.
+
+**2. Not all phases are comparable, so they are timed separately.**
+
+| phase | reference equivalent | in the comparison? |
+|---|---|---|
+| flow routing | all references build a flow structure | YES |
+| junction network | **nothing else here builds one** | NO -- reported separately |
+| basin selection | `dependencemap` / `watershed` | YES |
+
+`seconds` is now flow + basin selection. Folding the junction network in would
+charge lsdtt3 for a structure no reference builds -- the same error `accum_d8`
+made with the s-vector.
+
+**3. A 2.1 s phase that was not basin work.** The first placement of the
+basin-selection timer ran past the selection into the outlet-file read and the
+coordinate diagnostics, giving 2.16 s against 0.03 s of flow routing. Narrowed
+to the selection proper, the phase is **0.0002-0.0006 s**.
+
+**That leaves a real finding: the basin outlet coordinate diagnostics cost
+~2.1 s on a 256^2 raster with 9 outlets.** That is reporting, not analysis, and
+it is two orders of magnitude above the routing it follows. The shape matches
+the PROJ defect already recorded for the cosmogenic inversion (a transform
+rebuilt per point rather than reused, 73.7 us against 0.37 us). NOT confirmed
+here, and not fixed -- but it should be looked at, because it is paid by every
+`lsdtt-basin-extraction` run that supplies an outlet file.
+
+**Measured after all three fixes** (256^2, depths 1/4/7 -- shape only, this is a
+thermally limited laptop and none of these are results):
+
+| engine | depth 1 | depth 4 | depth 7 |
+|---|---|---|---|
+| lsdtt3 total (flow + selection) | 0.018 | 0.037 | 0.015 |
+| ... of which basin selection | **0.00041** | **0.00020** | **0.00057** |
+| topotoolbox | 0.009 | 0.011 | 0.010 |
+| whitebox | 0.316 | 0.763 | **1.344** |
+
+lsdtt3's selection phase is FLAT with depth and sub-millisecond -- the s-vector
+sub-interval read -- while Whitebox rises roughly linearly, which is the
+per-nesting-level cost its `unnest_basins` design makes explicit. That is the
+shape the case was built to expose. The magnitudes need a server.
+
 ### Consequence for recorded campaigns
 
 `run_benchmark_suite.py`'s `accum_d8` case is `needs_filled`, so its Whitebox

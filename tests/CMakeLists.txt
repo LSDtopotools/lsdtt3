@@ -1190,6 +1190,43 @@ if(LSDTT_ENABLE_BENCHMARKS)
                            TIMEOUT 1800)
         endforeach()
     endforeach()
+
+    # -------------------------------------------------------------------------
+    # Chi VALUE comparison against TopoToolbox.
+    #
+    # This is the odd one out in this block, and deliberately so: everything
+    # else here is a TIMING benchmark that happens to guard comparability,
+    # whereas this asserts VALUES and nothing else. Both tools integrate
+    # chi = int (A0/A)^(m/n) ds; with A0 = 1 m^2, m/n matched and (since
+    # 2026-09-08) the same trapezoidal quadrature on both sides, they agree to
+    # float32 rounding. The pinned slope window is [0.999999, 1.000001].
+    #
+    # It is registered here rather than with the unit tests because it needs
+    # the pixi benchmark environment for TopoToolbox, and exits 77 without it.
+    #
+    # NO NETWORK AND NO COMMITTED RASTER. The fixture is a synthetic island the
+    # driver generates itself; lsdtt-synthetic-networks is deterministic under
+    # a fixed seed, and the driver verifies the DEM's sha256 before applying any
+    # tolerance. A crop of real terrain cannot be used at all: lsdtt3 drops any
+    # basin whose upslope area touches invalid data, which on a cropped DEM is
+    # every basin, so there would be no chi to compare.
+    #
+    # Timings from this driver are never asserted -- they would be meaningless
+    # on a shared or thermally limited machine. --check enforces value metrics
+    # only.
+    # -------------------------------------------------------------------------
+    add_test(
+        NAME benchmark_chi_value_topotoolbox
+        COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_svector_benchmark.py"
+                --build-dir "$<TARGET_FILE_DIR:lsdtt-chi-analysis>"
+                --cases chi_value
+                --threshold 100
+                --out-dir "${CMAKE_CURRENT_BINARY_DIR}/svector_benchmark"
+                --check
+    )
+    set_tests_properties(benchmark_chi_value_topotoolbox
+        PROPERTIES LABELS "benchmark;chi" SKIP_RETURN_CODE 77 TIMEOUT 1800)
     endif()
 
     # Hydraulic DAGGER parity benchmark (plan Phases 3-4).
@@ -3801,6 +3838,20 @@ set_tests_properties(rigorous_flat_surface_finder_label_baseline PROPERTIES
 # =============================================================================
 
 set(LSDTT_DOMAIN_RULES
+    # Cross-package benchmarks, registered only under LSDTT_ENABLE_BENCHMARKS.
+    # FIRST, because first match wins and this must claim every benchmark_*
+    # test regardless of what else its name contains.
+    #
+    # Without this rule the guard below rejects EVERY benchmark test and
+    # `cmake -DLSDTT_ENABLE_BENCHMARKS=ON` fails to configure at all -- which
+    # is what it did between the guard landing and 2026-09-08, because the
+    # guard was added while benchmarks were OFF and nobody reconfigured with
+    # them ON. The default-OFF option hid it.
+    #
+    # The subsystem labels these tests set for themselves ("benchmark;flow",
+    # "benchmark;surface_metrics", "benchmark;chi") are MERGED with this
+    # domain further down, so `ctest -L flow` still reaches the flow benchmark.
+    "^benchmark_"            "benchmark"
     "synthetic_networks|_ocn_" "synthetic_networks"
     "niemi"                  "cosmo"
     "quartz|fertility"       "quartz"

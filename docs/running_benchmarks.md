@@ -249,11 +249,9 @@ Everything is a flag or an environment variable; no file needs editing.
 pixi run bench-server --out-dir "$PWD" --fixture-dir /scratch/$USER/lsdtt3_fixtures
 ```
 
-### The standard server workflow, start to finish
+### Set up once (both routes)
 
-Clone and build once, then run from wherever you want the results.
-
-**1. Clone and install the environment** (login node, once):
+**1. Clone and install the environment:**
 
 ```sh
 git clone https://github.com/LSDtopotools/lsdtt3.git
@@ -261,7 +259,7 @@ cd lsdtt3
 pixi install -e benchmark
 ```
 
-**2. Build in Release mode** (once):
+**2. Build in Release mode:**
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -269,9 +267,134 @@ cmake --build build -j
 ```
 
 Binaries land in `/path/to/lsdtt3/build/`, which is where the benchmark looks
-by default.
+by default. A Debug build measures the compiler's inlining decisions rather
+than the algorithms, and the summary says so in bold if it detects one.
 
-**3. Submit from your data directory.** Everything else is derived:
+There are two routes, and they run the *same* measurement:
+
+| | when |
+|---|---|
+| [**A plain bash session**](#route-a-a-plain-bash-session) | you have a shell on the machine and no scheduler, or you want a quick run now |
+| [**Slurm**](#route-b-slurm) | the machine has a scheduler, and you want an **exclusive** node — required for anything quotable |
+
+The Slurm wrapper contains no measurement logic. It exists only so a scheduler
+site runs the identical command a non-scheduler site runs.
+
+### How much memory the run needs
+
+Not previously stated here, and it decides which ladder rungs you can use.
+
+lsdtt3's flow object is about **43 bytes per cell**, and the suite runs one
+engine at a time, so the peak is roughly one engine plus the staged DEM:
+
+| rung | cells | lsdtt3 flow object | comfortable in |
+|---|---:|---:|---|
+| 1000² | 1 M | ~43 MB | anything |
+| 2000² | 4 M | ~172 MB | anything |
+| 4000² | 16 M | ~688 MB | **8 GB** |
+| 8000² | 64 M | ~2.8 GB | **16 GB**, with room to watch |
+
+Add the DEM itself (256 MB at 8000² in float32), the filled copy, and the
+outputs. The Python references are the ones to watch rather than lsdtt3: they
+work in NumPy and a 64 M-cell float64 array is 512 MB each, and RichDEM
+constructs arrays per call.
+
+**On 16 GB the full `server` ladder should fit, but confirm rather than assume.**
+Every row records `peak_rss_mb`, so after a first run:
+
+```sh
+python - <<'EOF'
+import csv
+rows = list(csv.DictReader(open('benchmark_campaigns/<run>/benchmark_raw.csv')))
+peak = max(float(r['peak_rss_mb']) for r in rows if r.get('peak_rss_mb'))
+print(f"peak observed: {peak:.0f} MB")
+EOF
+```
+
+If a rung is too big the engine is killed, the suite records the failure and
+carries on — so you get a campaign with holes rather than a crash. Check for
+`error` values in the CSV before trusting a table. To stay clear of it, drop the
+top rung:
+
+```sh
+--ladder 1000,2000,4000
+```
+
+### Route A: a plain bash session
+
+The honest caveat first, because it is the whole reason Slurm is preferred:
+
+!!! warning "A shared machine measures its co-tenants"
+    Without an exclusive allocation you are measuring whatever else is running,
+    especially for the surface metrics, which are **memory-bandwidth-bound** and
+    degrade under a co-tenant long before CPU contention shows up. A campaign
+    on a busy machine produced a 0.64× "scaling" figure that took a separate
+    investigation to attribute, and it was probably contention all along.
+
+    Check the machine is quiet first (`uptime`, `top`), and record in your notes
+    that it was not exclusive. Value comparisons — chi, fill, D8 agreement — are
+    deterministic and unaffected; only timings are at risk.
+
+With the [one-off setup](#set-up-once-both-routes) done:
+
+```sh
+cd /path/to/my/data
+nohup pixi run --manifest-path /path/to/lsdtt3/pixi.toml -e benchmark \
+    python /path/to/lsdtt3/tests/scripts/run_benchmark_suite.py \
+        --profile server \
+        --build-dir /path/to/lsdtt3/build \
+        --out-dir "$PWD/benchmark_campaigns" \
+        --fixture-dir /scratch/$USER/lsdtt3_fixtures \
+        --threads 1,2,4,8 \
+    > bench.log 2>&1 &
+```
+
+`nohup ... &` so it survives the session dropping — the `server` profile runs
+for hours. `tmux` or `screen` do the same job and let you watch it; either is
+fine.
+
+Four things differ from the Slurm route, and all four are on you rather than the
+scheduler:
+
+- **Absolute paths.** `pixi run` sets the working directory to the manifest
+  root, so a relative `--out-dir` lands in the repository rather than where you
+  invoked it.
+- **Cap `--threads` at the PHYSICAL core count.** `nproc` counts
+  hyperthreads. Including them makes bandwidth-bound work several times slower
+  and reads as a scaling collapse. `lscpu | grep -E '^Core|^Socket'` gives the
+  real number.
+- **Nothing enforces the thread/allocation match.** The sbatch wrapper refuses
+  to start if `--cpus-per-task` is below the sweep; here there is no such
+  guard, so an oversubscribed row is yours to avoid.
+- **Watch progress** without the log:
+
+  ```sh
+  tail -f bench.log
+  ls -lt benchmark_campaigns/          # hardware_manifest.json appears at once
+  ls -l  /scratch/$USER/lsdtt3_fixtures  # grows during the first download
+  ```
+
+Start with the shakedown, exactly as under Slurm — it costs ten minutes and
+catches a missing binary or an unreachable download before a multi-hour run:
+
+```sh
+pixi run --manifest-path /path/to/lsdtt3/pixi.toml -e benchmark \
+    python /path/to/lsdtt3/tests/scripts/run_benchmark_suite.py \
+        --profile laptop --build-dir /path/to/lsdtt3/build \
+        --out-dir "$PWD/benchmark_campaigns"
+```
+
+Read the first lines of its output before anything else: all three references
+must say `yes`. A missing one is skipped silently and you get a campaign with a
+third of the rows.
+
+### Route B: Slurm
+
+The route for anything quotable: `#SBATCH --exclusive` is already in the
+wrapper, and an exclusive node is the only way to keep a co-tenant out of your
+timings.
+
+**Submit from your data directory.** Everything else is derived:
 
 | | derived from | value |
 |---|---|---|
@@ -464,6 +587,76 @@ python tests/scripts/run_benchmark_suite.py --profile server \
 | `--no-fetch` | never download; skip anything missing |
 | `--dry-run` | print the plan and exit |
 | `--list` | print every case and profile as JSON |
+
+---
+
+## The other two drivers
+
+The campaign above is the cross-package speed comparison. Two smaller drivers
+answer questions it cannot, and both run the same way on a server as anywhere
+else.
+
+### Correctness, not speed
+
+```sh
+pixi run -e benchmark python tests/scripts/run_flow_benchmark.py \
+    --exe build/lsdtt-raster-preprocessing \
+    --drainage-exe build/lsdtt-drainage-analysis --check
+```
+
+Compares lsdtt3's **values** against RichDEM, TopoToolbox and Whitebox: fill,
+breach and D8 accumulation. `--check` enforces tolerances pinned just above
+observed divergence, so it exits non-zero on a real disagreement.
+
+Deterministic, so it does not need an idle machine — run it anywhere. It skips
+(exit 77) if the fixture hashes do not match the ones the tolerances were pinned
+against, because applying a pinned tolerance to a different raster asserts
+nothing.
+
+### What the s-vector buys
+
+```sh
+pixi run -e benchmark python tests/scripts/run_svector_benchmark.py \
+    --build-dir build --depths 1,2,3,4,5
+```
+
+lsdtt3 stores each cell's upslope set as a contiguous interval. That costs about
+57 % of the D8 build and ~24 of the ~43 bytes per cell; the campaign measures
+the cost. This driver measures the return, in the two places it is collected:
+
+- **`basins_nested`** — nested basins swept over **nesting depth**. Not basin
+  count: every tool does N *disjoint* basins in one pass, so that axis shows
+  nothing. Depth is what the references pay for repeatedly (Whitebox's
+  `unnest_basins` emits one raster per level), and what lsdtt3 reads as a
+  sub-interval. **The result is the slope against depth, not any single time.**
+- **`chi_network`** — DEM to chi, end-to-end and decomposed by phase. lsdtt3
+  has no separate accumulation phase because the s-vector already produced
+  drainage area; TopoToolbox must run `flow_accumulation` before
+  `chitransform` can be called at all. That empty cell is the finding.
+- **`chi_value`** — a VALUE comparison of chi against TopoToolbox, with
+  `--check`. Deterministic and wired into CTest as
+  `benchmark_chi_value_topotoolbox`, so it needs no idle machine.
+
+```sh
+pixi run -e benchmark python tests/scripts/run_svector_benchmark.py \
+    --build-dir build --cases chi_value --check
+```
+
+It generates its own fixture — a synthetic island — and verifies the DEM's
+sha256 before applying any tolerance. It cannot use a cropped real DEM at all:
+lsdtt3 drops any basin whose upslope area touches invalid data, which on a crop
+is every basin, so there would be no chi to compare.
+
+### Enabling these under CTest
+
+```sh
+cmake -S . -B build -DLSDTT_ENABLE_BENCHMARKS=ON
+ctest --test-dir build -L benchmark
+```
+
+OFF by default: they need network access for fixtures and the pixi `benchmark`
+environment, neither of which may turn CI red. Anything unavailable exits 77 and
+CTest records a skip rather than a failure.
 
 ---
 
