@@ -231,7 +231,20 @@ def basins_lsdtt3(build_dir: pathlib.Path, filled: pathlib.Path,
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    times = []
+    # lsdtt-basin-extraction reports three phases, in this order. They are
+    # NOT equally comparable, which is the whole point of splitting them:
+    #
+    #   flow_routing      the references build a flow structure too -> COMPARABLE
+    #   junction_network  NOTHING else here builds one              -> EXCLUDED
+    #   basin_selection   dependencemap / watershed equivalent      -> COMPARABLE
+    #
+    # `seconds` is flow + basin_selection. The junction network is reported
+    # separately rather than folded in, because charging lsdtt3 for a structure
+    # no reference builds is the same error `accum_d8` made with the s-vector.
+    PHASES = ["flow_routing", "junction_network", "basin_selection"]
+
+    totals, comparable, phase_rows = [], [], []
+    scope = "cli_reported_compute"
     for _ in range(max(1, repeats)):
         stdout, wall = run_cli(build_dir / "lsdtt-basin-extraction", out,
                                "b.param", {
@@ -245,10 +258,35 @@ def basins_lsdtt3(build_dir: pathlib.Path, filled: pathlib.Path,
             "write_output_format": "gtiff",
         })
         ct = compute_times(stdout)
-        times.append(sum(ct) if ct else wall)
-    return {"engine": "lsdtt3", "seconds": min(times),
-            "seconds_all": times,
-            "timing_scope": "cli_reported_compute" if times else "whole_process"}
+        if not ct:
+            # Say so rather than mislabelling. An earlier version of this
+            # function fell back to wall clock and still reported the scope as
+            # `cli_reported_compute`, which put whole-process rows -- 99 % of
+            # which were process startup and GDAL I/O -- into a table that
+            # claimed to exclude them.
+            scope = "whole_process"
+            totals.append(wall)
+            comparable.append(wall)
+            continue
+        phase_rows.append(ct)
+        totals.append(sum(ct))
+        # Positional: the phases print in the fixed order above. Guard the
+        # length so a future CLI change that adds a phase degrades to the total
+        # rather than silently attributing the wrong number.
+        if len(ct) == len(PHASES):
+            comparable.append(ct[0] + ct[2])
+        else:
+            comparable.append(sum(ct))
+            scope = "cli_reported_compute_unattributed"
+
+    best = phase_rows[0] if phase_rows else []
+    return {"engine": "lsdtt3",
+            "seconds": min(comparable),
+            "seconds_all": comparable,
+            "seconds_all_phases": min(totals),
+            "phase_names": PHASES if len(best) == len(PHASES) else [],
+            "phase_seconds": best,
+            "timing_scope": scope}
 
 
 def basins_reference(engine: str, filled: pathlib.Path, seeds: pathlib.Path,
@@ -325,6 +363,118 @@ def chi_reference(filled_or_raw: pathlib.Path, threshold: int,
     info = json.loads(proc.stdout.strip().splitlines()[-1])
     info["engine"] = "topotoolbox"
     return info
+
+
+# -----------------------------------------------------------------------------
+# The chi-value fixture: generated, not committed.
+#
+# The chi comparison needs a DEM containing at least one COMPLETE catchment --
+# one whose entire upslope area is inside the valid data. lsdtt3 drops any basin
+# that is not (see chi_value_compare), so on a cropped real DEM every chi output
+# is empty and there is nothing to compare.
+#
+# A synthetic island supplies one, and `lsdtt-synthetic-networks` is
+# DETERMINISTIC: the same `random_seed` produces a byte-identical DEM (verified
+# -- two runs, same sha256). So the fixture is generated from the recipe below
+# rather than committed, which keeps a 640 KB raster out of the tree while
+# leaving the comparison exactly reproducible.
+#
+# THE RECIPE IS PART OF THE PIN. Change any of it and the tolerances below mean
+# nothing, because they were measured against this raster and no other. That is
+# why the sha256 is checked: applying a pinned tolerance to a different DEM is
+# how a benchmark comes to assert nothing at all.
+#
+# It has to be a FAT, SMOOTH island. Measured while building this:
+# island_fill_fraction 0.55 with the default harmonics gave 16 % land in a
+# lobate shape whose basins all still reached the coast -- zero complete basins.
+# 0.95 with 3 harmonics gives ~57 % land and 150 px of interior, and 9 basins
+# survive.
+# -----------------------------------------------------------------------------
+ISLAND_RECIPE = {
+    "n_rows": 400, "n_cols": 400, "cell_size": 30.0,
+    "domain_type": "efd_island",
+    "island_fill_fraction": 0.95,
+    "efd_n_harmonics": 3,
+    "efd_roughness": 3.0,
+    "outlet_mode": "auto",
+    "steady_state_mode": "relief",
+    "target_relief": 900.0,
+    "m_exponent": 0.45,
+    "n_exponent": 1.0,
+    "random_seed": 1,
+    "write_output_format": "gtiff",
+}
+
+# sha256 (first 12) of the DEM the tolerances were pinned against.
+EXPECTED_ISLAND_SHA = "2834b2b08c64"
+
+# Chi-value tolerances, pinned just above OBSERVED divergence -- the same rule
+# run_flow_benchmark.py uses. A tolerance set to a round number far above
+# reality asserts nothing.
+#
+# These are TIGHT on purpose. Since lsdtt3 adopted the trapezoidal rule the two
+# implementations compute the identical quantity, so the expected slope is 1
+# exactly and the only spread left is float32 rounding in lsdtt3's CSV output.
+# MEASURED 2026-09-08 from THIS DRIVER's own run (threshold 100, no explicit
+# outlets), 5 basins / 783 nodes:
+#
+#     slope                0.999999666 - 1.000000146
+#     R^2                  1.0000000000 (all basins)
+#     max abs residual     5.428e-06 chi units
+#
+# The residual is float32 rounding in lsdtt3's CSV, not a difference in value.
+#
+# The basin and node counts are pinned as FLOORS because they were measured
+# here, from this configuration. An earlier hand-run with explicit outlets and
+# n_largest_basins gave 9 basins / 804 nodes; pinning those numbers made the
+# check fail against the driver's own output. Pin what the thing being checked
+# actually produces, not what a differently-configured run produced.
+#
+# If this ever fails on slope, the first thing to check is the QUADRATURE RULE
+# on both sides, not the terrain: a left-endpoint rule against a trapezoidal one
+# reads as slope ~1.004 here, and mismatched A0 reads as A0_ratio^(m/n) (~631
+# for a0=1e6 vs 1.0 at m/n=0.45).
+CHI_VALUE_TOLERANCES = {
+    # Just above observed on both sides of 1.
+    "slope_min":            0.999999,
+    "slope_max":            1.000001,
+    "r_squared_min":        0.999999999,
+    "max_abs_residual_chi": 1.0e-5,
+    # Floors, not equalities: a fixture or filter change that REDUCES the
+    # comparison is the failure worth catching. More basins is not a problem.
+    "min_basins":           5,
+    "min_matched_nodes":    780,
+}
+
+
+def prepare_island(build_dir: pathlib.Path, work: pathlib.Path) -> pathlib.Path:
+    """Generate the island fixture, and refuse to proceed on a different one."""
+    out = work / "island"
+    out.mkdir(parents=True, exist_ok=True)
+    dem = out / "isl_ocn_dem.tif"
+    if not dem.exists():
+        exe = build_dir / "lsdtt-synthetic-networks"
+        if not exe.exists():
+            die_skip(f"{exe} not found; needed to generate the chi fixture")
+        params = {"write_path": out, "write_fname": "isl"}
+        params.update(ISLAND_RECIPE)
+        run_cli(exe, out, "island.param", params)
+    if not dem.exists():
+        raise RuntimeError(f"expected {dem}")
+
+    import hashlib
+    digest = hashlib.sha256(dem.read_bytes()).hexdigest()[:12]
+    if digest != EXPECTED_ISLAND_SHA:
+        # A skip, not a failure: a different GDAL or compiler produces a
+        # different raster, which is an environment difference rather than a
+        # defect in lsdtt3. Failing here would turn someone else's toolchain
+        # into an lsdtt3 bug report.
+        die_skip(
+            f"island fixture sha256 {digest} != pinned {EXPECTED_ISLAND_SHA}. "
+            f"The chi-value tolerances were measured against the pinned raster "
+            f"and mean nothing against another. Re-measure and re-pin both "
+            f"together, or investigate why the generator changed.")
+    return dem
 
 
 # -----------------------------------------------------------------------------
@@ -510,6 +660,11 @@ def main() -> int:
     ap.add_argument("--python-exe", default=sys.executable)
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--cases", default="basins,chi,chi_value")
+    ap.add_argument("--check", action="store_true",
+                    help="enforce CHI_VALUE_TOLERANCES and exit non-zero on a "
+                         "violation. Value metrics only -- nothing here "
+                         "asserts a timing, which would be meaningless off a "
+                         "dedicated machine.")
     args = ap.parse_args()
 
     build_dir = pathlib.Path(args.build_dir).resolve()
@@ -605,7 +760,13 @@ def main() -> int:
         print("  per-basin regression of lsdtt3 chi on TopoToolbox chi:")
         print("  slope must be 1.0 (same integrand); intercept is the "
               "baselevel offset and is free")
-        vrows = chi_value_compare(build_dir, filled, work, args.threshold,
+        # Its OWN fixture, not the campaign's: a cropped DEM yields no complete
+        # basin and therefore no chi at all. See prepare_island().
+        island = prepare_island(build_dir, work)
+        print(f"  fixture: generated island, sha256 {EXPECTED_ISLAND_SHA} "
+              f"(deterministic, random_seed="
+              f"{ISLAND_RECIPE['random_seed']})")
+        vrows = chi_value_compare(build_dir, island, work, args.threshold,
                                   args.m_over_n, args.a0, args.python_exe,
                                   args.timeout_seconds)
         for r in vrows:
@@ -618,6 +779,45 @@ def main() -> int:
                       f"slope={r['slope']:.6f}  intercept={r['intercept']:+.4f}  "
                       f"R2={r['r_squared']:.6f}  "
                       f"max|resid|={r['max_abs_residual_chi']:.4f}")
+
+    # -- tolerance enforcement (VALUE metrics only) --------------------------
+    failures: list[str] = []
+    if args.check:
+        vals = [r for r in rows if r.get("case") == "chi_value"
+                and "error" not in r]
+        errs = [r for r in rows if r.get("case") == "chi_value"
+                and "error" in r]
+        for r in errs:
+            failures.append(f"chi_value: {r['error']}")
+
+        t = CHI_VALUE_TOLERANCES
+        if len(vals) < t["min_basins"]:
+            failures.append(
+                f"chi_value: {len(vals)} basins compared, expected at least "
+                f"{t['min_basins']}. Fewer basins means the fixture or the "
+                f"completeness filter changed, and the per-basin tolerances "
+                f"below were pinned on a different population.")
+        matched = sum(r["n_matched"] for r in vals)
+        if matched < t["min_matched_nodes"]:
+            failures.append(
+                f"chi_value: {matched} nodes matched, expected at least "
+                f"{t['min_matched_nodes']}")
+        for r in vals:
+            b = r["basin_index"]
+            if not (t["slope_min"] <= r["slope"] <= t["slope_max"]):
+                failures.append(
+                    f"chi_value basin {b}: slope {r['slope']:.6f} outside "
+                    f"[{t['slope_min']}, {t['slope_max']}]. Check the "
+                    f"QUADRATURE RULE and A0 on both sides before the terrain.")
+            if r["r_squared"] < t["r_squared_min"]:
+                failures.append(
+                    f"chi_value basin {b}: R^2 {r['r_squared']:.8f} below "
+                    f"{t['r_squared_min']}")
+            if r["max_abs_residual_chi"] > t["max_abs_residual_chi"]:
+                failures.append(
+                    f"chi_value basin {b}: max abs residual "
+                    f"{r['max_abs_residual_chi']:.3e} above "
+                    f"{t['max_abs_residual_chi']:.1e} chi units")
 
     # -- output -------------------------------------------------------------
     fields = ["fixture", "case", "depth", "n_seeds", "engine", "seconds",
@@ -651,6 +851,14 @@ def main() -> int:
 
     print(f"\nwrote {csv_path}")
     print("Timings here are NOT results unless this ran on an idle server.")
+
+    if args.check:
+        if failures:
+            print("\nTOLERANCE FAILURES:")
+            for f in failures:
+                print(f"  - {f}")
+            return 1
+        print("\nchi value tolerances: PASS")
     return 0
 
 
