@@ -328,6 +328,64 @@ enum class raster_output_format
 raster_output_format resolve_raster_output_format(const std::string& fmt_str);
 
 
+// -----------------------------------------------------------------------------
+// tiff_predictor_for
+//
+// TIFF compression predictor for a band type. NOT a free choice -- the TIFF 6.0
+// spec ties it to the data:
+//
+//   1  none
+//   2  horizontal differencing   -- INTEGER data only
+//   3  floating-point predictor  -- float data
+//
+// lsdtt3 writes Float32 almost everywhere, and every raster it wrote used to
+// carry PREDICTOR=2. GDAL accepts that pairing and reads it back without
+// complaint, so nothing inside this project ever noticed.
+//
+// Measured on alpine_1000 (1000x1000 Float32, 3.81 MB raw), tiled DEFLATE:
+//
+//     PREDICTOR=2    2.68 MB     spec-invalid on float data
+//     PREDICTOR=3    2.19 MB     correct, and 18% smaller
+//     no predictor   3.14 MB
+//
+// So this is not a trade-off: 3 is both the conforming choice and the smaller
+// one. There is no reason a float raster should ever carry predictor 2.
+//
+// WHAT THIS DOES *NOT* FIX, because it is easy to assume otherwise: Whitebox
+// Workflows cannot read a DEFLATE-predictor TIFF AT ALL -- it returns all-NaN
+// for predictor 2 and predictor 3 alike, tiled or striped (measured; a
+// predictor-free file of the same data reads correctly). That is a limitation
+// of its TIFF reader, not a consequence of the wrong predictor, and changing
+// the predictor here does not address it. Making lsdtt3 predictor-free to suit
+// one third-party reader would cost every user 43% on every float raster, so
+// the benchmark stages a predictor-free copy for Whitebox instead -- see
+// tests/scripts/whitebox_reference.py.
+//
+// Every place that sets a DEFLATE/LZW/ZSTD predictor on a GTiff or COG must use
+// this rather than a literal.
+// -----------------------------------------------------------------------------
+inline int tiff_predictor_for(GDALDataType type)
+{
+    switch (type)
+    {
+        case GDT_Float32:
+        case GDT_Float64:
+            return 3;
+        case GDT_Byte:
+        case GDT_UInt16:
+        case GDT_Int16:
+        case GDT_UInt32:
+        case GDT_Int32:
+            return 2;
+        default:
+            // Complex types, and anything a future GDAL adds: no predictor is
+            // the only safe answer, because a wrong one corrupts rather than
+            // merely compressing worse.
+            return 1;
+    }
+}
+
+
 // Minimum pixel count for COG overhead to be worthwhile.
 // Below this threshold, write_full() uses plain GeoTIFF even when cog is requested.
 static constexpr long long k_cog_min_pixels = 512LL * 512LL;  // 262,144 pixels

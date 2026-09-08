@@ -27,6 +27,7 @@
 //   P8  D8 accumulation is exact on a planar ramp (analytic oracle; no reference)
 //   P9  the Vincent reconstruction backend matches priority-flood exactly
 //   P10 reconstruction + flat resolution yields a ROUTABLE surface
+//   P11 drainage area is identical with and without the s-vector
 //
 // Section 8 additionally *characterises* (reports, does not assert) the
 // alternative fill algorithm exposed by lsdtt-raster-preprocessing, per Simon's
@@ -1126,6 +1127,72 @@ void test_d8_accumulation_on_ramp()
 
 
 // =============================================================================
+// P11 -- drainage area is identical with and without the s-vector
+//
+// `get_drainage_area_raster()` reads precomputed subtree sizes when the
+// s-vector exists and accumulates over the topological order when it does not.
+// The benchmark reports those as two measurements of ONE quantity -- the
+// s-vector build is ~57% of the D8 build and no reference implementation builds
+// anything equivalent, so a like-for-like timing row has to drop it.
+//
+// That framing is only honest if the two paths agree EXACTLY. This pins that.
+// If it ever fails, the benchmark's "lsdtt3 (accumulation only)" row stops
+// being the same measurement as the shipped one and must not be published
+// beside it.
+// =============================================================================
+void test_drainage_area_svector_parity(const fixture& fx)
+{
+    const lsdtt::lsdtt_raster_cpu filled = lsdtt::fill_pits(fx.dem, 0.0001f);
+
+    auto area_with = [&](bool build_s_vector)
+    {
+        lsdtt::lsdtt_flowinfo_options opts;
+        opts.boundary_conditions     = "oooo";
+        opts.build_topological_order = true;
+        opts.build_s_vector          = build_s_vector;
+        lsdtt::lsdtt_flowinfo fi(filled.get_data_array(), filled.get_mask_array(),
+                                 filled.get_meta(), opts);
+        return fi.get_drainage_area_raster();
+    };
+
+    const lsdtt::lsdtt_raster_result with    = area_with(true);
+    const lsdtt::lsdtt_raster_result without = area_with(false);
+
+    check("P11 both paths return the same grid size",
+          with.data.size() == without.data.size(),
+          "with = " + std::to_string(with.data.size()) +
+          ", without = " + std::to_string(without.data.size()));
+
+    if (with.data.size() != without.data.size()) return;
+
+    std::size_t n_differing = 0;
+    double      worst       = 0.0;
+    for (std::size_t i = 0; i < with.data.size(); ++i)
+    {
+        if (with.mask[i] != without.mask[i]) { ++n_differing; continue; }
+        if (!with.mask[i]) continue;
+        const double d = std::fabs(static_cast<double>(with.data[i]) -
+                                   static_cast<double>(without.data[i]));
+        if (d > 0.0)
+        {
+            ++n_differing;
+            worst = std::max(worst, d);
+        }
+    }
+
+    // EXACT, not a tolerance. Both paths sum the same per-cell areas over the
+    // same receiver graph; the only difference is the order of traversal, and
+    // the accumulation is carried in double. A tolerance here would hide a real
+    // divergence in the graph rather than absorb floating-point noise.
+    check("P11 drainage area is bit-identical with and without the s-vector",
+          n_differing == 0,
+          "differing cells = " + std::to_string(n_differing) +
+          " of " + std::to_string(with.data.size()) +
+          ", worst = " + std::to_string(worst) + " m^2");
+}
+
+
+// =============================================================================
 // P7 -- D-inf / MFD weight normalisation
 // =============================================================================
 void test_flowgraph_weight_properties(const fixture& fx)
@@ -1294,6 +1361,7 @@ int main(int argc, char** argv)
         test_reconstruction_matches_priority_flood(fx);
         test_radix_priority_flood(fx);
         test_reconstruction_gradient_is_routable(fx);
+        test_drainage_area_svector_parity(fx);
         test_flowgraph_weight_properties(fx);
         std::cout << "\n";
     }

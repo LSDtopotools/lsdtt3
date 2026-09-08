@@ -124,6 +124,43 @@ void assert_raster_matches_flow_grid(
     }
 }
 
+// -----------------------------------------------------------------------------
+// chi_increment -- the quadrature rule for one segment of the chi integral.
+//
+//   chi = integral of (A_0 / A)^(m/n) ds
+//
+// TRAPEZOIDAL, evaluating the integrand at BOTH ends of the segment:
+//
+//   d_chi = step * 0.5 * ( f(A_upstream) + f(A_downstream) )
+//
+// Changed from a left-endpoint rectangle rule (`step * f(A_upstream)`) on
+// 2026-09-08. That rule was first-order accurate and biased chi HIGH on every
+// segment: drainage area increases downstream, so f = (A_0/A)^(m/n) decreases,
+// so the upstream value always exceeds the segment average. The bias was
+// one-signed and accumulated along the whole profile.
+//
+// Measured against TopoToolbox (which uses `streamquad_trapz`) on a synthetic
+// island, 9 basins and 804 matched nodes: the old rule regressed against
+// TopoToolbox with slopes 1.00195-1.00638 (mean 1.00377), i.e. ~0.4 % high on a
+// 30 m grid, and the error is O(h) so it grows with cell size. With the rule
+// matched the regression slope is 1.00000 on every basin -- the two
+// implementations agree EXACTLY, and the discrepancy was never about chi.
+// See docs/testing_and_benchmarking.md.
+//
+// Both denominators are validated by the caller before this is reached.
+// -----------------------------------------------------------------------------
+double chi_increment(
+    double step,
+    double denom_upstream,
+    double denom_downstream,
+    double A_0,
+    double m_over_n)
+{
+    return step * 0.5 * (std::pow(A_0 / denom_upstream,   m_over_n) +
+                         std::pow(A_0 / denom_downstream, m_over_n));
+}
+
+
 double step_length_from_receiver_dir(
     std::uint8_t dir,
     double cell_size)
@@ -297,7 +334,11 @@ basin_full_result compute_full_basin_chi(
         }
 
         const double denom = denominator_fn(flat);
-        if (!std::isfinite(denom) || denom <= 0.0)
+        // The receiver's denominator is needed too: the trapezoidal rule
+        // evaluates the integrand at BOTH ends of the segment.
+        const double denom_rec = denominator_fn(rec);
+        if (!std::isfinite(denom) || denom <= 0.0 ||
+            !std::isfinite(denom_rec) || denom_rec <= 0.0)
         {
             throw std::runtime_error(
                 "lsdtt_chi_extraction_cpu: chi denominator must be finite and > 0."
@@ -313,7 +354,8 @@ basin_full_result compute_full_basin_chi(
             static_cast<double>(
                 result.chi[static_cast<std::size_t>(rec_local)]
             ) +
-            step * std::pow(options.A_0 / denom, options.m_over_n)
+            chi_increment(step, denom, denom_rec,
+                          options.A_0, options.m_over_n)
         );
     }
 
@@ -423,7 +465,11 @@ lsdtt_chi_basin_result compute_threshold_basin_chi(
         }
 
         const double denom = denominator_fn(flat);
-        if (!std::isfinite(denom) || denom <= 0.0)
+        // The receiver's denominator is needed too: the trapezoidal rule
+        // evaluates the integrand at BOTH ends of the segment.
+        const double denom_rec = denominator_fn(rec);
+        if (!std::isfinite(denom) || denom <= 0.0 ||
+            !std::isfinite(denom_rec) || denom_rec <= 0.0)
         {
             throw std::runtime_error(
                 "lsdtt_chi_extraction_cpu: chi denominator must be finite and > 0."
@@ -438,7 +484,8 @@ lsdtt_chi_basin_result compute_threshold_basin_chi(
         result.receiver_flats[i] = rec;
         result.chi[i] = static_cast<float>(
             static_cast<double>(result.chi[rec_local]) +
-            step * std::pow(options.A_0 / denom, options.m_over_n)
+            chi_increment(step, denom, denom_rec,
+                          options.A_0, options.m_over_n)
         );
     }
 
@@ -541,7 +588,11 @@ lsdtt_chi_basin_result compute_junction_network_basin_chi(
         }
 
         const double denom = denominator_fn(flat);
-        if (!std::isfinite(denom) || denom <= 0.0)
+        // The receiver's denominator is needed too: the trapezoidal rule
+        // evaluates the integrand at BOTH ends of the segment.
+        const double denom_rec = denominator_fn(rec);
+        if (!std::isfinite(denom) || denom <= 0.0 ||
+            !std::isfinite(denom_rec) || denom_rec <= 0.0)
         {
             throw std::runtime_error(
                 "lsdtt_chi_extraction_cpu: chi denominator must be finite and > 0."
@@ -556,7 +607,8 @@ lsdtt_chi_basin_result compute_junction_network_basin_chi(
         result.receiver_flats[i] = rec;
         result.chi[i] = static_cast<float>(
             static_cast<double>(result.chi[rec_local]) +
-            step * std::pow(options.A_0 / denom, options.m_over_n)
+            chi_increment(step, denom, denom_rec,
+                          options.A_0, options.m_over_n)
         );
     }
 

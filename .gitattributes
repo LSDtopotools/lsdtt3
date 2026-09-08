@@ -1,4 +1,96 @@
-# Treat binary data files as binary so no platform (esp. Windows with
-# core.autocrlf) performs end-of-line translation that would corrupt them.
-*.nc   binary
-*.tif  binary
+# Line endings and binary handling.
+#
+# WHY THIS MATTERS BEYOND TIDINESS
+#
+# 60 of ~975 tracked text files are stored with CRLF, 42 of them C++ sources
+# under src/. That is invisible day to day, and then it is not: any tool that
+# rewrites a file wholesale (a bulk edit, `git stash` round-tripping, a Windows
+# editor) silently converts the whole file, and a one-line change lands as a
+# whole-file diff. It happened twice in one session, to
+# src/core/lsdtt_vector_utils.cpp (1 line -> 757) and
+# src/cpu/lsdtt_chi_extraction_cpu.cpp (58 lines -> 3284). Both were caught by
+# reading the diffstat; neither was caught by the compiler or the tests,
+# because the code was correct in both cases.
+#
+# `text eol=lf` normalises on commit: the repository holds LF, the working tree
+# gets whatever the platform wants. Nothing about editing on Windows or WSL2
+# changes.
+#
+# ---------------------------------------------------------------------------
+# APPLYING THIS IS A SEPARATE COMMIT, ON ITS OWN
+# ---------------------------------------------------------------------------
+# Adding this file does NOT convert anything. Existing CRLF files stay as they
+# are until they are renormalised:
+#
+#     git add --renormalize .
+#     git commit -m "Normalise line endings to LF (see .gitattributes)"
+#
+# Do that on a clean tree, in a commit that changes nothing else. It rewrites
+# ~60 files, so mixed into other work it would bury the real change - which is
+# exactly the failure mode this file exists to prevent. Anyone with uncommitted
+# edits in those files should land them first, or the renormalise will conflict.
+# ---------------------------------------------------------------------------
+
+# Default: let git decide what is text, and store text as LF.
+* text=auto
+
+# ---------------------------------------------------------------------------
+# Source and documentation - always LF in the repository.
+# ---------------------------------------------------------------------------
+*.cpp   text eol=lf
+*.hpp   text eol=lf
+*.h     text eol=lf
+*.cu    text eol=lf
+*.py    text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.smk   text eol=lf
+*.in    text eol=lf
+CMakeLists.txt text eol=lf
+
+# ---------------------------------------------------------------------------
+# TEST FIXTURES AND EXPECTED OUTPUTS ARE NOT NORMALISED.
+#
+# `-text` means "never translate this, in either direction". These files are
+# compared byte for byte, and several are pinned by SHA256, so changing a line
+# ending changes the pin and the comparison. That is not a hypothetical:
+#
+#   tests/data/cosmo_oracle.csv   is a file-hash tripwire whose whole purpose
+#                                 is to change when the cosmogenic output
+#                                 changes. Renormalising it would trip it for a
+#                                 reason that has nothing to do with the
+#                                 numerics, and the cosmogenic numeric core is
+#                                 not to be disturbed without explicit review.
+#
+#   tests/expected/cosmo/*.csv    reference values from published studies and
+#                                 from the CRONUS emulator, compared exactly.
+#
+# All 15 CRLF-carrying CSVs in the tree are under these two paths. Leaving them
+# alone is the entire reason this section exists - renormalising them is the one
+# way this change could break something real.
+# ---------------------------------------------------------------------------
+tests/data/**       -text
+tests/expected/**   -text
+
+# ---------------------------------------------------------------------------
+# Binary data. No platform may perform end-of-line translation on these.
+# ---------------------------------------------------------------------------
+*.nc    binary
+*.tif   binary
+*.tiff  binary
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.gpkg  binary
+*.fgb   binary
+*.dem   binary
+*.bil   binary
+*.flt   binary
+*.hdr   binary
+*.prj   binary
+*.asc   binary

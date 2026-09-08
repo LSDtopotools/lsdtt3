@@ -249,7 +249,7 @@ prints the same information.
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `A_0` | float | `1.0` | Chi reference area. Positive reference area in square metres. |
+| `chi_A0` | float | `1.0` | Reference drainage area A0 for the chi integration (m²), positive. **Leave at 1.0** unless you know why: a chi-elevation gradient equals `k_sn` only when `A0 = 1 m²`; any other value silently rescales it by `A0^(m/n)`. *(Renamed from `A_0`; the old key still works for one release, with a warning.)* |
 | `calculate_sink_chi` | bool | `false` | Calculate full-raster sink-aware chi. |
 | `m_over_n` | float | `0.45` | Chi theta. Chi is descriptive for multi-elevation moulins, not an erosion-rate proxy. |
 | `write_chi_raster` | bool | `true` | Write sink-aware chi raster. |

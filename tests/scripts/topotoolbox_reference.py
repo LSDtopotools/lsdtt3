@@ -129,7 +129,15 @@ SURFACE_ROUTINES = (
     "hillshade_unfused",
 )
 
-ROUTINES = FLOW_ROUTINES + SURFACE_ROUTINES
+# s-vector counterweight routines (tests/scripts/run_svector_benchmark.py).
+# These do NOT return a GridObject, so they return their own info dict and never
+# reach the shared tail below.
+SVECTOR_ROUTINES = ("basins_from_seeds", "chi_network", "chi_grid")
+
+# Set by main(); read only by the SVECTOR_ROUTINES branch of run().
+_ARGS = None
+
+ROUTINES = FLOW_ROUTINES + SURFACE_ROUTINES + SVECTOR_ROUTINES
 
 # Routines whose timing must never be quoted as a ratio against lsdtt3: they do
 # demonstrably less work than a quadratic surface fit.
@@ -313,6 +321,214 @@ def _repeat_time(call, repeats: int) -> dict:
     }
 
 
+def run_basins_from_seeds(dem, seeds_path: str, levels: int, repeats: int):
+    """Upslope set of every seed, delineated ONE NESTING LEVEL AT A TIME.
+
+    TopoToolbox's `dependencemap` takes a LOGICAL GRID, so many seeds are one
+    pass -- which is exactly why a disjoint-basin comparison shows nothing. What
+    it cannot do is express NESTED basins in a single output: a nested set has to
+    be resolved level by level, so the cost is linear in depth.
+
+    That is what is timed here: one `dependencemap` per level, which is the
+    honest analogue of Whitebox's `unnest_basins` emitting one raster per level,
+    and of lsdtt3 reading a sub-interval per basin.
+    """
+    import csv as _csv
+    import numpy as np
+    import topotoolbox as ttb
+
+    with open(seeds_path) as fh:
+        pts = [(float(r["latitude"]), float(r["longitude"]))
+               for r in _csv.DictReader(fh)]
+
+    rows, cols = np.asarray(dem.z).shape
+
+    # Seeds arrive as lat/lon; map to pixels through the DEM's own transform so
+    # the same points land on the same cells as they do for lsdtt3.
+    seeds_rc = _latlon_to_rowcol(dem, pts)
+
+    def one_pass():
+        # The FlowObject is built INSIDE the timed region, because lsdtt-basin-
+        # extraction builds its flow routing on every invocation and the two
+        # have to include the same work. Building it outside made the reference
+        # look ~1000x faster while measuring a different operation -- the
+        # like-for-like failure this whole benchmark exists to avoid.
+        fd = ttb.FlowObject(dem)
+        # One logical grid per level. Splitting the seeds across `levels`
+        # buckets reproduces the level-by-level structure without needing the
+        # junction hierarchy here: the DRIVER decides which seeds belong to
+        # which depth, and the count per level is what varies.
+        out = None
+        per = max(1, len(seeds_rc) // max(1, levels))
+        for lvl in range(levels):
+            chunk = seeds_rc[lvl * per:(lvl + 1) * per] or seeds_rc[:1]
+            mask = dem.duplicate_with_new_data(
+                np.zeros((rows, cols), dtype=np.float32))
+            arr = np.asarray(mask.z)
+            for (r, c) in chunk:
+                if 0 <= r < rows and 0 <= c < cols:
+                    arr[r, c] = 1.0
+            out = fd.dependencemap(mask)
+        return out
+
+    with suppressed_output():
+        one_pass()                                  # warm-up, discarded
+    times = []
+    for _ in range(max(1, repeats)):
+        t0 = time.perf_counter()
+        with suppressed_output():
+            one_pass()
+        times.append(time.perf_counter() - t0)
+
+    return {"reference": "topotoolbox", "routine": "basins_from_seeds",
+            "seconds": min(times), "seconds_all": times,
+            "seconds_median": statistics.median(times),
+            "levels": levels, "n_seeds": len(seeds_rc), "threads": 1,
+            "timing_scope": "in_process_routine",
+            "peak_rss_mb": peak_rss_mb()}
+
+
+def _latlon_to_rowcol(dem, pts):
+    """Map lat/lon to (row, col) using the DEM's CRS and transform."""
+    from osgeo import osr
+    osr.UseExceptions()
+    src = osr.SpatialReference(); src.ImportFromEPSG(4326)
+    dst = osr.SpatialReference()
+    try:
+        dst.ImportFromWkt(dem.crs.to_wkt())
+    except Exception:
+        dst.ImportFromEPSG(4326)
+    try:
+        src.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        dst.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    except Exception:
+        pass
+    tr = osr.CoordinateTransformation(src, dst)
+    tf = dem.transform
+    out = []
+    for lat, lon in pts:
+        x, y, *_ = tr.TransformPoint(lon, lat)
+        col = int((x - tf[2]) / tf[0]) if tf[0] else 0
+        row = int((y - tf[5]) / tf[4]) if tf[4] else 0
+        out.append((row, col))
+    return out
+
+
+def chi_grid(dem, threshold_px: int, mn: float, a0: float, out_path: str):
+    """Write TopoToolbox's chi as a full-grid raster, for a VALUE comparison.
+
+    Not a timing routine. It exists so chi can be joined against lsdtt3's per
+    node table cell by cell, with no coordinate matching.
+
+    The grid is assembled from `node_indices` rather than `StreamObject.to_grid`
+    -- that method raises IndexError in topotoolbox 3.x because it indexes a
+    1-D node array with a 2-D index. `node_indices` is (2, n) of row/col, which
+    is the same information without the bug.
+
+    a0 is passed through and must be 1.0 for the chi gradient to be k_sn;
+    correctcellsize=False because the area handed over is already m^2.
+    """
+    import numpy as np
+    import topotoolbox as ttb
+    from osgeo import gdal, osr
+    gdal.UseExceptions()
+
+    filled = dem.fillsinks()
+    fd = ttb.FlowObject(filled)
+    acc = fd.flow_accumulation()
+    s = ttb.StreamObject(fd, threshold=int(threshold_px))
+    area_m2 = np.asarray(acc.z, dtype=float) * (float(dem.cellsize) ** 2)
+    chi = np.asarray(s.chitransform(area_m2, a0=a0, mn=mn,
+                                    correctcellsize=False), dtype=float)
+
+    rows, cols = np.asarray(dem.z).shape
+    grid = np.full((rows, cols), np.nan, dtype=np.float64)
+    ni = np.asarray(s.node_indices)
+    grid[ni[0], ni[1]] = chi
+
+    drv = gdal.GetDriverByName("GTiff")
+    ds = drv.Create(out_path, cols, rows, 1, gdal.GDT_Float64)
+    tf = dem.transform
+    ds.SetGeoTransform((tf[2], tf[0], tf[1], tf[5], tf[3], tf[4]))
+    try:
+        srs = osr.SpatialReference(); srs.ImportFromWkt(dem.crs.to_wkt())
+        ds.SetProjection(srs.ExportToWkt())
+    except Exception:
+        pass
+    band = ds.GetRasterBand(1)
+    band.WriteArray(grid); band.SetNoDataValue(float("nan"))
+    ds.FlushCache(); ds = None
+
+    finite = grid[np.isfinite(grid)]
+    return {"reference": "topotoolbox", "routine": "chi_grid",
+            "a0": a0, "mn": mn, "stream_threshold_px": int(threshold_px),
+            "n_chi_nodes": int(finite.size),
+            "chi_max": float(finite.max()) if finite.size else None,
+            "out_path": out_path, "threads": 1,
+            "timing_scope": "not_timed"}
+
+
+def chi_network(dem, threshold_px: int, mn: float, a0: float, repeats: int):
+    """DEM -> chi, END-TO-END and decomposed by phase.
+
+    THE DECOMPOSITION IS THE POINT. lsdtt3 has no separate accumulation phase --
+    the s-vector build already produced drainage area, and chi reads it in O(1).
+    TopoToolbox must run `flow_accumulation` explicitly before `chitransform`
+    can be called at all, because chitransform takes a PRECOMPUTED area raster.
+    Timing chitransform alone would hide that.
+
+    a0 is passed through, never defaulted here: TopoToolbox's own default is
+    1e6, and a chi gradient is k_sn only at a0 = 1 m^2.
+
+    correctcellsize=False because `upstream_area` is handed over in m^2 already
+    (flow_accumulation gives cells; it is multiplied by cellsize^2 below). The
+    flag would otherwise apply cellsize^2 a second time.
+    """
+    import numpy as np
+    import topotoolbox as ttb
+
+    phases = ["fill", "flow_object", "flow_accumulation", "stream_object",
+              "chitransform"]
+
+    def one_pass():
+        t = []
+        t0 = time.perf_counter(); filled = dem.fillsinks(); t.append(time.perf_counter() - t0)
+        t0 = time.perf_counter(); fd = ttb.FlowObject(filled); t.append(time.perf_counter() - t0)
+        t0 = time.perf_counter(); acc = fd.flow_accumulation(); t.append(time.perf_counter() - t0)
+        t0 = time.perf_counter()
+        s = ttb.StreamObject(fd, threshold=int(threshold_px))
+        t.append(time.perf_counter() - t0)
+        area_m2 = np.asarray(acc.z, dtype=float) * (float(dem.cellsize) ** 2)
+        t0 = time.perf_counter()
+        chi = s.chitransform(area_m2, a0=a0, mn=mn, correctcellsize=False)
+        t.append(time.perf_counter() - t0)
+        return t, chi
+
+    with suppressed_output():
+        one_pass()                                  # warm-up, discarded
+    best, best_chi = None, None
+    totals = []
+    for _ in range(max(1, repeats)):
+        with suppressed_output():
+            t, chi = one_pass()
+        totals.append(sum(t))
+        if best is None or sum(t) < sum(best):
+            best, best_chi = t, chi
+
+    arr = np.asarray(best_chi, dtype=float)
+    finite = arr[np.isfinite(arr)]
+    return {"reference": "topotoolbox", "routine": "chi_network",
+            "seconds": min(totals), "seconds_all": totals,
+            "seconds_median": statistics.median(totals),
+            "phase_names": phases, "phase_seconds": best,
+            "a0": a0, "mn": mn,
+            "stream_threshold_px": int(threshold_px),
+            "n_chi_nodes": int(finite.size),
+            "chi_max": float(finite.max()) if finite.size else None,
+            "threads": 1, "timing_scope": "in_process_routine",
+            "peak_rss_mb": peak_rss_mb()}
+
+
 def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         azimuth: float = 315.0, altitude: float = 60.0):
     import numpy as np
@@ -325,6 +541,20 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
 
     info = {"reference": "topotoolbox", "routine": routine,
             "seconds_read": seconds_read}
+
+    if routine in SVECTOR_ROUTINES:
+        # Return directly: these produce no single GridObject, so the shared
+        # tail below (which reads `result.z`) does not apply to them.
+        if routine == "basins_from_seeds":
+            out = run_basins_from_seeds(dem, _ARGS.seeds, _ARGS.levels, repeats)
+        elif routine == "chi_grid":
+            out = chi_grid(dem, _ARGS.stream_threshold, _ARGS.mn, _ARGS.a0,
+                           out_path)
+        else:
+            out = chi_network(dem, _ARGS.stream_threshold, _ARGS.mn,
+                              _ARGS.a0, repeats)
+        out["seconds_read"] = seconds_read
+        return out
 
     if routine in SURFACE_ROUTINES:
         # update, not rebind: run_surface returns a fresh dict, and rebinding
@@ -444,11 +674,29 @@ def main() -> int:
                          "Spearman rho = 1.0000. See run_surface_benchmark.py.")
     ap.add_argument("--altitude", type=float, default=60.0,
                     help="hillshade illumination altitude, degrees")
+    ap.add_argument("--seeds", default="",
+                    help="basins_from_seeds: CSV of latitude,longitude seeds")
+    ap.add_argument("--levels", type=int, default=1,
+                    help="basins_from_seeds: nesting levels to resolve")
+    ap.add_argument("--stream-threshold", type=int, default=1000,
+                    help="chi_network: contributing-pixel stream threshold")
+    ap.add_argument("--mn", type=float, default=0.45,
+                    help="chi_network: m/n ratio")
+    ap.add_argument("--a0", type=float, default=1.0,
+                    help="chi_network: reference area A0 (m2). 1.0 makes the "
+                         "chi gradient k_sn; TopoToolbox's own default is 1e6")
     ap.add_argument("--repeats", type=int, default=1,
                     help="timed repetitions after a discarded warm-up "
                          "(surface routines only). The reported `seconds` is "
                          "the best of these; `seconds_median` the median.")
     args = ap.parse_args()
+
+    # The s-vector routines need arguments the shared run() signature does not
+    # carry. Rather than widen that signature for two routines, hand them the
+    # parsed args through a module-level handle set here, at the single place
+    # main() runs.
+    global _ARGS
+    _ARGS = args
 
     try:
         import topotoolbox  # noqa: F401

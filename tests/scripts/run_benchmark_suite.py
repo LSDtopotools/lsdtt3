@@ -316,6 +316,31 @@ CASES: dict[str, dict[str, Any]] = {
                   "output": "_d8_drainage_area.tif"},
     },
 
+    # The like-for-like partner to `accum_d8`. Same operation, same output --
+    # pinned bit-identical by P11 in tests/cpp/test_flow_properties.cpp -- with
+    # the s-vector switched off, which is the structure no reference builds.
+    #
+    # REPORT BOTH ROWS OR NEITHER. `accum_d8` is what a user of lsdtt3 actually
+    # pays and is the honest headline; this row is what a fair comparison
+    # against tools that build no equivalent structure costs. Quoting only this
+    # one would flatter lsdtt3 by hiding work its users do get; quoting only the
+    # other charges it for work the references never do.
+    "accum_d8_no_svector": {
+        "sequential": True,
+        "needs_filled": True,
+        "suite": "flow",
+        "note": ("D8 accumulation with build_flow_s_vector: false. The "
+                 "like-for-like row: same raster as accum_d8, without the "
+                 "s-vector (~57% of the D8 build) that no reference builds"),
+        "engines": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
+                    "whitebox": "accum_d8"},
+        "lsdtt": {"exe": "lsdtt-drainage-analysis",
+                  "params": {"write_d8_drainage_area_raster": "true",
+                             "raster_is_filled": "true",
+                             "build_flow_s_vector": "false"},
+                  "output": "_d8_drainage_area.tif"},
+    },
+
     # -- suite: mfd --------------------------------------------------------
     # Multi-direction routing. Every implementation uses a different
     # proportioning rule (Tarboton D-inf vs Quinn MFD vs Freeman FD8), so these

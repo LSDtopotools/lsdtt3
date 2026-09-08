@@ -1990,12 +1990,31 @@ lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster() const
 {
     require_built();
 
+    // WITHOUT THE S-VECTOR, ACCUMULATE INSTEAD OF REFUSING.
+    //
+    // The s-vector path below is an O(1) read of a precomputed subtree size --
+    // the work was already done during construction, which is why it measures
+    // ~1.4 ms. Building it costs ~106 ms of the ~186 ms D8 build on a 1000^2
+    // tile (57%), and it exists for `is_upslope_of` and the analyses that
+    // depend on O(1) upslope queries, NOT for drainage area.
+    //
+    // A caller that wants only drainage area should not have to pay for it, and
+    // should not have to know that this method is implemented on top of it.
+    // Accumulating over the topological order gives a BIT-IDENTICAL raster
+    // (measured: 0 differing cells of 1,000,000) for less total work.
+    //
+    // Pinned by `unit_flow_drainage_area_svector_parity`.
     if (!has_s_vector_)
     {
-        throw std::runtime_error(
-            "lsdtt_flowinfo::get_drainage_area_raster(): "
-            "s_vector not built - set build_s_vector = true in lsdtt_flowinfo_options"
-        );
+        if (!has_topological_order_)
+        {
+            throw std::runtime_error(
+                "lsdtt_flowinfo::get_drainage_area_raster(): needs either the "
+                "s_vector or the topological order - set build_s_vector or "
+                "build_topological_order in lsdtt_flowinfo_options"
+            );
+        }
+        return accumulate_raster();
     }
 
     const std::size_t n          = mask_.size();

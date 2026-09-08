@@ -546,7 +546,17 @@ int main(int argc, char* argv[])
     float_default_map["chi_A0"] = 1.0f;
     help_map["chi_A0"] = {"float","1.0",
         "Reference drainage area A0 for chi integration (m2).",
-        "Chi = integral of (A0/A)^(m/n) ds from the outlet. Default is 1.0.",
+        "Chi = integral of (A0/A)^(m/n) ds from the outlet. "
+        "LEAVE THIS AT 1.0 UNLESS YOU KNOW WHY YOU ARE CHANGING IT. The slope "
+        "of a chi-elevation profile equals the channel steepness index k_sn "
+        "ONLY when A0 = 1 m2; for any other A0 the gradient is k_sn scaled by "
+        "A0^(m/n), so it is a steepness index referenced to that area rather "
+        "than k_sn itself. The rescaling is silent - the profile looks the "
+        "same and only the numbers on the axis change - and it is large: "
+        "A0 = 1e6 m2 at m/n = 0.45 scales every gradient by about 631. Other "
+        "packages default differently (TopoToolbox's chitransform uses "
+        "a0 = 1e6), so state A0 explicitly whenever a value is compared across "
+        "tools or quoted in a paper.",
         "Chi extraction / fitting", "param", "fit_chi_networks"};
 
     float_default_map["mn_min"] = 0.3f;

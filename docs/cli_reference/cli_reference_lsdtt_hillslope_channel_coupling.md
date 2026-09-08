@@ -360,7 +360,7 @@ prints the same information.
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `chi_A_0` | float | `1.0` | Reference drainage area A_0 for the chi integration. |
+| `chi_A0` | float | `1.0` | Reference drainage area A0 for the chi integration (m²). **Leave at 1.0** unless you know why: a chi-elevation gradient equals `k_sn` only when `A0 = 1 m²`; any other value silently rescales it by `A0^(m/n)`. *(Renamed from `chi_A_0`; the old key still works for one release, with a warning.)* |
 | `chi_critical_divergence_m` | float | `5.0` | Segment-fitting tolerance: max divergence (m) before a new segment. |
 | `m_over_n` | float | `0.45` | Concavity index m/n used for the chi integration. |
 | `run_chi_analysis` | bool | `false` | Fit the chi network and attach channel steepness to every hilltop row. |

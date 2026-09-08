@@ -111,7 +111,7 @@ Outlets that fail to snap are dropped with a message naming the point and the re
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `chi_A0` | float | `1.0` | Reference drainage area A₀ (m²) in `chi = ∫(A₀/A)^(m/n) ds`. |
+| `chi_A0` | float | `1.0` | Reference drainage area A₀ (m²) in `chi = ∫(A₀/A)^(m/n) ds`. **Leave at 1.0** unless you know why: the gradient of a chi-elevation profile equals `k_sn` only when `A0 = 1 m²`; any other value silently rescales it by `A0^(m/n)` (≈631× at `A0 = 1e6`, `m/n = 0.45`). |
 | `m_over_n` | float | `0.45` | Reference concavity θ = m/n. Must be > 0. Constrain it with `lsdtt-chi-analysis` and supply the result here. |
 | `outlet_control_mode` | string | `none` | Base‑level treatment — see below. |
 | `outlet_control_min_elevation` | float | `-9999` | Elevation floor (m). Used only when `outlet_control_mode: elevation`. |

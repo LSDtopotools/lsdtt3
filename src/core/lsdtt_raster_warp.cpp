@@ -218,7 +218,12 @@ lsdtt_extent transformed_extent_in_target_crs(
 // -----------------------------------------------------------------------------
 char** build_gdalwarp_options(
     const warp_request& req,
-    const std::string&  source_driver_name)
+    const std::string&  source_driver_name,
+    // Band type of the SOURCE. GDALWarp preserves it unless -ot is given, and
+    // -ot is not given here, so this is also the type of the output -- which is
+    // what the compression predictor has to match. Passed in rather than read
+    // from the file again: the caller already holds the open dataset.
+    GDALDataType        source_type)
 {
     char** opts = nullptr;
 
@@ -285,11 +290,19 @@ char** build_gdalwarp_options(
     opts = CSLAddString(opts, "-of");
     opts = CSLAddString(opts, driver_name.c_str());
 
+    // See tiff_predictor_for() in lsdtt_data_loader.hpp: the predictor depends
+    // on the band type, and 2 on float data is spec-invalid and reads as NaN in
+    // strict TIFF readers even though GDAL round-trips it happily.
+    const std::string predictor_co =
+        "PREDICTOR=" + std::to_string(tiff_predictor_for(source_type));
+
     // Creation options
     if (driver_name == "COG")
     {
         opts = CSLAddString(opts, "-co");
         opts = CSLAddString(opts, "COMPRESS=DEFLATE");
+        opts = CSLAddString(opts, "-co");
+        opts = CSLAddString(opts, predictor_co.c_str());
     }
     else if (driver_name == "GTiff")
     {
@@ -302,7 +315,7 @@ char** build_gdalwarp_options(
         opts = CSLAddString(opts, "-co");
         opts = CSLAddString(opts, "COMPRESS=DEFLATE");
         opts = CSLAddString(opts, "-co");
-        opts = CSLAddString(opts, "PREDICTOR=2");
+        opts = CSLAddString(opts, predictor_co.c_str());
     }
 
     // Multi-threading and memory
@@ -351,7 +364,13 @@ void run_gdalwarp(
         if (desc) source_driver_name = desc;
     }
 
-    char** warp_opts = build_gdalwarp_options(req, source_driver_name);
+    const GDALDataType source_type =
+        (GDALGetRasterCount(src_ds) > 0)
+            ? GDALGetRasterDataType(GDALGetRasterBand(src_ds, 1))
+            : GDT_Float32;
+
+    char** warp_opts =
+        build_gdalwarp_options(req, source_driver_name, source_type);
 
     int usage_error = CE_None;
     GDALWarpAppOptions* app_opts = GDALWarpAppOptionsNew(warp_opts, nullptr);
