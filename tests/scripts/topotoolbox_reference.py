@@ -132,7 +132,7 @@ SURFACE_ROUTINES = (
 # s-vector counterweight routines (tests/scripts/run_svector_benchmark.py).
 # These do NOT return a GridObject, so they return their own info dict and never
 # reach the shared tail below.
-SVECTOR_ROUTINES = ("basins_from_seeds", "chi_network")
+SVECTOR_ROUTINES = ("basins_from_seeds", "chi_network", "chi_grid")
 
 # Set by main(); read only by the SVECTOR_ROUTINES branch of run().
 _ARGS = None
@@ -414,6 +414,60 @@ def _latlon_to_rowcol(dem, pts):
     return out
 
 
+def chi_grid(dem, threshold_px: int, mn: float, a0: float, out_path: str):
+    """Write TopoToolbox's chi as a full-grid raster, for a VALUE comparison.
+
+    Not a timing routine. It exists so chi can be joined against lsdtt3's per
+    node table cell by cell, with no coordinate matching.
+
+    The grid is assembled from `node_indices` rather than `StreamObject.to_grid`
+    -- that method raises IndexError in topotoolbox 3.x because it indexes a
+    1-D node array with a 2-D index. `node_indices` is (2, n) of row/col, which
+    is the same information without the bug.
+
+    a0 is passed through and must be 1.0 for the chi gradient to be k_sn;
+    correctcellsize=False because the area handed over is already m^2.
+    """
+    import numpy as np
+    import topotoolbox as ttb
+    from osgeo import gdal, osr
+    gdal.UseExceptions()
+
+    filled = dem.fillsinks()
+    fd = ttb.FlowObject(filled)
+    acc = fd.flow_accumulation()
+    s = ttb.StreamObject(fd, threshold=int(threshold_px))
+    area_m2 = np.asarray(acc.z, dtype=float) * (float(dem.cellsize) ** 2)
+    chi = np.asarray(s.chitransform(area_m2, a0=a0, mn=mn,
+                                    correctcellsize=False), dtype=float)
+
+    rows, cols = np.asarray(dem.z).shape
+    grid = np.full((rows, cols), np.nan, dtype=np.float64)
+    ni = np.asarray(s.node_indices)
+    grid[ni[0], ni[1]] = chi
+
+    drv = gdal.GetDriverByName("GTiff")
+    ds = drv.Create(out_path, cols, rows, 1, gdal.GDT_Float64)
+    tf = dem.transform
+    ds.SetGeoTransform((tf[2], tf[0], tf[1], tf[5], tf[3], tf[4]))
+    try:
+        srs = osr.SpatialReference(); srs.ImportFromWkt(dem.crs.to_wkt())
+        ds.SetProjection(srs.ExportToWkt())
+    except Exception:
+        pass
+    band = ds.GetRasterBand(1)
+    band.WriteArray(grid); band.SetNoDataValue(float("nan"))
+    ds.FlushCache(); ds = None
+
+    finite = grid[np.isfinite(grid)]
+    return {"reference": "topotoolbox", "routine": "chi_grid",
+            "a0": a0, "mn": mn, "stream_threshold_px": int(threshold_px),
+            "n_chi_nodes": int(finite.size),
+            "chi_max": float(finite.max()) if finite.size else None,
+            "out_path": out_path, "threads": 1,
+            "timing_scope": "not_timed"}
+
+
 def chi_network(dem, threshold_px: int, mn: float, a0: float, repeats: int):
     """DEM -> chi, END-TO-END and decomposed by phase.
 
@@ -493,6 +547,9 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         # tail below (which reads `result.z`) does not apply to them.
         if routine == "basins_from_seeds":
             out = run_basins_from_seeds(dem, _ARGS.seeds, _ARGS.levels, repeats)
+        elif routine == "chi_grid":
+            out = chi_grid(dem, _ARGS.stream_threshold, _ARGS.mn, _ARGS.a0,
+                           out_path)
         else:
             out = chi_network(dem, _ARGS.stream_threshold, _ARGS.mn,
                               _ARGS.a0, repeats)

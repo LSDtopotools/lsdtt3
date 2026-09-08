@@ -328,6 +328,139 @@ def chi_reference(filled_or_raw: pathlib.Path, threshold: int,
 
 
 # -----------------------------------------------------------------------------
+# Case 3: chi VALUE comparison
+# -----------------------------------------------------------------------------
+def chi_value_compare(build_dir: pathlib.Path, filled: pathlib.Path,
+                      work: pathlib.Path, threshold: int, m_over_n: float,
+                      a0: float, python_exe: str, timeout: float) -> list[dict]:
+    """Do lsdtt3 and TopoToolbox agree on chi, node for node?
+
+    WHY A PER-BASIN REGRESSION AND NOT A DIFFERENCE.
+
+    chi is defined relative to a BASELEVEL: it is 0 at the outlet the
+    integration started from and accumulates upstream. The two tools do not
+    necessarily start from the same node -- lsdtt3 seeds from its own basin
+    outlets, TopoToolbox from the stream network's outlets -- so a raw
+    difference would be dominated by a constant offset that says nothing about
+    the integrand.
+
+    What the comparison is actually testing is whether the two integrate the
+    SAME QUANTITY: chi = integral of (A0/A)^(m/n) ds. So within each basin,
+    regress lsdtt3's chi on TopoToolbox's:
+
+        SLOPE     must be 1.0. It is the ratio of the integrands. A slope of
+                  A0_ratio^(m/n) is the signature of mismatched A0 -- at
+                  m/n = 0.45 an unnoticed a0=1e6 on one side shows up as ~631,
+                  which is why this test is worth running at all.
+        INTERCEPT is the baselevel offset. Free; not a defect.
+        RESIDUAL  is the real disagreement, in chi units.
+
+    Node join is on the flat index (row * n_cols + col), so no coordinate
+    matching and no tolerance on position.
+    """
+    import math
+
+    out = work / "chi_value"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+
+    exe = build_dir / "lsdtt-chi-analysis"
+    if not exe.exists():
+        return [{"engine": "lsdtt3", "case": "chi_value",
+                 "error": "lsdtt-chi-analysis not built (needs Eigen3)"}]
+
+    # lsdtt3: the FIT NODE table, not the chi coordinate raster.
+    #
+    # The raster path runs through write_chi_data_maps, which drops any basin
+    # whose upslope area touches invalid data -- and `is_influenced_by_invalid`
+    # counts the raster edge. On a CROPPED fixture essentially every basin's
+    # headwaters reach an edge, so that path yields nothing at all. See the
+    # note recorded with this case: it is a deliberate correctness stance in
+    # lsdtt3, not a defect, but it makes the raster unusable here.
+    try:
+        stdout, _ = run_cli(exe, out, "cv.param", {
+            "read_path": filled.parent, "read_fname": filled.name,
+            "write_path": out, "write_fname": "cv",
+            "raster_is_filled": "true",
+            "threshold_contributing_pixels": threshold,
+            "chi_A0": a0, "m_over_n": m_over_n,
+            "fit_chi_networks": "true", "write_fit_tables": "true",
+            "write_output_format": "gtiff",
+        })
+    except RuntimeError as exc:
+        return [{"engine": "lsdtt3", "case": "chi_value",
+                 "error": str(exc)[-300:]}]
+
+    nodes = sorted(out.glob("cv_chi_fit_nodes_mn_*.csv"))
+    if not nodes:
+        return [{"engine": "lsdtt3", "case": "chi_value",
+                 "error": "no chi fit node table written"}]
+
+    # TopoToolbox: chi as a full grid, same filled DEM, same a0 and m/n.
+    ttb_tif = out / "ttb_chi.tif"
+    proc = subprocess.run(
+        [python_exe, str(SCRIPT_DIR / "topotoolbox_reference.py"),
+         "--routine", "chi_grid", "--in", str(filled), "--out", str(ttb_tif),
+         "--stream-threshold", str(threshold), "--mn", str(m_over_n),
+         "--a0", str(a0)],
+        capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        return [{"engine": "topotoolbox", "case": "chi_value",
+                 "error": proc.stderr[-300:].strip()}]
+
+    from osgeo import gdal
+    gdal.UseExceptions()
+    ds = gdal.Open(str(ttb_tif))
+    ttb = ds.GetRasterBand(1).ReadAsArray().astype(float)
+    n_cols = ds.RasterXSize
+    ds = None
+
+    per_basin: dict[int, list[tuple[float, float]]] = {}
+    with nodes[0].open() as fh:
+        for row in csv.DictReader(fh):
+            flat = int(row["flat"])
+            r, c = divmod(flat, n_cols)
+            if not (0 <= r < ttb.shape[0] and 0 <= c < ttb.shape[1]):
+                continue
+            b = ttb[r, c]
+            if not math.isfinite(b):
+                continue
+            per_basin.setdefault(int(row["basin_index"]), []).append(
+                (b, float(row["chi"])))
+
+    rows_out = []
+    for basin, pairs in sorted(per_basin.items()):
+        if len(pairs) < 3:
+            continue
+        xs = [p[0] for p in pairs]
+        ys = [p[1] for p in pairs]
+        n = len(xs)
+        mx, my = sum(xs) / n, sum(ys) / n
+        sxx = sum((x - mx) ** 2 for x in xs)
+        sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        if sxx <= 0.0:
+            continue
+        slope = sxy / sxx
+        intercept = my - slope * mx
+        resid = [y - (slope * x + intercept) for x, y in zip(xs, ys)]
+        sst = sum((y - my) ** 2 for y in ys)
+        ssr = sum(r * r for r in resid)
+        rows_out.append({
+            "case": "chi_value", "engine": "lsdtt3_vs_topotoolbox",
+            "basin_index": basin, "n_matched": n,
+            "slope": slope, "intercept": intercept,
+            "r_squared": (1.0 - ssr / sst) if sst > 0 else float("nan"),
+            "max_abs_residual_chi": max(abs(r) for r in resid),
+            "a0": a0, "m_over_n": m_over_n,
+        })
+    if not rows_out:
+        rows_out = [{"case": "chi_value", "engine": "lsdtt3_vs_topotoolbox",
+                     "error": "no basin had >=3 nodes present in both"}]
+    return rows_out
+
+
+# -----------------------------------------------------------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -346,7 +479,7 @@ def main() -> int:
     ap.add_argument("--timeout-seconds", type=float, default=1800.0)
     ap.add_argument("--python-exe", default=sys.executable)
     ap.add_argument("--out-dir", default="")
-    ap.add_argument("--cases", default="basins,chi")
+    ap.add_argument("--cases", default="basins,chi,chi_value")
     args = ap.parse_args()
 
     build_dir = pathlib.Path(args.build_dir).resolve()
@@ -436,10 +569,32 @@ def main() -> int:
                                  r.get("phase_seconds", [])):
                 print(f"        {name:24s} {sec:.4f} s")
 
+    # -- case 3: chi values -------------------------------------------------
+    if "chi_value" in cases:
+        print("\n=== chi VALUE comparison (lsdtt3 vs TopoToolbox) ===")
+        print("  per-basin regression of lsdtt3 chi on TopoToolbox chi:")
+        print("  slope must be 1.0 (same integrand); intercept is the "
+              "baselevel offset and is free")
+        vrows = chi_value_compare(build_dir, filled, work, args.threshold,
+                                  args.m_over_n, args.a0, args.python_exe,
+                                  args.timeout_seconds)
+        for r in vrows:
+            r["fixture"] = args.fixture
+            rows.append(r)
+            if "error" in r:
+                print(f"    ERROR {r['error'][:110]}")
+            else:
+                print(f"    basin {r['basin_index']:3d}  n={r['n_matched']:5d}  "
+                      f"slope={r['slope']:.6f}  intercept={r['intercept']:+.4f}  "
+                      f"R2={r['r_squared']:.6f}  "
+                      f"max|resid|={r['max_abs_residual_chi']:.4f}")
+
     # -- output -------------------------------------------------------------
     fields = ["fixture", "case", "depth", "n_seeds", "engine", "seconds",
               "timing_scope", "result_is_slope_vs_depth", "phase_names",
-              "phase_seconds", "error"]
+              "phase_seconds", "basin_index", "n_matched", "slope",
+              "intercept", "r_squared", "max_abs_residual_chi", "a0",
+              "m_over_n", "error"]
     csv_path = out_dir / "svector_benchmark.csv"
     with csv_path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
