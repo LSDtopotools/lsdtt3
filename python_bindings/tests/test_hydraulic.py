@@ -73,7 +73,7 @@ class HydraulicRoutingTest(unittest.TestCase):
         self.assertGreater(result.qin.to_numpy()[2, 2], 0.0)
 
     def test_graphflood_v2_ghost_state(self):
-        """Ghosts replace incoming flow and retain their supplied depth."""
+        """Flux-only ghosts replace incoming flow but evolve their depth."""
         meta = lsdtt3.RasterMeta.from_shape(3, 5, cell_size=1.0)
         valid = np.ones((3, 5), dtype=bool)
         bed_values = np.broadcast_to(
@@ -110,9 +110,9 @@ class HydraulicRoutingTest(unittest.TestCase):
 
         # The 10 m3/s donor reaches the ghost, then is discarded.
         self.assertEqual(qin[1, 2], np.float32(0.25))
-        self.assertEqual(qout[1, 2], np.float32(0.25))
+        self.assertGreater(qout[1, 2], qin[1, 2])
         self.assertEqual(qin[1, 1], np.float32(0.25))
-        self.assertEqual(depth[1, 2], initial_values[1, 2])
+        self.assertNotEqual(depth[1, 2], initial_values[1, 2])
 
         # Existing v2 calls have the same output with None or explicit zeros.
         kwargs = dict(boundary_conditions="nnno", max_steps=2,

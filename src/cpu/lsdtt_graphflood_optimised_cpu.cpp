@@ -813,7 +813,7 @@ private:
         const double area = meta_.cell_size * meta_.cell_size;
         for (std::uint32_t flat : active_)
         {
-            if (state_[flat] == 3 || state_[flat] == 2)
+            if (state_[flat] == 3)
             {
                 qout_[flat] = qin_[flat];
                 specific_discharge_[flat] = qout_[flat] / meta_.cell_size;
@@ -835,11 +835,6 @@ private:
             (meta_.cell_size * meta_.cell_size);
         for (std::uint32_t flat : active_)
         {
-            if (state_[flat] == 2)
-            {
-                dhw_[flat] = 0.0;
-                continue;
-            }
             const double old_depth = depth_[flat];
             depth_[flat] = std::max(0.0,
                 old_depth + scale * (qin_[flat] - qout_[flat]));

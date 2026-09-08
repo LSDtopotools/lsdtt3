@@ -1599,9 +1599,10 @@ def run_graphflood_optimised_v2(
     kernel, specialised Manning exponents, and dirty-tile topology validation.
     A failed local validation always falls back to a complete Priority-Flood.
 
-    ``node_state == 2`` marks a ghost cell. Its depth remains equal to
-    ``initial_water_depth`` and it routes ``prescribed_qin`` rather than flow
-    received from its neighbours. ``prescribed_qin=None`` supplies zero.
+    ``node_state == 2`` marks a flux-only ghost cell. It routes
+    ``prescribed_qin`` rather than flow received from its neighbours, while
+    its depth and capacity-limited discharge evolve from ``initial_water_depth``.
+    ``prescribed_qin=None`` supplies zero.
 
     Authors
     -------
