@@ -645,7 +645,8 @@ void test_optimised_v2_kernels()
     options.full_validation_every = 0;
 
     const auto result = lsdtt::run_graphflood_optimised_v2_cpu(
-        bed, states, rain, friction, points, initial_depth, options,
+        bed, states, rain, friction, points, initial_depth,
+        std::vector<double>(n, 0.0), options,
         2, false, 1, 1.0e-9, 1.0e-9);
     double outlet_qin = 0.0;
     for (int col = 0; col < 9; ++col) outlet_qin += result.qin.data[72 + col];
