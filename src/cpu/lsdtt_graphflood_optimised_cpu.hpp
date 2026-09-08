@@ -134,6 +134,7 @@ struct graphflood_multigrid_transfer_policy
     const std::vector<double>& friction_coefficient,
     const std::vector<double>& point_inflow,
     const std::vector<double>& initial_water_depth,
+    const std::vector<double>& prescribed_qin,
     const graphflood_optimised_options& options,
     std::int64_t max_steps,
     bool run_until_converged,

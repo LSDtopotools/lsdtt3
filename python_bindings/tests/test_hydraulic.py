@@ -72,6 +72,85 @@ class HydraulicRoutingTest(unittest.TestCase):
         )
         self.assertGreater(result.qin.to_numpy()[2, 2], 0.0)
 
+    def test_graphflood_v2_ghost_state(self):
+        """Ghosts replace incoming flow and retain their supplied depth."""
+        meta = lsdtt3.RasterMeta.from_shape(3, 5, cell_size=1.0)
+        valid = np.ones((3, 5), dtype=bool)
+        bed_values = np.broadcast_to(
+            np.arange(5, dtype=np.float32), (3, 5)
+        ).copy()
+        bed = lsdtt3.Raster.from_numpy(bed_values, valid, meta)
+        states = np.zeros((3, 5), dtype=np.float32)
+        states[1, :] = 1.0
+        states[1, 0] = 3.0
+        states[1, 2] = 2.0
+        node_state = lsdtt3.Raster.from_numpy(states, valid, meta)
+        zero = lsdtt3.Raster.from_numpy(
+            np.zeros((3, 5), dtype=np.float32), valid, meta
+        )
+        friction = lsdtt3.Raster.from_numpy(
+            np.full((3, 5), 1.0 / 0.033, dtype=np.float32), valid, meta
+        )
+        initial_values = np.zeros((3, 5), dtype=np.float32)
+        initial_values[1, 2] = 0.125
+        initial = lsdtt3.Raster.from_numpy(initial_values, valid, meta)
+        prescribed_values = np.zeros((3, 5), dtype=np.float32)
+        prescribed_values[1, 2] = 0.25
+        prescribed = lsdtt3.Raster.from_numpy(prescribed_values, valid, meta)
+
+        result = lsdtt3.run_graphflood_optimised_v2(
+            bed, node_state, zero, friction, boundary_conditions="nnnn",
+            initial_water_depth=initial, prescribed_qin=prescribed,
+            point_inflows=[[1, 3, 10.0]], max_steps=3,
+            run_until_converged=False,
+        )
+        qin = result.qin.to_numpy()
+        qout = result.qout.to_numpy()
+        depth = result.water_depth.to_numpy()
+
+        # The 10 m3/s donor reaches the ghost, then is discarded.
+        self.assertEqual(qin[1, 2], np.float32(0.25))
+        self.assertEqual(qout[1, 2], np.float32(0.25))
+        self.assertEqual(qin[1, 1], np.float32(0.25))
+        self.assertEqual(depth[1, 2], initial_values[1, 2])
+
+        # Existing v2 calls have the same output with None or explicit zeros.
+        kwargs = dict(boundary_conditions="nnno", max_steps=2,
+                      run_until_converged=False)
+        baseline = lsdtt3.run_graphflood_optimised_v2(
+            self.bed, self.states, self.rainfall_rate,
+            self.friction_coefficient, **kwargs
+        )
+        explicit_zero = lsdtt3.Raster.from_numpy(
+            np.zeros((5, 5), dtype=np.float32), np.ones((5, 5), dtype=bool),
+            self.meta,
+        )
+        with_zero_field = lsdtt3.run_graphflood_optimised_v2(
+            self.bed, self.states, self.rainfall_rate,
+            self.friction_coefficient, prescribed_qin=explicit_zero, **kwargs
+        )
+        for name in ("water_depth", "qin", "qout"):
+            self.assertEqual(
+                getattr(baseline, name).to_numpy().tobytes(),
+                getattr(with_zero_field, name).to_numpy().tobytes(),
+            )
+
+        invalid_values = prescribed_values.copy()
+        invalid_values[1, 2] = -1.0
+        invalid = lsdtt3.Raster.from_numpy(invalid_values, valid, meta)
+        with self.assertRaisesRegex(ValueError, "prescribed_qin"):
+            lsdtt3.run_graphflood_optimised_v2(
+                bed, node_state, zero, friction, prescribed_qin=invalid,
+                max_steps=1,
+            )
+        invalid_values[1, 2] = np.inf
+        invalid = lsdtt3.Raster.from_numpy(invalid_values, valid, meta)
+        with self.assertRaisesRegex(ValueError, "prescribed_qin"):
+            lsdtt3.run_graphflood_optimised_v2(
+                bed, node_state, zero, friction, prescribed_qin=invalid,
+                max_steps=1,
+            )
+
     def test_hydraulic_fill_keeps_a_representable_slope(self):
         """Tiny epsilon must not round flats back to zero hydraulic slope."""
         meta = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=1.0)

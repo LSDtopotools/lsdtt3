@@ -1591,12 +1591,17 @@ def run_graphflood_optimised_v2(
         tol_median_abs_dhw: float = 1e-7,
         tol_median_rel_dhw: float = 1e-5, reuse_topology: bool = True,
         dirty_tile_size: int = 64, full_validation_every: int = 128,
-        initial_water_depth: Raster | None = None) -> GraphFloodOptimisedResult:
+        initial_water_depth: Raster | None = None,
+        prescribed_qin: Raster | None = None) -> GraphFloodOptimisedResult:
     """Run the incremental v2 CPU GraphFlood solver.
 
     V2 adds a monotone radix-heap Priority-Flood, a bounds-free interior MFD
     kernel, specialised Manning exponents, and dirty-tile topology validation.
     A failed local validation always falls back to a complete Priority-Flood.
+
+    ``node_state == 2`` marks a ghost cell. Its depth remains equal to
+    ``initial_water_depth`` and it routes ``prescribed_qin`` rather than flow
+    received from its neighbours. ``prescribed_qin=None`` supplies zero.
 
     Authors
     -------

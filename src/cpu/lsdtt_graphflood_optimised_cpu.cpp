@@ -66,6 +66,7 @@ public:
         const std::vector<double>& friction_coefficient,
         const std::vector<double>& point_inflow,
         const std::vector<double>& initial_water_depth,
+        const std::vector<double>& prescribed_qin,
         const graphflood_optimised_options& options,
         bool use_v2)
         : meta_(bed.get_meta()), n_rows_(meta_.n_rows), n_cols_(meta_.n_cols),
@@ -74,13 +75,14 @@ public:
     {
         validate_inputs(bed, node_state, rainfall_rate,
                         friction_coefficient, point_inflow,
-                        initial_water_depth);
+                        initial_water_depth, prescribed_qin);
 
         const auto& bed_data = bed.get_data();
         state_ = node_state.get_vector();
         bed_.assign(bed_data.begin(), bed_data.end());
         surface_ = bed_;
         depth_ = initial_water_depth;
+        if (use_v2_ && !prescribed_qin.empty()) prescribed_qin_ = prescribed_qin;
         qin_.assign(n_cells_, 0.0);
         qout_.assign(n_cells_, 0.0);
         dhw_.assign(n_cells_, 0.0);
@@ -157,7 +159,8 @@ private:
         const std::vector<double>& rainfall_rate,
         const std::vector<double>& friction_coefficient,
         const std::vector<double>& point_inflow,
-        const std::vector<double>& initial_water_depth)
+        const std::vector<double>& initial_water_depth,
+        const std::vector<double>& prescribed_qin)
     {
         if (!meta_.is_valid() || bed.empty())
             throw std::invalid_argument("run_graphflood_optimised: invalid bed raster");
@@ -167,7 +170,8 @@ private:
             throw std::invalid_argument("run_graphflood_optimised: node_state shape mismatch");
         if (rainfall_rate.size() != n_cells_ ||
             friction_coefficient.size() != n_cells_ || point_inflow.size() != n_cells_ ||
-            initial_water_depth.size() != n_cells_)
+            initial_water_depth.size() != n_cells_ ||
+            (use_v2_ && !prescribed_qin.empty() && prescribed_qin.size() != n_cells_))
             throw std::invalid_argument("run_graphflood_optimised: forcing shape mismatch");
         if (options_.boundary_conditions.size() != 4)
             throw std::invalid_argument("run_graphflood_optimised: boundary conditions must be NESW");
@@ -196,8 +200,11 @@ private:
         for (std::size_t flat = 0; flat < n_cells_; ++flat)
         {
             const std::uint8_t state = states[flat];
-            if (state != 0 && state != 1 && state != 3)
-                throw std::invalid_argument("run_graphflood_optimised: node states must be 0, 1, or 3");
+            if (state != 0 && state != 1 && state != 3 &&
+                !(use_v2_ && state == 2))
+                throw std::invalid_argument(use_v2_
+                    ? "run_graphflood_optimised: node states must be 0, 1, 2, or 3"
+                    : "run_graphflood_optimised: node states must be 0, 1, or 3");
             if (state == 0) continue;
             if (mask[flat] == 0 || !std::isfinite(values[flat]) ||
                 !std::isfinite(rainfall_rate[flat]) || rainfall_rate[flat] < 0.0 ||
@@ -207,6 +214,10 @@ private:
                 !std::isfinite(initial_water_depth[flat]) ||
                 initial_water_depth[flat] < 0.0)
                 throw std::invalid_argument("run_graphflood_optimised: invalid active-cell input");
+            if (state == 2 && (prescribed_qin.size() != n_cells_ ||
+                               !std::isfinite(prescribed_qin[flat]) ||
+                               prescribed_qin[flat] < 0.0))
+                throw std::invalid_argument("run_graphflood_optimised: invalid ghost prescribed_qin");
             if (state == 3)
             {
                 ++outlets;
@@ -495,6 +506,7 @@ private:
         const double area = meta_.cell_size * meta_.cell_size;
         for (std::uint32_t flat : active_)
         {
+            if (state_[flat] == 2) continue;
             const double old_depth = depth_[flat];
             depth_[flat] = std::max(0.0,
                 static_cast<double>(surface_[flat]) - bed_[flat]);
@@ -694,6 +706,7 @@ private:
         const bool unit_exponent = std::abs(options_.mfd_exponent - 1.0f) < 1.0e-6f;
         for (std::uint32_t flat : order_)
         {
+            if (state_[flat] == 2) qin_[flat] = prescribed_qin_[flat];
             if (state_[flat] == 3) continue;
             std::uint32_t receivers[8];
             double weights[8];
@@ -800,7 +813,7 @@ private:
         const double area = meta_.cell_size * meta_.cell_size;
         for (std::uint32_t flat : active_)
         {
-            if (state_[flat] == 3)
+            if (state_[flat] == 3 || state_[flat] == 2)
             {
                 qout_[flat] = qin_[flat];
                 specific_discharge_[flat] = qout_[flat] / meta_.cell_size;
@@ -822,6 +835,11 @@ private:
             (meta_.cell_size * meta_.cell_size);
         for (std::uint32_t flat : active_)
         {
+            if (state_[flat] == 2)
+            {
+                dhw_[flat] = 0.0;
+                continue;
+            }
             const double old_depth = depth_[flat];
             depth_[flat] = std::max(0.0,
                 old_depth + scale * (qin_[flat] - qout_[flat]));
@@ -905,6 +923,7 @@ private:
             depth_.capacity() * sizeof(double) + qin_.capacity() * sizeof(double) +
             qout_.capacity() * sizeof(double) + dhw_.capacity() * sizeof(double) +
             source_q_.capacity() * sizeof(double) + friction_.capacity() * sizeof(double) +
+            prescribed_qin_.capacity() * sizeof(double) +
             slope_.capacity() * sizeof(double) +
             specific_discharge_.capacity() * sizeof(double) +
             heap_.capacity() * sizeof(flood_node) +
@@ -950,7 +969,7 @@ private:
     std::vector<std::int8_t> flood_state_;
     std::vector<std::uint32_t> active_, order_, sort_scratch_, best_receiver_;
     std::vector<std::uint32_t> rank_;
-    std::vector<double> depth_, qin_, qout_, dhw_, source_q_, friction_;
+    std::vector<double> depth_, qin_, qout_, dhw_, source_q_, friction_, prescribed_qin_;
     std::vector<double> slope_, specific_discharge_;
     std::vector<double> convergence_abs_, convergence_rel_;
     std::vector<flood_node> heap_, flood_queue_;
@@ -1005,7 +1024,7 @@ graphflood_optimised_result run_graphflood_optimised_cpu(
 {
     optimised_solver solver(bed, node_state, rainfall_rate,
                             friction_coefficient, point_inflow,
-                            initial_water_depth, options, false);
+                            initial_water_depth, {}, options, false);
     return solver.run(max_steps, run_until_converged, convergence_check_every,
                       tol_median_abs_dhw, tol_median_rel_dhw);
 }
@@ -1017,6 +1036,7 @@ graphflood_optimised_result run_graphflood_optimised_v2_cpu(
     const std::vector<double>& friction_coefficient,
     const std::vector<double>& point_inflow,
     const std::vector<double>& initial_water_depth,
+    const std::vector<double>& prescribed_qin,
     const graphflood_optimised_options& options,
     std::int64_t max_steps,
     bool run_until_converged,
@@ -1026,7 +1046,7 @@ graphflood_optimised_result run_graphflood_optimised_v2_cpu(
 {
     optimised_solver solver(bed, node_state, rainfall_rate,
                             friction_coefficient, point_inflow,
-                            initial_water_depth, options, true);
+                            initial_water_depth, prescribed_qin, options, true);
     return solver.run(max_steps, run_until_converged, convergence_check_every,
                       tol_median_abs_dhw, tol_median_rel_dhw);
 }
@@ -1139,7 +1159,8 @@ graphflood_multigrid_result run_graphflood_optimised_v2_multigrid_cpu(
         };
         auto result = run_graphflood_optimised_v2_cpu(
             level_bed, states, to_double(level_rain), to_double(level_friction), level_points,
-            to_double(level_depth), options, steps_per_level[level], run_until_converged,
+            to_double(level_depth), std::vector<double>(n_cells, 0.0), options,
+            steps_per_level[level], run_until_converged,
             convergence_check_every, tol_median_abs_dhw, tol_median_rel_dhw);
         previous_depth.emplace(std::vector<float>(result.water_depth.data),
                                std::vector<std::uint8_t>(result.water_depth.mask),

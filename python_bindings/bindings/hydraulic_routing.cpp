@@ -70,13 +70,16 @@ lsdtt::lsdtt_flowgraph_method hydraulic_method(const std::string& value)
 }
 
 lsdtt::lsdtt_array2d_u8 hydraulic_states(const Raster& bed,
-                                          const Raster& node_state)
+                                          const Raster& node_state,
+                                          bool allow_ghost = false,
+                                          bool* has_ghosts = nullptr)
 {
     require_same_grid(bed, node_state, "node_state");
     const auto& meta = bed.native().get_meta();
     const auto& values = node_state.native().get_data();
     const auto& mask = node_state.native().get_mask();
     lsdtt::lsdtt_array2d_u8 result(meta.n_rows, meta.n_cols, 0);
+    if (has_ghosts != nullptr) *has_ghosts = false;
     for (int row = 0; row < meta.n_rows; ++row)
     {
         for (int col = 0; col < meta.n_cols; ++col)
@@ -89,12 +92,16 @@ lsdtt::lsdtt_array2d_u8 hydraulic_states(const Raster& bed,
             }
             const float value = values[flat];
             if (!std::isfinite(value) || std::floor(value) != value ||
-                (value != 0.0f && value != 1.0f && value != 3.0f))
+                (value != 0.0f && value != 1.0f && value != 3.0f &&
+                 !(allow_ghost && value == 2.0f)))
             {
                 throw std::invalid_argument(
-                    "node_state valid values must be exactly 0, 1, or 3");
+                    allow_ghost
+                        ? "node_state valid values must be exactly 0, 1, 2, or 3"
+                        : "node_state valid values must be exactly 0, 1, or 3");
             }
             result(row, col) = static_cast<std::uint8_t>(value);
+            if (has_ghosts != nullptr && value == 2.0f) *has_ghosts = true;
         }
     }
     return result;
@@ -180,6 +187,25 @@ std::vector<double> initial_depth_field(const Raster& bed, nb::object value)
             static_cast<std::size_t>(meta.n_rows) * meta.n_cols, 0.0);
     const auto& raster = nb::cast<const Raster&>(value);
     return field_values(bed, raster, "initial_water_depth");
+}
+
+std::vector<double> prescribed_qin_field(const Raster& bed, nb::object value,
+                                         bool has_ghosts)
+{
+    const auto& meta = bed.native().get_meta();
+    if (value.is_none())
+    {
+        if (!has_ghosts) return {};
+        return std::vector<double>(
+            static_cast<std::size_t>(meta.n_rows) * meta.n_cols, 0.0);
+    }
+    const auto& raster = nb::cast<const Raster&>(value);
+    if (!has_ghosts)
+    {
+        require_same_grid(bed, raster, "prescribed_qin");
+        return {};
+    }
+    return field_values(bed, raster, "prescribed_qin");
 }
 
 class HydraulicResult
@@ -487,14 +513,16 @@ GraphFloodOptimisedResult run_graphflood_optimised_v2(
     bool reuse_topology,
     int dirty_tile_size,
     int full_validation_every,
-    nb::object initial_water_depth)
+    nb::object initial_water_depth,
+    nb::object prescribed_qin)
 {
     if (mfd_exponent <= 0.0f)
         throw std::invalid_argument("mfd_exponent must be positive");
     if (condition_bed != "none" && condition_bed != "fill")
         throw std::invalid_argument("condition_bed must be 'none' or 'fill'");
 
-    const auto states = hydraulic_states(bed, node_state);
+    bool has_ghosts = false;
+    const auto states = hydraulic_states(bed, node_state, true, &has_ghosts);
     lsdtt::lsdtt_raster_cpu routed_bed = bed.native();
     if (condition_bed == "fill")
     {
@@ -521,7 +549,8 @@ GraphFloodOptimisedResult run_graphflood_optimised_v2(
         field_values(bed, rainfall_rate, "rainfall_rate"),
         field_values(bed, friction_coefficient, "friction_coefficient"),
         point_inflow_field(bed, point_inflows),
-        initial_depth_field(bed, initial_water_depth), options, max_steps,
+        initial_depth_field(bed, initial_water_depth),
+        prescribed_qin_field(bed, prescribed_qin, has_ghosts), options, max_steps,
         run_until_converged, convergence_check_every,
         tol_median_abs_dhw, tol_median_rel_dhw));
 }
@@ -739,6 +768,7 @@ direct raster MFD routing and validates a cached topology before reuse.
         nb::arg("dirty_tile_size") = 64,
         nb::arg("full_validation_every") = 128,
         nb::arg("initial_water_depth") = nb::none(),
+        nb::arg("prescribed_qin") = nb::none(),
         R"doc(
 Run GraphFlood with the incremental v2 CPU kernels.
 
@@ -746,6 +776,9 @@ V2 uses a monotone radix heap in Priority-Flood, a bounds-free interior MFD
 loop, specialised Manning exponents, and exact dirty-tile topology validation.
 It falls back to a full Priority-Flood whenever a checked edge invalidates the
 cached order. ``full_validation_every=0`` disables periodic full audits.
+``node_state=2`` is a ghost cell: its depth is held at ``initial_water_depth``
+and it routes its fixed ``prescribed_qin`` downslope. ``prescribed_qin=None``
+means zero at ghost cells.
 )doc");
 
     module.def("_run_graphflood_optimised_v2_multigrid_native",
