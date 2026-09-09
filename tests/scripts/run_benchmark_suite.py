@@ -1314,6 +1314,26 @@ def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
         # score the engines on different rasters.
         "enforce_projection": "false",
         "write_output_format": "gtiff",
+        # MUST be set explicitly -- OMP_NUM_THREADS alone is NOT enough.
+        #
+        # A CLI that declares n_threads passes it into the library, and
+        # resolve_threads() (src/cpu/lsdtt_raster_surface_fitting_cpu.cpp)
+        # honours any POSITIVE value verbatim, applying it as an explicit
+        # `num_threads(n)` clause. That clause OVERRIDES the environment. Only
+        # n_threads == 0 falls through to omp_get_max_threads(), which is what
+        # actually reads OMP_NUM_THREADS.
+        #
+        # So for any CLI defaulting to n_threads = 1 -- lsdtt-surface-metrics
+        # and lsdtt-spectral-analysis do -- setting OMP_NUM_THREADS in the
+        # environment achieves NOTHING: every measurement runs single-threaded
+        # and the scaling curve is flat by construction. That silently wasted
+        # the whole thread sweep of the 2026-08-31 campaigns, which swept only
+        # the `surface` suite, i.e. only lsdtt-surface-metrics.
+        #
+        # Writing it here is a no-op for CLIs that default to 0 (they resolve to
+        # the same count via the environment) and is the fix for those that do
+        # not. Set it for every run so no future CLI can reintroduce the trap.
+        "n_threads": str(threads),
     }
     params.update(spec["params"])
     param_path = out_dir / "benchmark.param"

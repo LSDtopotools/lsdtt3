@@ -217,8 +217,8 @@ hillslope_length_search_result search_channel_threshold_for_hillslope_length(
             << opts.min_channel_pixels << " channel pixels, so the hillslope "
                "length cannot be measured at all. Widen the bracket, or check "
                "that the drainage-area array is in the units you think it is "
-               "(incision_threshold_area behaves as a PIXEL COUNT when "
-               "divide_area_by_dx is set).";
+               "(incision_threshold_area is compared against specific catchment "
+               "area A/dx, a length in metres, when divide_area_by_dx is set).";
         out.message = msg.str();
         return out;
     }

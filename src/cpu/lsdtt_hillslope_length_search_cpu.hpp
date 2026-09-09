@@ -189,10 +189,14 @@ struct hillslope_length_search_result
 // `opts.target_m`.
 //
 // `drainage_area` may be in any units -- map area or pixel counts -- and the
-// returned threshold is in those same units. NOTE that
-// `incision_threshold_area` is documented as m^2 but behaves as a PIXEL COUNT
-// when `divide_area_by_dx` is set, so the caller must pass the array whose units
-// it actually intends to use downstream.
+// returned threshold is in those same units. NOTE that `incision_threshold_area`
+// is documented as m^2 but is compared against SPECIFIC CATCHMENT AREA a = A/dx,
+// a LENGTH IN METRES, when `divide_area_by_dx` is set. So the caller must pass
+// the array whose units it actually intends to use downstream.
+//
+// (An earlier version of this note said "a PIXEL COUNT". That was wrong: a pixel
+// count would be A/dx^2. The semantics are pinned in
+// tests/cpp/test_channel_threshold_units.cpp.)
 [[nodiscard]] hillslope_length_search_result search_channel_threshold_for_hillslope_length(
     const lsdtt_flowinfo&                  flow,
     const std::vector<double>&             drainage_area,
