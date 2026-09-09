@@ -295,6 +295,13 @@ The `laptop` profile's speedups sit between about 0.8× and 1.4×. There is not
 enough work in a 500² grid to amortise thread setup, so use the `server`
 profile for anything about parallel scaling.
 
+!!! note "Only sweep what is actually swept"
+
+    The `surface` suite is the only one swept over threads, and it can be run on
+    its own — see [Running only the thread sweep](#running-only-the-thread-sweep).
+    Any scaling figure quoted from a campaign generated before 2026-09-09 is
+    invalid; that section explains why and what to re-run.
+
 More importantly, **a scaling number means nothing without knowing what the
 machine can do**. lsdtt3's surface-metric kernels are memory-bandwidth-bound,
 not compute-bound, so they scale like a streaming kernel rather than like an
@@ -670,6 +677,86 @@ pixi run -e benchmark python tests/scripts/run_benchmark_suite.py --profile serv
 | `--no-fetch` | never download; skip anything missing |
 | `--dry-run` | print the plan and exit |
 | `--list` | print every case and profile as JSON |
+
+---
+
+## Running only the thread sweep
+
+The thread sweep is a small part of a campaign but it sits inside the longest
+one. If you only need the scaling numbers — because a full `server` run already
+gave you good single-thread timings, or because a previous sweep was invalid
+(see the warning below) — run the `surface` suite on its own:
+
+```sh
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
+    --profile server --suites surface
+```
+
+**Why that is the whole thread experiment.** Every case outside the `surface`
+suite is declared `sequential` and runs once, at one thread, by design: filling,
+breaching and flow-graph construction are ordered traversals with no
+parallelism to measure. `lsdtt-surface-metrics` is the only genuinely parallel
+CLI in the campaign, so `--suites surface` covers 100% of what the sweep
+measures and skips the hours spent on cases that are pinned at one thread
+anyway.
+
+Narrow it further if you want a specific answer:
+
+```sh
+# one case, the full thread ladder, one region -- minutes, not hours
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
+    --profile server --cases polyfit_all --regions alpine
+
+# just the top of the ladder, where the scaling signal is strongest
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
+    --profile server --suites surface --ladder 4000,8000
+
+# check the plan before committing the time
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
+    --profile server --suites surface --dry-run
+```
+
+Use `--threads` to override the ladder — but cap it at your **physical** core
+count, for the reason in [§4 above](#4-scaling-curves-need-a-ceiling-and-the-big-dems).
+
+### Pick a rung with enough compute in it
+
+Whole-process wall time includes GDAL read and write, and the surface-metric
+kernels are fast. On a 2400² fixture the compute is a small fraction of the
+run, so I/O dominates and the scaling signal is buried no matter how many
+threads you give it. That is why the `server` ladder goes to 8000 px: at 64M
+cells there is enough work to measure. If you shorten the ladder for a quick
+answer, shorten it from the *bottom* (`--ladder 4000,8000`), never to the small
+rungs.
+
+The per-run `Compute time` and `Write time` the CLI prints are captured in the
+results, so you can check the ratio for yourself rather than guessing.
+
+### If your campaign predates the n_threads fix
+
+!!! warning "Thread sweeps from before 2026-09-09 are invalid"
+
+    The harness set thread count **only** through the `OMP_NUM_THREADS`
+    environment variable. That is not sufficient. A CLI that declares
+    `n_threads` passes it into the library, and `resolve_threads()`
+    (`src/cpu/lsdtt_raster_surface_fitting_cpu.cpp`) honours any positive value
+    verbatim, applying it as an explicit `num_threads(n)` clause that
+    **overrides the environment**. Only `n_threads: 0` falls through to
+    `omp_get_max_threads()`, which is what actually reads `OMP_NUM_THREADS`.
+
+    `lsdtt-surface-metrics` defaults to `n_threads: 1`. Since the harness never
+    wrote `n_threads` into the generated `.param` file, every surface-metrics
+    measurement ran **single-threaded at every thread count**, and the resulting
+    scaling curves are flat by construction rather than by measurement.
+
+    Because the `surface` suite is the only suite that is swept, this invalidated
+    the entire thread experiment of any earlier campaign while leaving every
+    single-thread timing untouched and still valid.
+
+    The harness now writes `n_threads` into every generated parameter file. If
+    you have a campaign from before the fix, you do **not** need to repeat it:
+    re-run `--suites surface` as above and substitute the new scaling table. The
+    non-surface numbers in your existing `SUMMARY.md` are unaffected.
 
 ---
 
