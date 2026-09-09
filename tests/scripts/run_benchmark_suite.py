@@ -213,11 +213,71 @@ REFERENCE_SCRIPTS = {
 
 
 # -----------------------------------------------------------------------------
+# WHY AN ENGINE IS ABSENT FROM A CASE.
+#
+# An engine missing from a case's `engines` map produces no row, and the summary
+# used to print "-" for that cell -- the SAME mark it prints when a run was
+# skipped or failed. For a peer-reviewed table those are very different claims:
+# "not reachable from the interface we benchmark" is a result; "we did not
+# measure it" is a gap.
+#
+# *** THE CLAIM IS ABOUT THE INTERFACE, NOT ABOUT THE PROJECT. ***
+# This benchmark drives TopoToolbox through its PYTHON package, which is early
+# (0.0.12) and exposes a fraction of what TopoToolbox 3 offers in MATLAB.
+# TopoToolbox 3 DOES implement multiple-flow-direction and D-infinity routing
+# -- see md/usersguide_3_mfd.md in TopoToolbox/topotoolbox3 -- they are simply
+# not bound in the Python package yet. Writing "TopoToolbox does not implement
+# MFD" would be false, and a reviewer who uses the MATLAB version would know it
+# at a glance. Word every reason as a statement about the BINDING.
+#
+# The same care applies to the others: RichDEM and Whitebox are also driven
+# through Python bindings, and lsdtt3 through its CLI.
+#
+# Every entry has been CHECKED against the installed package. Do not add one on
+# the strength of a recollection -- the registry previously asserted "RichDEM
+# has no slope tool", which is false (rd.TerrainAttribute offers slope_riserun,
+# slope_percentage, slope_degrees, slope_radians, planform_curvature and
+# profile_curvature). That claim silently kept a whole reference out of the
+# surface comparison.
+#
+# Verified 2026-09-08 against richdem 2.3.0, topotoolbox 0.0.12,
+# whitebox_workflows 2.0.6.
+NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
+    "accum_dinf": {
+        "topotoolbox": "not bound in the Python package 0.0.12 "
+                       "(FlowObject takes method='d8' only); TopoToolbox 3 "
+                       "implements D-infinity in MATLAB",
+    },
+    "accum_mfd": {
+        "topotoolbox": "not bound in the Python package 0.0.12 "
+                       "(FlowObject takes method='d8' only); TopoToolbox 3 "
+                       "implements MFD in MATLAB",
+    },
+    "fill_epsilon": {
+        "topotoolbox": "not bound in the Python package 0.0.12 "
+                       "(fillsinks(bc, hybrid) takes no flat-increment "
+                       "argument)",
+    },
+}
+
+
+# -----------------------------------------------------------------------------
 # Case registry
 #
 # One entry per comparable operation.  `engines` maps an engine name to the
 # routine string that engine understands; an engine absent from the map simply
-# produces no row, which is how "RichDEM has no slope tool" is expressed.
+# produces no row.
+#
+# *** THAT ABSENCE IS NOT SELF-DOCUMENTING, AND ONE OF THEM WAS WRONG. ***
+# This comment used to give "RichDEM has no slope tool" as its example. RichDEM
+# 2.3.0 HAS one: rd.TerrainAttribute offers slope_riserun, slope_percentage,
+# slope_degrees, slope_radians, planform_curvature and profile_curvature --
+# most of what `slope_only` and `polyfit_all` compare. The surface comparison
+# has therefore been running with three engines where four were available, on
+# the strength of a code comment nobody rechecked.
+#
+# Where an engine genuinely cannot do a case, record it in NOT_IMPLEMENTED
+# above WITH the reason, and check it against the installed package first.
 #
 # `lsdtt` describes how to drive the lsdtt3 CLI: which executable, which
 # parameters, and which output file to expect.  These mirror run_flow_benchmark
@@ -1820,6 +1880,24 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append("Like-for-like only: every row here is an in-process timing of "
              "the routine itself.")
     L.append("")
+    L.append("`n/a` means the operation is NOT REACHABLE THROUGH THE INTERFACE "
+             "BENCHMARKED HERE -- a result, not a gap. `-` means no comparable "
+             "row was produced (skipped, failed, or overhead-dominated). The "
+             "two are not the same claim and are not interchangeable.")
+    L.append("")
+    L.append("**`n/a` is a statement about the binding, not about the "
+             "project.** TopoToolbox is driven through its Python package, "
+             "which is early (0.0.12); TopoToolbox 3 implements more in MATLAB "
+             "than is bound there. Read each reason below literally.")
+    L.append("")
+    _ni = sorted({(c, e, why) for c, m in NOT_IMPLEMENTED.items()
+                  for e, why in m.items()})
+    if _ni:
+        L.append("| case | engine | why `n/a` |")
+        L.append("|---|---|---|")
+        for c, e, why in _ni:
+            L.append(f"| {c} | {e} | {why} |")
+        L.append("")
     quotable = [r for r in ok
                 if not r["report_only"] and not r["overhead_dominated"]
                 and r["timing_scope"] in COMPARABLE_SCOPES]
@@ -1907,6 +1985,26 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append("")
     L.append("---")
     L.append("")
+    L.append("### What this campaign does NOT cover")
+    L.append("")
+    L.append("Absent from every table above, and not because they failed -- "
+             "they are measured by a different driver whose axes do not fit "
+             "this one (nesting depth, and per-phase decomposition):")
+    L.append("")
+    L.append("| not measured here | where it lives |")
+    L.append("|---|---|")
+    L.append("| nested basin extraction, swept over nesting depth | "
+             "`tests/scripts/run_svector_benchmark.py --cases basins` |")
+    L.append("| chi, end-to-end and decomposed by phase | "
+             "`... --cases chi` |")
+    L.append("| chi VALUE agreement with TopoToolbox | "
+             "`... --cases chi_value --check` |")
+    L.append("| fill / breach / D8 VALUE agreement | "
+             "`tests/scripts/run_flow_benchmark.py --check` |")
+    L.append("")
+    L.append("This campaign asserts no values at all. Correctness lives in "
+             "those two drivers and in the CTest suite.")
+    L.append("")
     L.append("### Reading these numbers")
     L.append("")
     L.append("- The `timing_scope` column says how each row was measured, and "
@@ -1937,9 +2035,25 @@ def _fixture_order(rows: list[dict]) -> list[str]:
     return [k for k, _ in sorted(seen.items(), key=lambda kv: kv[1])]
 
 
+def _engine_columns(rows: list[dict]) -> list[str]:
+    """Engine columns for a table: those with rows, PLUS any known to be unable.
+
+    An engine that cannot perform a case produces no row, so deriving the column
+    list from observed rows alone drops it from the table entirely -- and the
+    `n/a` that says "this package does not implement this" never appears. The
+    absence then reads as though the engine were never considered, which is the
+    opposite of the finding. See NOT_IMPLEMENTED.
+    """
+    engines = {r["engine"] for r in rows}
+    cases = {r["case"] for r in rows}
+    for case_name in cases:
+        engines.update(NOT_IMPLEMENTED.get(case_name, {}))
+    return sorted(engines)
+
+
 def _ratio_table(L: list[str], rows: list[dict]) -> None:
     """Throughput per engine at the highest common thread count."""
-    engines = sorted({r["engine"] for r in rows})
+    engines = _engine_columns(rows)
     fixtures = _fixture_order(rows)
     L.append("| case | fixture | threads | " + " | ".join(engines) + " |")
     L.append("|---|---|---|" + "---|" * len(engines))
@@ -1957,6 +2071,10 @@ def _ratio_table(L: list[str], rows: list[dict]) -> None:
                     if match and match[0]["mcells_per_second"]:
                         cells.append(f"{float(match[0]['mcells_per_second']):.2f}")
                         any_val = True
+                    elif eng in NOT_IMPLEMENTED.get(case_name, {}):
+                        # The package cannot do this. That is a RESULT, and must
+                        # not look like a measurement we failed to take.
+                        cells.append("n/a")
                     else:
                         cells.append("-")
                 if any_val:
@@ -2022,7 +2140,7 @@ def _memory_table(L: list[str], rows: list[dict]) -> None:
     if not mem:
         L.append("_Peak RSS unavailable on this platform (needs wait4)._")
         return
-    engines = sorted({r["engine"] for r in mem})
+    engines = _engine_columns(mem)
     L.append("| case | fixture | " + " | ".join(engines) + " |")
     L.append("|---|---|" + "---|" * len(engines))
     for case_name in sorted({r["case"] for r in mem}):
@@ -2038,6 +2156,8 @@ def _memory_table(L: list[str], rows: list[dict]) -> None:
                 if m:
                     cells.append(f"{max(m):.0f}")
                     any_val = True
+                elif eng in NOT_IMPLEMENTED.get(case_name, {}):
+                    cells.append("n/a")
                 else:
                     cells.append("-")
             if any_val:
@@ -2270,6 +2390,44 @@ def main() -> int:
           + ("" if args.fixture_dir else "   (default: inside the repo -- "
                                          "use --fixture-dir to move it)"))
     print(f"profile:  {args.profile} ({profile['description']})")
+
+    # -------------------------------------------------------------------------
+    # Report which references this interpreter can actually import, BEFORE
+    # measuring anything.
+    #
+    # The suite treats a missing reference as a clean skip, so without this the
+    # only symptom is absent rows in a campaign that exited successfully -- and
+    # you find out after the run, not before it. The Slurm wrapper has always
+    # printed this; a direct `python ...` invocation did not, which is exactly
+    # the route someone takes when they have just run `pixi install -e
+    # benchmark` and assumed that was enough. It is not: `pixi install` creates
+    # the environment, `pixi run -e benchmark python ...` is what uses it.
+    # -------------------------------------------------------------------------
+    # Print the interpreter PATH, not a derived nickname: which python is
+    # running is the whole question here, and the path answers it unambiguously.
+    print(f"\ninterpreter: {args.python_exe}")
+    print("reference implementations importable by it:")
+    _available = []
+    for _mod in ("richdem", "topotoolbox", "whitebox_workflows"):
+        _probe = subprocess.run(
+            [args.python_exe, "-c", f"import {_mod}"],
+            capture_output=True, text=True)
+        _ok = _probe.returncode == 0
+        _available.append(_ok)
+        print(f"    {_mod:20s} {'yes' if _ok else 'NO'}")
+    if not any(_available):
+        print("\n*** NO REFERENCE IMPLEMENTATION IS IMPORTABLE. ***\n"
+              "    This campaign will contain lsdtt3 rows ONLY, and will still\n"
+              "    exit successfully -- there will be nothing to compare against.\n"
+              "    Run it through pixi rather than a bare python:\n\n"
+              "        pixi run -e benchmark python "
+              "tests/scripts/run_benchmark_suite.py ...\n\n"
+              "    `pixi install -e benchmark` only CREATES that environment.\n",
+              file=sys.stderr)
+    elif not all(_available):
+        print("    (a missing reference is SKIPPED, not an error -- it produces\n"
+              "     no rows, so check this list before trusting the tables)")
+    print()
 
     hardware = capture_hardware_manifest(build_dir, args.python_exe)
     (run_dir / "hardware_manifest.json").write_text(
