@@ -258,6 +258,17 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
                        "(fillsinks(bc, hybrid) takes no flat-increment "
                        "argument)",
     },
+    "hillshade": {
+        "richdem": "no hillshade in richdem 2.3.0 (rd.TerrainAttribute's "
+                   "attribute set is slope_*/aspect/curvature only)",
+    },
+    "polyfit_many": {
+        "richdem": "no eight-metric call; rd.TerrainAttribute computes one "
+                   "attribute per call and refits the 3x3 quadratic each "
+                   "time. This is the lsdtt3-only amortisation row",
+        "topotoolbox": "no eight-metric call (see the case note)",
+        "whitebox": "no eight-metric call (see the case note)",
+    },
 }
 
 
@@ -271,13 +282,16 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
 # *** THAT ABSENCE IS NOT SELF-DOCUMENTING, AND ONE OF THEM WAS WRONG. ***
 # This comment used to give "RichDEM has no slope tool" as its example. RichDEM
 # 2.3.0 HAS one: rd.TerrainAttribute offers slope_riserun, slope_percentage,
-# slope_degrees, slope_radians, planform_curvature and profile_curvature --
-# most of what `slope_only` and `polyfit_all` compare. The surface comparison
-# has therefore been running with three engines where four were available, on
-# the strength of a code comment nobody rechecked.
+# slope_degrees, slope_radians, aspect, curvature, planform_curvature and
+# profile_curvature. The surface comparison ran with three engines where four
+# were available, for two campaigns, on the strength of a code comment nobody
+# rechecked. RichDEM is now wired into `slope_only` and `polyfit_all`
+# (2026-09-09) and the routines are exercised in richdem_reference.py.
 #
 # Where an engine genuinely cannot do a case, record it in NOT_IMPLEMENTED
-# above WITH the reason, and check it against the installed package first.
+# above WITH the reason, and check it against the installed package first --
+# an unexplained absence reads as "we did not bother", which is the more
+# damaging of the two readings for a paper.
 #
 # `lsdtt` describes how to drive the lsdtt3 CLI: which executable, which
 # parameters, and which output file to expect.  These mirror run_flow_benchmark
@@ -434,17 +448,27 @@ CASES: dict[str, dict[str, Any]] = {
     },
 
     # -- suite: surface ----------------------------------------------------
-    # The three engines are architecturally different here and the case list is
+    # The four engines are architecturally different here and the case list is
     # shaped to make that visible rather than to hide it.
     #
-    #   lsdtt3      fits a 6-term quadratic over a moving window of
-    #               `polyfit_lambda_metres` and derives EVERY metric from the
-    #               one fit.
+    #   lsdtt3      fits a 6-term quadratic by least squares over a moving
+    #               window of `polyfit_lambda_metres` and derives EVERY metric
+    #               from the one fit.
+    #   RichDEM     fits a 9-term quadratic analytically to the 3x3
+    #               neighbourhood (Zevenbergen & Thorne 1987) and
+    #               differentiates it, in C++, serial -- and refits per
+    #               attribute, one attribute per call.
     #   TopoToolbox runs scipy convolutions with the Evans 3x3 kernels, in
     #               Python, serial -- and recomputes all five convolutions per
     #               curvature type.
     #   Whitebox    runs 3x3 finite-difference operators in Rust, and likewise
     #               recomputes per curvature type.
+    #
+    # RichDEM is the nearest of the three references to lsdtt3 in FORM -- both
+    # fit a quadratic and differentiate it -- and is still not value-comparable
+    # to it: RichDEM's is an exact interpolation of a fixed 3x3, lsdtt3's a
+    # least-squares fit over a window the user chooses. Curvature sign and
+    # aspect handedness conventions were NOT checked across the four.
     #
     # Measured decomposition of lsdtt3's cost on alpine_1000 -- the shared fit
     # is paid ONCE and the per-metric work is what scales:
@@ -477,9 +501,11 @@ CASES: dict[str, dict[str, Any]] = {
         "suite": "surface",
         "note": ("slope alone. lsdtt3 pays the FULL 6-coefficient quadratic "
                  "fit (~82 ms of ~110 ms on 1000^2) to produce one metric, "
-                 "where TopoToolbox runs 2 convolutions. This is lsdtt3's "
-                 "WORST surface case by construction. TIMING ONLY"),
-        "engines": {"topotoolbox": "evansslope", "whitebox": "slope"},
+                 "where TopoToolbox runs 2 convolutions and RichDEM and "
+                 "Whitebox run one 3x3 operator. This is lsdtt3's WORST "
+                 "surface case by construction. TIMING ONLY"),
+        "engines": {"richdem": "slope", "topotoolbox": "evansslope",
+                    "whitebox": "slope"},
         "lsdtt": {"exe": "lsdtt-surface-metrics",
                   "params": {"polyfit_metrics": "slope",
                              "polyfit_method": "direct",
@@ -498,10 +524,16 @@ CASES: dict[str, dict[str, Any]] = {
         "note": ("slope + aspect + profile + plan curvature. lsdtt3 derives "
                  "all four from ONE shared fit; the references recompute per "
                  "metric. NOT like-for-like in two ways: the metric SETS "
-                 "differ (lsdtt3 slope+aspect+2 curvatures vs TopoToolbox 4 "
-                 "curvatures), and lsdtt3's fixed fit cost has not yet "
-                 "amortised at 4 metrics. TIMING ONLY"),
-        "engines": {"topotoolbox": "curvature_all4",
+                 "differ (lsdtt3 slope+aspect+2 curvatures, TopoToolbox 4 "
+                 "curvatures, RichDEM and Whitebox 2 curvatures), and "
+                 "lsdtt3's fixed fit cost has not yet amortised at 4 "
+                 "metrics. TIMING ONLY"),
+        # RichDEM and Whitebox contribute TWO curvatures where TopoToolbox
+        # contributes four; the metric counts differ across the row and the
+        # note says so. Comparing the three reference columns against each
+        # other is not meaningful either.
+        "engines": {"richdem": "curvature_all2",
+                    "topotoolbox": "curvature_all4",
                     "whitebox": "curvature_all2"},
         "lsdtt": {"exe": "lsdtt-surface-metrics",
                   "params": {"polyfit_metrics":
@@ -2181,12 +2213,12 @@ def main() -> int:
                          "absolute path to collect results elsewhere.")
     ap.add_argument("--fixture-dir", default="",
                     help="where the downloaded region sources and their crops "
-                         "live. Defaults to tests/data/dem_cache inside the "
-                         "repo, which is the wrong place on a cluster: the "
-                         "server profile stores ~512 MB here and a repo on a "
-                         "quota'd home filesystem will not take it. Point this "
-                         "at project or scratch storage. Reused across "
-                         "campaigns, so it is worth keeping.")
+                         "live. Defaults to <out-dir>/benchmark_fixtures when "
+                         "--out-dir is given, otherwise tests/data/dem_cache "
+                         "inside the repo. The server profile stores ~512 MB "
+                         "here, so on a cluster keep it off a quota'd home: "
+                         "point it at project or scratch storage. Reused "
+                         "across campaigns, so it is worth keeping.")
     ap.add_argument("--python-exe", default=sys.executable,
                     help="interpreter for the reference scripts; must be the "
                          "one with richdem/topotoolbox/whitebox installed")
@@ -2260,6 +2292,22 @@ def main() -> int:
     global FIXTURE_DIR
     if args.fixture_dir:
         FIXTURE_DIR = pathlib.Path(args.fixture_dir).expanduser().resolve()
+    elif args.out_dir:
+        # DEFAULT WITH --out-dir: keep the DEMs beside the campaign.
+        #
+        # It used to default into the repository (tests/data/dem_cache) even
+        # when the caller had said where their data should go, while the sbatch
+        # wrapper defaulted to <submit dir>/benchmark_fixtures. So the two
+        # routes disagreed about where ~512 MB of DEMs belonged, and a direct
+        # run quietly filled the checkout -- on a cluster, usually a quota'd
+        # home filesystem.
+        #
+        # Still a CACHE, and still reused: --out-dir is the PARENT of the
+        # per-run campaign directory, not the campaign directory itself, so
+        # successive runs into the same --out-dir share one set of fixtures and
+        # download nothing after the first.
+        FIXTURE_DIR = (pathlib.Path(args.out_dir).expanduser().resolve()
+                       / "benchmark_fixtures")
 
     profile = dict(PROFILES[args.profile])
     explicit_fixtures = ([f.strip() for f in args.fixtures.split(",")
@@ -2381,14 +2429,15 @@ def main() -> int:
     # The fixture cache defaults INSIDE THE REPOSITORY, while the campaign
     # defaults to the current directory -- two different roots, which is
     # genuinely surprising and has already cost someone a confused hunt for
-    # DEMs that were never going to be next to their results. The sbatch
-    # wrapper overrides the fixture path to sit beside the campaign; a direct
-    # run does not. Printing both makes the difference visible in the first
-    # three lines of any log instead of being something you have to know.
+    # DEMs that were never going to be next to their results. Both routes now
+    # put the cache beside the campaign when a destination is given, but the
+    # paths are still printed together so the log shows where they went rather
+    # than it being something you have to know.
     print(f"campaign: {run_dir}")
     print(f"fixtures: {FIXTURE_DIR}"
-          + ("" if args.fixture_dir else "   (default: inside the repo -- "
-                                         "use --fixture-dir to move it)"))
+          + ("" if (args.fixture_dir or args.out_dir)
+             else "   (default: inside the repo -- "
+                  "pass --out-dir or --fixture-dir to move it)"))
     print(f"profile:  {args.profile} ({profile['description']})")
 
     # -------------------------------------------------------------------------
@@ -2573,7 +2622,8 @@ def main() -> int:
                                       overhead))
                 done += 1
                 _progress(done, total, case_name, "lsdtt3", fx_key, threads,
-                          rows[-1])
+                          rows[-1],
+                          report_only=bool(case.get("report_only")))
 
                 for engine, routine in sorted(case["engines"].items()):
                     # A serial reference is measured ONCE, at the baseline
@@ -2597,7 +2647,8 @@ def main() -> int:
                                           overhead))
                     done += 1
                     _progress(done, total, case_name, engine, fx_key, threads,
-                              rows[-1])
+                              rows[-1], routine=routine,
+                              report_only=bool(case.get("report_only")))
 
     csv_path = run_dir / "benchmark_raw.csv"
     with csv_path.open("w", newline="") as fh:
@@ -2631,7 +2682,27 @@ def main() -> int:
     return 0
 
 
-def _progress(done, total, case_name, engine, fixture, threads, row) -> None:
+def _progress(done, total, case_name, engine, fixture, threads, row,
+              routine: str = "", report_only: bool = False) -> None:
+    """One line per measurement.
+
+    NAME WHAT THE ENGINE ACTUALLY RAN, NOT JUST THE CASE.
+
+    Case names are lsdtt3-centric, and for a report-only case the reference is
+    often running something quite different. Printing
+
+        [   2/ 488] fill_spill_merge  whitebox  alpine_1000  1t  ok  16.97 ms
+
+    says Whitebox did fill-spill-merge in 17 ms. It did not: it ran `sink`,
+    which only labels cells lying in depressions, while lsdtt3 built a nested
+    depression hierarchy AND ran Fill-Spill-Merge AND wrote a filled DEM. Next
+    to lsdtt3's 201 ms that reads as lsdtt3 being 12x slower at the same job,
+    and a reader watching the log has no way to know otherwise -- the
+    report-only flag only ever appeared in the rendered tables, long after.
+
+    So the routine is shown whenever it differs from the case name, and
+    report-only rows say so inline.
+    """
     status = row["status"]
     detail = ""
     if status == "ok":
@@ -2640,7 +2711,14 @@ def _progress(done, total, case_name, engine, fixture, threads, row) -> None:
             detail += "  (overhead-dominated)"
     elif row["note"]:
         detail = row["note"][:60]
-    print(f"  [{done:4d}/{total:4d}] {case_name:22s} {engine:12s} "
+
+    label = engine
+    if routine and routine != case_name:
+        label = f"{engine}:{routine}"
+    if report_only:
+        detail = (detail + "  [report-only: not the same operation]").strip()
+
+    print(f"  [{done:4d}/{total:4d}] {case_name:22s} {label:26s} "
           f"{fixture:16s} {threads}t  {status:12s} {detail}")
 
 
