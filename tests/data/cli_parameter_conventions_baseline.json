@@ -1,0 +1,685 @@
+{
+  "README": [
+    "Baseline allow-list for tests/scripts/check_cli_parameter_conventions.py",
+    "(Phase 0d of docs/plan_docs/cli_consistency_remediation_plan.md).",
+    "",
+    "Every entry is a CLI parameter that violates a section-3 naming",
+    "convention TODAY and is knowingly tolerated until the phase that renames",
+    "it lands.  The test passes on these and fails only on violations that are",
+    "NOT listed here.",
+    "",
+    "THIS LIST MUST ONLY EVER SHRINK.  Edit it by DELETING lines.  Do not",
+    "regenerate it wholesale with --write-baseline: doing so launders every",
+    "violation introduced since the last refresh into the allow-list and the",
+    "guard stops guarding.  A stale entry (one whose violation no longer",
+    "occurs) is reported by the test but does not fail it, so deleting stale",
+    "lines is never urgent and never blocks a phase."
+  ],
+  "violations": [
+    {
+      "cli": "lsdtt-basin-extraction",
+      "parameter": "channel_network_junctions_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-basin-extraction",
+      "parameter": "channel_network_lines_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-basin-extraction",
+      "parameter": "channel_network_points_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-basin-extraction",
+      "parameter": "side_tributary_vector_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-basin-stats",
+      "parameter": "minimum_elevation",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-basin-surface-metrics",
+      "parameter": "write_dinf_area_raster_log10",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "channel_network_junctions_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "channel_network_lines_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "channel_network_points_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "flow_lines_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "wiener_diagnostics_raster_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "wiener_surface_fitting_radius_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "wiener_write_filtered_dem",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-channel-extraction",
+      "parameter": "wiener_write_tangential_curvature",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-channel-network-analysis",
+      "parameter": "channel_link_bearings_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-network-analysis",
+      "parameter": "junction_angle_bearing_vectors_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-network-analysis",
+      "parameter": "junction_angles_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-network-analysis",
+      "parameter": "minimum_basin_pixels",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-channel-network-analysis",
+      "parameter": "strahler_channels_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-channel-network-analysis",
+      "parameter": "tokunaga_channels_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-chi-analysis",
+      "parameter": "chi_data_maps_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-chi-analysis",
+      "parameter": "chi_fit_segment_lines_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-chi-analysis",
+      "parameter": "fit_critical_divergence_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-chi-analysis",
+      "parameter": "minimum_channel_pixels",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-chi-analysis",
+      "parameter": "print_chi_data_maps",
+      "rule": "print_writes_file"
+    },
+    {
+      "cli": "lsdtt-cosmo-column-tool",
+      "parameter": "sample_spacing_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-cosmo-landslides",
+      "parameter": "event_volume_per_area_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-cosmo-landslides",
+      "parameter": "write_post_landslide_dem",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-cosmo-prediction",
+      "parameter": "ice_thickness_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-cosmo-prediction",
+      "parameter": "quartz_fertility_regolith_depth_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-cosmo-prediction",
+      "parameter": "step_change_target_relief_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-cosmo-tool",
+      "parameter": "self_consistent_age_tol",
+      "rule": "tol_abbreviation"
+    },
+    {
+      "cli": "lsdtt-cross-sections",
+      "parameter": "cross_section_lines_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-cross-sections",
+      "parameter": "cross_section_sample_points_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-cross-sections",
+      "parameter": "minimum_bearing_window_pixels",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-feature-finder",
+      "parameter": "write_channel_candidate_diagnostics",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-feature-finder",
+      "parameter": "write_channel_scale_diagnostics",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-feature-finder",
+      "parameter": "write_drain_diagnostics",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-feature-finder",
+      "parameter": "write_road_diagnostics",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-feature-finder",
+      "parameter": "write_road_extract_diagnostics",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-feature-finder",
+      "parameter": "write_valley_diagnostics",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-flat-surface-finder",
+      "parameter": "write_floodplain_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-flat-surface-finder",
+      "parameter": "write_residual_relief_labelled_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-flat-surface-finder",
+      "parameter": "write_slope_break_bridge_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-flat-surface-finder",
+      "parameter": "write_slope_break_centreline",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-flat-surface-finder",
+      "parameter": "write_slope_break_centreline_connected",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-hillslope-channel-coupling",
+      "parameter": "chi_critical_divergence_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-hillslope-channel-coupling",
+      "parameter": "hilltop_points_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-hillslope-channel-coupling",
+      "parameter": "minimum_basin_pixels",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-hillslope-channel-coupling",
+      "parameter": "minimum_elevation",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-hillslope-channel-coupling",
+      "parameter": "ridgelines_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-internal-drainage",
+      "parameter": "minimum_pixels_in_patch",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-internal-drainage",
+      "parameter": "minimum_sink_area",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-internal-drainage",
+      "parameter": "minimum_sink_depth",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-internal-drainage",
+      "parameter": "minimum_sink_volume",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-internal-drainage",
+      "parameter": "sink_vector_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-lem",
+      "parameter": "hillslope_implicit_error_tol",
+      "rule": "tol_abbreviation"
+    },
+    {
+      "cli": "lsdtt-lem",
+      "parameter": "hillslope_implicit_picard_tol",
+      "rule": "tol_abbreviation"
+    },
+    {
+      "cli": "lsdtt-lem",
+      "parameter": "steady_state_tolerance_dz_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "point_vector_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "polygon_vector_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_marsh_platform_labels",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_marsh_platform_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_marsh_platform_seed_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_marsh_scarp_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_marsh_scarp_seed_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_marsh_search_crossover",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_marsh_search_space",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_tidal_channel_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-marsh-topography",
+      "parameter": "write_tidal_upl",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "nuth_kaab_coreg_initial_dx_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "nuth_kaab_coreg_initial_dy_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "nuth_kaab_coreg_initial_dz_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "nuth_kaab_coreg_max_horizontal_step_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_absolute_difference",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_difference",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_first_on_overlap",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_multiply",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_overlap_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_ratio",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_second_coregistered",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_second_on_overlap",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-calculator",
+      "parameter": "write_sum",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-raster-preprocessing",
+      "parameter": "minimum_elevation",
+      "rule": "minimum_prefix"
+    },
+    {
+      "cli": "lsdtt-raster-preprocessing",
+      "parameter": "sampled_points_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-raster-preprocessing",
+      "parameter": "vector_clip_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-ridgeline-analysis",
+      "parameter": "print_paired_flowpath_statistics",
+      "rule": "print_writes_file"
+    },
+    {
+      "cli": "lsdtt-ridgeline-analysis",
+      "parameter": "print_ridgeline_flow_topological_distance",
+      "rule": "print_writes_file"
+    },
+    {
+      "cli": "lsdtt-sediment-routing",
+      "parameter": "D50_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-sediment-routing",
+      "parameter": "D84_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-sediment-routing",
+      "parameter": "D90_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-sediment-routing",
+      "parameter": "active_layer_depth_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-sediment-routing",
+      "parameter": "giuh_hillslope_length_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-spectral-analysis",
+      "parameter": "valley_spacing_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-spectral-analysis",
+      "parameter": "write_2d_spectrum",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "breach_max_dist_px",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "channel_lambda_max_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "channel_lambda_min_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "connect_tol_m",
+      "rule": "tol_abbreviation"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "connect_tol_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "dem_network_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "junction_comparison_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "junction_tolerance_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "max_gap_climb_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "max_gap_search_px",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "max_repair_gap_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "merge_snap_tol_m",
+      "rule": "tol_abbreviation"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "merge_snap_tol_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "reach_divergence_match_radius_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "reach_divergence_min_length_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "reach_divergence_separation_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "segmented_trace_spacing_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "trace_max_divergence_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "vector_sources_output_format",
+      "rule": "duplicate_format"
+    },
+    {
+      "cli": "lsdtt-stream-burning",
+      "parameter": "write_repaired_dem",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-surface-metrics",
+      "parameter": "cloth_convergence_tol",
+      "rule": "tol_abbreviation"
+    },
+    {
+      "cli": "lsdtt-surface-metrics",
+      "parameter": "hough_theta_deg",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-surface-metrics",
+      "parameter": "write_curvature_skeletons",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-surface-metrics",
+      "parameter": "write_shape_classification",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-surface-metrics",
+      "parameter": "write_vec_adaptive_skeletons",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-surface-metrics",
+      "parameter": "write_vec_adaptive_threshold",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-synthetic-networks",
+      "parameter": "steady_state_tolerance_dz_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-valley-centreline",
+      "parameter": "write_cross_section_informed_valley_mask",
+      "rule": "bool_raster_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "cell_size_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "centreline_snap_max_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "channel_max_half_width_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "dp_tolerance_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "line_overlap_tolerance_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "min_centreline_component_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "min_channel_spur_len_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "min_tributary_length_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "padding_m",
+      "rule": "unit_suffix"
+    },
+    {
+      "cli": "lsdtt-water-centreline",
+      "parameter": "tributary_snap_tolerance_m",
+      "rule": "unit_suffix"
+    }
+  ]
+}

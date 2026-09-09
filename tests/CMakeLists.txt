@@ -3812,6 +3812,32 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(rigorous_flat_surface_finder_label_baseline PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Phase 0d of docs/plan_docs/cli_consistency_remediation_plan.md: the durable
+# guard on parameter naming. Walks every built lsdtt-* CLI, reads its declared
+# parameters from the help registry (`<cli> -h json`) and applies the mechanical
+# rules of plan section 3 -- no `_m`/`_px`/`_deg` suffixes, no `print_*` that
+# writes a file, bool raster outputs ending `_raster`/`_rasters`, one raster and
+# one vector format parameter per CLI, no `minimum_` (outside the documented
+# `<subject>_minimum_contributing_pixels` family) and no `tol`.
+#
+# Report-only against a baseline allow-list, so it PASSES on today's tree and
+# fails only on a NEWLY introduced violation. The allow-list must only ever
+# shrink; a stale entry is reported, not failed, so no later phase is blocked by
+# it. See the script's header comment.
+#
+# No build dependency beyond the CLIs themselves: it runs the binaries that are
+# already there. The binary directory comes from a generator expression rather
+# than a hard-coded path.
+add_test(NAME unit_cli_parameter_conventions
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_cli_parameter_conventions.py"
+        --bin-dir "$<TARGET_FILE_DIR:lsdtt-channel-extraction>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --baseline "${LSDTT_TEST_DATA_DIR}/cli_parameter_conventions_baseline.json")
+set_tests_properties(unit_cli_parameter_conventions PROPERTIES
+    LABELS "unit;cli;conventions"
+    TIMEOUT 900)
+
 # =============================================================================
 # COMPARTMENTALISATION: domain and cost labels
 #

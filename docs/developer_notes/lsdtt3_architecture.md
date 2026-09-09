@@ -1090,6 +1090,59 @@ The `parse_double_vector` / `parse_float_vector` / `parse_int_vector` helpers ar
 on `lsdtt_param_parser` and expect the string to already have been registered via
 `string_default_map`.
 
+### Shared parameter declaration layer
+
+Files: `src/core/lsdtt_common_parameters.hpp/.cpp`
+
+**Architectural role:** A CLI declares no shared parameter name of its own. Every
+parameter shared by two or more CLIs is declared exactly once in the shared layer,
+and CLIs adopt it via a function call.
+
+This eliminates the root cause of parameter drift: each shared concept had been
+re-typed independently by each CLI, so one author wrote 0 and another wrote 1
+with no intent behind the difference, 20+ CLIs re-declared the same help text with
+silent corrections, and threshold values diverged without reason.
+
+**The pattern:** Each semantic group (flow routing, output formats, basin outlets,
+fitting parameters, synthetic domains) gets one function that populates a caller's
+default and help maps:
+
+```cpp
+lsdtt::declare_flow_routing_parameters(
+    std::map<std::string, bool>&        bool_map,
+    std::map<std::string, int>&         int_map,
+    std::map<std::string, float>&       float_map,
+    std::map<std::string, std::string>& string_map,
+    lsdtt::lsdtt_help_registry&         help_map,
+    const std::string& prefix = ""      // optional, for multi-stage CLIs
+);
+```
+
+On return, the maps contain the full set of shared parameters and their help
+entries, ready for a CLI to call `parse_all_parameters()`.
+
+**Adoption in a CLI:** Instead of hand-declaring `threshold_contributing_pixels`,
+`raster_is_filled`, `fill_min_slope`, etc. separately, a CLI calls:
+
+```cpp
+lsdtt::declare_flow_routing_parameters(
+    bool_default_map, int_default_map, float_default_map,
+    string_default_map, help_map
+);
+```
+
+After adoption, renaming that parameter is a one-line change in one file, not a
+twenty-CLI edit. This is why parameter renames in the remediation plan are low-risk:
+the shared layer makes them self-enforcing.
+
+**Migration status:** Not all CLIs have adopted the shared layer yet. Legacy CLIs
+that predate the shared layer still hand-declare their parameters. The remediation
+plan migrates them per-phase.
+
+**Naming standard:** Every shared parameter follows the conventions in
+`docs/cli_parameter_conventions.md`. That document is the durable record of what
+names are canonical, what units they use, and when to use `min_` vs `minimum_`,
+`threshold_` vs `min_`, and so on.
 
 ---
 

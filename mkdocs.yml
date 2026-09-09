@@ -137,6 +137,7 @@ nav:
       - GraphFlood: python_api/graphflood.md
   - Developer notes:
     - Developer onboarding: developer_notes/developer_onboarding.md
+    - Parameter naming conventions: cli_parameter_conventions.md
     - Git from the command line: developer_notes/git_notes.md
     - Architecture: developer_notes/lsdtt3_architecture.md
     - Building from source: developer_notes/building_from_source.md

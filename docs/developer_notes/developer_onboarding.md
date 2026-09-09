@@ -59,6 +59,50 @@ In CLI files:
 This pattern is now the standard for all CLIs because it makes developer-facing
 options easy to inspect and keeps the parameter contract readable in one place.
 
+### Parameter naming conventions
+
+Every parameter you add must follow the naming standard in
+`docs/cli_parameter_conventions.md`. The standard ensures that parameter names are
+self-documenting across all CLIs.
+
+**Checklist when adding a parameter:**
+
+1. **Look for a shared name first.** Is this a threshold, an output format, a
+   raster file, or a window size? Check the conventions table to see if it already
+   has a canonical name. If so, use it exactly. Do not invent a variant.
+
+2. **Use the shared declaration layer if available.** If your parameter is part of
+   a semantic group (flow routing, output formats, basin outlets, fitting parameters,
+   synthetic domains), check whether your CLI can call the corresponding
+   `declare_*_parameters()` function from `src/core/lsdtt_common_parameters.hpp`.
+   If yes, use it — do not hand-declare the parameter.
+
+3. **Follow the unit-suffix rule.** Always spell out units: `_metres`, `_pixels`,
+   `_degrees`, never `_m`, `_px`, `_deg`. A threshold on area is
+   `<what>_area_threshold_m2`, never `_area_threshold` or `_area` alone.
+
+4. **Use the right prefix.** Output switches start with `write_` (not `print_` for
+   files), stage switches start with `run_`, boolean rasters end in `_raster` or
+   `_rasters`. Bounds use `min_`/`max_` unless the full word `minimum` reads more
+   clearly (e.g. `basin_minimum_contributing_pixels`).
+
+5. **Distinguish the two fill concepts.** If your CLI does filling, know which one
+   you need: `raster_is_filled` (input assertion, compute-saving) or
+   `fill_before_routing` (analytical choice). Write help text that says which
+   question the parameter answers.
+
+6. **Document the parameter's role in the help entry.** Every parameter must have
+   a short description (one line, including units) and a longer explanation
+   (covering valid range, cross-references to related parameters, caveats). Do not
+   skip the units — a developer will find this in the CSV reference, and they may
+   not have the source code to hand.
+
+7. **Plan for migration.** Even if you are not renaming anything today, know that
+   if your parameter is later renamed, the old name will be added to an alias map
+   (see `src/core/lsdtt_param_parser.hpp`). Existing `.param` files will keep
+   working with a deprecation warning. This means naming is not a permanent choice —
+   you can fix a bad name later without breaking users.
+
 ### File I/O parameter note
 
 For CLIs using `lsdtt_param_parser`:

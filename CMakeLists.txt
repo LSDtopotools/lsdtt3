@@ -233,6 +233,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_csv_table.cpp
     src/core/lsdtt_stat_csv.cpp
     src/core/lsdtt_outlet_clusters.cpp
+    src/core/lsdtt_common_parameters.cpp
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
