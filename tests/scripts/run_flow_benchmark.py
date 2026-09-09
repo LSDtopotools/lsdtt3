@@ -763,7 +763,23 @@ def main() -> int:
     ap.add_argument("--fixture", default="alpine_small",
                     help="fixture basename in tests/data/dem_cache (default alpine_small)")
     ap.add_argument("--comparison", choices=list(COMPARISONS) + ["all"], default="all")
-    ap.add_argument("--work-dir", default=None)
+    # --out-dir is the name the other two drivers use; --work-dir is the
+    # original spelling, kept working so existing scripts and job files do not
+    # break. Both write to the same place. This directory holds the RESULTS
+    # (benchmark_results.csv) AND the scratch: staged filled DEMs and the
+    # per-reference output caches, which run to hundreds of MB on the larger
+    # fixtures. Point it somewhere with room.
+    ap.add_argument("--out-dir", "--work-dir", dest="out_dir", default=None,
+                    help="results and scratch directory. Default "
+                         "build/flow_benchmark inside the repo. Give the "
+                         "campaign directory to keep everything together.")
+    ap.add_argument("--fixture-dir", default="",
+                    help="where fixture DEMs are cached and fetched to. "
+                         "Default tests/data/dem_cache inside the repo, which "
+                         "puts downloads in your working tree. Point it at the "
+                         "campaign's benchmark_fixtures directory to share the "
+                         "cache with run_benchmark_suite.py and avoid "
+                         "re-downloading.")
     ap.add_argument("--check", action="store_true",
                     help="fail on pinned tolerance violations (Phase 3)")
     ap.add_argument("--list", action="store_true", help="list comparisons and exit")
@@ -807,7 +823,14 @@ def main() -> int:
     if not exe.exists():
         die_skip(f"executable {exe} not found; build lsdtt3 first")
 
-    work_dir = pathlib.Path(args.work_dir).resolve() if args.work_dir else \
+    # Rebind the module global before anything can fetch: ensure_fixture()
+    # reads it at call time, so this redirects both the lookup and the
+    # download.
+    if args.fixture_dir:
+        global FIXTURE_DIR
+        FIXTURE_DIR = pathlib.Path(args.fixture_dir).resolve()
+
+    work_dir = pathlib.Path(args.out_dir).resolve() if args.out_dir else \
         REPO_ROOT / "build" / "flow_benchmark"
     work_dir.mkdir(parents=True, exist_ok=True)
 
