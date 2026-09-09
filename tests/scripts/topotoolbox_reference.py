@@ -255,6 +255,15 @@ def run_surface(routine: str, dem, repeats: int,
         "seconds": min(timings),
         "seconds_median": statistics.median(timings),
         "seconds_all": timings,
+        # Emitted explicitly. Its absence here made every TopoToolbox SURFACE
+        # row in run_benchmark_suite.py report "+/- 0.00", because the consumer
+        # defaults a missing field to 0.0 -- so a campaign showed perfectly
+        # repeatable timings for one engine and real spread for the other two,
+        # which reads as TopoToolbox being unusually stable rather than as a
+        # field that was never set. The flow path (_repeat_time) has always
+        # emitted it; only this one did not.
+        "seconds_stdev": (statistics.stdev(timings) if len(timings) > 1
+                          else 0.0),
         "repeats": len(timings),
         "n_convolutions": N_CONVOLUTIONS.get(routine),
         "report_only": routine in REPORT_ONLY_ROUTINES,

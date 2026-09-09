@@ -12,9 +12,13 @@ valid and others are not — see
 [Testing and benchmarking](testing_and_benchmarking.md). This page is just how
 to run it.
 
+It should be noted here that the comparisons are not all like-for-like. Details about different implemetations and choices made are available in the report produced by these benchmarking tests. 
+
 ---
 
 ## Quick start
+
+You need to install a bunch of stuff to get Whitebox Workflows, RichDEM and TopoToolbox3 working, we have wrapped all that up in a pixi environment. Once it is installed (see below) you run: 
 
 ```sh
 pixi run bench-laptop
@@ -98,6 +102,9 @@ everything is cached and the suite runs offline.
 
 ## The two profiles
 
+Only run the `server` version is you have powerful compute available. 
+Note that if you are running on a personal computer (e.g., your laptop), the compute will become thermally limited (this is when you fan starts going crazy). In that event, your computer will throttle the CPU speed and the speed reporting will not be reliable. 
+
 | | `laptop` | `server` |
 |---|---|---|
 | DEM sizes | 500², 1000² | 1000², 2000², 4000², 8000² |
@@ -132,12 +139,12 @@ that separates these tools most sharply:
 The suite downloads **one large DEM per region** and crops every size in the
 ladder out of it, so terrain stays as consistent as possible as the grid grows
 and you only ever download once.
-
-This matters more than it sounds. In one measured campaign, Whitebox's fill was
+ 
+The different implementations do better or worse in different terrain types. 
+In one measured campaign, Whitebox's fill was
 **5.5× faster than lsdtt3 on high-relief terrain and 44× slower on low-relief
-terrain** — same code, same grid size, only the landscape changed. A benchmark
-on one terrain type would have told you something confidently wrong. Always
-read both regions.
+terrain**; this with the same code, same grid size, and only a changed landscape. 
+We have given some end member landscapes to highlight this behaviour in the benchmarking.  
 
 ---
 
@@ -265,15 +272,15 @@ others of the same scope:
 - `in_process_routine` — a reference script timing the routine in-process
 - `whole_process` — wall clock for an entire CLI run, **never** put in a ratio
 
-This is not pedantry. lsdtt3's fill on a small DEM is ~7.6 ms of compute inside
-a ~279 ms process — whole-process wall clock was 97 % startup and file I/O.
+We do this for a reason. lsdtt3's fill on a small DEM is ~7.6 ms of compute inside
+a ~279 ms process: spinup costs time but we wish to measure compute. 
 
 ### 3. Respect the flags
 
-- **`overhead_dominated`** — the measurement is within 3× of that engine's own
+- **`overhead_dominated`**: the measurement is within 3× of that engine's own
   measured fixed cost, so it is mostly overhead. Excluded from the ratio table
   and listed separately. Expect many of these on the `laptop` profile.
-- **`report_only`** — the engines are not doing equivalent work, so a ratio
+- **`report_only`**: the engines are not doing equivalent work, so a ratio
   would be a claim about the definitions rather than the implementations.
   Absolute times only. All surface-metric and multi-direction-flow rows are
   report-only.

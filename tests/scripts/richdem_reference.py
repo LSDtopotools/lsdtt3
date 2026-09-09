@@ -38,8 +38,44 @@ import statistics
 import sys
 import time
 
-ROUTINES = ("fill", "fill_epsilon", "breach",
-            "accum_d8", "accum_dinf", "accum_mfd")
+FLOW_ROUTINES = ("fill", "fill_epsilon", "breach",
+                 "accum_d8", "accum_dinf", "accum_mfd")
+
+# Surface metrics -- TIMING ONLY.
+#
+# These went missing from the benchmark for a bad reason. The case registry in
+# run_benchmark_suite.py carried a comment asserting "RichDEM has no slope
+# tool", and on the strength of that comment RichDEM was left out of the
+# surface suite entirely. It is wrong: rd.TerrainAttribute in 2.3.0 offers
+# slope_riserun, slope_percentage, slope_degrees, slope_radians, aspect,
+# curvature, planform_curvature and profile_curvature.
+#
+# WHAT THESE ACTUALLY COMPUTE, because the four engines are NOT computing the
+# same quantity and the rows must not be read as if they were:
+#
+#   RichDEM      Zevenbergen & Thorne (1987): a 9-term quadratic fitted
+#                analytically to the 3x3 neighbourhood, curvatures from its
+#                partial derivatives. Fixed 3x3 -- there is no window size.
+#   lsdtt3       a 6-term quadratic least-squares fit over a moving window of
+#                polyfit_lambda_metres, every metric from the ONE fit.
+#   TopoToolbox  scipy convolutions with the Evans 3x3 kernels, in Python.
+#   Whitebox     3x3 finite-difference operators in Rust.
+#
+# RichDEM is the closest of the three references to lsdtt3 in FORM -- both fit
+# a quadratic and differentiate it -- and still not comparable in VALUE,
+# because RichDEM's is an exact 3x3 interpolation where lsdtt3's is a
+# least-squares fit over a window the user chooses. Sign and handedness
+# conventions for the curvatures were not checked and are not assumed to
+# agree. Every surface case is report_only; no value is compared.
+SURFACE_ROUTINES = (
+    "slope",
+    "aspect",
+    "curvature_profc",
+    "curvature_planc",
+    "curvature_all2",   # profile + planform back to back, one shared timing
+)
+
+ROUTINES = FLOW_ROUTINES + SURFACE_ROUTINES
 
 
 @contextlib.contextmanager
@@ -92,6 +128,30 @@ def _call_for(routine: str, dem, mfd_exponent: float):
     if routine == "accum_mfd":
         return lambda: rd.FlowAccumulation(dem, method="Freeman",
                                            exponent=mfd_exponent)
+
+    # -- surface -----------------------------------------------------------
+    # Degrees for slope, matching whitebox_reference.py's units="degrees", so
+    # the two references at least agree with each other on what they return.
+    # The unit does not affect cost.
+    if routine == "slope":
+        return lambda: rd.TerrainAttribute(dem, attrib="slope_degrees")
+    if routine == "aspect":
+        return lambda: rd.TerrainAttribute(dem, attrib="aspect")
+    if routine == "curvature_profc":
+        return lambda: rd.TerrainAttribute(dem, attrib="profile_curvature")
+    if routine == "curvature_planc":
+        return lambda: rd.TerrainAttribute(dem, attrib="planform_curvature")
+    if routine == "curvature_all2":
+        # What a user pays to get both curvatures. RichDEM, like Whitebox and
+        # TopoToolbox, refits per curvature type; one lsdtt3 polyfit yields
+        # every coefficient at once. Two calls rather than four, mirroring
+        # whitebox_reference.py's curvature_all2: RichDEM's `curvature` is
+        # total curvature, not a tangential/mean pair, so there is no
+        # four-metric equivalent to compare against TopoToolbox's
+        # curvature_all4.
+        return lambda: [rd.TerrainAttribute(dem, attrib="profile_curvature"),
+                        rd.TerrainAttribute(dem, attrib="planform_curvature")]
+
     raise ValueError(f"unknown routine {routine!r}")
 
 
@@ -129,15 +189,21 @@ def run(routine: str, in_path: str, out_path, mfd_exponent: float,
             result = call()
         timings.append(time.perf_counter() - t0)
 
+    # A list result (curvature_all2) has no single raster to stand for it;
+    # report the first and write the first, as whitebox_reference.py does.
+    # Stacking them instead would put a leading axis into `shape` and make the
+    # row look like a different-sized problem.
+    primary = result[0] if isinstance(result, list) else result
+
     seconds_write = None
     if out_path:
         import richdem as rd
         t0 = time.perf_counter()
         with suppressed_output():
-            rd.SaveGDAL(out_path, result)
+            rd.SaveGDAL(out_path, primary)
         seconds_write = time.perf_counter() - t0
 
-    arr = np.asarray(result)
+    arr = np.asarray(primary)
     finite = arr[np.isfinite(arr)]
     return {
         "reference": "richdem",
@@ -147,9 +213,9 @@ def run(routine: str, in_path: str, out_path, mfd_exponent: float,
         "seconds_all": timings,
         "seconds_stdev": statistics.stdev(timings) if len(timings) > 1 else 0.0,
         "repeats": len(timings),
-        # RichDEM's FillDepressions/BreachDepressions/FlowAccumulation are
-        # serial for these routines, so the thread count is 1 whatever the
-        # caller asked for. Stated rather than omitted so a campaign cannot
+        # RichDEM's FillDepressions/BreachDepressions/FlowAccumulation and
+        # TerrainAttribute are all serial, so the thread count is 1 whatever
+        # the caller asked for. Stated rather than omitted so a campaign cannot
         # silently attribute a thread count to it.
         "threads": 1,
         "seconds_read": seconds_read,

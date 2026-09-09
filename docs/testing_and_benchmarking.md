@@ -6303,10 +6303,58 @@ engine also keeps its column when every one of its cells is `n/a`, which it
 previously lost — dropping the column made "cannot" look like "never
 considered".
 
-**Outstanding:** add RichDEM to `slope_only` and `polyfit_all`. Its curvature
-definitions must be checked against lsdtt3's before the rows are treated as
-comparable, so this is a case-registry change with a comparability question
-attached, not a one-line addition.
+**Resolved 2026-09-09.** `richdem_reference.py` gained a surface section
+(`slope`, `aspect`, `curvature_profc`, `curvature_planc`, `curvature_all2`) and
+RichDEM is wired into `slope_only` (`slope`) and `polyfit_all`
+(`curvature_all2`). Both cases were already `report_only` and remain so.
+
+The comparability question that made this more than a one-line addition has an
+answer, and it is not "the values now agree". The four engines compute four
+different things:
+
+| engine | method | window |
+|---|---|---|
+| lsdtt3 | 6-term quadratic, **least-squares** fit, every metric from ONE fit | `polyfit_lambda_metres`, user-chosen |
+| RichDEM | 9-term quadratic, **exact analytic** fit (Zevenbergen & Thorne 1987), differentiated; refits per attribute | fixed 3×3 |
+| TopoToolbox | scipy convolutions, Evans 3×3 kernels; recomputes all five per curvature type | fixed 3×3 |
+| Whitebox | 3×3 finite-difference operators in Rust; recomputes per curvature type | fixed 3×3 |
+
+RichDEM is the **nearest of the three references to lsdtt3 in form** — both fit
+a quadratic and differentiate it — and is still not value-comparable, because
+an exact interpolation of a fixed 3×3 is not a least-squares fit over a chosen
+window. Curvature sign conventions and aspect handedness were **not** checked
+across the four and are not assumed to agree. No surface value is compared
+anywhere in the suite.
+
+The metric counts also differ within `polyfit_all`: lsdtt3 slope + aspect + 2
+curvatures, TopoToolbox 4 curvatures, RichDEM and Whitebox 2 curvatures. The
+case note says this. It is a cost-of-a-typical-request row, not a
+same-work-per-engine row.
+
+Two genuine RichDEM absences were recorded in `NOT_IMPLEMENTED` rather than
+left as silent gaps, since an unexplained absence reads as "we did not bother":
+`hillshade` (no hillshade attribute in 2.3.0) and `polyfit_many` (no
+eight-metric call — recorded for all three references, as that row exists to
+show lsdtt3's shared fit amortising and has no reference equivalent by design).
+
+First measurement, alpine_1000, 1 thread, 3 repeats, **on the thermally limited
+laptop — not quotable**, recorded only to show the rows are produced:
+
+| case | lsdtt3 | richdem | topotoolbox | whitebox |
+|---|---|---|---|---|
+| `slope_only` (ms) | 59.8 | 47.8 | 66.3 | 55.9 |
+| `polyfit_all` (ms) | 163.9 | 49.0 | 218.4 | 78.9 |
+
+### TopoToolbox surface rows reported a zero standard deviation (2026-09-09)
+
+`run_surface` in `topotoolbox_reference.py` returned `seconds`,
+`seconds_median` and `seconds_all` but **not** `seconds_stdev`.
+`run_benchmark_suite.py` defaults a missing field to 0.0, so every TopoToolbox
+surface row in every campaign printed `+/- 0.00` — a spread that would have
+looked like an implausibly stable measurement rather than a missing one. The
+flow path in the same file emitted the field; only the surface path did not.
+Fixed by emitting it explicitly. Verified: `--routine evansslope --repeats 3`
+now reports a stdev of 7.8e-4 s where it previously reported 0.
 
 ### Consequence for recorded campaigns
 
