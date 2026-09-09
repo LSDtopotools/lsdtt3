@@ -128,8 +128,13 @@ Output files:
 
 ---
 
-## Output format
+## Output vector format
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format (for diagnostics): `cog`, `gtiff`, `same_as_input`. |
+| `write_vector_format` | string | `flatgeobuf` | Output **vector** format for the centreline layer: `flatgeobuf`/`fgb`, `gpkg`. This is the vector key, not the raster key `write_output_format` used by the raster tools. |
+
+`write_vector_format` was called `write_output_format` in earlier releases. The
+old name still works as a deprecated alias: the value is carried across and a
+warning naming the replacement is printed. Update your parameter files, because
+`write_output_format` means a *raster* format in every other CLI.

@@ -251,7 +251,7 @@ exactly what it was given.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `fallback_admission_algorithm_choice` | string | `relief` | Built-in admission when `flat_mask_fname` is empty: `relief` or `slope`. |
-| `fallback_relief_window_pixels` | int | `5` | Moving-window radius (pixels) for the fallback relief admission. |
+| `fallback_relief_window_radius_pixels` | int | `5` | Moving-window **radius** in pixels for the fallback relief admission. Not a window side: `5` gives an 11×11 window. `lsdtt-flat-surface-finder` and `lsdtt-mountain-front` spell their equivalent `relief_window_side_pixels`, which is a full **side length**, so the same number means a different window there. The old name `fallback_relief_window_pixels` is accepted as a deprecated alias. |
 | `fallback_relief_threshold_metres` | float | `1.0` | Local relief below which a cell is admitted as flat [m]. |
 | `fallback_slope_threshold` | float | `0.05` | Gradient magnitude below which a cell is admitted as flat [m/m]. |
 | `min_component_pixels` | int | `50` | Minimum patch size in pixels, **applied per band**. |

@@ -160,15 +160,19 @@ int main(int argc, char* argv[])
     help_map["fallback_admission_algorithm_choice"] = {"string","relief",
         "Built-in admission when flat_mask_fname is empty: relief or slope.",
         "relief admits cells whose local relief over "
-        "fallback_relief_window_pixels is below "
+        "fallback_relief_window_radius_pixels is below "
         "fallback_relief_threshold_metres. slope admits cells whose gradient "
         "magnitude is below fallback_slope_threshold.",
         "Admission","param","flat_mask_fname"};
 
-    int_default_map["fallback_relief_window_pixels"] = 5;
-    help_map["fallback_relief_window_pixels"] = {"int","5",
-        "Moving-window radius in pixels for the fallback relief admission.",
-        "Only used when flat_mask_fname is empty and the fallback is relief.",
+    int_default_map["fallback_relief_window_radius_pixels"] = 5;
+    help_map["fallback_relief_window_radius_pixels"] = {"int","5",
+        "Moving-window RADIUS in pixels for the fallback relief admission.",
+        "This is a radius, not a window side: 5 means an 11x11 window.  Note "
+        "that lsdtt-flat-surface-finder and lsdtt-mountain-front spell their "
+        "equivalent relief_window_side_pixels, which is a full SIDE LENGTH and "
+        "so means something different for the same number.  Only used when "
+        "flat_mask_fname is empty and the fallback is relief.",
         "Admission","param","flat_mask_fname"};
 
     float_default_map["fallback_relief_threshold_metres"] = 1.0f;
@@ -1083,6 +1087,14 @@ int main(int argc, char* argv[])
     // Parse
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
+
+    // A pure rename: the value carries across unchanged. The new spelling says
+    // what the number is - a radius, so 5 is an 11x11 window - because the same
+    // idea is a full window SIDE in lsdtt-flat-surface-finder and
+    // lsdtt-mountain-front.
+    pp.set_deprecated_aliases({
+        {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"} });
+
     try
     {
         pp.parse_all_parameters(float_default_map, int_default_map,
@@ -1320,7 +1332,7 @@ int main(int argc, char* argv[])
             if (how == "relief")
             {
                 const double radius =
-                    static_cast<double>(ip["fallback_relief_window_pixels"]) *
+                    static_cast<double>(ip["fallback_relief_window_radius_pixels"]) *
                     meta.cell_size;
                 const lsdtt::lsdtt_raster_cpu relief =
                     lsdtt::moving_window_local_relief(dem, radius);

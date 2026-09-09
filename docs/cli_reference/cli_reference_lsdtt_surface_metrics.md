@@ -46,7 +46,7 @@ key: value
 | `read_fname` | string | parameter file stem | Input raster filename. |
 | `write_path` | string | same as `read_path` | Directory for output files. |
 | `write_fname` | string | same as `read_fname` | Output filename stem. |
-| `write_output_format` | string | `cog` | Output raster format. `cog` = Cloud Optimised GeoTIFF. `gtiff` = plain compressed GeoTIFF. `same_as_input` = match the input format. |
+| `write_output_format` | string | `cog` | Output raster format. `cog` = Cloud Optimised GeoTIFF. `gtiff` = plain compressed GeoTIFF. `same_as_input` = match the input format. `png` = 8-bit scaled image with a worldfile and PAM sidecar, for quick visualisation only, not for analysis reuse. Output files take the extension of the chosen format. |
 
 ---
 

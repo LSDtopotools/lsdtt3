@@ -139,18 +139,34 @@ def discover_clis(bin_dir: Path, cli_src_dir: Path | None = None) -> list[Path]:
     return found
 
 
-def missing_binaries(bin_dir: Path, cli_src_dir: Path) -> list[str]:
-    """CLI sources in cli/ with no built executable.
+def unmeasurable_clis(bin_dir: Path, cli_src_dir: Path) -> tuple[list[str], list[str]]:
+    """CLI sources whose binary is missing, or older than the source.
 
-    Reported, never fatal: a partial build is a normal working state and must
-    not fail the suite.  But an unbuilt CLI is UNCHECKED, so it is named rather
-    than passing silently.
+    Returns (missing, stale).
+
+    WHY THIS IS FATAL RATHER THAN A NOTE.  This check reads each CLI's parameter
+    registry out of the BUILT BINARY via `-h json`.  A binary older than its
+    source reports the parameters that CLI had when it was last compiled, not
+    the ones it has now -- so a violation added since then is invisible and the
+    check passes for the wrong reason.
+
+    That is not hypothetical.  The Phase 0 baseline was generated against a tree
+    in which 10 of 38 binaries were stale and one was absent, and it therefore
+    recorded two violations that the source had already fixed while missing nine
+    that were really there.  Both errors pointed the same way: the guard looked
+    greener than the tree was.
+
+    A guard that silently under-measures is worse than no guard, so an
+    incomplete build fails here with the exact list of targets to build.
     """
-    missing = []
+    missing, stale = [], []
     for src in sorted(cli_src_dir.glob("lsdtt-*.cpp")):
-        if not (bin_dir / src.stem).is_file():
+        exe = bin_dir / src.stem
+        if not exe.is_file():
             missing.append(src.stem)
-    return missing
+        elif exe.stat().st_mtime < src.stat().st_mtime:
+            stale.append(src.stem)
+    return missing, stale
 
 
 def read_parameters(exe: Path, timeout: float) -> list[dict]:
@@ -444,12 +460,23 @@ def main() -> int:
         return 2
 
     if args.cli_src_dir is not None:
-        unbuilt = missing_binaries(args.bin_dir, args.cli_src_dir)
-        if unbuilt:
-            print(
-                "NOTE: %d CLI source(s) have no built executable and were NOT "
-                "checked: %s" % (len(unbuilt), ", ".join(unbuilt))
-            )
+        missing, stale = unmeasurable_clis(args.bin_dir, args.cli_src_dir)
+        if missing or stale:
+            print("ERROR: the build tree does not match cli/, so this check "
+                  "cannot measure what is actually in the source.")
+            if missing:
+                print("  %d CLI(s) not built at all:" % len(missing))
+                for name in missing:
+                    print("      %s" % name)
+            if stale:
+                print("  %d binary/binaries older than their source:" % len(stale))
+                for name in stale:
+                    print("      %s" % name)
+            print("  Build them and re-run, e.g.:")
+            print("      cmake --build %s -j" % args.bin_dir)
+            print("  See unmeasurable_clis() for why this is fatal rather than "
+                  "a warning.")
+            return 2
 
     violations: list[dict] = []
     n_parsed = 0

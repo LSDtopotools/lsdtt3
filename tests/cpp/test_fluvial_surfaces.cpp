@@ -254,8 +254,11 @@ void run_self_checks()
     catch (const std::exception&) { projected = false; }
     check(projected, "fixture DEM is projected in metres");
 
-    // The roughness contrast that the relief threshold separates. A 5-cell
-    // window at 10 m is a 20 m radius, matching relief_window_pixels: 5.
+    // The roughness contrast that the relief threshold separates. This uses a
+    // 2-cell (20 m) radius, i.e. a 5x5 window. NOTE this is NOT the same window
+    // the CLI fixtures use: they set fallback_relief_window_radius_pixels: 5,
+    // which is a 5-cell radius (11x11). This check is a fixture sanity check on
+    // the roughness contrast, not a reproduction of the CLI's admission step.
     const lsdtt::lsdtt_raster_cpu relief =
         lsdtt::moving_window_local_relief(dem, 2.0 * k_cell_size);
 

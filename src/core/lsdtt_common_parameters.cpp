@@ -414,19 +414,19 @@ void declare_synthetic_noise_parameters(
         "diamond_square_roughness.",
         group, "param", ""};
 
-    const std::string k_noise_target_stddev =
-        prefixed_parameter_key(prefix, "noise_target_stddev");
-    float_default_map[k_noise_target_stddev] = 1.0f;
-    help_map[k_noise_target_stddev] = {"float", "1.0",
+    const std::string k_noise_target_stddev_metres =
+        prefixed_parameter_key(prefix, "noise_target_stddev_metres");
+    float_default_map[k_noise_target_stddev_metres] = 1.0f;
+    help_map[k_noise_target_stddev_metres] = {"float", "1.0",
         "Target standard deviation of the generated noise surface (metres).",
         "The raw surface is rescaled to this standard deviation. Used when "
         "noise_type is red_noise or diamond_square.",
         group, "param", ""};
 
-    const std::string k_noise_relief =
-        prefixed_parameter_key(prefix, "noise_relief");
-    float_default_map[k_noise_relief] = 0.0f;
-    help_map[k_noise_relief] = {"float", "0.0",
+    const std::string k_noise_relief_metres =
+        prefixed_parameter_key(prefix, "noise_relief_metres");
+    float_default_map[k_noise_relief_metres] = 0.0f;
+    help_map[k_noise_relief_metres] = {"float", "0.0",
         "Amplitude (metres) of white noise added on top of the surface. "
         "0 disables it.",
         "Roughens whatever closed depressions survive, so that when they are "
@@ -449,7 +449,7 @@ void declare_synthetic_noise_parameters(
     float_default_map[k_diamond_square_initial_scale] = 1.0f;
     help_map[k_diamond_square_initial_scale] = {"float", "1.0",
         "Initial perturbation amplitude for the diamond-square surface.",
-        "The amplitude applied at the coarsest level, decayed at every "
+        "Dimensionless: the surface is normalised to noise_target_stddev_metres afterwards, so only the ratio of this to diamond_square_roughness affects the result -- its absolute value is washed out. That is why it carries no unit suffix."
         "subsequent level by diamond_square_roughness. Used only when "
         "noise_type is diamond_square.",
         group, "param", ""};

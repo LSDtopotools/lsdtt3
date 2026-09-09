@@ -12,7 +12,7 @@
 // Identifies mountain masses in a DEM via adaptive relief thresholding.
 //
 // Pipeline:
-//   Stage 1 - Local relief (square window, relief_window_pixels)
+//   Stage 1 - Local relief (square window, relief_window_side_pixels)
 //   Stage 2 - Flat mask: adaptive (CDF divergence threshold) or fixed value.
 //             Adaptive: 500-bin empirical CDF vs best-fit parametric distribution;
 //             threshold at x of maximum positive divergence.  Writes CDF CSV.
@@ -213,10 +213,14 @@ int main(int argc, char* argv[])
         "-", "io", ""};
 
     // --- Stage 1: relief ---
-    int_default_map["relief_window_pixels"] = 5;
-    help_map["relief_window_pixels"] = {"int","5",
-        "Square window size (pixels) for local relief (max - min).",
-        "Must be odd and >= 3.",
+    int_default_map["relief_window_side_pixels"] = 5;
+    help_map["relief_window_side_pixels"] = {"int","5",
+        "Full window SIDE LENGTH (pixels) for local relief (max - min).",
+        "This is the side of the square window, not a radius: must be odd and "
+        ">= 3, and 5 means a 5x5 neighbourhood.  Note that "
+        "lsdtt-fluvial-surfaces spells its equivalent "
+        "fallback_relief_window_radius_pixels, which is a RADIUS and so means "
+        "something different for the same number.",
         "Stage 1: relief", "param", ""};
 
     // --- Stage 2: relief threshold ---
@@ -340,6 +344,12 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // A pure rename: the value carries across unchanged. The new spelling says
+    // what the number is - a full window side, not a radius - because the same
+    // idea is a RADIUS in lsdtt-fluvial-surfaces.
+    pp.set_deprecated_aliases({
+        {"relief_window_pixels", "relief_window_side_pixels"} });
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
     auto bf = pp.get_bool_parameters();
@@ -383,9 +393,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Stage 1: local relief (square window)
     // -------------------------------------------------------------------------
-    const int wpix = ip["relief_window_pixels"];
+    const int wpix = ip["relief_window_side_pixels"];
     if (wpix < 3 || wpix % 2 == 0)
-    { std::cerr << "Error: relief_window_pixels must be odd and >= 3\n"; return 1; }
+    { std::cerr << "Error: relief_window_side_pixels must be odd and >= 3\n"; return 1; }
 
     std::cout << "Stage 1: computing local relief (square window, "
               << wpix << " pixels)...\n";

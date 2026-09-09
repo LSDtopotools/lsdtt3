@@ -34,7 +34,7 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 | Step | What happens | Controlled by |
 |---|---|---|
 | 1 | Load DEM, check it is projected in metres | — |
-| 2 | Local relief (max − min) in a square window | `relief_window_pixels` |
+| 2 | Local relief (max − min) in a square window | `relief_window_side_pixels` |
 | 3 | Threshold relief, fixed or adaptive | `relief_threshold_metres`, `adaptive_relief_threshold` |
 | 4 | Optional gradient cap from a fitted polynomial surface | `admission_slope_cap_degrees`, `admission_slope_window_metres` |
 | 5 | Combine the two tests | `admission_mode` |
@@ -64,7 +64,7 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `relief_window_pixels` | int | `5` | Square window size (pixels) for local relief (max − min). |
+| `relief_window_side_pixels` | int | `5` | Full window **side length** in pixels for local relief (max − min). Not a radius: must be odd and ≥ 3, so `5` is a 5×5 neighbourhood. `lsdtt-fluvial-surfaces` spells its equivalent `fallback_relief_window_radius_pixels`, which is a **radius**, so the same number means a different window there. The old name `relief_window_pixels` is accepted as a deprecated alias. |
 | `relief_threshold_metres` | float | `1.0` | Local relief (m) below which a pixel is classed flat. |
 | `adaptive_relief_threshold` | bool | `false` | Choose the relief threshold automatically, at the point of maximum divergence between the empirical CDF and the best-fitting parametric CDF. Ignores `relief_threshold_metres`. |
 | `relief_threshold_multiplier` | float | `1.0` | Multiplier applied to the adaptively chosen threshold. |

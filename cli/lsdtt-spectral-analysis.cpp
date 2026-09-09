@@ -60,28 +60,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// resolve_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::raster_output_format resolve_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "gtiff")
-    {
-        return lsdtt::raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return lsdtt::raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' - defaulting to cog.\n";
-    }
-    return lsdtt::raster_output_format::cog;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -116,9 +94,13 @@ int main(int argc, char* argv[])
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
+        "Allowed values: cog, gtiff, same_as_input, png. "
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format.",
+        "same_as_input: match the input raster format. "
+        "png: 8-bit scaled image with a worldfile and PAM sidecar for "
+        "georeferencing - for quick visualisation only, not for analysis "
+        "reuse. Output files take the extension of the chosen format.",
         "Output format", "io", ""};
 
     // --- Spectral options ---
@@ -264,7 +246,19 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string> sf  = pp.get_string_parameters();
 
     const lsdtt::raster_output_format out_fmt =
-        resolve_output_format(sf["write_output_format"]);
+        lsdtt::resolve_raster_output_format(sf["write_output_format"]);
+
+    // The output extension follows the output format: png outputs get a .png
+    // extension, same_as_input inherits the extension of the input raster.
+    std::string output_ext = ".tif";
+    if (out_fmt == lsdtt::raster_output_format::png)
+    {
+        output_ext = ".png";
+    }
+    else if (out_fmt == lsdtt::raster_output_format::same_as_input)
+    {
+        output_ext = pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext();
+    }
 
     std::cout << "Output format       : " << sf["write_output_format"] << "\n";
     std::cout << "Log bin width       : " << ff["spectral_log_bin_width"] << "\n";
@@ -464,7 +458,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            const std::string o = pp.make_output_path( "_psd_2d.tif");
+            const std::string o = pp.make_output_path( "_psd_2d" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 result.psd_2d.get_vector(),
@@ -480,7 +474,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            const std::string o = pp.make_output_path( "_background_psd_2d.tif");
+            const std::string o = pp.make_output_path( "_background_psd_2d" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 result.background_psd_2d.get_vector(),

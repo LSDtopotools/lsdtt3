@@ -66,7 +66,7 @@ The `_relief_cdf.csv` file is always written when `adaptive_relief_threshold` is
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `relief_window_pixels` | int | `5` | Square window size in pixels for local relief (max − min). Must be odd and ≥ 3. |
+| `relief_window_side_pixels` | int | `5` | Full window **side length** in pixels for local relief (max − min). Not a radius: must be odd and ≥ 3, so `5` is a 5×5 neighbourhood. `lsdtt-fluvial-surfaces` spells its equivalent `fallback_relief_window_radius_pixels`, which is a **radius**, so the same number means a different window there. The old name `relief_window_pixels` is accepted as a deprecated alias. |
 
 ---
 
@@ -133,7 +133,7 @@ write_path: /data/output/
 write_fname: my_dem_mountain
 
 # Relief window
-relief_window_pixels: 5
+relief_window_side_pixels: 5
 
 # Adaptive threshold (inspect _relief_cdf.csv to tune)
 adaptive_relief_threshold: true

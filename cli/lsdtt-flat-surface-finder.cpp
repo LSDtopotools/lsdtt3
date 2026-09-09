@@ -145,10 +145,14 @@ int main(int argc, char* argv[])
         "-", "io", ""};
 
     // --- Relief (always on) ---
-    int_default_map["relief_window_pixels"] = 5;
-    help_map["relief_window_pixels"] = {"int","5",
-        "Square window size (pixels) for local relief (max - min) computation.",
-        "Must be odd and >= 3.  5 = 5x5 neighbourhood.",
+    int_default_map["relief_window_side_pixels"] = 5;
+    help_map["relief_window_side_pixels"] = {"int","5",
+        "Full window SIDE LENGTH (pixels) for local relief (max - min).",
+        "This is the side of the square window, not a radius: must be odd and "
+        ">= 3, and 5 means a 5x5 neighbourhood.  Note that "
+        "lsdtt-fluvial-surfaces spells its equivalent "
+        "fallback_relief_window_radius_pixels, which is a RADIUS and so means "
+        "something different for the same number.",
         "Relief (always on)", "param", ""};
 
     float_default_map["relief_threshold_metres"] = 1.0f;
@@ -210,7 +214,7 @@ int main(int argc, char* argv[])
     help_map["admission_slope_window_metres"] = {"float","0",
         "Window diameter (m) of the polynomial fit the admission gradient is "
         "measured over. 0 = match the relief window.",
-        "Defaulting to relief_window_pixels x cell size keeps the two "
+        "Defaulting to relief_window_side_pixels x cell size keeps the two "
         "admission tests commensurate: they then disagree about the ground, "
         "not about the scale they are looking at.",
         "Admission", "param", ""};
@@ -644,6 +648,7 @@ int main(int argc, char* argv[])
          "apply_plane_merges never had any effect and has been removed"} });
 
     pp.set_deprecated_aliases({
+        {"relief_window_pixels",          "relief_window_side_pixels"},
         {"write_combined_flat_mask",      "write_combined_flat_mask_raster"},
         {"write_metric_flat_masks",       "write_metric_flat_mask_rasters"},
         {"test_surface_vector_file",      "test_surface_polygon_fname"},
@@ -765,7 +770,7 @@ int main(int argc, char* argv[])
     req.directional_close_line_length_pixels = 0;
     req.min_component_pixels       = 1;  // all components kept; CLI does its own filtering
     req.cdf_n_bins                 = ip["cdf_n_bins"];
-    req.relief_window_pixels       = ip["relief_window_pixels"];
+    req.relief_window_pixels       = ip["relief_window_side_pixels"];
     req.relief_threshold_metres    = static_cast<double>(ff["relief_threshold_metres"]);
     req.n_threads                  = ip["n_threads"];
     req.test_surface_vector_file   = sf["test_surface_polygon_fname"];
@@ -777,7 +782,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "Computing adaptive relief threshold...\n";
 
-        const int    wpix          = ip["relief_window_pixels"];
+        const int    wpix          = ip["relief_window_side_pixels"];
         const int    half          = (wpix - 1) / 2;
         const double relief_radius = static_cast<double>(std::max(1, half))
                                      * dem.get_meta().cell_size;
@@ -863,7 +868,7 @@ int main(int argc, char* argv[])
             {
                 // Same scale as the relief test, so the two disagree about the
                 // ground rather than about the window they read it through.
-                lambda = static_cast<double>(ip["relief_window_pixels"]) * cell;
+                lambda = static_cast<double>(ip["relief_window_side_pixels"]) * cell;
             }
             if (lambda < cell)
             {
@@ -1380,7 +1385,7 @@ int main(int argc, char* argv[])
         }
         else if (!pa.plane_residual_raster.get_data().empty())
         {
-            const int    wpix   = ip["relief_window_pixels"];
+            const int    wpix   = ip["relief_window_side_pixels"];
             const int    half   = (wpix - 1) / 2;
             const double radius = static_cast<double>(std::max(1, half))
                                   * dem.get_meta().cell_size;

@@ -78,10 +78,15 @@ Selection is one-to-one: once a tip is used in an accepted bridge, it cannot be 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_output_format` | string | `flatgeobuf` | Output format for repaired lines. Supported here: `flatgeobuf`/`fgb`, `gpkg`. |
+| `write_vector_format` | string | `flatgeobuf` | Output **vector** format for repaired lines: `flatgeobuf`/`fgb`, `gpkg`. This is the vector key, not the raster key `write_output_format` used by the raster tools. |
 | `calculate_spatial_index` | bool | `true` | Build spatial index on the repaired output layer. |
 | `road_name_field` | string | `roadName` | Road attribute copied to `crossed_road_name` for road bridges. Falls back internally to `roadNumber` when missing/empty. |
 | `merge_chains` | bool | `false` | Placeholder switch for dissolving connected chains. **Not implemented**; leave false. |
+
+`write_vector_format` was called `write_output_format` in earlier releases. The
+old name still works as a deprecated alias: the value is carried across and a
+warning naming the replacement is printed. Update your parameter files, because
+`write_output_format` means a *raster* format in every other CLI.
 
 ---
 
@@ -97,7 +102,7 @@ Selection is one-to-one: once a tip is used in an accepted bridge, it cannot be 
 
 | File | Written when | Description |
 |---|---|---|
-| `<write_fname>_water_line_repaired.<ext>` | always | Repaired line layer (original features plus inserted bridge segments). `<ext>` from `write_output_format`. |
+| `<write_fname>_water_line_repaired.<ext>` | always | Repaired line layer (original features plus inserted bridge segments). `<ext>` from `write_vector_format`. |
 | `<write_fname>_repair_tips.fgb` | `write_tip_diagnostics: true` | Point diagnostics for dangling tips. |
 
 ---
@@ -137,7 +142,7 @@ input_vector: vml-nr73nw.gpkg
 water_layer: vml-nr73nw_Water_Line
 road_layer: vml-nr73nw_Road_Centreline
 
-write_output_format: gpkg
+write_vector_format: gpkg
 calculate_spatial_index: true
 
 snap_tolerance: 0.5

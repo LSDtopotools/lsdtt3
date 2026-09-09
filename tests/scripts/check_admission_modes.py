@@ -134,7 +134,7 @@ def run_mode(exe: str, work: Path, dem: Path, mode: str, cap: float) -> int:
         f"write_fname: {stem}\n"
         "n_threads: 1\n"
         "write_output_format: gtiff\n"
-        "relief_window_pixels: 5\n"
+        "relief_window_side_pixels: 5\n"
         "adaptive_relief_threshold: false\n"
         "relief_threshold_metres: 4.0\n"
         "min_component_pixels: 1\n"

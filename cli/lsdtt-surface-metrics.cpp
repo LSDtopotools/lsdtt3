@@ -87,28 +87,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// resolve_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::raster_output_format resolve_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "gtiff")
-    {
-        return lsdtt::raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return lsdtt::raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' - defaulting to cog.\n";
-    }
-    return lsdtt::raster_output_format::cog;
-}
-
 
 // -----------------------------------------------------------------------------
 // parse_window_shape
@@ -354,15 +332,23 @@ static std::vector<float> parse_slope_thresholds(const std::string& csv)
 // -----------------------------------------------------------------------------
 static std::string polyfit_metric_suffix(
     lsdtt::polyfit_metric metric,
-    const std::string&    method = "wavelet")
+    const std::string&    method = "wavelet",
+    const std::string&    ext    = ".tif")
 {
     for (const auto& entry : polyfit_metric_table())
     {
         if (entry.metric == metric)
         {
-            // entry.suffix is "_polyfit_xxx.tif"; prepend "_<method>" so
-            // the result is "_wavelet_polyfit_xxx.tif" or "_direct_polyfit_xxx.tif".
-            return std::string("_") + method + entry.suffix;
+            // entry.suffix is "_polyfit_xxx.tif"; prepend "_<method>" and swap
+            // the stored ".tif" for the requested extension so the result is
+            // "_wavelet_polyfit_xxx.tif", "_direct_polyfit_xxx.png", etc.
+            std::string suffix = std::string("_") + method + entry.suffix;
+            if (suffix.size() >= 4 &&
+                suffix.compare(suffix.size() - 4, 4, ".tif") == 0)
+            {
+                suffix.replace(suffix.size() - 4, 4, ext);
+            }
+            return suffix;
         }
     }
 
@@ -414,9 +400,13 @@ int main(int argc, char* argv[])
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
+        "Allowed values: cog, gtiff, same_as_input, png. "
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format.",
+        "same_as_input: match the input raster format. "
+        "png: 8-bit scaled image with a worldfile and PAM sidecar for "
+        "georeferencing - for quick visualisation only, not for analysis "
+        "reuse. Output files take the extension of the chosen format.",
         "Output format", "io", ""};
 
     // --- Hillshade ---
@@ -1068,7 +1058,19 @@ int main(int argc, char* argv[])
 
     const int n_threads = ifs["n_threads"];
     const lsdtt::raster_output_format out_fmt =
-        resolve_output_format(sf["write_output_format"]);
+        lsdtt::resolve_raster_output_format(sf["write_output_format"]);
+
+    // The output extension follows the output format: png outputs get a .png
+    // extension, same_as_input inherits the extension of the input raster.
+    std::string output_ext = ".tif";
+    if (out_fmt == lsdtt::raster_output_format::png)
+    {
+        output_ext = ".png";
+    }
+    else if (out_fmt == lsdtt::raster_output_format::same_as_input)
+    {
+        output_ext = pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext();
+    }
 
     std::cout << "Output format: " << sf["write_output_format"] << "\n";
 
@@ -1099,12 +1101,12 @@ int main(int argc, char* argv[])
         if (pm == "both" || pm == "wavelet")
         {
             for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
-                std::cout << " " << polyfit_metric_suffix(metric, "wavelet");
+                std::cout << " " << polyfit_metric_suffix(metric, "wavelet", output_ext);
         }
         if (pm == "both" || pm == "direct")
         {
             for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
-                std::cout << " " << polyfit_metric_suffix(metric, "direct");
+                std::cout << " " << polyfit_metric_suffix(metric, "direct", output_ext);
         }
         std::cout << "\n";
     }
@@ -1124,6 +1126,17 @@ int main(int argc, char* argv[])
             std::cout << "I am adding slope_degrees to requested polyfit metrics "
                     "because you want me to write_slope_threshold_layers \n";
             requested_polyfit_metrics.push_back(lsdtt::polyfit_metric::slope_degrees);
+        }
+
+        // The threshold layers are built by re-opening the slope_degrees raster
+        // written earlier in this run. png output is 8-bit scaled, so the values
+        // read back would not be slopes in degrees.
+        if (out_fmt == lsdtt::raster_output_format::png)
+        {
+            std::cerr << "Warning: write_slope_threshold_layers re-reads the "
+                         "slope_degrees raster it wrote, but write_output_format "
+                         "is png (8-bit scaled). The thresholds will not be in "
+                         "degrees. Use gtiff or cog for this option.\n";
         }
     }
 
@@ -1231,7 +1244,7 @@ int main(int argc, char* argv[])
                       << std::chrono::duration<double>(hs_t1 - hs_t0).count()
                       << " s)\n";
 
-            const std::string o = pp.make_output_path( "_hillshade.tif");
+            const std::string o = pp.make_output_path( "_hillshade" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 hillshade.get_data(),
@@ -1268,7 +1281,7 @@ int main(int argc, char* argv[])
                     local_relief_shape
                 );
 
-            const std::string o = pp.make_output_path( "_local_relief.tif");
+            const std::string o = pp.make_output_path( "_local_relief" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 local_relief.get_data(),
@@ -1327,12 +1340,12 @@ int main(int argc, char* argv[])
                 };
                 const coeff_entry entries[] =
                 {
-                    {fitted.a, "_" + method_str + "_polyfit_a.tif"},
-                    {fitted.b, "_" + method_str + "_polyfit_b.tif"},
-                    {fitted.c, "_" + method_str + "_polyfit_c.tif"},
-                    {fitted.d, "_" + method_str + "_polyfit_d.tif"},
-                    {fitted.e, "_" + method_str + "_polyfit_e.tif"},
-                    {fitted.f, "_" + method_str + "_polyfit_f.tif"}
+                    {fitted.a, "_" + method_str + "_polyfit_a" + output_ext},
+                    {fitted.b, "_" + method_str + "_polyfit_b" + output_ext},
+                    {fitted.c, "_" + method_str + "_polyfit_c" + output_ext},
+                    {fitted.d, "_" + method_str + "_polyfit_d" + output_ext},
+                    {fitted.e, "_" + method_str + "_polyfit_e" + output_ext},
+                    {fitted.f, "_" + method_str + "_polyfit_f" + output_ext}
                 };
                 for (const auto& entry : entries)
                 {
@@ -1366,7 +1379,7 @@ int main(int argc, char* argv[])
                     if (!metric_result.has(metric)) continue;
 
                     const std::string o =
-                        pp.make_output_path( polyfit_metric_suffix(metric, method_str));
+                        pp.make_output_path( polyfit_metric_suffix(metric, method_str, output_ext));
                     std::cout << "Writing: " << o << "\n";
 
                     const auto write_t0 = std::chrono::steady_clock::now();
@@ -1430,7 +1443,7 @@ int main(int argc, char* argv[])
                             // Write the fundamental-form principal curvatures -
                             // the alternative k_max / k_min this method produces.
                             const std::string o_kmax = pp.make_output_path(
-                                "_" + method_str + "_ff_maximum_curvature.tif");
+                                "_" + method_str + "_ff_maximum_curvature" + output_ext);
                             std::cout << "Writing: " << o_kmax << "\n";
                             loader.write_full(
                                 kmax_r->get_data(), kmax_r->get_meta(),
@@ -1438,7 +1451,7 @@ int main(int argc, char* argv[])
                             );
 
                             const std::string o_kmin = pp.make_output_path(
-                                "_" + method_str + "_ff_minimum_curvature.tif");
+                                "_" + method_str + "_ff_minimum_curvature" + output_ext);
                             std::cout << "Writing: " << o_kmin << "\n";
                             loader.write_full(
                                 kmin_r->get_data(), kmin_r->get_meta(),
@@ -1467,7 +1480,7 @@ int main(int argc, char* argv[])
                         );
 
                     const std::string o_class =
-                        pp.make_output_path("_" + method_str + "_shape_class.tif");
+                        pp.make_output_path("_" + method_str + "_shape_class" + output_ext);
                     std::cout << "Writing: " << o_class << "\n";
                     loader.write_full(
                         shape.shape_class.get_data(),
@@ -1478,7 +1491,7 @@ int main(int argc, char* argv[])
                     if (bf["write_shape_curvature_rasters"])
                     {
                         const std::string o_kg = pp.make_output_path(
-                            "_" + method_str + "_shape_gaussian_curvature.tif");
+                            "_" + method_str + "_shape_gaussian_curvature" + output_ext);
                         std::cout << "Writing: " << o_kg << "\n";
                         loader.write_full(
                             shape.gaussian_curvature.get_data(),
@@ -1487,7 +1500,7 @@ int main(int argc, char* argv[])
                         );
 
                         const std::string o_km = pp.make_output_path(
-                            "_" + method_str + "_shape_mean_curvature.tif");
+                            "_" + method_str + "_shape_mean_curvature" + output_ext);
                         std::cout << "Writing: " << o_km << "\n";
                         loader.write_full(
                             shape.mean_curvature.get_data(),
@@ -1609,7 +1622,7 @@ int main(int argc, char* argv[])
             for (const std::string& method_str : methods)
             {
                 // Build the path to the slope_degrees raster written in Step 3.
-                const std::string slope_input_path = pp.make_output_path(polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str));
+                const std::string slope_input_path = pp.make_output_path(polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str, output_ext));
 
                 std::cout << "\nOpening slope degrees raster: " << slope_input_path << "\n";
 
@@ -1645,7 +1658,7 @@ int main(int argc, char* argv[])
                     // Build output suffix, e.g. "_wavelet_slope_threshold_15.0.tif"
                     const std::string suffix =
                         "_" + method_str + "_slope_threshold_"
-                        + std::to_string(static_cast<int>(threshold)) + ".tif";
+                        + std::to_string(static_cast<int>(threshold)) + output_ext;
                     const std::string o = pp.make_output_path(suffix);
 
                     std::cout << "  Writing: " << o << "\n";
@@ -1678,9 +1691,9 @@ int main(int argc, char* argv[])
                     n_threads
                 );
 
-            const std::string o_or  = pp.make_output_path( "_madk2_or.tif");
-            const std::string o_dmc = pp.make_output_path( "_madk2_dmc.tif");
-            const std::string o_ra  = pp.make_output_path( "_madk2_ra.tif");
+            const std::string o_or  = pp.make_output_path( "_madk2_or" + output_ext);
+            const std::string o_dmc = pp.make_output_path( "_madk2_dmc" + output_ext);
+            const std::string o_ra  = pp.make_output_path( "_madk2_ra" + output_ext);
 
             std::cout << "Writing: " << o_or  << "\n";
             loader.write_full(
@@ -1745,7 +1758,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_frangi_raster"])
             {
-                const std::string o = pp.make_output_path( "_frangi.tif");
+                const std::string o = pp.make_output_path( "_frangi" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     frangi.response.get_data(),
@@ -1757,7 +1770,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_frangi_scale_raster"])
             {
-                const std::string o = pp.make_output_path( "_frangi_scale.tif");
+                const std::string o = pp.make_output_path( "_frangi_scale" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     frangi.best_scale_metres.get_data(),
@@ -1794,7 +1807,7 @@ int main(int argc, char* argv[])
                     0   // disable OpenCV pool; we use n_threads
                 );
 
-            const std::string o = pp.make_output_path( "_otsu.tif");
+            const std::string o = pp.make_output_path( "_otsu" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 otsu_result.get_data(),
@@ -1844,7 +1857,7 @@ int main(int argc, char* argv[])
                     0
                 );
 
-            const std::string o = pp.make_output_path( "_hough_lines.tif");
+            const std::string o = pp.make_output_path( "_hough_lines" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 hough_result.get_data(),
@@ -1897,13 +1910,13 @@ int main(int argc, char* argv[])
 
             // Write the curvature rasters so the user can inspect them
             {
-                const std::string o = pp.make_output_path( "_vec_skeleton_curvature.tif");
+                const std::string o = pp.make_output_path( "_vec_skeleton_curvature" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(vec_raster.get_data(),
                                   vec_raster.get_meta(), o, out_fmt);
             }
             {
-                const std::string o = pp.make_output_path( "_profile_curvature.tif");
+                const std::string o = pp.make_output_path( "_profile_curvature" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(profile_raster.get_data(),
                                   profile_raster.get_meta(), o, out_fmt);
@@ -1935,11 +1948,11 @@ int main(int argc, char* argv[])
                 loader.write_full(r.get_data(), r.get_meta(), o, out_fmt);
             };
 
-            write_r(cskres.vec_binary,       "_vec_skeleton_binary.tif");
-            write_r(cskres.vec_skeleton,     "_vec_skeleton.tif");
-            write_r(cskres.profile_relief,   "_profile_curvature_relief.tif");
-            write_r(cskres.profile_binary,   "_profile_skeleton_binary.tif");
-            write_r(cskres.profile_skeleton, "_profile_skeleton.tif");
+            write_r(cskres.vec_binary,       "_vec_skeleton_binary" + output_ext);
+            write_r(cskres.vec_skeleton,     "_vec_skeleton" + output_ext);
+            write_r(cskres.profile_relief,   "_profile_curvature_relief" + output_ext);
+            write_r(cskres.profile_binary,   "_profile_skeleton_binary" + output_ext);
+            write_r(cskres.profile_skeleton, "_profile_skeleton" + output_ext);
         }
         catch (const std::exception& e)
         {
@@ -1979,7 +1992,7 @@ int main(int argc, char* argv[])
 
             // Write the VEC raster for inspection
             {
-                const std::string o = pp.make_output_path( "_vec_adaptive_curvature.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_curvature" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(vec_raster.get_data(),
                                   vec_raster.get_meta(), o, out_fmt);
@@ -1994,7 +2007,7 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::threshold_adaptive_mean(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
-                const std::string o = pp.make_output_path( "_vec_adaptive_mean.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_mean" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(mean_binary.get_data(),
                                   mean_binary.get_meta(), o, out_fmt);
@@ -2005,7 +2018,7 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::threshold_adaptive_gaussian(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
-                const std::string o = pp.make_output_path( "_vec_adaptive_gaussian.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_gaussian" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(gauss_binary.get_data(),
                                   gauss_binary.get_meta(), o, out_fmt);
@@ -2030,8 +2043,8 @@ int main(int argc, char* argv[])
                     loader.write_full(skel.get_data(), skel.get_meta(), o, out_fmt);
                 };
 
-                make_skeleton(mean_binary,  "_vec_adaptive_mean_skeleton.tif");
-                make_skeleton(gauss_binary, "_vec_adaptive_gaussian_skeleton.tif");
+                make_skeleton(mean_binary,  "_vec_adaptive_mean_skeleton" + output_ext);
+                make_skeleton(gauss_binary, "_vec_adaptive_gaussian_skeleton" + output_ext);
             }
         }
         catch (const std::exception& e)
@@ -2077,7 +2090,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_envelope_raster"])
             {
-                const std::string o = pp.make_output_path( "_cloth_envelope.tif");
+                const std::string o = pp.make_output_path( "_cloth_envelope" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.envelope.get_data(),
@@ -2088,7 +2101,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_incision_raster"])
             {
-                const std::string o = pp.make_output_path( "_cloth_incision.tif");
+                const std::string o = pp.make_output_path( "_cloth_incision" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.incision.get_data(),
@@ -2099,7 +2112,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_crest_mask_raster"])
             {
-                const std::string o = pp.make_output_path( "_cloth_crest_mask.tif");
+                const std::string o = pp.make_output_path( "_cloth_crest_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.crest_mask.get_data(),

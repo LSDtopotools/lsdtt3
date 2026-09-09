@@ -130,7 +130,7 @@ lsdtt::declare_synthetic_domain_parameters(...);
     //           synthetic_crs_wkt
 
 lsdtt::declare_synthetic_noise_parameters(...);
-    // Declares: noise_type, noise_target_stddev, noise_relief,
+    // Declares: noise_type, noise_target_stddev_metres, noise_relief_metres,
     //           diamond_square_roughness, diamond_square_initial_scale
 ```
 

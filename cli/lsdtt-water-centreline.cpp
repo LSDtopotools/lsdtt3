@@ -84,10 +84,16 @@ int main(int argc, char* argv[])
         "Required. e.g. vml-nr73sw_Water_Line.",
         "-", "param", "clip_lines_to_areas"};
 
-    string_default_map["write_output_format"] = "flatgeobuf";
-    help_map["write_output_format"] = {"string","flatgeobuf",
-        "Output vector format.",
-        "flatgeobuf (default) or gpkg.",
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
+        "Output VECTOR format: flatgeobuf or gpkg.",
+        "Governs every vector layer this tool writes. Distinct from the raster "
+        "key write_output_format used by the raster tools: this CLI writes "
+        "vectors only. FlatGeobuf is preferred: it is compact, carries its own "
+        "georeferencing, and does not have GeoPackage's problems writing "
+        "across drives (a common WSL2 situation). GeoPackage is an SQLite "
+        "database, and SQLite cannot take the file locks it needs on a drive "
+        "mounted into WSL2, so a gpkg write there fails.",
         "-", "io", ""};
 
     int_default_map["epsg"] = 27700;
@@ -253,6 +259,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // write_output_format meant a VECTOR format here, but that name means a
+    // RASTER format in every other CLI. Renamed to write_vector_format.
+    pp.set_deprecated_aliases({ {"write_output_format", "write_vector_format"} });
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -271,7 +281,7 @@ int main(int argc, char* argv[])
 
     const std::string input_path = pp.add_read_path_if_needed(sf["input_vector"]);
     lsdtt::vector_output_format out_fmt =
-        lsdtt::resolve_vector_output_format(sf["write_output_format"]);
+        lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
 
     lsdtt::water_centreline_options opt;
     opt.epsg        = ifs["epsg"];

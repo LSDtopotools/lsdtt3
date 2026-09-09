@@ -223,16 +223,6 @@
     },
     {
       "cli": "lsdtt-flat-surface-finder",
-      "parameter": "write_floodplain_mask",
-      "rule": "bool_raster_suffix"
-    },
-    {
-      "cli": "lsdtt-flat-surface-finder",
-      "parameter": "write_residual_relief_labelled_mask",
-      "rule": "bool_raster_suffix"
-    },
-    {
-      "cli": "lsdtt-flat-surface-finder",
       "parameter": "write_slope_break_bridge_mask",
       "rule": "bool_raster_suffix"
     },

@@ -119,7 +119,7 @@ Output files:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format: `cog`, `gtiff`, `same_as_input`. |
+| `write_output_format` | string | `cog` | Raster output format: `cog`, `gtiff`, `same_as_input`, `png`. `png` writes an 8-bit scaled image with a worldfile and PAM sidecar for quick visualisation only, not for analysis reuse. Output files take the extension of the chosen format. |
 
 ---
 

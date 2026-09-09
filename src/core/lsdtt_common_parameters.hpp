@@ -102,8 +102,8 @@
 //   n_rows, n_cols, cell_size_metres              cli/lsdtt-raster-synthetic-tests.cpp
 //   random_seed                                   cli/lsdtt-synthetic-networks.cpp
 //   synthetic_crs_wkt, noise_type,
-//   noise_target_stddev                           cli/lsdtt-lem.cpp
-//   noise_relief, diamond_square_roughness,
+//   noise_target_stddev_metres                           cli/lsdtt-lem.cpp
+//   noise_relief_metres, diamond_square_roughness,
 //   diamond_square_initial_scale                  cli/lsdtt-raster-synthetic-tests.cpp
 //
 // Two names declared here are NOT yet spelled this way by any CLI, and are
@@ -111,9 +111,9 @@
 //
 //   cell_size_metres  (CLIs say `cell_size` / `grid_resolution`; §3 requires
 //       units spelled out)
-//   noise_type / noise_relief  (plan §9.4 names; the closest existing keys are
+//   noise_type / noise_relief_metres  (plan §9.4 names; the closest existing keys are
 //       lem's `initial_surface_type` and raster-synthetic-tests'
-//       `diamond_square_noise_relief`)
+//       `diamond_square_noise_relief_metres`)
 //
 // THE TWO FILL FLAGS ARE NOT THE SAME PARAMETER
 //
@@ -240,8 +240,8 @@ void declare_synthetic_domain_parameters(
 // Synthetic noise surfaces (plan §9.4).
 //
 //   noise_type                    string  "flat"
-//   noise_target_stddev           float   1.0
-//   noise_relief                  float   0.0
+//   noise_target_stddev_metres           float   1.0
+//   noise_relief_metres                  float   0.0
 //   diamond_square_roughness      float   0.55
 //   diamond_square_initial_scale  float   1.0
 // -----------------------------------------------------------------------------
