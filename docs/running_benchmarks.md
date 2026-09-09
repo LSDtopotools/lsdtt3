@@ -1,13 +1,11 @@
 # Running benchmarks on your own system
 
-lsdtt3 ships a benchmark suite that measures how it compares against three
-other topographic-analysis implementations — **RichDEM**, **TopoToolbox** and
-**Whitebox Workflows** — on *your* hardware, on real terrain.
+lsdtt3 includes a benchmark suite that measures how it compares against three
+other topographic analysis implementations — **RichDEM**, **TopoToolbox** and
+**Whitebox Workflows** on *your* hardware, on real terrain.
 
-It is deliberately **not** part of the test suite. `ctest` never runs it, it
-asserts nothing, and it cannot fail a build. Its only product is a
-self-contained directory of measurements you can read, keep, or send to
-somebody else.
+It is deliberately not part of the test suite: the test suite is used to making sure the clis and routines do not break with updates and have the correct implementation. This is a different excercise. `ctest` never runs it  and it cannot fail a build. Its only product is a
+self-contained directory of measurements you can use to see how fast and how memory thirsty the difference implemetaions are. 
 
 If you want the reasoning behind the design — why particular comparisons are
 valid and others are not — see
