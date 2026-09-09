@@ -1,13 +1,11 @@
 # Running benchmarks on your own system
 
-lsdtt3 ships a benchmark suite that measures how it compares against three
-other topographic-analysis implementations — **RichDEM**, **TopoToolbox** and
-**Whitebox Workflows** — on *your* hardware, on real terrain.
+lsdtt3 includes a benchmark suite that measures how it compares against three
+other topographic analysis implementations — **RichDEM**, **TopoToolbox** and
+**Whitebox Workflows** on *your* hardware, on real terrain.
 
-It is deliberately **not** part of the test suite. `ctest` never runs it, it
-asserts nothing, and it cannot fail a build. Its only product is a
-self-contained directory of measurements you can read, keep, or send to
-somebody else.
+It is deliberately not part of the test suite: the test suite is used to making sure the clis and routines do not break with updates and have the correct implementation. This is a different excercise. `ctest` never runs it  and it cannot fail a build. Its only product is a
+self-contained directory of measurements you can use to see how fast and how memory thirsty the difference implemetaions are. 
 
 If you want the reasoning behind the design — why particular comparisons are
 valid and others are not — see
@@ -42,6 +40,34 @@ pixi run bench-laptop --dry-run
 ```sh
 pixi install -e benchmark
 ```
+
+!!! danger "`pixi install` creates the environment. `pixi run` is what uses it."
+    **Always invoke the suite through `pixi run -e benchmark python …`, never
+    through a bare `python`.** `pixi install -e benchmark` only builds the
+    environment; it does not put you in it, and it does not change what `python`
+    means in your shell. If you have a conda environment active — an `(lsdtt3)`
+    prompt, say — a bare `python` is *that* interpreter, which has none of the
+    reference packages.
+
+    The failure is quiet and expensive. Every reference row comes back
+    `skipped`, the lsdtt3 rows all succeed, and the campaign **exits
+    successfully** with a third of the data:
+
+    ```
+    [  19/ 216] accum_d8  topotoolbox  alpine_500  1t  skipped  SKIP: topotoolbox not importable...
+    [  20/ 216] accum_d8  whitebox     alpine_500  1t  skipped  SKIP: whitebox_workflows not importable...
+    ```
+
+    A reference that is installed but *broken* is worse still — it reports
+    `error exit 1` rather than `skipped`. The usual cause is a pip-installed
+    RichDEM: version 0.3.4 pins `numpy<2` and breaks against a newer NumPy.
+    Use the conda-forge build that pixi provides.
+
+    Check before committing to a long run:
+
+    ```sh
+    pixi run -e benchmark python -c "import richdem, topotoolbox, whitebox_workflows; print('all three ok')"
+    ```
 
 This pulls RichDEM and TopoToolbox and Whitebox Workflows at pinned versions.
 It is a large environment (~1.3 GB) because it includes GDAL. All three
@@ -129,14 +155,59 @@ One directory per run, `<profile>_<host>_<timestamp>/`, containing:
 The directory is self-contained: tar it and send it as-is. Everything needed to
 interpret or reproduce the numbers is inside it.
 
+### Which profile you get
+
+**`--profile` defaults to `laptop`.** So a bare invocation is a laptop run, and
+the `server` profile always has to be asked for:
+
+```sh
+pixi run bench-laptop                                          # laptop, explicitly
+pixi run bench-server                                          # server, explicitly
+
+# the same two, spelled out
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py --profile server
+```
+
+The two pixi tasks are just those calls with `--profile` filled in. If you are
+not sure which one a directory came from, `run_manifest.json` records the
+profile and the exact command line.
+
 ### Where it gets written
 
 ```sh
-pixi run bench-laptop                                    # into the repo
-python tests/scripts/run_benchmark_suite.py --out-dir .  # into the current directory
+pixi run bench-laptop                                       # into the repo
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
+    --profile laptop --out-dir .                            # into the current directory
 ```
 
 A relative `--out-dir` resolves against the **current directory**.
+
+!!! note "`--out-dir` and `--build-dir` resolve against *different* places"
+    This catches people, so it is worth stating plainly:
+
+    | flag | a relative value resolves against |
+    |---|---|
+    | `--out-dir` | the **current directory** |
+    | `--fixture-dir` | the **current directory** |
+    | `--build-dir` | the **repository root**, derived from the script's own path |
+
+    So the default `--build-dir build` means `<repo>/build` **no matter where
+    you run from**. The binaries do *not* need to be on `$PATH`, and you do not
+    need to be in the repository — running the script by its full path from
+    a data directory finds them. Point `--build-dir` somewhere else only if you
+    built out of tree.
+
+    If a binary is missing the suite says so before measuring anything:
+
+    ```
+    WARNING: not found in /path/to/lsdtt3/build: lsdtt-chi-analysis
+             lsdtt3 rows for those cases will be 'unavailable'.
+             Build them, or pass --build-dir.
+    ```
+
+    Read that line. A campaign whose lsdtt3 rows are all `unavailable` still
+    exits successfully.
 
 !!! warning "pixi runs tasks from the repository root"
     `pixi run bench-server --out-dir results` puts results in the *repo*, not
@@ -571,7 +642,7 @@ result, it is a wrong one, and it looks exactly like a real scaling ceiling.
 ## Customising a run
 
 ```sh
-python tests/scripts/run_benchmark_suite.py --profile server \
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py --profile server \
     --regions alpine --ladder 1000,2000 --threads 1,4 --cases fill,breach
 ```
 

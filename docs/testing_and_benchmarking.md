@@ -6264,6 +6264,50 @@ sub-interval read -- while Whitebox rises roughly linearly, which is the
 per-nesting-level cost its `unnest_basins` design makes explicit. That is the
 shape the case was built to expose. The magnitudes need a server.
 
+### RichDEM was excluded from the surface comparison on a false premise (2026-09-08)
+
+The case registry's comment gave "RichDEM has no slope tool" as its example of
+why an engine may be absent from a case. **It has one.** RichDEM 2.3.0's
+`rd.TerrainAttribute` offers `slope_riserun`, `slope_percentage`,
+`slope_degrees`, `slope_radians`, `planform_curvature` and
+`profile_curvature` — most of what `slope_only` and `polyfit_all` compare.
+
+So the surface-metric comparison has been running with **three engines where
+four were available**, because a code comment asserted a capability limit that
+was never checked against the package. Found while auditing why TopoToolbox had
+no D-infinity or MFD rows.
+
+The TopoToolbox absences are real **but they are about the PYTHON BINDING, not
+about TopoToolbox**, and getting that wrong in a paper would be caught
+instantly by anyone who uses the MATLAB version:
+
+| case | engine | why |
+|---|---|---|
+| `accum_dinf`, `accum_mfd` | topotoolbox | not bound in the Python package 0.0.12 — `FlowObject` takes `method='d8'` only. **TopoToolbox 3 implements both in MATLAB** (`md/usersguide_3_mfd.md`) |
+| `fill_epsilon` | topotoolbox | not bound in 0.0.12 — `fillsinks(bc, hybrid)` takes no flat-increment argument |
+
+So the correct statement is **"D-infinity and MFD are not reachable through the
+TopoToolbox Python package at 0.0.12"**, not "TopoToolbox does not implement
+them". An earlier draft of this section said the latter. It was wrong.
+
+**This scopes the whole comparison and the paper must say so.** Three of the
+four engines are driven through Python bindings and the fourth (lsdtt3) through
+its CLI. The TopoToolbox binding in particular is at **0.0.12** — early, and
+exposing a fraction of TopoToolbox 3. Coverage and performance measured here
+characterise *those interfaces*, which for TopoToolbox is not the interface most
+of its users have.
+
+`SUMMARY.md` now distinguishes the two cases: `n/a` means the package cannot do
+it, `-` means no comparable row was produced. They had been the same mark. The
+engine also keeps its column when every one of its cells is `n/a`, which it
+previously lost — dropping the column made "cannot" look like "never
+considered".
+
+**Outstanding:** add RichDEM to `slope_only` and `polyfit_all`. Its curvature
+definitions must be checked against lsdtt3's before the rows are treated as
+comparable, so this is a case-registry change with a comparability question
+attached, not a one-line addition.
+
 ### Consequence for recorded campaigns
 
 `run_benchmark_suite.py`'s `accum_d8` case is `needs_filled`, so its Whitebox
