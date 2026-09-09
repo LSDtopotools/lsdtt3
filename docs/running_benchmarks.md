@@ -598,6 +598,11 @@ both the campaign and the DEM cache default there.
 The same rule applies without Slurm: `$PWD` stands in for the submit directory,
 so `cd` to where you want the results and run the suite directly.
 
+**This rule covers `run_benchmark_suite.py` only.** The other two drivers
+default into `build/` regardless of where you run them from, and must be given
+`--out-dir` and `--fixture-dir` explicitly — see
+[the other two drivers](#putting-their-output-in-your-campaign-directory).
+
 ### Under Slurm
 
 `tests/scripts/slurm_benchmark.sbatch` contains **no measurement logic**. It
@@ -674,6 +679,84 @@ The campaign above is the cross-package speed comparison. Two smaller drivers
 answer questions it cannot, and both run the same way on a server as anywhere
 else.
 
+### Putting their output in your campaign directory
+
+**Read this before running either one.** Unlike `run_benchmark_suite.py`, these
+two do **not** create a timestamped campaign directory for you, and their
+defaults write *inside the repository*:
+
+| driver | results default to | fixtures default to |
+|---|---|---|
+| `run_benchmark_suite.py` | `./benchmark_campaigns/<profile>_<host>_<stamp>/` | `<out-dir>/benchmark_fixtures/` |
+| `run_flow_benchmark.py` | `build/flow_benchmark/` | `tests/data/dem_cache/` |
+| `run_svector_benchmark.py` | `build/svector_benchmark/<fixture>_<stamp>/` | `tests/data/dem_cache/` |
+
+Both take `--out-dir` and `--fixture-dir` to override that. Pointing them at
+the directory the suite already made keeps one run in one place, and — the part
+that actually matters on a server — makes all three drivers **share one fixture
+cache**, so the DEMs are downloaded once rather than once per driver.
+
+Say your campaign is the one the suite just printed:
+
+```sh
+CAMPAIGN=$PWD/benchmark_campaigns/server_myhost_20260909_101147
+FIXTURES=$PWD/benchmark_campaigns/benchmark_fixtures
+```
+
+Then:
+
+```sh
+# correctness -> $CAMPAIGN/flow_benchmark/
+pixi run -e benchmark python tests/scripts/run_flow_benchmark.py \
+    --exe build/lsdtt-raster-preprocessing \
+    --drainage-exe build/lsdtt-drainage-analysis \
+    --fetch-exe build/lsdtt-fetch-raster \
+    --out-dir "$CAMPAIGN/flow_benchmark" \
+    --fixture-dir "$FIXTURES" \
+    --check
+
+# s-vector payoff -> $CAMPAIGN/svector_benchmark/
+pixi run -e benchmark python tests/scripts/run_svector_benchmark.py \
+    --build-dir build \
+    --out-dir "$CAMPAIGN/svector_benchmark" \
+    --fixture-dir "$FIXTURES" \
+    --depths 1,2,3,4,5
+```
+
+Afterwards the campaign holds everything:
+
+```text
+benchmark_campaigns/
+├── benchmark_fixtures/              # shared by all three drivers
+└── server_myhost_20260909_101147/
+    ├── SUMMARY.md                   # from run_benchmark_suite.py
+    ├── benchmark_raw.csv
+    ├── flow_benchmark/
+    │   ├── benchmark_results.csv    # value comparisons
+    │   └── <fixture>_<case>/        # staged rasters and reference caches
+    └── svector_benchmark/
+        ├── svector_benchmark.csv
+        └── run_manifest.json
+```
+
+Three things to know about these flags:
+
+- `--out-dir` on `run_flow_benchmark.py` is **results and scratch together**.
+  It holds `benchmark_results.csv` alongside staged filled DEMs and one output
+  cache per reference package, which runs to hundreds of MB on the larger
+  fixtures. Give it room. `--work-dir` is the original spelling of the same
+  flag and still works.
+- `--out-dir` on `run_svector_benchmark.py` is used **verbatim** — it does not
+  append a timestamp the way the default does. Re-running with the same path
+  appends to the existing `svector_benchmark.csv` rather than replacing it. Use
+  a fresh path per run, or delete the CSV first.
+- `--fixture-dir` on `run_flow_benchmark.py` is where fixtures are **fetched
+  to** as well as read from, so it needs to be writable. On
+  `run_svector_benchmark.py` it is read-only: that driver never downloads. Its
+  `basins` and `chi` cases need the fixture to exist already — run the flow
+  driver once first — and its `chi_value` case generates its own synthetic
+  island and ignores `--fixture-dir` entirely.
+
 ### Correctness, not speed
 
 ```sh
@@ -697,6 +780,9 @@ nothing.
 pixi run -e benchmark python tests/scripts/run_svector_benchmark.py \
     --build-dir build --depths 1,2,3,4,5
 ```
+
+(Add `--out-dir` and `--fixture-dir` as above to keep the output with the rest
+of the campaign; without them this writes to `build/svector_benchmark/`.)
 
 lsdtt3 stores each cell's upslope set as a contiguous interval. That costs about
 57 % of the D8 build and ~24 of the ~43 bytes per cell; the campaign measures

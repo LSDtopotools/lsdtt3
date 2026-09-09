@@ -658,7 +658,22 @@ def main() -> int:
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--timeout-seconds", type=float, default=1800.0)
     ap.add_argument("--python-exe", default=sys.executable)
-    ap.add_argument("--out-dir", default="")
+    ap.add_argument("--out-dir", default="",
+                    help="results and scratch directory. Default "
+                         "build/svector_benchmark/<fixture>_<timestamp>. Give "
+                         "the campaign directory to keep everything together; "
+                         "a timestamped subdirectory is NOT added when you "
+                         "name it, so use a distinct path per run or the CSV "
+                         "is appended to.")
+    ap.add_argument("--fixture-dir", default="",
+                    help="where fixture DEMs are looked for. Default "
+                         "tests/data/dem_cache inside the repo. Point it at "
+                         "the campaign's benchmark_fixtures directory to share "
+                         "the cache with run_benchmark_suite.py. This driver "
+                         "never downloads: the `basins` and `chi` cases need "
+                         "the fixture to exist already (run_flow_benchmark.py "
+                         "fetches it), and `chi_value` generates its own "
+                         "synthetic island and ignores this entirely.")
     ap.add_argument("--cases", default="basins,chi,chi_value")
     ap.add_argument("--check", action="store_true",
                     help="enforce CHI_VALUE_TOLERANCES and exit non-zero on a "
@@ -668,10 +683,14 @@ def main() -> int:
     args = ap.parse_args()
 
     build_dir = pathlib.Path(args.build_dir).resolve()
-    fixture = FIXTURE_DIR / f"{args.fixture}.tif"
+    fixture_dir = pathlib.Path(args.fixture_dir).resolve() if args.fixture_dir \
+        else FIXTURE_DIR
+    fixture = fixture_dir / f"{args.fixture}.tif"
     if not fixture.exists():
         die_skip(f"fixture {fixture} not found; run the flow benchmark once "
-                 f"to fetch it")
+                 f"to fetch it, or pass --fixture-dir pointing at the "
+                 f"directory that already holds it. (The chi_value case does "
+                 f"not need it -- run --cases chi_value on its own.)")
     for exe in ("lsdtt-raster-preprocessing", "lsdtt-channel-extraction",
                 "lsdtt-basin-extraction"):
         if not (build_dir / exe).exists():
