@@ -476,20 +476,71 @@ int main(int argc, char* argv[])
     ds_opts.contributing_pixels_threshold = 
         ifs["basin_outlet_contributing_pixels_threshold"];
 
+    // An outlet must end up ON THE CHANNEL NETWORK, not merely on a valid cell.
+    // This tool builds lsdtt_junction_basin objects, and those resolve the
+    // outlet through junction_upstream_of_flat, which throws
+    // "flat index is not on the channel network" for anything else. Snapping
+    // guarantees a CONTRIBUTING-PIXEL COUNT, which is a different thing: a cell
+    // can carry plenty of upslope area and still not be a network cell.
+    //
+    // Previously a failed snap silently kept the unsnapped pixel, the only test
+    // was is_valid_cell, and a single bad outlet aborted the whole run with an
+    // uncaught exception -- losing all buffered output with it. Now every
+    // rejection is per-outlet, reported, and skipped, which is what
+    // lsdtt-basin-stats has always done with the same input.
+    std::size_t n_skipped = 0;
+
     for (const auto& out : requested_outlets) {
-        if (out.status != lsdtt::lsdtt_point_input_status::success) continue;
+        if (out.status != lsdtt::lsdtt_point_input_status::success) {
+            std::cerr << "Warning: outlet " << out.point_id
+                      << " did not map to an in-bounds raster pixel; skipping.\n";
+            ++n_skipped;
+            continue;
+        }
+
         int r = out.row, c = out.col;
         std::int64_t f = out.flat;
 
         if (snap_method == "downstream") {
-            auto snapped = 
+            auto snapped =
                 lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
                     *flow, r, c, ds_opts);
-            if (snapped.status == lsdtt::lsdtt_snap_status::success) {
-                f = snapped.snapped_flat;
+            if (snapped.status != lsdtt::lsdtt_snap_status::success) {
+                std::cerr << "Warning: outlet " << out.point_id
+                          << " could not be snapped downstream ("
+                          << lsdtt::snap_status_to_string(snapped.status)
+                          << "); skipping.\n";
+                ++n_skipped;
+                continue;
             }
-        } 
-        if (flow->is_valid_cell(f)) valid_outlet_flats.push_back(f);
+            f = snapped.snapped_flat;
+        }
+
+        if (!flow->is_valid_cell(f)) {
+            std::cerr << "Warning: outlet " << out.point_id
+                      << " maps to an invalid or nodata flow pixel; skipping.\n";
+            ++n_skipped;
+            continue;
+        }
+
+        if (!channel_network->is_channel(f)) {
+            std::cerr << "Warning: outlet " << out.point_id
+                      << " does not lie on the channel network after snapping "
+                         "(source_pixels_threshold = "
+                      << ifs["source_pixels_threshold"]
+                      << "); skipping. Lower source_pixels_threshold to extend "
+                         "the network towards this outlet, or move the outlet "
+                         "onto a mapped channel.\n";
+            ++n_skipped;
+            continue;
+        }
+
+        valid_outlet_flats.push_back(f);
+    }
+
+    if (n_skipped > 0) {
+        std::cout << "Outlets skipped: " << n_skipped << " of "
+                  << requested_outlets.size() << "\n";
     }
 
     if (valid_outlet_flats.empty()) {

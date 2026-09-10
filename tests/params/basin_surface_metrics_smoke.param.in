@@ -5,12 +5,12 @@
 # "the tool's actual science". Both are exercised here, over TWO lambda scales,
 # so the per-lambda column expansion is covered as well as the metrics.
 #
-# The outlets are the 25 INTERIOR points of the basin-stats set. The four
-# edge-adjacent ones are deliberately excluded: this CLI aborts on them with an
-# uncaught std::runtime_error from junction_upstream_of_flat ("flat index is not
-# on the channel network"). See the plan -- outlet snapping guarantees a
-# contributing-pixel count, not membership of the junction network, and one bad
-# outlet takes down the whole run.
+# Uses the FULL basin-stats outlet set, including the ones that cannot be
+# resolved. One of them fails to snap, so the run also covers the warn-and-skip
+# path -- which is the point: this CLI used to abort with an uncaught
+# std::runtime_error from junction_upstream_of_flat when an outlet did not land
+# on the channel network, taking the whole run down and losing all buffered
+# output. Outlet resolution now rejects per-outlet and reports why.
 read_path: __READ_PATH__
 read_fname: basin_stats_diamond_square.tif
 write_path: __WRITE_PATH__
@@ -18,7 +18,7 @@ write_fname: bsm
 
 write_output_format: gtiff
 
-basin_outlet_csv: __READ_PATH__/basin_surface_metrics_outlets.csv
+basin_outlet_csv: __READ_PATH__/basin_stats_outlets.csv
 basin_outlet_snapping_method: downstream
 basin_outlet_contributing_pixels_threshold: 150
 source_pixels_threshold: 150

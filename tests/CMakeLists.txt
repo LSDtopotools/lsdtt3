@@ -437,15 +437,6 @@ add_lsdtt_cli_smoke_test(
 # Both reuse the basin-stats fixture DEM. The outlet set is committed separately
 # and is INTERIOR ONLY: see basin_surface_metrics_smoke.param.in for why.
 # =============================================================================
-add_test(NAME fixture_basin_surface_metrics_outlets
-    COMMAND ${CMAKE_COMMAND} -E copy
-        "${LSDTT_TEST_DATA_DIR}/basin_surface_metrics_outlets.csv"
-        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_surface_metrics_outlets.csv")
-set_tests_properties(fixture_basin_surface_metrics_outlets PROPERTIES
-    LABELS "fixture;basin_surface_metrics"
-    FIXTURES_SETUP basin_stats_fixture
-    DEPENDS fixture_basin_stats_dem)
-
 add_test(NAME smoke_basin_surface_metrics
     COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
         --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
@@ -463,11 +454,14 @@ add_test(NAME smoke_basin_surface_metrics
         --expect-file-contains "bsm_outline_curvature_flips.csv:N_flips_lambda60"
         --expect-file-contains "bsm_outline_curvature_flips.csv:N_flips_lambda120"
         --expect-file-contains "bsm_slope_area_stats.csv:A_max_slope_lambda120"
+        # The warn-and-skip path: one outlet in this set cannot be snapped, and
+        # the run must carry on rather than abort.
+        --expect-file-contains "../stderr.log:could not be snapped downstream"
         # ORACLES for C12, not numeric standards: they say the sign-flip counting
         # and the slope-area analysis did not change when those ~160 lines moved
         # out of main(). Re-freeze deliberately if a change is intended.
-        --expect-sha256 bsm_outline_curvature_flips.csv:2376c65b07b2c2e02fe927a81342455d696d11aa969122792cb6b4d150defdbe
-        --expect-sha256 bsm_slope_area_stats.csv:06fbb4310b0638f843f5cbec5e47a70db53dd6f09222d6db5e5043018cc71e6d)
+        --expect-sha256 bsm_outline_curvature_flips.csv:994b77c5706e32d20ba4a9f7f1eba1c0516d9ad9d489113d3155151ec74f791f
+        --expect-sha256 bsm_slope_area_stats.csv:2abfaff6b6482336c50a141f5d3aad70e974f52b25441028b474cc498bdaf949)
 set_tests_properties(smoke_basin_surface_metrics PROPERTIES
     LABELS "smoke;cli;basin_surface_metrics"
     FIXTURES_REQUIRED basin_stats_fixture)
