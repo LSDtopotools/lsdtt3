@@ -99,6 +99,17 @@ std::string csv_trim(const std::string& s);
 // column.
 std::vector<std::string> csv_split_row(const std::string& row);
 
+// Split one line into fields AND trim each one -- csv_split_row followed by
+// csv_trim on every field.
+//
+// This is what a caller reading a CSV by hand almost always wants, and it is
+// what load_csv_table does internally. It exists as a named function because
+// four CLIs had each grown their own splitter, and unifying them on
+// csv_split_row alone simply moved the duplication: each then needed the same
+// three-line trim loop. Reach for csv_split_row directly only when you have a
+// reason to keep the surrounding whitespace on a field.
+std::vector<std::string> csv_split_row_trimmed(const std::string& row);
+
 // Throws std::runtime_error if the file cannot be opened, is empty, or has no
 // header columns. Blank lines in the body are skipped.
 lsdtt_csv_table load_csv_table(const std::string& path);

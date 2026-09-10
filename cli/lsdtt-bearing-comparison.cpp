@@ -32,6 +32,7 @@
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/utils/lsdtt_statistical_tests.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -55,25 +56,6 @@ static void print_banner()
 }
 
 
-// -----------------------------------------------------------------------------
-// Minimal CSV column reader: returns the values of `column` (as doubles),
-// optionally keeping only rows where `filter_column` == filter_value.
-// -----------------------------------------------------------------------------
-static std::vector<std::string> split_csv_line(const std::string& line)
-{
-    std::vector<std::string> fields;
-    std::string field;
-    std::stringstream ss(line);
-    while (std::getline(ss, field, ','))
-    {
-        if (!field.empty() && field.back() == '\r')   // strip Windows CR
-        {
-            field.pop_back();
-        }
-        fields.push_back(field);
-    }
-    return fields;
-}
 
 static int index_of(const std::vector<std::string>& v, const std::string& name)
 {
@@ -86,6 +68,7 @@ static int index_of(const std::vector<std::string>& v, const std::string& name)
     }
     return -1;
 }
+
 
 static std::vector<double> read_csv_column(
     const std::string& path,
@@ -104,7 +87,7 @@ static std::vector<double> read_csv_column(
     {
         throw std::runtime_error("CSV file is empty: " + path);
     }
-    const std::vector<std::string> headers = split_csv_line(header_line);
+    const std::vector<std::string> headers = lsdtt::csv_split_row_trimmed(header_line);
 
     const int col = index_of(headers, column);
     if (col < 0)
@@ -127,7 +110,7 @@ static std::vector<double> read_csv_column(
         {
             continue;
         }
-        const std::vector<std::string> fields = split_csv_line(line);
+        const std::vector<std::string> fields = lsdtt::csv_split_row_trimmed(line);
         if (static_cast<int>(fields.size()) <= col)
         {
             continue;

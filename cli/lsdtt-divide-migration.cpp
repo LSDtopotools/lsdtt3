@@ -60,6 +60,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -96,54 +97,7 @@ static bool cluster_field_is_set(const std::string& field_name)
     return lsdtt::to_lower_ascii(field_name) != "null";
 }
 
-// Split one CSV row into fields. Double-quoted fields may contain commas and
-// escaped quotes (""), so a label such as "Loch Etive, north" stays in a single
-// column instead of silently shifting every field after it.
-static std::vector<std::string> split_csv_row_simple(const std::string& row)
-{
-    std::vector<std::string> cols;
-    std::string token;
-    bool in_quotes = false;
 
-    for (std::size_t i = 0; i < row.size(); ++i)
-    {
-        const char c = row[i];
-        if (in_quotes)
-        {
-            if (c == '"')
-            {
-                if (i + 1 < row.size() && row[i + 1] == '"')
-                {
-                    token.push_back('"');
-                    ++i;
-                }
-                else
-                {
-                    in_quotes = false;
-                }
-            }
-            else
-            {
-                token.push_back(c);
-            }
-        }
-        else if (c == '"')
-        {
-            in_quotes = true;
-        }
-        else if (c == ',')
-        {
-            cols.push_back(token);
-            token.clear();
-        }
-        else if (c != '\r')
-        {
-            token.push_back(c);
-        }
-    }
-    cols.push_back(token);
-    return cols;
-}
 
 static std::vector<std::string> load_cluster_values_from_csv(
     const std::string& csv_path,
@@ -161,7 +115,7 @@ static std::vector<std::string> load_cluster_values_from_csv(
         throw std::runtime_error("CSV cluster file is empty: " + csv_path);
     }
 
-    const std::vector<std::string> headers = split_csv_row_simple(header);
+    const std::vector<std::string> headers = lsdtt::csv_split_row_trimmed(header);
     int cluster_col = -1;
     for (std::size_t i = 0; i < headers.size(); ++i)
     {
@@ -194,7 +148,7 @@ static std::vector<std::string> load_cluster_values_from_csv(
     while (std::getline(in, row))
     {
         if (row.empty()) continue;
-        const std::vector<std::string> cols = split_csv_row_simple(row);
+        const std::vector<std::string> cols = lsdtt::csv_split_row_trimmed(row);
         if (cluster_col < static_cast<int>(cols.size()))
         {
             values.emplace_back(cols[static_cast<std::size_t>(cluster_col)]);

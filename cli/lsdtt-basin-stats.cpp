@@ -86,6 +86,7 @@
 #include "../src/utils/lsdtt_histogram.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 
 
 static const std::string k_version  = "0.3.0";
@@ -1268,32 +1269,11 @@ int main(int argc, char* argv[])
         std::ifstream csv_in(basin_csv_path);
         if (csv_in)
         {
-            auto split_csv_line = [](const std::string& line)
-            {
-                std::vector<std::string> fields;
-                std::stringstream ss(line);
-                std::string field;
-                while (std::getline(ss, field, ','))
-                {
-                    // trim leading/trailing whitespace and carriage returns
-                    const auto first = field.find_first_not_of(" \t\r");
-                    const auto last  = field.find_last_not_of(" \t\r");
-                    if (first == std::string::npos)
-                    {
-                        fields.emplace_back("");
-                    }
-                    else
-                    {
-                        fields.emplace_back(field.substr(first, last - first + 1));
-                    }
-                }
-                return fields;
-            };
 
             std::string line;
             if (std::getline(csv_in, line))
             {
-                const auto header = split_csv_line(line);
+                const auto header = lsdtt::csv_split_row_trimmed(line);
                 int gauge_id_col   = -1;
                 int gauge_name_col = -1;
 
@@ -1319,7 +1299,7 @@ int main(int argc, char* argv[])
                         continue;
                     }
 
-                    const auto fields = split_csv_line(line);
+                    const auto fields = lsdtt::csv_split_row_trimmed(line);
 
                     gauge_id_vec.push_back(
                         (gauge_id_col >= 0 &&

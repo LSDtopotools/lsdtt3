@@ -91,6 +91,13 @@ std::vector<std::string> csv_split_row(const std::string& row)
     return out;
 }
 
+std::vector<std::string> csv_split_row_trimmed(const std::string& row)
+{
+    std::vector<std::string> fields = csv_split_row(row);
+    for (std::string& f : fields) f = csv_trim(f);
+    return fields;
+}
+
 lsdtt_csv_table load_csv_table(const std::string& path)
 {
     std::ifstream f(path);
@@ -102,8 +109,8 @@ lsdtt_csv_table load_csv_table(const std::string& path)
     if (!std::getline(f, line))
         throw std::runtime_error("Input CSV is empty: " + path);
 
-    for (const std::string& tok : csv_split_row(line))
-        t.headers.push_back(csv_trim(tok));
+    for (const std::string& tok : csv_split_row_trimmed(line))
+        t.headers.push_back(tok);
     if (t.headers.empty())
         throw std::runtime_error("Input CSV has no header columns: " + path);
 

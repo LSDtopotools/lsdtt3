@@ -83,6 +83,7 @@
 #include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 #include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -99,22 +100,7 @@ struct raster_attribute_request
     std::string attribute_name;
 };
 
-static std::vector<std::string> split_csv_simple(const std::string& line)
-{
-    std::vector<std::string> tokens;
-    std::stringstream ss(line);
-    std::string item;
 
-    while (std::getline(ss, item, ','))
-    {
-        // trim leading/trailing whitespace
-        const auto first = item.find_first_not_of(" \t\r\n");
-        const auto last  = item.find_last_not_of(" \t\r\n");
-        if (first == std::string::npos) tokens.push_back("");
-        else tokens.push_back(item.substr(first, last - first + 1));
-    }
-    return tokens;
-}
 
 
 static std::vector<raster_attribute_request> read_raster_attribute_csv(
@@ -137,7 +123,7 @@ static std::vector<raster_attribute_request> read_raster_attribute_csv(
         );
     }
 
-    auto header = split_csv_simple(header_line);
+    auto header = lsdtt::csv_split_row_trimmed(header_line);
 
     int raster_col = -1;
     int attr_col   = -1;
@@ -163,7 +149,7 @@ static std::vector<raster_attribute_request> read_raster_attribute_csv(
     {
         if (line.empty()) continue;
 
-        auto tokens = split_csv_simple(line);
+        auto tokens = lsdtt::csv_split_row_trimmed(line);
         if (static_cast<int>(tokens.size()) <= std::max(raster_col, attr_col))
         {
             continue;
