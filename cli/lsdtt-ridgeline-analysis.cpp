@@ -112,93 +112,6 @@ struct lsdtt_ridgeline_record {
 
 
 
-// =============================================================================
-// Helper: Wraps a periodic DEM with a 1-px pad so 3x3 windows hit the borders
-// =============================================================================
-static lsdtt::poly_fit_coeffs run_raw_dem_3x3_polyfit_with_bcs(
-    const lsdtt::lsdtt_raster_cpu& dem,
-    const std::string&             bcs,
-    int                            n_threads)
-{
-    bool p_ns = (bcs.size() >= 4 && std::tolower(static_cast<unsigned char>(bcs[0])) == 'p' && 
-                                    std::tolower(static_cast<unsigned char>(bcs[2])) == 'p');
-    bool p_ew = (bcs.size() >= 4 && std::tolower(static_cast<unsigned char>(bcs[1])) == 'p' && 
-                                    std::tolower(static_cast<unsigned char>(bcs[3])) == 'p');
-
-    // If there is no periodicity, a straight execution is fine
-    if (!p_ns && !p_ew) {
-        return lsdtt::direct_polyfit(dem, dem.get_meta().cell_size, n_threads);
-    }
-
-    const auto& meta = dem.get_meta();
-    int nrows = meta.n_rows;
-    int ncols = meta.n_cols;
-    int p_rows = nrows + 2; // Pad top and bottom
-    int p_cols = ncols + 2; // Pad left and right
-
-    std::vector<float>   p_data(p_rows * p_cols, static_cast<float>(meta.no_data_value));
-    std::vector<uint8_t> p_mask(p_rows * p_cols, 0);
-
-    const auto& orig_data = dem.get_data();
-    const auto& orig_mask = dem.get_mask();
-
-    auto wrap = [](int idx, int max_val, bool is_p) {
-        if (is_p) return (idx % max_val + max_val) % max_val;
-        return (idx >= 0 && idx < max_val) ? idx : -1;
-    };
-
-    // Pad the DEM taking boundary conditions into account
-    for (int r = -1; r <= nrows; ++r) {
-        for (int c = -1; c <= ncols; ++c) {
-            int wr = wrap(r, nrows, p_ns);
-            int wc = wrap(c, ncols, p_ew);
-
-            if (wr != -1 && wc != -1) {
-                std::size_t orig_idx = wr * ncols + wc;
-                std::size_t p_idx    = (r + 1) * p_cols + (c + 1);
-                p_data[p_idx] = orig_data[orig_idx];
-                p_mask[p_idx] = orig_mask[orig_idx];
-            }
-        }
-    }
-
-    lsdtt::lsdtt_raster_meta p_meta = meta;
-    p_meta.n_rows = p_rows;
-    p_meta.n_cols = p_cols;
-    lsdtt::lsdtt_raster_cpu padded_dem(std::move(p_data), std::move(p_mask), p_meta);
-
-    // Evaluate direct_polyfit strictly clamped to cell_size on the padded geometry
-    auto p_fit = lsdtt::direct_polyfit(padded_dem, meta.cell_size, n_threads);
-
-    // Cropping lambda
-    auto crop_raster = [&](const lsdtt::lsdtt_raster_cpu& p_rast) {
-        std::vector<float>   c_data(nrows * ncols, static_cast<float>(meta.no_data_value));
-        std::vector<uint8_t> c_mask(nrows * ncols, 0);
-        const auto& pd = p_rast.get_data();
-        const auto& pm = p_rast.get_mask();
-
-        for (int r = 0; r < nrows; ++r) {
-            for (int c = 0; c < ncols; ++c) {
-                std::size_t p_idx = (r + 1) * p_cols + (c + 1);
-                std::size_t c_idx = r * ncols + c;
-                c_data[c_idx] = pd[p_idx];
-                c_mask[c_idx] = pm[p_idx];
-            }
-        }
-        return lsdtt::lsdtt_raster_cpu(std::move(c_data), std::move(c_mask), meta);
-    };
-
-    // Strip the padding away to return the arrays exact original resolution
-    lsdtt::poly_fit_coeffs final_fit;
-    final_fit.a = crop_raster(p_fit.a);
-    final_fit.b = crop_raster(p_fit.b);
-    final_fit.c = crop_raster(p_fit.c);
-    final_fit.d = crop_raster(p_fit.d);
-    final_fit.e = crop_raster(p_fit.e);
-    final_fit.f = crop_raster(p_fit.f);
-
-    return final_fit;
-}
 
 
 // -----------------------------------------------------------------------------
@@ -258,164 +171,9 @@ parse_corner_coordinates_csv(
     return valid_corners;
 }
 
-// =============================================================================
-// resolve_dem_corners
-//
-// Automatically finds the 4 corners of the active DEM mask. This supports both
-// strictly rectangular grids AND internal sinuous/non-rectangular domains 
-// efficiently without needing external CSVs.
-// =============================================================================
-static std::array<std::int64_t, 4> resolve_dem_corners(
-    const lsdtt::lsdtt_raster_cpu& dem)
-{
-    std::cout << "\n--- Resolving DEM corners for segmenting boundaries ---\n";
-
-    const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
-    const int n_rows = m.n_rows;
-    const int n_cols = m.n_cols;
-    const auto& mask = dem.get_mask_array();
-
-    int nw_row = -1, ne_row = -1, sw_row = -1, se_row = -1;
-
-    // Scan column 0 for NW (top to bottom)
-    for (int r = 0; r < n_rows; ++r) {
-        if (mask(r, 0) != 0) { nw_row = r; break; }
-    }
-    // Scan column n_cols-1 for NE (top to bottom)
-    for (int r = 0; r < n_rows; ++r) {
-        if (mask(r, n_cols - 1) != 0) { ne_row = r; break; }
-    }
-    // Scan column 0 for SW (bottom to top)
-    for (int r = n_rows - 1; r >= 0; --r) {
-        if (mask(r, 0) != 0) { sw_row = r; break; }
-    }
-    // Scan column n_cols-1 for SE (bottom to top)
-    for (int r = n_rows - 1; r >= 0; --r) {
-        if (mask(r, n_cols - 1) != 0) { se_row = r; break; }
-    }
-
-    if (nw_row == -1 || ne_row == -1 || sw_row == -1 || se_row == -1) {
-        throw std::runtime_error(
-            "Could not find 4 valid corners on the left and right edges of the active mask. "
-            "Are your boundary pixels masked completely off the edge?"
-        );
-    }
-
-    const std::array<std::pair<int,int>, 4> corners = {{
-        {nw_row, 0       },
-        {ne_row, n_cols-1},
-        {sw_row, 0       },
-        {se_row, n_cols-1}
-    }};
-
-    std::array<std::int64_t, 4> flat_indices{};
-    for (int i = 0; i < 4; ++i)
-    {
-        flat_indices[i] = static_cast<std::int64_t>(corners[i].first) * n_cols + corners[i].second;
-        std::cout << "  Detected corner " << i << " at row/col " 
-                  << corners[i].first << "/" << corners[i].second << ".\n";
-    }
-    return flat_indices;
-}
 
 
 
-// =============================================================================
-// extract_boundary_segments
-// =============================================================================
-static std::vector<std::vector<std::int64_t>> extract_boundary_segments(
-    const lsdtt::lsdtt_raster_cpu&      dem,
-    const std::array<std::int64_t, 4>&  corners)
-{
-    std::cout << "\n--- Extracting DEM boundaries (4-connected trace) ---\n";
-    const auto& mask = dem.get_mask_array();
-    
-    std::vector<lsdtt::lsdtt_pixel_rc> boundary_rc = 
-        lsdtt::trace_boundary_pixels(mask, 4);
-        
-    if (boundary_rc.empty()) {
-        throw std::runtime_error("Found no boundary pixels.");
-    }
-
-    const int n_cols = dem.get_meta().n_cols;
-    std::vector<std::int64_t> boundary_flats;
-    boundary_flats.reserve(boundary_rc.size());
-    for (const auto& rc : boundary_rc) {
-        boundary_flats.push_back(
-            static_cast<std::int64_t>(rc.row) * n_cols + rc.col
-        );
-    }
-
-    // Pair traces nearest-pixel-index with its structural Corner ID (0=NW, 1=NE, 2=SW, 3=SE)
-    std::vector<std::pair<std::size_t, int>> ordered_corners;
-    for (int i = 0; i < 4; ++i)
-    {
-        const int corner_r = static_cast<int>(corners[i] / n_cols);
-        const int corner_c = static_cast<int>(corners[i] % n_cols);
-
-        std::size_t best_idx = 0;
-        long long best_dist_sq = -1;
-
-        for (std::size_t j = 0; j < boundary_rc.size(); ++j)
-        {
-            long long dr = boundary_rc[j].row - corner_r;
-            long long dc = boundary_rc[j].col - corner_c;
-            long long dist_sq = dr * dr + dc * dc;
-
-            if (best_dist_sq == -1 || dist_sq < best_dist_sq) {
-                best_dist_sq = dist_sq;
-                best_idx = j;
-            }
-        }
-        ordered_corners.push_back({best_idx, i});
-        std::cout << "  Boundary segment corner " << i << " assigned to pixel row/col "
-                  << corner_r << "/" << corner_c << ".\n";
-    }
-
-    // Sort corners sequentially by the order they appear in the trace loop
-    std::sort(ordered_corners.begin(), ordered_corners.end());
-
-    std::vector<std::vector<std::int64_t>> boundary_segments(4);
-    for (int i = 0; i < 4; ++i)
-    {
-        std::size_t start_idx = ordered_corners[i].first;
-        std::size_t end_idx   = ordered_corners[(i + 1) % 4].first;
-        
-        int corner_A = ordered_corners[i].second;
-        int corner_B = ordered_corners[(i + 1) % 4].second;
-
-        // Definitively lock the segment to its true geographical side
-        // Corner IDs: 0=NW, 1=NE, 2=SW, 3=SE
-        int boundary_id = -1; 
-        if ((corner_A == 0 && corner_B == 1) || (corner_A == 1 && corner_B == 0)) boundary_id = 0; // North
-        else if ((corner_A == 1 && corner_B == 3) || (corner_A == 3 && corner_B == 1)) boundary_id = 1; // East
-        else if ((corner_A == 3 && corner_B == 2) || (corner_A == 2 && corner_B == 3)) boundary_id = 2; // South
-        else if ((corner_A == 2 && corner_B == 0) || (corner_A == 0 && corner_B == 2)) boundary_id = 3; // West
-
-        if (boundary_id != -1) {
-            if (start_idx <= end_idx) {
-                // +1 to make the end_idx (the corner) inclusive on this boundary
-                boundary_segments[boundary_id].assign(
-                    boundary_flats.begin() + start_idx, 
-                    boundary_flats.begin() + end_idx + 1
-                );
-            } else {
-                // Segment wraps perfectly around the end of the trace array
-                boundary_segments[boundary_id].assign(
-                    boundary_flats.begin() + start_idx, 
-                    boundary_flats.end()
-                );
-                // +1 to make the end_idx (the corner) inclusive on this boundary
-                boundary_segments[boundary_id].insert(
-                    boundary_segments[boundary_id].end(), 
-                    boundary_flats.begin(), 
-                    boundary_flats.begin() + end_idx + 1
-                );
-            }
-        }
-    }
-    return boundary_segments;
-}
 
 
 // =============================================================================
@@ -1093,12 +851,35 @@ int main(int argc, char* argv[])
             } else {
                 std::cout << "No corner_coordinates_csv supplied. "
                           << "Using the four DEM pixel corners.\n";
-                corner_flats = resolve_dem_corners(routed_dem);
+                // Corner detection and boundary segmentation are geometry, and
+                // live in lsdtt_binary_array2d_tracing. They do not print; the
+                // reporting below is this CLI's.
+                std::cout << "\n--- Resolving DEM corners for segmenting boundaries ---\n";
+                corner_flats = lsdtt::resolve_active_mask_corners(
+                    routed_dem.get_mask_array());
+
+                const int corner_ncols = routed_dem.get_meta().n_cols;
+                for (int i = 0; i < 4; ++i)
+                {
+                    std::cout << "  Detected corner " << i << " at row/col "
+                              << (corner_flats[i] / corner_ncols) << "/"
+                              << (corner_flats[i] % corner_ncols) << ".\n";
+                }
             }
 
-            auto boundary_segments = extract_boundary_segments(
-                routed_dem, corner_flats
-            );
+            std::cout << "\n--- Extracting DEM boundaries (4-connected trace) ---\n";
+            auto boundary_segments = lsdtt::split_boundary_into_cardinal_segments(
+                routed_dem.get_mask_array(), corner_flats);
+            {
+                const int seg_ncols = routed_dem.get_meta().n_cols;
+                for (int i = 0; i < 4; ++i)
+                {
+                    std::cout << "  Boundary segment corner " << i
+                              << " assigned to pixel row/col "
+                              << (corner_flats[i] / seg_ncols) << "/"
+                              << (corner_flats[i] % seg_ncols) << ".\n";
+                }
+            }
 
             basin_manager.select_all_junction_basins();
             basin_manager.filter_range_spanning(
@@ -2033,7 +1814,8 @@ int main(int argc, char* argv[])
             lsdtt::poly_fit_coeffs fitted;
             try {
                 if (method == "raw_dem_3x3") {
-                    fitted = run_raw_dem_3x3_polyfit_with_bcs(dem, sf["boundary_conditions"], ifs["n_threads"]);
+                    fitted = lsdtt::direct_polyfit_with_boundary_conditions(
+                            dem, sf["boundary_conditions"], ifs["n_threads"]);
                 } else if (method == "wavelet") {
                     fitted = lsdtt::wavelet_quadratic_fit(dem, ff["polyfit_lambda_metres"], ifs["n_threads"]);
                 } else {

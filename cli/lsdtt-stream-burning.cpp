@@ -1373,159 +1373,47 @@ int main(int argc, char* argv[])
          burn_mode == lsdtt::stream_burn_mode::snap_to_accumulation) &&
         bf["carve_inward_edge_sources"])
     {
-        const int    carve_px = std::max(1, ifs["edge_source_carve_pixels"]);
-        const int    carve_max_px =
-            std::max(carve_px, ifs["edge_source_carve_max_pixels"]);
-        const double carve_min_slope =
+        // The carve itself is in lsdtt_burn_vectormap_cpu. What stays here is
+        // the reporting and the two things that must follow it: re-resolving
+        // depressions on the carved DEM, and rebuilding flow routing.
+        lsdtt::edge_source_carve_options carve_opts;
+        carve_opts.carve_pixels     = ifs["edge_source_carve_pixels"];
+        carve_opts.carve_max_pixels = ifs["edge_source_carve_max_pixels"];
+        carve_opts.carve_min_slope  =
             (ff["repair_min_slope"] > 0.0f)
                 ? static_cast<double>(ff["repair_min_slope"])
                 : static_cast<double>(ff["fill_min_slope"]);
-
-        const lsdtt::lsdtt_raster_meta& cmeta = routed_dem.get_meta();
-        const lsdtt::lsdtt_array2d_u8&  cmask = routed_dem.get_mask_array();
-
-        auto xy_to_flat = [&](double x, double y) -> std::int64_t
-        {
-            const int col = static_cast<int>(
-                std::floor((x - cmeta.x_min) / cmeta.cell_size));
-            const int row = static_cast<int>(
-                std::floor((cmeta.y_max() - y) / cmeta.cell_size));
-            if (row < 0 || row >= cmeta.n_rows ||
-                col < 0 || col >= cmeta.n_cols ||
-                cmask(row, col) == 0)
-                return -1;
-            return static_cast<std::int64_t>(row) * cmeta.n_cols + col;
-        };
-
-        // Perpendicular distance (m) from cell f to the nearest DEM boundary.
-        auto dist_to_boundary_m = [&](std::int64_t f) -> double
-        {
-            const int row = static_cast<int>(f / cmeta.n_cols);
-            const int col = static_cast<int>(f % cmeta.n_cols);
-            const int cells = std::min(
-                std::min(col, cmeta.n_cols - 1 - col),
-                std::min(row, cmeta.n_rows - 1 - row));
-            return cells * cmeta.cell_size;
-        };
-
-        const double interior_margin_m =
+        carve_opts.interior_margin_metres =
             static_cast<double>(ff["edge_source_min_interior_metres"]);
-
-        const auto& vjns = vector_network.junctions();
-        const auto& veds = vector_network.edges();
 
         std::cout << "\n--- Carving inward-draining edge sources ---\n";
 
-        int n_carved = 0;
-        for (std::size_t i = 0; i < source_flats.size(); ++i)
+        const std::vector<lsdtt::edge_source_carve_record> carve_records =
+            lsdtt::carve_inward_draining_edge_sources(
+                routed_dem, vector_network, source_flats,
+                valid_source_is_dem_edge, valid_source_junction_ids,
+                carve_opts);
+
+        for (const lsdtt::edge_source_carve_record& rec : carve_records)
         {
-            if (valid_source_is_dem_edge[i] == 0) continue;
-
-            const std::int32_t jid = valid_source_junction_ids[i];
-            if (jid < 0 || jid >= vector_network.n_junctions()) continue;
-            const auto& J = vjns[static_cast<std::size_t>(jid)];
-
-            // Guard: the vector network must say this source drains inward,
-            // i.e. its downstream junction is lower than the source.
-            if (J.is_outlet || J.receiver_junction < 0 ||
-                J.downstream_edge_id < 0)
-                continue;
-
-            const double recv_elev =
-                vjns[static_cast<std::size_t>(J.receiver_junction)].elevation;
-            if (!(recv_elev < J.elevation - 1.0e-6)) continue;
-
-            // Build a contiguous carve path: the source pixel followed by
-            // distinct in-DEM cells sampled along the downstream vector PATH -
-            // following the receiver chain across junctions, not just the single
-            // immediate downstream edge. A channel that hugs the boundary for one
-            // short edge before turning inland (or that runs along the edge to an
-            // outlet) needs several edges to escape the boundary; carving only the
-            // first edge leaves it stranded. The carve extends until the terminus
-            // is at least interior_margin_m from the nearest DEM boundary, or the
-            // downstream path ends (outlet), or carve_max_px is hit; it always
-            // carves at least carve_px cells. A distance test is used, not a
-            // D8-drains-off test, because near the boundary the DEM flow runs
-            // along the edge and may never reach an outlet within a hop budget.
-            std::vector<std::int64_t> path;
-            path.push_back(source_flats[i]);
-
-            const double step = cmeta.cell_size * 0.5;
-            bool reached_interior = false;
-            std::int32_t cur_j = jid;
-            std::unordered_set<std::int32_t> visited_j;
-
-            while (!reached_interior &&
-                   static_cast<int>(path.size()) <= carve_max_px)
+            std::cout << "  vector source jid=" << rec.junction_id
+                      << ": carved " << rec.pixels_carved << " px inward, "
+                      << "terminus "
+                      << rec.terminus_distance_to_boundary_metres
+                      << " m from edge";
+            switch (rec.terminus)
             {
-                if (cur_j < 0 || cur_j >= vector_network.n_junctions()) break;
-                if (!visited_j.insert(cur_j).second) break;     // cycle guard
-                const auto& CJ = vjns[static_cast<std::size_t>(cur_j)];
-                if (CJ.downstream_edge_id < 0) break;           // outlet / no path
-                const auto& E =
-                    veds[static_cast<std::size_t>(CJ.downstream_edge_id)];
-                if (E.xy.size() < 2) break;
-
-                // Orient the edge geometry so it runs from cur_j downstream.
-                const bool forward = (E.upstream_junction == cur_j);
-                auto vtx = [&](std::size_t k) -> const lsdtt::lsdtt_xy&
-                {
-                    return forward ? E.xy[k] : E.xy[E.xy.size() - 1 - k];
-                };
-
-                for (std::size_t k = 1;
-                     k < E.xy.size() &&
-                     !reached_interior &&
-                     static_cast<int>(path.size()) <= carve_max_px;
-                     ++k)
-                {
-                    const auto& a = vtx(k - 1);
-                    const auto& b = vtx(k);
-                    const double seglen = std::hypot(b.x - a.x, b.y - a.y);
-                    const int nsteps =
-                        std::max(1, static_cast<int>(seglen / step));
-
-                    for (int s = 1;
-                         s <= nsteps &&
-                         !reached_interior &&
-                         static_cast<int>(path.size()) <= carve_max_px;
-                         ++s)
-                    {
-                        const double t = static_cast<double>(s) / nsteps;
-                        const std::int64_t f = xy_to_flat(
-                            a.x + t * (b.x - a.x),
-                            a.y + t * (b.y - a.y));
-                        if (f < 0 || f == path.back()) continue;
-                        path.push_back(f);
-
-                        if (static_cast<int>(path.size()) > carve_px &&
-                            dist_to_boundary_m(f) >= interior_margin_m)
-                        {
-                            reached_interior = true;
-                        }
-                    }
-                }
-
-                cur_j = CJ.receiver_junction;
+                case lsdtt::edge_carve_terminus::reached_interior_margin:
+                    std::cout << " (reached interior margin)"; break;
+                case lsdtt::edge_carve_terminus::hit_pixel_cap:
+                    std::cout << " (hit carve_max_pixels cap)"; break;
+                case lsdtt::edge_carve_terminus::followed_channel_to_downstream_end:
+                    std::cout << " (followed channel to its downstream end)"; break;
             }
-
-            if (path.size() < 2) continue;
-
-            lsdtt::burn_capturing_path(routed_dem, path, carve_min_slope);
-            ++n_carved;
-
-            std::cout << "  vector source jid=" << jid
-                      << ": carved " << (path.size() - 1) << " px inward, "
-                      << "terminus " << dist_to_boundary_m(path.back())
-                      << " m from edge"
-                      << (reached_interior
-                              ? " (reached interior margin)"
-                              : (static_cast<int>(path.size()) > carve_max_px
-                                     ? " (hit carve_max_pixels cap)"
-                                     : " (followed channel to its downstream end)"))
-                      << "\n";
+            std::cout << "\n";
         }
 
+        const int n_carved = static_cast<int>(carve_records.size());
         std::cout << "Edge sources carved inward: " << n_carved << "\n";
 
         if (n_carved > 0)

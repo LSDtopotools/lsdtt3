@@ -483,6 +483,78 @@ set_tests_properties(smoke_basin_surface_metrics_polyfit PROPERTIES
     LABELS "smoke;cli;basin_surface_metrics"
     FIXTURES_REQUIRED basin_stats_fixture)
 
+# =============================================================================
+# lsdtt-ridgeline-analysis: the range_defined_ridgelines path (C2 and C3)
+#
+# The three pre-existing ridgeline tests are all paired_flowpaths and reach
+# neither resolve_dem_corners/extract_boundary_segments (C2) nor
+# run_raw_dem_3x3_polyfit_with_bcs (C3). These two do.
+#
+# oooo and opop are both run because C3's substance is the PERIODIC wrap-around
+# padding: with fully open boundaries there is nothing to wrap and the branch is
+# never taken. The two produce different slope rasters.
+# =============================================================================
+add_test(NAME smoke_ridgeline_range_open
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-ridgeline-analysis>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/ridgeline_range_oooo.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_ridgeline_range_open"
+        --expect rg_oooo_raw_dem_3x3_polyfit_slope.tif
+        --expect rg_oooo_raw_dem_3x3_polyfit_maximum_curvature.tif
+        --expect-raster-size rg_oooo_raw_dem_3x3_polyfit_slope.tif:200x200
+        # C2 must actually resolve corners and segment the boundary.
+        --expect-file-contains "../stdout.log:Resolving DEM corners"
+        --expect-file-contains "../stdout.log:Boundary segment corner 3 assigned"
+        # ORACLE for C2+C3 under open boundaries.
+        --expect-sha256 rg_oooo_raw_dem_3x3_polyfit_slope.tif:c6a0d7322aa1d1f510db0fac8a2544c052238e1782d74bd68805e04a37b8b9c4)
+set_tests_properties(smoke_ridgeline_range_open PROPERTIES
+    LABELS "smoke;cli;ridgeline"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_test(NAME smoke_ridgeline_range_periodic
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-ridgeline-analysis>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/ridgeline_range_opop.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_ridgeline_range_periodic"
+        --expect rg_opop_raw_dem_3x3_polyfit_slope.tif
+        --expect-raster-size rg_opop_raw_dem_3x3_polyfit_slope.tif:200x200
+        --expect-file-contains "../stdout.log:Resolving DEM corners"
+        # ORACLE for the PERIODIC padding branch. This hash differs from the
+        # open-boundary one above, which is the evidence that the wrap-around
+        # padding in run_raw_dem_3x3_polyfit_with_bcs actually does something --
+        # if a refactor made the two equal, both oracles could not hold.
+        --expect-sha256 rg_opop_raw_dem_3x3_polyfit_slope.tif:f7beffb5d95fb65e7ca6108624baac5f8c7ae60399622c2f235acb94a2bd9eae)
+set_tests_properties(smoke_ridgeline_range_periodic PROPERTIES
+    LABELS "smoke;cli;ridgeline"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# lsdtt-chi-analysis: the outlet-FILE path (C5). The other chi tests only reach
+# resolve_outlet_flats through its auto-detect branch.
+add_test(NAME smoke_chi_analysis_outlet_file
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-chi-analysis>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/chi_analysis_outlet_file.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_outlet_file"
+        --expect chi_chi_basin_outlets.csv
+        --expect chi_chi_data_maps.csv
+        # The outlet FILE branch, not auto-detect.
+        --expect-file-contains "../stdout.log:Reading outlet file"
+        # ... and the per-outlet skip path within it.
+        --expect-file-contains "../stderr.log:could not be snapped downstream"
+        # ORACLE for C5: the resolved outlet set, which is what
+        # resolve_outlet_flats exists to produce. Checked deterministic before
+        # freezing.
+        --expect-sha256 chi_chi_basin_outlets.csv:f2a980bf03e6870a6dc754386822b4ce6731017bacc97ff23ffa9be202f29621)
+set_tests_properties(smoke_chi_analysis_outlet_file PROPERTIES
+    LABELS "smoke;cli;chi"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
 # lsdtt-linear-stats: a floor, not coverage. See the param template for why the
 # line fixture must stay clear of the raster edge.
 add_test(NAME fixture_linear_stats_lines
@@ -558,7 +630,13 @@ add_test(NAME smoke_stream_burning
         # prints "Edge sources carved inward: 0", and the C4 code path would be
         # untested while the test passed. --expect-file-contains resolves against
         # the out/ directory, so ../stdout.log is the run log.
-        --expect-file-contains "../stdout.log:Edge sources carved inward: 2")
+        --expect-file-contains "../stdout.log:Edge sources carved inward: 2"
+        # ORACLES frozen before the C4 extraction. The stdout assertion above
+        # proves the carve RAN; these prove its RESULT did not change when the
+        # ~160 lines moved out of main(). Verified deterministic across repeat
+        # runs before freezing.
+        --expect-sha256 burn_burned.tif:f63a442d8b42bbb6a6a4c857b0c046bda2bb889bc8c319f4cc105a8ad4b8648b
+        --expect-sha256 burn_dem_network_lines.fgb:b675ef0fe65bd863eff7ee81fac93d45595366fe4b76926f051bc85788ed05a2)
 set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "smoke;cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
@@ -4154,6 +4232,10 @@ set(LSDTT_DOMAIN_RULES
     "streamlines"            "streamlines"
     "hilltop_flow_routing|hilltop_coupling|hillslope_channel_coupling" "hilltop_flow_routing"
     "paired_flowpaths"       "paired_flowpaths"
+    # The range_defined_ridgelines path (C2/C3) is its own subsystem: boundary
+    # tracing and BC-aware surface fitting, not the paired-flowpath work the
+    # other ridgeline tests cover.
+    "ridgeline"              "ridgeline"
     "divide_diagnostics"     "divide_diagnostics"
     "divide_migration"       "divide_migration"
     "fetch"                  "fetch"

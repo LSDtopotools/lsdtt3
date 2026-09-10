@@ -715,6 +715,32 @@ poly_fit_coeffs direct_polyfit(
 );
 
 // -----------------------------------------------------------------------------
+// direct_polyfit_with_boundary_conditions
+//
+// direct_polyfit at the 3x3 scale (lambda = cell_size), honouring periodic
+// boundaries: the raster is padded by one pixel with wrap-around on any
+// periodic axis, fitted, and the six coefficient rasters are cropped back to
+// the original grid.
+//
+// WHY THIS IS NOT JUST A CONVENIENCE. Without the padding, a 3x3 fit at a
+// periodic edge sees nodata where the modelled domain has real neighbours, so
+// every edge cell gets a fit computed from a truncated stencil. On a wrapped
+// domain -- a LEM run, say -- that is wrong at exactly the cells a divide or a
+// ridgeline is most likely to occupy.
+//
+// With no periodic axis this is `direct_polyfit(raster, cell_size, n_threads)`
+// and nothing else, so it is safe to call unconditionally.
+//
+// `boundary_conditions` is the usual four characters (N, E, S, W); an axis
+// counts as periodic only when both of its edges are 'p'.
+// -----------------------------------------------------------------------------
+poly_fit_coeffs direct_polyfit_with_boundary_conditions(
+    const lsdtt_raster_cpu& raster,
+    const std::string&      boundary_conditions,
+    int                     n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
 // compute_polyfit_metrics
 //
 // Computes one or more surface-metric rasters from a set of quadratic-fit

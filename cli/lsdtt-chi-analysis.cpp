@@ -59,6 +59,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/cpu/lsdtt_outlet_resolution_cpu.hpp"
 
 static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -154,212 +155,6 @@ static std::int32_t count_main_stem_nodes(
     return count;
 }
 
-// -----------------------------------------------------------------------------
-// resolve_outlet_flats
-//
-// Returns a vector of flat indices representing basin outlets, either loaded
-// from a file (and snapped) or auto-detected as the largest basin.
-// -----------------------------------------------------------------------------
-static std::vector<std::int64_t> resolve_outlet_flats(
-    const lsdtt::lsdtt_param_parser& pp,
-    const lsdtt::lsdtt_raster_cpu& dem,
-    const lsdtt::lsdtt_flow_base& flow,
-    const std::string& outlet_file,
-    const std::string& snapping_method,
-    int snap_threshold_pixels,
-    int min_search_radius_pixels,
-    int max_search_radius_pixels,
-    int source_pixels_threshold,
-    int n_pixels_move_outlet_upstream)
-{
-    if (outlet_file == "NULL" || outlet_file.empty())
-    {
-        std::vector<std::int64_t> all_outlets =
-            lsdtt::get_all_basin_outlet_flats(flow, source_pixels_threshold);
-        std::cout << "No outlet file supplied; seeding chi extraction from all "
-                  << all_outlets.size() << " basin outlet(s) above the source "
-                     "threshold.\n";
-        if (all_outlets.empty())
-            throw std::runtime_error(
-                "No basin outlets found in the flow object.");
-
-        // Interior (non-edge) outlets drain to nodata (e.g. an island coast);
-        // lift them off the nodata fringe by walking up the main stem. Re-check
-        // the source threshold afterwards and de-duplicate convergent outlets.
-        std::vector<std::int64_t> resolved;
-        resolved.reserve(all_outlets.size());
-        int n_moved = 0;
-        for (const std::int64_t o : all_outlets)
-        {
-            std::int64_t outlet = o;
-            if (n_pixels_move_outlet_upstream > 0 &&
-                !lsdtt::is_flat_on_dem_edge(flow, o))
-            {
-                outlet = lsdtt::move_outlet_upstream(
-                    flow, o, n_pixels_move_outlet_upstream);
-                if (outlet != o)
-                    ++n_moved;
-            }
-            if (flow.s_vector_size_unchecked(outlet) <
-                static_cast<std::uint64_t>(source_pixels_threshold))
-                continue;  // dropped below threshold after the move
-            resolved.push_back(outlet);
-        }
-
-        std::sort(resolved.begin(), resolved.end());
-        resolved.erase(std::unique(resolved.begin(), resolved.end()),
-                       resolved.end());
-
-        std::cout << "  Moved " << n_moved << " interior outlet(s) "
-                  << n_pixels_move_outlet_upstream << " pixel(s) upstream; "
-                  << resolved.size() << " unique outlet(s) remain. The largest "
-                     "complete basins are selected via n_largest_basins.\n";
-        if (resolved.empty())
-            throw std::runtime_error(
-                "No basin outlets remain after the upstream move / threshold "
-                "filter.");
-        return resolved;
-    }
-
-    const std::string outlet_file_path = pp.add_read_path_if_needed(outlet_file);
-    std::cout << "Reading outlet file: " << outlet_file_path << "\n";
-
-    {
-        const auto& p = outlet_file_path;
-        const bool looks_like_csv =
-            p.size() >= 4 &&
-            lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
-        if (looks_like_csv)
-            std::cout << "Outlet file is CSV: latitude and longitude columns "
-                         "(EPSG:4326) will be transformed to raster CRS.\n";
-        else
-            std::cout << "Outlet file is a vector layer: coordinates will be "
-                         "transformed from layer CRS to raster CRS.\n";
-    }
-
-    std::vector<lsdtt::lsdtt_input_point> requested_outlets =
-        lsdtt::load_points_in_raster_crs(outlet_file_path, dem.get_meta());
-
-    if (requested_outlets.empty())
-        throw std::runtime_error("Outlet file contained no usable points.");
-
-    {
-        int n_transform_failed = 0, n_unsupported_geom = 0;
-        int n_outside = 0, n_empty_geom = 0, n_missing_crs = 0;
-        for (const auto& pt : requested_outlets)
-        {
-            switch (pt.status)
-            {
-                case lsdtt::lsdtt_point_input_status::coordinate_transform_failed:
-                    ++n_transform_failed; break;
-                case lsdtt::lsdtt_point_input_status::unsupported_geometry_type:
-                    ++n_unsupported_geom; break;
-                case lsdtt::lsdtt_point_input_status::outside_raster_extent:
-                    ++n_outside; break;
-                case lsdtt::lsdtt_point_input_status::empty_geometry:
-                    ++n_empty_geom; break;
-                case lsdtt::lsdtt_point_input_status::missing_source_crs:
-                    ++n_missing_crs; break;
-                default: break;
-            }
-        }
-        if (n_transform_failed > 0)
-        {
-            std::cerr << "Warning: " << n_transform_failed
-                      << " point(s) failed coordinate transformation.\n";
-            const auto& p = outlet_file_path;
-            if (p.size() >= 4 &&
-                lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv")
-                std::cerr << "  -> CSV files must have columns named "
-                             "'latitude' and 'longitude'.\n";
-        }
-        if (n_unsupported_geom > 0)
-            std::cerr << "Warning: " << n_unsupported_geom
-                      << " feature(s) skipped - not point geometry.\n";
-        if (n_missing_crs > 0)
-            std::cerr << "Warning: " << n_missing_crs
-                      << " feature(s) had no source CRS.\n";
-        if (n_empty_geom > 0)
-            std::cerr << "Warning: " << n_empty_geom
-                      << " feature(s) had empty geometry and were skipped.\n";
-        if (n_outside > 0)
-            std::cout << "Note: " << n_outside
-                      << " point(s) fall outside the raster extent "
-                         "and will be skipped.\n";
-    }
-
-    lsdtt::lsdtt_square_snap_options square_snap_options;
-    square_snap_options.contributing_pixels_threshold =
-        static_cast<std::uint64_t>(snap_threshold_pixels);
-    square_snap_options.min_search_radius_pixels = min_search_radius_pixels;
-    square_snap_options.max_search_radius_pixels = max_search_radius_pixels;
-
-    lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
-    downstream_snap_options.contributing_pixels_threshold =
-        static_cast<std::uint64_t>(snap_threshold_pixels);
-
-    std::vector<std::int64_t> outlet_flats;
-    outlet_flats.reserve(requested_outlets.size());
-
-    for (const auto& pt : requested_outlets)
-    {
-        if (pt.status != lsdtt::lsdtt_point_input_status::success)
-        {
-            std::cerr << "Warning: outlet point " << pt.point_id
-                      << " did not map to a valid raster cell; skipping.\n";
-            continue;
-        }
-
-        int row = pt.row;
-        int col = pt.col;
-        std::int64_t flat = pt.flat;
-
-        if (snapping_method == "expanding_square")
-        {
-            const lsdtt::lsdtt_snap_result snapped =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                    flow, row, col, square_snap_options);
-
-            if (snapped.status != lsdtt::lsdtt_snap_status::success)
-            {
-                std::cerr << "Warning: outlet point " << pt.point_id
-                          << " could not be snapped with expanding_square; skipping.\n";
-                continue;
-            }
-            flat = snapped.snapped_flat;
-        }
-        else if (snapping_method == "downstream")
-        {
-            const lsdtt::lsdtt_snap_result snapped =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                    flow, row, col, downstream_snap_options);
-
-            if (snapped.status != lsdtt::lsdtt_snap_status::success)
-            {
-                std::cerr << "Warning: outlet point " << pt.point_id
-                          << " could not be snapped downstream; skipping.\n";
-                continue;
-            }
-            flat = snapped.snapped_flat;
-        }
-        else
-        {
-            if (!flow.is_valid_cell(flat))
-            {
-                std::cerr << "Warning: outlet point " << pt.point_id
-                          << " maps to invalid flow cell; skipping.\n";
-                continue;
-            }
-        }
-
-        outlet_flats.push_back(flat);
-    }
-
-    if (outlet_flats.empty())
-        throw std::runtime_error("No valid outlet flats were produced from the CSV.");
-
-    return outlet_flats;
-}
 
 // =============================================================================
 // main
@@ -905,16 +700,95 @@ int main(int argc, char* argv[])
     std::vector<std::int64_t> outlet_flats;
     try
     {
-        outlet_flats = resolve_outlet_flats(
-            pp, dem, *flow,
-            sf["basin_outlet_file"],
-            snapping_method,
-            ifs["basin_outlet_contributing_pixels_threshold"],
-            ifs["basin_outlet_min_search_radius_pixels"],
-            ifs["basin_outlet_max_search_radius_pixels"],
-            ifs["source_pixels_threshold"],
-            ifs["n_pixels_move_outlet_upstream"]
-        );
+        // Outlet resolution lives in lsdtt_outlet_resolution_cpu and does not
+        // print; the reporting below is this CLI's.
+        lsdtt::outlet_resolution_options ores;
+        ores.snapping_method = snapping_method;
+        ores.square_snap.contributing_pixels_threshold =
+            static_cast<std::uint64_t>(
+                ifs["basin_outlet_contributing_pixels_threshold"]);
+        ores.square_snap.min_search_radius_pixels =
+            ifs["basin_outlet_min_search_radius_pixels"];
+        ores.square_snap.max_search_radius_pixels =
+            ifs["basin_outlet_max_search_radius_pixels"];
+        ores.downstream_snap.contributing_pixels_threshold =
+            static_cast<std::uint64_t>(
+                ifs["basin_outlet_contributing_pixels_threshold"]);
+        ores.source_pixels_threshold       = ifs["source_pixels_threshold"];
+        ores.n_pixels_move_outlet_upstream = ifs["n_pixels_move_outlet_upstream"];
+
+        lsdtt::outlet_resolution_report orep;
+        const std::string outlet_file = sf["basin_outlet_file"];
+
+        if (outlet_file == "NULL" || outlet_file.empty())
+        {
+            outlet_flats = lsdtt::resolve_outlet_flats_auto(*flow, ores, orep);
+
+            std::cout << "No outlet file supplied; seeding chi extraction from all "
+                      << orep.n_detected << " basin outlet(s) above the source "
+                         "threshold.\n";
+            std::cout << "  Moved " << orep.n_moved_upstream
+                      << " interior outlet(s) "
+                      << ifs["n_pixels_move_outlet_upstream"]
+                      << " pixel(s) upstream; " << outlet_flats.size()
+                      << " unique outlet(s) remain. The largest complete basins "
+                         "are selected via n_largest_basins.\n";
+        }
+        else
+        {
+            const std::string outlet_file_path =
+                pp.add_read_path_if_needed(outlet_file);
+            std::cout << "Reading outlet file: " << outlet_file_path << "\n";
+
+            const bool looks_like_csv =
+                outlet_file_path.size() >= 4 &&
+                lsdtt::to_lower_ascii(
+                    outlet_file_path.substr(outlet_file_path.size() - 4)) == ".csv";
+            if (looks_like_csv)
+                std::cout << "Outlet file is CSV: latitude and longitude columns "
+                             "(EPSG:4326) will be transformed to raster CRS.\n";
+            else
+                std::cout << "Outlet file is a vector layer: coordinates will be "
+                             "transformed from layer CRS to raster CRS.\n";
+
+            outlet_flats = lsdtt::resolve_outlet_flats_from_file(
+                dem, *flow, outlet_file_path, ores, orep);
+
+            const auto& s = orep.input_summary;
+            if (s.transform_failed > 0)
+            {
+                std::cerr << "Warning: " << s.transform_failed
+                          << " point(s) failed coordinate transformation.\n";
+                if (looks_like_csv)
+                    std::cerr << "  -> CSV files must have columns named "
+                                 "'latitude' and 'longitude'.\n";
+            }
+            if (s.unsupported_geom > 0)
+                std::cerr << "Warning: " << s.unsupported_geom
+                          << " feature(s) skipped - not point geometry.\n";
+            if (s.missing_source_crs > 0)
+                std::cerr << "Warning: " << s.missing_source_crs
+                          << " feature(s) had no source CRS.\n";
+            if (s.empty_geometry > 0)
+                std::cerr << "Warning: " << s.empty_geometry
+                          << " feature(s) had empty geometry and were skipped.\n";
+            if (s.outside_raster > 0)
+                std::cout << "Note: " << s.outside_raster
+                          << " point(s) fall outside the raster extent "
+                             "and will be skipped.\n";
+
+            for (const std::int32_t pid : orep.unsnappable_point_ids)
+            {
+                std::cerr << "Warning: outlet point " << pid;
+                if (snapping_method == "expanding_square")
+                    std::cerr << " could not be snapped with expanding_square";
+                else if (snapping_method == "downstream")
+                    std::cerr << " could not be snapped downstream";
+                else
+                    std::cerr << " did not map to a valid raster cell";
+                std::cerr << "; skipping.\n";
+            }
+        }
     }
     catch (const std::exception& e)
     {

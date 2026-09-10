@@ -1,5 +1,6 @@
 // lsdtt_raster_resampling_cpu.cpp
 
+#include <cctype>
 #include "lsdtt_raster_resampling_cpu.hpp"
 
 #include <algorithm>
@@ -542,6 +543,134 @@ lsdtt_raster_cpu interpolate_to_nearest_power_of_two(
     lsdtt_raster_cpu destination = empty_raster(target_meta);
     resample_raster(source, destination, method);
     return destination;
+}
+
+
+namespace
+{
+// Wrap an index onto [0, n) when the axis is periodic; otherwise report "off
+// the edge" as -1.
+inline int wrap_index(const int idx, const int n, const bool periodic)
+{
+    if (periodic) return (idx % n + n) % n;
+    return (idx >= 0 && idx < n) ? idx : -1;
+}
+
+inline bool axis_is_periodic(const std::string& bc, const std::size_t a,
+                             const std::size_t b)
+{
+    return bc.size() >= 4 &&
+           std::tolower(static_cast<unsigned char>(bc[a])) == 'p' &&
+           std::tolower(static_cast<unsigned char>(bc[b])) == 'p';
+}
+} // namespace
+
+lsdtt_raster_cpu pad_raster_by_boundary_conditions(
+    const lsdtt_raster_cpu& raster,
+    const std::string&      boundary_conditions,
+    const int               border_pixels
+)
+{
+    if (border_pixels < 0)
+    {
+        throw std::invalid_argument(
+            "pad_raster_by_boundary_conditions: border_pixels must be >= 0");
+    }
+
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+
+    // N and S are indices 0 and 2; E and W are 1 and 3.
+    const bool periodic_ns = axis_is_periodic(boundary_conditions, 0, 2);
+    const bool periodic_ew = axis_is_periodic(boundary_conditions, 1, 3);
+
+    const int p_rows = nrows + 2 * border_pixels;
+    const int p_cols = ncols + 2 * border_pixels;
+
+    std::vector<float> p_data(
+        static_cast<std::size_t>(p_rows) * static_cast<std::size_t>(p_cols),
+        static_cast<float>(meta.no_data_value));
+    std::vector<std::uint8_t> p_mask(
+        static_cast<std::size_t>(p_rows) * static_cast<std::size_t>(p_cols), 0u);
+
+    const std::vector<float>&        d = raster.get_data();
+    const std::vector<std::uint8_t>& m = raster.get_mask();
+
+    for (int r = -border_pixels; r < nrows + border_pixels; ++r)
+    {
+        const int wr = wrap_index(r, nrows, periodic_ns);
+        if (wr < 0) continue;
+
+        for (int c = -border_pixels; c < ncols + border_pixels; ++c)
+        {
+            const int wc = wrap_index(c, ncols, periodic_ew);
+            if (wc < 0) continue;
+
+            const std::size_t src =
+                static_cast<std::size_t>(wr) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(wc);
+            const std::size_t dst =
+                static_cast<std::size_t>(r + border_pixels) *
+                static_cast<std::size_t>(p_cols) +
+                static_cast<std::size_t>(c + border_pixels);
+
+            p_data[dst] = d[src];
+            p_mask[dst] = m[src];
+        }
+    }
+
+    lsdtt_raster_meta p_meta = meta;
+    p_meta.n_rows = p_rows;
+    p_meta.n_cols = p_cols;
+
+    return lsdtt_raster_cpu(std::move(p_data), std::move(p_mask), p_meta);
+}
+
+
+lsdtt_raster_cpu crop_raster_border(
+    const lsdtt_raster_cpu&  padded,
+    const lsdtt_raster_meta& original_meta,
+    const int                border_pixels
+)
+{
+    const int nrows = original_meta.n_rows;
+    const int ncols = original_meta.n_cols;
+    const int p_cols = padded.get_meta().n_cols;
+
+    if (nrows <= 0 || ncols <= 0)
+    {
+        throw std::invalid_argument(
+            "crop_raster_border: cropping would leave an empty raster");
+    }
+
+    std::vector<float> c_data(
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols),
+        static_cast<float>(original_meta.no_data_value));
+    std::vector<std::uint8_t> c_mask(
+        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols), 0u);
+
+    const std::vector<float>&        pd = padded.get_data();
+    const std::vector<std::uint8_t>& pm = padded.get_mask();
+
+    for (int r = 0; r < nrows; ++r)
+    {
+        for (int c = 0; c < ncols; ++c)
+        {
+            const std::size_t src =
+                static_cast<std::size_t>(r + border_pixels) *
+                static_cast<std::size_t>(p_cols) +
+                static_cast<std::size_t>(c + border_pixels);
+            const std::size_t dst =
+                static_cast<std::size_t>(r) * static_cast<std::size_t>(ncols) +
+                static_cast<std::size_t>(c);
+
+            c_data[dst] = pd[src];
+            c_mask[dst] = pm[src];
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(c_data), std::move(c_mask), original_meta);
 }
 
 } // namespace lsdtt

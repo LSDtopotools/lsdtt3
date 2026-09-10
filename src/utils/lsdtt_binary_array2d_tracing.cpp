@@ -4,6 +4,8 @@
 //
 // See lsdtt_binary_array2d_tracing.hpp for documentation.
 
+#include <utility>
+#include <algorithm>
 #include "lsdtt_binary_array2d_tracing.hpp"
 
 #include <array>
@@ -255,6 +257,151 @@ trace_boundary_pixels(
     }
 
     return out;
+}
+
+
+std::array<std::int64_t, 4> resolve_active_mask_corners(
+    const lsdtt_array2d_u8& mask
+)
+{
+    const int n_rows = mask.n_rows();
+    const int n_cols = mask.n_cols();
+
+    int nw_row = -1, ne_row = -1, sw_row = -1, se_row = -1;
+
+    for (int r = 0; r < n_rows; ++r)
+        if (mask(r, 0) != 0) { nw_row = r; break; }
+
+    for (int r = 0; r < n_rows; ++r)
+        if (mask(r, n_cols - 1) != 0) { ne_row = r; break; }
+
+    for (int r = n_rows - 1; r >= 0; --r)
+        if (mask(r, 0) != 0) { sw_row = r; break; }
+
+    for (int r = n_rows - 1; r >= 0; --r)
+        if (mask(r, n_cols - 1) != 0) { se_row = r; break; }
+
+    if (nw_row < 0 || ne_row < 0 || sw_row < 0 || se_row < 0)
+    {
+        throw std::runtime_error(
+            "resolve_active_mask_corners: could not find active pixels on both "
+            "the first and last columns of the mask. Are the boundary pixels "
+            "masked off entirely?");
+    }
+
+    const std::array<std::pair<int, int>, 4> rc = {{
+        {nw_row, 0           },
+        {ne_row, n_cols - 1  },
+        {sw_row, 0           },
+        {se_row, n_cols - 1  }
+    }};
+
+    std::array<std::int64_t, 4> flats{};
+    for (int i = 0; i < 4; ++i)
+    {
+        flats[i] = static_cast<std::int64_t>(rc[i].first) *
+                   static_cast<std::int64_t>(n_cols) + rc[i].second;
+    }
+    return flats;
+}
+
+
+std::vector<std::vector<std::int64_t>> split_boundary_into_cardinal_segments(
+    const lsdtt_array2d_u8&            mask,
+    const std::array<std::int64_t, 4>& corners
+)
+{
+    const std::vector<lsdtt_pixel_rc> boundary_rc = trace_boundary_pixels(mask, 4);
+    if (boundary_rc.empty())
+    {
+        throw std::runtime_error(
+            "split_boundary_into_cardinal_segments: the mask has no boundary "
+            "pixels");
+    }
+
+    const int n_cols = mask.n_cols();
+
+    std::vector<std::int64_t> boundary_flats;
+    boundary_flats.reserve(boundary_rc.size());
+    for (const lsdtt_pixel_rc& rc : boundary_rc)
+    {
+        boundary_flats.push_back(
+            static_cast<std::int64_t>(rc.row) *
+            static_cast<std::int64_t>(n_cols) + rc.col);
+    }
+
+    // Each corner to its nearest traced pixel: a corner taken from the edge
+    // columns is not necessarily on the traced loop itself.
+    std::vector<std::pair<std::size_t, int>> ordered_corners;
+    ordered_corners.reserve(4);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const int corner_r = static_cast<int>(corners[i] / n_cols);
+        const int corner_c = static_cast<int>(corners[i] % n_cols);
+
+        std::size_t best_idx = 0;
+        long long   best_dist_sq = -1;
+
+        for (std::size_t j = 0; j < boundary_rc.size(); ++j)
+        {
+            const long long dr = boundary_rc[j].row - corner_r;
+            const long long dc = boundary_rc[j].col - corner_c;
+            const long long d2 = dr * dr + dc * dc;
+            if (best_dist_sq < 0 || d2 < best_dist_sq)
+            {
+                best_dist_sq = d2;
+                best_idx     = j;
+            }
+        }
+        ordered_corners.emplace_back(best_idx, i);
+    }
+
+    // Trace order, so consecutive entries bound one arc of the loop.
+    std::sort(ordered_corners.begin(), ordered_corners.end());
+
+    std::vector<std::vector<std::int64_t>> segments(4);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const std::size_t start_idx = ordered_corners[i].first;
+        const std::size_t end_idx   = ordered_corners[(i + 1) % 4].first;
+        const int corner_a = ordered_corners[i].second;
+        const int corner_b = ordered_corners[(i + 1) % 4].second;
+
+        // Corner ids: 0 = NW, 1 = NE, 2 = SW, 3 = SE. The PAIR decides the side,
+        // so the labelling does not depend on where the trace started or which
+        // way round it runs.
+        int side = -1;
+        if      ((corner_a == 0 && corner_b == 1) || (corner_a == 1 && corner_b == 0)) side = 0; // north
+        else if ((corner_a == 1 && corner_b == 3) || (corner_a == 3 && corner_b == 1)) side = 1; // east
+        else if ((corner_a == 3 && corner_b == 2) || (corner_a == 2 && corner_b == 3)) side = 2; // south
+        else if ((corner_a == 2 && corner_b == 0) || (corner_a == 0 && corner_b == 2)) side = 3; // west
+
+        if (side < 0) continue;
+
+        if (start_idx <= end_idx)
+        {
+            // end_idx + 1: the closing corner belongs to this side too, so
+            // consecutive segments share it.
+            segments[side].assign(
+                boundary_flats.begin() + static_cast<std::ptrdiff_t>(start_idx),
+                boundary_flats.begin() + static_cast<std::ptrdiff_t>(end_idx) + 1);
+        }
+        else
+        {
+            // Straddles the end of the trace array: stitch across the wrap.
+            segments[side].assign(
+                boundary_flats.begin() + static_cast<std::ptrdiff_t>(start_idx),
+                boundary_flats.end());
+            segments[side].insert(
+                segments[side].end(),
+                boundary_flats.begin(),
+                boundary_flats.begin() + static_cast<std::ptrdiff_t>(end_idx) + 1);
+        }
+    }
+
+    return segments;
 }
 
 } // namespace lsdtt

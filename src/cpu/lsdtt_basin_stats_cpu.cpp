@@ -68,12 +68,9 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
             if (options.snapping_method == "expanding_square" ||
                 options.snapping_method == "downstream")
             {
-                const lsdtt_snap_result snapped =
-                    (options.snapping_method == "expanding_square")
-                        ? snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                              flow, row, col, options.square_snap)
-                        : snap_pixel_to_contributing_pixels_threshold_downstream(
-                              flow, row, col, options.downstream_snap);
+                const lsdtt_snap_result snapped = snap_pixel_by_method(
+                    flow, row, col, options.snapping_method,
+                    options.square_snap, options.downstream_snap);
 
                 out.snap_ran = true;
                 out.snap     = snapped;

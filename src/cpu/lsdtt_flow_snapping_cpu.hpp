@@ -45,6 +45,7 @@
 
 #pragma once
 
+#include <string>
 #include <cstdint>
 #include <vector>
 
@@ -281,6 +282,36 @@ snap_flats_to_contributing_pixels_threshold_downstream(
     const std::vector<std::int64_t>&        flats,
     const lsdtt_downstream_snap_options&    options =
         lsdtt_downstream_snap_options{}
+);
+
+// -----------------------------------------------------------------------------
+// snap_pixel_by_method
+//
+// Dispatch to the snapping routine named by `method`, so a caller that takes
+// the method as a string parameter does not have to spell the if/else out.
+//
+//   "none"              no snapping; the input pixel is returned with
+//                       status success, so a caller can treat all three
+//                       methods uniformly
+//   "expanding_square"  snap_pixel_to_contributing_pixels_threshold_expanding_square
+//   "downstream"        snap_pixel_to_contributing_pixels_threshold_downstream
+//
+// Throws std::invalid_argument on an unrecognised method, rather than silently
+// falling through to no snapping: a typo in a parameter file would otherwise
+// produce unsnapped outlets that look like a modelling choice.
+//
+// Four CLIs wrote this dispatch out by hand (basin-extraction, basin-stats,
+// chi-analysis and the extracted basin-stats module), and the "none" case was
+// handled differently in each -- some skipping the snap, some validating the
+// pixel first.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_snap_result snap_pixel_by_method(
+    const lsdtt_flow_base&               flow,
+    int                                  row,
+    int                                  col,
+    const std::string&                   method,
+    const lsdtt_square_snap_options&     square_options,
+    const lsdtt_downstream_snap_options& downstream_options
 );
 
 } // namespace lsdtt

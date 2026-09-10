@@ -55,4 +55,42 @@ lsdtt_raster_cpu interpolate_to_nearest_power_of_two(
     power_of_two_direction direction,
     raster_resampling_method method);
 
+// -----------------------------------------------------------------------------
+// pad_raster_by_boundary_conditions
+//
+// Add a one-pixel border, filled by WRAPPING across any axis whose boundary
+// conditions are periodic and left as nodata otherwise.
+//
+// `boundary_conditions` is the usual four characters (N, E, S, W), matched
+// case-insensitively. An axis counts as periodic only when BOTH of its edges
+// are 'p': a raster periodic on one side and open on the other has nothing
+// coherent to wrap onto.
+//
+// The point of the border is that a 3x3 neighbourhood operator applied to the
+// padded raster sees, at a periodic edge, the cells that are its true
+// neighbours in the modelled domain rather than nodata. Run the operator on the
+// result and take the interior back with crop_raster_border.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu pad_raster_by_boundary_conditions(
+    const lsdtt_raster_cpu& raster,
+    const std::string&      boundary_conditions,
+    int                     border_pixels = 1
+);
+
+// -----------------------------------------------------------------------------
+// crop_raster_border
+//
+// Remove `border_pixels` from every side, the inverse of
+// pad_raster_by_boundary_conditions. Throws std::invalid_argument if that would
+// leave nothing.
+//
+// The returned raster carries `original_meta` verbatim, so a pad/operate/crop
+// round trip gives back a raster on exactly the grid it started on.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu crop_raster_border(
+    const lsdtt_raster_cpu&  padded,
+    const lsdtt_raster_meta& original_meta,
+    int                      border_pixels = 1
+);
+
 } // namespace lsdtt
