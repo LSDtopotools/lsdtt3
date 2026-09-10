@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include <cstddef>
+#include <limits>
 #include "lsdtt_raster_cpu.hpp"
 
 #include <string>
@@ -331,6 +333,41 @@ float raster_stddev_value(const lsdtt_raster_cpu& a);
 
 /// Range (max - min) over all valid pixels.
 float raster_range_value(const lsdtt_raster_cpu& a);
+
+// -----------------------------------------------------------------------------
+// raster_difference_stats
+//
+// Error statistics for one raster against another, over the pixels where BOTH
+// are valid: RMSE, mean absolute error, maximum absolute error, and bias
+// (signed mean error, a - b).
+//
+// The masked intersection is the point. Comparing two rasters is not the same
+// as taking statistics of their difference, because a pixel valid in one and
+// nodata in the other must be excluded rather than differenced against a
+// sentinel.
+//
+// `count` is the number of pixels actually compared; when it is zero every
+// statistic is NaN rather than 0, so an empty comparison cannot be mistaken for
+// a perfect one.
+//
+// Written for lsdtt-raster-synthetic-tests, comparing a fitted surface against
+// an analytic one, but there was never anything synthetic-specific about it and
+// the benchmarking work wants exactly this for DEM-vs-DEM comparison.
+// -----------------------------------------------------------------------------
+struct raster_difference_result
+{
+    std::size_t count   = 0;
+    double      rmse    = std::numeric_limits<double>::quiet_NaN();
+    double      mae     = std::numeric_limits<double>::quiet_NaN();
+    double      max_abs = std::numeric_limits<double>::quiet_NaN();
+    double      bias    = std::numeric_limits<double>::quiet_NaN();
+};
+
+// Throws std::invalid_argument if the two rasters do not share a grid.
+raster_difference_result raster_difference_stats(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b
+);
 
 
 // -----------------------------------------------------------------------------

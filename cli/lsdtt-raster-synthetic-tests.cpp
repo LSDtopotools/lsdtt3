@@ -38,6 +38,7 @@
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -163,67 +164,10 @@ static void write_global_quadratic_coeffs_csv(
     loader.write_csv(out_csv, headers, rows);
 }
 
-// -----------------------------------------------------------------------------
-// raster_error_stats
-//
-// Per-coefficient statistics comparing fitted vs analytic coefficients.
-// All comparisons are over pixels where both fitted and analytic are valid.
-// -----------------------------------------------------------------------------
-struct raster_error_stats
-{
-    std::size_t count   = 0;          // number of valid comparison pixels
-    double      rmse    = std::numeric_limits<double>::quiet_NaN();
-    double      mae     = std::numeric_limits<double>::quiet_NaN();
-    double      max_abs = std::numeric_limits<double>::quiet_NaN();
-    double      bias    = std::numeric_limits<double>::quiet_NaN();
-};
-
-static raster_error_stats compute_error_stats(
-    const lsdtt::lsdtt_raster_cpu& fitted,
-    const lsdtt::lsdtt_raster_cpu& analytic)
-{
-    const lsdtt::lsdtt_raster_meta& meta = fitted.get_meta();
-    const std::size_t n = static_cast<std::size_t>(meta.n_rows)
-                        * static_cast<std::size_t>(meta.n_cols);
-
-    const std::vector<float>&   fit_data  = fitted.get_data();
-    const std::vector<uint8_t>& fit_mask  = fitted.get_mask();
-    const std::vector<float>&   ana_data  = analytic.get_data();
-    const std::vector<uint8_t>& ana_mask  = analytic.get_mask();
-
-    double sum_sq  = 0.0;
-    double sum_abs = 0.0;
-    double sum_err = 0.0;
-    double max_abs = 0.0;
-    std::size_t count = 0;
-
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        if (fit_mask[i] == 0 || ana_mask[i] == 0) continue;
-        if (meta.is_nodata(fit_data[i]) || meta.is_nodata(ana_data[i])) continue;
-
-        const double err = static_cast<double>(fit_data[i])
-                         - static_cast<double>(ana_data[i]);
-
-        sum_sq  += err * err;
-        sum_abs += std::abs(err);
-        sum_err += err;
-        max_abs  = std::max(max_abs, std::abs(err));
-        ++count;
-    }
-
-    if (count == 0) return raster_error_stats{};
-
-    const double n_d = static_cast<double>(count);
-    raster_error_stats s;
-    s.count   = count;
-    s.rmse    = std::sqrt(sum_sq  / n_d);
-    s.mae     = sum_abs / n_d;
-    s.max_abs = max_abs;
-    s.bias    = sum_err / n_d;
-    return s;
-}
-
+// Error statistics against the analytic reference come from the library:
+// lsdtt::algebra::raster_difference_stats (src/cpu/lsdtt_raster_algebra.hpp).
+// There was never anything synthetic-specific about masked-intersection
+// RMSE/MAE/bias, and the benchmarking work wants the same function.
 // -----------------------------------------------------------------------------
 // run_wavelet_test
 //
@@ -263,7 +207,7 @@ static void run_wavelet_test(
         const lsdtt::lsdtt_raster_cpu& fit_coeff = coeff_raster(fitted,   k);
         const lsdtt::lsdtt_raster_cpu& ana_coeff = coeff_raster(analytic, k);
 
-        raster_error_stats stats = compute_error_stats(fit_coeff, ana_coeff);
+        lsdtt::algebra::raster_difference_result stats = lsdtt::algebra::raster_difference_stats(fit_coeff, ana_coeff);
 
         const char* cn = coeff_name(k);
 

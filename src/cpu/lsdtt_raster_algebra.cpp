@@ -1590,5 +1590,61 @@ lsdtt_raster_cpu raster_adaptive_relief_threshold(
     return raster_binary_true_below_threshold(raster, static_cast<float>(threshold));
 }
 
+raster_difference_result raster_difference_stats(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b
+)
+{
+    const lsdtt_raster_meta& ma = a.get_meta();
+    const lsdtt_raster_meta& mb = b.get_meta();
+
+    if (ma.n_rows != mb.n_rows || ma.n_cols != mb.n_cols)
+    {
+        throw std::invalid_argument(
+            "lsdtt::algebra::raster_difference_stats(): rasters differ in size"
+        );
+    }
+
+    const std::vector<float>&        da = a.get_data();
+    const std::vector<std::uint8_t>& xa = a.get_mask();
+    const std::vector<float>&        db = b.get_data();
+    const std::vector<std::uint8_t>& xb = b.get_mask();
+
+    const std::size_t n = da.size();
+
+    double sum_sq  = 0.0;
+    double sum_abs = 0.0;
+    double sum_err = 0.0;
+    double max_abs = 0.0;
+    std::size_t count = 0;
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (xa[i] == 0 || xb[i] == 0) continue;
+        if (ma.is_nodata(da[i]) || mb.is_nodata(db[i])) continue;
+        if (!std::isfinite(da[i]) || !std::isfinite(db[i])) continue;
+
+        const double err = static_cast<double>(da[i]) - static_cast<double>(db[i]);
+
+        sum_sq  += err * err;
+        sum_abs += std::abs(err);
+        sum_err += err;
+        max_abs  = std::max(max_abs, std::abs(err));
+        ++count;
+    }
+
+    if (count == 0) return raster_difference_result{};
+
+    const double n_d = static_cast<double>(count);
+
+    raster_difference_result s;
+    s.count   = count;
+    s.rmse    = std::sqrt(sum_sq / n_d);
+    s.mae     = sum_abs / n_d;
+    s.max_abs = max_abs;
+    s.bias    = sum_err / n_d;
+    return s;
+}
+
 } // namespace algebra
 } // namespace lsdtt
