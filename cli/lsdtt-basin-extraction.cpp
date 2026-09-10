@@ -59,6 +59,7 @@
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 // ---------------------------------------------------------------------------
 // Small geometry helpers for the line-crossing basin analysis.
@@ -658,17 +659,6 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    auto to_lower_copy = [](std::string s)
-    {
-        for (char& ch : s)
-        {
-            ch = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(ch))
-            );
-        }
-        return s;
-    };
-
     // -------------------------------------------------------------------------
     // Cross-parameter logic
     // -------------------------------------------------------------------------
@@ -781,7 +771,7 @@ int main(int argc, char* argv[])
     }
 
     const std::string basin_outlet_snapping_method =
-        to_lower_copy(sf["basin_outlet_snapping_method"]);
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
 
     if (basin_outlet_snapping_method != "none" &&
         basin_outlet_snapping_method != "expanding_square" &&
@@ -1563,7 +1553,7 @@ int main(int argc, char* argv[])
                 const auto& p = basin_outlet_file_path;
                 const bool looks_like_csv =
                     p.size() >= 4 &&
-                    to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                    lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
                 if (looks_like_csv)
                     std::cout << "\nOutlet file is CSV: latitude and longitude "
                                  "columns (EPSG:4326) will be transformed to "
@@ -1623,7 +1613,7 @@ int main(int argc, char* argv[])
                     const auto& p = basin_outlet_file_path;
                     const bool looks_like_csv =
                         p.size() >= 4 &&
-                        to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                        lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
                     if (looks_like_csv)
                         std::cerr << "  -> CSV files must have columns named "
                                      "'latitude' and 'longitude'.\n";
@@ -1780,24 +1770,6 @@ int main(int argc, char* argv[])
                     ifs["basin_outlet_contributing_pixels_threshold"]
                 );
 
-            auto snap_status_to_string = [](lsdtt::lsdtt_snap_status status)
-            {
-                switch (status)
-                {
-                    case lsdtt::lsdtt_snap_status::success:
-                        return std::string("success");
-                    case lsdtt::lsdtt_snap_status::input_out_of_bounds:
-                        return std::string("input_out_of_bounds");
-                    case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
-                        return std::string("input_invalid_flow_cell");
-                    case lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window:
-                        return std::string("threshold_not_found_in_search_window");
-                    case lsdtt::lsdtt_snap_status::outlet_reached_before_threshold:
-                        return std::string("outlet_reached_before_threshold");
-                }
-
-                return std::string("unknown");
-            };
 
             std::vector<std::int64_t> basin_outlet_flat_indices;
             basin_outlet_flat_indices.reserve(requested_outlets.size());
@@ -1843,7 +1815,7 @@ int main(int argc, char* argv[])
                         {
                             std::cerr << "Warning: basin outlet " << outlet.point_id
                                       << " could not be snapped with expanding_square ("
-                                      << snap_status_to_string(snapped.status)
+                                      << lsdtt::snap_status_to_string(snapped.status)
                                       << "); skipping.\n";
                             continue;
                         }
@@ -1872,7 +1844,7 @@ int main(int argc, char* argv[])
                         {
                             std::cerr << "Warning: basin outlet " << outlet.point_id
                                       << " could not be snapped downstream ("
-                                      << snap_status_to_string(snapped.status)
+                                      << lsdtt::snap_status_to_string(snapped.status)
                                       << "); skipping.\n";
                             continue;
                         }

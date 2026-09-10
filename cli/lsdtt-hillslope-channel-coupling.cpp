@@ -87,6 +87,7 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_ridgeline_cpu.hpp"
 #include "../src/cpu/lsdtt_streamlines_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -97,8 +98,7 @@ namespace
 
 std::string lower(std::string s)
 {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    s = lsdtt::to_lower_ascii(s);
     return s;
 }
 

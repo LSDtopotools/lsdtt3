@@ -42,6 +42,7 @@
 #include "../src/cpu/lsdtt_hydraulic_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.1.1";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -376,9 +377,7 @@ int main(int argc, char* argv[])
     // Cross-parameter logic
     // -------------------------------------------------------------------------
     std::string routing_method = sf["flow_routing_method"];
-    std::transform(routing_method.begin(), routing_method.end(),
-                   routing_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    routing_method = lsdtt::to_lower_ascii(routing_method);
 
     if (routing_method != "mfd" && routing_method != "dinf")
     {
@@ -388,9 +387,7 @@ int main(int argc, char* argv[])
     }
 
     std::string bed_preprocessing = sf["bed_preprocessing"];
-    std::transform(bed_preprocessing.begin(), bed_preprocessing.end(),
-                   bed_preprocessing.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    bed_preprocessing = lsdtt::to_lower_ascii(bed_preprocessing);
     if (bed_preprocessing != "none" && bed_preprocessing != "fill")
     {
         std::cerr << "FATAL: bed_preprocessing must be 'none' or 'fill'. Got: "

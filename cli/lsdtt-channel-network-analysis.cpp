@@ -57,6 +57,7 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -468,17 +469,6 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    auto to_lower_copy = [](std::string s)
-    {
-        for (char& ch : s)
-        {
-            ch = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(ch))
-            );
-        }
-        return s;
-    };
-
     // -------------------------------------------------------------------------
     // Cross-parameter logic
     // -------------------------------------------------------------------------
@@ -575,7 +565,7 @@ int main(int argc, char* argv[])
 
 
     const std::string link_sampling_mode =
-        to_lower_copy(sf["link_sampling_mode"]);
+        lsdtt::to_lower_ascii(sf["link_sampling_mode"]);
 
     lsdtt::lsdtt_link_sampling_options link_sampling_options;
     if (link_sampling_mode == "full_link")
@@ -608,7 +598,7 @@ int main(int argc, char* argv[])
         ifs["link_sampling_min_nodes"];
 
     const std::string bearing_anchor_name =
-        to_lower_copy(sf["channel_link_bearing_sample_anchor"]);
+        lsdtt::to_lower_ascii(sf["channel_link_bearing_sample_anchor"]);
 
     lsdtt::lsdtt_link_sample_anchor channel_link_bearing_anchor;
     if (bearing_anchor_name == "upstream_end")
@@ -656,7 +646,7 @@ int main(int argc, char* argv[])
     }
 
     const std::string basin_outlet_snapping_method =
-        to_lower_copy(sf["basin_outlet_snapping_method"]);
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
 
     if (basin_outlet_snapping_method != "none" &&
         basin_outlet_snapping_method != "expanding_square" &&
@@ -997,7 +987,7 @@ int main(int argc, char* argv[])
                 const auto& p = basin_outlet_file_path;
                 const bool looks_like_csv =
                     p.size() >= 4 &&
-                    to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                    lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
                 if (looks_like_csv)
                     std::cout << "Outlet file is CSV: latitude and longitude "
                                  "columns (EPSG:4326) will be transformed to "
@@ -1054,7 +1044,7 @@ int main(int argc, char* argv[])
                     const auto& p = basin_outlet_file_path;
                     const bool looks_like_csv =
                         p.size() >= 4 &&
-                        to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                        lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
                     if (looks_like_csv)
                         std::cerr << "  -> CSV files must have columns named "
                                      "'latitude' and 'longitude'.\n";

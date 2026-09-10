@@ -62,6 +62,7 @@
 
 #ifdef LSDTT_HAS_OPENCV
 #include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 #endif
 
 static const std::string k_version  = "0.2.0";
@@ -951,9 +952,7 @@ int main(int argc, char* argv[])
     // Apply the global compute-backend preference. Dispatched kernels (e.g.
     // direct_polyfit) read this; everything without a GPU port stays on CPU.
     {
-        std::string cb = sf["compute_backend"];
-        std::transform(cb.begin(), cb.end(), cb.begin(),
-                       [](unsigned char ch){ return std::tolower(ch); });
+        std::string cb = lsdtt::to_lower_ascii(sf["compute_backend"]);
         if (cb == "cpu")
             lsdtt::set_compute_backend(lsdtt::backend_type::cpu);
         else if (cb == "gpu")

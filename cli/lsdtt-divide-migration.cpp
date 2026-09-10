@@ -224,23 +224,6 @@ static std::vector<std::string> load_cluster_values_from_vector(
     return values;
 }
 
-static const char* snap_status_to_cstr(lsdtt::lsdtt_snap_status status)
-{
-    switch (status)
-    {
-    case lsdtt::lsdtt_snap_status::success:
-        return "success";
-    case lsdtt::lsdtt_snap_status::input_out_of_bounds:
-        return "input_out_of_bounds";
-    case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
-        return "input_invalid_flow_cell";
-    case lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window:
-        return "threshold_not_found_in_search_window";
-    case lsdtt::lsdtt_snap_status::outlet_reached_before_threshold:
-        return "outlet_reached_before_threshold";
-    }
-    return "unknown";
-}
 
 // =============================================================================
 // main
@@ -724,7 +707,7 @@ int main(int argc, char* argv[])
             {
                 accepted = false;
                 std::cout << "  outlet point_id=" << pt.point_id
-                          << " snap failed (" << snap_status_to_cstr(sr.status)
+                          << " snap failed (" << lsdtt::snap_status_to_string(sr.status)
                           << "), dropping point\n";
             }
         }
@@ -742,7 +725,7 @@ int main(int argc, char* argv[])
             {
                 accepted = false;
                 std::cout << "  outlet point_id=" << pt.point_id
-                          << " snap failed (" << snap_status_to_cstr(sr.status)
+                          << " snap failed (" << lsdtt::snap_status_to_string(sr.status)
                           << "), dropping point\n";
             }
         }

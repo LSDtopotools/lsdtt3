@@ -58,6 +58,7 @@
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation =
@@ -1371,9 +1372,7 @@ int main(int argc, char* argv[])
     if (resolved_regime == lsdtt::hillslope_coupling_regime::coupled &&
         regime_requested)
     {
-        std::string hs_model = sf["hillslope_model"];
-        for (char& ch : hs_model)
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        std::string hs_model = lsdtt::to_lower_ascii(sf["hillslope_model"]);
 
         // NOTE (2026-08-27): `coupled` + `roering_implicit` used to be a FATAL
         // combination, on the reasoning that the implicit solver needs a

@@ -55,6 +55,7 @@
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
 #include "../src/utils/lsdtt_natural_breaks.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -598,37 +599,25 @@ int main(int argc, char* argv[])
 
     // Normalise method strings to lowercase for comparison.
     std::string twi_method = sf["twi_drainage_area_method"];
-    std::transform(twi_method.begin(), twi_method.end(), twi_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    twi_method = lsdtt::to_lower_ascii(twi_method);
 
     std::string conn_area_method = sf["connectivity_drainage_area_method"];
-    std::transform(conn_area_method.begin(), conn_area_method.end(),
-                   conn_area_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    conn_area_method = lsdtt::to_lower_ascii(conn_area_method);
 
     std::string conn_slope_method = sf["connectivity_slope_method"];
-    std::transform(conn_slope_method.begin(), conn_slope_method.end(),
-                   conn_slope_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    conn_slope_method = lsdtt::to_lower_ascii(conn_slope_method);
 
     std::string conn_roughness_method = sf["connectivity_roughness_method"];
-    std::transform(conn_roughness_method.begin(), conn_roughness_method.end(),
-                   conn_roughness_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    conn_roughness_method = lsdtt::to_lower_ascii(conn_roughness_method);
 
     std::string sti_method = sf["sti_drainage_area_method"];
-    std::transform(sti_method.begin(), sti_method.end(), sti_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    sti_method = lsdtt::to_lower_ascii(sti_method);
 
     std::string sti_term_mode_str = sf["sti_term_mode"];
-    std::transform(sti_term_mode_str.begin(), sti_term_mode_str.end(),
-                   sti_term_mode_str.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    sti_term_mode_str = lsdtt::to_lower_ascii(sti_term_mode_str);
 
     std::string sti_spr_transform_str = sf["sti_spr_transform"];
-    std::transform(sti_spr_transform_str.begin(), sti_spr_transform_str.end(),
-                   sti_spr_transform_str.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    sti_spr_transform_str = lsdtt::to_lower_ascii(sti_spr_transform_str);
 
     const bool write_sti = bf["write_sti_raster"];
     const bool write_sti_proxy = bf["write_sti_proxy_raster"];
@@ -1149,8 +1138,7 @@ int main(int argc, char* argv[])
             slope_res.at(lsdtt::polyfit_metric::slope);
 
         std::string method_lc = area_method;
-        std::transform(method_lc.begin(), method_lc.end(), method_lc.begin(),
-                       [](unsigned char c){ return std::tolower(c); });
+        method_lc = lsdtt::to_lower_ascii(method_lc);
 
         lsdtt::lsdtt_raster_result area_result;
         try

@@ -13,6 +13,7 @@
 // semantics documentation.
 // -----------------------------------------------------------------------------
 
+#include <functional>
 #include "lsdtt_channel_scope_cpu.hpp"
 
 #include <cmath>
@@ -434,6 +435,26 @@ std::vector<std::int64_t> load_role_point_flats(
     std::cout << "  " << pts.size() << " point(s) loaded, "
               << flats.size() << " mapped to valid cells\n";
     return flats;
+}
+
+std::vector<std::int64_t> load_role_point_flats_by_key(
+    const std::string&                                    role,
+    const std::string&                                    path_key_suffix,
+    const std::function<std::string(const std::string&)>& get_string,
+    const lsdtt_raster_meta&                              meta
+)
+{
+    const std::string stem = role + "_points";
+
+    point_role_input in;
+    in.role_name            = role;
+    in.path                 = get_string(stem + path_key_suffix);
+    in.input_format         = get_string(stem + "_input_format");
+    in.layer_name           = get_string(stem + "_layer_name");
+    in.latitude_field_name  = get_string(stem + "_latitude_field_name");
+    in.longitude_field_name = get_string(stem + "_longitude_field_name");
+
+    return load_role_point_flats(in, meta);
 }
 
 // -----------------------------------------------------------------------------

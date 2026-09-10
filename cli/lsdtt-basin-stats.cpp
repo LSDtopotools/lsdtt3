@@ -87,6 +87,7 @@
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/core/lsdtt_csv_table.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 
 static const std::string k_version  = "0.3.0";
@@ -827,19 +828,8 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    auto to_lower_copy = [](std::string s)
-    {
-        for (char& ch : s)
-        {
-            ch = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(ch))
-            );
-        }
-        return s;
-    };
-
     const std::string basin_outlet_snapping_method =
-        to_lower_copy(sf["basin_outlet_snapping_method"]);
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
 
     if (basin_outlet_snapping_method != "none" &&
         basin_outlet_snapping_method != "expanding_square" &&
@@ -881,7 +871,7 @@ int main(int argc, char* argv[])
     }
 
     const std::string basin_length_definition =
-        to_lower_copy(sf["basin_length_definition"]);
+        lsdtt::to_lower_ascii(sf["basin_length_definition"]);
 
     if (basin_length_definition != "flow_path" &&
         basin_length_definition != "geometric")
@@ -1362,23 +1352,6 @@ int main(int argc, char* argv[])
             ifs["basin_outlet_contributing_pixels_threshold"]
         );
 
-    auto snap_status_to_string = [](lsdtt::lsdtt_snap_status status)
-    {
-        switch (status)
-        {
-            case lsdtt::lsdtt_snap_status::success:
-                return std::string("success");
-            case lsdtt::lsdtt_snap_status::input_out_of_bounds:
-                return std::string("input_out_of_bounds");
-            case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
-                return std::string("input_invalid_flow_cell");
-            case lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window:
-                return std::string("threshold_not_found_in_search_window");
-            case lsdtt::lsdtt_snap_status::outlet_reached_before_threshold:
-                return std::string("outlet_reached_before_threshold");
-        }
-        return std::string("unknown");
-    };
 
 
     for (const auto& outlet : requested_outlets)
@@ -1428,7 +1401,7 @@ int main(int argc, char* argv[])
                 {
                     std::cerr << "Warning: outlet " << outlet.point_id
                               << " could not be snapped with expanding_square ("
-                              << snap_status_to_string(snapped.status)
+                              << lsdtt::snap_status_to_string(snapped.status)
                               << "); skipping.\n";
                     continue;
                 }
@@ -1453,7 +1426,7 @@ int main(int argc, char* argv[])
                 {
                     std::cerr << "Warning: outlet " << outlet.point_id
                               << " could not be snapped downstream ("
-                              << snap_status_to_string(snapped.status)
+                              << lsdtt::snap_status_to_string(snapped.status)
                               << "); skipping.\n";
                     continue;
                 }

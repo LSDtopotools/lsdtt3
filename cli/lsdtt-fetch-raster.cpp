@@ -70,6 +70,7 @@
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version   = "0.2.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -644,8 +645,7 @@ int main(int argc, char* argv[])
 
     auto to_lower_copy = [](std::string s) -> std::string
     {
-        std::transform(s.begin(), s.end(), s.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        s = lsdtt::to_lower_ascii(s);
         return s;
     };
 

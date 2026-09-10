@@ -1427,18 +1427,22 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Channel scope resolution ---\n";
         try
         {
+            // The five-key convention lives in lsdtt_channel_scope_cpu; this CLI
+            // spells its paths as <role>_points_fname and resolves them against
+            // read_path, which the accessor below does.
             auto role_flats = [&](const std::string& role)
             {
-                lsdtt::point_role_input in;
-                in.role_name            = role;
-                in.path = sf[role + "_points_fname"].empty()
-                    ? std::string()
-                    : pp.add_read_path_if_needed(sf[role + "_points_fname"]);
-                in.input_format         = sf[role + "_points_input_format"];
-                in.layer_name           = sf[role + "_points_layer_name"];
-                in.latitude_field_name  = sf[role + "_points_latitude_field_name"];
-                in.longitude_field_name = sf[role + "_points_longitude_field_name"];
-                return lsdtt::load_role_point_flats(in, routing_dem.get_meta());
+                return lsdtt::load_role_point_flats_by_key(
+                    role, "_fname",
+                    [&](const std::string& key) {
+                        const std::string v = sf[key];
+                        return (key.size() >= 6 &&
+                                key.compare(key.size() - 6, 6, "_fname") == 0 &&
+                                !v.empty())
+                            ? pp.add_read_path_if_needed(v)
+                            : v;
+                    },
+                    routing_dem.get_meta());
             };
 
             lsdtt::channel_scope_request sreq;
