@@ -1097,47 +1097,15 @@ int main(int argc, char* argv[])
 
                 try
                 {
-                    if (basin_outlet_snapping_method == "expanding_square")
+                    const lsdtt::lsdtt_snap_result snapped =
+                        lsdtt::snap_pixel_by_method(
+                            *flow, row, col, basin_outlet_snapping_method,
+                            square_snap_options, downstream_snap_options);
+                    if (snapped.status != lsdtt::lsdtt_snap_status::success)
                     {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                                *flow,
-                                row,
-                                col,
-                                square_snap_options
-                            );
-
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                        {
-                            continue;
-                        }
-
-                        flat = snapped.snapped_flat;
+                        continue;
                     }
-                    else if (basin_outlet_snapping_method == "downstream")
-                    {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                                *flow,
-                                row,
-                                col,
-                                downstream_snap_options
-                            );
-
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                        {
-                            continue;
-                        }
-
-                        flat = snapped.snapped_flat;
-                    }
-                    else
-                    {
-                        if (!flow->is_valid_cell(flat))
-                        {
-                            continue;
-                        }
-                    }
+                    flat = snapped.snapped_flat;
 
                     const std::int32_t junction =
                         channel_network->junction_upstream_of_flat(flat);

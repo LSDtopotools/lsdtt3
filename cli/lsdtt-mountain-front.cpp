@@ -93,97 +93,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static lsdtt::lsdtt_raster_cpu prune_upstream_outlets(
-    const lsdtt::lsdtt_raster_cpu& outlets,
-    const lsdtt::lsdtt_flow_base&  flow)
-{
-    const lsdtt::lsdtt_raster_meta& meta = outlets.get_meta();
-    const std::vector<float>&        odat = outlets.get_data();
-    const std::vector<uint8_t>&      omsk = outlets.get_mask();
-
-    const std::size_t npix =
-        static_cast<std::size_t>(meta.n_rows) *
-        static_cast<std::size_t>(meta.n_cols);
-
-    if (flow.full_grid_size() != npix)
-    {
-        throw std::runtime_error(
-            "prune_upstream_outlets: flow grid size does not match outlet raster size.");
-    }
-
-    const float nd = static_cast<float>(meta.no_data_value);
-
-    std::vector<uint8_t> is_candidate(npix, uint8_t{0});
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (omsk[i] == 0) continue;
-        if (std::isfinite(odat[i]) && !meta.is_nodata(odat[i]) && odat[i] > 0.5f)
-            is_candidate[i] = uint8_t{1};
-    }
-
-    std::vector<float>   out_data(npix, nd);
-    std::vector<uint8_t> out_mask = omsk;
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (omsk[i] != 0)
-            out_data[i] = 0.0f;
-    }
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (is_candidate[i] == 0) continue;
-
-        bool has_downstream_outlet = false;
-
-        std::int64_t j =
-            flow.receiver_of_unchecked(static_cast<std::int64_t>(i));
-
-        int guard = 0;
-        while (guard < static_cast<int>(npix))
-        {
-            if (j == lsdtt::lsdtt_flow_base::nodata_receiver ||
-                j == lsdtt::lsdtt_flow_base::outlet_receiver)
-            {
-                break;
-            }
-
-            if (j < 0 || j >= static_cast<std::int64_t>(npix))
-            {
-                break;
-            }
-
-            const std::size_t jj = static_cast<std::size_t>(j);
-
-            if (omsk[jj] == 0)
-                break;
-
-            if (is_candidate[jj] != 0)
-            {
-                has_downstream_outlet = true;
-                break;
-            }
-
-            const std::int64_t next = flow.receiver_of_unchecked(j);
-
-            if (next == j)   // self-loop safety
-                break;
-
-            j = next;
-            ++guard;
-        }
-
-        if (!has_downstream_outlet)
-            out_data[i] = 1.0f;
-    }
-
-    return lsdtt::lsdtt_raster_cpu(
-        std::move(out_data), std::move(out_mask), meta);
-}
-
-
-
-
 // =============================================================================
 // main
 // =============================================================================
@@ -667,12 +576,9 @@ if (bf["write_mountain_front_outlets"])
 
             // -----------------------------------------------------------------
             // Prune outlet candidates that have another outlet downstream.
-            //
-            // Replace get_receiver_index_vector() with your actual accessor if
-            // the flow object uses a different method name.
             // -----------------------------------------------------------------
             const lsdtt::lsdtt_raster_cpu outlets =
-                prune_upstream_outlets(
+                lsdtt::retain_downstream_most_mountain_front_outlets(
                     outlet_candidates, *flow);
 
 

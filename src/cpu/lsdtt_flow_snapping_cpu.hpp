@@ -300,10 +300,6 @@ snap_flats_to_contributing_pixels_threshold_downstream(
 // falling through to no snapping: a typo in a parameter file would otherwise
 // produce unsnapped outlets that look like a modelling choice.
 //
-// Four CLIs wrote this dispatch out by hand (basin-extraction, basin-stats,
-// chi-analysis and the extracted basin-stats module), and the "none" case was
-// handled differently in each -- some skipping the snap, some validating the
-// pixel first.
 // -----------------------------------------------------------------------------
 [[nodiscard]] lsdtt_snap_result snap_pixel_by_method(
     const lsdtt_flow_base&               flow,

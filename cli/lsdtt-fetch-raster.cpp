@@ -1470,43 +1470,18 @@ int main(int argc, char* argv[])
                 break;
             }
 
-            std::int64_t snapped_flat = -1;
-            if (snap_method == "none")
+            const lsdtt::lsdtt_snap_result snap = lsdtt::snap_pixel_by_method(
+                flow, row, col, snap_method, square_snap_options,
+                downstream_snap_options);
+            if (snap.status != lsdtt::lsdtt_snap_status::success)
             {
-                snapped_flat = flow.flat_index(row, col);
-                if (!flow.is_valid_cell(snapped_flat))
-                {
-                    all_ok = false;
-                    fail_message = "outlet pixel is invalid on final DEM";
-                    break;
-                }
+                all_ok = false;
+                fail_message = snap_method == "none"
+                    ? "outlet pixel is invalid on final DEM"
+                    : "could not snap outlet to channel cell (" + snap_method + ")";
+                break;
             }
-            else if (snap_method == "expanding_square")
-            {
-                const lsdtt::lsdtt_snap_result snap =
-                    lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                        flow, row, col, square_snap_options);
-                if (snap.status != lsdtt::lsdtt_snap_status::success)
-                {
-                    all_ok = false;
-                    fail_message = "could not snap outlet to channel cell (expanding_square)";
-                    break;
-                }
-                snapped_flat = snap.snapped_flat;
-            }
-            else
-            {
-                const lsdtt::lsdtt_snap_result snap =
-                    lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                        flow, row, col, downstream_snap_options);
-                if (snap.status != lsdtt::lsdtt_snap_status::success)
-                {
-                    all_ok = false;
-                    fail_message = "could not snap outlet to channel cell (downstream)";
-                    break;
-                }
-                snapped_flat = snap.snapped_flat;
-            }
+            const std::int64_t snapped_flat = snap.snapped_flat;
 
             const lsdtt::lsdtt_flat_index_slice basin_pixels =
                 flow.upslope_nodes(snapped_flat);
@@ -1745,28 +1720,11 @@ int main(int argc, char* argv[])
                 downstream_snap_options.contributing_pixels_threshold =
                     static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
 
-                std::int64_t snapped_flat = -1;
-                if (snap_method == "none")
-                {
-                    snapped_flat = flow.flat_index(row, col);
-                    if (!flow.is_valid_cell(snapped_flat)) continue;
-                }
-                else if (snap_method == "expanding_square")
-                {
-                    const lsdtt::lsdtt_snap_result snap =
-                        lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                            flow, row, col, square_snap_options);
-                    if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
-                    snapped_flat = snap.snapped_flat;
-                }
-                else
-                {
-                    const lsdtt::lsdtt_snap_result snap =
-                        lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                            flow, row, col, downstream_snap_options);
-                    if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
-                    snapped_flat = snap.snapped_flat;
-                }
+                const lsdtt::lsdtt_snap_result snap = lsdtt::snap_pixel_by_method(
+                    flow, row, col, snap_method, square_snap_options,
+                    downstream_snap_options);
+                if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
+                const std::int64_t snapped_flat = snap.snapped_flat;
 
                 lsdtt::lsdtt_basin_cpu basin(snapped_flat, flow);
                 lsdtt::lsdtt_basin_outline_cpu outline = basin.get_basin_outline();

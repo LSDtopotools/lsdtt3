@@ -54,7 +54,6 @@
 #include "../src/cpu/lsdtt_sti_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
-#include "../src/utils/lsdtt_natural_breaks.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.1.0";
@@ -200,79 +199,6 @@ static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
     return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
-// -----------------------------------------------------------------------------
-// classify_jenks_categories
-//
-// Classify valid pixels into Jenks natural-break classes (1..K) and preserve
-// nodata mask. Invalid pixels are set to nodata in the output.
-// -----------------------------------------------------------------------------
-static lsdtt::lsdtt_raster_cpu classify_jenks_categories(
-    const lsdtt::lsdtt_raster_cpu& input,
-    const int                      requested_classes,
-    const int                      max_histogram_bins,
-    lsdtt::lsdtt_jenks_result&     jenks,
-    std::int64_t&                  classified_pixels)
-{
-    const auto& src_data = input.get_data();
-    const auto& src_mask = input.get_mask();
-    const auto& meta = input.get_meta();
-
-    if (src_data.size() != src_mask.size())
-    {
-        throw std::runtime_error("classify_jenks_categories: data/mask size mismatch");
-    }
-
-    std::vector<double> values;
-    values.reserve(src_data.size());
-    for (std::size_t i = 0; i < src_data.size(); ++i)
-    {
-        if (src_mask[i] == 0) continue;
-        const float v = src_data[i];
-        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
-        values.push_back(static_cast<double>(v));
-    }
-
-    lsdtt::lsdtt_jenks_options opts;
-    opts.n_classes = requested_classes;
-    opts.max_histogram_bins = max_histogram_bins;
-    jenks = lsdtt::compute_jenks_breaks(values, opts);
-
-    std::vector<float> out_data = src_data;
-    std::vector<std::uint8_t> out_mask = src_mask;
-    const float nodata_f = static_cast<float>(meta.no_data_value);
-    classified_pixels = 0;
-
-    for (std::size_t i = 0; i < src_data.size(); ++i)
-    {
-        if (src_mask[i] == 0)
-        {
-            out_data[i] = nodata_f;
-            continue;
-        }
-        const float v = src_data[i];
-        if (!std::isfinite(v) || meta.is_nodata(v))
-        {
-            out_data[i] = nodata_f;
-            out_mask[i] = 0;
-            continue;
-        }
-
-        const int cls = lsdtt::classify_jenks_value(
-            static_cast<double>(v),
-            jenks.upper_breaks
-        );
-        if (cls <= 0)
-        {
-            out_data[i] = nodata_f;
-            out_mask[i] = 0;
-            continue;
-        }
-        out_data[i] = static_cast<float>(cls);
-        ++classified_pixels;
-    }
-
-    return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
-}
 // =============================================================================
 // main
 // =============================================================================
@@ -1644,14 +1570,11 @@ int main(int argc, char* argv[])
 
                     if (write_sti_p95_jenks)
                     {
-                        lsdtt::lsdtt_jenks_result jenks;
-                        std::int64_t classified = 0;
-                        lsdtt::lsdtt_raster_cpu sti_p95_jenks = classify_jenks_categories(
+                        lsdtt::algebra::raster_jenks_classification_result classification =
+                            lsdtt::algebra::classify_jenks_categories(
                             sti_p95,
                             ifs["sti_p95_jenks_n_classes"],
-                            ifs["sti_p95_jenks_max_histogram_bins"],
-                            jenks,
-                            classified
+                            ifs["sti_p95_jenks_max_histogram_bins"]
                         );
                         const std::string sti_p95_jenks_file = pp.make_output_path(
                             "_sti_p95_jenks" + std::to_string(ifs["sti_p95_jenks_n_classes"]),
@@ -1659,23 +1582,24 @@ int main(int argc, char* argv[])
                         );
                         std::cout << "Writing: " << sti_p95_jenks_file << "\n";
                         loader.write_full(
-                            sti_p95_jenks.get_data(),
-                            sti_p95_jenks.get_meta(),
+                            classification.classified_raster.get_data(),
+                            classification.classified_raster.get_meta(),
                             sti_p95_jenks_file,
                             out_fmt
                         );
 
                         std::cout << "STI ksd Jenks classes requested/effective: "
-                                  << jenks.requested_classes << " / " << jenks.effective_classes << "\n";
+                                  << classification.jenks.requested_classes << " / "
+                                  << classification.jenks.effective_classes << "\n";
                         std::cout << "STI ksd Jenks classified pixels          : "
-                                  << classified << " / " << kept_pixels << "\n";
+                                  << classification.classified_pixels << " / " << kept_pixels << "\n";
                         std::cout << "STI ksd Jenks GVF                        : "
-                                  << jenks.goodness_of_variance_fit << "\n";
+                                  << classification.jenks.goodness_of_variance_fit << "\n";
                         std::cout << "STI ksd Jenks upper breaks               : ";
-                        for (std::size_t bi = 0; bi < jenks.upper_breaks.size(); ++bi)
+                        for (std::size_t bi = 0; bi < classification.jenks.upper_breaks.size(); ++bi)
                         {
                             if (bi > 0) std::cout << ", ";
-                            std::cout << jenks.upper_breaks[bi];
+                            std::cout << classification.jenks.upper_breaks[bi];
                         }
                         std::cout << "\n";
                     }
@@ -1796,14 +1720,11 @@ int main(int argc, char* argv[])
 
                     if (write_sti_p95_jenks)
                     {
-                        lsdtt::lsdtt_jenks_result jenks;
-                        std::int64_t classified = 0;
-                        lsdtt::lsdtt_raster_cpu sti_proxy_p95_jenks = classify_jenks_categories(
+                        lsdtt::algebra::raster_jenks_classification_result classification =
+                            lsdtt::algebra::classify_jenks_categories(
                             sti_proxy_p95,
                             ifs["sti_p95_jenks_n_classes"],
-                            ifs["sti_p95_jenks_max_histogram_bins"],
-                            jenks,
-                            classified
+                            ifs["sti_p95_jenks_max_histogram_bins"]
                         );
                         const std::string sti_proxy_p95_jenks_file = pp.make_output_path(
                             "_sti_proxy_p95_jenks" + std::to_string(ifs["sti_p95_jenks_n_classes"]),
@@ -1811,23 +1732,24 @@ int main(int argc, char* argv[])
                         );
                         std::cout << "Writing: " << sti_proxy_p95_jenks_file << "\n";
                         loader.write_full(
-                            sti_proxy_p95_jenks.get_data(),
-                            sti_proxy_p95_jenks.get_meta(),
+                            classification.classified_raster.get_data(),
+                            classification.classified_raster.get_meta(),
                             sti_proxy_p95_jenks_file,
                             out_fmt
                         );
 
                         std::cout << "STI proxy Jenks classes requested/effective: "
-                                  << jenks.requested_classes << " / " << jenks.effective_classes << "\n";
+                                  << classification.jenks.requested_classes << " / "
+                                  << classification.jenks.effective_classes << "\n";
                         std::cout << "STI proxy Jenks classified pixels          : "
-                                  << classified << " / " << kept_pixels << "\n";
+                                  << classification.classified_pixels << " / " << kept_pixels << "\n";
                         std::cout << "STI proxy Jenks GVF                        : "
-                                  << jenks.goodness_of_variance_fit << "\n";
+                                  << classification.jenks.goodness_of_variance_fit << "\n";
                         std::cout << "STI proxy Jenks upper breaks               : ";
-                        for (std::size_t bi = 0; bi < jenks.upper_breaks.size(); ++bi)
+                        for (std::size_t bi = 0; bi < classification.jenks.upper_breaks.size(); ++bi)
                         {
                             if (bi > 0) std::cout << ", ";
-                            std::cout << jenks.upper_breaks[bi];
+                            std::cout << classification.jenks.upper_breaks[bi];
                         }
                         std::cout << "\n";
                     }

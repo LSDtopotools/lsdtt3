@@ -16,7 +16,8 @@
 // Workflow:
 //   1. Parse parameters & implement cross-parameter dependencies.
 //   2. Load DEM, verify projection, fill pits, and build D8 routing.
-//   3. Read basin outlets from CSV, snap downstream, and extract basins.
+//   3. Read basin outlets from CSV, apply the selected snapping method, and
+//      extract basins.
 //   4. Extract continuous 1D basin outlines into memory.
 //   5. (If requested) Build D-infinity flow routing on the FILLED DEM,
 //      compute accumulation, sample into memory, and free graph.
@@ -73,6 +74,7 @@
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 // =============================================================================
 // Helper Polyfit Registration
@@ -215,6 +217,18 @@ int main(int argc, char* argv[])
         "Defines the required D8 accumulation to arrest snapping.",
         "Snapping options", "param", ""};
 
+    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_min_search_radius_pixels"] = {"int", "0",
+        "Minimum expanding-square search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Snapping options", "param", "basin_outlet_snapping_method"};
+
+    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_max_search_radius_pixels"] = {"int", "25",
+        "Maximum expanding-square search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Snapping options", "param", "basin_outlet_snapping_method"};
+
     // --- Smoothing Scales & Polyfit ---
     string_default_map["lambda_scales"] = "10,50,100";
     help_map["lambda_scales"] = {"string", "10,50,100", 
@@ -336,6 +350,15 @@ int main(int argc, char* argv[])
 
     if (sf["basin_outlet_csv"] == "NULL" || sf["basin_outlet_csv"].empty()) {
         std::cerr << "FATAL: basin_outlet_csv is required.\n"; return 1;
+    }
+
+    const std::string snap_method =
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
+    if (snap_method != "none" && snap_method != "downstream" &&
+        snap_method != "expanding_square") {
+        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
+                     "none, downstream, expanding_square.\n";
+        return 1;
     }
 
     std::vector<double> lambda_scales;
@@ -470,11 +493,17 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: " << e.what() << "\n"; return 1;
     }
 
-    std::string snap_method = sf["basin_outlet_snapping_method"];
     std::vector<std::int64_t> valid_outlet_flats;
     lsdtt::lsdtt_downstream_snap_options ds_opts;
     ds_opts.contributing_pixels_threshold = 
         ifs["basin_outlet_contributing_pixels_threshold"];
+    lsdtt::lsdtt_square_snap_options square_opts;
+    square_opts.contributing_pixels_threshold =
+        ifs["basin_outlet_contributing_pixels_threshold"];
+    square_opts.min_search_radius_pixels =
+        ifs["basin_outlet_min_search_radius_pixels"];
+    square_opts.max_search_radius_pixels =
+        ifs["basin_outlet_max_search_radius_pixels"];
 
     // An outlet must end up ON THE CHANNEL NETWORK, not merely on a valid cell.
     // This tool builds lsdtt_junction_basin objects, and those resolve the
@@ -501,20 +530,24 @@ int main(int argc, char* argv[])
         int r = out.row, c = out.col;
         std::int64_t f = out.flat;
 
-        if (snap_method == "downstream") {
-            auto snapped =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                    *flow, r, c, ds_opts);
-            if (snapped.status != lsdtt::lsdtt_snap_status::success) {
+        const lsdtt::lsdtt_snap_result snapped = lsdtt::snap_pixel_by_method(
+            *flow, r, c, snap_method, square_opts, ds_opts);
+        if (snapped.status != lsdtt::lsdtt_snap_status::success) {
+            if (snap_method == "none") {
                 std::cerr << "Warning: outlet " << out.point_id
-                          << " could not be snapped downstream ("
+                          << " maps to an invalid or nodata flow pixel; skipping.\n";
+            } else {
+                std::cerr << "Warning: outlet " << out.point_id
+                          << " could not be snapped "
+                          << (snap_method == "downstream" ? "downstream" : "with expanding_square")
+                          << " ("
                           << lsdtt::snap_status_to_string(snapped.status)
                           << "); skipping.\n";
-                ++n_skipped;
-                continue;
             }
-            f = snapped.snapped_flat;
+            ++n_skipped;
+            continue;
         }
+        f = snapped.snapped_flat;
 
         if (!flow->is_valid_cell(f)) {
             std::cerr << "Warning: outlet " << out.point_id

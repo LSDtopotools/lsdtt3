@@ -31,10 +31,13 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_natural_breaks.hpp"
 
 #include <string>
+#include <vector>
 
 namespace lsdtt { class lsdtt_data_loader; } // forward declaration
 
@@ -214,6 +217,42 @@ lsdtt_raster_cpu raster_normalise_nonnegative(
 // Masking and conditional selection
 // -----------------------------------------------------------------------------
 
+// Reclassify source-mask-valid pixels to 1 when lround(value) is in `values`,
+// otherwise 0. The source mask and metadata are preserved verbatim, including
+// writing 0 data under masked pixels. Non-finite values never match. An empty
+// or duplicate-containing value set is valid.
+struct raster_value_set_mask_result
+{
+    lsdtt_raster_cpu raster;
+    std::int64_t     selected_pixels = 0;
+};
+
+raster_value_set_mask_result raster_mask_from_rounded_value_set(
+    const lsdtt_raster_cpu& source,
+    const std::vector<long>& values
+);
+
+// Build the landslide host mask `active AND NOT excluded`. Foreground means
+// nonzero and source-mask-valid (not > 0.5). A null active mask means all cells
+// are active. Exclusion nodata/masked cells are not excluded; valid nonzero
+// values, including non-finite values, are excluded.
+//
+// Output metadata come from `domain`, but its data and mask do not constrain
+// the result. The output mask is all-valid and inactive/excluded cells are valid
+// background 0. All supplied rasters must have the domain dimensions.
+struct raster_active_mask_result
+{
+    lsdtt_raster_cpu raster;
+    std::int64_t     active_pixels = 0;
+    std::int64_t     excluded_pixels = 0;
+};
+
+raster_active_mask_result raster_active_mask_and_not_excluded(
+    const lsdtt_raster_cpu& domain,
+    const lsdtt_raster_cpu* active_mask,
+    const lsdtt_raster_cpu& exclusion_mask
+);
+
 /// Binary threshold from above:
 /// result = 1 where a >= threshold, else 0.
 /// Valid input pixels remain valid in the output; nodata remains nodata.
@@ -333,6 +372,21 @@ float raster_stddev_value(const lsdtt_raster_cpu& a);
 
 /// Range (max - min) over all valid pixels.
 float raster_range_value(const lsdtt_raster_cpu& a);
+
+// Classify finite, unmasked, non-nodata pixels into Jenks classes 1..K.
+// Pixels invalid by any of those criteria are nodata and masked in the output.
+struct raster_jenks_classification_result
+{
+    lsdtt_raster_cpu  classified_raster;
+    lsdtt_jenks_result jenks;
+    std::int64_t      classified_pixels = 0;
+};
+
+raster_jenks_classification_result classify_jenks_categories(
+    const lsdtt_raster_cpu& input,
+    int                     requested_classes,
+    int                     max_histogram_bins
+);
 
 // -----------------------------------------------------------------------------
 // raster_difference_stats

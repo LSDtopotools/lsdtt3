@@ -12,6 +12,7 @@
 #include "../core/lsdtt_stat_csv.hpp"
 #include "../utils/lsdtt_distributions.hpp"
 #include "../utils/lsdtt_histogram.hpp"
+#include "../utils/lsdtt_natural_breaks.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,155 @@
 
 namespace lsdtt {
 namespace algebra {
+
+raster_value_set_mask_result raster_mask_from_rounded_value_set(
+    const lsdtt_raster_cpu& source,
+    const std::vector<long>& values)
+{
+    const auto& src_data = source.get_data();
+    const auto& src_mask = source.get_mask();
+    if (src_data.size() != src_mask.size())
+    {
+        throw std::runtime_error(
+            "raster_mask_from_rounded_value_set: data/mask size mismatch");
+    }
+
+    raster_value_set_mask_result result;
+    std::vector<float> out_data(src_data.size(), 0.0f);
+    std::vector<std::uint8_t> out_mask = src_mask;
+    for (std::size_t i = 0; i < src_data.size(); ++i)
+    {
+        if (src_mask[i] == 0 || !std::isfinite(src_data[i])) continue;
+        const long rounded = std::lround(static_cast<double>(src_data[i]));
+        if (std::find(values.begin(), values.end(), rounded) != values.end())
+        {
+            out_data[i] = 1.0f;
+            ++result.selected_pixels;
+        }
+    }
+    result.raster = lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), source.get_meta());
+    return result;
+}
+
+raster_active_mask_result raster_active_mask_and_not_excluded(
+    const lsdtt_raster_cpu& domain,
+    const lsdtt_raster_cpu* active_mask,
+    const lsdtt_raster_cpu& exclusion_mask)
+{
+    const auto& meta = domain.get_meta();
+    const auto dimensions_match = [&meta](const lsdtt_raster_cpu& raster)
+    {
+        return raster.get_meta().n_rows == meta.n_rows &&
+               raster.get_meta().n_cols == meta.n_cols;
+    };
+    if (!dimensions_match(exclusion_mask) ||
+        (active_mask != nullptr && !dimensions_match(*active_mask)))
+    {
+        throw std::invalid_argument(
+            "raster_active_mask_and_not_excluded: raster dimensions do not match domain");
+    }
+
+    const auto& ice_data = exclusion_mask.get_data();
+    const auto& ice_mask = exclusion_mask.get_mask();
+    const float ice_nodata =
+        static_cast<float>(exclusion_mask.get_meta().no_data_value);
+    const std::size_t n = static_cast<std::size_t>(meta.n_pixels());
+    if (ice_data.size() != n || ice_mask.size() != n ||
+        (active_mask != nullptr &&
+         (active_mask->get_data().size() != n || active_mask->get_mask().size() != n)))
+    {
+        throw std::runtime_error(
+            "raster_active_mask_and_not_excluded: data/mask size mismatch");
+    }
+
+    raster_active_mask_result result;
+    std::vector<float> out_data(n, 0.0f);
+    std::vector<std::uint8_t> out_mask(n, 1);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const bool in_active = active_mask == nullptr ||
+            (active_mask->get_mask()[i] != 0 && active_mask->get_data()[i] != 0.0f);
+        const bool excluded = ice_mask[i] != 0 && ice_data[i] != ice_nodata &&
+                              ice_data[i] != 0.0f;
+        if (excluded && in_active) ++result.excluded_pixels;
+        if (in_active && !excluded)
+        {
+            out_data[i] = 1.0f;
+            ++result.active_pixels;
+        }
+    }
+    result.raster = lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta);
+    return result;
+}
+
+raster_jenks_classification_result classify_jenks_categories(
+    const lsdtt_raster_cpu& input,
+    const int               requested_classes,
+    const int               max_histogram_bins)
+{
+    const auto& src_data = input.get_data();
+    const auto& src_mask = input.get_mask();
+    const auto& meta = input.get_meta();
+
+    if (src_data.size() != src_mask.size())
+    {
+        throw std::runtime_error("classify_jenks_categories: data/mask size mismatch");
+    }
+
+    std::vector<double> values;
+    values.reserve(src_data.size());
+    for (std::size_t i = 0; i < src_data.size(); ++i)
+    {
+        if (src_mask[i] == 0) continue;
+        const float v = src_data[i];
+        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
+        values.push_back(static_cast<double>(v));
+    }
+
+    lsdtt_jenks_options opts;
+    opts.n_classes = requested_classes;
+    opts.max_histogram_bins = max_histogram_bins;
+
+    raster_jenks_classification_result result;
+    result.jenks = compute_jenks_breaks(values, opts);
+
+    std::vector<float> out_data = src_data;
+    std::vector<std::uint8_t> out_mask = src_mask;
+    const float nodata_f = static_cast<float>(meta.no_data_value);
+
+    for (std::size_t i = 0; i < src_data.size(); ++i)
+    {
+        if (src_mask[i] == 0)
+        {
+            out_data[i] = nodata_f;
+            continue;
+        }
+        const float v = src_data[i];
+        if (!std::isfinite(v) || meta.is_nodata(v))
+        {
+            out_data[i] = nodata_f;
+            out_mask[i] = 0;
+            continue;
+        }
+
+        const int cls = classify_jenks_value(
+            static_cast<double>(v), result.jenks.upper_breaks);
+        if (cls <= 0)
+        {
+            out_data[i] = nodata_f;
+            out_mask[i] = 0;
+            continue;
+        }
+        out_data[i] = static_cast<float>(cls);
+        ++result.classified_pixels;
+    }
+
+    result.classified_raster = lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), meta);
+    return result;
+}
 
 // =============================================================================
 // assert_compatible

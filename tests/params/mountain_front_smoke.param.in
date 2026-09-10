@@ -12,6 +12,11 @@ write_output_format: gtiff
 write_vector_format: csv
 
 relief_window_side_pixels: 3
+adaptive_relief_threshold: false
+relief_threshold_metres: 8
+min_flat_component_pixels: 1
+flat_closing_radius_metres: 0
+erosion_radius_metres: 0
 min_component_pixels: 1
 min_contributing_pixels: 1   # renamed to basin_minimum_contributing_pixels in Phase 5 (plan section 10b)
 

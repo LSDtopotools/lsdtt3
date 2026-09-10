@@ -1,0 +1,16 @@
+# Exercises the advertised expanding-square outlet path without adding a fixture.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: bsm_square
+
+basin_outlet_csv: __READ_PATH__/basin_stats_outlets.csv
+basin_outlet_snapping_method: expanding_square
+basin_outlet_contributing_pixels_threshold: 150
+basin_outlet_min_search_radius_pixels: 0
+basin_outlet_max_search_radius_pixels: 25
+source_pixels_threshold: 150
+
+lambda_scales: 60
+polyfit_metrics: maximum_curvature
+write_outline_curvature_flips: true

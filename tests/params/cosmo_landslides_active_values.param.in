@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: lsactive
+
+landslide_mode: single_event
+threshold_contributing_pixels: 20
+event_volume_m3: 2
+event_time_yr: 0
+random_seed: 7
+mask_fname: tiny_landslide_active_mask.asc
+mask_active_values: 4
+write_output_format: gtiff

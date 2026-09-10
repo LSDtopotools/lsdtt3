@@ -55,6 +55,7 @@
 #include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
@@ -823,23 +824,10 @@ int main(int argc, char* argv[])
                 return 1;
             }
 
-            auto&       m_data = mask_raster.get_data_array();
-            const auto& m_mask = mask_raster.get_mask_array();
-            const auto& m_meta = mask_raster.get_meta();
-            std::int64_t n_active = 0;
-            for (int r = 0; r < m_meta.n_rows; ++r)
-                for (int c = 0; c < m_meta.n_cols; ++c)
-                {
-                    bool keep = false;
-                    if (m_mask(r, c))
-                    {
-                        const long v = std::lround(
-                            static_cast<double>(m_data(r, c)));
-                        for (long w : wanted) if (v == w) { keep = true; break; }
-                    }
-                    m_data(r, c) = keep ? 1.0f : 0.0f;
-                    if (keep) ++n_active;
-                }
+            auto reclassified = lsdtt::algebra::raster_mask_from_rounded_value_set(
+                mask_raster, wanted);
+            mask_raster = std::move(reclassified.raster);
+            const std::int64_t n_active = reclassified.selected_pixels;
 
             std::cout << "Mask values   : " << sf["mask_active_values"]
                       << " -> " << n_active << " host pixels\n";
@@ -885,28 +873,10 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        const auto& icd = ice_raster.get_data_array();
-        const auto& icm = ice_raster.get_mask_array();
-        const float ice_ndv = static_cast<float>(ice_raster.get_meta().no_data_value);
-
-        lsdtt::lsdtt_array2d_f  cd(meta.n_rows, meta.n_cols, 0.0f);
-        lsdtt::lsdtt_array2d_u8 ck(meta.n_rows, meta.n_cols, 1);
-        std::int64_t n_excluded = 0;
-        for (int r = 0; r < meta.n_rows; ++r)
-        {
-            for (int c = 0; c < meta.n_cols; ++c)
-            {
-                const bool in_active = mask_ptr
-                    ? (mask_ptr->get_mask_array()(r, c) &&
-                       mask_ptr->get_data_array()(r, c) != 0.0f)
-                    : true;
-                const bool iced = icm(r, c) && icd(r, c) != ice_ndv
-                                            && icd(r, c) != 0.0f;
-                if (iced && in_active) ++n_excluded;
-                cd(r, c) = (in_active && !iced) ? 1.0f : 0.0f;
-            }
-        }
-        combined_mask = lsdtt::lsdtt_raster_cpu(std::move(cd), std::move(ck), meta);
+        auto combined = lsdtt::algebra::raster_active_mask_and_not_excluded(
+            filled, mask_ptr, ice_raster);
+        const std::int64_t n_excluded = combined.excluded_pixels;
+        combined_mask = std::move(combined.raster);
         mask_ptr = &combined_mask;
         std::cout << "Ice mask      : " << sf["ice_mask_fname"] << " -- "
                   << n_excluded << " pixel(s) excluded from landsliding\n";

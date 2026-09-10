@@ -693,29 +693,11 @@ int main(int argc, char* argv[])
         std::int64_t snapped_flat = pt.flat;
         bool accepted = true;
 
-        if (snap_method == "downstream")
+        if (snap_method != "none")
         {
             const lsdtt::lsdtt_snap_result sr =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                    *flow, pt.row, pt.col, ds_opts);
-            if (sr.status == lsdtt::lsdtt_snap_status::success)
-            {
-                snapped_flat = sr.snapped_flat;
-                ++n_snap_success;
-            }
-            else
-            {
-                accepted = false;
-                std::cout << "  outlet point_id=" << pt.point_id
-                          << " snap failed (" << lsdtt::snap_status_to_string(sr.status)
-                          << "), dropping point\n";
-            }
-        }
-        else if (snap_method == "expanding_square")
-        {
-            const lsdtt::lsdtt_snap_result sr =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                    *flow, pt.row, pt.col, sq_opts);
+                lsdtt::snap_pixel_by_method(
+                    *flow, pt.row, pt.col, snap_method, sq_opts, ds_opts);
             if (sr.status == lsdtt::lsdtt_snap_status::success)
             {
                 snapped_flat = sr.snapped_flat;

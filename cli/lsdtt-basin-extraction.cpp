@@ -1801,29 +1801,37 @@ int main(int argc, char* argv[])
                     int col = outlet.col;
                     std::int64_t flat = outlet.flat;
 
-                    if (basin_outlet_snapping_method == "expanding_square")
-                    {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                                *flow,
-                                row,
-                                col,
-                                square_snap_options
-                            );
+                    const lsdtt::lsdtt_snap_result snapped =
+                        lsdtt::snap_pixel_by_method(
+                            *flow, row, col, basin_outlet_snapping_method,
+                            square_snap_options, downstream_snap_options);
 
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
+                    if (snapped.status != lsdtt::lsdtt_snap_status::success)
+                    {
+                        if (basin_outlet_snapping_method == "none")
                         {
                             std::cerr << "Warning: basin outlet " << outlet.point_id
-                                      << " could not be snapped with expanding_square ("
+                                      << " maps to an invalid or nodata flow pixel; skipping.\n";
+                        }
+                        else
+                        {
+                            std::cerr << "Warning: basin outlet " << outlet.point_id
+                                      << " could not be snapped "
+                                      << (basin_outlet_snapping_method == "downstream"
+                                              ? "downstream" : "with expanding_square")
+                                      << " ("
                                       << lsdtt::snap_status_to_string(snapped.status)
                                       << "); skipping.\n";
-                            continue;
                         }
+                        continue;
+                    }
 
-                        row  = snapped.snapped_row;
-                        col  = snapped.snapped_col;
-                        flat = snapped.snapped_flat;
+                    row  = snapped.snapped_row;
+                    col  = snapped.snapped_col;
+                    flat = snapped.snapped_flat;
 
+                    if (basin_outlet_snapping_method == "expanding_square")
+                    {
                         std::cout << "  Snapped      : row=" << row
                                   << " col=" << col
                                   << " radius=" << snapped.search_radius_pixels
@@ -1832,43 +1840,12 @@ int main(int argc, char* argv[])
                     }
                     else if (basin_outlet_snapping_method == "downstream")
                     {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                                *flow,
-                                row,
-                                col,
-                                downstream_snap_options
-                            );
-
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                        {
-                            std::cerr << "Warning: basin outlet " << outlet.point_id
-                                      << " could not be snapped downstream ("
-                                      << lsdtt::snap_status_to_string(snapped.status)
-                                      << "); skipping.\n";
-                            continue;
-                        }
-
-                        row  = snapped.snapped_row;
-                        col  = snapped.snapped_col;
-                        flat = snapped.snapped_flat;
-
                         std::cout << "  Snapped      : row=" << row
                                   << " col=" << col
                                   << " steps=" << snapped.downstream_steps
                                   << " contributing_pixels="
                                   << snapped.snapped_contributing_pixels << "\n";
                     }
-                    else
-                    {
-                        if (!flow->is_valid_cell(flat))
-                        {
-                            std::cerr << "Warning: basin outlet " << outlet.point_id
-                                      << " maps to an invalid or nodata flow pixel; skipping.\n";
-                            continue;
-                        }
-                    }
-
                     basin_outlet_flat_indices.push_back(flat);
                 }
                 catch (const std::exception& e)

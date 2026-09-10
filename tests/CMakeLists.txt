@@ -415,6 +415,27 @@ add_lsdtt_cli_smoke_test(
     tiny_d8_drainage_area.tif
 )
 
+# C9 extraction guard: unlike drainage_analysis_smoke.param.in, this reaches
+# both STI P95 Jenks call sites. The raster and diagnostic oracles were frozen
+# against the original CLI-local classify_jenks_categories implementation.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_sti_jenks
+    lsdtt-drainage-analysis
+    drainage_analysis_sti_jenks.param.in
+    drainage_sti_sti_p95_jenks5.tif
+    --expect drainage_sti_sti_proxy_p95_jenks5.tif
+    --expect-raster-values drainage_sti_sti_p95_jenks5.tif:1
+    --expect-raster-values drainage_sti_sti_proxy_p95_jenks5.tif:1
+    --stdout-contains "STI ksd Jenks classes requested/effective: 5 / 1"
+    --stdout-contains "STI ksd Jenks classified pixels          : 3 / 3"
+    --stdout-contains "STI ksd Jenks GVF                        : 1"
+    --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
+    --stdout-contains "STI proxy Jenks classes requested/effective: 5 / 1"
+    --stdout-contains "STI proxy Jenks classified pixels          : 1 / 1"
+    --stdout-contains "STI proxy Jenks GVF                        : 1"
+    --stdout-contains "STI proxy Jenks upper breaks               : 0.906619"
+)
+
 # lsdtt-mountain-front and lsdtt-feature-finder had NO tests at all until
 # 2026-09-10. That was found when the B7 extraction (write_masked_pixels_as_points)
 # refactored the outlet writer of one and both point writers of the other, and
@@ -482,6 +503,27 @@ add_test(NAME smoke_basin_surface_metrics_polyfit
 set_tests_properties(smoke_basin_surface_metrics_polyfit PROPERTIES
     LABELS "smoke;cli;basin_surface_metrics"
     FIXTURES_REQUIRED basin_stats_fixture)
+
+add_test(NAME smoke_basin_surface_metrics_expanding_square
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_expanding_square.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_basin_surface_metrics_expanding_square"
+        --expect bsm_square_outline_curvature_flips.csv)
+set_tests_properties(smoke_basin_surface_metrics_expanding_square PROPERTIES
+    LABELS "smoke;cli;basin_surface_metrics;snapping"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_basin_surface_metrics_unknown_snap
+    lsdtt-basin-surface-metrics
+    basin_surface_metrics_unknown_snap.param.in
+    unused
+    --expect-failure
+    --stderr-contains "FATAL: basin_outlet_snapping_method must be one of: none, downstream, expanding_square."
+)
 
 # =============================================================================
 # lsdtt-ridgeline-analysis: the range_defined_ridgelines path (C2 and C3)
@@ -706,6 +748,8 @@ add_lsdtt_cli_smoke_test(
     mountain_front_smoke.param.in
     mf_relief.tif
     --expect mf_mountain_front_outlets.csv
+    --stdout-contains "2 outlet(s) written."
+    --expect-sha256 mf_mountain_front_outlets.csv:5367371b46baac70a366d9bf1648293f5aaf665aa27ebfcc41f5341661780c56
 )
 
 add_lsdtt_cli_smoke_test(
@@ -1713,6 +1757,13 @@ target_link_libraries(lsdtt-test-landslide-series PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-flow-properties cpp/test_flow_properties.cpp)
 target_link_libraries(lsdtt-test-flow-properties PRIVATE lsdtt3_cpu)
 
+add_executable(lsdtt-test-flow-snapping cpp/test_flow_snapping.cpp)
+target_link_libraries(lsdtt-test-flow-snapping PRIVATE lsdtt3_cpu)
+
+add_executable(lsdtt-test-mountain-front-outlet-pruning
+               cpp/test_mountain_front_outlet_pruning.cpp)
+target_link_libraries(lsdtt-test-mountain-front-outlet-pruning PRIVATE lsdtt3_cpu)
+
 add_executable(lsdtt-test-synthetic-networks cpp/test_synthetic_networks.cpp)
 target_link_libraries(lsdtt-test-synthetic-networks PRIVATE lsdtt3_cpu)
 
@@ -1742,6 +1793,14 @@ add_test(NAME unit_flow_properties
                  ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
+
+add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
+set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
+
+add_test(NAME unit_mountain_front_outlet_pruning
+         COMMAND lsdtt-test-mountain-front-outlet-pruning)
+set_tests_properties(unit_mountain_front_outlet_pruning PROPERTIES
+                     LABELS "unit;flow;mountain_front")
 
 # Depression hierarchy, phase 0
 # (docs/plan_docs/depression_hierarchy_fix_plan.md section 4.1): pins the
@@ -1975,6 +2034,22 @@ target_link_libraries(lsdtt-test-raster-hierarchy PRIVATE lsdtt3_cpu)
 add_test(NAME unit_raster_hierarchy
          COMMAND lsdtt-test-raster-hierarchy)
 set_tests_properties(unit_raster_hierarchy PROPERTIES LABELS "unit;raster")
+
+add_executable(lsdtt-test-raster-jenks-classification
+               cpp/test_raster_jenks_classification.cpp)
+target_link_libraries(lsdtt-test-raster-jenks-classification PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_raster_jenks_classification
+         COMMAND lsdtt-test-raster-jenks-classification)
+set_tests_properties(unit_raster_jenks_classification PROPERTIES
+    LABELS "unit;raster;jenks")
+
+add_executable(lsdtt-test-raster-active-masks cpp/test_raster_active_masks.cpp)
+target_link_libraries(lsdtt-test-raster-active-masks PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_raster_active_masks COMMAND lsdtt-test-raster-active-masks)
+set_tests_properties(unit_raster_active_masks PROPERTIES
+    LABELS "unit;raster;mask")
 
 # Divide-migration compute layer (docs/plan_docs/divide_migration_cli_plan.md
 # §11.1I).  Covers the routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
@@ -3260,6 +3335,42 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "lssmoke_LS_INVENTORY.csv:n_pixels"
 )
 
+# C10 characterization: these three paths were previously untested. Counts and
+# output checksums are frozen from the inline implementation before extraction.
+add_lsdtt_cli_smoke_test(
+    regression_cosmo_landslides_active_values
+    lsdtt-cosmo-landslides
+    cosmo_landslides_active_values.param.in
+    lsactive_LS_TFAIL.tif
+    --stdout-contains "Mask values   : 4 -> 19 host pixels"
+    --stdout-contains "Active area   : 18 m2 (18 px)"
+    --expect-valid-percent lsactive_LS_TFAIL.tif:0
+    --expect-raster-checksum lsactive_LS_TFAIL.tif:65255
+)
+
+add_lsdtt_cli_smoke_test(
+    regression_cosmo_landslides_ice_mask
+    lsdtt-cosmo-landslides
+    cosmo_landslides_ice_mask.param.in
+    lsice_LS_TFAIL.tif
+    --stdout-contains "4 pixel(s) excluded from landsliding"
+    --stdout-contains "Active area   : 4 m2 (4 px)"
+    --expect-valid-percent lsice_LS_TFAIL.tif:0
+    --expect-raster-checksum lsice_LS_TFAIL.tif:65255
+)
+
+add_lsdtt_cli_smoke_test(
+    regression_cosmo_landslides_active_values_ice
+    lsdtt-cosmo-landslides
+    cosmo_landslides_active_values_ice.param.in
+    lsactiveice_LS_TFAIL.tif
+    --stdout-contains "Mask values   : 4 -> 19 host pixels"
+    --stdout-contains "4 pixel(s) excluded from landsliding"
+    --stdout-contains "Active area   : 2 m2 (2 px)"
+    --expect-valid-percent lsactiveice_LS_TFAIL.tif:0
+    --expect-raster-checksum lsactiveice_LS_TFAIL.tif:65255
+)
+
 # R2c: CRN concentrations in lsdtt-cosmo-landslides can now build a real site
 # (per-pixel production + shielding) instead of only the scalar convenience
 # path.
@@ -4247,7 +4358,7 @@ set(LSDTT_DOMAIN_RULES
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
     "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
-    "chi|channel|drainage|basin|flow_properties|link_length"  "network"
+    "chi|channel|drainage|basin|flow_properties|flow_snapping|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret"           "core"
     "depression_hierarchy"   "network"

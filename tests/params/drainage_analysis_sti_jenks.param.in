@@ -1,0 +1,24 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: drainage_sti
+
+raster_is_filled: false
+write_output_format: gtiff
+
+write_sti_raster: true
+write_sti_proxy_raster: true
+write_sti_95th_percentile_rasters: true
+write_sti_p95_jenks_rasters: true
+sti_p95_jenks_n_classes: 5
+sti_p95_jenks_max_histogram_bins: 8
+sti_drainage_area_method: dinf
+sti_window_radius: 1
+
+sti_soil_vector_path: __READ_PATH__/drainage_sti_soil.geojson
+sti_soil_layer_name: drainage_sti_soil
+sti_landuse_vector_path: __READ_PATH__/drainage_sti_landuse.geojson
+sti_landuse_layer_name: drainage_sti_landuse
+sti_ksat_csv_path: __READ_PATH__/drainage_sti_ksat.csv
+sti_spr_csv_path: __READ_PATH__/drainage_sti_spr.csv
+sti_xlsx_path: __READ_PATH__/not_present.xlsx

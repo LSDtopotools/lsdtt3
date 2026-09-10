@@ -711,6 +711,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    const std::string basin_outlet_snapping_method =
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
+    if (basin_outlet_snapping_method != "none" &&
+        basin_outlet_snapping_method != "expanding_square" &&
+        basin_outlet_snapping_method != "downstream")
+    {
+        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
+                     "none, expanding_square, downstream.\n";
+        return 1;
+    }
+
     const int n_selection_modes = 
         static_cast<int>(bf["select_basins_from_outlets"]) +
         static_cast<int>(bf["select_basins_from_outlets_nested"]) +
@@ -967,14 +978,21 @@ int main(int argc, char* argv[])
                 lsdtt::lsdtt_downstream_snap_options ds_opts;
                 ds_opts.contributing_pixels_threshold = 
                     ifs["basin_outlet_contributing_pixels_threshold"];
+                lsdtt::lsdtt_square_snap_options square_opts;
+                square_opts.contributing_pixels_threshold =
+                    ifs["basin_outlet_contributing_pixels_threshold"];
+                square_opts.min_search_radius_pixels =
+                    ifs["basin_outlet_min_search_radius_pixels"];
+                square_opts.max_search_radius_pixels =
+                    ifs["basin_outlet_max_search_radius_pixels"];
 
                 std::vector<std::int64_t> out_flats;
                 for (const auto& pt : req_outlets) {
                     if (pt.status == lsdtt::lsdtt_point_input_status::success) {
-                        if (sf["basin_outlet_snapping_method"] == "downstream") {
-                            auto snap = lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                                *flow, pt.row, pt.col, ds_opts
-                            );
+                        if (basin_outlet_snapping_method != "none") {
+                            const auto snap = lsdtt::snap_pixel_by_method(
+                                *flow, pt.row, pt.col,
+                                basin_outlet_snapping_method, square_opts, ds_opts);
                             if (snap.status == lsdtt::lsdtt_snap_status::success) {
                                 out_flats.push_back(snap.snapped_flat);
                             }
