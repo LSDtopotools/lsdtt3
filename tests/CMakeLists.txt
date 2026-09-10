@@ -43,6 +43,7 @@ function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_
         COMMAND
             ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
             --exe "$<TARGET_FILE:${TARGET_NAME}>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/${PARAM_TEMPLATE}"
             --read-path "${LSDTT_TEST_DATA_DIR}"
             --work-dir "${work_dir}"
@@ -4070,3 +4071,57 @@ if(NOT _lsdtt_unclassified STREQUAL "")
         "carries its subsystem in the name. Do not leave a test unlabelled -- "
         "it will silently stop being run by anyone working on that subsystem.")
 endif()
+
+# =============================================================================
+# BUILD CURRENCY GUARD
+#
+# A build system will happily run yesterday's binary, and a stale one produces a
+# confident green. That is not hypothetical here: the parameter-convention
+# baseline was once generated against a tree with ten stale binaries and one
+# missing, and a smoke test passed against a CLI built before a signature change
+# while a full build was failing on that very file.
+#
+# The CLI smoke harness checks its own executable (assert_binary_is_current in
+# run_cli_smoke.py). That leaves the ~60 C++ test drivers, which nothing checks:
+# a stale driver runs the old object code and reports success.
+#
+# So: a manifest of every executable target and its sources, written at generate
+# time so $<TARGET_FILE:...> resolves, and one test that compares mtimes. Built
+# from CMake's own target list rather than a hand-written one, so a driver added
+# later is covered without anyone remembering to add it.
+# =============================================================================
+set(_currency_lines "")
+foreach(_dir "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+    get_property(_targets DIRECTORY "${_dir}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_tgt ${_targets})
+        get_target_property(_type ${_tgt} TYPE)
+        if(NOT _type STREQUAL "EXECUTABLE")
+            continue()
+        endif()
+        get_target_property(_srcs ${_tgt} SOURCES)
+        get_target_property(_tgt_src_dir ${_tgt} SOURCE_DIR)
+        set(_abs_srcs "")
+        foreach(_s ${_srcs})
+            if(IS_ABSOLUTE "${_s}")
+                list(APPEND _abs_srcs "${_s}")
+            else()
+                list(APPEND _abs_srcs "${_tgt_src_dir}/${_s}")
+            endif()
+        endforeach()
+        string(REPLACE ";" "|" _joined "${_abs_srcs}")
+        list(APPEND _currency_lines "${_tgt}\t$<TARGET_FILE:${_tgt}>\t${_joined}")
+    endforeach()
+endforeach()
+list(JOIN _currency_lines "\n" _currency_body)
+
+file(GENERATE
+     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/build_currency_manifest.tsv"
+     CONTENT "${_currency_body}\n")
+
+add_test(NAME unit_build_is_current
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_build_is_current.py"
+        --manifest "${CMAKE_CURRENT_BINARY_DIR}/build_currency_manifest.tsv")
+set_tests_properties(unit_build_is_current PROPERTIES
+    LABELS "unit;core;conventions"
+    TIMEOUT 300)

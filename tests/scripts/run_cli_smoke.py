@@ -12,6 +12,15 @@ import sys
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one lsdtt CLI smoke test")
     parser.add_argument("--exe", required=True, help="Path to CLI executable")
+    parser.add_argument(
+        "--cli-src-dir",
+        default=None,
+        help=(
+            "The repository's cli/ directory. When given, the executable is "
+            "checked against cli/<name>.cpp and the test FAILS if the binary is "
+            "older than its source. See assert_binary_is_current()."
+        ),
+    )
     parser.add_argument("--param-template", required=True, help="Template parameter file")
     parser.add_argument("--read-path", required=True, help="Input data directory")
     parser.add_argument("--work-dir", required=True, help="Working directory for this test")
@@ -140,6 +149,44 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def assert_binary_is_current(exe: pathlib.Path,
+                             cli_src_dir: pathlib.Path | None) -> None:
+    """Fail if the executable is older than the CLI source it was built from.
+
+    WHY THIS IS A TEST FAILURE AND NOT A WARNING.
+
+    A build system will happily run yesterday's binary. That makes "the test
+    passed" and "the code passed" different statements, and the difference is
+    invisible in the result: a stale binary produces a confident green.
+
+    Both halves of that bit this project on 2026-09-10. The parameter-convention
+    baseline was generated against a tree with ten stale binaries and one
+    missing, so it recorded two violations the source had already fixed and
+    missed nine that were really there. And smoke_feature_finder passed against
+    a lsdtt-feature-finder built before a signature change, while a full build
+    was at that moment FAILING on two call sites in that very file.
+
+    So the check is fatal, and it names the rebuild. A source with no binary at
+    all is caught by the existing FileNotFoundError on `exe`.
+    """
+    if cli_src_dir is None:
+        return
+
+    source = cli_src_dir / (exe.name + ".cpp")
+    if not source.is_file():
+        # Not a cli/ program (a test driver, say). Nothing to compare against.
+        return
+
+    if exe.stat().st_mtime < source.stat().st_mtime:
+        raise AssertionError(
+            f"{exe.name} is STALE: the binary predates {source.name}, so this "
+            f"test would report on code that is no longer in the tree.\n"
+            f"  binary: {exe}\n"
+            f"  source: {source}\n"
+            f"Rebuild and re-run:  cmake --build <build dir> --target {exe.name}"
+        )
 
 
 def assert_file_contains(file_path: pathlib.Path, needle: str) -> None:
@@ -396,6 +443,10 @@ def main() -> int:
 
     if not exe.exists():
         raise FileNotFoundError(f"Executable not found: {exe}")
+    assert_binary_is_current(
+        exe,
+        pathlib.Path(args.cli_src_dir).resolve() if args.cli_src_dir else None,
+    )
     if not template_path.exists():
         raise FileNotFoundError(f"Template not found: {template_path}")
     if not read_path.exists():
