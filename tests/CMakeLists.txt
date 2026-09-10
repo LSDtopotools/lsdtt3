@@ -1299,6 +1299,43 @@ target_link_libraries(lsdtt-test-vertical-units PRIVATE lsdtt3_cpu)
 add_test(NAME unit_vertical_units COMMAND lsdtt-test-vertical-units)
 set_tests_properties(unit_vertical_units PROPERTIES LABELS "unit;raster")
 
+# -----------------------------------------------------------------------------
+# Phase 2 of the CLI consistency remediation plan
+# (docs/plan_docs/cli_consistency_remediation_plan.md §4 Phase 2).
+#
+# Each of these pins a helper that was extracted out of one or more cli/*.cpp
+# files into a library home. They are registered here, ahead of the extraction,
+# so that no Phase 2 agent has to edit this file and collide with another.
+# -----------------------------------------------------------------------------
+
+# B1 to_lower_ascii + Category A planar_distance / polyline_length /
+# cell_centre_x,y / bearing_from_north_degrees.
+add_executable(lsdtt-test-cli-helper-string-utils cpp/test_cli_helper_string_utils.cpp)
+target_link_libraries(lsdtt-test-cli-helper-string-utils PRIVATE lsdtt3_cpu)
+add_test(NAME unit_cli_helper_string_utils COMMAND lsdtt-test-cli-helper-string-utils)
+set_tests_properties(unit_cli_helper_string_utils PROPERTIES LABELS "unit")
+
+# B2 output_extension(raster_output_format, read_ext) and B3 csv_number.
+add_executable(lsdtt-test-cli-helper-formats cpp/test_cli_helper_formats.cpp)
+target_link_libraries(lsdtt-test-cli-helper-formats PRIVATE lsdtt3_core)
+add_test(NAME unit_cli_helper_formats COMMAND lsdtt-test-cli-helper-formats)
+set_tests_properties(unit_cli_helper_formats PROPERTIES LABELS "unit")
+
+# D5 quote-aware lsdtt::csv_split_row and load_csv_table.
+add_executable(lsdtt-test-csv-table-quoting cpp/test_csv_table_quoting.cpp)
+target_link_libraries(lsdtt-test-csv-table-quoting PRIVATE lsdtt3_core)
+add_test(NAME unit_csv_table_quoting COMMAND lsdtt-test-csv-table-quoting)
+set_tests_properties(unit_csv_table_quoting PROPERTIES LABELS "unit")
+
+# B4 the polyfit metric name/suffix table beside the polyfit_metric enum.
+add_executable(lsdtt-test-surface-metrics-polyfit-metric-table
+               cpp/test_surface_metrics_polyfit_metric_table.cpp)
+target_link_libraries(lsdtt-test-surface-metrics-polyfit-metric-table PRIVATE lsdtt3_cpu)
+add_test(NAME unit_surface_metrics_polyfit_metric_table
+         COMMAND lsdtt-test-surface-metrics-polyfit-metric-table)
+set_tests_properties(unit_surface_metrics_polyfit_metric_table
+                     PROPERTIES LABELS "unit;surface_metrics")
+
 add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
 target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
 
@@ -3904,6 +3941,11 @@ set(LSDTT_DOMAIN_RULES
     "param|secret"           "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
+    # Phase 2 of the CLI consistency remediation: the shared helper homes
+    # extracted out of cli/ (to_lower_ascii, output_extension, csv_number,
+    # planar_distance, quote-aware csv_split_row). They are library-level
+    # string/format hygiene, so they belong in the core compartment.
+    "cli_helper|csv_table"   "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. Measured

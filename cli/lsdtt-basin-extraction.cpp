@@ -57,22 +57,14 @@
 #include "../src/cpu/lsdtt_side_tributary_basins_cpu.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
+#include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
 
 // ---------------------------------------------------------------------------
 // Small geometry helpers for the line-crossing basin analysis.
 // ---------------------------------------------------------------------------
 namespace {
 
-// Geographic bearing of (ox,oy)->(cx,cy): degrees from North, clockwise [0,360).
-double bearing_north(double ox, double oy, double cx, double cy)
-{
-    const double de = cx - ox, dn = cy - oy;
-    if (de == 0.0 && dn == 0.0)
-        return std::numeric_limits<double>::quiet_NaN();
-    double b = std::atan2(de, dn) * 180.0 / M_PI;
-    if (b < 0.0) b += 360.0;
-    return b;
-}
 
 // Wrap an angle to (-180, 180].
 double wrap180(double a)
@@ -82,13 +74,6 @@ double wrap180(double a)
     return r - 180.0;
 }
 
-std::string precise_string(double v)
-{
-    std::ostringstream ss;
-    ss.precision(10);
-    ss << v;
-    return ss.str();
-}
 
 struct lsdtt_seg_hit { double tan_az; double nx; double ny; };
 
@@ -113,7 +98,7 @@ lsdtt_seg_hit nearest_fault_segment(
             best = d2;
             hit.nx = cx;
             hit.ny = cy;
-            hit.tan_az = bearing_north(x0, y0, x1, y1);
+            hit.tan_az = lsdtt::bearing_from_north_degrees(x0, y0, x1, y1);
         }
     }
     return hit;
@@ -2073,25 +2058,25 @@ int main(int argc, char* argv[])
                 const double area_px = static_cast<double>(npix.data[oi]);
                 const double com_x = m.x_min + static_cast<double>(sx.data[oi]) / area_px;
                 const double com_y = m.y_min + static_cast<double>(sy.data[oi]) / area_px;
-                const double bearing = bearing_north(ox, oy, com_x, com_y);
+                const double bearing = lsdtt::bearing_from_north_degrees(ox, oy, com_x, com_y);
 
                 const lsdtt_seg_hit hit =
                     nearest_fault_segment(com_x, com_y, fault_segments);
                 const std::string side = (com_x >= hit.nx) ? "east" : "west";
                 const double n1 = std::fmod(hit.tan_az + 90.0, 360.0);
                 const double n2 = std::fmod(hit.tan_az - 90.0 + 360.0, 360.0);
-                const double to_com = bearing_north(hit.nx, hit.ny, com_x, com_y);
+                const double to_com = lsdtt::bearing_from_north_degrees(hit.nx, hit.ny, com_x, com_y);
                 const double normal =
                     (std::fabs(wrap180(n1 - to_com))
                      <= std::fabs(wrap180(n2 - to_com))) ? n1 : n2;
                 const double defl = wrap180(bearing - normal);
 
                 rows.push_back({
-                    std::to_string(i), precise_string(area_px * cell_area),
-                    precise_string(ox), precise_string(oy),
-                    precise_string(com_x), precise_string(com_y),
-                    precise_string(bearing), precise_string(hit.tan_az),
-                    side, precise_string(defl)});
+                    std::to_string(i), lsdtt::csv_number(area_px * cell_area, 10),
+                    lsdtt::csv_number(ox, 10), lsdtt::csv_number(oy, 10),
+                    lsdtt::csv_number(com_x, 10), lsdtt::csv_number(com_y, 10),
+                    lsdtt::csv_number(bearing, 10), lsdtt::csv_number(hit.tan_az, 10),
+                    side, lsdtt::csv_number(defl, 10)});
             }
 
             const std::string out =
@@ -2374,14 +2359,14 @@ int main(int argc, char* argv[])
                         static_cast<double>(flow->s_vector_size(flat));
 
                     rows.push_back({
-                        precise_string(lon),
-                        precise_string(lat),
+                        lsdtt::csv_number(lon, 10),
+                        lsdtt::csv_number(lat, 10),
                         std::to_string(junc),
                         std::to_string(flat),
                         std::to_string(static_cast<std::int64_t>(n_pix)),
-                        precise_string(n_pix * cell_area_km2),
-                        precise_string(n_valid_cells > 0.0
-                                           ? n_pix / n_valid_cells : 0.0)
+                        lsdtt::csv_number(n_pix * cell_area_km2, 10),
+                        lsdtt::csv_number(n_valid_cells > 0.0
+                                           ? n_pix / n_valid_cells : 0.0, 10)
                     });
                 }
 

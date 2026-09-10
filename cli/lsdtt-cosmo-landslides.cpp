@@ -56,6 +56,7 @@
 #include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -133,12 +134,6 @@ struct sample_point_row
     double longitude = std::numeric_limits<double>::quiet_NaN();
 };
 
-static std::string to_lower(std::string s)
-{
-    for (char& ch : s)
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return s;
-}
 
 // Thin adapter over lsdtt::compute_percentile so this file keeps its
 // fraction-in-[0,1] call convention. The shared routine takes 0-100 and is the
@@ -168,10 +163,10 @@ static std::vector<sample_point_row> read_sample_point_rows(
     int i_name = -1, i_lat = -1, i_lon = -1;
     for (int i = 0; i < static_cast<int>(h.size()); ++i)
     {
-        const std::string key = to_lower(lsdtt::csv_trim(h[i]));
-        if (key == to_lower(name_col)) i_name = i;
-        if (key == to_lower(lat_col)) i_lat = i;
-        if (key == to_lower(lon_col)) i_lon = i;
+        const std::string key = lsdtt::to_lower_ascii(lsdtt::csv_trim(h[i]));
+        if (key == lsdtt::to_lower_ascii(name_col)) i_name = i;
+        if (key == lsdtt::to_lower_ascii(lat_col)) i_lat = i;
+        if (key == lsdtt::to_lower_ascii(lon_col)) i_lon = i;
     }
     if (i_lat < 0 || i_lon < 0)
         throw std::runtime_error(

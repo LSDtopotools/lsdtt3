@@ -18,11 +18,21 @@
 // trims, two different "is this field missing" rules -- which is exactly the
 // kind of divergence that makes one tool reject a file another accepts.
 //
-// SCOPE, deliberately small. This is a SIMPLE splitter: it does not handle
-// quoted fields containing commas, embedded newlines, or escape sequences. It is
-// for the tabular parameter/sample inputs lsdtt3 CLIs read, which are machine
-// generated or hand-written flat tables. If you need real RFC 4180 parsing, this
-// is the wrong tool and should not be extended into one -- reach for a parser.
+// SCOPE, deliberately small. The splitter is quote-aware in the RFC 4180 sense
+// -- a field may be wrapped in double quotes, a comma inside quotes is literal,
+// and "" inside quotes is one literal quote -- but it is line-oriented and so
+// does NOT support a newline embedded inside a quoted field: the reader has
+// already cut the file into lines before the splitter sees it. There are no
+// other escape sequences, no configurable delimiter and no type inference. It
+// is for the tabular parameter/sample inputs lsdtt3 CLIs read, which are
+// machine generated or hand-written flat tables. If you need multi-line fields
+// or a full dialect-aware reader, this is the wrong tool -- reach for a parser
+// rather than extending this one.
+//
+// It is also deliberately LENIENT. These files come from users, and three CLIs
+// read them; refusing a file outright is a worse failure than a permissive
+// parse, so no malformed input throws from the splitter. csv_split_row below
+// states exactly what each malformed shape yields.
 //
 // For raster/point inputs that must be transformed into a raster CRS, use
 // lsdtt_point_input instead; this is the plain-table path.
@@ -50,7 +60,43 @@ struct lsdtt_csv_table
 // all-whitespace input.
 std::string csv_trim(const std::string& s);
 
-// Split one line on commas. No quote handling -- see the scope note above.
+// Split one line into fields on commas, honouring double quotes. This does NOT
+// trim: the caller does that (load_csv_table calls csv_trim on every token), so
+// that a quoted field can keep leading/trailing spaces if a caller ever wants
+// them. The contract, exactly:
+//
+//   a,b,c        -> {a, b, c}          unquoted fields are taken verbatim
+//   a,"b",c      -> {a, b, c}          the wrapping quotes are removed
+//   a,"b,c",d    -> {a, b,c, d}        a comma inside quotes is literal: 3 fields
+//   a,"b""c",d   -> {a, b"c, d}        "" inside quotes is one literal quote
+//   ,,           -> {"", "", ""}       empty fields are empty strings
+//   a,b,         -> {a, b, ""}         a trailing comma yields a trailing field
+//   ""           -> {""}               a quoted empty field is an empty string,
+//                                      indistinguishable from an unquoted one
+//   ""(the empty line) -> {}           an empty line has NO fields, not one
+//    "a, b"      -> {a, b }            whitespace before the opening quote is
+//                                      dropped with the quote; text after the
+//                                      closing quote is kept, then trimmed by
+//                                      the caller
+//
+// Malformed input, the lenient readings (none of these throw):
+//
+//   * UNTERMINATED QUOTE, e.g.  a,"b,c   -> {a, b,c}. End of line is treated as
+//     an implicit closing quote, so the rest of the line is one field and the
+//     commas in it stay literal. It is not re-parsed as unquoted text.
+//   * QUOTE MID-FIELD in an otherwise unquoted field, e.g.  ab"cd  -> {ab"cd}.
+//     Only a quote at the START of a field (after any leading whitespace) opens
+//     a quoted field, so an interior quote is just a character. This is what
+//     keeps every previously-working unquoted file byte-identical.
+//   * TEXT AFTER A CLOSING QUOTE, e.g.  "ab"cd  -> {abcd}. The trailing run is
+//     appended verbatim to the unquoted content rather than being dropped or
+//     rejected. A trailing \r on a CRLF file lands here and in the plain
+//     unquoted case, and is removed by csv_trim in the caller, not here.
+//
+// NOTE, behaviour change (decision D5): the previous getline-based splitter
+// dropped a trailing empty field, so "a," gave {a}. It now gives {a, ""}, which
+// means a header line ending in a comma now declares one extra, empty-named
+// column.
 std::vector<std::string> csv_split_row(const std::string& row);
 
 // Throws std::runtime_error if the file cannot be opened, is empty, or has no

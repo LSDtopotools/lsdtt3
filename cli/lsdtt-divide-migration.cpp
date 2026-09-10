@@ -59,6 +59,7 @@
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -88,17 +89,11 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static std::string lowercase_copy(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
 
 static bool cluster_field_is_set(const std::string& field_name)
 {
     if (field_name.empty()) return false;
-    return lowercase_copy(field_name) != "null";
+    return lsdtt::to_lower_ascii(field_name) != "null";
 }
 
 // Split one CSV row into fields. Double-quoted fields may contain commas and
@@ -178,10 +173,10 @@ static std::vector<std::string> load_cluster_values_from_csv(
     }
     if (cluster_col < 0)
     {
-        const std::string target_lc = lowercase_copy(cluster_field);
+        const std::string target_lc = lsdtt::to_lower_ascii(cluster_field);
         for (std::size_t i = 0; i < headers.size(); ++i)
         {
-            if (lowercase_copy(headers[i]) == target_lc)
+            if (lsdtt::to_lower_ascii(headers[i]) == target_lc)
             {
                 cluster_col = static_cast<int>(i);
                 break;
@@ -501,7 +496,7 @@ int main(int argc, char* argv[])
     auto valid_choice = [](const std::string& value,
                            const std::initializer_list<const char*> choices)
     {
-        const std::string v = lowercase_copy(value);
+        const std::string v = lsdtt::to_lower_ascii(value);
         for (const char* c : choices)
         {
             if (v == c) return true;
@@ -635,7 +630,7 @@ int main(int argc, char* argv[])
     {
         try
         {
-            const std::string ext = lowercase_copy(
+            const std::string ext = lsdtt::to_lower_ascii(
                 std::filesystem::path(outlet_path).extension().string());
             if (ext == ".csv")
             {
@@ -743,7 +738,7 @@ int main(int argc, char* argv[])
     int next_unit_id = 1;
 
     std::size_t n_snap_success = 0;
-    const std::string snap_method = lowercase_copy(sf.at("basin_outlet_snapping_method"));
+    const std::string snap_method = lsdtt::to_lower_ascii(sf.at("basin_outlet_snapping_method"));
 
     lsdtt::lsdtt_downstream_snap_options ds_opts;
     ds_opts.contributing_pixels_threshold =
@@ -896,7 +891,7 @@ int main(int argc, char* argv[])
     //                       outlet elevation as a common chi base level
     //   complete_only     : drop basins whose upslope area touches nodata
     // -------------------------------------------------------------------------
-    const std::string outlet_control_mode = lowercase_copy(sf.at("outlet_control_mode"));
+    const std::string outlet_control_mode = lsdtt::to_lower_ascii(sf.at("outlet_control_mode"));
     std::cout << "Outlet control mode: " << outlet_control_mode << "\n";
 
     if (outlet_control_mode == "elevation")

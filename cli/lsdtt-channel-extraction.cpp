@@ -46,6 +46,7 @@
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -69,14 +70,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static std::string to_lower_copy(std::string s)
-{
-    for (char& c : s)
-    {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return s;
-}
 
 static std::string raster_ext(lsdtt::raster_output_format fmt)
 {
@@ -85,7 +78,7 @@ static std::string raster_ext(lsdtt::raster_output_format fmt)
 
 static bool mentions_missing_fftw(const std::string& msg)
 {
-    const std::string lower = to_lower_copy(msg);
+    const std::string lower = lsdtt::to_lower_ascii(msg);
     return lower.find("without fftw") != std::string::npos ||
            lower.find("fftw") != std::string::npos;
 }
@@ -415,7 +408,7 @@ int main(int argc, char* argv[])
     // Cross-parameter logic
     // -------------------------------------------------------------------------
     const std::string source_algorithm_choice =
-        to_lower_copy(sf["source_extraction_algorithm_choice"]);
+        lsdtt::to_lower_ascii(sf["source_extraction_algorithm_choice"]);
 
     if (source_algorithm_choice != "threshold" &&
         source_algorithm_choice != "wiener")

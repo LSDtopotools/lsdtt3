@@ -58,6 +58,7 @@
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -82,15 +83,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-static std::string to_lower_copy(std::string s)
-{
-    for (char& ch : s)
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return s;
-}
 
 static std::string mn_suffix(double mn)
 {
@@ -236,7 +228,7 @@ static std::vector<std::int64_t> resolve_outlet_flats(
         const auto& p = outlet_file_path;
         const bool looks_like_csv =
             p.size() >= 4 &&
-            to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+            lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
         if (looks_like_csv)
             std::cout << "Outlet file is CSV: latitude and longitude columns "
                          "(EPSG:4326) will be transformed to raster CRS.\n";
@@ -277,7 +269,7 @@ static std::vector<std::int64_t> resolve_outlet_flats(
                       << " point(s) failed coordinate transformation.\n";
             const auto& p = outlet_file_path;
             if (p.size() >= 4 &&
-                to_lower_copy(p.substr(p.size() - 4)) == ".csv")
+                lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv")
                 std::cerr << "  -> CSV files must have columns named "
                              "'latitude' and 'longitude'.\n";
         }
@@ -747,7 +739,7 @@ int main(int argc, char* argv[])
     auto sf  = pp.get_string_parameters();
 
     const std::string snapping_method =
-        to_lower_copy(sf["basin_outlet_snapping_method"]);
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
     const std::size_t minimum_channel_pixels =
         ifs["minimum_channel_pixels"] > 0
             ? static_cast<std::size_t>(ifs["minimum_channel_pixels"])

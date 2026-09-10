@@ -127,6 +127,28 @@ inline double polygon_perimeter(const std::vector<lsdtt_xy>& ring)
 }
 
 // -----------------------------------------------------------------------------
+// planar_distance
+//
+// Euclidean distance between two planar points. The coordinates are assumed to
+// be PROJECTED (metres); this is not a great-circle distance and must not be
+// handed lat/lon.
+//
+// Deliberately plain sqrt(dx*dx + dy*dy) rather than std::hypot: that is what
+// the three copies this replaces all did (src/cpu/lsdtt_strahler_tokunaga_
+// analysis_cpu.cpp, src/cpu/lsdtt_channel_network_analysis_cpu.cpp and
+// cli/lsdtt-linear-stats.cpp), and it matches the inline distance arithmetic in
+// polyline_length / polygon_perimeter above, so unifying on it is bit-for-bit
+// behaviour-preserving. sqrt overflows to inf for separations above ~1.3e154,
+// which no projected coordinate pair reaches.
+// -----------------------------------------------------------------------------
+inline double planar_distance(const lsdtt_xy& a, const lsdtt_xy& b)
+{
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// -----------------------------------------------------------------------------
 // polyline_length
 //
 // Arc length of an OPEN polyline (no implied closing edge - unlike

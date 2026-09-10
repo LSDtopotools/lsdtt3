@@ -33,6 +33,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/utils/lsdtt_polygon_geometry.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -57,45 +58,13 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// planar_distance - copied from
-//    src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.cpp
-//    src/cpu/lsdtt_channel_network_analysis.cpp
-// might be usefull to move to utils/ or core/
-// -----------------------------------------------------------------------------
-double planar_distance(
-    const lsdtt::lsdtt_xy& a,
-    const lsdtt::lsdtt_xy& b
-)
-{
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    return std::sqrt(dx * dx + dy * dy);
-}
 
-// -----------------------------------------------------------------------------
-// calculate_length - calculate the distance between a series of lsdtt_xy
-// coordinates
-// -----------------------------------------------------------------------------
-double calculate_length(const std::vector<lsdtt::lsdtt_xy>& points) {
-    if (points.size() < 2) {
-        return 0.0;
-    }
-    double result = 0.0;
-    auto previous_pt = points.begin();
-    for (auto next_pt = std::next(points.begin()); next_pt != points.end(); next_pt++) {
-        result += planar_distance(*previous_pt, *next_pt);
-        previous_pt = next_pt;
-    }
-
-    return result;
-}
 
 // -----------------------------------------------------------------------------
 // interpolate_along - finds a point at a given distance along a line
 // -----------------------------------------------------------------------------
 lsdtt::lsdtt_xy interpolate_along(const std::vector<lsdtt::lsdtt_xy>& points, double distance) {
-    double length = calculate_length(points);
+    double length = lsdtt::polyline_length(points);
     if (points.size() < 2) {
         throw std::runtime_error("interpolate_along: A line should have at least two points");
     }
@@ -105,13 +74,13 @@ lsdtt::lsdtt_xy interpolate_along(const std::vector<lsdtt::lsdtt_xy>& points, do
 
     auto it_pt = points.begin();
     auto it_next_pt = std::next(points.begin());
-    double distance_to_next_pt = planar_distance(*it_pt, *it_next_pt);
+    double distance_to_next_pt = lsdtt::planar_distance(*it_pt, *it_next_pt);
 
     while (distance > distance_to_next_pt) {
         distance -= distance_to_next_pt;
         it_pt ++;
         it_next_pt ++;
-        distance_to_next_pt = planar_distance(*it_pt, *it_next_pt);
+        distance_to_next_pt = lsdtt::planar_distance(*it_pt, *it_next_pt);
     }
 
     const lsdtt::lsdtt_xy& pt = *it_pt;
@@ -323,7 +292,7 @@ int main(int argc, char* argv[])
 
             float distance = 0;
             int point_idx = 0;
-            double line_length = calculate_length(line.points);
+            double line_length = lsdtt::polyline_length(line.points);
             const int num_points = ceil(line_length / stride_length);
             std::vector<double> values(num_points);
             bool bounds_overstepped = false;
@@ -434,7 +403,7 @@ int main(int argc, char* argv[])
 		}
 
         auto result = results[i].value();
-        double line_length = calculate_length(layer.as_line(layer.records[i]).points);
+        double line_length = lsdtt::polyline_length(layer.as_line(layer.records[i]).points);
         output_loader.write_line(
             layer.as_line(layer.records[i]).points,
             {

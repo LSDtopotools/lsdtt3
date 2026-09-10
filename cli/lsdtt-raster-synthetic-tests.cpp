@@ -37,6 +37,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -94,18 +95,6 @@ static const lsdtt::lsdtt_raster_cpu& coeff_raster(
 }
 
 // -----------------------------------------------------------------------------
-// format_double
-// -----------------------------------------------------------------------------
-static std::string format_double(double x)
-{
-    if (std::isnan(x))     return "nan";
-    if (!std::isfinite(x)) return (x > 0.0) ? "inf" : "-inf";
-
-    std::ostringstream oss;
-    oss << std::setprecision(17) << x;
-    return oss.str();
-}
-// -----------------------------------------------------------------------------
 // write_coeff_set
 // -----------------------------------------------------------------------------
 static void write_coeff_set(
@@ -143,8 +132,8 @@ static void write_periodic_components_csv(
         {
             std::to_string(c.mode_x),
             std::to_string(c.mode_y),
-            format_double(c.amplitude),
-            format_double(c.phase)
+            lsdtt::csv_number(c.amplitude),
+            lsdtt::csv_number(c.phase)
         });
     }
 
@@ -163,12 +152,12 @@ static void write_global_quadratic_coeffs_csv(
 
     std::vector<std::vector<std::string>> rows =
     {
-        {"a", format_double(coeffs.a)},
-        {"b", format_double(coeffs.b)},
-        {"c", format_double(coeffs.c)},
-        {"d", format_double(coeffs.d)},
-        {"e", format_double(coeffs.e)},
-        {"f", format_double(coeffs.f)}
+        {"a", lsdtt::csv_number(coeffs.a)},
+        {"b", lsdtt::csv_number(coeffs.b)},
+        {"c", lsdtt::csv_number(coeffs.c)},
+        {"d", lsdtt::csv_number(coeffs.d)},
+        {"e", lsdtt::csv_number(coeffs.e)},
+        {"f", lsdtt::csv_number(coeffs.f)}
     };
 
     loader.write_csv(out_csv, headers, rows);
@@ -280,16 +269,16 @@ static void run_wavelet_test(
 
         std::cout << "  coeff " << cn
                   << "  n=" << stats.count
-                  << "  RMSE="    << format_double(stats.rmse)
-                  << "  MAE="     << format_double(stats.mae)
-                  << "  maxAbs="  << format_double(stats.max_abs)
-                  << "  bias="    << format_double(stats.bias)
+                  << "  RMSE="    << lsdtt::csv_number(stats.rmse)
+                  << "  MAE="     << lsdtt::csv_number(stats.mae)
+                  << "  maxAbs="  << lsdtt::csv_number(stats.max_abs)
+                  << "  bias="    << lsdtt::csv_number(stats.bias)
                   << "\n";
 
         if (is_exact_oracle && stats.count > 0 && stats.rmse > 1e-3)
         {
             std::cerr << "  WARNING: coeff " << cn
-                      << " RMSE=" << format_double(stats.rmse)
+                      << " RMSE=" << lsdtt::csv_number(stats.rmse)
                       << " exceeds 1e-3 on exact oracle surface.\n";
         }
 
@@ -297,13 +286,13 @@ static void run_wavelet_test(
         {
             surface_name,
             is_exact_oracle ? "true" : "false",
-            format_double(lambda),
+            lsdtt::csv_number(lambda),
             std::string(cn),
             std::to_string(stats.count),
-            format_double(stats.rmse),
-            format_double(stats.mae),
-            format_double(stats.max_abs),
-            format_double(stats.bias)
+            lsdtt::csv_number(stats.rmse),
+            lsdtt::csv_number(stats.mae),
+            lsdtt::csv_number(stats.max_abs),
+            lsdtt::csv_number(stats.bias)
         });
 
         if (write_fitted)

@@ -78,6 +78,7 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_binary_array2d_tracing.hpp"
 #include "../src/utils/lsdtt_signal1d.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 
 static const std::string k_version   = "0.3.0";
@@ -99,169 +100,17 @@ struct lsdtt_ridgeline_record {
     float                      area_right;      // Flow drainage area (negative if NA)
 };
 
-// -----------------------------------------------------------------------------
-// Formatting Helper
-// -----------------------------------------------------------------------------
-static std::string to_lower_copy(std::string s) 
-{
-    for (char& ch : s) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return s;
-}
 
-static std::string trim_copy(const std::string& s)
-{
-    std::size_t start = 0;
-    while (start < s.size() &&
-           std::isspace(static_cast<unsigned char>(s[start])))
-    {
-        ++start;
-    }
 
-    std::size_t end = s.size();
-    while (end > start &&
-           std::isspace(static_cast<unsigned char>(s[end - 1])))
-    {
-        --end;
-    }
-
-    return s.substr(start, end - start);
-}
-
-static std::vector<std::string> split_csv(const std::string& csv)
-{
-    std::vector<std::string> out;
-    std::string current;
-
-    for (char ch : csv)
-    {
-        if (ch == ',')
-        {
-            std::string token = trim_copy(current);
-            if (!token.empty())
-            {
-                out.push_back(token);
-            }
-            current.clear();
-        }
-        else
-        {
-            current.push_back(ch);
-        }
-    }
-
-    std::string token = trim_copy(current);
-    if (!token.empty())
-    {
-        out.push_back(token);
-    }
-
-    return out;
-}
 
 // -----------------------------------------------------------------------------
 // Polyfit Helper Configs
 // -----------------------------------------------------------------------------
-struct polyfit_metric_entry
-{
-    const char*           name;
-    lsdtt::polyfit_metric metric;
-    const char*           suffix;
-};
+// Polyfit metric names, parsing and output suffixes come from the library:
+//   src/cpu/lsdtt_raster_surface_metrics_cpu.hpp, next to the polyfit_metric
+//   enum, with a unit test that fails if table and enum diverge.
 
-static const std::vector<polyfit_metric_entry>& polyfit_metric_table()
-{
-    static const std::vector<polyfit_metric_entry> table =
-    {
-        {"fitted_surface",               lsdtt::polyfit_metric::fitted_surface,              "_polyfit_fitted_surface.tif"},
-        {"dzdx",                         lsdtt::polyfit_metric::dzdx,                        "_polyfit_dzdx.tif"},
-        {"dzdy",                         lsdtt::polyfit_metric::dzdy,                        "_polyfit_dzdy.tif"},
-        {"d2zdx2",                       lsdtt::polyfit_metric::d2zdx2,                      "_polyfit_d2zdx2.tif"},
-        {"d2zdxdy",                      lsdtt::polyfit_metric::d2zdxdy,                     "_polyfit_d2zdxdy.tif"},
-        {"d2zdy2",                       lsdtt::polyfit_metric::d2zdy2,                      "_polyfit_d2zdy2.tif"},
-        {"slope",                        lsdtt::polyfit_metric::slope,                       "_polyfit_slope.tif"},
-        {"slope_degrees",                lsdtt::polyfit_metric::slope_degrees,               "_polyfit_slope_degrees.tif"},
-        {"aspect_radians",               lsdtt::polyfit_metric::aspect_radians,              "_polyfit_aspect_radians.tif"},
-        {"aspect_degrees",               lsdtt::polyfit_metric::aspect_degrees,              "_polyfit_aspect_degrees.tif"},
-        {"laplacian",                    lsdtt::polyfit_metric::laplacian,                   "_polyfit_laplacian.tif"},
-        {"hessian_determinant",          lsdtt::polyfit_metric::hessian_determinant,         "_polyfit_hessian_determinant.tif"},
-        {"mean_curvature",               lsdtt::polyfit_metric::mean_curvature,              "_polyfit_mean_curvature.tif"},
-        {"gaussian_curvature",           lsdtt::polyfit_metric::gaussian_curvature,          "_polyfit_gaussian_curvature.tif"},
-        {"maximum_curvature",            lsdtt::polyfit_metric::maximum_curvature,           "_polyfit_maximum_curvature.tif"},
-        {"minimum_curvature",            lsdtt::polyfit_metric::minimum_curvature,           "_polyfit_minimum_curvature.tif"},
-        {"curvedness",                   lsdtt::polyfit_metric::curvedness,                  "_polyfit_curvedness.tif"},
-        {"shape_index",                  lsdtt::polyfit_metric::shape_index,                 "_polyfit_shape_index.tif"},
-        {"profile_curvature",            lsdtt::polyfit_metric::profile_curvature,           "_polyfit_profile_curvature.tif"},
-        {"plan_curvature",               lsdtt::polyfit_metric::plan_curvature,              "_polyfit_plan_curvature.tif"},
-        {"tangential_curvature",         lsdtt::polyfit_metric::tangential_curvature,        "_polyfit_tangential_curvature.tif"},
-        {"difference_curvature",         lsdtt::polyfit_metric::difference_curvature,        "_polyfit_difference_curvature.tif"},
-        {"horizontal_excess_curvature",  lsdtt::polyfit_metric::horizontal_excess_curvature, "_polyfit_horizontal_excess_curvature.tif"},
-        {"vertical_excess_curvature",    lsdtt::polyfit_metric::vertical_excess_curvature,   "_polyfit_vertical_excess_curvature.tif"},
-        {"accumulation_curvature",       lsdtt::polyfit_metric::accumulation_curvature,      "_polyfit_accumulation_curvature.tif"},
-        {"ring_curvature",               lsdtt::polyfit_metric::ring_curvature,              "_polyfit_ring_curvature.tif"},
-        {"rotor",                        lsdtt::polyfit_metric::rotor,                       "_polyfit_rotor.tif"}
-    };
-    return table;
-}
 
-static std::vector<lsdtt::polyfit_metric> parse_polyfit_metrics(const std::string& csv)
-{
-    std::vector<lsdtt::polyfit_metric> metrics;
-    std::set<lsdtt::polyfit_metric>    seen;
-
-    const std::vector<std::string> tokens = split_csv(csv);
-    if (tokens.empty()) return metrics;
-
-    for (const std::string& token : tokens)
-    {
-        if (token == "all")
-        {
-            for (const auto& entry : polyfit_metric_table())
-            {
-                if (seen.insert(entry.metric).second)
-                {
-                    metrics.push_back(entry.metric);
-                }
-            }
-            continue;
-        }
-
-        bool found = false;
-        for (const auto& entry : polyfit_metric_table())
-        {
-            if (token == entry.name)
-            {
-                found = true;
-                if (seen.insert(entry.metric).second)
-                {
-                    metrics.push_back(entry.metric);
-                }
-                break;
-            }
-        }
-
-        if (!found)
-        {
-            throw std::runtime_error("Unknown polyfit metric: " + token);
-        }
-    }
-    return metrics;
-}
-
-static std::string polyfit_metric_suffix(
-    lsdtt::polyfit_metric metric,
-    const std::string&    method = "wavelet")
-{
-    for (const auto& entry : polyfit_metric_table())
-    {
-        if (entry.metric == metric)
-        {
-            return std::string("_") + method + entry.suffix;
-        }
-    }
-    throw std::runtime_error("No output suffix defined for requested polyfit metric.");
-}
 
 // =============================================================================
 // Helper: Wraps a periodic DEM with a 1-px pad so 3x3 windows hit the borders
@@ -1094,7 +943,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::string analysis_mode = to_lower_copy(sf["ridgeline_analysis_mode"]);
+    std::string analysis_mode = lsdtt::to_lower_ascii(sf["ridgeline_analysis_mode"]);
     if (analysis_mode != "basin_outline_ridgelines"       &&
         analysis_mode != "interfluvial_divide_ridgelines" &&
         analysis_mode != "range_defined_ridgelines")
@@ -1122,7 +971,7 @@ int main(int argc, char* argv[])
 
     std::vector<lsdtt::polyfit_metric> requested_polyfit_metrics;
     try {
-        requested_polyfit_metrics = parse_polyfit_metrics(sf["polyfit_metrics"]);
+        requested_polyfit_metrics = lsdtt::parse_polyfit_metric_list(sf["polyfit_metrics"]);
     } catch (const std::exception& e) {
         std::cerr << "Error parsing polyfit_metrics: " << e.what() << "\n";
         return 1;
@@ -2170,12 +2019,7 @@ int main(int argc, char* argv[])
         std::vector<std::string> active_metric_names;
 
         for (auto m : requested_polyfit_metrics) {
-            for (const auto& entry : polyfit_metric_table()) {
-                if (entry.metric == m) {
-                    active_metric_names.push_back(entry.name);
-                    break;
-                }
-            }
+            active_metric_names.push_back(lsdtt::polyfit_metric_name(m));
         }
 
         for (const auto& name : active_metric_names) {
@@ -2235,7 +2079,7 @@ int main(int argc, char* argv[])
                 if (bf["write_polyfit_rasters"]) {
                     for (const auto& metric : requested_polyfit_metrics) {
                         if (!metric_result.has(metric)) continue;
-                        std::string out_path = pp.make_output_path(polyfit_metric_suffix(metric, method));
+                        std::string out_path = pp.make_output_path(lsdtt::polyfit_metric_output_suffix(metric, method));
                         std::cout << "  Writing: " << out_path << "\n";
                         loader.write_full(metric_result.at(metric).get_data(), metric_result.at(metric).get_meta(), out_path, lsdtt::raster_output_format::cog);
                     }
@@ -2244,7 +2088,7 @@ int main(int argc, char* argv[])
 
                 for (const auto& metric : requested_polyfit_metrics) {
                     if (!metric_result.has(metric)) continue;
-                    std::string out_path = pp.make_output_path(polyfit_metric_suffix(metric, method));
+                    std::string out_path = pp.make_output_path(lsdtt::polyfit_metric_output_suffix(metric, method));
                     std::cout << "  Writing: " << out_path << "\n";
                     loader.write_full(metric_result.at(metric).get_data(), metric_result.at(metric).get_meta(), out_path, lsdtt::raster_output_format::cog);
                 }

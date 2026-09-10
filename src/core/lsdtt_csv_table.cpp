@@ -9,7 +9,6 @@
 #include "lsdtt_csv_table.hpp"
 
 #include <fstream>
-#include <sstream>
 #include <stdexcept>
 
 namespace lsdtt
@@ -30,12 +29,65 @@ std::string csv_trim(const std::string& s)
     return s.substr(b, e - b + 1);
 }
 
+// A quote-aware splitter, RFC 4180 shaped but deliberately lenient. The exact
+// contract, including the malformed cases, is documented in the header; keep
+// the two in step.
+static bool is_csv_ws(const char c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+
 std::vector<std::string> csv_split_row(const std::string& row)
 {
     std::vector<std::string> out;
-    std::istringstream ss(row);
-    std::string item;
-    while (std::getline(ss, item, ',')) out.push_back(item);
+    // An empty line has no fields at all, not one empty field. load_csv_table
+    // uses this to reject a header-less file.
+    if (row.empty()) return out;
+
+    const std::size_t n = row.size();
+    std::size_t i = 0;
+    while (true)
+    {
+        std::string field;
+
+        // Whitespace before an opening quote is dropped with the quote; if no
+        // quote follows, the field is verbatim from `i` and that whitespace is
+        // part of it (csv_trim, in the caller, deals with it).
+        std::size_t j = i;
+        while (j < n && is_csv_ws(row[j])) ++j;
+
+        if (j < n && row[j] == '"')
+        {
+            std::size_t k = j + 1;
+            while (k < n)
+            {
+                if (row[k] == '"')
+                {
+                    // "" inside quotes is one literal quote; a lone " closes.
+                    if (k + 1 < n && row[k + 1] == '"') { field.push_back('"'); k += 2; continue; }
+                    ++k;
+                    break;
+                }
+                field.push_back(row[k]);
+                ++k;
+            }
+            // Lenient: an unterminated quote was just closed by end of line,
+            // and any text between a closing quote and the next separating
+            // comma is appended verbatim rather than being an error.
+            while (k < n && row[k] != ',') { field.push_back(row[k]); ++k; }
+            i = k;
+        }
+        else
+        {
+            std::size_t k = i;
+            while (k < n && row[k] != ',') { field.push_back(row[k]); ++k; }
+            i = k;
+        }
+
+        out.push_back(field);
+        if (i >= n) break;
+        ++i; // step over the separating comma; a trailing one yields an empty field
+    }
     return out;
 }
 
@@ -50,9 +102,7 @@ lsdtt_csv_table load_csv_table(const std::string& path)
     if (!std::getline(f, line))
         throw std::runtime_error("Input CSV is empty: " + path);
 
-    std::istringstream hs(line);
-    std::string tok;
-    while (std::getline(hs, tok, ','))
+    for (const std::string& tok : csv_split_row(line))
         t.headers.push_back(csv_trim(tok));
     if (t.headers.empty())
         throw std::runtime_error("Input CSV has no header columns: " + path);
@@ -61,13 +111,14 @@ lsdtt_csv_table load_csv_table(const std::string& path)
     {
         if (csv_trim(line).empty()) continue;
         lsdtt_csv_row row;
-        std::istringstream rs(line);
+        // Both the header and the body go through csv_split_row so a quoted
+        // field means the same thing in either -- these used to be two inline
+        // getline loops that knew nothing about quotes.
+        const std::vector<std::string> toks = csv_split_row(line);
         std::size_t i = 0;
-        while (std::getline(rs, tok, ',') && i < t.headers.size())
-        {
-            row[t.headers[i]] = csv_trim(tok);
-            ++i;
-        }
+        // Over-long rows are truncated to the header count.
+        for (; i < toks.size() && i < t.headers.size(); ++i)
+            row[t.headers[i]] = csv_trim(toks[i]);
         // Short rows are padded so every header key exists; see the header note.
         while (i < t.headers.size())
         {

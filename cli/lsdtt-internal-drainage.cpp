@@ -36,6 +36,8 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
 
 static const std::string k_version = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -60,20 +62,7 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static std::string lower(std::string value)
-{
-    for (char& c : value)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return value;
-}
 
-static std::string number(double value)
-{
-    std::ostringstream out;
-    out.precision(17);
-    out << value;
-    return out.str();
-}
 
 static lsdtt::sink_io_format sink_format_from_vector(
     lsdtt::vector_output_format format)
@@ -131,9 +120,9 @@ static void write_depression_csv(
         rows.push_back({
             std::to_string(sink.sink_id),
             std::to_string(sink.routing_sink_id),
-            number(sink.pit_elevation), number(sink.spill_elevation),
-            number(sink.depth_m), number(sink.area_m2), number(sink.volume_m3),
-            std::to_string(sink.n_pixels), number(sink.tagged_drainage_area_m2),
+            lsdtt::csv_number(sink.pit_elevation), lsdtt::csv_number(sink.spill_elevation),
+            lsdtt::csv_number(sink.depth_m), lsdtt::csv_number(sink.area_m2), lsdtt::csv_number(sink.volume_m3),
+            std::to_string(sink.n_pixels), lsdtt::csv_number(sink.tagged_drainage_area_m2),
             std::to_string(sink.tagged_n_pixels),
             std::to_string(sink.hierarchy_level),
             std::to_string(sink.parent_sink_id), sink.accepted ? "1" : "0"
@@ -513,14 +502,14 @@ static channel_output_result write_sink_channels(
                 std::to_string(routing_id),
                 std::to_string(sinks[static_cast<std::size_t>(routing_id)].sink_id),
                 std::to_string(flat), std::to_string(row), std::to_string(col),
-                number(xy.x), number(xy.y), number(lonlat.latitude),
-                number(lonlat.longitude), std::to_string(junction),
+                lsdtt::csv_number(xy.x), lsdtt::csv_number(xy.y), lsdtt::csv_number(lonlat.latitude),
+                lsdtt::csv_number(lonlat.longitude), std::to_string(junction),
                 std::to_string(order),
-                number(static_cast<double>(flow.s_vector_size(flat)) *
+                lsdtt::csv_number(static_cast<double>(flow.s_vector_size(flat)) *
                        flow.meta().pixel_area()),
-                number(distance.data[index])
+                lsdtt::csv_number(distance.data[index])
             };
-            if (chi != nullptr) record.push_back(number(chi->get_data()[index]));
+            if (chi != nullptr) record.push_back(lsdtt::csv_number(chi->get_data()[index]));
             rows.push_back(std::move(record));
         }
         loader.write_csv(pp.make_output_path("_sink_channel_nodes.csv"),
@@ -611,16 +600,16 @@ static void write_sink_stats(
             s_it == slope_by_label.end() ? lsdtt::lsdtt_descriptive_stats{} : s_it->second;
         std::vector<std::string> row = {
             std::to_string(sink.routing_sink_id), std::to_string(sink.sink_id),
-            number(sink.pit_x), number(sink.pit_y), number(sink.latitude),
-            number(sink.longitude), std::to_string(sink.pit_row),
-            std::to_string(sink.pit_col), number(sink.pit_elevation),
-            number(sink.spill_elevation), number(sink.depth_m),
-            number(sink.area_m2), number(sink.volume_m3),
-            number(sink.tagged_drainage_area_m2),
+            lsdtt::csv_number(sink.pit_x), lsdtt::csv_number(sink.pit_y), lsdtt::csv_number(sink.latitude),
+            lsdtt::csv_number(sink.longitude), std::to_string(sink.pit_row),
+            std::to_string(sink.pit_col), lsdtt::csv_number(sink.pit_elevation),
+            lsdtt::csv_number(sink.spill_elevation), lsdtt::csv_number(sink.depth_m),
+            lsdtt::csv_number(sink.area_m2), lsdtt::csv_number(sink.volume_m3),
+            lsdtt::csv_number(sink.tagged_drainage_area_m2),
             std::to_string(sink.tagged_n_pixels),
-            number(e.min), number(e.q25), number(e.median), number(e.q75),
-            number(e.max), number(e.mean), number(s.min), number(s.q25),
-            number(s.median), number(s.q75), number(s.max), number(s.mean)
+            lsdtt::csv_number(e.min), lsdtt::csv_number(e.q25), lsdtt::csv_number(e.median), lsdtt::csv_number(e.q75),
+            lsdtt::csv_number(e.max), lsdtt::csv_number(e.mean), lsdtt::csv_number(s.min), lsdtt::csv_number(s.q25),
+            lsdtt::csv_number(s.median), lsdtt::csv_number(s.q75), lsdtt::csv_number(s.max), lsdtt::csv_number(s.mean)
         };
         for (int order = 1; order <= max_order; ++order)
         {
@@ -633,7 +622,7 @@ static void write_sink_stats(
                         static_cast<std::size_t>(sink.routing_sink_id)].end())
                     length = found->second;
             }
-            row.push_back(number(length));
+            row.push_back(lsdtt::csv_number(length));
         }
         rows.push_back(std::move(row));
     }
@@ -825,9 +814,9 @@ int main(int argc, char* argv[])
         const auto ip = pp.get_int_parameters();
         const auto sf = pp.get_string_parameters();
 
-        const std::string stage = lower(sf.at("internal_drainage_stage"));
-        const std::string algorithm = lower(sf.at("sink_detection_algorithm_choice"));
-        const std::string mode_name = lower(sf.at("sink_mode"));
+        const std::string stage = lsdtt::to_lower_ascii(sf.at("internal_drainage_stage"));
+        const std::string algorithm = lsdtt::to_lower_ascii(sf.at("sink_detection_algorithm_choice"));
+        const std::string mode_name = lsdtt::to_lower_ascii(sf.at("sink_mode"));
         if (stage != "detect" && stage != "route" && stage != "both")
             throw std::invalid_argument("internal_drainage_stage must be detect, route, or both");
         if (algorithm != "depression_hierarchy" && algorithm != "fill_difference")

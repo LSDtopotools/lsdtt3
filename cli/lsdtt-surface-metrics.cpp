@@ -185,108 +185,15 @@ static std::vector<std::string> split_csv(const std::string& csv)
     return out;
 }
 
-// -----------------------------------------------------------------------------
-// polyfit_metric_entry
-// -----------------------------------------------------------------------------
-struct polyfit_metric_entry
-{
-    const char*           name;
-    lsdtt::polyfit_metric metric;
-    const char*           suffix;
-};
+// Polyfit metric names, parsing and output suffixes now live in the library:
+//   lsdtt::all_polyfit_metrics / polyfit_metric_name /
+//   polyfit_metric_from_string / polyfit_metric_output_suffix /
+//   parse_polyfit_metric_list   (src/cpu/lsdtt_raster_surface_metrics_cpu.hpp)
+// This CLI, lsdtt-ridgeline-analysis and lsdtt-basin-surface-metrics each kept
+// a private copy; the third had drifted six metrics behind, so a name accepted
+// here was rejected there. One table, next to the enum, with a unit test that
+// fails if the two fall out of step.
 
-// -----------------------------------------------------------------------------
-// polyfit_metric_table
-// -----------------------------------------------------------------------------
-static const std::vector<polyfit_metric_entry>& polyfit_metric_table()
-{
-    static const std::vector<polyfit_metric_entry> table =
-    {
-        {"fitted_surface",               lsdtt::polyfit_metric::fitted_surface,              "_polyfit_fitted_surface.tif"},
-        {"dzdx",                         lsdtt::polyfit_metric::dzdx,                        "_polyfit_dzdx.tif"},
-        {"dzdy",                         lsdtt::polyfit_metric::dzdy,                        "_polyfit_dzdy.tif"},
-        {"d2zdx2",                       lsdtt::polyfit_metric::d2zdx2,                      "_polyfit_d2zdx2.tif"},
-        {"d2zdxdy",                      lsdtt::polyfit_metric::d2zdxdy,                     "_polyfit_d2zdxdy.tif"},
-        {"d2zdy2",                       lsdtt::polyfit_metric::d2zdy2,                      "_polyfit_d2zdy2.tif"},
-        {"slope",                        lsdtt::polyfit_metric::slope,                       "_polyfit_slope.tif"},
-        {"slope_degrees",                lsdtt::polyfit_metric::slope_degrees,               "_polyfit_slope_degrees.tif"},
-        {"aspect_radians",               lsdtt::polyfit_metric::aspect_radians,              "_polyfit_aspect_radians.tif"},
-        {"aspect_degrees",               lsdtt::polyfit_metric::aspect_degrees,              "_polyfit_aspect_degrees.tif"},
-        {"laplacian",                    lsdtt::polyfit_metric::laplacian,                   "_polyfit_laplacian.tif"},
-        {"hessian_determinant",          lsdtt::polyfit_metric::hessian_determinant,         "_polyfit_hessian_determinant.tif"},
-        {"mean_curvature",               lsdtt::polyfit_metric::mean_curvature,              "_polyfit_mean_curvature.tif"},
-        {"gaussian_curvature",           lsdtt::polyfit_metric::gaussian_curvature,          "_polyfit_gaussian_curvature.tif"},
-        {"maximum_curvature",            lsdtt::polyfit_metric::maximum_curvature,           "_polyfit_maximum_curvature.tif"},
-        {"minimum_curvature",            lsdtt::polyfit_metric::minimum_curvature,           "_polyfit_minimum_curvature.tif"},
-        {"curvedness",                   lsdtt::polyfit_metric::curvedness,                  "_polyfit_curvedness.tif"},
-        {"shape_index",                  lsdtt::polyfit_metric::shape_index,                 "_polyfit_shape_index.tif"},
-        {"profile_curvature",            lsdtt::polyfit_metric::profile_curvature,           "_polyfit_profile_curvature.tif"},
-        {"plan_curvature",               lsdtt::polyfit_metric::plan_curvature,              "_polyfit_plan_curvature.tif"},
-        {"tangential_curvature",         lsdtt::polyfit_metric::tangential_curvature,        "_polyfit_tangential_curvature.tif"},
-        {"difference_curvature",         lsdtt::polyfit_metric::difference_curvature,        "_polyfit_difference_curvature.tif"},
-        {"horizontal_excess_curvature",  lsdtt::polyfit_metric::horizontal_excess_curvature, "_polyfit_horizontal_excess_curvature.tif"},
-        {"vertical_excess_curvature",    lsdtt::polyfit_metric::vertical_excess_curvature,   "_polyfit_vertical_excess_curvature.tif"},
-        {"accumulation_curvature",       lsdtt::polyfit_metric::accumulation_curvature,      "_polyfit_accumulation_curvature.tif"},
-        {"ring_curvature",               lsdtt::polyfit_metric::ring_curvature,              "_polyfit_ring_curvature.tif"},
-        {"rotor",                        lsdtt::polyfit_metric::rotor,                       "_polyfit_rotor.tif"}
-    };
-
-    return table;
-}
-
-// -----------------------------------------------------------------------------
-// parse_polyfit_metrics
-// -----------------------------------------------------------------------------
-static std::vector<lsdtt::polyfit_metric> parse_polyfit_metrics(
-    const std::string& csv)
-{
-    std::vector<lsdtt::polyfit_metric> metrics;
-    std::set<lsdtt::polyfit_metric>    seen;
-
-    const std::vector<std::string> tokens = split_csv(csv);
-    if (tokens.empty())
-    {
-        return metrics;
-    }
-
-    for (const std::string& token : tokens)
-    {
-        if (token == "all")
-        {
-            for (const auto& entry : polyfit_metric_table())
-            {
-                if (seen.insert(entry.metric).second)
-                {
-                    metrics.push_back(entry.metric);
-                }
-            }
-            continue;
-        }
-
-        bool found = false;
-        for (const auto& entry : polyfit_metric_table())
-        {
-            if (token == entry.name)
-            {
-                found = true;
-                if (seen.insert(entry.metric).second)
-                {
-                    metrics.push_back(entry.metric);
-                }
-                break;
-            }
-        }
-
-        if (!found)
-        {
-            throw std::runtime_error(
-                "Unknown polyfit metric: " + token
-            );
-        }
-    }
-
-    return metrics;
-}
 
 // -----------------------------------------------------------------------------
 // parse_slope_thresholds
@@ -323,39 +230,6 @@ static std::vector<float> parse_slope_thresholds(const std::string& csv)
 }
 
 
-// -----------------------------------------------------------------------------
-// polyfit_metric_suffix
-//
-// Returns the output filename suffix for a given metric and method.
-// method must be "wavelet" or "direct".  The table stores "_polyfit_*.tif";
-// the method is prepended to give "_wavelet_polyfit_*.tif" etc.
-// -----------------------------------------------------------------------------
-static std::string polyfit_metric_suffix(
-    lsdtt::polyfit_metric metric,
-    const std::string&    method = "wavelet",
-    const std::string&    ext    = ".tif")
-{
-    for (const auto& entry : polyfit_metric_table())
-    {
-        if (entry.metric == metric)
-        {
-            // entry.suffix is "_polyfit_xxx.tif"; prepend "_<method>" and swap
-            // the stored ".tif" for the requested extension so the result is
-            // "_wavelet_polyfit_xxx.tif", "_direct_polyfit_xxx.png", etc.
-            std::string suffix = std::string("_") + method + entry.suffix;
-            if (suffix.size() >= 4 &&
-                suffix.compare(suffix.size() - 4, 4, ".tif") == 0)
-            {
-                suffix.replace(suffix.size() - 4, 4, ext);
-            }
-            return suffix;
-        }
-    }
-
-    throw std::runtime_error(
-        "No output suffix defined for requested polyfit metric."
-    );
-}
 
 // =============================================================================
 // main
@@ -986,7 +860,7 @@ int main(int argc, char* argv[])
     std::vector<lsdtt::polyfit_metric> requested_polyfit_metrics;
     try
     {
-        requested_polyfit_metrics = parse_polyfit_metrics(sf["polyfit_metrics"]);
+        requested_polyfit_metrics = lsdtt::parse_polyfit_metric_list(sf["polyfit_metrics"]);
     }
     catch (const std::exception& e)
     {
@@ -1101,12 +975,12 @@ int main(int argc, char* argv[])
         if (pm == "both" || pm == "wavelet")
         {
             for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
-                std::cout << " " << polyfit_metric_suffix(metric, "wavelet", output_ext);
+                std::cout << " " << lsdtt::polyfit_metric_output_suffix(metric, "wavelet", output_ext);
         }
         if (pm == "both" || pm == "direct")
         {
             for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
-                std::cout << " " << polyfit_metric_suffix(metric, "direct", output_ext);
+                std::cout << " " << lsdtt::polyfit_metric_output_suffix(metric, "direct", output_ext);
         }
         std::cout << "\n";
     }
@@ -1379,7 +1253,7 @@ int main(int argc, char* argv[])
                     if (!metric_result.has(metric)) continue;
 
                     const std::string o =
-                        pp.make_output_path( polyfit_metric_suffix(metric, method_str, output_ext));
+                        pp.make_output_path( lsdtt::polyfit_metric_output_suffix(metric, method_str, output_ext));
                     std::cout << "Writing: " << o << "\n";
 
                     const auto write_t0 = std::chrono::steady_clock::now();
@@ -1622,7 +1496,7 @@ int main(int argc, char* argv[])
             for (const std::string& method_str : methods)
             {
                 // Build the path to the slope_degrees raster written in Step 3.
-                const std::string slope_input_path = pp.make_output_path(polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str, output_ext));
+                const std::string slope_input_path = pp.make_output_path(lsdtt::polyfit_metric_output_suffix(lsdtt::polyfit_metric::slope_degrees, method_str, output_ext));
 
                 std::cout << "\nOpening slope degrees raster: " << slope_input_path << "\n";
 

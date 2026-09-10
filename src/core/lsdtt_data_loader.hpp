@@ -146,6 +146,11 @@ inline std::string output_extension(const point_output_format fmt)
             throw std::invalid_argument("Unknown point_output_format");
     }
 }
+
+// The third sibling, output_extension(raster_output_format, read_ext), lives
+// further down this header, immediately after the raster_output_format enum:
+// it has to switch on that enum, so it cannot be declared before the enum is
+// complete.
 // =============================================================================
 // Geometry value types
 //
@@ -326,6 +331,46 @@ enum class raster_output_format
 
 // This resolves the raster output format from a string 
 raster_output_format resolve_raster_output_format(const std::string& fmt_str);
+
+// -----------------------------------------------------------------------------
+// output_extension(raster_output_format, read_ext)
+//
+// Third overload of output_extension (the vector_output_format and
+// point_output_format siblings are above, before the enums they switch on).
+//
+// Returns the file extension, leading dot included, that a raster written in
+// `fmt` should carry. `read_ext` is the extension of the INPUT raster, as
+// returned by lsdtt_param_parser::get_read_ext(); it is only consulted for
+// same_as_input, and may be left empty when the caller has no input raster.
+//
+// The rule:
+//   png            -> ".png"
+//   same_as_input  -> read_ext if non-empty, else ".tif"
+//   cog, gtiff     -> ".tif"
+//
+// This is a strict superset of the several private copies that had grown in
+// cli/: the png-vs-tif copies got same_as_input wrong (they returned ".tif"
+// for an ENVI bil or NetCDF input), and the same_as_input copies got png
+// wrong (they returned ".tif" for a PNG). Handling both cases is correct for
+// every caller of either copy, so migrating onto this overload can only fix
+// output names, never change a correct one.
+// -----------------------------------------------------------------------------
+inline std::string output_extension(
+    const raster_output_format fmt,
+    const std::string&         read_ext = "")
+{
+    switch (fmt)
+    {
+        case raster_output_format::png:           return ".png";
+        case raster_output_format::same_as_input: return read_ext.empty()
+                                                             ? std::string(".tif")
+                                                             : read_ext;
+        case raster_output_format::cog:           return ".tif";
+        case raster_output_format::gtiff:         return ".tif";
+        default:
+            throw std::invalid_argument("Unknown raster_output_format");
+    }
+}
 
 
 // -----------------------------------------------------------------------------

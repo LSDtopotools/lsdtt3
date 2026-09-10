@@ -86,7 +86,8 @@ static void print_banner()
 // Keep only valid pixels whose value is at or above the requested percentile
 // threshold; all other valid pixels are set to nodata and masked out.
 //
-// Percentile uses nearest-rank selection over valid input pixels.
+// Percentile uses type-7 linear interpolation (project decision D4),
+// matching lsdtt::raster_percentile. It was nearest-rank before.
 // -----------------------------------------------------------------------------
 static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
     const lsdtt::lsdtt_raster_cpu& input,
@@ -125,13 +126,57 @@ static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
         return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
     }
 
+    // TYPE-7 (linear interpolation), matching lsdtt::raster_percentile
+    // (src/cpu/lsdtt_raster_algebra.cpp) and lsdtt::compute_percentile. This
+    // replaced a NEAREST-RANK selection, ceil(p/100 * n), which returned an
+    // observed data value; type-7 interpolates between the two values
+    // straddling a fractional rank and is what R's quantile(), numpy and
+    // MATLAB return by default. Project decision D4.
+    //
+    // WHY THE FORMULA IS REPEATED HERE RATHER THAN CALLING raster_percentile.
+    // The library's collect_valid() admits a pixel on its MASK BYTE ALONE,
+    // while the loop above additionally rejects non-finite values and the
+    // nodata sentinel. On a raster obeying the usual invariant (mask 0
+    // wherever nodata) the two agree, but the extra guards here are
+    // deliberate, and a NaN admitted into the vector would corrupt the
+    // nth_element ordering rather than fail loudly. Calling the library
+    // directly would therefore change validity semantics as well as the
+    // percentile definition, which is more than D4 decided. Resolve the mask
+    // invariant first, then this whole function can go.
     const double p = std::clamp(percentile, 0.0, 100.0);
-    std::size_t rank = static_cast<std::size_t>(std::ceil((p / 100.0) * valid_values.size()));
-    rank = std::clamp<std::size_t>(rank, 1, valid_values.size());
-    const std::size_t kth = rank - 1;
+    const std::size_t n = valid_values.size();
 
-    std::nth_element(valid_values.begin(), valid_values.begin() + kth, valid_values.end());
-    threshold = valid_values[kth];
+    if (n == 1)
+    {
+        threshold = valid_values[0];
+    }
+    else
+    {
+        const double rank = (p / 100.0) * static_cast<double>(n - 1);
+        const std::size_t lower_index = static_cast<std::size_t>(std::floor(rank));
+        const std::size_t upper_index = static_cast<std::size_t>(std::ceil(rank));
+
+        std::nth_element(valid_values.begin(),
+                         valid_values.begin() + static_cast<std::ptrdiff_t>(upper_index),
+                         valid_values.end());
+        const float upper_value = valid_values[upper_index];
+
+        if (lower_index == upper_index)
+        {
+            threshold = upper_value;
+        }
+        else
+        {
+            std::nth_element(valid_values.begin(),
+                             valid_values.begin() + static_cast<std::ptrdiff_t>(lower_index),
+                             valid_values.begin() + static_cast<std::ptrdiff_t>(upper_index) + 1);
+            const float lower_value = valid_values[lower_index];
+            const double frac = rank - std::floor(rank);
+            threshold = static_cast<float>(
+                static_cast<double>(lower_value) +
+                frac * (static_cast<double>(upper_value) - static_cast<double>(lower_value)));
+        }
+    }
 
     const float nodata_f = static_cast<float>(meta.no_data_value);
     for (std::size_t i = 0; i < src_data.size(); ++i)

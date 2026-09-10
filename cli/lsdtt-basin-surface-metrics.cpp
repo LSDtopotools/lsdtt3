@@ -78,44 +78,14 @@
 // Helper Polyfit Registration
 // =============================================================================
 namespace {
-struct metric_entry {
-    std::string name;
-    lsdtt::polyfit_metric metric;
-};
-
-const std::vector<metric_entry>& get_metric_table() {
-    static const std::vector<metric_entry> table = {
-        {"fitted_surface", lsdtt::polyfit_metric::fitted_surface},
-        {"dzdx", lsdtt::polyfit_metric::dzdx},
-        {"dzdy", lsdtt::polyfit_metric::dzdy},
-        {"d2zdx2", lsdtt::polyfit_metric::d2zdx2},
-        {"d2zdxdy", lsdtt::polyfit_metric::d2zdxdy},
-        {"d2zdy2", lsdtt::polyfit_metric::d2zdy2},
-        {"slope", lsdtt::polyfit_metric::slope},
-        {"slope_degrees", lsdtt::polyfit_metric::slope_degrees},
-        {"aspect_radians", lsdtt::polyfit_metric::aspect_radians},
-        {"aspect_degrees", lsdtt::polyfit_metric::aspect_degrees},
-        {"laplacian", lsdtt::polyfit_metric::laplacian},
-        {"hessian_determinant", lsdtt::polyfit_metric::hessian_determinant},
-        {"mean_curvature", lsdtt::polyfit_metric::mean_curvature},
-        {"gaussian_curvature", lsdtt::polyfit_metric::gaussian_curvature},
-        {"maximum_curvature", lsdtt::polyfit_metric::maximum_curvature},
-        {"minimum_curvature", lsdtt::polyfit_metric::minimum_curvature},
-        {"curvedness", lsdtt::polyfit_metric::curvedness},
-        {"shape_index", lsdtt::polyfit_metric::shape_index},
-        {"profile_curvature", lsdtt::polyfit_metric::profile_curvature},
-        {"plan_curvature", lsdtt::polyfit_metric::plan_curvature},
-        {"tangential_curvature", lsdtt::polyfit_metric::tangential_curvature}
-    };
-    return table;
-}
-
-std::string metric_to_string(lsdtt::polyfit_metric metric) {
-    for (const auto& entry : get_metric_table()) {
-        if (entry.metric == metric) return entry.name;
-    }
-    return "unknown";
-}
+// Polyfit metric names come from the library:
+//   src/cpu/lsdtt_raster_surface_metrics_cpu.hpp
+// This CLI previously kept its own table which stopped at tangential_curvature
+// and so REJECTED six metrics that lsdtt-surface-metrics and
+// lsdtt-ridgeline-analysis accepted (difference_curvature,
+// horizontal_excess_curvature, vertical_excess_curvature,
+// accumulation_curvature, ring_curvature, rotor). One table now, with a unit
+// test that fails if it falls out of step with the enum.
 } // namespace
 
 // =============================================================================
@@ -423,14 +393,11 @@ int main(int argc, char* argv[])
     // Convert string requests to Enums
     std::vector<lsdtt::polyfit_metric> polyfit_metrics;
     for (const auto& req : requested_metric_strings) {
-        bool found = false;
-        for (const auto& mapping : get_metric_table()) {
-            if (req == mapping.name) {
-                polyfit_metrics.push_back(mapping.metric);
-                found = true; break;
-            }
+        try {
+            polyfit_metrics.push_back(lsdtt::polyfit_metric_from_string(req));
         }
-        if (!found) {
+        catch (const std::exception&) {
+            // The library throws; this CLI reports and exits cleanly instead.
             std::cerr << "FATAL: Unknown metric requested: " << req << "\n";
             return 1;
         }
@@ -641,7 +608,7 @@ int main(int argc, char* argv[])
             lsdtt::compute_polyfit_metrics(fitted, req);
 
         for (auto metric : polyfit_metrics) {
-            std::string m_name = metric_to_string(metric);
+            std::string m_name = lsdtt::polyfit_metric_name(metric);
             std::string map_key = m_name + "_lambda" + 
                                   std::to_string(static_cast<int>(lambda));
             
