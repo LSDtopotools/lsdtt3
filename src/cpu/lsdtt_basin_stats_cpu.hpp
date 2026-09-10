@@ -67,6 +67,11 @@ struct basin_stats_record
     int          outlet_row     = -1;
     int          outlet_col     = -1;
     std::int64_t outlet_flat    = -1;
+    // NOT the same as lsdtt_basin_cpu::pixel_count() or
+    // get_number_of_basin_pixels(), which return the size of the upslope slice.
+    // This counts the pixels with VALID DEM DATA, so the two differ whenever a
+    // basin contains interior nodata -- and drainage_area_km2 below is derived
+    // from this one, not from the slice size.
     std::size_t  n_pixels       = 0;
     double       drainage_area_km2 = 0.0;
     bool         nodata_on_edge = false;
@@ -187,21 +192,26 @@ struct basin_stats_outlet_result
 };
 
 // -----------------------------------------------------------------------------
-// basin_touches_nodata
+// On basin completeness
 //
-// True if any pixel of `upslope` has a nodata neighbour, or lies against the
-// raster edge, in the 8-neighbourhood.
+// There is NO basin_touches_nodata here, deliberately. The first version of
+// this module carried one -- a 3x3 scan of each basin pixel against the DEM
+// mask and the raster bounds, lifted verbatim from the CLI. It duplicated
+// lsdtt_basin_cpu::check_basin_completeness(), which walks the same pixels
+// calling lsdtt_flow_base::is_influenced_by_invalid(), and it was the WORSE of
+// the two: is_influenced_by_invalid resolves each neighbour THROUGH THE FLOW
+// OBJECT'S BOUNDARY CONDITIONS, so a periodic boundary is correctly not treated
+// as truncation, while a bare geometric scan counts every raster edge.
 //
-// The only such test in the codebase. It is what decides whether a basin is
-// clipped by the DEM boundary and therefore whether its area, relief and shape
-// metrics describe a whole catchment or a truncated one -- which is why it is
-// reported on the record even when it does not cause a rejection.
+// `record.nodata_on_edge` is therefore `!basin.check_basin_completeness()`.
+//
+// A WARNING ABOUT PERIODIC BOUNDARIES. They belong to numerical models. Real
+// DEMs do not have them, and most of lsdtt3 is built around real data, so a
+// periodic boundary on a measured DEM is almost always a mistake -- it makes
+// basins that leave one side of the raster reappear on the other. Callers
+// should say so; lsdtt-basin-stats warns when its boundary conditions contain
+// a 'p'.
 // -----------------------------------------------------------------------------
-[[nodiscard]] bool basin_touches_nodata(
-    const lsdtt_flow_base&       flow,
-    const lsdtt_flat_index_slice& upslope,
-    const lsdtt_raster_cpu&      dem
-);
 
 // -----------------------------------------------------------------------------
 // compute_basin_stats

@@ -1000,6 +1000,36 @@ int main(int argc, char* argv[])
         {
             fi_opts.boundary_conditions = join_boundary_conditions(bc);
         }
+
+        // PERIODIC BOUNDARIES ON A MEASURED DEM ARE ALMOST CERTAINLY A MISTAKE.
+        //
+        // They exist for numerical models, where the domain is meant to wrap.
+        // A real DEM does not wrap: a basin that leaves one side of the raster
+        // does not reappear on the other. Under a periodic boundary the flow
+        // routing joins the two sides anyway, so upslope areas, basin extents
+        // and the completeness test all silently describe a catchment that does
+        // not exist on the ground.
+        //
+        // Warn rather than refuse: a synthetic DEM from lsdtt-lem or
+        // lsdtt-synthetic-networks is a legitimate input to this tool, and for
+        // those the periodic boundary is the point.
+        if (fi_opts.boundary_conditions.find('p') != std::string::npos ||
+            fi_opts.boundary_conditions.find('P') != std::string::npos)
+        {
+            std::cerr
+                << "\nWARNING: boundary_conditions is '"
+                << fi_opts.boundary_conditions
+                << "', which makes at least one edge PERIODIC.\n"
+                << "         Periodic boundaries are for numerical models. On a "
+                   "measured DEM they are\n"
+                << "         almost always a mistake: flow wraps from one side "
+                   "of the raster to the other,\n"
+                << "         so drainage areas, basin extents and the "
+                   "basin-completeness test describe a\n"
+                << "         catchment that does not exist on the ground. Use "
+                   "'o' (open) or 'n' (no flux)\n"
+                << "         unless this DEM came from a model that wraps.\n\n";
+        }
     }
 
     std::unique_ptr<lsdtt::lsdtt_flow_base> flow;

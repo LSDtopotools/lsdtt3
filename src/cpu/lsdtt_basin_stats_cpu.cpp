@@ -17,48 +17,6 @@
 namespace lsdtt
 {
 
-bool basin_touches_nodata(
-    const lsdtt_flow_base&        flow,
-    const lsdtt_flat_index_slice& upslope,
-    const lsdtt_raster_cpu&       dem
-)
-{
-    const lsdtt_raster_meta&  meta     = dem.get_meta();
-    const lsdtt_array2d_u8&   dem_mask = dem.get_mask_array();
-
-    for (const std::int64_t* it = upslope.begin(); it != upslope.end(); ++it)
-    {
-        const int br = flow.row_from_flat_unchecked(*it);
-        const int bc = flow.col_from_flat_unchecked(*it);
-
-        for (int dr = -1; dr <= 1; ++dr)
-        {
-            for (int dc = -1; dc <= 1; ++dc)
-            {
-                if (dr == 0 && dc == 0) continue;
-
-                const int nr = br + dr;
-                const int nc = bc + dc;
-
-                // Off the raster counts: a basin against the boundary is
-                // truncated in exactly the way a nodata neighbour truncates it.
-                if (nr < 0 || nr >= meta.n_rows ||
-                    nc < 0 || nc >= meta.n_cols)
-                {
-                    return true;
-                }
-                if (dem_mask(nr, nc) == 0)
-                {
-                    return true;
-                }
-            }
-        }
-    }
-
-    return false;
-}
-
-
 std::vector<basin_stats_outlet_result> compute_basin_stats(
     const lsdtt_flow_base&                flow,
     const lsdtt_raster_cpu&               dem,
@@ -139,9 +97,15 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
                 continue;
             }
 
-            const lsdtt_flat_index_slice upslope = flow.upslope_nodes(flat);
+            // ONE basin object: it owns the upslope slice, and it answers the
+            // completeness question. Resolving the slice separately and then
+            // constructing a basin for the shape metrics did both twice.
+            const lsdtt_basin_cpu basin(flat, flow);
+            const lsdtt_flat_index_slice& upslope = basin.get_slice();
 
-            out.nodata_on_edge = basin_touches_nodata(flow, upslope, dem);
+            // Boundary-condition aware: see the note in the header. A periodic
+            // boundary is not truncation; an open one is.
+            out.nodata_on_edge = !basin.check_basin_completeness();
             if (out.nodata_on_edge && options.reject_nodata_edge_basins)
             {
                 out.outcome = basin_stats_outcome::rejected_nodata_edge;
@@ -171,6 +135,12 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
             slope_values.reserve(upslope.size());
             fdist_values.reserve(upslope.size());
 
+            // ONE pass, deliberately. lsdtt_basin_cpu::get_basin_values(raster)
+            // would give the elevation vector on its own, but this loop also
+            // accumulates slope, flow distance relative to THIS outlet, the
+            // centroid sums and channel length by Strahler order. Three or four
+            // get_basin_values calls would be three or four passes over the
+            // basin for values that are all available here at once.
             for (const std::int64_t* it = upslope.begin();
                  it != upslope.end(); ++it)
             {
@@ -273,7 +243,6 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
             {
                 try
                 {
-                    lsdtt_basin_cpu basin(flat, flow);
                     lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
 
                     const std::vector<lsdtt_pixel_rc>& div_rc =
