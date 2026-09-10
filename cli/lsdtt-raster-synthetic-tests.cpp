@@ -373,10 +373,10 @@ int main(int argc, char* argv[])
 
         // Terrace staircase and alluvial fan (fluvial-surface test domains)
         {"write_terrace_staircase_surface",         false},
-        {"write_terrace_staircase_tread_id",        true},
+        {"write_terrace_staircase_tread_id_raster",        true},
         {"write_terrace_staircase_channel_mask",    true},
         {"write_alluvial_fan_surface",              false},
-        {"write_alluvial_fan_lobe_id",              true},
+        {"write_alluvial_fan_lobe_id_raster",              true},
 
         // Hillslope strip (transient-solver test domain)
         {"write_hillslope_strip_surface",           false},
@@ -431,13 +431,13 @@ int main(int argc, char* argv[])
         {"wavelet_lambda",            100.0f},
 
         // Terrace staircase
-        {"terrace_tread_width_m",             300.0f},
-        {"terrace_riser_height_m",              8.0f},
+        {"terrace_tread_width_metres",             300.0f},
+        {"terrace_riser_height_metres",              8.0f},
         {"terrace_valley_gradient",            0.002f},
         {"terrace_riser_height_downstream_taper", 0.0f},
         {"terrace_tread_cross_gradient",       0.002f},
-        {"terrace_riser_gap_width_m",         120.0f},
-        {"terrace_noise_amplitude_m",           0.0f},
+        {"terrace_riser_gap_width_metres",         120.0f},
+        {"terrace_noise_amplitude_metres",           0.0f},
         {"terrace_channel_elevation",         100.0f},
         {"terrace_valley_wall_gradient",        0.5f},
 
@@ -447,9 +447,9 @@ int main(int argc, char* argv[])
         {"fan_apex_elevation",                500.0f},
         {"fan_gradient",                       0.03f},
         {"fan_concavity",                       0.0f},
-        {"fan_lobe_inset_m",                    4.0f},
-        {"fan_lobe_half_angle_deg",            25.0f},
-        {"fan_noise_amplitude_m",               0.0f},
+        {"fan_lobe_inset_metres",                    4.0f},
+        {"fan_lobe_half_angle_degrees",            25.0f},
+        {"fan_noise_amplitude_metres",               0.0f},
 
         // Hillslope strip
         {"strip_baselevel_elevation",   0.0f},
@@ -612,7 +612,7 @@ int main(int argc, char* argv[])
              "Terrace j sits j riser heights above the local channel and "
              "occupies the band [(j-1)*tread_width, j*tread_width) from the "
              "channel on both flanks."}},
-        {"write_terrace_staircase_tread_id",
+        {"write_terrace_staircase_tread_id_raster",
             {"bool","true",
              "Write the ground-truth tread id raster (1..n_terraces on treads, "
              "0 on the channel, on risers, and inside a riser gap).",""}},
@@ -621,9 +621,9 @@ int main(int argc, char* argv[])
              "Write the trunk channel mask (1 = channel).",""}},
         {"terrace_n_terraces",
             {"int","4","Number of terrace treads on each flank.",""}},
-        {"terrace_tread_width_m",
+        {"terrace_tread_width_metres",
             {"float","300","Cross-valley width of each tread in metres.",""}},
-        {"terrace_riser_height_m",
+        {"terrace_riser_height_metres",
             {"float","8",
              "Height of each riser in metres.",
              "Set this BELOW the flat threshold to make every riser pass the "
@@ -650,7 +650,7 @@ int main(int argc, char* argv[])
              "At each gap the stepped cross-section is replaced by a "
              "continuous ramp, so the gap reads as flat and connects treads "
              "that are metres apart in height."}},
-        {"terrace_riser_gap_width_m",
+        {"terrace_riser_gap_width_metres",
             {"float","120",
              "Along-valley length of each riser gap in metres.",
              "Must comfortably exceed the roughness window of whatever "
@@ -658,7 +658,7 @@ int main(int argc, char* argv[])
              "reaches the stepped rows either side and never reads as flat. "
              "At a 40 m window a 30 m gap returns 4.5 m of local relief; a "
              "120 m gap returns about 1 m."}},
-        {"terrace_noise_amplitude_m",
+        {"terrace_noise_amplitude_metres",
             {"float","0","Symmetric per-pixel white noise amplitude, metres.",
              "0 gives an exact surface whose tread elevations can be asserted "
              "to the metre."}},
@@ -677,7 +677,7 @@ int main(int argc, char* argv[])
              "to apex, so a height-above-channel ladder cuts it into arcs; the "
              "lobes sit a constant depth below the older surface, so a "
              "residual to a fitted fan separates them cleanly."}},
-        {"write_alluvial_fan_lobe_id",
+        {"write_alluvial_fan_lobe_id_raster",
             {"bool","true",
              "Write the ground-truth lobe id raster (0 = older surface, "
              "1..n_inset_lobes = inset lobes).",""}},
@@ -702,11 +702,11 @@ int main(int argc, char* argv[])
              "fits and a plane does not."}},
         {"fan_n_inset_lobes",
             {"int","2","Number of inset lobes radiating from the apex.",""}},
-        {"fan_lobe_inset_m",
+        {"fan_lobe_inset_metres",
             {"float","4","Depth of each lobe below the older surface, metres.",""}},
-        {"fan_lobe_half_angle_deg",
+        {"fan_lobe_half_angle_degrees",
             {"float","25","Half-angle of each lobe wedge in degrees.",""}},
-        {"fan_noise_amplitude_m",
+        {"fan_noise_amplitude_metres",
             {"float","0","Symmetric per-pixel white noise amplitude, metres.",""}},
 
         // Hillslope strip (transient Roering hillslope solver test domain)
@@ -787,6 +787,21 @@ int main(int argc, char* argv[])
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
+
+    // Parameter renames onto the project conventions (docs/cli_parameter_conventions.md):
+    // units are spelled out, and a bool that writes a raster ends in _raster.
+    // The old keys keep working and print a warning naming the replacement.
+    pp.set_deprecated_aliases({
+        {"fan_lobe_half_angle_deg",          "fan_lobe_half_angle_degrees"},
+        {"fan_lobe_inset_m",                 "fan_lobe_inset_metres"},
+        {"fan_noise_amplitude_m",            "fan_noise_amplitude_metres"},
+        {"terrace_noise_amplitude_m",        "terrace_noise_amplitude_metres"},
+        {"terrace_riser_gap_width_m",        "terrace_riser_gap_width_metres"},
+        {"terrace_riser_height_m",           "terrace_riser_height_metres"},
+        {"terrace_tread_width_m",            "terrace_tread_width_metres"},
+        {"write_alluvial_fan_lobe_id",       "write_alluvial_fan_lobe_id_raster"},
+        {"write_terrace_staircase_tread_id", "write_terrace_staircase_tread_id_raster"},
+    });
 
     pp.parse_all_parameters(float_defaults, int_defaults, bool_defaults, string_defaults);
 
@@ -1087,14 +1102,14 @@ int main(int argc, char* argv[])
                 lsdtt::generate_terrace_staircase_surface(
                     n_rows, n_cols, cell_size,
                     ifs["terrace_n_terraces"],
-                    ff["terrace_tread_width_m"],
-                    ff["terrace_riser_height_m"],
+                    ff["terrace_tread_width_metres"],
+                    ff["terrace_riser_height_metres"],
                     ff["terrace_valley_gradient"],
                     ff["terrace_riser_height_downstream_taper"],
                     ff["terrace_tread_cross_gradient"],
                     ifs["terrace_n_riser_gaps"],
-                    ff["terrace_riser_gap_width_m"],
-                    ff["terrace_noise_amplitude_m"],
+                    ff["terrace_riser_gap_width_metres"],
+                    ff["terrace_noise_amplitude_metres"],
                     ff["terrace_channel_elevation"],
                     ff["terrace_valley_wall_gradient"],
                     seed,
@@ -1104,7 +1119,7 @@ int main(int argc, char* argv[])
             loader.write_full(st.dem.get_data(), st.dem.get_meta(),
                 pp.make_output_path("_terrace_staircase.tif"), out_fmt);
 
-            if (bf["write_terrace_staircase_tread_id"])
+            if (bf["write_terrace_staircase_tread_id_raster"])
             {
                 loader.write_full(
                     st.tread_id.get_data(), st.tread_id.get_meta(),
@@ -1134,9 +1149,9 @@ int main(int argc, char* argv[])
                     ff["fan_gradient"],
                     ff["fan_concavity"],
                     ifs["fan_n_inset_lobes"],
-                    ff["fan_lobe_inset_m"],
-                    ff["fan_lobe_half_angle_deg"],
-                    ff["fan_noise_amplitude_m"],
+                    ff["fan_lobe_inset_metres"],
+                    ff["fan_lobe_half_angle_degrees"],
+                    ff["fan_noise_amplitude_metres"],
                     seed,
                     n_threads
                 );
@@ -1144,7 +1159,7 @@ int main(int argc, char* argv[])
             loader.write_full(fan.dem.get_data(), fan.dem.get_meta(),
                 pp.make_output_path("_alluvial_fan.tif"), out_fmt);
 
-            if (bf["write_alluvial_fan_lobe_id"])
+            if (bf["write_alluvial_fan_lobe_id_raster"])
             {
                 loader.write_full(
                     fan.lobe_id.get_data(), fan.lobe_id.get_meta(),

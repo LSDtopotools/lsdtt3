@@ -231,14 +231,14 @@ int main(int argc, char* argv[])
         "Used by run_until_converged.",
         "Point inflow", "param", ""};
 
-    float_default_map["tol_median_abs_dhw"] = 1.0e-6f;
-    help_map["tol_median_abs_dhw"] = {"float","1e-6",
+    float_default_map["median_dhw_convergence_tolerance_metres"] = 1.0e-6f;
+    help_map["median_dhw_convergence_tolerance_metres"] = {"float","1e-6",
         "Absolute median dhw convergence threshold in metres.",
         "Used by run_until_converged.",
         "Point inflow", "param", ""};
 
-    float_default_map["tol_median_rel_dhw"] = 1.0e-4f;
-    help_map["tol_median_rel_dhw"] = {"float","1e-4",
+    float_default_map["median_dhw_relative_convergence_tolerance"] = 1.0e-4f;
+    help_map["median_dhw_relative_convergence_tolerance"] = {"float","1e-4",
         "Relative median dhw convergence threshold.",
         "Used by run_until_converged.",
         "Point inflow", "param", ""};
@@ -356,6 +356,13 @@ int main(int argc, char* argv[])
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
+
+    // Renamed onto the project conventions: no `tol` abbreviation
+    // (docs/cli_parameter_conventions.md). Old keys still work, with a warning.
+    pp.set_deprecated_aliases({
+        {"tol_median_abs_dhw", "median_dhw_convergence_tolerance_metres"},
+        {"tol_median_rel_dhw", "median_dhw_relative_convergence_tolerance"},
+    });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -643,8 +650,8 @@ int main(int argc, char* argv[])
                 ii["n_steps"],
                 ii["report_every"],
                 ii["convergence_check_every"],
-                ff["tol_median_abs_dhw"],
-                ff["tol_median_rel_dhw"]
+                ff["median_dhw_convergence_tolerance_metres"],
+                ff["median_dhw_relative_convergence_tolerance"]
             );
 
             if (!converged)

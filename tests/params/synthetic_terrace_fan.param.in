@@ -16,17 +16,17 @@ write_output_format: gtiff
 # 300-column grid at 10 m spans with valley wall to spare on both flanks.
 write_terrace_staircase_surface: true
 terrace_n_terraces: 4
-terrace_tread_width_m: 300.0
-terrace_riser_height_m: 8.0
+terrace_tread_width_metres: 300.0
+terrace_riser_height_metres: 8.0
 terrace_tread_cross_gradient: 0.002
 
 # Three road-like cuts, each 120 m along the valley. The width matters: a gap
 # narrower than the detector's roughness window never reads as flat, because a
 # window centred in it still reaches the stepped rows either side.
 terrace_n_riser_gaps: 3
-terrace_riser_gap_width_m: 120.0
+terrace_riser_gap_width_metres: 120.0
 
 write_alluvial_fan_surface: true
 fan_n_inset_lobes: 2
-fan_lobe_inset_m: 4.0
+fan_lobe_inset_metres: 4.0
 fan_gradient: 0.03

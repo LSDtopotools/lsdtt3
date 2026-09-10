@@ -1065,7 +1065,7 @@ add_lsdtt_cli_smoke_test(
     hydraulic_routing_invalid_mode.param.in
     unused_expected_output
     --expect-failure
-    --stderr-contains "FATAL: hydraulic_run_mode must be 'stationary' or 'transient'."
+    --stderr-contains "FATAL: flow_routing_method must be 'mfd' or 'dinf'."
 )
 
 add_lsdtt_cli_smoke_test(
