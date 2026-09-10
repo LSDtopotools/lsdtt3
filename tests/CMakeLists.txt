@@ -32,6 +32,9 @@ set(LSDTT_HILLTOP_COUPLING_FIXTURE_DIR
 # CTest fixture): a projected 200x200 linear-range DEM with flat piedmont and
 # a rough mountain zone, plus the channel source point that
 # lsdtt-valley-centreline requires.
+set(LSDTT_BASIN_STATS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/basin_stats_fixture")
+
 set(LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/fluvial_surfaces_fixture")
 
@@ -416,6 +419,65 @@ add_lsdtt_cli_smoke_test(
 # in the suite would have caught a regression. feature-finder is the largest CLI
 # in the repo at 174 parameters. These two cover the parameter plumbing and one
 # output each; they are a floor, not adequate coverage.
+# =============================================================================
+# lsdtt-basin-stats
+#
+# This CLI had NO tests and NO fixtures until 2026-09-10. It needed both before
+# the C1 extraction moved ~840 lines (the record struct, the per-basin
+# accumulation loop, and the two writers) out of its main() into
+# src/cpu/lsdtt_basin_stats_cpu.
+#
+# The DEM is GENERATED rather than shipped, because tests/data/dem_cache is
+# gitignored and nothing in the suite may depend on a fetched artefact. A fixed
+# seed and the fixed synthetic georeference make it byte-reproducible, which is
+# what lets the smoke test below carry a sha256 ORACLE on the stats CSV --
+# a refactor tripwire, re-freezable by a deliberate act, in the sense used in
+# docs/testing_and_benchmarking.md.
+# =============================================================================
+add_test(NAME fixture_basin_stats_dem
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-raster-synthetic-tests>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/basin_stats_fixture_dem.param.in"
+        --read-path "${LSDTT_TEST_DATA_DIR}"
+        --work-dir "${LSDTT_BASIN_STATS_FIXTURE_DIR}"
+        --expect basin_stats_diamond_square.tif)
+set_tests_properties(fixture_basin_stats_dem PROPERTIES
+    LABELS "fixture;basin_stats"
+    FIXTURES_SETUP basin_stats_fixture)
+
+# The harness wipes its work dir, so the outlet CSV is copied in AFTER the DEM
+# is generated rather than at configure time. Both are FIXTURES_SETUP for the
+# same fixture; DEPENDS fixes the order between them.
+add_test(NAME fixture_basin_stats_outlets
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/basin_stats_outlets.csv"
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_stats_outlets.csv")
+set_tests_properties(fixture_basin_stats_outlets PROPERTIES
+    LABELS "fixture;basin_stats"
+    FIXTURES_SETUP basin_stats_fixture
+    DEPENDS fixture_basin_stats_dem)
+
+add_test(NAME smoke_basin_stats
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-basin-stats>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/basin_stats_smoke.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_basin_stats"
+        --expect bs_basin_stats.csv
+        --expect bs_basin_polygons.fgb
+        --expect bs_junction_area_ratios.csv
+        --expect-vector-feature-min bs_basin_polygons.fgb:10
+        # ORACLE, not a numeric standard: a tripwire for the C1 extraction of
+        # the record, the per-basin accumulation and the two writers out of
+        # main(). It says "the output did not change", nothing about whether
+        # the output is right. Re-freeze deliberately if a change is intended.
+        --expect-sha256 bs_basin_stats.csv:408f44271c676b1b9cf4cacf0a296fa4b193161828dc95463d4e8835a71af349)
+set_tests_properties(smoke_basin_stats PROPERTIES
+    LABELS "smoke;cli;basin_stats"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
 add_lsdtt_cli_smoke_test(
     smoke_mountain_front
     lsdtt-mountain-front
@@ -3973,6 +4035,7 @@ set(LSDTT_DOMAIN_RULES
     # mountain_front is landform/relief work and feature_finder is multi-scale
     # surface response, so both sit in the surface compartment.
     "mountain_front|feature_finder" "surface_metrics"
+    "basin_stats"            "network"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. Measured

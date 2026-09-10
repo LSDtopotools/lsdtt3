@@ -1,0 +1,27 @@
+# Generates the deterministic DEM that the lsdtt-basin-stats tests run on.
+#
+# lsdtt-basin-stats had NO tests and NO fixtures until 2026-09-10. It needed one
+# before the C1 extraction moved ~840 lines out of its main(), and dem_cache is
+# gitignored (fetched), so the DEM has to be generated rather than shipped.
+#
+# A fixed seed and a fixed synthetic georeference make this byte-reproducible,
+# which is what lets the basin-stats test carry a sha256 oracle.
+#
+# NOTE the parameter names here are this CLI's own (cell_size, seed,
+# diamond_square_stddev). The shared declaration layer spells them
+# cell_size_metres / random_seed / noise_target_stddev_metres; adopting it is
+# Phase 4/5 work and this template must be updated in the same commit.
+read_path: __READ_PATH__
+read_fname: unused
+write_path: __WRITE_PATH__
+write_fname: basin_stats
+
+write_output_format: gtiff
+n_rows: 200
+n_cols: 200
+cell_size: 30.0
+seed: 33
+
+write_diamond_square_surface: true
+diamond_square_roughness: 0.6
+diamond_square_stddev: 120.0

@@ -327,6 +327,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_junction_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp
     src/cpu/lsdtt_basin_outline_cpu.cpp
+    src/cpu/lsdtt_basin_stats_cpu.cpp
     src/cpu/lsdtt_flat_surface_finder.cpp
     src/cpu/lsdtt_slope_break_finder_cpu.cpp
     src/cpu/lsdtt_flat_surface_plane_analysis.cpp

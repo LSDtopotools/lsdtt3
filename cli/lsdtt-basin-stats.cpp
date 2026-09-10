@@ -88,73 +88,19 @@
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/cpu/lsdtt_basin_stats_cpu.hpp"
 
 
 static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-basin-stats";
 
-// -----------------------------------------------------------------------------
-// Local record types
-// -----------------------------------------------------------------------------
-
-struct basin_stats_record
-{
-    int          basin_id       = -1;
-    std::string  gauge_id       = "";
-    std::string  gauge_name     = "";
-    double       latitude       = 0.0;
-    double       longitude      = 0.0;
-    double       outlet_x       = 0.0;
-    double       outlet_y       = 0.0;
-    int          outlet_row     = -1;
-    int          outlet_col     = -1;
-    std::int64_t outlet_flat    = -1;
-    std::size_t  n_pixels       = 0;
-    double       drainage_area_km2 = 0.0;
-    bool         nodata_on_edge = false;
-
-    lsdtt::lsdtt_descriptive_stats stats;  // elevation statistics
-
-    // Centroid in projected CRS and WGS84
-    double centroid_x         = 0.0;
-    double centroid_y         = 0.0;
-    double centroid_latitude  = 0.0;
-    double centroid_longitude = 0.0;
-
-    // Outlet -> centre-of-mass bearing (degrees from North, clockwise) + distance
-    double com_bearing_deg    = std::numeric_limits<double>::quiet_NaN();
-    double com_distance_m     = std::numeric_limits<double>::quiet_NaN();
-
-    // Slope (gradient magnitude) percentiles
-    double slope_25th = 0.0;
-    double slope_50th = 0.0;
-    double slope_75th = 0.0;
-
-    // Flow distance from outlet percentiles (metres)
-    double flow_distance_25th = 0.0;
-    double flow_distance_50th = 0.0;
-    double flow_distance_75th = 0.0;
-
-    // Channel length (m) by Strahler stream order (keys 1-6)
-    // -1.0 indicates channel stats were not calculated
-    std::map<int, double> channel_length_by_order;
-
-    // Basin planform shape metrics (see docs/tex_technical/basin_shape_metrics.tex)
-    // basin_length_m is L_b under the chosen basin_length_definition.
-    bool   shape_valid           = false;
-    double basin_length_m        = 0.0;
-    double elongation_ratio      = 0.0;
-    double form_factor           = 0.0;
-    double circularity_ratio     = 0.0;
-    double gravelius_compactness = 0.0;
-    double solidity              = 0.0;
-    double eccentricity          = 0.0;
-    double orientation_deg       = 0.0;
-    double hypsometric_integral  = 0.0;
-};
-
-
+// basin_stats_record, basin_stats_options, compute_basin_stats and
+// basin_touches_nodata now live in src/cpu/lsdtt_basin_stats_cpu.hpp. The
+// accumulation loop that used to sit in main() went with them; what stays here
+// is the CSV and polygon schemas, the progress output, and the gauge labels,
+// which come from optional columns of this tool's own outlet CSV.
+using lsdtt::basin_stats_record;
 // -----------------------------------------------------------------------------
 // basin_pdf_cdf_path
 // -----------------------------------------------------------------------------
@@ -1354,12 +1300,34 @@ int main(int argc, char* argv[])
 
 
 
-    for (const auto& outlet : requested_outlets)
-    {
-        const double latitude  = outlet.original_y;
-        const double longitude = outlet.original_x;
+    lsdtt::basin_stats_options stats_options;
+    stats_options.snapping_method            = basin_outlet_snapping_method;
+    stats_options.square_snap                = square_snap_options;
+    stats_options.downstream_snap            = downstream_snap_options;
+    stats_options.reject_nodata_edge_basins  = bf["reject_nodata_edge_basins"];
+    stats_options.calculate_centre_of_mass_bearing = do_com_bearing;
+    stats_options.calculate_shape_metrics    = do_shape_metrics;
+    stats_options.basin_length_definition    = basin_length_definition;
+    stats_options.shape_perimeter_simplify_cells =
+        ff["shape_perimeter_simplify_cells"];
+    // The PDF/CDF writer needs the basin's elevation values, not the record.
+    stats_options.collect_elevation_values   = bf["write_basin_pdf_cdf_csv"];
 
-        // Gauge labels (aligned by 0-based index = point_id - 1)
+    const std::vector<lsdtt::basin_stats_outlet_result> outlet_results =
+        lsdtt::compute_basin_stats(
+            *flow, dem, gradient_raster, flow_dist_raster,
+            channel_network.get(), to_wgs84,
+            requested_outlets, stats_options);
+
+    // Reporting is this CLI's job: compute_basin_stats does not print.
+    for (std::size_t i = 0; i < outlet_results.size(); ++i)
+    {
+        const lsdtt::basin_stats_outlet_result& res = outlet_results[i];
+        const lsdtt::lsdtt_input_point&      outlet = requested_outlets[i];
+
+        // Gauge labels, aligned by 0-based index = point_id - 1. They come from
+        // optional columns of this tool's outlet CSV, so they are filled in
+        // here rather than by the compute layer.
         const int gauge_row = outlet.point_id - 1;
         const std::string g_id =
             (has_gauge_id && gauge_row >= 0 &&
@@ -1373,423 +1341,101 @@ int main(int argc, char* argv[])
         std::cout << "\nOutlet " << outlet.point_id;
         if (!g_id.empty())   std::cout << "  gauge_id=" << g_id;
         if (!g_name.empty()) std::cout << "  gauge_name=" << g_name;
-        std::cout << "  lat=" << latitude << " lon=" << longitude << "\n";
+        std::cout << "  lat=" << outlet.original_y
+                  << " lon=" << outlet.original_x << "\n";
 
-        try
+        if (res.snap_ran && res.snap.status == lsdtt::lsdtt_snap_status::success)
         {
-            if (outlet.status != lsdtt::lsdtt_point_input_status::success)
-            {
+            std::cout << "  Snapped : row=" << res.snap.snapped_row
+                      << " col=" << res.snap.snapped_col;
+            if (basin_outlet_snapping_method == "expanding_square")
+                std::cout << " radius=" << res.snap.search_radius_pixels;
+            else
+                std::cout << " steps=" << res.snap.downstream_steps;
+            std::cout << " contributing="
+                      << res.snap.snapped_contributing_pixels << "\n";
+        }
+
+        if (res.nodata_on_edge)
+        {
+            std::cout << "  Note: basin touches nodata / raster edge\n";
+        }
+
+        switch (res.outcome)
+        {
+            case lsdtt::basin_stats_outcome::point_not_mapped:
                 std::cerr << "Warning: outlet " << outlet.point_id
                           << " did not map to an in-bounds raster pixel; skipping.\n";
                 continue;
-            }
-
-            int row = outlet.row;
-            int col = outlet.col;
-            std::int64_t flat = outlet.flat;
-
-            lsdtt::lsdtt_xy xy{outlet.x, outlet.y};
-
-            if (basin_outlet_snapping_method == "expanding_square")
-            {
-                const lsdtt::lsdtt_snap_result snapped =
-                    lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                        *flow, row, col, square_snap_options
-                    );
-
-                if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                {
-                    std::cerr << "Warning: outlet " << outlet.point_id
-                              << " could not be snapped with expanding_square ("
-                              << lsdtt::snap_status_to_string(snapped.status)
-                              << "); skipping.\n";
-                    continue;
-                }
-
-                row  = snapped.snapped_row;
-                col  = snapped.snapped_col;
-                flat = snapped.snapped_flat;
-                xy   = lsdtt::cell_center_from_row_col(meta, row, col);
-
-                std::cout << "  Snapped : row=" << row << " col=" << col
-                          << " radius=" << snapped.search_radius_pixels
-                          << " contributing=" << snapped.snapped_contributing_pixels << "\n";
-            }
-            else if (basin_outlet_snapping_method == "downstream")
-            {
-                const lsdtt::lsdtt_snap_result snapped =
-                    lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                        *flow, row, col, downstream_snap_options
-                    );
-
-                if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                {
-                    std::cerr << "Warning: outlet " << outlet.point_id
-                              << " could not be snapped downstream ("
-                              << lsdtt::snap_status_to_string(snapped.status)
-                              << "); skipping.\n";
-                    continue;
-                }
-
-                row  = snapped.snapped_row;
-                col  = snapped.snapped_col;
-                flat = snapped.snapped_flat;
-                xy   = lsdtt::cell_center_from_row_col(meta, row, col);
-
-                std::cout << "  Snapped : row=" << row << " col=" << col
-                          << " steps=" << snapped.downstream_steps
-                          << " contributing=" << snapped.snapped_contributing_pixels << "\n";
-            }
-            else
-            {
-                if (!flow->is_valid_cell(flat))
-                {
-                    std::cerr << "Warning: outlet " << outlet.point_id
-                              << " maps to an invalid or nodata flow pixel; skipping.\n";
-                    continue;
-                }
-            }
-
-            const lsdtt::lsdtt_flat_index_slice upslope =
-                flow->upslope_nodes(flat);
-
-            // ------------------------------------------------------------------
-            // Check whether any upslope pixel borders nodata or the raster edge
-            // ------------------------------------------------------------------
-            bool nodata_on_edge = false;
-            for (const std::int64_t* it = upslope.begin();
-                 it != upslope.end() && !nodata_on_edge;
-                 ++it)
-            {
-                const int br = flow->row_from_flat_unchecked(*it);
-                const int bc = flow->col_from_flat_unchecked(*it);
-
-                for (int dr = -1; dr <= 1 && !nodata_on_edge; ++dr)
-                {
-                    for (int dc = -1; dc <= 1 && !nodata_on_edge; ++dc)
-                    {
-                        if (dr == 0 && dc == 0) continue;
-                        const int nr = br + dr;
-                        const int nc = bc + dc;
-                        if (nr < 0 || nr >= meta.n_rows ||
-                            nc < 0 || nc >= meta.n_cols)
-                        {
-                            nodata_on_edge = true;
-                        }
-                        else if (dem_mask(nr, nc) == 0)
-                        {
-                            nodata_on_edge = true;
-                        }
-                    }
-                }
-            }
-
-            if (nodata_on_edge)
-            {
-                std::cout << "  Note: basin touches nodata / raster edge\n";
-                if (bf["reject_nodata_edge_basins"])
-                {
-                    std::cout << "  Skipping (reject_nodata_edge_basins = true)\n";
-                    continue;
-                }
-            }
-
-            // ------------------------------------------------------------------
-            // Flow distance at the outlet (absolute, from any baselevel outlet)
-            // ------------------------------------------------------------------
-            double outlet_fd = 0.0;
-            if (fd_mask(row, col) != 0)
-            {
-                outlet_fd = fd_data(row, col);
-            }
-
-            // ------------------------------------------------------------------
-            // Accumulate per-pixel values
-            // ------------------------------------------------------------------
-            std::vector<float> elev_values;
-            std::vector<float> slope_values;
-            std::vector<float> fdist_values;
-
-            double sum_x = 0.0;
-            double sum_y = 0.0;
-
-            // Channel length by stream order (1-6); positive = accumulated
-            std::map<int, double> chan_len;
-            for (int o = 1; o <= 6; ++o) { chan_len[o] = 0.0; }
-
-            elev_values.reserve(upslope.size());
-            slope_values.reserve(upslope.size());
-            fdist_values.reserve(upslope.size());
-
-            for (const std::int64_t* it = upslope.begin();
-                 it != upslope.end();
-                 ++it)
-            {
-                const std::int64_t basin_flat = *it;
-                if (basin_flat < 0) continue;
-
-                const int basin_row = flow->row_from_flat_unchecked(basin_flat);
-                const int basin_col = flow->col_from_flat_unchecked(basin_flat);
-
-                if (!dem_mask.in_bounds(basin_row, basin_col)) continue;
-                if (dem_mask(basin_row, basin_col) == 0) continue;
-
-                // Elevation
-                elev_values.push_back(dem_data(basin_row, basin_col));
-
-                // Slope (gradient magnitude)
-                if (grad_mask.in_bounds(basin_row, basin_col) &&
-                    grad_mask(basin_row, basin_col) != 0)
-                {
-                    slope_values.push_back(grad_data(basin_row, basin_col));
-                }
-
-                // Flow distance from this outlet
-                if (fd_mask.in_bounds(basin_row, basin_col) &&
-                    fd_mask(basin_row, basin_col) != 0)
-                {
-                    const double rel_fd =
-                        std::max(0.0,
-                            static_cast<double>(fd_data(basin_row, basin_col))
-                            - outlet_fd);
-                    fdist_values.push_back(static_cast<float>(rel_fd));
-                }
-
-                // Centroid accumulation
-                const lsdtt::lsdtt_xy pxy =
-                    lsdtt::cell_center_from_row_col(meta, basin_row, basin_col);
-                sum_x += pxy.x;
-                sum_y += pxy.y;
-
-                // Channel length by stream order
-                if (has_channel_network &&
-                    channel_network->is_channel(basin_flat))
-                {
-                    const std::int32_t junc =
-                        channel_network->junction_upstream_of_flat(basin_flat);
-
-                    if (junc >= 0)
-                    {
-                        const int order = static_cast<int>(
-                            channel_network->stream_order_of_junction(junc)
-                        );
-
-                        if (order >= 1 && order <= 6)
-                        {
-                            const std::uint8_t dir =
-                                flow->receiver_dir_of(basin_flat);
-                            const bool diagonal =
-                                (dir == 1 || dir == 3 ||
-                                 dir == 5 || dir == 7);
-                            chan_len[order] +=
-                                diagonal ? diag_len : cell_size;
-                        }
-                    }
-                }
-            }
-
-            if (elev_values.empty())
-            {
+            case lsdtt::basin_stats_outcome::snap_failed:
+                std::cerr << "Warning: outlet " << outlet.point_id
+                          << " could not be snapped with "
+                          << basin_outlet_snapping_method << " ("
+                          << lsdtt::snap_status_to_string(res.snap.status)
+                          << "); skipping.\n";
+                continue;
+            case lsdtt::basin_stats_outcome::invalid_flow_pixel:
+                std::cerr << "Warning: outlet " << outlet.point_id
+                          << " maps to an invalid or nodata flow pixel; skipping.\n";
+                continue;
+            case lsdtt::basin_stats_outcome::rejected_nodata_edge:
+                std::cout << "  Skipping (reject_nodata_edge_basins = true)\n";
+                continue;
+            case lsdtt::basin_stats_outcome::no_valid_pixels:
                 std::cerr << "Warning: basin for outlet " << outlet.point_id
                           << " contained no valid DEM pixels; skipping.\n";
                 continue;
-            }
-
-            // ------------------------------------------------------------------
-            // Descriptive statistics
-            // ------------------------------------------------------------------
-            const lsdtt::lsdtt_descriptive_stats elev_stats =
-                lsdtt::compute_descriptive_stats(elev_values);
-
-            // Slope percentiles
-            double s25 = 0.0, s50 = 0.0, s75 = 0.0;
-            if (!slope_values.empty())
-            {
-                s25 = lsdtt::compute_percentile(slope_values, 25.0);
-                s50 = lsdtt::compute_percentile(slope_values, 50.0);
-                s75 = lsdtt::compute_percentile(slope_values, 75.0);
-            }
-
-            // Flow distance percentiles
-            double fd25 = 0.0, fd50 = 0.0, fd75 = 0.0;
-            if (!fdist_values.empty())
-            {
-                fd25 = lsdtt::compute_percentile(fdist_values, 25.0);
-                fd50 = lsdtt::compute_percentile(fdist_values, 50.0);
-                fd75 = lsdtt::compute_percentile(fdist_values, 75.0);
-            }
-
-            // Centroid
-            const std::size_t n_pix = elev_values.size();
-            const double cx = sum_x / static_cast<double>(n_pix);
-            const double cy = sum_y / static_cast<double>(n_pix);
-
-            double cent_lat = 0.0, cent_lon = 0.0;
-            if (to_wgs84.is_initialised())
-            {
-                const lsdtt::lsdtt_lonlat ll =
-                    lsdtt::xy_to_lonlat(cx, cy, to_wgs84);
-                cent_lat = ll.latitude;
-                cent_lon = ll.longitude;
-            }
-
-            // PDF/CDF per basin
-            if (bf["write_basin_pdf_cdf_csv"])
-            {
-                const lsdtt::lsdtt_histogram hist =
-                    lsdtt::compute_histogram(
-                        elev_values,
-                        static_cast<std::size_t>(ifs["n_histogram_bins"])
-                    );
-
-                const std::string dist_csv =
-                    basin_pdf_cdf_path(pp, outlet.point_id);
-                std::cout << "  Writing PDF/CDF: " << dist_csv << "\n";
-                write_basin_pdf_cdf_csv(dist_csv, outlet.point_id, hist);
-            }
-
-            // ------------------------------------------------------------------
-            // Basin planform shape metrics
-            //
-            // Trace the basin outline polygon, convert the pixel-corner divide
-            // ring to projected coordinates, and derive shape metrics.
-            // See docs/tex_technical/basin_shape_metrics.tex for derivations and references.
-            // ------------------------------------------------------------------
-            lsdtt::lsdtt_basin_shape shape;
-            bool shape_ok = false;
-            if (do_shape_metrics)
-            try
-            {
-                lsdtt::lsdtt_basin_cpu basin(flat, *flow);
-                lsdtt::lsdtt_basin_outline_cpu outline = basin.get_basin_outline();
-
-                const std::vector<lsdtt::lsdtt_pixel_rc>& div_rc =
-                    outline.outline_divide_rc();
-                const lsdtt::lsdtt_raster_meta& dgm = outline.divide_grid_meta();
-
-                std::vector<lsdtt::lsdtt_xy> ring;
-                ring.reserve(div_rc.size());
-                for (const auto& rc : div_rc)
-                {
-                    ring.push_back(
-                        lsdtt::cell_center_from_row_col(dgm, rc.row, rc.col));
-                }
-
-                if (ring.size() >= 3)
-                {
-                    double basin_len = 0.0;
-                    if (basin_length_definition == "geometric")
-                    {
-                        const std::vector<lsdtt::lsdtt_xy> hull =
-                            lsdtt::convex_hull(ring);
-                        basin_len = lsdtt::feret_diameters(hull).d_max;
-                    }
-                    else  // flow_path
-                    {
-                        for (const float f : fdist_values)
-                        {
-                            basin_len = std::max(basin_len,
-                                                 static_cast<double>(f));
-                        }
-                    }
-
-                    const double simp_tol =
-                        ff["shape_perimeter_simplify_cells"] * cell_size;
-
-                    shape = lsdtt::compute_basin_shape(
-                        ring,
-                        basin_len,
-                        elev_stats.min,
-                        elev_stats.mean,
-                        elev_stats.max,
-                        simp_tol);
-                    shape_ok = true;
-                }
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "  Warning: basin shape metrics failed for outlet "
-                          << outlet.point_id << ": " << e.what() << "\n";
-            }
-
-            // ------------------------------------------------------------------
-            // Assemble record
-            // ------------------------------------------------------------------
-            basin_stats_record row_out;
-            row_out.basin_id           = outlet.point_id;
-            row_out.gauge_id           = g_id;
-            row_out.gauge_name         = g_name;
-            row_out.latitude           = latitude;
-            row_out.longitude          = longitude;
-            row_out.outlet_x           = xy.x;
-            row_out.outlet_y           = xy.y;
-            row_out.outlet_row         = row;
-            row_out.outlet_col         = col;
-            row_out.outlet_flat        = flat;
-            row_out.n_pixels           = n_pix;
-            row_out.drainage_area_km2  = static_cast<double>(n_pix) * cell_area_km2;
-            row_out.nodata_on_edge     = nodata_on_edge;
-            row_out.centroid_x         = cx;
-            row_out.centroid_y         = cy;
-            row_out.centroid_latitude  = cent_lat;
-            row_out.centroid_longitude = cent_lon;
-            if (do_com_bearing)
-            {
-                row_out.com_bearing_deg =
-                    lsdtt::bearing_from_north_degrees(xy.x, xy.y, cx, cy);
-                row_out.com_distance_m = std::hypot(cx - xy.x, cy - xy.y);
-            }
-            row_out.stats              = elev_stats;
-            row_out.slope_25th         = s25;
-            row_out.slope_50th         = s50;
-            row_out.slope_75th         = s75;
-            row_out.flow_distance_25th = fd25;
-            row_out.flow_distance_50th = fd50;
-            row_out.flow_distance_75th = fd75;
-
-            row_out.shape_valid           = shape_ok;
-            row_out.basin_length_m        = shape.basin_length;
-            row_out.elongation_ratio      = shape.elongation_ratio;
-            row_out.form_factor           = shape.form_factor;
-            row_out.circularity_ratio     = shape.circularity_ratio;
-            row_out.gravelius_compactness = shape.gravelius_compactness;
-            row_out.solidity              = shape.solidity;
-            row_out.eccentricity          = shape.eccentricity;
-            row_out.orientation_deg       = shape.orientation_deg;
-            row_out.hypsometric_integral  = shape.hypsometric_integral;
-
-            if (has_channel_network)
-            {
-                row_out.channel_length_by_order = chan_len;
-            }
-
-            basin_rows.push_back(row_out);
-
-            std::cout << "  Basin pixels  : " << n_pix << "\n";
-            std::cout << "  Drainage area : " << row_out.drainage_area_km2
-                      << " km2\n";
-            std::cout << "  Elev mean     : " << elev_stats.mean << " m\n";
-            std::cout << "  Elev median   : " << elev_stats.median << " m\n";
-            std::cout << "  Relief        : " << elev_stats.range << " m\n";
-            std::cout << "  Slope 50th    : " << s50 << " m/m\n";
-            std::cout << "  FlowDist 50th : " << fd50 << " m\n";
-            if (shape_ok)
-            {
-                std::cout << "  Elongation Re : " << shape.elongation_ratio
-                          << "  (L_b=" << shape.basin_length << " m)\n";
-                std::cout << "  Circularity Rc: " << shape.circularity_ratio
-                          << "  Solidity: " << shape.solidity << "\n";
-            }
-            if (has_channel_network)
-            {
-                std::cout << "  Channel len O1: " << chan_len[1] << " m\n";
-                std::cout << "  Channel len O2: " << chan_len[2] << " m\n";
-            }
+            case lsdtt::basin_stats_outcome::failed:
+                std::cerr << "Warning: failed to process outlet "
+                          << outlet.point_id << ": " << res.message << "\n";
+                continue;
+            case lsdtt::basin_stats_outcome::success:
+                break;
         }
-        catch (const std::exception& e)
+
+        if (res.shape_failed)
         {
-            std::cerr << "Warning: failed to process outlet "
-                      << outlet.point_id << ": " << e.what() << "\n";
+            std::cerr << "  Warning: basin shape metrics failed for outlet "
+                      << outlet.point_id << ": " << res.message << "\n";
+        }
+
+        basin_stats_record row_out = res.record;
+        row_out.gauge_id   = g_id;
+        row_out.gauge_name = g_name;
+
+        if (bf["write_basin_pdf_cdf_csv"])
+        {
+            const lsdtt::lsdtt_histogram hist =
+                lsdtt::compute_histogram(
+                    res.elevation_values,
+                    static_cast<std::size_t>(ifs["n_histogram_bins"]));
+            const std::string dist_csv = basin_pdf_cdf_path(pp, outlet.point_id);
+            std::cout << "  Writing PDF/CDF: " << dist_csv << "\n";
+            write_basin_pdf_cdf_csv(dist_csv, outlet.point_id, hist);
+        }
+
+        basin_rows.push_back(row_out);
+
+        std::cout << "  Basin pixels  : " << row_out.n_pixels << "\n";
+        std::cout << "  Drainage area : " << row_out.drainage_area_km2 << " km2\n";
+        std::cout << "  Elev mean     : " << row_out.stats.mean << " m\n";
+        std::cout << "  Elev median   : " << row_out.stats.median << " m\n";
+        std::cout << "  Relief        : " << row_out.stats.range << " m\n";
+        std::cout << "  Slope 50th    : " << row_out.slope_50th << " m/m\n";
+        std::cout << "  FlowDist 50th : " << row_out.flow_distance_50th << " m\n";
+        if (row_out.shape_valid)
+        {
+            std::cout << "  Elongation Re : " << row_out.elongation_ratio
+                      << "  (L_b=" << row_out.basin_length_m << " m)\n";
+            std::cout << "  Circularity Rc: " << row_out.circularity_ratio
+                      << "  Solidity: " << row_out.solidity << "\n";
+        }
+        if (channel_network != nullptr)
+        {
+            std::cout << "  Channel len O1: "
+                      << row_out.channel_length_by_order.at(1) << " m\n";
+            std::cout << "  Channel len O2: "
+                      << row_out.channel_length_by_order.at(2) << " m\n";
         }
     }
 
