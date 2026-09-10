@@ -59,6 +59,7 @@
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/cpu/lsdtt_synthetic_domain_cpu.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation =
@@ -114,153 +115,8 @@ static void write_hillshade_png(
                       lsdtt::raster_output_format::png);
 }
 
-// -----------------------------------------------------------------------------
-// apply_sinuous_mask
-//
-// Subsets the rectangular domain into a sinuous active area. Omits pixels 
-// are set to mathematically flat base_elev levels to prevent gradient blowups.
-// -----------------------------------------------------------------------------
-static lsdtt::lsdtt_raster_cpu apply_sinuous_mask(
-    const lsdtt::lsdtt_raster_cpu& dem,
-    bool enable_n, float amp_n_frac, int waves_n, float phase_n,
-    bool enable_s, float amp_s_frac, int waves_s, float phase_s,
-    float baselevel_elev)
-{
-    if (amp_n_frac < 0.0f || amp_n_frac > 0.25f || amp_s_frac < 0.0f || amp_s_frac > 0.25f)
-    {
-        throw std::runtime_error("sinuous amplitude fractions must be in [0, 0.25]");
-    }
-
-    const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
-    const int nr = meta.n_rows;
-    const int nc = meta.n_cols;
-    const double dx = meta.cell_size;
-
-    const double Lx = static_cast<double>(nc) * dx;
-    const double Ly = static_cast<double>(nr) * dx;
-    
-    const double A_n  = Ly * static_cast<double>(amp_n_frac);
-    const double A_s  = Ly * static_cast<double>(amp_s_frac);
-
-    std::vector<float> data = dem.get_data();
-    std::vector<uint8_t> mask = dem.get_mask();
-
-    const double k_pi = 3.14159265358979323846;
-
-    for (int r = 0; r < nr; ++r)
-    {
-        const double y = static_cast<double>(nr - 1 - r) * dx; 
-
-        for (int c = 0; c < nc; ++c)
-        {
-            const double x = static_cast<double>(c) * dx;
-            bool mask_out = false;
-            
-            if (enable_s)
-            {
-                const double shift_s = A_s * std::sin(
-                    2.0 * k_pi * static_cast<double>(waves_s) * (x / Lx) + 
-                    2.0 * k_pi * static_cast<double>(phase_s)
-                );
-                const double y_min = A_s + shift_s - 1e-4 * dx;
-                if (y < y_min) mask_out = true;
-            }
-            
-            if (enable_n && !mask_out)
-            {
-                const double shift_n = A_n * std::sin(
-                    2.0 * k_pi * static_cast<double>(waves_n) * (x / Lx) + 
-                    2.0 * k_pi * static_cast<double>(phase_n)
-                );
-                const double y_max = Ly - A_n + shift_n + 1e-4 * dx;
-                if (y > y_max) mask_out = true;
-            }
-
-            if (mask_out)
-            {
-                const std::size_t idx = static_cast<std::size_t>(r) * nc + c;
-                data[idx] = baselevel_elev; // Mathematically flat placeholder for stability
-                mask[idx] = 0;
-            }
-        }
-    }
-    
-    return lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
-}
 
 
-// -----------------------------------------------------------------------------
-// build_boundary_flats
-//
-// Extracts all D8-connected structural boundaries, ensuring sinuous staircase
-// corners are perfectly matched depending on the specific boundary (o, n, p).
-// -----------------------------------------------------------------------------
-static std::vector<std::int64_t> build_boundary_flats(
-    const lsdtt::lsdtt_raster_cpu& dem,
-    const std::string& bc)
-{
-    const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
-    const int nr = meta.n_rows;
-    const int nc = meta.n_cols;
-    const std::vector<uint8_t>& mask = dem.get_mask();
-
-    std::vector<std::int64_t> out;
-
-    bool fix_n = (bc.length() > 0 && (bc[0] == 'o' || bc[0] == 'b'));
-    bool fix_e = (bc.length() > 1 && (bc[1] == 'o' || bc[1] == 'b'));
-    bool fix_s = (bc.length() > 2 && (bc[2] == 'o' || bc[2] == 'b'));
-    bool fix_w = (bc.length() > 3 && (bc[3] == 'o' || bc[3] == 'b'));
-
-    for (int r = 0; r < nr; ++r)
-    {
-        for (int c = 0; c < nc; ++c)
-        {
-            const std::int64_t flat = static_cast<std::int64_t>(r) * nc + c;
-            
-            if (!mask[static_cast<std::size_t>(flat)]) continue;
-
-            bool is_edge = false;
-
-            // D8 connectivity to find boundaries securely
-            for (int dr = -1; dr <= 1 && !is_edge; ++dr)
-            {
-                for (int dc = -1; dc <= 1; ++dc)
-                {
-                    if (dr == 0 && dc == 0) continue;
-                    
-                    int nr2 = r + dr;
-                    int nc2 = c + dc;
-
-                    // Check outer rectangular bounds
-                    if (nr2 < 0)              { if (fix_n) is_edge = true; }
-                    else if (nr2 >= nr)       { if (fix_s) is_edge = true; }
-                    else if (nc2 < 0)         { if (fix_w) is_edge = true; }
-                    else if (nc2 >= nc)       { if (fix_e) is_edge = true; }
-                    else 
-                    {
-                        // Any valid pixel that touches a mask == 0 void area 
-                        if (mask[static_cast<std::size_t>(nr2 * nc + nc2)] == 0) 
-                        {
-                            bool fix_dir = false;
-                            if (dr == -1 && fix_n) fix_dir = true;
-                            if (dr == 1  && fix_s) fix_dir = true;
-                            if (dc == -1 && fix_w) fix_dir = true;
-                            if (dc == 1  && fix_e) fix_dir = true;
-                            
-                            if (fix_dir) {
-                                is_edge = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (is_edge) out.push_back(flat);
-        }
-    }
-
-    return out;
-}
 
 // =============================================================================
 // main
@@ -1668,7 +1524,7 @@ int main(int argc, char* argv[])
         std::cout << "\nApplying sinuous boundaries...\n";
         try
         {
-            dem = apply_sinuous_mask(
+            dem = lsdtt::apply_sinuous_domain_mask(
                 dem, 
                 bf["enable_sinuous_n_boundary"], ff["sinuous_n_amplitude_fraction"], ifs["sinuous_n_n_waves"], ff["sinuous_n_phase_offset"],
                 bf["enable_sinuous_s_boundary"], ff["sinuous_s_amplitude_fraction"], ifs["sinuous_s_n_waves"], ff["sinuous_s_phase_offset"],
@@ -1685,7 +1541,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Identify boundary pixels and explicitly bind them to baselevel
     // -------------------------------------------------------------------------
-    std::vector<std::int64_t> boundary_flats = build_boundary_flats(dem, opts.boundary_conditions);
+    std::vector<std::int64_t> boundary_flats = lsdtt::build_boundary_flats(dem, opts.boundary_conditions);
     std::cout << "Boundary pixels identified: " << boundary_flats.size() << "\n";
 
     // -------------------------------------------------------------------------

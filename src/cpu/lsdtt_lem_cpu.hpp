@@ -270,4 +270,25 @@ compute_lem_channel_mask(
     const lsdtt_lem_options& opts
 );
 
+// -----------------------------------------------------------------------------
+// build_boundary_flats
+//
+// The fixed-elevation boundary pixels for a domain, as consumed by the LEM
+// solvers' `boundary_flats` argument.
+//
+// A valid pixel is a boundary pixel when any of its eight neighbours is either
+// outside the grid across a FIXED edge, or a masked-out pixel lying in a fixed
+// direction. `boundary_conditions` is the usual four characters (N, E, S, W);
+// 'o' (open) and 'b' (baselevel) are fixed, 'n' (no flux) and 'p' (periodic)
+// are not.
+//
+// Testing the mask as well as the rectangle is what makes this work on a
+// non-rectangular domain -- see apply_sinuous_domain_mask -- where the real
+// boundary follows the mask edge and steps in and out of the grid interior.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<std::int64_t> build_boundary_flats(
+    const lsdtt_raster_cpu& dem,
+    const std::string&      boundary_conditions
+);
+
 } // namespace lsdtt

@@ -6,6 +6,7 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
+#include <cstdint>
 #include "lsdtt_lem_cpu.hpp"
 
 #include <algorithm>
@@ -667,6 +668,82 @@ run_lem_step(
     //    the domain and a wave of incision propagates up the channel network.
     // -------------------------------------------------------------------------
     return {std::move(current), stats};
+}
+
+
+std::vector<std::int64_t> build_boundary_flats(
+    const lsdtt_raster_cpu& dem,
+    const std::string&      boundary_conditions
+)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int nr = meta.n_rows;
+    const int nc = meta.n_cols;
+    const std::vector<std::uint8_t>& mask = dem.get_mask();
+
+    const std::string& bc = boundary_conditions;
+
+    // 'o' open and 'b' baselevel are FIXED edges; 'n' no-flux and 'p' periodic
+    // are not, so a pixel against them is not held at fixed elevation.
+    const bool fix_n = (bc.length() > 0 && (bc[0] == 'o' || bc[0] == 'b'));
+    const bool fix_e = (bc.length() > 1 && (bc[1] == 'o' || bc[1] == 'b'));
+    const bool fix_s = (bc.length() > 2 && (bc[2] == 'o' || bc[2] == 'b'));
+    const bool fix_w = (bc.length() > 3 && (bc[3] == 'o' || bc[3] == 'b'));
+
+    std::vector<std::int64_t> out;
+
+    for (int r = 0; r < nr; ++r)
+    {
+        for (int c = 0; c < nc; ++c)
+        {
+            const std::int64_t flat =
+                static_cast<std::int64_t>(r) * static_cast<std::int64_t>(nc) + c;
+
+            if (!mask[static_cast<std::size_t>(flat)]) continue;
+
+            bool is_edge = false;
+
+            for (int dr = -1; dr <= 1 && !is_edge; ++dr)
+            {
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    if (dr == 0 && dc == 0) continue;
+
+                    const int nr2 = r + dr;
+                    const int nc2 = c + dc;
+
+                    if      (nr2 < 0)    { if (fix_n) is_edge = true; }
+                    else if (nr2 >= nr)  { if (fix_s) is_edge = true; }
+                    else if (nc2 < 0)    { if (fix_w) is_edge = true; }
+                    else if (nc2 >= nc)  { if (fix_e) is_edge = true; }
+                    else
+                    {
+                        // A masked-out neighbour inside the grid: the mask edge
+                        // of a non-rectangular domain. It counts only in a
+                        // direction whose boundary is fixed.
+                        const std::size_t nidx =
+                            static_cast<std::size_t>(nr2) *
+                            static_cast<std::size_t>(nc) +
+                            static_cast<std::size_t>(nc2);
+
+                        if (mask[nidx] == 0)
+                        {
+                            bool fix_dir = false;
+                            if (dr == -1 && fix_n) fix_dir = true;
+                            if (dr ==  1 && fix_s) fix_dir = true;
+                            if (dc == -1 && fix_w) fix_dir = true;
+                            if (dc ==  1 && fix_e) fix_dir = true;
+                            if (fix_dir) is_edge = true;
+                        }
+                    }
+                }
+            }
+
+            if (is_edge) out.push_back(flat);
+        }
+    }
+
+    return out;
 }
 
 } // namespace lsdtt

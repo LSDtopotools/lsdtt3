@@ -32,6 +32,9 @@ set(LSDTT_HILLTOP_COUPLING_FIXTURE_DIR
 # CTest fixture): a projected 200x200 linear-range DEM with flat piedmont and
 # a rough mountain zone, plus the channel source point that
 # lsdtt-valley-centreline requires.
+set(LSDTT_STREAM_BURNING_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_fixture")
+
 set(LSDTT_BASIN_STATS_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/basin_stats_fixture")
 
@@ -419,6 +422,153 @@ add_lsdtt_cli_smoke_test(
 # in the suite would have caught a regression. feature-finder is the largest CLI
 # in the repo at 174 parameters. These two cover the parameter plumbing and one
 # output each; they are a floor, not adequate coverage.
+# =============================================================================
+# lsdtt-basin-surface-metrics
+#
+# No tests until 2026-09-10. C12 -- the outline curvature sign-flip counting and
+# the slope-area analysis, ~160 lines the helper audit calls "the tool's actual
+# science" -- is still inline in main(), so these tests are the guard for that
+# extraction.
+#
+# Two cases rather than one, because the per-basin outline work and the
+# whole-DEM polyfit raster path are different branches; one case with every
+# switch on could not tell a failure in one from a failure in the other.
+#
+# Both reuse the basin-stats fixture DEM. The outlet set is committed separately
+# and is INTERIOR ONLY: see basin_surface_metrics_smoke.param.in for why.
+# =============================================================================
+add_test(NAME fixture_basin_surface_metrics_outlets
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/basin_surface_metrics_outlets.csv"
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_surface_metrics_outlets.csv")
+set_tests_properties(fixture_basin_surface_metrics_outlets PROPERTIES
+    LABELS "fixture;basin_surface_metrics"
+    FIXTURES_SETUP basin_stats_fixture
+    DEPENDS fixture_basin_stats_dem)
+
+add_test(NAME smoke_basin_surface_metrics
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_smoke.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_basin_surface_metrics"
+        --expect bsm_outline_curvature_flips.csv
+        --expect bsm_slope_area_stats.csv
+        --expect bsm_basin_polygons.fgb
+        --expect-vector-feature-min bsm_basin_polygons.fgb:20
+        # Both lambda scales must appear as their own columns: the per-lambda
+        # expansion is part of what C12 moves, and a single-scale run would not
+        # exercise it.
+        --expect-file-contains "bsm_outline_curvature_flips.csv:N_flips_lambda60"
+        --expect-file-contains "bsm_outline_curvature_flips.csv:N_flips_lambda120"
+        --expect-file-contains "bsm_slope_area_stats.csv:A_max_slope_lambda120"
+        # ORACLES for C12, not numeric standards: they say the sign-flip counting
+        # and the slope-area analysis did not change when those ~160 lines moved
+        # out of main(). Re-freeze deliberately if a change is intended.
+        --expect-sha256 bsm_outline_curvature_flips.csv:2376c65b07b2c2e02fe927a81342455d696d11aa969122792cb6b4d150defdbe
+        --expect-sha256 bsm_slope_area_stats.csv:06fbb4310b0638f843f5cbec5e47a70db53dd6f09222d6db5e5043018cc71e6d)
+set_tests_properties(smoke_basin_surface_metrics PROPERTIES
+    LABELS "smoke;cli;basin_surface_metrics"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_test(NAME smoke_basin_surface_metrics_polyfit
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_polyfit.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_basin_surface_metrics_polyfit"
+        --expect bsmp_slope_lambda60.tif
+        --expect bsmp_maximum_curvature_lambda60.tif
+        --expect bsmp_dinf_area.tif
+        # One raster per requested metric, named for the lambda: that naming is
+        # what a caller depends on to find the output of a multi-scale run.
+        --expect-raster-size bsmp_slope_lambda60.tif:200x200)
+set_tests_properties(smoke_basin_surface_metrics_polyfit PROPERTIES
+    LABELS "smoke;cli;basin_surface_metrics"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# lsdtt-linear-stats: a floor, not coverage. See the param template for why the
+# line fixture must stay clear of the raster edge.
+add_test(NAME fixture_linear_stats_lines
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/linear_stats_lines.fgb"
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/linear_stats_lines.fgb")
+set_tests_properties(fixture_linear_stats_lines PROPERTIES
+    LABELS "fixture;linear_stats"
+    FIXTURES_SETUP basin_stats_fixture
+    DEPENDS fixture_basin_stats_dem)
+
+add_test(NAME smoke_linear_stats
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-linear-stats>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/linear_stats_smoke.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_linear_stats"
+        --expect ls_linear_stats.fgb
+        --expect-vector-feature-min ls_linear_stats.fgb:2)
+set_tests_properties(smoke_linear_stats PROPERTIES
+    LABELS "smoke;cli;linear_stats"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# =============================================================================
+# lsdtt-stream-burning
+#
+# No tests at all until 2026-09-10. The largest CLI in the repo (~2981 lines)
+# and the highest-risk extraction in the remediation plan (C4, the
+# inward-draining edge carve), which the plan says to do "with the burn tests
+# green" -- so C4 was blocked on this fixture existing.
+#
+# The vector network is COMMITTED rather than derived from the DEM. A network
+# extracted from the DEM has interior channel heads, so the carve stage runs and
+# carves nothing; tests/data/stream_burning_network.fgb puts four of its five
+# lines on the raster boundary so the carve actually executes. Its coordinates
+# are tied to the fixed synthetic georeference of the generated DEM.
+# =============================================================================
+add_test(NAME fixture_stream_burning_dem
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-raster-synthetic-tests>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_fixture_dem.param.in"
+        --read-path "${LSDTT_TEST_DATA_DIR}"
+        --work-dir "${LSDTT_STREAM_BURNING_FIXTURE_DIR}"
+        --expect sb_diamond_square.tif)
+set_tests_properties(fixture_stream_burning_dem PROPERTIES
+    LABELS "fixture;stream_burning"
+    FIXTURES_SETUP stream_burning_fixture)
+
+add_test(NAME fixture_stream_burning_network
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/stream_burning_network.fgb"
+        "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out/stream_burning_network.fgb")
+set_tests_properties(fixture_stream_burning_network PROPERTIES
+    LABELS "fixture;stream_burning"
+    FIXTURES_SETUP stream_burning_fixture
+    DEPENDS fixture_stream_burning_dem)
+
+add_test(NAME smoke_stream_burning
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_smoke.param.in"
+        --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_stream_burning"
+        --expect burn_burned.tif
+        --expect burn_burned_network_lines.fgb
+        --expect burn_merged_lines.fgb
+        --expect burn_dem_network_lines.fgb
+        --expect burn_cleaned_network.fgb
+        # The carve must actually CARVE. Without this the stage still runs and
+        # prints "Edge sources carved inward: 0", and the C4 code path would be
+        # untested while the test passed. --expect-file-contains resolves against
+        # the out/ directory, so ../stdout.log is the run log.
+        --expect-file-contains "../stdout.log:Edge sources carved inward: 2")
+set_tests_properties(smoke_stream_burning PROPERTIES
+    LABELS "smoke;cli;stream_burning"
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 # =============================================================================
 # lsdtt-basin-stats
 #
@@ -4036,6 +4186,9 @@ set(LSDTT_DOMAIN_RULES
     # surface response, so both sit in the surface compartment.
     "mountain_front|feature_finder" "surface_metrics"
     "basin_stats"            "network"
+    "stream_burning"         "network"
+    "linear_stats"           "network"
+    "basin_surface_metrics"  "surface_metrics"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. Measured

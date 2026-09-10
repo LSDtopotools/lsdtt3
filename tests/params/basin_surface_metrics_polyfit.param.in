@@ -1,0 +1,23 @@
+# The polyfit raster path of lsdtt-basin-surface-metrics.
+#
+# A separate case from the smoke test: write_polyfit_rasters takes a different
+# branch (whole-DEM surface fitting written out as rasters) from the per-basin
+# outline work, and a single case with everything on would not distinguish a
+# failure in one from a failure in the other.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: bsmp
+
+write_output_format: gtiff
+
+basin_outlet_csv: __READ_PATH__/basin_surface_metrics_outlets.csv
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 150
+source_pixels_threshold: 150
+
+lambda_scales: 60
+polyfit_metrics: slope,maximum_curvature
+polyfit_method: direct
+write_polyfit_rasters: true
+write_dinf_area_raster: true

@@ -246,32 +246,11 @@ static channel_output_result write_sink_channels(
     bool write_junctions,
     const lsdtt::lsdtt_raster_cpu* chi)
 {
-    const std::size_t n_cells = flow.full_grid_size();
-    std::vector<std::uint8_t> qualifies(n_cells, 0u);
-    std::vector<std::uint8_t> has_qualifying_donor(n_cells, 0u);
-    for (std::size_t index = 0; index < n_cells; ++index)
-    {
-        const std::int64_t flat = static_cast<std::int64_t>(index);
-        if (tagged.sink_id_raster.get_mask()[index] != 0u &&
-            flow.s_vector_size(flat) >= static_cast<std::uint64_t>(threshold))
-            qualifies[index] = 1u;
-    }
-    for (std::size_t index = 0; index < n_cells; ++index)
-    {
-        if (qualifies[index] == 0u) continue;
-        const std::int64_t receiver =
-            flow.receiver_of(static_cast<std::int64_t>(index));
-        if (receiver >= 0 && qualifies[static_cast<std::size_t>(receiver)] != 0u &&
-            tagged.sink_id_raster.get_data()[index] ==
-                tagged.sink_id_raster.get_data()[static_cast<std::size_t>(receiver)])
-            has_qualifying_donor[static_cast<std::size_t>(receiver)] = 1u;
-    }
-    std::vector<std::int64_t> sources;
-    for (std::size_t index = 0; index < n_cells; ++index)
-    {
-        if (qualifies[index] != 0u && has_qualifying_donor[index] == 0u)
-            sources.push_back(static_cast<std::int64_t>(index));
-    }
+    // The channel-head rule (including the same-sink donor condition) lives in
+    // lsdtt_internal_drainage_cpu. What stays here is the writing.
+    const std::vector<std::int64_t> sources =
+        lsdtt::sink_channel_sources(
+            flow, tagged, static_cast<std::uint64_t>(threshold));
 
     channel_output_result output;
     output.length_by_order.resize(sinks.size());

@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include "lsdtt_raster_cpu.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -79,5 +80,31 @@ struct lsdtt_polygon_true_area
 
 lsdtt_polygon_true_area rasterise_polygon_true_area(
     const std::vector<lsdtt_xy>& ring, double cell_size, int margin_cells = 1);
+
+// -----------------------------------------------------------------------------
+// apply_sinuous_domain_mask
+//
+// Subsets a rectangular domain to a sinuous active area by masking out a band
+// along the north and/or south edge whose width varies as a sine along x.
+//
+// Masked pixels are set to `baselevel_elevation` as well as being masked. That
+// is deliberate and not merely tidiness: a masked pixel left holding its
+// original elevation still participates in any gradient taken across the mask
+// boundary, and the resulting cliff blows the gradient up. Flattening them to
+// base level keeps that gradient finite.
+//
+// amp_*_fraction are fractions of the domain's y extent and must be in
+// [0, 0.25]; anything larger would take the two bands into each other. Throws
+// std::runtime_error otherwise.
+//
+// waves_* is the number of full sine periods across the domain's x extent and
+// phase_* is in turns (1.0 = a full period), not radians.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu apply_sinuous_domain_mask(
+    const lsdtt_raster_cpu& dem,
+    bool  enable_north, float amp_north_fraction, int waves_north, float phase_north,
+    bool  enable_south, float amp_south_fraction, int waves_south, float phase_south,
+    float baselevel_elevation
+);
 
 } // namespace lsdtt
