@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <cmath>
+#include <sstream>
 #include <cctype>
 #include <string>
 
@@ -59,6 +61,50 @@ inline std::string to_lower_ascii(std::string s)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return s;
+}
+
+// -----------------------------------------------------------------------------
+// csv_number
+//
+// Formats a double for a CSV field. This is the single spelling of numeric
+// output for every CSV lsdtt3 writes by hand; it replaces four private copies
+// that had grown in cli/ (named number, format_double, fmt and precise_string)
+// which between them used three precisions and three different non-finite
+// spellings.
+//
+// Format: std::ostringstream in its default (defaultfloat) float format with
+// precision(precision). That is exactly what all four copies did, so for
+// finite values the output is byte-identical to what they produced at the same
+// precision.
+//
+// NON-FINITE CONTRACT -- relied on by downstream readers:
+//   NaN        -> "nan"
+//   +infinity  -> "inf"
+//   -infinity  -> "-inf"
+// All lowercase. pandas.read_csv, numpy.loadtxt and R's read.csv all parse
+// those three spellings natively, so a CSV written through this function reads
+// back with its non-finite values intact and needs no na_values= argument.
+// This also removes the platform-dependent "nan" / "-nan" that the two copies
+// with no non-finite handling emitted by accident, since the sign of a NaN is
+// not meaningful.
+//
+// PRECISION IS A PER-CALL-SITE PROPERTY, NOT A STYLE CHOICE. The default of 17
+// is the round-trip precision for IEEE-754 double and is what new code should
+// use. Existing call sites that were written at another precision must keep
+// passing it explicitly (the swath-profile writers pass 9, the basin-extraction
+// writers pass 10) so that their numeric output stays byte-identical to what
+// they emitted before the unification. Do NOT "tidy" those call sites onto the
+// default: doing so silently changes the contents of published CSVs.
+// -----------------------------------------------------------------------------
+inline std::string csv_number(double v, int precision = 17)
+{
+    if (std::isnan(v))     return "nan";
+    if (!std::isfinite(v)) return (v > 0.0) ? "inf" : "-inf";
+
+    std::ostringstream ss;
+    ss.precision(precision);
+    ss << v;
+    return ss.str();
 }
 
 } // namespace lsdtt

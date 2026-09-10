@@ -2065,23 +2065,11 @@ int main(int argc, char* argv[])
                 std::cout << "Found " << dep_result.records.size()
                           << " depression(s).\n";
 
-                loader.begin_vector_write(
-                    o,
-                    "depressions",
-                    dep_result.schema,
-                    filled_dem.get_meta().crs_wkt,
-                    vec_fmt
-                );
+                lsdtt::write_vector_records(
+                    loader, o, "depressions",
+                    dep_result.schema, dep_result.records,
+                    filled_dem.get_meta().crs_wkt, vec_fmt);
 
-                for (const lsdtt::lsdtt_vector_record& rec : dep_result.records)
-                {
-                    const auto& poly =
-                        std::get<lsdtt::lsdtt_polygon_geom>(rec.geometry);
-                    loader.write_polygon(poly.exterior, poly.holes,
-                                            rec.field_values);
-                }
-
-                loader.finish_vector_write();
                 std::cout << "Writing: " << o << "\n";
             }
             catch (const std::exception& e)

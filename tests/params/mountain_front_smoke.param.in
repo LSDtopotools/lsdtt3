@@ -1,0 +1,19 @@
+# Smoke test for lsdtt-mountain-front.
+#
+# This CLI had no test at all until 2026-09-10, which is why the B7 refactor of
+# its outlet writer had to be verified by hand against a stashed binary. It
+# exercises the relief/mask stages and the outlet point layer.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: mf
+
+write_output_format: gtiff
+write_vector_format: csv
+
+relief_window_side_pixels: 3
+min_component_pixels: 1
+min_contributing_pixels: 1   # renamed to basin_minimum_contributing_pixels in Phase 5 (plan section 10b)
+
+write_relief_raster: true
+write_mountain_front_outlets: true

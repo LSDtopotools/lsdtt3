@@ -408,6 +408,28 @@ add_lsdtt_cli_smoke_test(
     tiny_d8_drainage_area.tif
 )
 
+# lsdtt-mountain-front and lsdtt-feature-finder had NO tests at all until
+# 2026-09-10. That was found when the B7 extraction (write_masked_pixels_as_points)
+# refactored the outlet writer of one and both point writers of the other, and
+# the change had to be verified by hand against a stashed binary because nothing
+# in the suite would have caught a regression. feature-finder is the largest CLI
+# in the repo at 174 parameters. These two cover the parameter plumbing and one
+# output each; they are a floor, not adequate coverage.
+add_lsdtt_cli_smoke_test(
+    smoke_mountain_front
+    lsdtt-mountain-front
+    mountain_front_smoke.param.in
+    mf_relief.tif
+    --expect mf_mountain_front_outlets.csv
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_feature_finder
+    lsdtt-feature-finder
+    feature_finder_smoke.param.in
+    ff_channel_candidate_score.tif
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_hydraulic_routing
     lsdtt-graphflood
@@ -3946,6 +3968,10 @@ set(LSDTT_DOMAIN_RULES
     # planar_distance, quote-aware csv_split_row). They are library-level
     # string/format hygiene, so they belong in the core compartment.
     "cli_helper|csv_table"   "core"
+    # Added 2026-09-10 with the first tests these two CLIs have ever had.
+    # mountain_front is landform/relief work and feature_finder is multi-scale
+    # surface response, so both sit in the surface compartment.
+    "mountain_front|feature_finder" "surface_metrics"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. Measured

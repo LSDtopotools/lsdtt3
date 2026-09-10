@@ -2529,34 +2529,23 @@ int main(int argc, char* argv[])
                 const std::string o = pp.make_output_path("_flow_divergent_points.fgb");
                 std::cout << "Writing: " << o << "\n";
                 lsdtt::lsdtt_data_loader vwriter;
-                vwriter.begin_vector_write(o, "flow_divergent_points", schema,
-                    fmeta.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
-
-                std::size_t n_pts = 0;
-                for (int r = 0; r < frows; ++r)
-                {
-                    for (int c = 0; c < fcols; ++c)
-                    {
-                        const std::size_t idx =
-                            static_cast<std::size_t>(r) * fcols + c;
-                        if (chm[idx] < 0.5f) continue;
-                        if (!angm[idx]) continue;
-                        if (static_cast<double>(ang[idx]) < min_ang) continue;
-
-                        const lsdtt::lsdtt_xy xy =
-                            lsdtt::cell_center_from_row_col(fmeta, r, c);
-                        vwriter.write_point(xy.x, xy.y, {
-                            static_cast<std::int64_t>(r),
-                            static_cast<std::int64_t>(c),
-                            static_cast<std::int64_t>(cp[idx]),
-                            static_cast<double>(ang[idx]),
-                            static_cast<double>(brg[idx]),
-                            static_cast<double>(rb[idx])
-                        });
-                        ++n_pts;
-                    }
-                }
-                vwriter.finish_vector_write();
+                const std::size_t n_pts = lsdtt::write_masked_pixels_as_points(
+                    vwriter, fmeta, frows, fcols,
+                    o, "flow_divergent_points", schema,
+                    lsdtt::point_output_format::flatgeobuf, false,
+                    [&](int, int, std::size_t idx) {
+                        return chm[idx] >= 0.5f && angm[idx] &&
+                               static_cast<double>(ang[idx]) >= min_ang;
+                    },
+                    [&](int r, int c, std::size_t idx)
+                        -> std::vector<lsdtt::lsdtt_vector_field_value> {
+                        return { static_cast<std::int64_t>(r),
+                                 static_cast<std::int64_t>(c),
+                                 static_cast<std::int64_t>(cp[idx]),
+                                 static_cast<double>(ang[idx]),
+                                 static_cast<double>(brg[idx]),
+                                 static_cast<double>(rb[idx]) };
+                    });
                 std::cout << "  " << n_pts << " divergent channel points written.\n";
             }
 
@@ -2586,35 +2575,25 @@ int main(int argc, char* argv[])
                 const std::string o = pp.make_output_path("_flow_valley_channel_points.fgb");
                 std::cout << "Writing: " << o << "\n";
                 lsdtt::lsdtt_data_loader vwriter;
-                vwriter.begin_vector_write(o, "flow_valley_channel_points", schema,
-                    fmeta.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
-
-                std::size_t n_pts = 0;
-                for (int r = 0; r < frows; ++r)
-                {
-                    for (int c = 0; c < fcols; ++c)
-                    {
-                        const std::size_t idx =
-                            static_cast<std::size_t>(r) * fcols + c;
-                        if (chm[idx] < 0.5f) continue;
-                        if (static_cast<std::int64_t>(cp[idx]) <= big_thr) continue;
-                        if (!bufm[idx] || buf[idx] < 0.5f) continue;
-
-                        const lsdtt::lsdtt_xy xy =
-                            lsdtt::cell_center_from_row_col(fmeta, r, c);
+                const std::size_t n_pts = lsdtt::write_masked_pixels_as_points(
+                    vwriter, fmeta, frows, fcols,
+                    o, "flow_valley_channel_points", schema,
+                    lsdtt::point_output_format::flatgeobuf, false,
+                    [&](int, int, std::size_t idx) {
+                        return chm[idx] >= 0.5f &&
+                               static_cast<std::int64_t>(cp[idx]) > big_thr &&
+                               bufm[idx] && buf[idx] >= 0.5f;
+                    },
+                    [&](int r, int c, std::size_t idx)
+                        -> std::vector<lsdtt::lsdtt_vector_field_value> {
                         const double angle_val =
                             angm[idx] ? static_cast<double>(ang[idx]) : 0.0;
-                        vwriter.write_point(xy.x, xy.y, {
-                            static_cast<std::int64_t>(r),
-                            static_cast<std::int64_t>(c),
-                            static_cast<std::int64_t>(cp[idx]),
-                            angle_val,
-                            static_cast<double>(con[idx])
-                        });
-                        ++n_pts;
-                    }
-                }
-                vwriter.finish_vector_write();
+                        return { static_cast<std::int64_t>(r),
+                                 static_cast<std::int64_t>(c),
+                                 static_cast<std::int64_t>(cp[idx]),
+                                 angle_val,
+                                 static_cast<double>(con[idx]) };
+                    });
                 std::cout << "  " << n_pts << " valley-axis big-channel points written.\n";
             }
         }

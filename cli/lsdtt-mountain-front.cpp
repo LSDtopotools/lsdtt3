@@ -313,9 +313,24 @@ int main(int argc, char* argv[])
 
     bool_default_map["write_mountain_front_outlets"] = false;
     help_map["write_mountain_front_outlets"] = {"bool","false",
-        "Write mountain front outlet points (FlatGeobuf + CSV).",
-        "Mountain mask edge pixels whose upstream area meets min_contributing_pixels.",
+        "Write mountain front outlet points.",
+        "Mountain mask edge pixels whose upstream area meets "
+        "basin_minimum_contributing_pixels. The container is set by "
+        "write_vector_format.",
         "Outputs", "switch", ""};
+
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
+        "Output VECTOR format: flatgeobuf, gpkg or csv.",
+        "Governs the outlet point layer. Distinct from write_output_format, "
+        "which is the RASTER format. csv writes latitude/longitude in WGS84 "
+        "instead of geometry in the raster CRS. FlatGeobuf is preferred: it is "
+        "compact, carries its own georeferencing, and does not have "
+        "GeoPackage's problems writing across drives (a common WSL2 "
+        "situation). GeoPackage is an SQLite database, and SQLite cannot take "
+        "the file locks it needs on a drive mounted into WSL2, so a gpkg write "
+        "there fails.",
+        "Outputs", "io", ""};
 
     // -------------------------------------------------------------------------
     // Parse
@@ -671,66 +686,46 @@ if (bf["write_mountain_front_outlets"])
                 const int onrows = mta.n_rows;
                 const int oncols = mta.n_cols;
 
-                // FlatGeobuf
+                // One layer, in whatever container the user asked for. csv
+                // gets latitude/longitude in WGS84; the vector formats carry
+                // the geometry in the raster CRS. Previously this wrote a
+                // FlatGeobuf AND a lat/lon CSV unconditionally, with the grid
+                // scan spelled out twice.
                 {
-                    const std::string fgb_path = stem + "_mountain_front_outlets.fgb";
-                    std::cout << "Writing mountain front outlets (FlatGeobuf): "
-                              << fgb_path << "\n";
+                    const lsdtt::point_output_format out_fmt =
+                        lsdtt::resolve_point_output_format(sf["write_vector_format"]);
+                    const std::string out_path =
+                        stem + "_mountain_front_outlets" +
+                        lsdtt::output_extension(out_fmt);
+
+                    std::cout << "Writing mountain front outlets: "
+                              << out_path << "\n";
+
                     lsdtt::lsdtt_vector_schema schema;
                     schema.field_names = {"row","col","contributing_pixels"};
                     schema.field_types  = {
                         lsdtt::lsdtt_vector_field_type::int64_type,
                         lsdtt::lsdtt_vector_field_type::int64_type,
                         lsdtt::lsdtt_vector_field_type::int64_type };
-                    loader.begin_vector_write(
-                        fgb_path, "mountain_front_outlets",
-                        schema, mta.crs_wkt,
-                        lsdtt::vector_output_format::flatgeobuf, false);
-                    for (int row = 0; row < onrows; ++row)
-                    {
-                        for (int col = 0; col < oncols; ++col)
-                        {
-                            const std::size_t idx =
-                                static_cast<std::size_t>(row) *
-                                static_cast<std::size_t>(oncols) + col;
-                            if (omsk[idx] == 0 || odat[idx] <= 0.5f) continue;
-                            const lsdtt::lsdtt_xy xy =
-                                lsdtt::cell_center_from_row_col(mta, row, col);
-                            const std::int64_t ca_px =
-                                (cmsk[idx] != 0 && std::isfinite(cdat[idx]))
-                                    ? static_cast<std::int64_t>(cdat[idx]) : 0LL;
-                            loader.write_point(xy.x, xy.y, {
-                                static_cast<std::int64_t>(row),
-                                static_cast<std::int64_t>(col), ca_px });
-                        }
-                    }
-                    loader.finish_vector_write();
-                }
 
-                // CSV (lat/lon)
-                {
-                    const std::string csv_path = stem + "_mountain_front_outlets.csv";
-                    std::cout << "Writing mountain front outlets (CSV): "
-                              << csv_path << "\n";
-                    lsdtt::lsdtt_coordinate_transform to_wgs84 =
-                        lsdtt::lsdtt_coordinate_transform::from_epsg(mta.crs_wkt, 4326);
-                    std::vector<std::vector<std::string>> rows;
-                    for (int row = 0; row < onrows; ++row)
-                    {
-                        for (int col = 0; col < oncols; ++col)
-                        {
-                            const std::size_t idx =
-                                static_cast<std::size_t>(row) *
-                                static_cast<std::size_t>(oncols) + col;
-                            if (omsk[idx] == 0 || odat[idx] <= 0.5f) continue;
-                            const lsdtt::lsdtt_lonlat ll =
-                                lsdtt::cell_center_to_lonlat(mta, row, col, to_wgs84);
-                            rows.push_back({
-                                std::to_string(ll.latitude),
-                                std::to_string(ll.longitude) });
-                        }
-                    }
-                    loader.write_csv(csv_path, {"latitude","longitude"}, rows);
+                    const std::size_t n_outlets =
+                        lsdtt::write_masked_pixels_as_points(
+                            loader, mta, onrows, oncols,
+                            out_path, "mountain_front_outlets", schema,
+                            out_fmt, false,
+                            [&](int, int, std::size_t idx) {
+                                return omsk[idx] != 0 && odat[idx] > 0.5f;
+                            },
+                            [&](int row, int col, std::size_t idx)
+                                -> std::vector<lsdtt::lsdtt_vector_field_value> {
+                                const std::int64_t ca_px =
+                                    (cmsk[idx] != 0 && std::isfinite(cdat[idx]))
+                                        ? static_cast<std::int64_t>(cdat[idx]) : 0LL;
+                                return { static_cast<std::int64_t>(row),
+                                         static_cast<std::int64_t>(col), ca_px };
+                            });
+
+                    std::cout << "  " << n_outlets << " outlet(s) written.\n";
                 }
             }
             catch (const std::exception& e)

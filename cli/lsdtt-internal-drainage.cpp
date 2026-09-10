@@ -80,28 +80,6 @@ static std::string candidate_input_path(
     return path.is_absolute() ? name : pp.get_read_path() + name;
 }
 
-static void write_polygon_records(
-    lsdtt::lsdtt_data_loader& loader,
-    const std::string& path,
-    const std::string& layer_name,
-    const lsdtt::depression_polygons_result& polygons,
-    const lsdtt::lsdtt_raster_meta& meta,
-    lsdtt::vector_output_format format,
-    bool spatial_index)
-{
-    loader.begin_vector_write(
-        path, layer_name, polygons.schema, meta.crs_wkt, format, spatial_index);
-    for (const lsdtt::lsdtt_vector_record& record : polygons.records)
-    {
-        if (!std::holds_alternative<lsdtt::lsdtt_polygon_geom>(record.geometry))
-            continue;
-        const lsdtt::lsdtt_polygon_geom& polygon =
-            std::get<lsdtt::lsdtt_polygon_geom>(record.geometry);
-        loader.write_polygon(polygon.exterior, polygon.holes, record.field_values);
-    }
-    loader.finish_vector_write();
-}
-
 static void write_depression_csv(
     lsdtt::lsdtt_data_loader& loader,
     const std::string& path,
@@ -920,13 +898,17 @@ int main(int argc, char* argv[])
                     loader, pp.make_output_path("_sink_candidates.csv"), detected,
                     dem.get_meta(), lsdtt::sink_io_format::csv);
             if (bf.at("write_sink_depression_polygons"))
-                write_polygon_records(
-                    loader, pp.make_output_path("_sink_depressions", vector_ext),
-                    "sink_depressions",
+            {
+                const lsdtt::depression_polygons_result polys =
                     lsdtt::sink_depressions_to_polygons(
-                        dem, detected, detection_options),
-                    dem.get_meta(), vector_format,
+                        dem, detected, detection_options);
+                lsdtt::write_vector_records(
+                    loader,
+                    pp.make_output_path("_sink_depressions", vector_ext),
+                    "sink_depressions", polys.schema, polys.records,
+                    dem.get_meta().crs_wkt, vector_format,
                     bf.at("write_vector_spatial_index"));
+            }
             if (bf.at("write_sink_depression_csv"))
                 write_depression_csv(
                     loader, pp.make_output_path("_sink_depressions.csv"), detected);
@@ -1039,13 +1021,17 @@ int main(int argc, char* argv[])
                 loader, pp.make_output_path("_accepted_sinks.csv"), sinks,
                 dem.get_meta(), lsdtt::sink_io_format::csv);
         if (bf.at("write_accepted_depression_polygons"))
-            write_polygon_records(
-                loader, pp.make_output_path("_accepted_depressions", vector_ext),
-                "accepted_depressions",
+        {
+            const lsdtt::depression_polygons_result polys =
                 lsdtt::sink_depressions_to_polygons(
-                    dem, sinks, detection_options),
-                dem.get_meta(), vector_format,
+                    dem, sinks, detection_options);
+            lsdtt::write_vector_records(
+                loader,
+                pp.make_output_path("_accepted_depressions", vector_ext),
+                "accepted_depressions", polys.schema, polys.records,
+                dem.get_meta().crs_wkt, vector_format,
                 bf.at("write_vector_spatial_index"));
+        }
         if (bf.at("write_sink_id_raster"))
             loader.write_full(
                 tagged.sink_id_raster.get_data(), tagged.sink_id_raster.get_meta(),

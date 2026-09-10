@@ -41,6 +41,8 @@
 
 #include "lsdtt_raster_meta.hpp"
 #include "lsdtt_raster_result.hpp"
+#include "../utils/lsdtt_string_utils.hpp"
+#include "lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
 namespace lsdtt {
@@ -826,5 +828,191 @@ private:
         void*                      ogr_layer  // OGRLayer* - opaque to avoid
     ) const;                                  // GDAL headers leaking into .hpp
 };
+
+// -----------------------------------------------------------------------------
+// vector_field_value_to_string
+//
+// One attribute value as CSV text. monostate (a NULL field) becomes an empty
+// cell; doubles go through csv_number so that a value written to CSV matches
+// the spelling used everywhere else, non-finite values included.
+// -----------------------------------------------------------------------------
+inline std::string vector_field_value_to_string(
+    const lsdtt_vector_field_value& value)
+{
+    if (std::holds_alternative<std::monostate>(value))  return "";
+    if (std::holds_alternative<std::int64_t>(value))
+        return std::to_string(std::get<std::int64_t>(value));
+    if (std::holds_alternative<double>(value))
+        return csv_number(std::get<double>(value));
+    return std::get<std::string>(value);
+}
+
+// -----------------------------------------------------------------------------
+// write_masked_pixels_as_points
+//
+// Write one point feature per raster cell that `select` accepts, with the
+// attribute values `attributes` builds for that cell. Opens the layer, walks
+// the grid in row-major order, and closes it. Returns the number of features
+// written.
+//
+// WHY THIS EXISTS. Three call sites (lsdtt-mountain-front and two in
+// lsdtt-feature-finder) were the same twenty lines: declare a schema, open the
+// layer, nested row/col loop, a per-cell test, cell_center_from_row_col, a
+// write_point with a per-cell attribute list, close the layer. Only the test
+// and the attribute list ever differed, so those two are the callbacks and
+// everything else is here.
+//
+// `idx` is the row-major flat index, passed to both callbacks so a caller does
+// not recompute it. `select` is called for every cell; `attributes` only for
+// the accepted ones, and it must return values matching `schema` in order.
+// -----------------------------------------------------------------------------
+inline std::size_t write_masked_pixels_as_points(
+    lsdtt_data_loader&         loader,
+    const lsdtt_raster_meta&   meta,
+    const int                  n_rows,
+    const int                  n_cols,
+    const std::string&         out_path,
+    const std::string&         layer_name,
+    const lsdtt_vector_schema& schema,
+    const point_output_format  format,
+    const bool                 spatial_index,
+    const std::function<bool(int, int, std::size_t)>& select,
+    const std::function<std::vector<lsdtt_vector_field_value>(int, int, std::size_t)>&
+        attributes
+)
+{
+    // CSV is a point format, not a vector-layer format, so it takes its own
+    // path: coordinates become latitude/longitude in WGS84 and the attributes
+    // become text. Everything else about the scan is identical.
+    const bool as_csv = (format == point_output_format::csv);
+
+    std::vector<std::vector<std::string>> csv_rows;
+    lsdtt_coordinate_transform to_wgs84;
+    if (as_csv)
+    {
+        if (meta.crs_wkt.empty())
+            throw std::runtime_error(
+                "write_masked_pixels_as_points: CSV output requires a valid CRS");
+        to_wgs84 = lsdtt_coordinate_transform::from_epsg(meta.crs_wkt, 4326);
+    }
+    else
+    {
+        loader.begin_vector_write(
+            out_path, layer_name, schema,
+            meta.crs_wkt,
+            convert_point_to_vector_output_format(format), spatial_index);
+    }
+
+    std::size_t n_written = 0;
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(n_cols) +
+                static_cast<std::size_t>(col);
+
+            if (!select(row, col, idx)) continue;
+
+            const std::vector<lsdtt_vector_field_value> values =
+                attributes(row, col, idx);
+
+            if (as_csv)
+            {
+                const lsdtt_lonlat ll =
+                    cell_center_to_lonlat(meta, row, col, to_wgs84);
+                std::vector<std::string> cells;
+                cells.reserve(values.size() + 2);
+                cells.push_back(csv_number(ll.latitude));
+                cells.push_back(csv_number(ll.longitude));
+                for (const lsdtt_vector_field_value& v : values)
+                    cells.push_back(vector_field_value_to_string(v));
+                csv_rows.push_back(std::move(cells));
+            }
+            else
+            {
+                const lsdtt_xy xy = cell_center_from_row_col(meta, row, col);
+                loader.write_point(xy.x, xy.y, values);
+            }
+            ++n_written;
+        }
+    }
+
+    if (as_csv)
+    {
+        std::vector<std::string> headers = {"latitude", "longitude"};
+        headers.insert(headers.end(),
+                       schema.field_names.begin(), schema.field_names.end());
+        loader.write_csv(out_path, headers, csv_rows);
+    }
+    else
+    {
+        loader.finish_vector_write();
+    }
+
+    return n_written;
+}
+
+// -----------------------------------------------------------------------------
+// write_polygon_record
+//
+// Unwrap one record's polygon geometry and write it. Returns false, writing
+// nothing, when the record carries no polygon (monostate, or a line/point).
+//
+// This three-step dance -- holds_alternative, get, write_polygon -- was written
+// out at five call sites. Two of them omitted the holds_alternative guard and
+// so would throw std::bad_variant_access on an empty geometry rather than skip
+// it; going through here they skip, which is what the guarded copies intended.
+// -----------------------------------------------------------------------------
+inline bool write_polygon_record(
+    lsdtt_data_loader&        loader,
+    const lsdtt_vector_record& record
+)
+{
+    if (!std::holds_alternative<lsdtt_polygon_geom>(record.geometry)) return false;
+
+    const lsdtt_polygon_geom& polygon =
+        std::get<lsdtt_polygon_geom>(record.geometry);
+
+    loader.write_polygon(polygon.exterior, polygon.holes, record.field_values);
+    return true;
+}
+
+// -----------------------------------------------------------------------------
+// write_vector_records
+//
+// Open a layer, write every polygon record in `records`, close it. Returns the
+// number of features actually written, which can be fewer than records.size()
+// if any record carries no polygon.
+//
+// For a caller that already HAS its records. A caller that builds them one at a
+// time inside its own loop -- because it is walking basins, or needs its own
+// ordering or filtering -- should open the layer itself and call
+// write_polygon_record per record rather than materialise a vector just to
+// satisfy this signature.
+// -----------------------------------------------------------------------------
+inline std::size_t write_vector_records(
+    lsdtt_data_loader&                      loader,
+    const std::string&                      out_path,
+    const std::string&                      layer_name,
+    const lsdtt_vector_schema&              schema,
+    const std::vector<lsdtt_vector_record>& records,
+    const std::string&                      crs_wkt,
+    const vector_output_format              format,
+    const bool                              spatial_index = false
+)
+{
+    loader.begin_vector_write(
+        out_path, layer_name, schema, crs_wkt, format, spatial_index);
+
+    std::size_t n_written = 0;
+    for (const lsdtt_vector_record& record : records)
+    {
+        if (write_polygon_record(loader, record)) ++n_written;
+    }
+
+    loader.finish_vector_write();
+    return n_written;
+}
 
 } // namespace lsdtt
