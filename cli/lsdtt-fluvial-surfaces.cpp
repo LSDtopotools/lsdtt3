@@ -73,6 +73,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
@@ -599,18 +600,13 @@ int main(int argc, char* argv[])
         "Classification","param",""};
 
     // --- Flow routing ---
-    bool_default_map["fill_dem_for_flow_routing"] = true;
-    help_map["fill_dem_for_flow_routing"] = {"bool","true",
-        "Fill pits before building flow routing.",
-        "The DEM used for the height reference is the ORIGINAL, unfilled one; "
-        "only the routing uses the filled surface.",
-        "Flow routing","switch",""};
+    lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope_for_routing"] = 0.0001f;
     help_map["fill_min_slope_for_routing"] = {"float","0.0001",
         "Minimum imposed slope when filling for routing [m/m].",
         "Barnes et al. 2014 Priority-Flood.",
-        "Flow routing","param","fill_dem_for_flow_routing"};
+        "Flow routing","param","fill_before_routing"};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
@@ -1093,7 +1089,8 @@ int main(int argc, char* argv[])
     // idea is a full window SIDE in lsdtt-flat-surface-finder and
     // lsdtt-mountain-front.
     pp.set_deprecated_aliases({
-        {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"} });
+        {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"},
+        {"fill_dem_for_flow_routing", "fill_before_routing"} });
 
     try
     {
@@ -1399,13 +1396,19 @@ int main(int argc, char* argv[])
     if (need_flow)
     {
         std::cout << "--- D8 flow routing ---\n";
+        std::cout << "Fill before routing  : "
+                  << (bf["fill_before_routing"] ? "yes" : "no") << "\n";
         try
         {
-            if (bf["fill_dem_for_flow_routing"])
+            if (bf["fill_before_routing"])
             {
                 std::cout << "Filling DEM for flow routing...\n";
                 routing_dem = lsdtt::fill_pits(
                     dem, ff["fill_min_slope_for_routing"], ip["n_threads"]);
+            }
+            else
+            {
+                std::cout << "Routing on the unfilled input DEM.\n";
             }
             lsdtt::lsdtt_flowinfo_options fo;
             fo.boundary_conditions       = sf["boundary_conditions"];

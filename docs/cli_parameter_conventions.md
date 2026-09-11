@@ -68,8 +68,8 @@ if (!bf["raster_is_filled"])
 }
 ```
 
-**Related:** `flow_dem_is_filled` in `feature-finder` (legacy name, absorbs into
-`raster_is_filled` during remediation)
+**Legacy alias:** `flow_dem_is_filled` in `feature-finder` maps to
+`raster_is_filled` with a deprecation warning.
 
 ### Concept B: `fill_before_routing` — analytical choice
 
@@ -87,8 +87,8 @@ not an error.
 dem = bf.at("fill_before_routing") ? lsdtt::fill_pits(dem_raw) : dem_raw;
 ```
 
-**Related:** `fill_dem_for_flow_routing` in `fluvial-surfaces` (legacy name,
-absorbs into `fill_before_routing` during remediation)
+**Legacy alias:** `fill_dem_for_flow_routing` in `fluvial-surfaces` maps to
+`fill_before_routing` with a deprecation warning.
 
 ### Note: `fill_initial_surface`
 

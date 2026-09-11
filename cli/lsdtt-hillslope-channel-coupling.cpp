@@ -72,6 +72,7 @@
 
 #include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
@@ -217,13 +218,7 @@ int main(int argc, char* argv[])
         "nodata-as-zero pixels.",
         "Input", "param", ""};
 
-    bool_default_map["fill_before_routing"] = true;
-    help_map["fill_before_routing"] = {"bool", "true",
-        "Pit-fill the DEM before building the flow network.",
-        "The router and the channel network need a pit-free surface. The TRACER "
-        "still runs on the RAW DEM so paths follow true topography -- both "
-        "surfaces are held at once and this switch only affects the router.",
-        "Input", "switch", ""};
+    lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);
 
     // ---- channels ------------------------------------------------------------
     int_default_map["source_pixels_threshold"] = 1000;

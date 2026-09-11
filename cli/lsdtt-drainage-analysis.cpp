@@ -44,6 +44,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_raster_reproject.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_connectivity_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
@@ -238,12 +239,7 @@ int main(int argc, char* argv[])
         "Threading / routing", "param", ""};
 
     // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled and ready for routing.",
-        "If false (default), the CLI will call fill_pits() before building "
-        "flow routing. If true, the DEM is assumed to already be suitable.",
-        "DEM preparation", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",

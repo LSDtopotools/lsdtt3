@@ -319,7 +319,7 @@ exactly what it was given.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `fill_dem_for_flow_routing` | bool | `true` | Fill pits before building flow routing. |
+| `fill_before_routing` | bool | `true` | Choose whether to fill pits before building flow routing. `false` routes on the unfilled DEM, so paths may terminate at sinks. |
 | `fill_min_slope_for_routing` | float | `0.0001` | Minimum imposed slope when filling [m/m]. |
 | `boundary_conditions` | string | `oooo` | Edge boundary codes, north east south west. |
 | `channel_threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining a channel. |

@@ -70,6 +70,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
@@ -588,11 +589,7 @@ int main(int argc, char* argv[])
         "Sea removal", "param", ""};
 
     // --- Routing preparation ---
-    bool_default_map["fill_before_routing"] = true;
-    help_map["fill_before_routing"] = {"bool","true",
-        "Fill pits before constructing flow routing.",
-        "Recommended for basin extraction from DEMs.",
-        "Routing preparation", "param", ""};
+    lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",

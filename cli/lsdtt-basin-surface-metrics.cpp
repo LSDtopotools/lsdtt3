@@ -58,6 +58,7 @@
 
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
@@ -169,12 +170,7 @@ int main(int argc, char* argv[])
         "Threading & I/O", "io", ""};
 
     // --- Input & Routing ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool", "false", 
-        "Whether the input raster is already pit-filled and ready for routing.", 
-        "If false (default), the CLI will call fill_pits() before building flow routing. "
-        "If true, the DEM is assumed to already be suitable for routing.",
-        "Input & Routing", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     string_default_map["basin_outlet_csv"] = "NULL";
     help_map["basin_outlet_csv"] = {"string", "NULL", 

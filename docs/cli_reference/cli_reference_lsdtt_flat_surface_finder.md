@@ -254,7 +254,7 @@ rather than being ignored, so a stale parameter file cannot silently do nothing.
 | `write_residual_relief_skeleton` | `write_residual_relief_skeleton_raster` |
 | `test_surface_vector_file` | `test_surface_polygon_fname` |
 | `floodplain_max_height_metres`, `terrace_min_height_metres`, `channel_adjacency_radius_metres`, `terrace_max_hand_spread_metres`, `terrace_corridor_per_pixel`, `band_reach_window_metres`, `terrace_max_distance_to_channel_metres` | moved to `lsdtt-fluvial-surfaces` |
-| every `source_points_*`, `outlet_points_*`, `write_channel_*`, `break_flats_with_channels`, `fill_dem_for_flow_routing`, `connect_flat_surfaces_to_channels` | moved to `lsdtt-fluvial-surfaces` — this tool no longer does flow routing |
+| every `source_points_*`, `outlet_points_*`, `write_channel_*`, `break_flats_with_channels`, `fill_before_routing`, `connect_flat_surfaces_to_channels` | moved to `lsdtt-fluvial-surfaces` — this tool no longer does flow routing |
 
 ---
 

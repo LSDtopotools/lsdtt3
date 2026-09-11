@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
@@ -114,12 +115,7 @@ int main(int argc, char* argv[])
         "o = open, n = no-flux, p = periodic, b = forced outlet.",
         "DEM and flow routing", "param", ""};
 
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled and ready for routing.",
-        "If false (default), fill_pits() is called before building flow routing. "
-        "If true, the DEM is used as supplied.",
-        "DEM and flow routing", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",

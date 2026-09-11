@@ -36,6 +36,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -816,11 +817,7 @@ int main(int argc, char* argv[])
         "Roads are smoother than the surrounding landscape, so they show low roughness.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    bool_default_map["flow_dem_is_filled"] = false;
-    help_map["flow_dem_is_filled"] = {"bool","false",
-        "Treat the input DEM as already pit-filled (skip internal fill).",
-        "Set true when supplying a pre-filled DEM (e.g. sd_fill.tif) to save time.",
-        "Flow-pathway road/channel discrimination", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     bool_default_map["write_flow_discrimination_rasters"] = true;
     help_map["write_flow_discrimination_rasters"] = {"bool","true",
@@ -1389,6 +1386,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"flow_dem_is_filled", "raster_is_filled"} });
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -1445,7 +1445,7 @@ int main(int argc, char* argv[])
             static_cast<double>(ff.at("flow_intermediate_window_metres"));
         road_flow_request.roughness_radius_metres =
             static_cast<double>(ff.at("flow_roughness_radius_metres"));
-        road_flow_request.dem_is_filled = bf.at("flow_dem_is_filled");
+        road_flow_request.dem_is_filled = bf.at("raster_is_filled");
         road_flow_request.n_threads = n_threads;
         road_flow_request.valley_curvature_metric =
             resolve_curvature_metric(sf.at("flow_valley_curvature_metric"));

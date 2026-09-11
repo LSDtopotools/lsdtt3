@@ -61,6 +61,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
@@ -136,11 +137,7 @@ int main(int argc, char* argv[])
         "Routing boundary conditions", "param", ""};
 
     // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Set true if the input DEM is already pit-filled and ready for routing.",
-        "When false (default) the CLI fills pits before building flow routing.",
-        "DEM preparation", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     bool_default_map["carve_before_fill"] = false;
     help_map["carve_before_fill"] = {"bool","false",

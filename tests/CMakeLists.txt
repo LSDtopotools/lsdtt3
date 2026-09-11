@@ -778,6 +778,8 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "--- Flow-pathway road/channel discrimination ---"
     --stdout-contains "Accum. threshold     : 3 px"
     --stdout-contains "DEM is filled        : yes"
+    --stderr-contains "'flow_dem_is_filled' is deprecated"
+    --stderr-contains "use 'raster_is_filled'"
 )
 
 # Phase 4 readiness: this old spelling remains explicit after aliases land. The
@@ -4229,7 +4231,13 @@ add_test(NAME smoke_fluvial_surfaces_help
          COMMAND lsdtt-fluvial-surfaces -h)
 set_tests_properties(smoke_fluvial_surfaces_help PROPERTIES
     LABELS "smoke;cli"
-    PASS_REGULAR_EXPRESSION "reference_field_algorithm_choice")
+    PASS_REGULAR_EXPRESSION "fill_before_routing")
+
+add_test(NAME smoke_feature_finder_fill_help
+         COMMAND lsdtt-feature-finder -h)
+set_tests_properties(smoke_feature_finder_fill_help PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "raster_is_filled")
 
 # End to end, with no flat_mask_fname, so the built-in fallback admission is
 # exercised too: the tool has to work on its own as well as downstream of CLI 1.
@@ -4252,6 +4260,22 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
 )
 set_tests_properties(smoke_fluvial_surfaces PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The warning names both spellings, while the routing diagnostic is emitted
+# immediately before the branch and proves the aliased false value skips fill.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_legacy_fill_key
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_fill_legacy.param.in
+    fsurf_fill_legacy_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Fill before routing  : no"
+    --stdout-contains "Routing on the unfilled input DEM."
+    --stderr-contains "'fill_dem_for_flow_routing' is deprecated"
+    --stderr-contains "use 'fill_before_routing'"
+)
+set_tests_properties(rigorous_fluvial_surfaces_legacy_fill_key PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # THE composability guarantee: HAND is the expensive stage and the level count

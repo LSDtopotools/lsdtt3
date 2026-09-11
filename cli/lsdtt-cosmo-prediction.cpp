@@ -54,6 +54,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_exe_path.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
@@ -694,11 +695,7 @@ int main(int argc, char* argv[])
         "Concentration raster loading (for accumulation)", "param", ""};
 
     // --- Flow routing (for accumulation) ---
-    bool_default_map["fill_before_routing"] = true;
-    help_map["fill_before_routing"] = {"bool","true",
-        "Fill DEM pits before building D8 flow routing.",
-        "Set false only if the DEM is already pit-filled.",
-        "Flow routing (for accumulation)", "param", ""};
+    lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);
 
     float_default_map["min_slope_for_fill"] = 0.0001f;
     help_map["min_slope_for_fill"] = {"float","0.0001",
