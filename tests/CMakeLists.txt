@@ -764,6 +764,58 @@ add_lsdtt_cli_smoke_test(
     ff_channel_candidate_score.tif
 )
 
+# Phase 4 readiness: reach the flow-discrimination engine with the legacy keys
+# explicitly set. The header assertions distinguish both values from their old
+# defaults; the mask oracle proves the threshold reached D8 channel selection.
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_flow_discrimination_legacy_keys
+    lsdtt-feature-finder
+    feature_finder_flow_discrimination.param.in
+    ff_flow_flow_channel_mask.tif
+    --expect ff_flow_flow_contributing_pixels.tif
+    --expect-raster-checksum ff_flow_flow_channel_mask.tif:15
+    --expect-raster-values ff_flow_flow_channel_mask.tif:0,1
+    --stdout-contains "--- Flow-pathway road/channel discrimination ---"
+    --stdout-contains "Accum. threshold     : 3 px"
+    --stdout-contains "DEM is filled        : yes"
+)
+
+# Phase 4 readiness: this old spelling remains explicit after aliases land. The
+# diagnostics and Strahler/Tokunaga CSV oracle prove that threshold-defined
+# sources reach channel-network construction and a real network analysis.
+add_lsdtt_cli_smoke_test(
+    rigorous_channel_network_analysis_legacy_threshold
+    lsdtt-channel-network-analysis
+    channel_network_analysis_legacy_threshold.param.in
+    cna_legacy_tokunaga_channel_data.csv
+    --stdout-contains "Contributing-pixel threshold: 3"
+    --stdout-contains "Number of source pixels: 5"
+    --stdout-contains "--- Channel network construction ---"
+    --stdout-contains "Channel cells : 15"
+    --stdout-contains "Junctions     : 9"
+    --stdout-contains "--- Strahler / Tokunaga analysis ---"
+    --stdout-contains "Strahler channels           : 6"
+    --expect-sha256 cna_legacy_tokunaga_channel_data.csv:dd48f4ace30af5b591dc788c6930bb084da2f8274d6a5403e718f8e65b04d923
+)
+
+# Phase 4 readiness: preserve the legacy spelling as a compatibility test after
+# aliases land. Diagnostics pin threshold-defined channel initiation and the
+# raster oracle pins the result of an actual sediment-routing run.
+add_lsdtt_cli_smoke_test(
+    rigorous_sediment_routing_legacy_threshold
+    lsdtt-sediment-routing
+    sediment_routing_legacy_threshold.param.in
+    sediment_legacy_cumulative_deposition.tif
+    --expect sediment_legacy_d50_al.tif
+    --stdout-contains "Extracting channel sources (threshold = 3 px)..."
+    --stdout-contains "Source pixels: 5"
+    --stdout-contains "Building channel network..."
+    --stdout-contains "Junctions (reaches): 9"
+    --stdout-contains "Running sediment routing (2 timesteps, 3600 s each)..."
+    --expect-valid-percent sediment_legacy_d50_al.tif:60
+    --expect-raster-checksum sediment_legacy_d50_al.tif:65386
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_hydraulic_routing
     lsdtt-graphflood
@@ -4424,6 +4476,7 @@ set(LSDTT_DOMAIN_RULES
     "mountain_front|feature_finder" "surface_metrics"
     "basin_stats"            "network"
     "stream_burning"         "network"
+    "sediment_routing"       "network"
     "linear_stats"           "network"
     "basin_surface_metrics"  "surface_metrics"
 )
