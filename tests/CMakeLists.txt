@@ -739,7 +739,10 @@ add_test(NAME smoke_basin_stats
         # the record, the per-basin accumulation and the two writers out of
         # main(). It says "the output did not change", nothing about whether
         # the output is right. Re-freeze deliberately if a change is intended.
-        --expect-sha256 bs_basin_stats.csv:408f44271c676b1b9cf4cacf0a296fa4b193161828dc95463d4e8835a71af349)
+        --expect-sha256 bs_basin_stats.csv:408f44271c676b1b9cf4cacf0a296fa4b193161828dc95463d4e8835a71af349
+        # Phase 4 readiness: the parameter is deliberately absent from the
+        # fixture, so this pins the old default before its intentional change.
+        --stdout-contains "threshold = 500 px")
 set_tests_properties(smoke_basin_stats PROPERTIES
     LABELS "smoke;cli;basin_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -1997,6 +2000,15 @@ add_internal_drainage_cli_test(
     phase4_empty_channels_sink_channel_nodes.csv
     --expect-file-contains "phase4_empty_channels_sink_channel_nodes.csv:routing_sink_id,sink_id"
     --stderr-contains "FlatGeobuf cannot store an empty layer")
+
+# Phase 4 readiness characterization. The parameter template deliberately omits
+# threshold_contributing_pixels so this records the old default of 5000 before
+# the intentional default change is made.
+add_internal_drainage_cli_test(
+    regression_internal_drainage_default_threshold
+    internal_drainage_default_threshold.param.in
+    phase4_default_threshold_sink_channel_nodes.csv
+    --expect-sha256 phase4_default_threshold_sink_channel_nodes.csv:cd56c9a44fe3fffaa72625ca625e497525a7c21c01c75ff0708db5c8ebe4d466)
 
 add_test(NAME smoke_internal_drainage_help
          COMMAND lsdtt-internal-drainage -h)

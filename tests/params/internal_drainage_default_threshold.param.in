@@ -1,0 +1,24 @@
+read_path: __READ_PATH__
+read_fname: phase4_dem.tif
+write_path: __WRITE_PATH__
+write_fname: phase4_default_threshold
+
+internal_drainage_stage: both
+sink_mode: forced_outlet
+minimum_pixels_in_patch: 100
+fill_min_slope: 0.0001
+
+# Deliberately omit threshold_contributing_pixels. This fixture characterizes
+# the pre-Phase-4 default of 5000.
+extract_sink_channel_networks: true
+write_sink_channel_lines: false
+write_sink_channel_nodes_csv: true
+write_sink_junctions: false
+
+write_sink_candidate_points: false
+write_sink_depression_polygons: false
+write_accepted_sink_points: false
+write_accepted_depression_polygons: false
+write_sink_id_raster: false
+write_sink_drainage_area_raster: false
+write_sink_stats_csv: false
