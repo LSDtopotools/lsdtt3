@@ -195,6 +195,15 @@ WARNING: '<old_key>' is deprecated and '<new_key>' was also supplied. Using
 '<new_key>'; the deprecated key is ignored.
 ```
 
+The warning contract names both keys; it does not name the executable. The
+parser owns the parameter filename but is not given CLI identity, and adding
+tool identity solely to decorate this warning would couple otherwise generic
+key migration to presentation.
+
+`set_deprecated_aliases()` replaces the parser's complete alias map. A CLI with
+more than one migration must therefore pass all mappings in one call. Do not
+call it repeatedly: a later call would discard the earlier aliases.
+
 #### `set_removed_keys()` — the parameter is gone; fatal
 
 Use this only for parameters whose whole purpose was to **turn something on**.

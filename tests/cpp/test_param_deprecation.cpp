@@ -92,7 +92,15 @@ int run_child(const std::string& path, const std::string& fname)
     pp.set_deprecated_aliases({
         {"terrace_max_distance_to_channel_metres",
          "valley_corridor_half_width_metres"},
-        {"band_reach_window_metres", "ladder_reach_window_metres"} });
+        {"band_reach_window_metres", "ladder_reach_window_metres"},
+        {"flow_dem_is_filled", "raster_is_filled"},
+        {"fill_dem_for_flow_routing", "fill_before_routing"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"channel_threshold_contributing_pixels",
+         "threshold_contributing_pixels"},
+        {"d8_channel_threshold_pixels", "threshold_contributing_pixels"},
+        {"flow_accumulation_threshold_pixels",
+         "threshold_contributing_pixels"} });
 
     std::map<std::string, float>       ff;
     std::map<std::string, int>         ii;
@@ -102,13 +110,17 @@ int run_child(const std::string& path, const std::string& fname)
     ff["valley_corridor_half_width_metres"] = -1.0f;
     ff["ladder_reach_window_metres"]        = -1.0f;
     ii["ladder_level_count"]                = 0;
+    ii["threshold_contributing_pixels"]     = 1000;
     bb["write_band_index_raster"]           = false;
+    bb["raster_is_filled"]                  = false;
+    bb["fill_before_routing"]               = true;
     ss["reference_field_algorithm_choice"]  = "hand";
 
     pp.parse_all_parameters(ff, ii, bb, ss);
 
     const auto f = pp.get_float_parameters();
     const auto i = pp.get_int_parameters();
+    const auto b = pp.get_bool_parameters();
 
     // Printed so the parent can check the value actually ARRIVED under the new
     // name. A warning that names the replacement but drops the value would be
@@ -120,6 +132,12 @@ int run_child(const std::string& path, const std::string& fname)
               << f.at("ladder_reach_window_metres") << "\n";
     std::cout << "CHILD ladder_level_count="
               << i.at("ladder_level_count") << "\n";
+    std::cout << "CHILD threshold_contributing_pixels="
+              << i.at("threshold_contributing_pixels") << "\n";
+    std::cout << "CHILD raster_is_filled="
+              << b.at("raster_is_filled") << "\n";
+    std::cout << "CHILD fill_before_routing="
+              << b.at("fill_before_routing") << "\n";
     std::cout << "CHILD_COMPLETED\n";
     return 0;
 }
@@ -263,6 +281,75 @@ int run_parent(const std::string& self, const std::filesystem::path& dir)
               "  the NEW name wins");
         check(contains(r.output, "was also supplied"),
               "  and the collision is reported rather than resolved silently");
+    }
+
+    // ---- arm 2b: every Phase 4 alias has the same pinned contract -----------
+    const std::vector<std::string> threshold_aliases = {
+        "source_pixels_threshold",
+        "channel_threshold_contributing_pixels",
+        "d8_channel_threshold_pixels",
+        "flow_accumulation_threshold_pixels"};
+    for (const std::string& old_key : threshold_aliases)
+    {
+        std::cout << "\n-- Phase 4 threshold alias: " << old_key << " --\n";
+        const child_run r = run_case(
+            self, dir, old_key + ".param",
+            k_clean_params + old_key + ": 321\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD_COMPLETED"),
+              old_key + " completes through the alias");
+        check(contains(r.output, old_key) &&
+                  contains(r.output, "threshold_contributing_pixels") &&
+                  contains(r.output, "WARNING"),
+              "  warning names the old and canonical threshold keys");
+        check(contains(r.output, "CHILD threshold_contributing_pixels=321"),
+              "  old threshold value arrives under the canonical key");
+        check(!contains(r.output, "are not used by this tool"),
+              "  consumed threshold alias is not reported as unknown");
+    }
+
+    {
+        std::cout << "\n-- Phase 4 mandatory-fill alias --\n";
+        const child_run r = run_case(
+            self, dir, "flow_dem_is_filled.param",
+            k_clean_params + "flow_dem_is_filled: true\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD_COMPLETED"),
+              "flow_dem_is_filled completes through the alias");
+        check(contains(r.output, "flow_dem_is_filled") &&
+                  contains(r.output, "raster_is_filled") &&
+                  contains(r.output, "WARNING"),
+              "  mandatory-fill warning names both keys");
+        check(contains(r.output, "CHILD raster_is_filled=1"),
+              "  mandatory-fill value arrives under the canonical key");
+    }
+
+    {
+        std::cout << "\n-- Phase 4 optional-fill alias --\n";
+        const child_run r = run_case(
+            self, dir, "fill_dem_for_flow_routing.param",
+            k_clean_params + "fill_dem_for_flow_routing: false\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD_COMPLETED"),
+              "fill_dem_for_flow_routing completes through the alias");
+        check(contains(r.output, "fill_dem_for_flow_routing") &&
+                  contains(r.output, "fill_before_routing") &&
+                  contains(r.output, "WARNING"),
+              "  optional-fill warning names both keys");
+        check(contains(r.output, "CHILD fill_before_routing=0"),
+              "  optional-fill value arrives under the canonical key");
+    }
+
+    {
+        std::cout << "\n-- Phase 4 old and canonical threshold --\n";
+        const child_run r = run_case(
+            self, dir, "phase4_both.param",
+            k_clean_params +
+                "source_pixels_threshold: 321\n"
+                "threshold_contributing_pixels: 654\n");
+        check(r.exit_code == 0,
+              "old and canonical threshold keys parse together");
+        check(contains(r.output, "CHILD threshold_contributing_pixels=654"),
+              "  canonical threshold wins over its alias");
+        check(contains(r.output, "was also supplied"),
+              "  Phase 4 threshold collision is reported");
     }
 
     // ---- arm 3: an unknown key is reported, not swallowed -------------------
