@@ -32,6 +32,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include "lsdtt_raster_cpu.hpp"
 #include "../utils/lsdtt_natural_breaks.hpp"
@@ -120,6 +121,16 @@ lsdtt_raster_cpu raster_positive_difference(
 // Unary transforms
 // operations that take one input raster and produce one output raster by transforming each pixel value.
 // -----------------------------------------------------------------------------
+
+/// Apply `transform` once, in row-major order, to every cell whose source mask
+/// is nonzero. The output keeps the source metadata and valid-cell domain (with
+/// canonical 0/1 mask values); masked output data is set to metadata nodata.
+/// Nodata-valued and non-finite data in valid cells is deliberately passed to
+/// the callback and its result is retained without additional filtering.
+lsdtt_raster_cpu raster_transform(
+    const lsdtt_raster_cpu&             source,
+    const std::function<float(float)>& transform
+);
 
 /// Absolute value: result = abs(a)
 lsdtt_raster_cpu raster_abs(

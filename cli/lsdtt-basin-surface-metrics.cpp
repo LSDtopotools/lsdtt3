@@ -69,11 +69,10 @@
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
+#include "../src/cpu/lsdtt_basin_outline_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
-#include "../src/utils/lsdtt_histogram.hpp"
-#include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
 // =============================================================================
@@ -108,9 +107,9 @@ struct BasinData {
     std::vector<float> interior_dinf_logA; 
     std::map<std::string, std::vector<float>> interior_metrics;
 
-    // Extracted Summary Statistics (Saved in Step 7/8, written in Step 9)
-    std::map<double, double> flip_dist_per_lambda;
-    std::map<double, double> a_max_slope_per_lambda;
+    // Analytical results are indexed in the same order as lambda_scales.
+    std::vector<lsdtt::outline_curvature_flip_result> curvature_flips;
+    lsdtt::basin_slope_area_result slope_area;
 };
 
 // =============================================================================
@@ -736,6 +735,40 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Pure basin analyses. Raster/basin-object sampling stays above; output
+    // propagation and formatting stay below.
+    for (auto& bd : basin_data_store) {
+        if (bf["write_outline_curvature_flips"]) {
+            // Historical/questionable semantics: distance.back() is used as
+            // the perimeter and no missing last-to-first segment is added.
+            double total_length = bd.outline_distance.empty() ?
+                                  0 : bd.outline_distance.back();
+            bd.curvature_flips.reserve(lambda_scales.size());
+            for (double l : lambda_scales) {
+                std::string mk = "maximum_curvature_lambda" +
+                                 std::to_string(static_cast<int>(l));
+                bd.curvature_flips.push_back(
+                    lsdtt::compute_outline_curvature_flips(
+                        bd.outline_metrics.at(mk),
+                        dem.get_meta().no_data_value,
+                        total_length));
+            }
+        }
+
+        if (needs_slope_area) {
+            std::vector<std::vector<float>> slopes_by_scale;
+            slopes_by_scale.reserve(lambda_scales.size());
+            for (double l : lambda_scales) {
+                std::string mk = "slope_lambda" +
+                                 std::to_string(static_cast<int>(l));
+                slopes_by_scale.push_back(bd.interior_metrics.at(mk));
+            }
+            bd.slope_area = lsdtt::compute_basin_slope_area_metrics(
+                bd.interior_dinf_logA, slopes_by_scale,
+                static_cast<double>(ff["slope_area_log_bin_width"]));
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Step 7 - Outline Outputs
     // -------------------------------------------------------------------------
@@ -790,27 +823,10 @@ int main(int argc, char* argv[])
                                     0 : bd.outline_distance.back();
             row.push_back(std::to_string(total_length));
 
-            for (double l : lambda_scales) {
-                std::string mk = "maximum_curvature_lambda" + 
-                                 std::to_string(static_cast<int>(l));
-                int flips = 0;
-                auto& curv = bd.outline_metrics.at(mk);
-                float ndv = dem.get_meta().no_data_value;
-
-                for (size_t i = 1; i < curv.size(); ++i) {
-                    if (curv[i] == ndv || curv[i-1] == ndv) continue;
-                    if ((curv[i] > 0 && curv[i-1] < 0) || 
-                        (curv[i] < 0 && curv[i-1] > 0)) {
-                        flips++;
-                    }
-                }
-                row.push_back(std::to_string(flips));
-                
-                double flip_d = flips > 0 ? (total_length / flips) : 
-                                std::numeric_limits<double>::quiet_NaN();
-                bd.flip_dist_per_lambda[l] = flip_d; // Save for Step 9
-                
-                row.push_back(flips > 0 ? std::to_string(flip_d) : "NaN");
+            for (const auto& flips : bd.curvature_flips) {
+                row.push_back(std::to_string(flips.n_flips));
+                row.push_back(flips.n_flips > 0 ?
+                              std::to_string(flips.mean_flip_distance) : "NaN");
             }
             rows.push_back(std::move(row));
         }
@@ -836,76 +852,25 @@ int main(int argc, char* argv[])
             headers.push_back("slope_lambda" + sl + "_p95");
         }
 
-        double bin_width = static_cast<double>(ff["slope_area_log_bin_width"]);
-
         for (const auto& bd : basin_data_store) {
-            std::vector<double> valid_area; 
-            for (float a : bd.interior_dinf_logA) {
-                if (std::isfinite(a) && a > -100) {
-                    valid_area.push_back(static_cast<double>(a));
-                }
-            }
-
-            std::vector<double> bin_edges;
-            if (!valid_area.empty() && bin_width > 0.0) {
-                auto mm = std::minmax_element(valid_area.begin(), 
-                                              valid_area.end());
-                double min_val = *mm.first;
-                double max_val = *mm.second;
-                
-                double edge_min = std::floor(min_val / bin_width) * bin_width;
-                double edge_max = std::ceil(max_val / bin_width) * bin_width;
-                
-                for (double edge = edge_min; edge <= edge_max + 1e-9; 
-                     edge += bin_width) {
-                    bin_edges.push_back(edge);
-                }
-            } else {
-                bin_edges = {0.0, bin_width};
-            }
-
             std::vector<std::vector<std::string>> rows;
-            for (size_t b = 0; b + 1 < bin_edges.size(); ++b) {
-                double e_lo  = bin_edges[b];
-                double e_hi  = bin_edges[b+1];
-                double e_cen = (e_lo + e_hi) / 2.0;
-
+            for (const auto& bin : bd.slope_area.bins) {
                 // De-log to represent Normal Area mathematically
                 std::vector<std::string> row = {
-                    std::to_string(std::pow(10.0, e_lo)),
-                    std::to_string(std::pow(10.0, e_hi)),
-                    std::to_string(std::pow(10.0, e_cen))
+                    std::to_string(std::pow(10.0, bin.log_area_lower)),
+                    std::to_string(std::pow(10.0, bin.log_area_upper)),
+                    std::to_string(std::pow(10.0, bin.log_area_center))
                 };
 
-                for (double l : lambda_scales) {
-                    std::string mk = "slope_lambda" + 
-                                     std::to_string(static_cast<int>(l));
-                    auto& raw_slopes = bd.interior_metrics.at(mk);
-                    
-                    std::vector<double> bin_slopes;
-                    for (size_t i = 0; i < raw_slopes.size(); ++i) {
-                        float logA = bd.interior_dinf_logA[i];
-                        if (std::isfinite(raw_slopes[i]) && logA > -100) {
-                            if (logA >= e_lo && logA < e_hi) {
-                                bin_slopes.push_back(
-                                    static_cast<double>(raw_slopes[i]));
-                            }
-                        }
-                    }
-
-                    if (bin_slopes.empty()) {
+                for (const auto& slopes : bin.slope_by_scale) {
+                    if (!std::isfinite(slopes.p50)) {
                         for (int k=0; k<5; ++k) row.push_back("NaN");
                     } else {
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 5.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 25.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 50.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 75.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 95.0)));
+                        row.push_back(std::to_string(slopes.p05));
+                        row.push_back(std::to_string(slopes.p25));
+                        row.push_back(std::to_string(slopes.p50));
+                        row.push_back(std::to_string(slopes.p75));
+                        row.push_back(std::to_string(slopes.p95));
                     }
                 }
                 rows.push_back(std::move(row));
@@ -926,8 +891,6 @@ int main(int argc, char* argv[])
                 "A_max_slope_lambda" + std::to_string(static_cast<int>(l)));
         }
 
-        double bin_width = static_cast<double>(ff["slope_area_log_bin_width"]);
-
         std::vector<std::vector<std::string>> rows;
         for (auto& bd : basin_data_store) {
             std::vector<std::string> row = {
@@ -935,80 +898,8 @@ int main(int argc, char* argv[])
                 std::to_string(bd.junction_number)
             };
 
-            std::vector<double> valid_area; 
-            for (float a : bd.interior_dinf_logA) {
-                if (std::isfinite(a) && a > -100) {
-                    valid_area.push_back(static_cast<double>(a));
-                }
-            }
-            
-            std::vector<double> bin_edges;
-            if (!valid_area.empty() && bin_width > 0.0) {
-                auto mm = std::minmax_element(valid_area.begin(), 
-                                              valid_area.end());
-                double min_val = *mm.first;
-                double max_val = *mm.second;
-                
-                double edge_min = std::floor(min_val / bin_width) * bin_width;
-                double edge_max = std::ceil(max_val / bin_width) * bin_width;
-                
-                for (double edge = edge_min; edge <= edge_max + 1e-9; 
-                     edge += bin_width) {
-                    bin_edges.push_back(edge);
-                }
-            } else {
-                for (double l : lambda_scales) { 
-                    row.push_back("NaN"); 
-                    bd.a_max_slope_per_lambda[l] = std::nan("");
-                }
-                rows.push_back(std::move(row));
-                continue;
-            }
-
-            for (double l : lambda_scales) {
-                std::string mk = "slope_lambda" + 
-                                 std::to_string(static_cast<int>(l));
-                auto& raw_slopes = bd.interior_metrics.at(mk);
-                
-                std::vector<double> paired_areas, paired_slopes;
-                for(size_t i = 0; i < raw_slopes.size(); ++i) {
-                    if (std::isfinite(raw_slopes[i]) && 
-                        bd.interior_dinf_logA[i] > -100) {
-                        paired_areas.push_back(
-                            static_cast<double>(bd.interior_dinf_logA[i]));
-                        paired_slopes.push_back(
-                            static_cast<double>(raw_slopes[i]));
-                    }
-                }
-
-                if (paired_areas.empty() || bin_edges.size() < 2) {
-                    row.push_back("NaN");
-                    bd.a_max_slope_per_lambda[l] = std::nan("");
-                    continue;
-                }
-
-                auto binned_stats = lsdtt::compute_binned_descriptive_stats(
-                        paired_areas, paired_slopes, bin_edges);
-                
-                double max_median = -9999.0;
-                double a_max_log = std::nan("");
-
-                for (size_t b = 0; b < binned_stats.stats_per_bin.size(); ++b) {
-                    if (!binned_stats.stats_per_bin[b].empty()) {
-                        double m = binned_stats.stats_per_bin[b].median;
-                        if (m > max_median) {
-                            max_median = m;
-                            a_max_log = binned_stats.bin_centres[b];
-                        }
-                    }
-                }
-                
-                double a_max_norm = std::isfinite(a_max_log) ? 
-                    std::pow(10.0, a_max_log) : 
-                    std::numeric_limits<double>::quiet_NaN();
-                
-                bd.a_max_slope_per_lambda[l] = a_max_norm; // Save for Step 9
-                
+            for (const auto& scale : bd.slope_area.scales) {
+                double a_max_norm = scale.area_at_maximum_median_slope;
                 row.push_back(
                     std::isfinite(a_max_norm) ? 
                     std::to_string(a_max_norm) : "NaN");
@@ -1072,13 +963,13 @@ int main(int argc, char* argv[])
             vals.emplace_back(static_cast<std::int64_t>(bd.outlet_flat));
             vals.emplace_back(static_cast<std::int64_t>(bd.junction_number));
 
-            for (double l : lambda_scales) {
-                double fdist = bd.flip_dist_per_lambda.count(l) ? 
-                               bd.flip_dist_per_lambda.at(l) : 
-                               std::numeric_limits<double>::quiet_NaN();
-                double amax  = bd.a_max_slope_per_lambda.count(l) ? 
-                               bd.a_max_slope_per_lambda.at(l) : 
-                               std::numeric_limits<double>::quiet_NaN();
+            for (std::size_t scale = 0; scale < lambda_scales.size(); ++scale) {
+                double fdist = scale < bd.curvature_flips.size() ?
+                    bd.curvature_flips[scale].mean_flip_distance :
+                    std::numeric_limits<double>::quiet_NaN();
+                double amax = scale < bd.slope_area.scales.size() ?
+                    bd.slope_area.scales[scale].area_at_maximum_median_slope :
+                    std::numeric_limits<double>::quiet_NaN();
 
                 // FGB/GeoPackage handles NULL via std::monostate
                 if (std::isfinite(fdist)) vals.emplace_back(fdist);

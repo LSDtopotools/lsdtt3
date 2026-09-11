@@ -521,6 +521,8 @@ lsdtt_point_attribute_value type_csv_token(const std::string& token)
     {
         return value;
     }
+    value.has_source_text = true;
+    value.source_text = text;
 
     std::int64_t as_integer = 0;
     if (parse_int64_token(text, as_integer))
@@ -595,7 +597,8 @@ std::vector<attribute_field_binding> bind_attribute_fields(
     const std::vector<std::string>& source_field_names,
     const std::vector<std::string>& requested_field_names,
     std::vector<std::string>&       fields_found,
-    std::vector<std::string>&       fields_missing)
+    std::vector<std::string>&       fields_missing,
+    bool                            case_insensitive)
 {
     std::vector<attribute_field_binding> bindings;
 
@@ -636,7 +639,7 @@ std::vector<attribute_field_binding> bind_attribute_fields(
             }
         }
 
-        if (binding.index < 0)
+        if (binding.index < 0 && case_insensitive)
         {
             for (std::size_t i = 0; i < source_field_names.size(); ++i)
             {
@@ -836,7 +839,8 @@ read_csv_latitude_longitude_points_impl(
             attribute_column_names,
             field_names,
             result.fields_found,
-            result.fields_missing
+            result.fields_missing,
+            true
         );
 
         // Rebase the bindings from attribute-schema positions onto raw CSV
@@ -977,7 +981,8 @@ read_vector_point_layer_impl(
     const std::string&              layer_name,
     bool                            keep_points_outside_raster,
     bool                            collect_attributes,
-    const std::vector<std::string>& field_names)
+    const std::vector<std::string>& field_names,
+    bool                            attribute_names_case_sensitive = false)
 {
     ensure_gdal_init();
 
@@ -1033,7 +1038,8 @@ read_vector_point_layer_impl(
             layer_field_names,
             field_names,
             result.fields_found,
-            result.fields_missing
+            result.fields_missing,
+            !attribute_names_case_sensitive
         );
     }
 
@@ -1421,6 +1427,16 @@ bool lsdtt_point_attribute_value::as_string(std::string& value_out) const
     }
 }
 
+bool lsdtt_point_attribute_value::as_source_string(std::string& value_out) const
+{
+    if (has_source_text)
+    {
+        value_out = source_text;
+        return true;
+    }
+    return as_string(value_out);
+}
+
 // -----------------------------------------------------------------------------
 // Attribute-aware point-layer loader
 // -----------------------------------------------------------------------------
@@ -1454,7 +1470,8 @@ load_point_layer_with_attributes(
         options.vector_layer_name,
         options.keep_points_outside_raster,
         true,
-        field_names
+        field_names,
+        options.vector_attribute_field_names_case_sensitive
     );
 }
 

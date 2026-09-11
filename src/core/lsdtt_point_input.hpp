@@ -126,6 +126,11 @@ enum class lsdtt_point_input_status
 //   Intended control over whether outside-raster points are retained in the
 //   returned vector. The current implementation preserves outside-raster points
 //   with status = outside_raster_extent so that input order remains stable.
+//
+// vector_attribute_field_names_case_sensitive
+//   Require exact requested attribute names for OGR vector layers. CSV field
+//   names remain case-insensitive. The default retains the loader's tolerant
+//   matching; callers with a published exact-match vector contract can opt in.
 // -----------------------------------------------------------------------------
 struct lsdtt_point_input_options
 {
@@ -138,6 +143,8 @@ struct lsdtt_point_input_options
     std::string csv_longitude_field_name = "longitude";
 
     bool keep_points_outside_raster = true;
+
+    bool vector_attribute_field_names_case_sensitive = false;
 };
 
 // -----------------------------------------------------------------------------
@@ -221,6 +228,11 @@ struct lsdtt_point_attribute_value
     double       d    = 0.0;
     std::string  s    = "";
 
+    // CSV attributes retain their trimmed source token so identifiers such as
+    // "01" are not normalised merely because they also parse as numbers.
+    bool        has_source_text = false;
+    std::string source_text     = "";
+
     // True when the field carried a usable value.
     [[nodiscard]] bool is_present() const noexcept
     {
@@ -241,6 +253,9 @@ struct lsdtt_point_attribute_value
     // Text conversion. Numeric values are rendered as text. Returns false only
     // when the value is absent.
     [[nodiscard]] bool as_string(std::string& value_out) const;
+
+    // Returns the original CSV token when available, otherwise as_string().
+    [[nodiscard]] bool as_source_string(std::string& value_out) const;
 };
 
 // -----------------------------------------------------------------------------

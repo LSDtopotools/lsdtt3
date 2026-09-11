@@ -99,129 +99,29 @@ static bool cluster_field_is_set(const std::string& field_name)
 
 
 
-static std::vector<std::string> load_cluster_values_from_csv(
-    const std::string& csv_path,
-    const std::string& cluster_field)
+static std::string cluster_attribute_to_string(
+    const lsdtt::lsdtt_point_attribute_value& value)
 {
-    std::ifstream in(csv_path);
-    if (!in)
+    if (value.has_source_text)
     {
-        throw std::runtime_error("could not open CSV cluster file: " + csv_path);
+        return value.source_text;
     }
-
-    std::string header;
-    if (!std::getline(in, header))
+    if (value.type == lsdtt::lsdtt_point_attribute_value::kind::text)
     {
-        throw std::runtime_error("CSV cluster file is empty: " + csv_path);
+        return value.s;
     }
-
-    const std::vector<std::string> headers = lsdtt::csv_split_row_trimmed(header);
-    int cluster_col = -1;
-    for (std::size_t i = 0; i < headers.size(); ++i)
+    if (value.type == lsdtt::lsdtt_point_attribute_value::kind::integer)
     {
-        if (headers[i] == cluster_field)
-        {
-            cluster_col = static_cast<int>(i);
-            break;
-        }
+        return std::to_string(value.i);
     }
-    if (cluster_col < 0)
-    {
-        const std::string target_lc = lsdtt::to_lower_ascii(cluster_field);
-        for (std::size_t i = 0; i < headers.size(); ++i)
-        {
-            if (lsdtt::to_lower_ascii(headers[i]) == target_lc)
-            {
-                cluster_col = static_cast<int>(i);
-                break;
-            }
-        }
-    }
-    if (cluster_col < 0)
-    {
-        throw std::runtime_error(
-            "cluster field not found in CSV header: " + cluster_field);
-    }
-
-    std::vector<std::string> values;
-    std::string row;
-    while (std::getline(in, row))
-    {
-        if (row.empty()) continue;
-        const std::vector<std::string> cols = lsdtt::csv_split_row_trimmed(row);
-        if (cluster_col < static_cast<int>(cols.size()))
-        {
-            values.emplace_back(cols[static_cast<std::size_t>(cluster_col)]);
-        }
-        else
-        {
-            values.emplace_back("");
-        }
-    }
-    return values;
-}
-
-static std::string vector_field_value_to_string(
-    const lsdtt::lsdtt_vector_field_value& value)
-{
-    if (std::holds_alternative<std::string>(value))
-    {
-        return std::get<std::string>(value);
-    }
-    if (std::holds_alternative<std::int64_t>(value))
-    {
-        return std::to_string(std::get<std::int64_t>(value));
-    }
-    if (std::holds_alternative<double>(value))
+    if (value.type == lsdtt::lsdtt_point_attribute_value::kind::real)
     {
         std::ostringstream ss;
         ss.precision(16);
-        ss << std::get<double>(value);
+        ss << value.d;
         return ss.str();
     }
     return "";
-}
-
-static std::vector<std::string> load_cluster_values_from_vector(
-    const std::string& vector_path,
-    const std::string& cluster_field)
-{
-    lsdtt::lsdtt_data_loader loader;
-    loader.open_vector(vector_path);
-
-    // read_vector_layer resolves the name with GetLayerByName(), which never
-    // matches an empty string, so the layer must be named explicitly. Take the
-    // first layer, matching how every other vector reader in the codebase does
-    // it (see lsdtt_burn_streams_cpu.cpp and cli/lsdtt-basin-extraction.cpp).
-    const std::vector<std::string> layer_names = loader.get_layer_names();
-    if (layer_names.empty())
-    {
-        loader.close_vector();
-        throw std::runtime_error("no layers in outlet vector file: " + vector_path);
-    }
-
-    lsdtt::lsdtt_vector_layer layer = loader.read_vector_layer(layer_names[0]);
-    loader.close_vector();
-
-    const int idx = layer.schema.index_of(cluster_field);
-    if (idx < 0)
-    {
-        throw std::runtime_error(
-            "cluster field not found in vector layer: " + cluster_field);
-    }
-
-    std::vector<std::string> values;
-    values.reserve(layer.records.size());
-    for (const auto& rec : layer.records)
-    {
-        if (idx >= static_cast<int>(rec.field_values.size()))
-        {
-            values.emplace_back("");
-            continue;
-        }
-        values.emplace_back(vector_field_value_to_string(rec.field_values[static_cast<std::size_t>(idx)]));
-    }
-    return values;
 }
 
 
@@ -540,14 +440,54 @@ int main(int argc, char* argv[])
     const std::string outlet_path = pp.add_read_path_if_needed(sf.at("basin_outlet_file"));
 
     std::vector<lsdtt::lsdtt_input_point> requested_outlets;
+    std::vector<std::string> cluster_values;
+    bool cluster_values_are_numeric = false;
+    const bool use_clusters = cluster_field_is_set(sf.at("outlet_cluster_field"));
     try
     {
-        requested_outlets = lsdtt::load_points_in_raster_crs(outlet_path, dem.get_meta());
+        if (use_clusters)
+        {
+            lsdtt::lsdtt_point_input_options point_options;
+            point_options.vector_attribute_field_names_case_sensitive = true;
+            const auto loaded = lsdtt::load_point_layer_with_attributes(
+                outlet_path, dem.get_meta(), {sf.at("outlet_cluster_field")},
+                point_options);
+            if (!loaded.fields_missing.empty())
+            {
+                const bool csv_input = lsdtt::to_lower_ascii(
+                    std::filesystem::path(outlet_path).extension().string()) == ".csv";
+                throw std::runtime_error(
+                    std::string("cluster field not found in ") +
+                    (csv_input ? "CSV header: " : "vector layer: ") +
+                    sf.at("outlet_cluster_field"));
+            }
+            requested_outlets.reserve(loaded.records.size());
+            cluster_values.reserve(loaded.records.size());
+            for (const auto& record : loaded.records)
+            {
+                requested_outlets.push_back(record.point);
+                cluster_values.push_back(cluster_attribute_to_string(
+                    record.attributes.at(sf.at("outlet_cluster_field"))));
+            }
+        }
+        else
+        {
+            requested_outlets =
+                lsdtt::load_points_in_raster_crs(outlet_path, dem.get_meta());
+        }
     }
     catch (const std::exception& e)
     {
-        std::cerr << "FATAL: could not load basin_outlet_file: "
-                  << outlet_path << " (" << e.what() << ")\n";
+        if (use_clusters)
+        {
+            std::cerr << "FATAL: could not load outlet clusters from field '"
+                      << sf.at("outlet_cluster_field") << "': " << e.what() << "\n";
+        }
+        else
+        {
+            std::cerr << "FATAL: could not load basin_outlet_file: "
+                      << outlet_path << " (" << e.what() << ")\n";
+        }
         return 1;
     }
 
@@ -559,42 +499,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Optional cluster labels in input order.
-    std::vector<std::string> cluster_values;
-    bool cluster_values_are_numeric = false;
-    const bool use_clusters = cluster_field_is_set(sf.at("outlet_cluster_field"));
     if (use_clusters)
     {
-        try
-        {
-            const std::string ext = lsdtt::to_lower_ascii(
-                std::filesystem::path(outlet_path).extension().string());
-            if (ext == ".csv")
-            {
-                cluster_values = load_cluster_values_from_csv(
-                    outlet_path, sf.at("outlet_cluster_field"));
-            }
-            else
-            {
-                cluster_values = load_cluster_values_from_vector(
-                    outlet_path, sf.at("outlet_cluster_field"));
-            }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: could not load outlet clusters from field '"
-                      << sf.at("outlet_cluster_field") << "': " << e.what() << "\n";
-            return 1;
-        }
-
-        if (cluster_values.size() < requested_outlets.size())
-        {
-            std::cerr << "FATAL: outlet cluster field rows (" << cluster_values.size()
-                      << ") are fewer than loaded outlet points ("
-                      << requested_outlets.size() << ").\n";
-            return 1;
-        }
-
         // Grouping semantics per mode:
         //   integer -> every label must be an integer; grouped by numeric value
         //   auto    -> grouped numerically if every label is an integer,

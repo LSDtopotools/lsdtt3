@@ -146,66 +146,6 @@ static double percentile_sorted(const std::vector<double>& v, double p)
     return lsdtt::compute_percentile(v, p * 100.0);
 }
 
-static std::vector<sample_point_row> read_sample_point_rows(
-    const std::string& csv_path,
-    const std::string& name_col,
-    const std::string& lat_col,
-    const std::string& lon_col)
-{
-    std::ifstream f(csv_path);
-    if (!f.is_open())
-        throw std::runtime_error("could not open sample_points_csv: " + csv_path);
-
-    std::string header;
-    if (!std::getline(f, header))
-        throw std::runtime_error("sample_points_csv is empty: " + csv_path);
-
-    auto h = lsdtt::csv_split_row(header);
-    int i_name = -1, i_lat = -1, i_lon = -1;
-    for (int i = 0; i < static_cast<int>(h.size()); ++i)
-    {
-        const std::string key = lsdtt::to_lower_ascii(lsdtt::csv_trim(h[i]));
-        if (key == lsdtt::to_lower_ascii(name_col)) i_name = i;
-        if (key == lsdtt::to_lower_ascii(lat_col)) i_lat = i;
-        if (key == lsdtt::to_lower_ascii(lon_col)) i_lon = i;
-    }
-    if (i_lat < 0 || i_lon < 0)
-        throw std::runtime_error(
-            "sample_points_csv must contain latitude/longitude columns named "
-            + lat_col + " and " + lon_col + ".");
-
-    std::vector<sample_point_row> out;
-    std::string line;
-    int idx = 1;
-    while (std::getline(f, line))
-    {
-        if (lsdtt::csv_trim(line).empty()) continue;
-        auto t = lsdtt::csv_split_row(line);
-        if (static_cast<int>(t.size()) <= std::max(i_lat, i_lon))
-            throw std::runtime_error("sample_points_csv row is too short at row "
-                                     + std::to_string(idx + 1));
-        sample_point_row r;
-        r.name = (i_name >= 0 && i_name < static_cast<int>(t.size()))
-            ? lsdtt::csv_trim(t[static_cast<std::size_t>(i_name)])
-            : ("sample_" + std::to_string(idx));
-        if (r.name.empty()) r.name = "sample_" + std::to_string(idx);
-        try
-        {
-            r.latitude = std::stod(lsdtt::csv_trim(t[static_cast<std::size_t>(i_lat)]));
-            r.longitude = std::stod(lsdtt::csv_trim(t[static_cast<std::size_t>(i_lon)]));
-        }
-        catch (const std::exception&)
-        {
-            throw std::runtime_error("sample_points_csv has non-numeric lat/lon at row "
-                                     + std::to_string(idx + 1));
-        }
-        out.push_back(r);
-        ++idx;
-    }
-    return out;
-}
-
-
 int main(int argc, char* argv[])
 {
     print_banner();
@@ -986,39 +926,49 @@ int main(int argc, char* argv[])
 
         const std::string pts_path = pp.add_read_path_if_needed(sf["sample_points_csv"]);
         std::vector<sample_point_row> sample_rows;
-        try
-        {
-            sample_rows = read_sample_point_rows(
-                pts_path,
-                sf["sample_name_column"],
-                sf["sample_latitude_column"],
-                sf["sample_longitude_column"]);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: " << e.what() << "\n";
-            return 1;
-        }
-
         lsdtt::lsdtt_point_input_options popts;
         popts.csv_latitude_field_name = sf["sample_latitude_column"];
         popts.csv_longitude_field_name = sf["sample_longitude_column"];
         std::vector<lsdtt::lsdtt_input_point> pts;
         try
         {
-            pts = lsdtt::load_points_in_raster_crs(pts_path, meta, popts);
+            const lsdtt::lsdtt_point_attribute_read_result loaded =
+                lsdtt::load_point_layer_with_attributes(
+                    pts_path, meta, {sf["sample_name_column"]}, popts);
+            pts.reserve(loaded.records.size());
+            sample_rows.reserve(loaded.records.size());
+            for (const auto& record : loaded.records)
+            {
+                const auto& point = record.point;
+                if (point.status ==
+                    lsdtt::lsdtt_point_input_status::coordinate_transform_failed)
+                {
+                    throw std::runtime_error(
+                        "sample_points_csv has unusable lat/lon at row " +
+                        std::to_string(point.point_id + 1));
+                }
+
+                sample_point_row row;
+                const auto name_it = record.attributes.find(sf["sample_name_column"]);
+                if (name_it == record.attributes.end() ||
+                    !name_it->second.as_source_string(row.name) || row.name.empty())
+                {
+                    row.name = "sample_" + std::to_string(point.point_id);
+                }
+                if (point.has_original_coordinates)
+                {
+                    row.longitude = point.original_x;
+                    row.latitude = point.original_y;
+                }
+                sample_rows.push_back(std::move(row));
+                pts.push_back(point);
+            }
         }
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: could not load sample points: " << e.what() << "\n";
             return 1;
         }
-        if (pts.size() != sample_rows.size())
-        {
-            std::cerr << "FATAL: sample_points_csv parse mismatch between name and coordinate loaders.\n";
-            return 1;
-        }
-
         lsdtt::lsdtt_square_snap_options snap_opts;
         snap_opts.contributing_pixels_threshold = static_cast<std::uint64_t>(chan_thresh);
         snap_opts.max_search_radius_pixels = ifs["sample_snap_radius_pixels"];

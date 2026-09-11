@@ -497,7 +497,7 @@ void write_attribute_csv(const lsdtt::lsdtt_raster_meta& meta,
 
     out << std::setprecision(15);
     out << "latitude,longitude,sink_id,area_m2,label\n";
-    out << a.lat << "," << a.lon << ",7,1234.5,alpha\n";
+    out << a.lat << "," << a.lon << ",007,1234.5,alpha\n";
     out << b.lat << "," << b.lon << ",8,0,beta\n";
     out << c.lat << "," << c.lon << ",9,99.25,gamma\n";
 
@@ -763,6 +763,12 @@ void test_cross_format_equivalence(const lsdtt::lsdtt_raster_meta& meta,
     check("attributes: the written values are the values read back",
           first.sink_id == 7 && close_enough(first.area_m2, 1234.5) &&
           first.label == "alpha");
+
+    std::string csv_source_text;
+    check("attributes: CSV numeric source spelling is retained for identifiers",
+          from_csv.records[0].attributes.at("sink_id").as_source_string(
+              csv_source_text) && csv_source_text == "007",
+          "source text = " + csv_source_text);
 
     // Plan 6.4(4), pinned so nobody starts comparing kind across formats: the
     // whole number 0 is typed by inspection from CSV (integer) and by schema

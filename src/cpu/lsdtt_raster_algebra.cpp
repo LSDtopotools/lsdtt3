@@ -31,6 +31,27 @@
 namespace lsdtt {
 namespace algebra {
 
+lsdtt_raster_cpu raster_transform(
+    const lsdtt_raster_cpu&             source,
+    const std::function<float(float)>& transform)
+{
+    const auto& data = source.get_data();
+    const auto& mask = source.get_mask();
+    const float nodata = static_cast<float>(source.get_meta().no_data_value);
+
+    std::vector<float> out_data(data.size(), nodata);
+    std::vector<uint8_t> out_mask(mask.size(), 0u);
+    for (std::size_t i = 0; i < data.size(); ++i)
+    {
+        if (!mask[i]) continue;
+        out_data[i] = transform(data[i]);
+        out_mask[i] = 1u;
+    }
+
+    return lsdtt_raster_cpu(
+        std::move(out_data), std::move(out_mask), source.get_meta());
+}
+
 raster_value_set_mask_result raster_mask_from_rounded_value_set(
     const lsdtt_raster_cpu& source,
     const std::vector<long>& values)

@@ -30,6 +30,7 @@
 #include "../../src/core/lsdtt_raster_meta.hpp"
 #include "../../src/core/lsdtt_types.hpp"
 #include "../../src/utils/lsdtt_polygon_geometry.hpp"
+#include "../../src/utils/lsdtt_numeric_utils.hpp"
 #include "../../src/utils/lsdtt_raster_geometry.hpp"
 #include "../../src/utils/lsdtt_string_utils.hpp"
 
@@ -208,6 +209,66 @@ void test_polyline_length()
                 lsdtt::polygon_perimeter(tri), 12.0);
 }
 
+void test_point_at_distance_along_polyline()
+{
+    const std::vector<lsdtt::lsdtt_xy> line{
+        {0.0, 0.0}, {0.0, 0.0}, {3.0, 4.0}, {3.0, 4.0}, {3.0, 9.0}};
+
+    check_close("point along: zero x",
+                lsdtt::point_at_distance_along_polyline(line, 0.0).x, 0.0);
+    check_close("point along: zero y",
+                lsdtt::point_at_distance_along_polyline(line, 0.0).y, 0.0);
+    check_close("point along: normal interpolation x",
+                lsdtt::point_at_distance_along_polyline(line, 2.5).x, 1.5);
+    check_close("point along: normal interpolation y",
+                lsdtt::point_at_distance_along_polyline(line, 2.5).y, 2.0);
+    check_close("point along: duplicate vertices and zero segments",
+                lsdtt::point_at_distance_along_polyline(line, 7.5).y, 6.5);
+    check_close("point along: endpoint",
+                lsdtt::point_at_distance_along_polyline(line, 10.0).y, 9.0);
+
+    const std::vector<lsdtt::lsdtt_xy> zero_length{{2.0, 3.0}, {2.0, 3.0}};
+    check_close("point along: zero-length polyline",
+                lsdtt::point_at_distance_along_polyline(zero_length, 0.0).x, 2.0);
+
+    bool negative_threw = false;
+    bool beyond_threw = false;
+    bool empty_threw = false;
+    bool single_threw = false;
+    try { (void)lsdtt::point_at_distance_along_polyline(line, -1.0); }
+    catch (const std::invalid_argument&) { negative_threw = true; }
+    try { (void)lsdtt::point_at_distance_along_polyline(line, 10.1); }
+    catch (const std::out_of_range&) { beyond_threw = true; }
+    try { (void)lsdtt::point_at_distance_along_polyline({}, 0.0); }
+    catch (const std::invalid_argument&) { empty_threw = true; }
+    try {
+        (void)lsdtt::point_at_distance_along_polyline({{1.0, 2.0}}, 0.0);
+    }
+    catch (const std::invalid_argument&) { single_threw = true; }
+    check_true("point along: negative distance throws", negative_threw);
+    check_true("point along: beyond-end distance throws", beyond_threw);
+    check_true("point along: empty polyline throws", empty_threw);
+    check_true("point along: single-point polyline throws", single_threw);
+}
+
+void test_inclusive_numeric_range()
+{
+    const std::vector<double> endpoint =
+        lsdtt::inclusive_numeric_range(0.1, 0.3, 0.1);
+    check_true("inclusive range: floating endpoint retained", endpoint.size() == 3);
+    if (endpoint.size() == 3)
+        check_close("inclusive range: floating endpoint value", endpoint[2], 0.3);
+
+    const std::vector<double> inside_half_step =
+        lsdtt::inclusive_numeric_range(0.0, 0.624, 0.25);
+    const std::vector<double> at_half_step =
+        lsdtt::inclusive_numeric_range(0.0, 0.625, 0.25);
+    check_true("inclusive range: value inside half-step excluded",
+               inside_half_step.size() == 3);
+    check_true("inclusive range: exact half-step included",
+               at_half_step.size() == 4);
+}
+
 void test_cell_centres()
 {
     lsdtt::lsdtt_raster_meta meta;
@@ -243,6 +304,8 @@ int main()
     test_to_lower_ascii();
     test_planar_distance();
     test_polyline_length();
+    test_point_at_distance_along_polyline();
+    test_inclusive_numeric_range();
     test_cell_centres();
 
     if (g_failures != 0)

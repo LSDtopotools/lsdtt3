@@ -65,6 +65,7 @@
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_landslide_crn_cpu.hpp"
@@ -1876,26 +1877,12 @@ int main(int argc, char* argv[])
             // Mass flux in kg/m2/yr. The delivery-mass raster from the
             // landslide coupling already carries this if it was produced;
             // otherwise it is the erosion rate rescaled.
-            lsdtt::lsdtt_raster_cpu mass_flux;
-            {
-                const auto& ed2  = erosion_raster.get_data_array();
-                const auto& em2  = erosion_raster.get_mask_array();
-                const auto& mmeta = erosion_raster.get_meta();
-                lsdtt::lsdtt_array2d<float>   mf(mmeta.n_rows, mmeta.n_cols,
-                    static_cast<float>(mmeta.no_data_value));
-                lsdtt::lsdtt_array2d<uint8_t> mk(mmeta.n_rows, mmeta.n_cols, 0);
-                for (int r = 0; r < mmeta.n_rows; ++r)
-                    for (int c = 0; c < mmeta.n_cols; ++c)
-                        if (em2(r, c))
-                        {
-                            mf(r, c) = static_cast<float>(
-                                lsdtt::eff_erate_to_kg_m2_yr(
-                                    static_cast<double>(ed2(r, c))));
-                            mk(r, c) = 1;
-                        }
-                mass_flux = lsdtt::lsdtt_raster_cpu(std::move(mf),
-                                                    std::move(mk), mmeta);
-            }
+            lsdtt::lsdtt_raster_cpu mass_flux = lsdtt::algebra::raster_transform(
+                erosion_raster,
+                [](float rate) {
+                    return static_cast<float>(lsdtt::eff_erate_to_kg_m2_yr(
+                        static_cast<double>(rate)));
+                });
 
             lsdtt::QuartzWeightSummary qsum;
             quartz_weight = lsdtt::make_quartz_weight_raster(

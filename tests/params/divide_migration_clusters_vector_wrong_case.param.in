@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+read_fname: divmig_valleys.tif
+write_path: __WRITE_PATH__
+write_fname: divmig_cluster_vec_wrong_case
+
+basin_outlet_file: divmig_outlets.fgb
+outlet_cluster_field: Cluster_ID
+outlet_cluster_mode: auto
+basin_outlet_snapping_method: none
+
+source_pixels_threshold: 40
+m_over_n: 0.45

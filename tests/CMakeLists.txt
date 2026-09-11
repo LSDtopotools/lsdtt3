@@ -587,6 +587,7 @@ add_test(NAME smoke_chi_analysis_outlet_file
         --expect chi_chi_data_maps.csv
         # The outlet FILE branch, not auto-detect.
         --expect-file-contains "../stdout.log:Reading outlet file"
+        --expect-file-contains "../stdout.log:Using explicit m_over_n list with 1 value(s): 0.45"
         # ... and the per-outlet skip path within it.
         --expect-file-contains "../stderr.log:could not be snapped downstream"
         # ORACLE for C5: the resolved outlet set, which is what
@@ -616,7 +617,8 @@ add_test(NAME smoke_linear_stats
         --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_linear_stats"
         --expect ls_linear_stats.fgb
-        --expect-vector-feature-min ls_linear_stats.fgb:2)
+        --expect-vector-feature-min ls_linear_stats.fgb:2
+        --expect-sha256 ls_linear_stats.fgb:5089ab341d0a212acc0fee3cba76c3e414aaa89bcbf7e017aabd93fa3988224a)
 set_tests_properties(smoke_linear_stats PROPERTIES
     LABELS "smoke;cli;linear_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -894,6 +896,19 @@ add_lsdtt_cli_smoke_test(
 )
 set_tests_properties(smoke_divide_migration_clusters_vector PROPERTIES
     LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_divide_migration_vector_field_case
+    lsdtt-divide-migration
+    divide_migration_clusters_vector_wrong_case.param.in
+    unused_expected_output
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "cluster field not found in vector layer: Cluster_ID"
+)
+set_tests_properties(failure_divide_migration_vector_field_case PROPERTIES
+    LABELS "failure;cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 # A clustered run whose outlets all collapse into ONE unit has no unit pair to
@@ -1687,6 +1702,14 @@ add_test(NAME unit_surface_metrics_polyfit_metric_table
 set_tests_properties(unit_surface_metrics_polyfit_metric_table
                      PROPERTIES LABELS "unit;surface_metrics")
 
+add_executable(lsdtt-test-basin-outline-metrics
+               cpp/test_basin_outline_metrics.cpp)
+target_link_libraries(lsdtt-test-basin-outline-metrics PRIVATE lsdtt3_cpu)
+add_test(NAME unit_basin_outline_metrics
+         COMMAND lsdtt-test-basin-outline-metrics)
+set_tests_properties(unit_basin_outline_metrics
+                     PROPERTIES LABELS "unit;basin_surface_metrics")
+
 add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
 target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
 
@@ -1703,6 +1726,9 @@ target_link_libraries(lsdtt-test-cosmo-ratio PRIVATE lsdtt3_cpu)
 
 add_executable(lsdtt-test-cosmo-units cpp/test_cosmo_units.cpp)
 target_link_libraries(lsdtt-test-cosmo-units PRIVATE lsdtt3_cpu)
+
+add_executable(lsdtt-test-raster-transform cpp/test_raster_transform.cpp)
+target_link_libraries(lsdtt-test-raster-transform PRIVATE lsdtt3_cpu)
 
 # Analytical step-change rasters: the Royden & Perron / Mitchell & Yanites
 # transient solution in chi, plus the imposed critical-slope hillslopes.
@@ -2993,6 +3019,9 @@ set_tests_properties(unit_niemi_ensemble PROPERTIES
 add_test(NAME unit_quartz_fertility COMMAND lsdtt-test-quartz-fertility)
 set_tests_properties(unit_quartz_fertility PROPERTIES LABELS "unit;cosmo")
 
+add_test(NAME unit_raster_transform COMMAND lsdtt-test-raster-transform)
+set_tests_properties(unit_raster_transform PROPERTIES LABELS "unit;raster_algebra;cosmo")
+
 # Landslide scar coupling and densities. Emits landslide_scar_recovery.csv,
 # which shows how a scar's concentration recovers with age at three depths and
 # what carrying it at the wrong material density does to the answer.
@@ -3388,6 +3417,9 @@ add_lsdtt_cli_smoke_test(
     cosmo_landslides_sample_ensemble.param.in
     lsens_LS_SAMPLE_EFFECT.csv
     --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:ratio_to_control_median"
+    --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:ORDER_FIRST,"
+    --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:ORDER_SECOND,-7.4887036,4.5097e-06,duplicate_of:ORDER_FIRST"
+    --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:OUTSIDE,10,10,failed_no_channel"
 )
 
 # A geographic-CRS DEM must exit cleanly with a diagnosis, NOT abort on an

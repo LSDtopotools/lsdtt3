@@ -59,6 +59,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/utils/lsdtt_numeric_utils.hpp"
 #include "../src/cpu/lsdtt_outlet_resolution_cpu.hpp"
 
 static const std::string k_version  = "0.3.0";
@@ -107,10 +108,7 @@ static std::vector<double> build_mn_vector(double mn_min, double mn_max, double 
     if (mn_max < mn_min)
         throw std::invalid_argument("mn_max must be >= mn_min.");
 
-    std::vector<double> tested;
-    for (double mn = mn_min; mn <= mn_max + 0.5 * mn_step; mn += mn_step)
-        tested.push_back(mn);
-    return tested;
+    return lsdtt::inclusive_numeric_range(mn_min, mn_max, mn_step);
 }
 
 static std::vector<double> parse_mn_override(

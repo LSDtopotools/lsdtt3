@@ -60,38 +60,6 @@ static void print_banner()
 
 
 
-// -----------------------------------------------------------------------------
-// interpolate_along - finds a point at a given distance along a line
-// -----------------------------------------------------------------------------
-lsdtt::lsdtt_xy interpolate_along(const std::vector<lsdtt::lsdtt_xy>& points, double distance) {
-    double length = lsdtt::polyline_length(points);
-    if (points.size() < 2) {
-        throw std::runtime_error("interpolate_along: A line should have at least two points");
-    }
-    if (length < distance) {
-        throw std::runtime_error("interpolate_along: 'distance' is larger than the line's length");
-    }
-
-    auto it_pt = points.begin();
-    auto it_next_pt = std::next(points.begin());
-    double distance_to_next_pt = lsdtt::planar_distance(*it_pt, *it_next_pt);
-
-    while (distance > distance_to_next_pt) {
-        distance -= distance_to_next_pt;
-        it_pt ++;
-        it_next_pt ++;
-        distance_to_next_pt = lsdtt::planar_distance(*it_pt, *it_next_pt);
-    }
-
-    const lsdtt::lsdtt_xy& pt = *it_pt;
-    const lsdtt::lsdtt_xy& next_pt = *it_next_pt;
-    lsdtt::lsdtt_xy result;
-    result.x = (distance / distance_to_next_pt) * (next_pt.x - pt.x) + pt.x,
-    result.y = (distance / distance_to_next_pt) * (next_pt.y - pt.y) + pt.y;
-
-    return result;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -313,7 +281,7 @@ int main(int argc, char* argv[])
             while (distance < line_length)
             {
                 const lsdtt::lsdtt_xy point =
-                    interpolate_along(line.points, distance);
+                    lsdtt::point_at_distance_along_polyline(line.points, distance);
 
                 const lsdtt::lsdtt_raster_meta& rmeta = raster.meta();
                 const int col = static_cast<int>(
