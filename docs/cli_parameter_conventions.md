@@ -107,11 +107,15 @@ The layer exposes functions that populate a CLI's default maps and help registry
 in one call. This ensures there is exactly one place each shared name is spelled:
 
 ```cpp
-lsdtt::declare_flow_routing_parameters(
-    bool_map, int_map, float_map, string_map, help_map);
-    // Declares: raster_is_filled, fill_min_slope, boundary_conditions,
-    //           threshold_contributing_pixels, n_threads
-    // (optional prefix for multi-stage CLIs)
+lsdtt::declare_routing_core_parameters(int_map, string_map, help_map);
+    // Declares: boundary_conditions, n_threads
+
+lsdtt::declare_raster_is_filled_parameter(bool_map, help_map);
+lsdtt::declare_fill_before_routing_parameter(bool_map, help_map);
+lsdtt::declare_fill_min_slope_parameter(float_map, help_map);
+lsdtt::declare_channel_initiation_parameters(int_map, help_map);
+    // Each declaration is independent; use only the concepts the CLI supports.
+    // Every function accepts an optional prefix for multi-stage CLIs.
 
 lsdtt::declare_output_format_parameters(...);
     // Declares: write_output_format, write_vector_format,
@@ -136,6 +140,12 @@ lsdtt::declare_synthetic_noise_parameters(...);
 
 As each CLI adopts these shared declarations during migration, it stops declaring
 these parameters itself.
+
+The flow declarations are intentionally granular. `raster_is_filled` and
+`fill_before_routing` are different questions, and many CLIs support only one.
+Similarly, a CLI may consume a pre-filled surface without owning a fill-slope
+parameter, or may define channels without exposing routing controls. Do not add
+unsupported keys merely to use a larger declaration group.
 
 ---
 

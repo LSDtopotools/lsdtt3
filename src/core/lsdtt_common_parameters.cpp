@@ -51,58 +51,15 @@ std::string prefixed_parameter_key(const std::string& prefix,
 }
 
 // -----------------------------------------------------------------------------
-// Flow routing and pit filling
+// Flow routing core
 // -----------------------------------------------------------------------------
-void declare_flow_routing_parameters(
-    std::map<std::string, bool>&        bool_default_map,
+void declare_routing_core_parameters(
     std::map<std::string, int>&         int_default_map,
-    std::map<std::string, float>&       float_default_map,
     std::map<std::string, std::string>& string_default_map,
     lsdtt_help_registry&                help_map,
     const std::string&                  prefix)
 {
     const std::string group = prefixed_group_label(prefix, "Flow routing");
-
-    // --- Pit filling -----------------------------------------------------
-    // Concept A (plan §2.2): filling is MANDATORY, this only skips the work.
-    const std::string k_raster_is_filled =
-        prefixed_parameter_key(prefix, "raster_is_filled");
-    bool_default_map[k_raster_is_filled] = false;
-    help_map[k_raster_is_filled] = {"bool", "false",
-        "Assert that the input raster has ALREADY been pit-filled.",
-        "ASKS: has the input already been filled? Filling is REQUIRED for this "
-        "analysis, so this switch does not choose whether to fill -- it only "
-        "lets the tool skip filling a surface that is filled already. Setting "
-        "it true for a DEM that still contains pits gives BAD routing, not "
-        "different routing. Do not confuse this with fill_before_routing, "
-        "which asks whether to fill at all.",
-        group, "switch", ""};
-
-    // Concept B (plan §2.2): filling is OPTIONAL and is an analytical choice.
-    const std::string k_fill_before_routing =
-        prefixed_parameter_key(prefix, "fill_before_routing");
-    bool_default_map[k_fill_before_routing] = true;
-    help_map[k_fill_before_routing] = {"bool", "true",
-        "Choose whether to pit-fill the DEM before building the flow network.",
-        "ASKS: should the DEM be filled at all? Filling is OPTIONAL here and "
-        "this is a genuine analytical choice. True (the default) routes over a "
-        "pit-free surface. False builds the flow network on the UNFILLED "
-        "surface, so flow paths terminate at sinks instead of being carried "
-        "through them. Do not confuse this with raster_is_filled, which is an "
-        "assertion that the input is already filled.",
-        group, "switch", ""};
-
-    const std::string k_fill_min_slope =
-        prefixed_parameter_key(prefix, "fill_min_slope");
-    float_default_map[k_fill_min_slope] = 0.0001f;
-    help_map[k_fill_min_slope] = {"float", "0.0001",
-        "Minimum slope (m/m) imposed by pit filling.",
-        "Passed to fill_pits() to gently enforce downstream descent across "
-        "filled depressions and flats. Only used when filling actually "
-        "happens.",
-        group, "param", ""};
-
-    // --- Routing ---------------------------------------------------------
     const std::string k_boundary_conditions =
         prefixed_parameter_key(prefix, "boundary_conditions");
     string_default_map[k_boundary_conditions] = "oooo";
@@ -112,20 +69,6 @@ void declare_flow_routing_parameters(
         "o = open, n = no-flux, p = periodic, b = forced outlet.",
         group, "param", ""};
 
-    const std::string k_threshold_contributing_pixels =
-        prefixed_parameter_key(prefix, "threshold_contributing_pixels");
-    int_default_map[k_threshold_contributing_pixels] = 1000;
-    help_map[k_threshold_contributing_pixels] = {"int", "1000",
-        "Contributing-pixel threshold defining a channel head.",
-        "The total number of upslope contributing pixels from the flow-routing "
-        "object, not the number of direct donors to a pixel. Reduce this value "
-        "to extract a denser network. This is a PIXEL COUNT and therefore "
-        "depends on the grid resolution: the equivalent drainage area is "
-        "threshold_contributing_pixels x cell area. Where a genuine area is "
-        "wanted instead, the convention is <what>_area_threshold_m2.",
-        group, "param", ""};
-
-    // --- Run control -----------------------------------------------------
     const std::string k_n_threads = prefixed_parameter_key(prefix, "n_threads");
     int_default_map[k_n_threads] = 0;
     help_map[k_n_threads] = {"int", "0",
@@ -134,6 +77,87 @@ void declare_flow_routing_parameters(
         "verbatim and OVERRIDES OMP_NUM_THREADS, so setting 1 here runs serial "
         "on any machine.",
         group, "io", ""};
+}
+
+// -----------------------------------------------------------------------------
+// Mandatory-fill assertion (concept A in plan section 2.2)
+// -----------------------------------------------------------------------------
+void declare_raster_is_filled_parameter(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map,
+    const std::string&           prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Pit filling");
+    const std::string key = prefixed_parameter_key(prefix, "raster_is_filled");
+    bool_default_map[key] = false;
+    help_map[key] = {"bool", "false",
+        "Assert that the input raster has ALREADY been pit-filled.",
+        "ASKS: has the input already been filled? Filling is REQUIRED for this "
+        "analysis, so this switch does not choose whether to fill -- it only "
+        "lets the tool skip filling a surface that is filled already. Setting "
+        "it true for a DEM that still contains pits gives BAD routing, not "
+        "different routing. Do not confuse this with fill_before_routing, "
+        "which asks whether to fill at all.",
+        group, "switch", ""};
+}
+
+// -----------------------------------------------------------------------------
+// Optional-fill analytical choice (concept B in plan section 2.2)
+// -----------------------------------------------------------------------------
+void declare_fill_before_routing_parameter(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map,
+    const std::string&           prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Pit filling");
+    const std::string key = prefixed_parameter_key(prefix, "fill_before_routing");
+    bool_default_map[key] = true;
+    help_map[key] = {"bool", "true",
+        "Choose whether to pit-fill the DEM before building the flow network.",
+        "ASKS: should the DEM be filled at all? Filling is OPTIONAL here and "
+        "this is a genuine analytical choice. True (the default) routes over a "
+        "pit-free surface. False builds the flow network on the UNFILLED "
+        "surface, so flow paths terminate at sinks instead of being carried "
+        "through them. Do not confuse this with raster_is_filled, which is an "
+        "assertion that the input is already filled.",
+        group, "switch", ""};
+}
+
+// -----------------------------------------------------------------------------
+void declare_fill_min_slope_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Pit filling");
+    const std::string key = prefixed_parameter_key(prefix, "fill_min_slope");
+    float_default_map[key] = 0.0001f;
+    help_map[key] = {"float", "0.0001",
+        "Minimum slope (m/m) imposed by pit filling.",
+        "Passed to fill_pits() to gently enforce downstream descent across "
+        "filled depressions and flats. Only used when filling actually happens.",
+        group, "param", ""};
+}
+
+// -----------------------------------------------------------------------------
+void declare_channel_initiation_parameters(
+    std::map<std::string, int>& int_default_map,
+    lsdtt_help_registry&        help_map,
+    const std::string&          prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Channel network");
+    const std::string key =
+        prefixed_parameter_key(prefix, "threshold_contributing_pixels");
+    int_default_map[key] = 1000;
+    help_map[key] = {"int", "1000",
+        "Contributing-pixel threshold defining a channel head.",
+        "The total number of upslope contributing pixels from the flow-routing "
+        "object, not the number of direct donors to a pixel. Reduce this value "
+        "to extract a denser network. This is a PIXEL COUNT and therefore "
+        "depends on the grid resolution: the equivalent drainage area is "
+        "threshold_contributing_pixels x cell area. Where a genuine area is "
+        "wanted instead, the convention is <what>_area_threshold_m2.",
+        group, "param", ""};
 }
 
 // -----------------------------------------------------------------------------

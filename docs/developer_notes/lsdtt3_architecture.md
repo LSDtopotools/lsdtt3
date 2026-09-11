@@ -1103,32 +1103,37 @@ re-typed independently by each CLI, so one author wrote 0 and another wrote 1
 with no intent behind the difference, 20+ CLIs re-declared the same help text with
 silent corrections, and threshold values diverged without reason.
 
-**The pattern:** Each semantic group (flow routing, output formats, basin outlets,
-fitting parameters, synthetic domains) gets one function that populates a caller's
-default and help maps:
+**The pattern:** Each independently selectable semantic group gets one function
+that populates a caller's default and help maps. Flow parameters are deliberately
+granular because a CLI may support routing, one of two distinct fill concepts,
+or channel initiation without supporting all of them:
 
 ```cpp
-lsdtt::declare_flow_routing_parameters(
-    std::map<std::string, bool>&        bool_map,
+lsdtt::declare_routing_core_parameters(
     std::map<std::string, int>&         int_map,
-    std::map<std::string, float>&       float_map,
     std::map<std::string, std::string>& string_map,
     lsdtt::lsdtt_help_registry&         help_map,
     const std::string& prefix = ""      // optional, for multi-stage CLIs
 );
+
+lsdtt::declare_raster_is_filled_parameter(bool_map, help_map);
+lsdtt::declare_fill_before_routing_parameter(bool_map, help_map);
+lsdtt::declare_fill_min_slope_parameter(float_map, help_map);
+lsdtt::declare_channel_initiation_parameters(int_map, help_map);
 ```
 
-On return, the maps contain the full set of shared parameters and their help
+On return, the maps contain only the selected shared parameters and their help
 entries, ready for a CLI to call `parse_all_parameters()`.
 
-**Adoption in a CLI:** Instead of hand-declaring `threshold_contributing_pixels`,
-`raster_is_filled`, `fill_min_slope`, etc. separately, a CLI calls:
+**Adoption in a CLI:** Instead of hand-declaring shared parameters, a CLI
+composes only the declarations for concepts it actually supports:
 
 ```cpp
-lsdtt::declare_flow_routing_parameters(
-    bool_default_map, int_default_map, float_default_map,
-    string_default_map, help_map
-);
+lsdtt::declare_routing_core_parameters(
+    int_default_map, string_default_map, help_map);
+lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
+lsdtt::declare_fill_min_slope_parameter(float_default_map, help_map);
+lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 ```
 
 After adoption, renaming that parameter is a one-line change in one file, not a

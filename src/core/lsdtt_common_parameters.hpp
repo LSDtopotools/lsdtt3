@@ -39,9 +39,11 @@
 //   std::map<std::string,std::string> string_default_map;
 //   lsdtt::lsdtt_help_registry        help_map;
 //
-//   lsdtt::declare_flow_routing_parameters(bool_default_map, int_default_map,
-//                                          float_default_map, string_default_map,
-//                                          help_map);
+//   lsdtt::declare_routing_core_parameters(
+//       int_default_map, string_default_map, help_map);
+//   lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
+//   lsdtt::declare_fill_min_slope_parameter(float_default_map, help_map);
+//   lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 //
 //   // A CLI that genuinely wants a different default overwrites AFTER the call:
 //   int_default_map["threshold_contributing_pixels"] = 200;
@@ -118,8 +120,8 @@
 // THE TWO FILL FLAGS ARE NOT THE SAME PARAMETER
 //
 // `raster_is_filled` and `fill_before_routing` are one word apart and ask
-// different questions (plan §2.2 / decision D2). Both are declared by
-// `declare_flow_routing_parameters` and the help text of each names the other:
+// different questions (plan section 2.2 / decision D2). They have separate
+// declaration functions, and the help text of each names the other:
 //
 //   raster_is_filled     - "has the input ALREADY been filled?" Filling is
 //                          MANDATORY for the operation; this flag only lets the
@@ -154,22 +156,41 @@ namespace lsdtt
     const std::string& key);
 
 // -----------------------------------------------------------------------------
-// Flow routing and pit filling.
+// Flow-routing core.
 //
-//   raster_is_filled              bool    false      (plan §3, D2 concept A)
-//   fill_before_routing           bool    true       (plan §3, D2 concept B)
-//   fill_min_slope                float   1e-4       (plan §3)
 //   boundary_conditions           string  "oooo"
-//   threshold_contributing_pixels int     1000       (plan D1/D3)
 //   n_threads                     int     0
 // -----------------------------------------------------------------------------
-void declare_flow_routing_parameters(
-    std::map<std::string, bool>&        bool_default_map,
+void declare_routing_core_parameters(
     std::map<std::string, int>&         int_default_map,
-    std::map<std::string, float>&       float_default_map,
     std::map<std::string, std::string>& string_default_map,
     lsdtt_help_registry&                help_map,
     const std::string&                  prefix = "");
+
+// Mandatory-fill assertion: filling is required; true skips work already done.
+void declare_raster_is_filled_parameter(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map,
+    const std::string&           prefix = "");
+
+// Optional-fill choice: false deliberately routes into sinks.
+void declare_fill_before_routing_parameter(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map,
+    const std::string&           prefix = "");
+
+// Fill slope is independent because not every caller exposing a fill concept
+// performs the fill itself or spells the stage slope without a prefix.
+void declare_fill_min_slope_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix = "");
+
+// Channel-initiation threshold (plan D1/D3).
+void declare_channel_initiation_parameters(
+    std::map<std::string, int>& int_default_map,
+    lsdtt_help_registry&        help_map,
+    const std::string&          prefix = "");
 
 // -----------------------------------------------------------------------------
 // Output formats.
