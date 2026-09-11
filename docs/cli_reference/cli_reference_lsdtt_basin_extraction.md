@@ -200,7 +200,7 @@ write_path:  /data/parkfield/
 read_fname:  parkfield_COP30_fill.tif
 write_fname: parkfield
 raster_is_filled: true
-source_pixels_threshold: 200
+threshold_contributing_pixels: 200
 
 select_basins_from_line_crossings: true
 crossing_line_fname: parkfield_COP30_clipped_vector.gpkg

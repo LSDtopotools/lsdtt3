@@ -55,7 +55,11 @@ class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
 
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_MOSAIC, "Mosaic raster"))
 
-        attach_backend_help(self, "lsdtt-raster-preprocessing")
+        attach_backend_help(
+            self,
+            "lsdtt-raster-preprocessing",
+            overrides={self.INPUT_RASTERS: "mosaic_file_list"},
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         raster_layers = self.parameterAsLayerList(parameters, self.INPUT_RASTERS, context)

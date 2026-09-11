@@ -17,8 +17,8 @@ basin_outlet_contributing_pixels_threshold: 100
 reject_nodata_edge_basins: false
 
 calculate_channel_stats: true
-# Deliberately omit threshold_contributing_pixels. This fixture characterizes
-# the pre-Phase-4 default (500) and CTest asserts the reported value.
+# Deliberately omit threshold_contributing_pixels. This fixture pins the
+# canonical shared default and CTest asserts its reported value and behaviour.
 calculate_junction_area_ratios: true
 calculate_centre_of_mass_bearing: true
 calculate_shape_metrics: true

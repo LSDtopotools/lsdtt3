@@ -178,7 +178,7 @@ channel donor.
 
 **This matters more than it looks: the channel head position is the single thing
 that sets hillslope length.** A curvature-based detector (`wiener`) places it on
-evidence; `source_pixels_threshold` places it on a chosen number. Prefer the
+evidence; `threshold_contributing_pixels` places it on a chosen number. Prefer the
 former, and ingest it rather than re-deriving it.
 
 The network must come from **the same DEM** this tool reads. Points falling on
@@ -328,7 +328,7 @@ prints the same information.
 | parameter | type | default | what it does |
 |---|---|---|---|
 | `channel_network_file` | string | `` | Optional channel network to ingest instead of extracting one. |
-| `source_pixels_threshold` | int | `1000` | Contributing pixels defining a channel head. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing pixels defining a channel head. |
 
 ### Floodplain
 

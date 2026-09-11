@@ -216,7 +216,7 @@ def run_basin_extraction_for_sample(
                 f"write_path: {sdir}",
                 f"read_fname: {dem_local.name}",
                 "write_fname: basin",
-                f"source_pixels_threshold: {threshold_px}",
+                f"threshold_contributing_pixels: {threshold_px}",
                 "select_basins_from_outlets: true",
                 f"basin_outlet_file: {pt_csv.name}",
                 "basin_outlet_snapping_method: expanding_square",

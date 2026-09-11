@@ -31,7 +31,7 @@ Steps are gated by booleans and run in this order:
 |---|---|
 | 1. Pit filling | `raster_is_filled: false` |
 | 2. D8 flow routing | always |
-| 3. Source extraction | `source_pixels_threshold` |
+| 3. Source extraction | `threshold_contributing_pixels` |
 | 4. Chi extraction + data map | `print_chi_data_maps: true` |
 | 5. Chi coordinate raster | `write_chi_coordinate_raster: true` |
 | 6. Chi network fitting + disorder sweep | `fit_chi_networks: true` |
@@ -88,7 +88,7 @@ If `basin_outlet_file` is `NULL` the largest basin in the DEM is used automatica
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `source_pixels_threshold` | int | `1000` | Contributing-pixel count used to define channel heads. Chi is computed only on pixels upstream of channel heads. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel count used to define channel heads. Chi is computed only on pixels upstream of channel heads. |
 | `minimum_channel_pixels` | int | `20` | Reject basins whose extracted channel has fewer than this many nodes. `0` or `1` keeps all basins. |
 | `n_pixels_move_outlet_upstream` | int | `10` | Move interior (non-edge) auto-detected outlets this many pixels upstream so the basin clears a coastal nodata fringe. `0` disables. |
 | `n_largest_basins` | int | `5` | Keep only the N largest complete basins, ranked by basin pixels. `0` = no size cap. |
@@ -121,7 +121,7 @@ divide-migration and cross-divide chi-contrast analysis.
 Behaviour:
 
 - Chi is integrated upstream from each retained basin outlet with chi = 0 at the outlet.
-- Basins are selected exactly as for the other chi outputs: `source_pixels_threshold`,
+- Basins are selected exactly as for the other chi outputs: `threshold_contributing_pixels`,
   then `minimum_channel_pixels`, then `n_largest_basins`. The completeness filter
   **always** runs here, so a basin whose upslope area touches nodata or the DEM edge
   is never written even when `n_largest_basins: 0`.
@@ -200,7 +200,7 @@ read_path:  /data/dems/
 read_fname: catchment.tif
 
 raster_is_filled:           false
-source_pixels_threshold:    1000
+threshold_contributing_pixels: 1000
 
 print_chi_data_maps:        true
 chi_data_maps_output_format: flatgeobuf
@@ -213,7 +213,7 @@ m_over_n:                   0.45
 read_path:  /data/dems/
 read_fname: catchment.tif
 
-source_pixels_threshold:    1000
+threshold_contributing_pixels: 1000
 basin_outlet_file:          outlets.csv
 
 fit_chi_networks:   true

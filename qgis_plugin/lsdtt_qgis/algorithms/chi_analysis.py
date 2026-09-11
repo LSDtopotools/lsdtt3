@@ -32,7 +32,7 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
     RASTER_IS_FILLED = "RASTER_IS_FILLED"
     FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
-    SOURCE_THRESHOLD = "SOURCE_THRESHOLD"
+    THRESHOLD_CONTRIBUTING_PIXELS = "THRESHOLD_CONTRIBUTING_PIXELS"
     MINIMUM_CHANNEL_PIXELS = "MINIMUM_CHANNEL_PIXELS"
     N_LARGEST_BASINS = "N_LARGEST_BASINS"
     BASIN_OUTLET_FILE = "BASIN_OUTLET_FILE"
@@ -124,8 +124,8 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterNumber(
-                self.SOURCE_THRESHOLD,
-                "Source threshold (pixels)",
+                self.THRESHOLD_CONTRIBUTING_PIXELS,
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
                 defaultValue=1000,
@@ -469,7 +469,7 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
                 self.BOOTSTRAP_SEED: "bootstrap_random_seed",
                 self.FIT_NETWORKS: "fit_chi_networks",
                 self.PRINT_DATA_MAPS: "print_chi_data_maps",
-                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
                 self.WRITE_DATA_MAP_LINES: "write_chi_data_map_lines",
                 self.WRITE_KSN_SUMMARY: "write_ksn_basin_summary",
                 self.WRITE_SEGMENT_LINES: "write_chi_fit_segment_lines",
@@ -509,6 +509,11 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
 
         fit_networks = self.parameterAsBool(parameters, self.FIT_NETWORKS, context)
         write_segment_lines = self.parameterAsBool(parameters, self.WRITE_SEGMENT_LINES, context)
+        if write_segment_lines and not fit_networks:
+            fit_networks = True
+            feedback.pushInfo(
+                "Chi fit segment lines require network fitting; enabling fit_chi_networks."
+            )
         print_data_maps = self.parameterAsBool(parameters, self.PRINT_DATA_MAPS, context)
         write_data_map_lines = self.parameterAsBool(parameters, self.WRITE_DATA_MAP_LINES, context)
         run_inversion = self.parameterAsBool(parameters, self.RUN_INVERSION, context)
@@ -553,7 +558,9 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             # DEM preparation and network extraction
             "raster_is_filled": self.parameterAsBool(parameters, self.RASTER_IS_FILLED, context),
             "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
-            "source_pixels_threshold": self.parameterAsInt(parameters, self.SOURCE_THRESHOLD, context),
+            "threshold_contributing_pixels": self.parameterAsInt(
+                parameters, self.THRESHOLD_CONTRIBUTING_PIXELS, context
+            ),
             "minimum_channel_pixels": self.parameterAsInt(parameters, self.MINIMUM_CHANNEL_PIXELS, context),
             "n_largest_basins": self.parameterAsInt(parameters, self.N_LARGEST_BASINS, context),
             "n_pixels_move_outlet_upstream": self.parameterAsInt(
@@ -659,8 +666,12 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
                 ),
             )
             segment_matches = sorted(glob.glob(segment_pattern))
-            if segment_matches:
-                outputs[self.OUTPUT_SEGMENT_LINES] = segment_matches[0]
+            if not segment_matches:
+                raise QgsProcessingException(
+                    "Expected chi fit segment lines output not found: {}. "
+                    "Check the run log in the output folder for warnings.".format(segment_pattern)
+                )
+            outputs[self.OUTPUT_SEGMENT_LINES] = segment_matches[0]
         if print_data_maps:
             outputs[self.OUTPUT_DATA_MAPS] = require_output(
                 output_folder, output_prefix,

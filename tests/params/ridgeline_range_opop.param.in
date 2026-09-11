@@ -28,7 +28,7 @@ fill_min_slope: 0.0001
 boundary_conditions: opop
 
 ridgeline_analysis_mode: range_defined_ridgelines
-source_pixels_threshold: 150
+threshold_contributing_pixels: 150
 
 calculate_polyfit_metrics_directly_on_dem: true
 polyfit_metrics: slope,maximum_curvature

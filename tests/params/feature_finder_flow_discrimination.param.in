@@ -1,4 +1,4 @@
-# Phase 4 compatibility characterization for the legacy flow-discrimination keys.
+# Compatibility coverage for the legacy threshold and fill keys.
 read_path: __READ_PATH__
 read_fname: tiny_dem.asc
 write_path: __WRITE_PATH__
@@ -8,7 +8,7 @@ feature_type: flow_road_discrimination
 n_threads: 1
 write_output_format: gtiff
 
-# Keep these old spellings explicit after canonical aliases are introduced.
+# Keep both old spellings explicit.
 flow_dem_is_filled: true
 flow_accumulation_threshold_pixels: 3
 

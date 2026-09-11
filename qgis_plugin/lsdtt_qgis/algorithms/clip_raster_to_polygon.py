@@ -82,7 +82,11 @@ class ClipRasterToPolygonAlgorithm(QgsProcessingAlgorithm):
 
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_CLIPPED, "Clipped raster"))
 
-        attach_backend_help(self, "lsdtt-raster-preprocessing")
+        attach_backend_help(
+            self,
+            "lsdtt-raster-preprocessing",
+            overrides={self.INPUT_POLYGON: "polygon_clip_fname"},
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

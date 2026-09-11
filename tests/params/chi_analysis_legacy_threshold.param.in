@@ -1,0 +1,14 @@
+# Compatibility coverage for the legacy channel-initiation key.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: chi_legacy
+raster_is_filled: false
+source_pixels_threshold: 1
+minimum_channel_pixels: 1
+n_largest_basins: 0
+mn_min: 0.5
+mn_max: 0.5
+mn_step: 0.1
+fit_chi_networks: true
+write_fit_tables: true

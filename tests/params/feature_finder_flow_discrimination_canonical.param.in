@@ -1,0 +1,20 @@
+# Canonical threshold and fill-key coverage for flow discrimination.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: ff_flow_canonical
+
+feature_type: flow_road_discrimination
+n_threads: 1
+write_output_format: gtiff
+raster_is_filled: true
+threshold_contributing_pixels: 3
+
+flow_regional_smoothing_metres: 3
+flow_path_half_window: 1
+flow_intermediate_window_metres: 3
+flow_roughness_radius_metres: 1
+
+write_flow_discrimination_rasters: true
+write_flow_divergent_points_fgb: false
+write_flow_valley_channel_points_fgb: false

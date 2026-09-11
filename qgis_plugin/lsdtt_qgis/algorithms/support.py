@@ -19,6 +19,7 @@ from qgis.core import (
 )
 
 from ..backend.manager import BackendManager
+from ..backend.manifest import backend_compatibility_error, load_manifest
 from ..backend.runner import run_cli, write_log
 from ..naming import (
     build_backend_help_index,
@@ -148,6 +149,13 @@ def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedba
 
     Raises QgsProcessingException on a non-zero exit code.
     """
+    backend = BackendManager()
+    compatibility_error = backend_compatibility_error(
+        load_manifest(backend.backend_path())
+    )
+    if compatibility_error:
+        raise QgsProcessingException(compatibility_error)
+
     log_stem = tool_name.replace("lsdtt-", "").replace("-", "_")
 
     driver_dir = param_values.get("read_path")
@@ -183,7 +191,6 @@ def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedba
                 "Saved reproducible parameter file: {}".format(params_file)
             )
 
-        backend = BackendManager()
         executable = backend.executable_path(tool_name)
         command = [executable, driver_dir, params_name]
         log_path = os.path.join(

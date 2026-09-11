@@ -70,10 +70,14 @@ Steps run in this order:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `feature_type` | string | `terrace` | Feature to detect. Options: `terrace`, `piedmont`, `hillslope_break`. |
+| `feature_type` | string | `terrace` | Feature to detect. Options include `terrace`, `piedmont`, `hillslope_break`, and `flow_road_discrimination`. |
 | `relief_threshold_metres` | float | `5.0` | Local relief threshold (metres) for feature detection. |
 | `slope_threshold_degrees` | float | `5.0` | Slope threshold (degrees) for classification. |
 | `smoothing_scale_metres` | float | `50.0` | Smoothing scale (metres) for surface fitting prior to analysis. |
+
+For `feature_type: flow_road_discrimination`, `threshold_contributing_pixels`
+(int, default `1000`) defines the D8 channel network used to distinguish flow
+pathways from roads.
 
 ---
 

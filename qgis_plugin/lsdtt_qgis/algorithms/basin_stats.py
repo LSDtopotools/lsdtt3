@@ -103,10 +103,10 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.THRESHOLD_CONTRIBUTING_PIXELS,
-                "Source threshold (contributing pixels)",
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
-                defaultValue=500,
+                defaultValue=1000,
             )
         )
         self.addParameter(
@@ -338,10 +338,6 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
         )
         write_polygons = self.parameterAsBool(parameters, self.WRITE_BASIN_POLYGONS, context)
         write_hillshade = self.parameterAsBool(parameters, self.WRITE_HILLSHADE, context)
-        if calculate_area_ratios and not calculate_channel_stats:
-            raise QgsProcessingException(
-                "Junction drainage-area ratios require channel statistics to be enabled."
-            )
         polygon_format = self.VECTOR_FORMAT_OPTIONS[
             self.parameterAsEnum(parameters, self.BASIN_POLYGON_FORMAT, context)
         ]

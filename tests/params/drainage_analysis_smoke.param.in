@@ -5,6 +5,7 @@ write_fname: tiny
 
 raster_is_filled: false
 write_output_format: gtiff
+threshold_contributing_pixels: 1000
 
 write_d8_drainage_area_raster: true
 write_dinf_drainage_area_raster: false

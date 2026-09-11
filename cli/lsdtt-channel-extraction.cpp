@@ -135,17 +135,12 @@ int main(int argc, char* argv[])
         "Pit filling", "param", ""};
 
     // --- Source extraction ---
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define source channel heads.",
-        "Channel heads are extracted from the flow-routing object using a "
-        "contributing-pixel threshold. Reduce this value to extract denser networks.",
-        "Channel sources", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     string_default_map["source_extraction_algorithm_choice"] = "threshold";
     help_map["source_extraction_algorithm_choice"] = {"string","threshold",
         "Source extraction algorithm.",
-        "Allowed values: threshold, wiener. Threshold uses source_pixels_threshold. "
+        "Allowed values: threshold, wiener. Threshold uses threshold_contributing_pixels. "
         "Wiener uses filtered-DEM curvature, QQ thresholding, and area pruning.",
         "Channel sources", "switch", ""};
 
@@ -392,6 +387,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    pp.set_deprecated_aliases({
+        {"source_pixels_threshold", "threshold_contributing_pixels"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -415,9 +412,9 @@ int main(int argc, char* argv[])
     }
 
     if (source_algorithm_choice == "threshold" &&
-        ifs["source_pixels_threshold"] <= 0)
+        ifs["threshold_contributing_pixels"] <= 0)
     {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -712,7 +709,7 @@ int main(int argc, char* argv[])
     if (source_algorithm_choice == "threshold")
     {
         std::cout << "Contributing-pixel threshold: "
-                  << ifs["source_pixels_threshold"] << "\n";
+                  << ifs["threshold_contributing_pixels"] << "\n";
 
         const lsdtt::lsdtt_flowinfo* flow_cpu =
             dynamic_cast<const lsdtt::lsdtt_flowinfo*>(flow.get());
@@ -728,7 +725,7 @@ int main(int argc, char* argv[])
         {
             source_flats =
                 flow_cpu->get_sources_index_threshold(
-                    ifs["source_pixels_threshold"]
+                    ifs["threshold_contributing_pixels"]
                 );
         }
         catch (const std::exception& e)
@@ -843,7 +840,7 @@ int main(int argc, char* argv[])
         if (source_algorithm_choice == "threshold")
         {
             std::cerr << "FATAL: source extraction returned no source pixels. "
-                      << "Try lowering source_pixels_threshold.\n";
+                      << "Try lowering threshold_contributing_pixels.\n";
         }
         else
         {

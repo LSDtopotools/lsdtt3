@@ -60,6 +60,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
@@ -105,11 +106,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     // --- Channel scope (mirrors lsdtt-flat-surface-finder) ---
-    int_default_map["channel_threshold_contributing_pixels"] = 1000;
-    help_map["channel_threshold_contributing_pixels"] = {"int","1000",
-        "Contributing-pixel threshold used to snap source points onto the "
-        "channel network.","",
-        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     for (const std::string& role : {std::string("source"), std::string("outlet")})
     {
@@ -540,7 +537,9 @@ int main(int argc, char* argv[])
     // went. A second hard error would say the same thing twice.
     // -------------------------------------------------------------------------
     pp.set_deprecated_aliases({
-        {"valley_corridor_width_metres", "valley_corridor_half_width_metres"} });
+        {"valley_corridor_width_metres", "valley_corridor_half_width_metres"},
+        {"channel_threshold_contributing_pixels",
+         "threshold_contributing_pixels"} });
 
     {
         std::map<std::string, std::string> ignored;
@@ -639,6 +638,9 @@ int main(int argc, char* argv[])
     // Channel scope
     // -------------------------------------------------------------------------
     std::cout << "\n--- Channel scope resolution ---\n";
+    std::cout << "Channel threshold: "
+              << ifs["threshold_contributing_pixels"]
+              << " contributing pixels\n";
     lsdtt::channel_scope_result scope;
     try
     {
@@ -654,7 +656,7 @@ int main(int argc, char* argv[])
 
         lsdtt::channel_scope_request scope_req;
         scope_req.threshold_contributing_pixels =
-            ifs["channel_threshold_contributing_pixels"];
+            ifs["threshold_contributing_pixels"];
         scope_req.source_flats = load_role_flats("source");
         scope_req.outlet_flats = load_role_flats("outlet");
         scope_req.snap_sources = bf["snap_sources_to_channel_threshold"];

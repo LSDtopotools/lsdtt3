@@ -383,7 +383,7 @@ class SurfaceMetricsAlgorithm(QgsProcessingAlgorithm):
                 self.WRITE_MADK2: "write_madk2_rasters",
                 self.MADK2_WINDOW_RADIUS: "madk2_window_radius_metres",
                 self.WRITE_POLYFIT_RASTERS: "write_polyfit_rasters",
-                self.SLOPE_THRESHOLD_LAYERS: "slope_threshold_layers",
+                self.SLOPE_THRESHOLD_LAYERS: "slope_thresholds",
                 self.WRITE_SHAPE_CURVATURE_RASTERS: "write_shape_curvature_rasters",
             },
         )
@@ -469,7 +469,7 @@ class SurfaceMetricsAlgorithm(QgsProcessingAlgorithm):
                 parameters, self.POLYFIT_FLAT_SLOPE_TOLERANCE, context
             ),
             "write_slope_threshold_layers": write_slope_thresholds,
-            "slope_threshold_layers": self.parameterAsString(
+            "slope_thresholds": self.parameterAsString(
                 parameters, self.SLOPE_THRESHOLD_LAYERS, context
             ),
             "clamp_slope_to_threshold": self.parameterAsBool(

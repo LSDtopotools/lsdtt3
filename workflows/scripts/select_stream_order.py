@@ -9,7 +9,7 @@ import sys
 
 
 def run_for_order(exe: pathlib.Path, dem_path: pathlib.Path, work_dir: pathlib.Path,
-                  source_threshold: int, stream_order: int) -> int:
+                  threshold_contributing_pixels: int, stream_order: int) -> int:
     param_path = work_dir / f"probe_order_{stream_order}.param"
     text = (
         f"read_path: {dem_path.parent}\n"
@@ -17,7 +17,7 @@ def run_for_order(exe: pathlib.Path, dem_path: pathlib.Path, work_dir: pathlib.P
         f"write_path: {work_dir}\n"
         f"write_fname: probe_order_{stream_order}\n\n"
         "raster_is_filled: true\n"
-        f"source_pixels_threshold: {source_threshold}\n\n"
+        f"threshold_contributing_pixels: {threshold_contributing_pixels}\n\n"
         "select_all_basins_of_stream_order: true\n"
         f"selected_stream_order: {stream_order}\n\n"
         "write_basin_outlines: false\n"
@@ -61,7 +61,7 @@ def main() -> int:
     ap.add_argument("--exe", required=True)
     ap.add_argument("--dem", required=True)
     ap.add_argument("--work-dir", required=True)
-    ap.add_argument("--source-threshold", type=int, required=True)
+    ap.add_argument("--threshold-contributing-pixels", type=int, required=True)
     ap.add_argument("--min-basins", type=int, required=True)
     ap.add_argument("--max-order", type=int, required=True)
     ap.add_argument("--selected-order-out", required=True)
@@ -86,7 +86,9 @@ def main() -> int:
     rows = []
     chosen = None
     for order in range(args.max_order, 0, -1):
-        n_basins = run_for_order(exe, dem, work_dir, args.source_threshold, order)
+        n_basins = run_for_order(
+            exe, dem, work_dir, args.threshold_contributing_pixels, order
+        )
         rows.append((order, n_basins))
         if n_basins >= args.min_basins:
             chosen = order

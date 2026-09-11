@@ -76,7 +76,7 @@ Steps run in this order:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `source_extraction_algorithm_choice` | string | `threshold` | Source extraction method. Allowed values: `threshold`, `wiener`. |
-| `source_pixels_threshold` | int | `1000` | Contributing-pixel count required to define a channel head. Reduce to extract a denser network. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel count required to define a channel head. Reduce to extract a denser network. |
 
 ### Wiener parameters
 
@@ -212,7 +212,7 @@ Profile columns: `feature_id`, `flow_distance`, `x`, `y`, `dem_elevation`, `burn
 read_path:  /data/dems/
 read_fname: my_dem.tif
 
-source_pixels_threshold:          500
+threshold_contributing_pixels: 500
 write_channel_network_lines:      true
 write_channel_network_junctions:  true
 ```
@@ -224,7 +224,7 @@ read_path: /data/dems/
 read_fname: my_dem.tif
 
 source_extraction_algorithm_choice: threshold
-source_pixels_threshold: 750
+threshold_contributing_pixels: 750
 
 write_channel_network_lines: true
 ```

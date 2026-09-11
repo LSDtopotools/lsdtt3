@@ -31,12 +31,14 @@ def parse_args() -> argparse.Namespace:
                         help="File that must exist and be non-empty after stage 2")
     parser.add_argument("--stage2-stdout-contains", action="append", default=[],
                         help="Required substring in stage 2's stdout")
+    parser.add_argument("--stage2-stderr-contains", action="append", default=[],
+                        help="Required substring in stage 2's stderr")
     return parser.parse_args()
 
 
 def run_stage(exe: pathlib.Path, work_dir: pathlib.Path, out_dir: pathlib.Path,
               template: pathlib.Path, read_path: pathlib.Path,
-              tag: str) -> str:
+              tag: str) -> tuple[str, str]:
     rendered = (template.read_text(encoding="utf-8")
                 .replace("__READ_PATH__", str(read_path))
                 .replace("__WRITE_PATH__", str(out_dir)))
@@ -55,7 +57,7 @@ def run_stage(exe: pathlib.Path, work_dir: pathlib.Path, out_dir: pathlib.Path,
         print(f"Stdout: {work_dir / f'stdout_{tag}.log'}", file=sys.stderr)
         print(f"Stderr: {work_dir / f'stderr_{tag}.log'}", file=sys.stderr)
         sys.exit(result.returncode)
-    return result.stdout
+    return result.stdout, result.stderr
 
 
 def main() -> int:
@@ -79,18 +81,27 @@ def main() -> int:
         if src.exists():
             shutil.copy(src, out_dir / name)
 
-    stage2 = run_stage(pathlib.Path(args.centreline_exe).resolve(), work_dir,
-                       out_dir, pathlib.Path(args.centreline_param).resolve(),
-                       out_dir, "centreline")
+    stage2_stdout, stage2_stderr = run_stage(
+        pathlib.Path(args.centreline_exe).resolve(), work_dir,
+        out_dir, pathlib.Path(args.centreline_param).resolve(),
+        out_dir, "centreline")
 
     errors = 0
     for needle in args.stage2_stdout_contains:
-        if needle not in stage2:
+        if needle not in stage2_stdout:
             print(f"Validation failed: stage 2 stdout lacks: {needle}",
                   file=sys.stderr)
             errors += 1
         else:
             print(f"  OK  stage 2 reported: {needle}")
+
+    for needle in args.stage2_stderr_contains:
+        if needle not in stage2_stderr:
+            print(f"Validation failed: stage 2 stderr lacks: {needle}",
+                  file=sys.stderr)
+            errors += 1
+        else:
+            print(f"  OK  stage 2 warning reported: {needle}")
 
     for rel in args.expect:
         path = out_dir / rel

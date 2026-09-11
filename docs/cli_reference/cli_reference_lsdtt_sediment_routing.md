@@ -70,7 +70,7 @@ Steps run in this order:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `flow_routing_algorithm` | string | `d8` | Flow routing method: `d8` (D8, preferred for sediment routing), `dinf` (D-infinity). |
+| `threshold_contributing_pixels` | int | `1000` | Minimum D8 contributing-pixel count used to extract the channel network routed by the model. |
 
 ---
 

@@ -21,6 +21,6 @@ ladder_break_algorithm_choice: jenks
 ladder_level_count: 2
 vertical_accuracy_metres: 0.5
 
-channel_threshold_contributing_pixels: 500
+threshold_contributing_pixels: 500
 write_valley_mask_raster: true
 clean_valley_mask: true

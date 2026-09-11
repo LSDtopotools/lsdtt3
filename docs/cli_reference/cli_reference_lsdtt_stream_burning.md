@@ -222,6 +222,14 @@ Shared by `snap_to_network` and `snap_to_accumulation`. When a vector source sit
 
 ---
 
+## D8-guided vector-network cleaning
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining the D8 channel mask used to score loop arms. |
+
+---
+
 ## Output files (always written)
 
 | File | Description |

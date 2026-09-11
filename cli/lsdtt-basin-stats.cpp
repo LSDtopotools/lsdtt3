@@ -637,11 +637,7 @@ int main(int argc, char* argv[])
         "Requires threshold_contributing_pixels to define channel sources.",
         "Channel statistics", "switch", ""};
 
-    int_default_map["threshold_contributing_pixels"] = 500;
-    help_map["threshold_contributing_pixels"] = {"int","500",
-        "Minimum number of contributing pixels to define a channel source.",
-        "Used when calculate_channel_stats is true. Larger values give a sparser network.",
-        "Channel statistics", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     bool_default_map["calculate_junction_area_ratios"] = false;
     help_map["calculate_junction_area_ratios"] = {"bool","false",

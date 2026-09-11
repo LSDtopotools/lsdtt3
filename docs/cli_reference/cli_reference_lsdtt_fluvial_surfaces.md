@@ -322,7 +322,7 @@ exactly what it was given.
 | `fill_before_routing` | bool | `true` | Choose whether to fill pits before building flow routing. `false` routes on the unfilled DEM, so paths may terminate at sinks. |
 | `fill_min_slope_for_routing` | float | `0.0001` | Minimum imposed slope when filling [m/m]. |
 | `boundary_conditions` | string | `oooo` | Edge boundary codes, north east south west. |
-| `channel_threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining a channel. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining a channel. |
 | `break_flats_with_channels` | bool | `false` | Remove in-scope channel pixels from the admitted set before banding. |
 | `connect_surfaces_to_channels` | bool | `false` | Record which in-scope channel each surface is linked to. |
 | `auto_detect_outlet_points` | bool | `true` | Infer source and outlet roles from a single combined point file. |

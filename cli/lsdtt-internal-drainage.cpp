@@ -25,6 +25,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
@@ -612,7 +613,7 @@ int main(int argc, char* argv[])
 
     int_default_map["minimum_pixels_in_patch"] = 1;
     int_default_map["n_threads"] = 0;
-    int_default_map["threshold_contributing_pixels"] = 5000;
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     float_default_map["minimum_sink_depth"] = 0.0f;
     float_default_map["minimum_sink_area"] = 0.0f;
@@ -684,10 +685,6 @@ int main(int argc, char* argv[])
         "Legacy-compatible minimum depression size.", "Detection", "param", ""};
     help_map["n_threads"] = {"int", "0", "Thread count.", "0 uses available threads.",
         "Run control", "io", ""};
-    help_map["threshold_contributing_pixels"] = {"int", "5000", "Channel threshold.",
-        "Minimum contributing pixels defining channel sources.",
-        "Channels", "param", "extract_sink_channel_networks"};
-
     help_map["minimum_sink_depth"] = {"float", "0.0", "Minimum sink depth.",
         "Reject shallower candidates.", "Detection", "param", ""};
     help_map["minimum_sink_area"] = {"float", "0.0", "Minimum depression area.",

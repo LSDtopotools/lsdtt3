@@ -245,7 +245,7 @@ rule write_cosmo_transient_channel_params:
             f"fill_before_routing: {_ct_bool(rt['fill_before_routing'])}\n"
             f"min_slope_for_fill: {rt['min_slope_for_fill']}\n"
             f"boundary_conditions: {rt['boundary_conditions']}\n"
-            f"source_pixels_threshold: {CTL['sampling']['source_pixels_threshold']}\n\n"
+            f"threshold_contributing_pixels: {CTL['sampling']['threshold_contributing_pixels']}\n\n"
             "write_channel_network_points: true\n"
             "channel_network_points_output_format: csv\n"
         )

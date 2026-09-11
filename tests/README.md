@@ -67,7 +67,7 @@ More rigorous checks currently included:
 - `rigorous_raster_calculator_difference_checksum`: checks the GDAL checksum of `tiny_difference.tif`.
 - `rigorous_drainage_d8_checksum`: checks the GDAL checksum of `tiny_d8_drainage_area.tif`.
 - `rigorous_chi_nodes_sha256`: checks SHA256 of `tiny_chi_fit_nodes_mn_0p500.csv`.
-- `failure_channel_extraction_invalid_threshold`: expected-failure test for invalid `source_pixels_threshold`.
+- `failure_channel_extraction_invalid_threshold`: expected-failure test for invalid `threshold_contributing_pixels`.
 - `failure_raster_calculator_missing_second`: expected-failure test for missing `second_raster_fname`.
 
 ## Divide migration

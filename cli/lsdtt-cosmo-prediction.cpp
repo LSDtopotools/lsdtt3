@@ -736,11 +736,7 @@ int main(int argc, char* argv[])
         "If absent from the points CSV, the column is omitted from the output.",
         "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
 
-    int_default_map["threshold_contributing_pixels"] = 1000;
-    help_map["threshold_contributing_pixels"] = {"int","1000",
-        "Minimum contributing pixels for a node to count as a channel when snapping sample points.",
-        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set.",
-        "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     int_default_map["snap_search_radius_pixels"] = 8;
     help_map["snap_search_radius_pixels"] = {"int","8",

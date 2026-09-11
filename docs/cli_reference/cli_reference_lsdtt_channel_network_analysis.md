@@ -75,7 +75,7 @@ There is no `write_output_format` for this CLI — vector and tabular outputs ea
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `source_pixels_threshold` | int | `1000` | Minimum upstream contributing pixels required for a pixel to be a channel source. Reduce to extract denser networks. Must be > 0. |
+| `threshold_contributing_pixels` | int | `1000` | Minimum upstream contributing pixels required for a pixel to be a channel source. Reduce to extract denser networks. Must be > 0. |
 
 ---
 
@@ -252,7 +252,7 @@ write_path: /data/output/
 write_fname: my_dem_network
 
 raster_is_filled:         true
-source_pixels_threshold:  1000
+threshold_contributing_pixels: 1000
 boundary_conditions:      oooo
 
 # Select junctions upstream of supplied basin outlets
@@ -282,7 +282,7 @@ write_fname: my_dem_strahler
 
 raster_is_filled:         false
 fill_min_slope:           0.0001
-source_pixels_threshold:  500
+threshold_contributing_pixels: 500
 
 # These analyses use the full network; no junction selection needed.
 write_strahler_channels:        true
@@ -299,7 +299,7 @@ read_fname: my_dem
 write_fname: my_dem_areas
 
 raster_is_filled:         false
-source_pixels_threshold:  500
+threshold_contributing_pixels: 500
 
 write_junction_area_ratio_data:    true
 write_junction_area_ratio_summary: true   # also writes the decades collapse table

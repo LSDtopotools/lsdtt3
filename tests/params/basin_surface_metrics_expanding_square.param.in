@@ -9,7 +9,7 @@ basin_outlet_snapping_method: expanding_square
 basin_outlet_contributing_pixels_threshold: 150
 basin_outlet_min_search_radius_pixels: 0
 basin_outlet_max_search_radius_pixels: 25
-source_pixels_threshold: 150
+threshold_contributing_pixels: 150
 
 lambda_scales: 60
 polyfit_metrics: maximum_curvature

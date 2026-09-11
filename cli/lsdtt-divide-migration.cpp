@@ -158,11 +158,7 @@ int main(int argc, char* argv[])
         "Only used when raster_is_filled is false.",
         "Routing / DEM", "param", "raster_is_filled"};
 
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold for extracting channel heads.",
-        "Must be > 0.",
-        "Routing / DEM", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -319,6 +315,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"source_pixels_threshold", "threshold_contributing_pixels"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -345,9 +343,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs.at("source_pixels_threshold") <= 0)
+    if (ifs.at("threshold_contributing_pixels") <= 0)
     {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -764,7 +762,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_junction_network_cpu junction_network;
     try
     {
-        source_flats = flow->get_sources_index_threshold(ifs.at("source_pixels_threshold"));
+        source_flats = flow->get_sources_index_threshold(ifs.at("threshold_contributing_pixels"));
 
         lsdtt::lsdtt_junction_network_options jn_opts;
         jn_opts.build_topological_order = true;
@@ -928,7 +926,7 @@ int main(int argc, char* argv[])
             lsdtt::get_chi_from_outlets_zero_base_threshold(
                 *flow,
                 selected_basin_outlet_flats,
-                ifs.at("source_pixels_threshold"),
+                ifs.at("threshold_contributing_pixels"),
                 chi_opts);
 
         // Common base level: chi is re-zeroed at the highest selected outlet

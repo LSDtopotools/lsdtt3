@@ -65,6 +65,7 @@ Steps run in this order:
 |---|---|---|---|
 | `raster_is_filled` | bool | `false` | Set `true` if DEM is already pit-filled. If `false`, `fill_pits()` is called automatically. |
 | `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. Used only when `raster_is_filled` is `false`. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel sources used to snap basin outlets. |
 
 ---
 

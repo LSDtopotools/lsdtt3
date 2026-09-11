@@ -317,11 +317,7 @@ int main(int argc, char* argv[])
         "DEM preparation", "param", ""};
 
     // --- Channel snapping ---
-    int_default_map["threshold_contributing_pixels"] = 1000;
-    help_map["threshold_contributing_pixels"] = {"int","1000",
-        "Minimum contributing pixels for a node to be considered a channel.",
-        "Sample points are snapped to the nearest node meeting this threshold.",
-        "Channel snapping", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     int_default_map["snap_search_radius_pixels"] = 8;
     help_map["snap_search_radius_pixels"] = {"int","8",

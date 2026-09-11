@@ -22,7 +22,7 @@ fetch:
 
 extract:
   minimum_basin_count: 4
-  source_pixels_threshold: 1000
+  threshold_contributing_pixels: 1000
   max_search_stream_order: 20
 
 analysis:
@@ -30,7 +30,7 @@ analysis:
 
 check_basins:
   outlets_file: "../tests/data/cosmo_tiny_points.csv"
-  source_pixels_threshold: 20
+  threshold_contributing_pixels: 20
   basin_outlet_snapping_method: "downstream"
   basin_outlet_contributing_pixels_threshold: 20
   basin_outlet_min_search_radius_pixels: 0
@@ -242,7 +242,7 @@ cosmo_transient_landslides:
     threshold_contributing_pixels: 1000
     snap_search_radius_pixels: 8
   sampling:
-    source_pixels_threshold: 2000
+    threshold_contributing_pixels: 2000
     sample_points_stride: 20
 
   # --- statistics and validation -------------------------------------------

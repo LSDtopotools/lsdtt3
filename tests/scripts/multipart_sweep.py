@@ -146,7 +146,7 @@ def case_channel_extraction(build, work):
             f"read_path: ./\nread_fname: dem.tif\nwrite_path: ./\n"
             f"write_fname: ce_{k}\nwrite_output_format: gtiff\n"
             f"source_extraction_algorithm_choice: threshold\n"
-            f"source_pixels_threshold: 60\n"
+            f"threshold_contributing_pixels: 60\n"
             f"write_channel_network_points: true\n"
             f"channel_network_points_output_format: flatgeobuf\n"
             f"stream_vector_path: line_{k}.fgb\ncalculate_spatial_index: false\n"

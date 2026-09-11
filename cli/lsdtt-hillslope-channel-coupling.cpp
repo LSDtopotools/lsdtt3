@@ -221,12 +221,7 @@ int main(int argc, char* argv[])
     lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);
 
     // ---- channels ------------------------------------------------------------
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int", "1000",
-        "Contributing pixels defining a channel head.",
-        "Sets where hillslopes end, so it sets the hillslope length. This is the "
-        "single most consequential parameter in the tool.",
-        "Channel network", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     string_default_map["channel_network_file"] = "";
     help_map["channel_network_file"] = {"string", "",
@@ -566,7 +561,9 @@ int main(int argc, char* argv[])
         lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
         // Renamed 2026-09-08 for consistency: the chi reference area is
         // `chi_A0` in every CLI that has one. One-release compatibility window.
-        pp.set_deprecated_aliases({ {"chi_A_0", "chi_A0"} });
+        pp.set_deprecated_aliases({
+            {"chi_A_0", "chi_A0"},
+            {"source_pixels_threshold", "threshold_contributing_pixels"} });
 
         pp.parse_all_parameters(float_default_map, int_default_map,
                                 bool_default_map, string_default_map);
@@ -598,8 +595,8 @@ int main(int argc, char* argv[])
             throw std::invalid_argument("hilltop_thinning must be >= 1");
         if (ip.at("trace_thinning") < 1)
             throw std::invalid_argument("trace_thinning must be >= 1");
-        if (ip.at("source_pixels_threshold") <= 0)
-            throw std::invalid_argument("source_pixels_threshold must be > 0");
+        if (ip.at("threshold_contributing_pixels") <= 0)
+            throw std::invalid_argument("threshold_contributing_pixels must be > 0");
 
         const lsdtt::raster_output_format raster_format =
             parse_raster_format(sf.at("write_output_format"));
@@ -691,7 +688,7 @@ int main(int argc, char* argv[])
 
         // ---- channel network ---------------------------------------------------
         std::cout << "\n--- Channel network ---\n";
-        const int chan_threshold = ip.at("source_pixels_threshold");
+        const int chan_threshold = ip.at("threshold_contributing_pixels");
 
         std::vector<float>        chan_data(ncell, 0.0f);
         std::int64_t n_channel = 0;
@@ -845,7 +842,7 @@ int main(int argc, char* argv[])
 
             if (n_channel == 0)
                 throw std::runtime_error(
-                    "no channel pixels at source_pixels_threshold "
+                    "no channel pixels at threshold_contributing_pixels "
                     + std::to_string(chan_threshold) + " - lower it");
 
             sources = flow.get_sources_index_threshold(chan_threshold);
@@ -1247,7 +1244,7 @@ int main(int argc, char* argv[])
             // The chi extractor REJECTS an outlet below its contributing-pixel
             // threshold, and that throw would abort a whole run for one small
             // basin. With an INGESTED network the junction outlets have nothing
-            // to do with source_pixels_threshold, so filter here rather than
+            // to do with threshold_contributing_pixels, so filter here rather than
             // letting the extractor decide.
             const lsdtt::lsdtt_raster_result cp_chi =
                 flow.get_n_contributing_pixels_raster();
@@ -1270,7 +1267,7 @@ int main(int argc, char* argv[])
             if (outlet_flats.empty())
             {
                 std::cout << "No basin outlet meets the chi threshold; skipping the "
-                             "chi join. Lower source_pixels_threshold to enable it.\n";
+                             "chi join. Lower threshold_contributing_pixels to enable it.\n";
                 goto chi_done;
             }
 

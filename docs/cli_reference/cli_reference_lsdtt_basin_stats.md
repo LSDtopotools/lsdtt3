@@ -115,7 +115,7 @@ When enabled, builds a Strahler-order channel network and computes total channel
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `calculate_channel_stats` | bool | `true` | Build a channel/junction network and compute channel length by Strahler order. |
-| `threshold_contributing_pixels` | int | `500` | Contributing-pixel threshold defining channel sources for channel statistics. Also defines the network used for junction area ratios. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel sources for channel statistics. Also defines the network used for junction area ratios. |
 
 ---
 
@@ -235,7 +235,7 @@ basin_outlet_contributing_pixels_threshold: 2000
 
 reject_nodata_edge_basins:  true
 calculate_channel_stats:    true
-threshold_contributing_pixels: 500
+threshold_contributing_pixels: 1000
 ```
 
 ## Example: enable basin shape metrics
@@ -250,6 +250,6 @@ shape_perimeter_simplify_cells:  1.0
 
 ```
 calculate_junction_area_ratios:  true
-threshold_contributing_pixels:   500
+threshold_contributing_pixels:   1000
 junction_area_ratio_bootstrap:   1000
 ```

@@ -1,0 +1,14 @@
+# Compatibility coverage for the legacy stream-burning threshold key.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: burn_legacy
+
+stream_vector_path: __READ_PATH__/stream_burning_network.fgb
+stream_burn_mode: snap_to_network
+do_stream_burn: true
+carve_inward_edge_sources: true
+d8_channel_threshold_pixels: 3
+
+write_burned_outputs: true
+write_merged_lines: true

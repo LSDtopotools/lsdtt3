@@ -20,12 +20,18 @@ Compatibility is controlled by the backend manifest field
 `>=0.1.0 <0.3.0`). The plugin checks that range to decide whether a backend is
 acceptable.
 
+The current wrappers require a versioned backend bundle with
+`backend_version >= 0.5.0`. This is a hard gate because these wrappers emit the
+canonical `threshold_contributing_pixels` key; unversioned bundles and older
+backends are rejected rather than silently running with an unsupported schema.
+
 Practical guidance:
 
 - Bump plugin version when plugin code/UI/processing wrappers change.
 - Bump backend version when CLI/runtime bundle contents change.
 - Keep `plugin_version_range` broad enough to include the plugin versions you
   intend to support.
+- Package and install backend `0.5.0` or newer for this plugin source.
 
 ## Finding the latest backend version number
 

@@ -33,7 +33,7 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
     RASTER_IS_FILLED = "RASTER_IS_FILLED"
     FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
-    SOURCE_THRESHOLD = "SOURCE_THRESHOLD"
+    THRESHOLD_CONTRIBUTING_PIXELS = "THRESHOLD_CONTRIBUTING_PIXELS"
     SOURCE_ALGORITHM = "SOURCE_ALGORITHM"
     WRITE_CHANNEL_LINES = "WRITE_CHANNEL_LINES"
     LINES_FORMAT = "LINES_FORMAT"
@@ -105,8 +105,8 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterNumber(
-                self.SOURCE_THRESHOLD,
-                "Source threshold (pixels)",
+                self.THRESHOLD_CONTRIBUTING_PIXELS,
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
                 defaultValue=1000,
@@ -283,7 +283,7 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
                 self.JUNCTIONS_FORMAT: "channel_network_junctions_output_format",
                 self.LINES_FORMAT: "channel_network_lines_output_format",
                 self.POINTS_FORMAT: "channel_network_points_output_format",
-                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
                 self.WIENER_WRITE_CURVATURE: "wiener_write_tangential_curvature",
                 self.WIENER_WRITE_QQ: "wiener_write_qq_table",
                 self.WRITE_CHANNEL_LINES: "write_channel_network_lines",
@@ -350,10 +350,19 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
         wiener_write_curvature = self.parameterAsBool(parameters, self.WIENER_WRITE_CURVATURE, context)
         wiener_write_qq = self.parameterAsBool(parameters, self.WIENER_WRITE_QQ, context)
 
-        if not any([write_lines, write_points, write_junctions, write_flow_lines, write_d8_flowdir]):
+        wiener_outputs = [wiener_write_filtered, wiener_write_curvature, wiener_write_qq]
+        if source_algorithm != "wiener" and any(wiener_outputs):
+            raise QgsProcessingException(
+                "Wiener diagnostics require the Wiener source extraction algorithm."
+            )
+
+        if not any([
+            write_lines, write_points, write_junctions, write_flow_lines, write_d8_flowdir,
+            write_burned_profiles, *wiener_outputs,
+        ]):
             raise QgsProcessingException(
                 "Enable at least one channel output (lines, points, junctions, "
-                "flow lines, or flow-direction raster)."
+                "flow lines, flow-direction raster, burned profiles, or Wiener diagnostics)."
             )
 
         stream_layer = self.parameterAsVectorLayer(parameters, self.STREAM_VECTOR, context)
@@ -371,7 +380,9 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
             "boundary_conditions": boundary_conditions,
             "raster_is_filled": self.parameterAsBool(parameters, self.RASTER_IS_FILLED, context),
             "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
-            "source_pixels_threshold": self.parameterAsInt(parameters, self.SOURCE_THRESHOLD, context),
+            "threshold_contributing_pixels": self.parameterAsInt(
+                parameters, self.THRESHOLD_CONTRIBUTING_PIXELS, context
+            ),
             "source_extraction_algorithm_choice": source_algorithm,
             "write_channel_network_lines": write_lines,
             "channel_network_lines_output_format": lines_format,

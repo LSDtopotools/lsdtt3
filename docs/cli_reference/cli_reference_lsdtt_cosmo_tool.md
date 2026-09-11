@@ -309,7 +309,7 @@ default to `0` simply because the common case is an unshielded surface sample.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `fill_before_routing` | bool | `true` | Fill DEM pits before building D8 flow routing. Set `false` only if the DEM is already pit-filled. |
+| `fill_before_routing` | bool | `true` | Fill DEM pits before building D8 flow routing. When `false`, route the input DEM unchanged; use this for an already filled DEM or when sinks must intentionally be preserved. |
 | `min_slope_for_fill` | float | `0.0001` | Minimum imposed slope during pit filling (m/m). Used only when `fill_before_routing: true`. |
 | `boundary_conditions` | string | `oooo` | D8 flow routing boundary conditions. Four-character string (N,E,S,W): `o` = open, `b` = forced outlet. |
 

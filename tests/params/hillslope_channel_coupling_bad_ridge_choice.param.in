@@ -3,5 +3,5 @@ read_fname: hilltop_cli_dem.tif
 write_path: __WRITE_PATH__
 write_fname: hcc_bad_ridge
 boundary_conditions: oooo
-source_pixels_threshold: 60
+threshold_contributing_pixels: 60
 ridge_extraction_algorithm_choice: banana

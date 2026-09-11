@@ -583,7 +583,7 @@ parameter has no successor, the reason is in the right-hand column.
 | `slope_threshold`, `use_absolute_thresholds` | 1 | `admission_slope_cap_degrees` with `admission_mode: slope` |
 | `QQ_threshold`, `*_lower_percentile`, `*_upper_percentile` | 1 | `adaptive_relief_threshold` + `relief_threshold_multiplier` — CDF divergence against fitted distributions, not a Gaussian QQ plot |
 | `minimum_patch_size` | 1, 2 | `min_component_pixels` (in tool 2 it is **per band**, not global) |
-| `threshold_SO` | 2 | replaced by the channel-scope model: `source_points_fname` / `outlet_points_fname`, or `channel_threshold_contributing_pixels` |
+| `threshold_SO` | 2 | replaced by the channel-scope model: `source_points_fname` / `outlet_points_fname`, or `threshold_contributing_pixels` |
 | `relief_threshold` | 2 | replaced by the ladder; `floodplain_max_height_metres` is the optional hard cap |
 | `minimum_terrace_height` | 2 | `terrace_min_height_metres`, demoted to an override |
 | `get_terraces` | 2 | no switch — `ladder_level_count` is the only control, and terraces are bands 1..n |

@@ -271,7 +271,7 @@ int main(int argc, char* argv[])
         "the outlet) across the whole upslope domain, so hillslope pixels get a "
         "chi value as well as channel pixels: this is the chi map used for "
         "divide-migration and cross-divide chi-contrast analysis. Basins are "
-        "selected exactly as for the other chi outputs (source_pixels_threshold, "
+        "selected exactly as for the other chi outputs (threshold_contributing_pixels, "
         "then minimum_channel_pixels, then n_largest_basins), except that the "
         "completeness filter always runs: basins whose upslope area touches "
         "nodata or the DEM edge are never written, and every pixel outside the "
@@ -281,11 +281,7 @@ int main(int argc, char* argv[])
         "Chi coordinate raster", "switch", ""};
 
     // --- Source extraction ---
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define channel heads.",
-        "Chi is computed only on pixels upstream of channel heads.",
-        "Source extraction", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     int_default_map["minimum_channel_pixels"] = 20;
     help_map["minimum_channel_pixels"] = {"int","20",
@@ -520,6 +516,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"source_pixels_threshold", "threshold_contributing_pixels"} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
 
@@ -548,9 +546,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Validate params
     // -------------------------------------------------------------------------
-    if (ifs["source_pixels_threshold"] <= 0)
+    if (ifs["threshold_contributing_pixels"] <= 0)
     {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -709,7 +707,7 @@ int main(int argc, char* argv[])
         ores.downstream_snap.contributing_pixels_threshold =
             static_cast<std::uint64_t>(
                 ifs["basin_outlet_contributing_pixels_threshold"]);
-        ores.source_pixels_threshold       = ifs["source_pixels_threshold"];
+        ores.source_pixels_threshold       = ifs["threshold_contributing_pixels"];
         ores.n_pixels_move_outlet_upstream = ifs["n_pixels_move_outlet_upstream"];
 
         lsdtt::outlet_resolution_report orep;
@@ -831,7 +829,7 @@ int main(int argc, char* argv[])
         try
         {
             chi_dm = lsdtt::get_chi_from_outlets_zero_base_threshold(
-                *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts_dm);
+                *flow, outlet_flats, ifs["threshold_contributing_pixels"], chi_opts_dm);
         }
         catch (const std::exception& e)
         {
@@ -930,7 +928,7 @@ int main(int argc, char* argv[])
 
             lsdtt::lsdtt_chi_collection_result chi_networks =
                 lsdtt::get_chi_from_outlets_zero_base_threshold(
-                    *flow, outlet_flats, ifs["source_pixels_threshold"],
+                    *flow, outlet_flats, ifs["threshold_contributing_pixels"],
                     chi_opts_raster);
 
             if (minimum_channel_pixels > 1)
@@ -1003,7 +1001,7 @@ int main(int argc, char* argv[])
 
             lsdtt::lsdtt_chi_collection_result chi_networks =
                 lsdtt::get_chi_from_outlets_zero_base_threshold(
-                    *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
+                    *flow, outlet_flats, ifs["threshold_contributing_pixels"], chi_opts);
 
             if (minimum_channel_pixels > 1)
             {
@@ -1065,7 +1063,7 @@ int main(int argc, char* argv[])
                 std::cout.flush();
 
                 chi_networks = lsdtt::get_chi_from_outlets_zero_base_threshold(
-                    *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
+                    *flow, outlet_flats, ifs["threshold_contributing_pixels"], chi_opts);
 
                 if (minimum_channel_pixels > 1)
                 {

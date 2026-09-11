@@ -7,5 +7,5 @@ basin_outlet_file: divide_migration_outlets_clusters.csv
 outlet_cluster_field: cluster_id
 outlet_cluster_mode: integer
 
-source_pixels_threshold: 1
+threshold_contributing_pixels: 1
 basin_outlet_snapping_method: none

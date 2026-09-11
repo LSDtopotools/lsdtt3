@@ -1,0 +1,12 @@
+# Compatibility coverage for the legacy channel-initiation key.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: basin_legacy
+raster_is_filled: false
+source_pixels_threshold: 1
+select_all_basins: true
+write_basin_outlines: true
+write_basin_outlines_as_polygon: false
+basin_outlines_output_format: flatgeobuf
+calculate_spatial_index: false

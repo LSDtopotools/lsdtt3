@@ -614,12 +614,7 @@ int main(int argc, char* argv[])
         "o = open, n = no-flux, p = periodic, b = forced outlet.",
         "Flow routing","param",""};
 
-    int_default_map["channel_threshold_contributing_pixels"] = 1000;
-    help_map["channel_threshold_contributing_pixels"] = {"int","1000",
-        "Contributing-pixel threshold defining a channel.",
-        "Used to find channel heads when no source points are supplied, and to "
-        "snap supplied sources onto the network.",
-        "Flow routing","param",""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Channel scope: source and outlet points ---
     bool_default_map["break_flats_with_channels"] = false;
@@ -1090,7 +1085,9 @@ int main(int argc, char* argv[])
     // lsdtt-mountain-front.
     pp.set_deprecated_aliases({
         {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"},
-        {"fill_dem_for_flow_routing", "fill_before_routing"} });
+        {"fill_dem_for_flow_routing", "fill_before_routing"},
+        {"channel_threshold_contributing_pixels",
+         "threshold_contributing_pixels"} });
 
     try
     {
@@ -1450,7 +1447,7 @@ int main(int argc, char* argv[])
 
             lsdtt::channel_scope_request sreq;
             sreq.threshold_contributing_pixels =
-                ip["channel_threshold_contributing_pixels"];
+                ip["threshold_contributing_pixels"];
             sreq.source_flats = role_flats("source");
             sreq.outlet_flats = role_flats("outlet");
             sreq.snap_sources = bf["snap_sources_to_channel_threshold"];

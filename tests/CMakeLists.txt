@@ -385,6 +385,16 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    rigorous_basin_extraction_legacy_threshold
+    lsdtt-basin-extraction
+    basin_extraction_legacy_threshold.param.in
+    basin_legacy_junction_basin_outlines.fgb
+    --stdout-contains "Contributing-pixel threshold: 1"
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+)
+
+add_lsdtt_cli_smoke_test(
     rigorous_basin_outlines_feature_count
     lsdtt-basin-extraction
     basin_extraction_smoke.param.in
@@ -414,6 +424,46 @@ add_lsdtt_cli_smoke_test(
     drainage_analysis_smoke.param.in
     tiny_d8_drainage_area.tif
 )
+
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_analysis_canonical_threshold
+    lsdtt-drainage-analysis
+    drainage_analysis_canonical_threshold.param.in
+    drainage_canonical_height_above_channel.tif
+    --stdout-contains "Channel threshold: 3 contributing pixels"
+    --stderr-not-contains "deprecated"
+    --expect-raster-stat drainage_canonical_height_above_channel.tif:min:0:0
+    --expect-raster-stat drainage_canonical_height_above_channel.tif:max:1:1000
+    --expect-file-contains "drainage_canonical_ingested_params.param:threshold_contributing_pixels: 3"
+    --expect-file-not-contains "drainage_canonical_ingested_params.param:channel_threshold_contributing_pixels"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_analysis_legacy_threshold
+    lsdtt-drainage-analysis
+    drainage_analysis_legacy_threshold.param.in
+    drainage_legacy_height_above_channel.tif
+    --stdout-contains "Channel threshold: 3 contributing pixels"
+    --stderr-contains "'channel_threshold_contributing_pixels' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+    --expect-file-contains "drainage_legacy_ingested_params.param:threshold_contributing_pixels: 3"
+    --expect-raster-stat drainage_legacy_height_above_channel.tif:min:0:0
+    --expect-raster-stat drainage_legacy_height_above_channel.tif:max:1:1000
+)
+
+set_tests_properties(rigorous_drainage_analysis_canonical_threshold PROPERTIES
+    FIXTURES_SETUP drainage_analysis_canonical_threshold)
+set_tests_properties(rigorous_drainage_analysis_legacy_threshold PROPERTIES
+    FIXTURES_SETUP drainage_analysis_legacy_threshold)
+add_test(
+    NAME rigorous_drainage_analysis_threshold_equivalence
+    COMMAND ${CMAKE_COMMAND} -E compare_files
+        "${CMAKE_CURRENT_BINARY_DIR}/rigorous_drainage_analysis_canonical_threshold/out/drainage_canonical_height_above_channel.tif"
+        "${CMAKE_CURRENT_BINARY_DIR}/rigorous_drainage_analysis_legacy_threshold/out/drainage_legacy_height_above_channel.tif"
+)
+set_tests_properties(rigorous_drainage_analysis_threshold_equivalence PROPERTIES
+    LABELS "cli;rigorous"
+    FIXTURES_REQUIRED "drainage_analysis_canonical_threshold;drainage_analysis_legacy_threshold")
 
 # C9 extraction guard: unlike drainage_analysis_smoke.param.in, this reaches
 # both STI P95 Jenks call sites. The raster and diagnostic oracles were frozen
@@ -514,6 +564,21 @@ add_test(NAME smoke_basin_surface_metrics_expanding_square
         --expect bsm_square_outline_curvature_flips.csv)
 set_tests_properties(smoke_basin_surface_metrics_expanding_square PROPERTIES
     LABELS "smoke;cli;basin_surface_metrics;snapping"
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_test(NAME rigorous_basin_surface_metrics_legacy_threshold
+    COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+        --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
+        --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+        --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_legacy_threshold.param.in"
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_basin_surface_metrics_legacy_threshold"
+        --expect bsm_legacy_outline_curvature_flips.csv
+        --expect-sha256 bsm_legacy_outline_curvature_flips.csv:f2f2537d2cb61a60da2fc2d4a1c862645424298d475ffcd1d4abf74010894181
+        --stderr-contains "'source_pixels_threshold' is deprecated"
+        --stderr-contains "use 'threshold_contributing_pixels'")
+set_tests_properties(rigorous_basin_surface_metrics_legacy_threshold PROPERTIES
+    LABELS "rigorous;cli;basin_surface_metrics;compatibility"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -685,6 +750,20 @@ set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "smoke;cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
+add_lsdtt_cli_smoke_test(
+    rigorous_stream_burning_legacy_threshold
+    lsdtt-stream-burning
+    stream_burning_legacy_threshold.param.in
+    burn_legacy_cleaned_network.fgb
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --stdout-contains "D8 channel cells (>= 3 px):"
+    --stderr-contains "'d8_channel_threshold_pixels' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+    --expect-file-contains "burn_legacy_ingested_params.param:threshold_contributing_pixels: 3"
+)
+set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 # =============================================================================
 # lsdtt-basin-stats
 #
@@ -739,10 +818,10 @@ add_test(NAME smoke_basin_stats
         # the record, the per-basin accumulation and the two writers out of
         # main(). It says "the output did not change", nothing about whether
         # the output is right. Re-freeze deliberately if a change is intended.
-        --expect-sha256 bs_basin_stats.csv:408f44271c676b1b9cf4cacf0a296fa4b193161828dc95463d4e8835a71af349
-        # Phase 4 readiness: the parameter is deliberately absent from the
-        # fixture, so this pins the old default before its intentional change.
-        --stdout-contains "threshold = 500 px")
+        --expect-sha256 bs_basin_stats.csv:6b8129739e73739716eb565ba822a85c4952efd55eb8ff0e3f41a1e10efa75a5
+        # Canonical-default regression: the parameter is deliberately absent
+        # from the fixture, so this pins the shared default and its behaviour.
+        --stdout-contains "threshold = 1000 px")
 set_tests_properties(smoke_basin_stats PROPERTIES
     LABELS "smoke;cli;basin_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -764,6 +843,18 @@ add_lsdtt_cli_smoke_test(
     ff_channel_candidate_score.tif
 )
 
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_flow_discrimination_canonical
+    lsdtt-feature-finder
+    feature_finder_flow_discrimination_canonical.param.in
+    ff_flow_canonical_flow_channel_mask.tif
+    --expect-raster-checksum ff_flow_canonical_flow_channel_mask.tif:15
+    --expect-raster-values ff_flow_canonical_flow_channel_mask.tif:0,1
+    --stdout-contains "Accum. threshold     : 3 px"
+    --stdout-contains "DEM is filled        : yes"
+    --expect-file-contains "ff_flow_canonical_ingested_params.param:threshold_contributing_pixels: 3"
+)
+
 # Phase 4 readiness: reach the flow-discrimination engine with the legacy keys
 # explicitly set. The header assertions distinguish both values from their old
 # defaults; the mask oracle proves the threshold reached D8 channel selection.
@@ -780,6 +871,9 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "DEM is filled        : yes"
     --stderr-contains "'flow_dem_is_filled' is deprecated"
     --stderr-contains "use 'raster_is_filled'"
+    --stderr-contains "'flow_accumulation_threshold_pixels' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+    --expect-file-contains "ff_flow_ingested_params.param:threshold_contributing_pixels: 3"
 )
 
 # Phase 4 readiness: this old spelling remains explicit after aliases land. The
@@ -797,6 +891,8 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Junctions     : 9"
     --stdout-contains "--- Strahler / Tokunaga analysis ---"
     --stdout-contains "Strahler channels           : 6"
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
     --expect-sha256 cna_legacy_tokunaga_channel_data.csv:dd48f4ace30af5b591dc788c6930bb084da2f8274d6a5403e718f8e65b04d923
 )
 
@@ -814,8 +910,29 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Building channel network..."
     --stdout-contains "Junctions (reaches): 9"
     --stdout-contains "Running sediment routing (2 timesteps, 3600 s each)..."
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
     --expect-valid-percent sediment_legacy_d50_al.tif:60
     --expect-raster-checksum sediment_legacy_d50_al.tif:65386
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_channel_extraction_legacy_threshold
+    lsdtt-channel-extraction
+    channel_extraction_legacy_threshold.param.in
+    channel_legacy_channel_network_lines.fgb
+    --stdout-contains "Contributing-pixel threshold: 1"
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_chi_analysis_legacy_threshold
+    lsdtt-chi-analysis
+    chi_analysis_legacy_threshold.param.in
+    chi_legacy_chi_fit_nodes_mn_0p500.csv
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
 )
 
 add_lsdtt_cli_smoke_test(
@@ -846,7 +963,7 @@ add_lsdtt_cli_smoke_test(
     channel_extraction_invalid_threshold.param.in
     tiny_invalid_channel_network_lines.fgb
     --expect-failure
-    --stderr-contains "FATAL: source_pixels_threshold must be > 0."
+    --stderr-contains "FATAL: threshold_contributing_pixels must be > 0."
 )
 
 add_lsdtt_cli_smoke_test(
@@ -908,6 +1025,20 @@ add_lsdtt_cli_smoke_test(
 )
 set_tests_properties(smoke_divide_migration_no_clusters PROPERTIES
     LABELS "smoke;cli;divide_migration"
+    FIXTURES_REQUIRED divide_migration_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_divide_migration_legacy_threshold
+    lsdtt-divide-migration
+    divide_migration_legacy_threshold.param.in
+    divmig_legacy_divides.fgb
+    --read-path "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}"
+    --expect divmig_legacy_channel_heads.fgb
+    --stdout-contains "channel heads    : 69"
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+)
+set_tests_properties(rigorous_divide_migration_legacy_threshold PROPERTIES
     FIXTURES_REQUIRED divide_migration_fixture)
 
 # Grouping outlets 1 and 2 into one unit makes the 1-2 divide internal, so the
@@ -2055,14 +2186,13 @@ add_internal_drainage_cli_test(
     --expect-file-contains "phase4_empty_channels_sink_channel_nodes.csv:routing_sink_id,sink_id"
     --stderr-contains "FlatGeobuf cannot store an empty layer")
 
-# Phase 4 readiness characterization. The parameter template deliberately omits
-# threshold_contributing_pixels so this records the old default of 5000 before
-# the intentional default change is made.
+# Canonical-default regression. The parameter template deliberately omits
+# threshold_contributing_pixels so this pins the shared default's behaviour.
 add_internal_drainage_cli_test(
     regression_internal_drainage_default_threshold
     internal_drainage_default_threshold.param.in
     phase4_default_threshold_sink_channel_nodes.csv
-    --expect-sha256 phase4_default_threshold_sink_channel_nodes.csv:cd56c9a44fe3fffaa72625ca625e497525a7c21c01c75ff0708db5c8ebe4d466)
+    --expect-sha256 phase4_default_threshold_sink_channel_nodes.csv:02e7dd6cfb9fe505ad2f4083e166caa131f494d18e315dad2bafc866e6267a5e)
 
 add_test(NAME smoke_internal_drainage_help
          COMMAND lsdtt-internal-drainage -h)
@@ -2231,6 +2361,19 @@ set_tests_properties(smoke_ridgeline_paired_flowpaths_sl_on PROPERTIES
     FIXTURES_REQUIRED paired_flowpaths_fixture)
 
 add_lsdtt_cli_smoke_test(
+    rigorous_ridgeline_legacy_threshold
+    lsdtt-ridgeline-analysis
+    ridgeline_legacy_threshold.param.in
+    ridge_legacy_paired_flowpaths_summary.csv
+    --read-path "${LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR}"
+    --stdout-contains "straight-link pairs = 870"
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+)
+set_tests_properties(rigorous_ridgeline_legacy_threshold PROPERTIES
+    FIXTURES_REQUIRED paired_flowpaths_fixture)
+
+add_lsdtt_cli_smoke_test(
     smoke_ridgeline_paired_flowpaths_sl_off
     lsdtt-ridgeline-analysis
     ridgeline_paired_flowpaths_sl_off.param.in
@@ -2360,6 +2503,15 @@ add_hilltop_coupling_cli_test(
     hcc_hilltop_points.csv
     --expect hcc_ridgelines.fgb
     --stdout-contains "never traced (DEM border)")
+
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_legacy_threshold
+    hillslope_channel_coupling_legacy_threshold.param.in
+    hcc_legacy_hilltop_points.csv
+    --expect hcc_legacy_ridgelines.fgb
+    --stdout-contains "Channel pixels: 423"
+    --stderr-contains "'source_pixels_threshold' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'")
 
 # E* and R* must be undefined, not zero, where the trace never ran.
 add_hilltop_coupling_cli_test(
@@ -4233,6 +4385,20 @@ set_tests_properties(smoke_fluvial_surfaces_help PROPERTIES
     LABELS "smoke;cli"
     PASS_REGULAR_EXPRESSION "fill_before_routing")
 
+foreach(threshold_help_target IN ITEMS
+        drainage-analysis
+        fluvial-surfaces
+        valley-centreline
+        stream-burning
+        feature-finder)
+    string(REPLACE "-" "_" threshold_help_slug "${threshold_help_target}")
+    add_test(NAME smoke_${threshold_help_slug}_threshold_help
+             COMMAND lsdtt-${threshold_help_target} -h)
+    set_tests_properties(smoke_${threshold_help_slug}_threshold_help PROPERTIES
+        LABELS "smoke;cli"
+        PASS_REGULAR_EXPRESSION "threshold_contributing_pixels")
+endforeach()
+
 add_test(NAME smoke_feature_finder_fill_help
          COMMAND lsdtt-feature-finder -h)
 set_tests_properties(smoke_feature_finder_fill_help PROPERTIES
@@ -4274,6 +4440,9 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Routing on the unfilled input DEM."
     --stderr-contains "'fill_dem_for_flow_routing' is deprecated"
     --stderr-contains "use 'fill_before_routing'"
+    --stderr-contains "'channel_threshold_contributing_pixels' is deprecated"
+    --stderr-contains "use 'threshold_contributing_pixels'"
+    --expect-file-contains "fsurf_fill_legacy_ingested_params.param:threshold_contributing_pixels: 500"
 )
 set_tests_properties(rigorous_fluvial_surfaces_legacy_fill_key PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -4347,6 +4516,24 @@ add_test(NAME smoke_fluvial_surfaces_pipeline
         --stage2-stdout-contains "Valley identification is supplied")
 set_tests_properties(smoke_fluvial_surfaces_pipeline PROPERTIES
     LABELS "smoke;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_test(NAME rigorous_valley_centreline_legacy_threshold
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fluvial_pipeline.py"
+        --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+        --centreline-exe "$<TARGET_FILE:lsdtt-valley-centreline>"
+        --surfaces-param "${LSDTT_TEST_PARAM_DIR}/fluvial_pipeline_surfaces.param.in"
+        --centreline-param "${LSDTT_TEST_PARAM_DIR}/valley_centreline_legacy_threshold.param.in"
+        --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_valley_centreline_legacy_threshold"
+        --expect vc_legacy_valley_mask_channels.tif
+        --expect vc_legacy_valley_centreline.fgb
+        --stage2-stdout-contains "Channel threshold: 200 contributing pixels"
+        --stage2-stderr-contains "'channel_threshold_contributing_pixels' is deprecated"
+        --stage2-stderr-contains "use 'threshold_contributing_pixels'")
+set_tests_properties(rigorous_valley_centreline_legacy_threshold PROPERTIES
+    LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The valley is now a required input, and the message must name where it comes

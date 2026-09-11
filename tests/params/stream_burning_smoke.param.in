@@ -19,6 +19,7 @@ stream_burn_mode: snap_to_network
 do_stream_burn: true
 
 carve_inward_edge_sources: true
+threshold_contributing_pixels: 1000
 
 write_burned_outputs: true
 write_merged_lines: true

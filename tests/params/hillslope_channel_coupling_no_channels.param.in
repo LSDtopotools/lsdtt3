@@ -3,4 +3,4 @@ read_fname: hilltop_cli_dem.tif
 write_path: __WRITE_PATH__
 write_fname: hcc_no_chan
 boundary_conditions: oooo
-source_pixels_threshold: 900000
+threshold_contributing_pixels: 900000

@@ -72,7 +72,7 @@ Nothing is written unless the relevant `print_*` / `write_*` switch is set.
 | `boundary_conditions` | string | `oooo` | Four‑character N, E, S, W string. `o` = open, `p` = periodic. `range_defined_ridgelines` interprets open boundaries as mountain fronts. |
 | `raster_is_filled` | bool | `false` | If false, `fill_pits()` is run before flow routing. |
 | `fill_min_slope` | float | `0.0001` | Minimum slope imposed by pit filling (used when `raster_is_filled` is false). |
-| `source_pixels_threshold` | int | `1000` | Contributing‑pixel threshold defining channel heads. Reduce for a denser network and more (smaller) basins. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing‑pixel threshold defining channel heads. Reduce for a denser network and more (smaller) basins. |
 
 ---
 
@@ -237,7 +237,7 @@ filter_incomplete_basins:true
 filter_nested_basins:true
 
 # Channel network density
-source_pixels_threshold: 1000
+threshold_contributing_pixels: 1000
 
 # Write the ridgeline CSVs
 print_ridgelines:        true

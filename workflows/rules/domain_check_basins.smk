@@ -27,7 +27,7 @@ rule write_check_basins_params:
             f"write_path: {write_dir}\n"
             "write_fname: check\n\n"
             "raster_is_filled: true\n"
-            f"source_pixels_threshold: {cfg['source_pixels_threshold']}\n\n"
+            f"threshold_contributing_pixels: {cfg['threshold_contributing_pixels']}\n\n"
             "select_basins_from_outlets: true\n"
             f"basin_outlet_file: {outlets_file}\n"
             f"basin_outlet_snapping_method: {cfg['basin_outlet_snapping_method']}\n"

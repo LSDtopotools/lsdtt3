@@ -27,7 +27,7 @@ ladder_level_count: 4
 vertical_accuracy_metres: 0.5
 ladder_resolvability_kappa: 3.0
 
-channel_threshold_contributing_pixels: 500
+threshold_contributing_pixels: 500
 floodplain_max_height_metres: 5.0
 terrace_min_height_metres: 5.0
 

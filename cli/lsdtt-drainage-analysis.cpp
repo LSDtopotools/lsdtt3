@@ -459,17 +459,10 @@ int main(int argc, char* argv[])
         "Write a height-above-channel raster.",
         "For each pixel: elevation difference to the nearest downstream channel "
         "pixel along the D8 flow path. Channel pixels are those whose D8 "
-        "contributing-pixel count >= channel_threshold_contributing_pixels.",
+        "contributing-pixel count >= threshold_contributing_pixels.",
         "Connectivity index (Cavalli et al. 2013)", "switch", ""};
 
-    int_default_map["channel_threshold_contributing_pixels"] = 1000;
-    help_map["channel_threshold_contributing_pixels"] = {"int","1000",
-        "Minimum contributing-pixel count to classify a pixel as a channel.",
-        "Used by write_height_above_channel_raster. Pixels with D8 "
-        "contributing-pixel count >= this threshold are treated as channels. "
-        "Tune relative to DEM resolution: at 5 m a value of 1000 corresponds "
-        "to ~0.025 km^2; at 30 m the same count is ~0.9 km^2.",
-        "Connectivity index (Cavalli et al. 2013)", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -504,6 +497,10 @@ int main(int argc, char* argv[])
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
+
+    pp.set_deprecated_aliases({
+        {"channel_threshold_contributing_pixels",
+         "threshold_contributing_pixels"} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -1952,7 +1949,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Height above channel ---\n";
         std::cout << "Channel threshold: "
-                  << ifs["channel_threshold_contributing_pixels"]
+                  << ifs["threshold_contributing_pixels"]
                   << " contributing pixels\n";
 
         try
@@ -1960,7 +1957,7 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_raster_result hac = d8_flow->get_height_above_channel_raster(
                 routed_dem.get_data(),
                 routed_dem.get_mask(),
-                ifs["channel_threshold_contributing_pixels"]
+                ifs["threshold_contributing_pixels"]
             );
 
             const std::string hac_file =

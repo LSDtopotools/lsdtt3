@@ -191,12 +191,7 @@ int main(int argc, char* argv[])
         "Passed to fill_pits() gently enforcing downstream descent.",
         "Input & Routing", "param", ""};
 
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int", "1000", 
-        "Contributing area threshold in pixels.", 
-        "Used to generate the initial D8 channel junction network from "
-        "which topologies and nested relationships are derived.",
-        "Input & Routing", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Snapping options ---
     string_default_map["basin_outlet_snapping_method"] = "downstream";
@@ -334,6 +329,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"source_pixels_threshold", "threshold_contributing_pixels"} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, 
         bool_default_map, string_default_map);
@@ -468,7 +465,7 @@ int main(int argc, char* argv[])
     }
 
     std::vector<std::int64_t> sources = flow->get_sources_index_threshold(
-        ifs["source_pixels_threshold"]);
+        ifs["threshold_contributing_pixels"]);
     lsdtt::lsdtt_junction_network_options jn_opts;
     jn_opts.build_topological_order = true;
     auto channel_network = lsdtt::make_junction_network_base(
@@ -554,9 +551,9 @@ int main(int argc, char* argv[])
         if (!channel_network->is_channel(f)) {
             std::cerr << "Warning: outlet " << out.point_id
                       << " does not lie on the channel network after snapping "
-                         "(source_pixels_threshold = "
-                      << ifs["source_pixels_threshold"]
-                      << "); skipping. Lower source_pixels_threshold to extend "
+                         "(threshold_contributing_pixels = "
+                      << ifs["threshold_contributing_pixels"]
+                      << "); skipping. Lower threshold_contributing_pixels to extend "
                          "the network towards this outlet, or move the outlet "
                          "onto a mapped channel.\n";
             ++n_skipped;

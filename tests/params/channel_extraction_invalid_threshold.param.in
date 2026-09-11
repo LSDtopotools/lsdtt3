@@ -4,7 +4,7 @@ write_path: __WRITE_PATH__
 write_fname: tiny_invalid
 
 raster_is_filled: false
-source_pixels_threshold: 0
+threshold_contributing_pixels: 0
 source_extraction_algorithm_choice: threshold
 
 write_channel_network_points: false

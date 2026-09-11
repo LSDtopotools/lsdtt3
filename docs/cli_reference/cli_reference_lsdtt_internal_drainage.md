@@ -240,7 +240,7 @@ prints the same information.
 | parameter | type | default | what it does |
 |---|---|---|---|
 | `extract_sink_channel_networks` | bool | `false` | Extract channels in sink basins. |
-| `threshold_contributing_pixels` | int | `5000` | Channel threshold. Minimum contributing pixels defining channel sources. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel sources. |
 | `write_sink_channel_lines` | bool | `true` | Write sink channel lines. |
 | `write_sink_channel_nodes_csv` | bool | `true` | Write sink channel nodes. |
 | `write_sink_junctions` | bool | `false` | Write sink junction points. |

@@ -208,7 +208,7 @@ Sediment connectivity index IC = log₁₀(D_up / D_down) following Cavalli et a
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
 | `write_height_above_channel_raster` | bool | `false` | `<write_fname>_height_above_channel.tif` — elevation difference from each pixel to the nearest downstream channel pixel along the D8 flow path. |
-| `channel_threshold_contributing_pixels` | int | `1000` | Minimum D8 contributing-pixel count to classify a pixel as a channel. Tune to DEM resolution: at 5 m, 1000 pixels ≈ 0.025 km²; at 30 m ≈ 0.9 km². |
+| `threshold_contributing_pixels` | int | `1000` | Minimum D8 contributing-pixel count to classify a pixel as a channel. Tune to DEM resolution: at 5 m, 1000 pixels ≈ 0.025 km²; at 30 m ≈ 0.9 km². |
 
 ---
 

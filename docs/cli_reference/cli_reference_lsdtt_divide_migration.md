@@ -87,7 +87,7 @@ A channel head is only ever matched to a divide that bounds **its own unit**. A 
 | `boundary_conditions` | string | `oooo` | Four‑character N, E, S, W string. `o` = open, `n` = no‑flux, `p` = periodic, `b` = forced outlet. |
 | `raster_is_filled` | bool | `false` | If false, `fill_pits()` runs before flow routing. |
 | `fill_min_slope` | float | `0.0001` | Minimum slope imposed by pit filling. Used only when `raster_is_filled` is false. |
-| `source_pixels_threshold` | int | `1000` | Contributing‑pixel threshold defining channel heads. Must be > 0. Lower it for a denser network and more heads — this is the main control on how many rows the metrics CSV has. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing‑pixel threshold defining channel heads. Must be > 0. Lower it for a denser network and more heads — this is the main control on how many rows the metrics CSV has. |
 
 ---
 
@@ -302,7 +302,7 @@ write_fname: sc
 basin_outlet_file: outlets.csv
 
 # Channel network density: lower for more heads
-source_pixels_threshold: 500
+threshold_contributing_pixels: 500
 
 # Chi settings -- constrain m_over_n with lsdtt-chi-analysis first
 chi_A0:   1.0
@@ -330,7 +330,7 @@ outlet_cluster_mode:  string
 basin_outlet_snapping_method: downstream
 basin_outlet_contributing_pixels_threshold: 5000
 
-source_pixels_threshold: 500
+threshold_contributing_pixels: 500
 m_over_n: 0.45
 
 # Impose a common base level so chi is comparable across the divide
@@ -404,7 +404,7 @@ The heads were not matched to any divide. Either only one unit had basins that s
 
 Every uncertainty method needs at least **two valid values on both sides** of the metric. Check `n_<metric>_a` and `n_<metric>_b` on the row:
 
-- one of them is `0` or `1`: that side has too few heads. Lower `source_pixels_threshold` for a denser network, or check that side's basins survived `outlet_control_mode` filtering.
+- one of them is `0` or `1`: that side has too few heads. Lower `threshold_contributing_pixels` for a denser network, or check that side's basins survived `outlet_control_mode` filtering.
 - `n_heads_a` is healthy but `n_relief_a` or `n_gradient_a` is small: most of that side's heads have NaN relief, which means their nearest divide point landed on nodata — see the all‑NaN case above.
 
 A NaN here is deliberate: a standard error from one value would be meaningless, and reporting `0` would be worse than reporting nothing.
@@ -419,4 +419,4 @@ No head was matched to any divide, so there was nothing to summarise. The file i
 
 ### Too few or too many channel heads
 
-`source_pixels_threshold` is the control. It is a contributing‑*pixel* count, so its meaning in area depends on cell size: at 30 m, `1000` pixels ≈ 0.9 km². Lower it for a denser network.
+`threshold_contributing_pixels` is the control. It is a contributing‑*pixel* count, so its meaning in area depends on cell size: at 30 m, `1000` pixels ≈ 0.9 km². Lower it for a denser network.

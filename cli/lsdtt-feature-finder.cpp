@@ -782,11 +782,7 @@ int main(int argc, char* argv[])
         "paths are compared against.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    int_default_map["flow_accumulation_threshold_pixels"] = 1000;
-    help_map["flow_accumulation_threshold_pixels"] = {"int","1000",
-        "Contributing-pixel threshold that defines the D8 channel network.",
-        "Pixels with at least this many upslope pixels are treated as channels.",
-        "Flow-pathway road/channel discrimination", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     int_default_map["flow_path_half_window"] = 5;
     help_map["flow_path_half_window"] = {"int","5",
@@ -1387,7 +1383,9 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"flow_dem_is_filled", "raster_is_filled"} });
+        {"flow_dem_is_filled", "raster_is_filled"},
+        {"flow_accumulation_threshold_pixels",
+         "threshold_contributing_pixels"} });
 
     pp.parse_all_parameters(
         float_default_map,
@@ -1417,6 +1415,7 @@ int main(int argc, char* argv[])
     lsdtt::valley_request valley_request;
     lsdtt::road_request road_request;
     lsdtt::road_flow_request road_flow_request;
+    int threshold_contributing_pixels = 1000;
 
     try
     {
@@ -1435,8 +1434,9 @@ int main(int argc, char* argv[])
 
         road_flow_request.regional_smoothing_metres =
             static_cast<double>(ff.at("flow_regional_smoothing_metres"));
+        threshold_contributing_pixels = ifs.at("threshold_contributing_pixels");
         road_flow_request.flow_accumulation_threshold_pixels =
-            ifs.at("flow_accumulation_threshold_pixels");
+            threshold_contributing_pixels;
         road_flow_request.flow_path_half_window =
             ifs.at("flow_path_half_window");
         road_flow_request.short_curvature_radius_metres =
@@ -2453,7 +2453,7 @@ int main(int argc, char* argv[])
             std::cout << "Regional smoothing   : "
                       << road_flow_request.regional_smoothing_metres << " m\n";
             std::cout << "Accum. threshold     : "
-                      << road_flow_request.flow_accumulation_threshold_pixels << " px\n";
+                      << threshold_contributing_pixels << " px\n";
             std::cout << "Flow-path half window: "
                       << road_flow_request.flow_path_half_window << " px\n";
             std::cout << "Roughness radius     : "

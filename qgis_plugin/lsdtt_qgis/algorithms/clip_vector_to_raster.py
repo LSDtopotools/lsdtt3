@@ -71,7 +71,11 @@ class ClipVectorToRasterAlgorithm(QgsProcessingAlgorithm):
 
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_CLIPPED, "Clipped vector"))
 
-        attach_backend_help(self, "lsdtt-raster-preprocessing")
+        attach_backend_help(
+            self,
+            "lsdtt-raster-preprocessing",
+            overrides={self.INPUT_VECTOR: "vector_data_fname"},
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

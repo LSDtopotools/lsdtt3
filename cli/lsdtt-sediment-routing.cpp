@@ -124,12 +124,7 @@ int main(int argc, char* argv[])
         "Passed to fill_pits() to gently enforce downstream descent.",
         "DEM and flow routing", "param", ""};
 
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define channel source heads.",
-        "Channel heads are extracted from the flow object by this threshold. "
-        "Reduce to extract a denser network; increase for sparser.",
-        "DEM and flow routing", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Transport formula ---
     string_default_map["transport_formula_choice"] = "wilcock_crowe";
@@ -392,6 +387,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"source_pixels_threshold", "threshold_contributing_pixels"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -527,13 +524,13 @@ int main(int argc, char* argv[])
     // Source extraction
     // -------------------------------------------------------------------------
     std::cout << "Extracting channel sources (threshold = "
-              << ifs["source_pixels_threshold"] << " px)...\n";
+              << ifs["threshold_contributing_pixels"] << " px)...\n";
 
     std::vector<std::int64_t> source_flats;
     try
     {
         source_flats = flow.get_sources_index_threshold(
-            ifs["source_pixels_threshold"]);
+            ifs["threshold_contributing_pixels"]);
     }
     catch (const std::exception& e)
     {
@@ -544,7 +541,7 @@ int main(int argc, char* argv[])
     if (source_flats.empty())
     {
         std::cerr << "FATAL: no source pixels found. "
-                     "Try lowering source_pixels_threshold.\n";
+                     "Try lowering threshold_contributing_pixels.\n";
         return 1;
     }
     std::cout << "  Source pixels: " << source_flats.size() << "\n";

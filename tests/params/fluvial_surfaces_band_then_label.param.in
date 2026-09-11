@@ -25,7 +25,7 @@ ladder_break_algorithm_choice: jenks
 ladder_level_count: 4
 vertical_accuracy_metres: 0.5
 
-channel_threshold_contributing_pixels: 500
+threshold_contributing_pixels: 500
 floodplain_max_height_metres: 5.0
 terrace_min_height_metres: 5.0
 

@@ -38,6 +38,12 @@ def parse_args() -> argparse.Namespace:
         help="Required substring in stderr.log",
     )
     parser.add_argument(
+        "--stderr-not-contains",
+        action="append",
+        default=[],
+        help="Substring that must not appear in stderr.log",
+    )
+    parser.add_argument(
         "--stdout-contains",
         action="append",
         default=[],
@@ -508,6 +514,16 @@ def main() -> int:
         if needle not in stderr_text:
             print(
                 f"Validation failed: stderr does not contain required text: {needle}",
+                file=sys.stderr,
+            )
+            print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)
+            print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
+            return 5
+
+    for needle in args.stderr_not_contains:
+        if needle in stderr_text:
+            print(
+                f"Validation failed: stderr contains forbidden text: {needle}",
                 file=sys.stderr,
             )
             print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)

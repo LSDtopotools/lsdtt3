@@ -180,13 +180,7 @@ int main(int argc, char* argv[])
         "Output","param",""};
 
     // --- Where landslides may start ---
-    int_default_map["threshold_contributing_pixels"] = 1000;
-    help_map["threshold_contributing_pixels"] = {"int","1000",
-        "Channel initiation threshold, in pixels.",
-        "Landslides start only BELOW this, i.e. on hillslopes. It also caps the "
-        "largest landslide, since a landslide cannot exceed the hillslope it "
-        "comes from.",
-        "Placement","param",""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     string_default_map["mask_fname"] = "NULL";
     help_map["mask_fname"] = {"string","NULL",

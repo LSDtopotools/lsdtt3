@@ -89,7 +89,15 @@ class SampleRastersToPointsAlgorithm(QgsProcessingAlgorithm):
 
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_POINTS, "Sampled points"))
 
-        attach_backend_help(self, "lsdtt-raster-preprocessing")
+        attach_backend_help(
+            self,
+            "lsdtt-raster-preprocessing",
+            overrides={
+                self.INPUT_POINTS: "point_data_fname",
+                self.RASTER_ATTRIBUTE_CSV: "raster_attribute_csv",
+                self.LAYER_NAME: "point_data_layer_name",
+            },
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)

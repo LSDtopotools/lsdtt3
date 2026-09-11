@@ -94,7 +94,7 @@ which classifies the downstream points as outlets. Point files may be CSV
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `channel_threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel cells for source snapping. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel cells for source snapping. |
 | `auto_detect_outlet_points` | bool | `true` | Classify points in `source_points_path` into sources and outlets. Disabled when an explicit outlet file is given. |
 | `snap_sources_to_channel_threshold` | bool | `true` | Snap source points to the nearest cell meeting the threshold. |
 | `source_snap_max_radius_pixels` | int | `25` | Maximum expanding-square search radius for snapping. |

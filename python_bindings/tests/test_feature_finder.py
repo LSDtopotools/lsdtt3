@@ -65,6 +65,27 @@ class FeatureFinderTest(unittest.TestCase):
         )
         self.assertEqual(outlets.shape, raster.shape)
 
+    def test_road_flow_canonical_keywords(self):
+        raster = self.raster()
+        result = lsdtt3.find_road_flow_discrimination(
+            raster,
+            regional_smoothing_metres=5.0,
+            threshold_contributing_pixels=5,
+            intermediate_window_metres=3.0,
+            roughness_radius_metres=1.0,
+            raster_is_filled=True,
+            n_threads=1,
+        )
+        self.assertEqual(result.contributing_pixels.shape, raster.shape)
+        self.assertEqual(result.channel_mask.shape, raster.shape)
+
+        with self.assertRaises(TypeError):
+            lsdtt3.find_road_flow_discrimination(
+                raster, flow_accumulation_threshold_pixels=5
+            )
+        with self.assertRaises(TypeError):
+            lsdtt3.find_road_flow_discrimination(raster, dem_is_filled=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-# Compatibility coverage for the legacy optional-fill key.
+# Compatibility coverage for the legacy threshold and optional-fill keys.
 read_path: __READ_PATH__
 read_fname: staircase_dem.tif
 write_path: __WRITE_PATH__
@@ -18,7 +18,7 @@ ladder_level_count: 4
 vertical_accuracy_metres: 0.5
 ladder_resolvability_kappa: 3.0
 
-# Keep this old spelling explicit: false must reach the unfilled routing path.
+# Keep both old spellings explicit: false must reach the unfilled routing path.
 fill_dem_for_flow_routing: false
 channel_threshold_contributing_pixels: 500
 floodplain_max_height_metres: 5.0

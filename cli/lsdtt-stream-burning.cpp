@@ -671,13 +671,7 @@ int main(int argc, char* argv[])
         "along the D8 flow path). Writes a cleaned-network line layer.",
         "D8 cleaning of the clipped vector network (loops + dead ends)", "param", ""};
 
-    int_default_map["d8_channel_threshold_pixels"] = 1000;
-    help_map["d8_channel_threshold_pixels"] = {"int","1000",
-        "Contributing-pixel threshold defining a D8 channel.",
-        "A DEM cell belongs to the D8 channel mask when its number of "
-        "contributing pixels (include-self) is at least this value. Used to "
-        "score loop arms. Only used when clean_vector_network_d8 is true.",
-        "D8 cleaning of the clipped vector network (loops + dead ends)", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     float_default_map["d8_dead_end_search_max_metres"] = 750.0f;
     help_map["d8_dead_end_search_max_metres"] = {"float","750.0",
@@ -713,6 +707,9 @@ int main(int argc, char* argv[])
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
+
+    pp.set_deprecated_aliases({
+        {"d8_channel_threshold_pixels", "threshold_contributing_pixels"} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -997,7 +994,7 @@ int main(int argc, char* argv[])
 
         lsdtt::vector_network_d8_clean_options clean_opts;
         clean_opts.channel_threshold_pixels =
-            static_cast<std::int64_t>(ifs["d8_channel_threshold_pixels"]);
+            static_cast<std::int64_t>(ifs["threshold_contributing_pixels"]);
         clean_opts.dead_end_search_max_metres =
             static_cast<double>(ff["d8_dead_end_search_max_metres"]);
 

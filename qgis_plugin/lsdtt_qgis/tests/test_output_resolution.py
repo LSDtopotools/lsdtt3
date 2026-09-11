@@ -199,7 +199,9 @@ CHANNEL_NETWORK_ANALYSIS_SUFFIXES = {
     "write_strahler_channels": "_strahler_channels",
     "write_tokunaga_channels": "_tokunaga_channels",
     "write_tokunaga_channel_data": "_tokunaga_channel_data.csv",
-    "write_tokunaga_summary_data": "_tokunaga_summary.csv",
+    "write_tokunaga_summary_data(pair_counts)": "_tokunaga_summary_pair_counts.csv",
+    "write_tokunaga_summary_data(offset_stats)": "_tokunaga_summary_offset_stats.csv",
+    "write_tokunaga_summary_data(fit)": "_tokunaga_summary_fit.csv",
     "write_junction_area_ratio_data": "_junction_area_ratios.csv",
     "write_junction_area_ratio_summary": "_junction_area_ratio_summary.csv",
     "write_junction_centre_of_mass_bearings": "_junction_com_bearings.csv",
@@ -224,8 +226,11 @@ def test_channel_network_analysis_layer_suffixes_follow_format():
 
 def test_channel_network_analysis_summary_tables_are_csv():
     for key in (
-        "write_tokunaga_summary_data",
+        "write_tokunaga_summary_data(pair_counts)",
+        "write_tokunaga_summary_data(offset_stats)",
+        "write_tokunaga_summary_data(fit)",
         "write_junction_area_ratio_data",
+        "write_junction_area_ratio_summary",
         "write_junction_centre_of_mass_bearings",
     ):
         assert CHANNEL_NETWORK_ANALYSIS_SUFFIXES[key].endswith(".csv")

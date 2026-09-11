@@ -5,7 +5,7 @@ write_fname: tiny
 
 raster_is_filled: false
 fill_min_slope: 0.0001
-source_pixels_threshold: 1
+threshold_contributing_pixels: 1
 minimum_channel_pixels: 1
 n_largest_basins: 0
 

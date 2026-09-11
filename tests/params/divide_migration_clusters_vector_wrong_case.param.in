@@ -8,5 +8,5 @@ outlet_cluster_field: Cluster_ID
 outlet_cluster_mode: auto
 basin_outlet_snapping_method: none
 
-source_pixels_threshold: 40
+threshold_contributing_pixels: 40
 m_over_n: 0.45

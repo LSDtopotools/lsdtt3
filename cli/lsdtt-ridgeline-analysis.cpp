@@ -220,11 +220,7 @@ int main(int argc, char* argv[])
         "Used when raster_is_filled is false.",
         "Threading / Routing", "param", ""};
 
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int", "1000", 
-        "Contributing-pixel threshold defining channel heads.", 
-        "Reduce for denser channels.",
-        "Threading / Routing", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Workflow mode ---
     string_default_map["ridgeline_analysis_mode"] = "basin_outline_ridgelines";
@@ -684,6 +680,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"source_pixels_threshold", "threshold_contributing_pixels"} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map
     );
@@ -693,8 +691,8 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    if (ifs["source_pixels_threshold"] <= 0) {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+    if (ifs["threshold_contributing_pixels"] <= 0) {
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -816,7 +814,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_junction_network_cpu junction_network;
     try {
         std::vector<std::int64_t> source_flats = 
-            flow->get_sources_index_threshold(ifs["source_pixels_threshold"]);
+            flow->get_sources_index_threshold(ifs["threshold_contributing_pixels"]);
         junction_network.create(*flow, source_flats, jn_opts);
     } catch (const std::exception& e) {
         std::cerr << "Fatal Error in junction network: " << e.what() << "\n";

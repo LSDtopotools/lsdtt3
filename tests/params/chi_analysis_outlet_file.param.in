@@ -18,7 +18,7 @@ write_output_format: gtiff
 basin_outlet_file: __READ_PATH__/basin_stats_outlets.csv
 basin_outlet_snapping_method: downstream
 basin_outlet_contributing_pixels_threshold: 150
-source_pixels_threshold: 150
+threshold_contributing_pixels: 150
 m_over_n: 0.45,0.45
 
 print_chi_data_maps: true
