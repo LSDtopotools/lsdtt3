@@ -87,6 +87,7 @@ nav:
     - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
     - Workflows: what_is_lsdtt3/workflows.md
   - Design and algorithms:
+    - Choosing a synthetic landscape tool: design_and_algorithms/synthetic_cli_cluster.md
     - Surface metrics: design_and_algorithms/surface_metrics.md
     - Floodplains, terraces and valleys: design_and_algorithms/fluvial_surfaces_and_valleys.md
     - Cosmogenic nuclides: design_and_algorithms/cosmogenic_nuclides.md
@@ -134,7 +135,7 @@ nav:
       - Cosmo column tool: cli_reference/cli_reference_lsdtt_cosmo_column_tool.md
     - Landscape evolution:
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
-      - Synthetic surfaces and tests: cli_reference/cli_reference_lsdtt_raster_synthetic_tests.md
+      - Synthetic surfaces: cli_reference/cli_reference_lsdtt_synthetic_surfaces.md
       - Synthetic networks: cli_reference/cli_reference_lsdtt_synthetic_networks.md
       - Cosmo landslides: cli_reference/cli_reference_lsdtt_cosmo_landslides.md
   - QGIS:

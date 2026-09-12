@@ -747,7 +747,7 @@ set_tests_properties(smoke_linear_stats PROPERTIES
 # =============================================================================
 add_test(NAME fixture_stream_burning_dem
     COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
-        --exe "$<TARGET_FILE:lsdtt-raster-synthetic-tests>"
+        --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
         --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
         --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_fixture_dem.param.in"
         --read-path "${LSDTT_TEST_DATA_DIR}"
@@ -827,7 +827,7 @@ set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
 # =============================================================================
 add_test(NAME fixture_basin_stats_dem
     COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
-        --exe "$<TARGET_FILE:lsdtt-raster-synthetic-tests>"
+        --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
         --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
         --param-template "${LSDTT_TEST_PARAM_DIR}/basin_stats_fixture_dem.param.in"
         --read-path "${LSDTT_TEST_DATA_DIR}"
@@ -1271,7 +1271,7 @@ set_tests_properties(smoke_divide_migration_pair_summary PROPERTIES
 # ~0.5 s, so it stays in the default suite.
 add_lsdtt_cli_smoke_test(
     smoke_lem_strip_fixture
-    lsdtt-raster-synthetic-tests
+    lsdtt-synthetic-surfaces
     lem_strip_fixture.param.in
     lemstrip_hillslope_strip.tif
     --expect lemstrip_hillslope_strip_channel_mask.tif
@@ -1282,9 +1282,9 @@ set_tests_properties(smoke_lem_strip_fixture PROPERTIES
     FIXTURES_SETUP lem_strip_fixture)
 
 add_lsdtt_cli_smoke_test(
-    smoke_raster_synthetic_phase5_defaults
-    lsdtt-raster-synthetic-tests
-    raster_synthetic_phase5_defaults.param.in
+    smoke_synthetic_surfaces_phase5_defaults
+    lsdtt-synthetic-surfaces
+    synthetic_surfaces_phase5_defaults.param.in
     rasterdefaults5_uniform_random.tif
     --expect-raster-size rasterdefaults5_uniform_random.tif:128x128
     # Before migration: 256x256, seed 1, checksum 65320. The new oracle is
@@ -1293,18 +1293,18 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
-    smoke_raster_synthetic_phase5_old_defaults_negative_control
-    lsdtt-raster-synthetic-tests
-    raster_synthetic_phase5_old_defaults.param.in
+    smoke_synthetic_surfaces_phase5_old_defaults_negative_control
+    lsdtt-synthetic-surfaces
+    synthetic_surfaces_phase5_old_defaults.param.in
     rasterolddefaults5_uniform_random.tif
     --expect-raster-size rasterolddefaults5_uniform_random.tif:256x256
     --expect-raster-checksum rasterolddefaults5_uniform_random.tif:65320
 )
 
 add_lsdtt_cli_smoke_test(
-    smoke_raster_synthetic_phase5_legacy
-    lsdtt-raster-synthetic-tests
-    raster_synthetic_phase5_legacy.param.in
+    smoke_synthetic_surfaces_phase5_legacy
+    lsdtt-synthetic-surfaces
+    synthetic_surfaces_phase5_legacy.param.in
     rasterlegacy5_hillslope_strip.tif
     --expect rasterlegacy5_hillslope_strip_channel_mask.tif
     --expect-raster-size rasterlegacy5_hillslope_strip.tif:9x7
@@ -1327,9 +1327,9 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
-    smoke_raster_synthetic_phase5_alias_conflict
-    lsdtt-raster-synthetic-tests
-    raster_synthetic_phase5_alias_conflict.param.in
+    smoke_synthetic_surfaces_phase5_alias_conflict
+    lsdtt-synthetic-surfaces
+    synthetic_surfaces_phase5_alias_conflict.param.in
     rasterconflict5_uniform_random.tif
     --expect-raster-size rasterconflict5_uniform_random.tif:9x7
     --expect-file-contains "rasterconflict5_ingested_params.param:random_seed: 33"
@@ -3175,8 +3175,8 @@ add_lsdtt_cli_smoke_test(
 foreach(default_help_spec IN ITEMS
         "lsdtt-surface-metrics|n_threads|default : 0"
         "lsdtt-surface-metrics|frangi_c|default : 1.0"
-        "lsdtt-raster-synthetic-tests|n_rows|default : 128"
-        "lsdtt-raster-synthetic-tests|n_cols|default : 128"
+        "lsdtt-synthetic-surfaces|n_rows|default : 128"
+        "lsdtt-synthetic-surfaces|n_cols|default : 128"
         "lsdtt-spectral-analysis|n_threads|default : 0"
         "lsdtt-spectral-analysis|valley_spacing_area_exponent|default : 0.45"
         "lsdtt-valley-centreline|write_output_format|default : cog"
@@ -3199,12 +3199,21 @@ foreach(default_help_spec IN ITEMS
         PASS_REGULAR_EXPRESSION "${default_help_regex}")
 endforeach()
 
-add_test(NAME unit_raster_synthetic_help_defaults_exact
+add_test(NAME unit_synthetic_surfaces_help_defaults_exact
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_synthetic_help_defaults.py"
-        --exe "$<TARGET_FILE:lsdtt-raster-synthetic-tests>")
-set_tests_properties(unit_raster_synthetic_help_defaults_exact PROPERTIES
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_synthetic_surfaces_help_defaults.py"
+        --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>")
+set_tests_properties(unit_synthetic_surfaces_help_defaults_exact PROPERTIES
     LABELS "unit;cli;parameters")
+
+add_test(NAME unit_synthetic_cli_banners
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_synthetic_cli_banners.py"
+        --surfaces "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
+        --networks "$<TARGET_FILE:lsdtt-synthetic-networks>"
+        --lem "$<TARGET_FILE:lsdtt-lem>")
+set_tests_properties(unit_synthetic_cli_banners PROPERTIES
+    LABELS "unit;cli;synthetic_networks;lem")
 
 add_lsdtt_cli_smoke_test(
     smoke_surface_metrics_madk2
@@ -4404,7 +4413,7 @@ set_tests_properties(fixture_fluvial_surfaces_cli PROPERTIES
 # what every later assertion about purity is scored against.
 add_lsdtt_cli_smoke_test(
     smoke_fluvial_surfaces_generators
-    lsdtt-raster-synthetic-tests
+    lsdtt-synthetic-surfaces
     synthetic_terrace_fan.param.in
     synfs_terrace_staircase.tif
     --expect synfs_terrace_staircase_tread_id.tif
@@ -4877,7 +4886,7 @@ set(LSDTT_DOMAIN_RULES
     # "benchmark;surface_metrics", "benchmark;chi") are MERGED with this
     # domain further down, so `ctest -L flow` still reaches the flow benchmark.
     "^benchmark_"            "benchmark"
-    "synthetic_networks|_ocn_" "synthetic_networks"
+    "synthetic_(surfaces|networks|cli)|_ocn_" "synthetic_networks"
     "niemi"                  "cosmo"
     "quartz|fertility"       "quartz"
     "cosmo"                  "cosmo"

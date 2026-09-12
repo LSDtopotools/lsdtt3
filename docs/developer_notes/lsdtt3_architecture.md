@@ -56,7 +56,7 @@ lsdtt3/
 │   ├── lsdtt-mountain-front.cpp
 │   ├── lsdtt-raster-calculator.cpp
 │   ├── lsdtt-raster-preprocessing.cpp
-│   ├── lsdtt-raster-synthetic-tests.cpp
+│   ├── lsdtt-synthetic-surfaces.cpp
 │   ├── lsdtt-ridgeline-analysis.cpp
 │   ├── lsdtt-sediment-routing.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
@@ -603,7 +603,7 @@ Current CLI programs are:
   Raster preprocessing workflow: projection enforcement/reprojection, masking,
   nodata filling, breaching, pit filling, hillshade, and related outputs.
 
-- **`lsdtt-raster-synthetic-tests.cpp`**  
+- **`lsdtt-synthetic-surfaces.cpp`**
   Synthetic raster generation and testing utilities.
 
 - **`lsdtt-synthetic-networks.cpp`**  

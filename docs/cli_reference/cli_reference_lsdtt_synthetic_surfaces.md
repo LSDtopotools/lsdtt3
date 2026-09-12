@@ -1,15 +1,17 @@
-# CLI reference: lsdtt-raster-synthetic-tests
+# CLI reference: lsdtt-synthetic-surfaces
 
-Generates synthetic raster test surfaces for algorithm validation and benchmarking. Creates idealized geometries including planes, cones, ridges, mountain ranges, and fractal surfaces with optional noise.
+Generates one-shot analytical, stochastic, and geomorphic fixture surfaces. Use
+this tool when the generated raster or its ground-truth companion layer is the
+product, rather than an optimised drainage network or an evolved landscape.
 
 ## Usage
 
 ```
-lsdtt-raster-synthetic-tests  <path> <parameter_file>
-lsdtt-raster-synthetic-tests  <parameter_file>        # path defaults to ./
-lsdtt-raster-synthetic-tests  -h                      # print help and exit
-lsdtt-raster-synthetic-tests  -v                      # print version and exit
-lsdtt-raster-synthetic-tests  -c                      # print citation and exit
+lsdtt-synthetic-surfaces  <path> <parameter_file>
+lsdtt-synthetic-surfaces  <parameter_file>        # path defaults to ./
+lsdtt-synthetic-surfaces  -h                      # print help and exit
+lsdtt-synthetic-surfaces  -v                      # print version and exit
+lsdtt-synthetic-surfaces  -c                      # print citation and exit
 ```
 
 ## Parameter file format
@@ -23,153 +25,43 @@ Keys use `snake_case`. All keys and their defaults are listed below.
 
 ---
 
-## Pipeline overview
+## How generation works
 
-Steps run in this order:
+Surface families are selected by independent `write_*_surface` switches. More
+than one family can be generated in a run on the same dimensions, cell size,
+and random seed. Generated rasters use lsdtt3's default synthetic projected
+georeference.
 
-| Step | Description |
+Available families are:
+
+- uniform, red, and blue noise;
+- diamond-square fractal terrain;
+- periodic cosine waves and global quadratic analytical surfaces;
+- terrace staircases with tread IDs and a trunk-channel mask;
+- alluvial fans with inset-lobe IDs;
+- hillslope strips with channel masks and controlled initial profiles.
+
+The two analytical families can optionally be passed through
+`wavelet_quadratic_fit`. The tool reports coefficient errors and can write true,
+fitted, and residual coefficient rasters. These diagnostics warn rather than
+acting as assertion-based unit tests.
+
+## Principal outputs
+
+| Family | Principal output suffixes |
 |---|---|
-| 1. Grid creation | Initialise raster grid with specified dimensions and CRS |
-| 2. Surface generation | Create base synthetic surface using selected geometry |
-| 3. Noise addition *(optional)* | Add white noise, red noise, or fractal perturbations |
-| 4. Scaling | Apply amplitude and vertical offset |
-| 5. Output | Write synthetic DEM with metadata |
+| Uniform/red/blue noise | `_uniform_random`, `_red_noise`, `_blue_noise` |
+| Diamond-square | `_diamond_square` |
+| Periodic wave | `_periodic_wave`, `_periodic_wave_components.csv` |
+| Global quadratic | `_global_quadratic`, `_global_quadratic_coefficients.csv` |
+| Terrace staircase | `_terrace_staircase`, `_terrace_staircase_tread_id`, `_terrace_staircase_channel_mask` |
+| Alluvial fan | `_alluvial_fan`, `_alluvial_fan_lobe_id` |
+| Hillslope strip | `_hillslope_strip`, `_hillslope_strip_channel_mask` |
+| Wavelet validation | coefficient rasters and `_wavelet_test_summary.csv` |
 
----
-
-## Output parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_path` | string | current directory | Directory for output files. |
-| `write_fname` | string | `synthetic_dem` | Output filename stem. |
-
----
-
-## Grid specification
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_rows` | int | `128` | Number of rows in output raster. |
-| `n_cols` | int | `128` | Number of columns in output raster. |
-| `cell_size_metres` | float | `1.0` | Pixel size in metres. Former `cell_size` is an unchanged-value alias. |
-| `random_seed` | int | `33` | Seed for all stochastic generators. Former `seed` is an unchanged-value alias. |
-| `set_default_synthetic_georeference` | bool | `true` | Use default georeference (Teanu Island, UTM 58S). If `false`, raster has no CRS. |
-
----
-
-## Surface type
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `surface_type` | string | `plane` | Type of surface to generate: `plane`, `cone`, `ridge`, `range`, `diamond_square`, `perlin_noise`. |
-
----
-
-## Surface type: Plane
-
-Simple flat or tilted plane.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `plane_slope_radians` | float | `0.0` | Slope angle (radians). Set to `0` for flat plane. |
-| `plane_aspect_radians` | float | `0.0` | Aspect direction (radians, 0=North, π/2=East). |
-| `plane_base_elevation_metres` | float | `1000.0` | Elevation at grid centre (metres). |
-
----
-
-## Surface type: Cone
-
-Conical mountain.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `cone_base_elevation_metres` | float | `1000.0` | Base elevation (metres). |
-| `cone_peak_elevation_metres` | float | `2000.0` | Peak elevation (metres). |
-| `cone_centre_x_fraction` | float | `0.5` | Peak location, x-fraction of grid (0–1). |
-| `cone_centre_y_fraction` | float | `0.5` | Peak location, y-fraction of grid (0–1). |
-
----
-
-## Surface type: Ridge
-
-Linear mountain ridge.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `ridge_base_elevation_metres` | float | `1000.0` | Base elevation (metres). |
-| `ridge_peak_elevation_metres` | float | `2000.0` | Peak elevation (metres). |
-| `ridge_orientation_radians` | float | `0.0` | Ridge strike direction (radians). |
-
----
-
-## Surface type: Mountain range
-
-Multiple peaks with valley floors.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `range_base_elevation_metres` | float | `1000.0` | Valley floor elevation (metres). |
-| `range_peak_elevation_metres` | float | `2000.0` | Peak elevation (metres). |
-| `range_n_peaks` | int | `5` | Number of peaks. |
-| `range_peak_spacing_fraction` | float | `0.2` | Spacing between peaks (fraction of grid diagonal). |
-
----
-
-## Surface type: Diamond-Square (fractal)
-
-Fractal surface generated via diamond-square algorithm.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `diamond_square_base_elevation_metres` | float | `1000.0` | Base elevation (metres). |
-| `diamond_square_roughness` | float | `0.7` | Roughness parameter (0–1). Higher = rougher surface. |
-| `diamond_square_max_displacement_metres` | float | `100.0` | Maximum elevation variation (metres). |
-
----
-
-## Surface type: Perlin noise
-
-Procedural noise-based surface.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `perlin_base_elevation_metres` | float | `1000.0` | Base elevation (metres). |
-| `perlin_scale_metres` | float | `500.0` | Feature scale (metres). Larger = smoother features. |
-| `perlin_amplitude_metres` | float | `100.0` | Amplitude of elevation variation (metres). |
-| `perlin_octaves` | int | `4` | Number of noise octaves (more = more detail, slower). |
-
----
-
-## Noise addition
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `add_white_noise` | bool | `false` | Add white noise. |
-| `white_noise_amplitude_metres` | float | `10.0` | Amplitude of white noise (metres). |
-| `add_red_noise` | bool | `false` | Add red (correlated) noise. |
-| `red_noise_amplitude_metres` | float | `20.0` | Amplitude of red noise (metres). |
-| `red_noise_correlation_length_pixels` | int | `50` | Correlation length (pixels) for red noise. |
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format: `cog` (preferred), `gtiff`, `png`. |
-
-The hillslope-strip parameter is `strip_half_width_metres`; the former
-`strip_half_width` spelling is an unchanged-value alias. Surface generators are
-selected by independent `write_*_surface` switches, which may be enabled
-simultaneously. There is deliberately no `noise_type` selector in this harness.
-
----
-
-## Output files
-
-- `<write_fname>_dem.tif` — main synthetic DEM
-- `<write_fname>_dem.png` *(optional)* — PNG hillshade preview (if `write_output_format: png`)
+Raster extensions follow `write_output_format`. See
+[Choosing a synthetic landscape tool](../design_and_algorithms/synthetic_cli_cluster.md)
+for the distinction from `lsdtt-synthetic-networks` and `lsdtt-lem`.
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters
@@ -191,7 +83,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `n_rows` | `int` | `128` | `param` | - | Number of rows in the synthetic raster. | - |
 | `n_cols` | `int` | `128` | `param` | - | Number of columns in the synthetic raster. | - |
-| `cell_size_metres` | `float` | `1.0` | `param` | - | Cell size in metres. | Note: synthetic rasters have no CRS. wavelet_quadratic_fit() is called with the supplied cell_size_metres. |
+| `cell_size_metres` | `float` | `1.0` | `param` | - | Cell size in metres. | Generated rasters use the default synthetic projected georeference. wavelet_quadratic_fit() is called with the supplied cell_size_metres. |
 | `random_seed` | `int` | `33` | `param` | - | Random seed for all stochastic generators. | - |
 | `n_threads` | `int` | `0` | `io` | - | Number of CPU threads (0 = all available). | - |
 | `write_output_format` | `string` | `cog` | `io` | - | Output format: cog, gtiff, same_as_input. | cog falls back to gtiff for rasters below ~262k pixels. |

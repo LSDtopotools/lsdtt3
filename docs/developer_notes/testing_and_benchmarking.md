@@ -952,7 +952,7 @@ downloads confounds size with terrain: at 30 m, 2400 px is a 72 km box and
 Cropping every rung from one source keeps terrain as constant as it can be and
 needs one download per region instead of one per rung.
 
-**Why not synthetic.** `lsdtt-raster-synthetic-tests` generates a
+**Why not synthetic.** `lsdtt-synthetic-surfaces` generates a
 diamond-square surface of any size in ~1.3 s with no network, which is
 tempting, and it is not usable here. Depression density (fraction of cells a
 no-epsilon RichDEM fill raises, 256²):
@@ -3737,7 +3737,7 @@ reported, never asserted, so it stays out of the default suite.
 
 **Test domains are generated in C++, never in Python.** The hillslope-strip
 generator in `lsdtt_raster_synthetic_surfaces_cpu` (exposed through
-`lsdtt-raster-synthetic-tests`) returns `{dem, channel_mask}` with flat, analytic
+`lsdtt-synthetic-surfaces`) returns `{dem, channel_mask}` with flat, analytic
 parabola and raised-plateau initial profiles; the network tests use the
 `diamond_square` initial surface already built into `lsdtt-lem` and let the
 model's own stream-power incision produce the branching network. Python supplies
@@ -3841,7 +3841,7 @@ semi-implicit solve now uses `omega = 1`.
 
 That end-to-end test is now registered and runs in the default suite:
 `smoke_lem_strip_fixture` generates the strip through
-`lsdtt-raster-synthetic-tests`, and `smoke_lem_roering_implicit_strip` runs
+`lsdtt-synthetic-surfaces`, and `smoke_lem_roering_implicit_strip` runs
 `lsdtt-lem` on it (`tests/params/lem_roering_implicit_strip.param.in`) and pins
 the converged steady state two-sided — peak **4.9429 m** and mean **3.2719 m**,
 the recorded in-LEM strip values. `U·L/D = 0.2` is a quarter of `Sc`, so the run
@@ -5588,7 +5588,7 @@ The 197/197 pass says nothing about it. Verified instead through the CLI's own o
 global quadratic -- the EXACT oracle for this fit -- all six coefficients recover to RMSE ~1e-10,
 i.e. float round-off, with the periodic-wave approximate oracle giving the expected small errors.
 
-That the check had to be run by hand is the finding. `lsdtt-raster-synthetic-tests` already carries
+That the check had to be run by hand is the finding. `lsdtt-synthetic-surfaces` already carries
 `test_wavelet_on_global_quadratic` with an exact analytic answer; it is not wired into CTest, so
 nothing guards this function against regression.
 

@@ -65,3 +65,18 @@ def test_driver_inventory_matches_the_vanilla_cmake_build() -> None:
     vanilla_cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
     expected = set(re.findall(r"lsdtt_cli\((lsdtt-[\w-]+)", vanilla_cmake))
     assert _cli._DRIVERS == expected
+
+
+def test_driver_inventory_matches_wheel_declarations() -> None:
+    """CMake targets and console scripts cannot drift from the dispatcher."""
+    root = Path(__file__).parents[1]
+    wheel_cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    cmake_drivers = set(re.findall(r"lsdtt_python_cli\((lsdtt-[\w-]+)", wheel_cmake))
+    console_scripts = set(
+        re.findall(r"^(lsdtt-[\w-]+)\s*=\s*\"lsdtt3\._cli:main\"$", pyproject, re.MULTILINE)
+    )
+    assert cmake_drivers == _cli._DRIVERS
+    assert console_scripts == _cli._DRIVERS
+    assert "lsdtt-synthetic-surfaces" in _cli._DRIVERS
+    assert "lsdtt-raster-synthetic-tests" not in _cli._DRIVERS

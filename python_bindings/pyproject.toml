@@ -11,7 +11,7 @@ dependencies = ["numpy>=1.24", "geopandas>=1.0"]
 
 [project.scripts]
 lsdtt-raster-preprocessing = "lsdtt3._cli:main"
-lsdtt-raster-synthetic-tests = "lsdtt3._cli:main"
+lsdtt-synthetic-surfaces = "lsdtt3._cli:main"
 lsdtt-synthetic-networks = "lsdtt3._cli:main"
 lsdtt-surface-metrics = "lsdtt3._cli:main"
 lsdtt-channel-extraction = "lsdtt3._cli:main"
@@ -23,6 +23,7 @@ lsdtt-mountain-front = "lsdtt3._cli:main"
 lsdtt-basin-stats = "lsdtt3._cli:main"
 lsdtt-basin-extraction = "lsdtt3._cli:main"
 lsdtt-flat-surface-finder = "lsdtt3._cli:main"
+lsdtt-fluvial-surfaces = "lsdtt3._cli:main"
 lsdtt-valley-centreline = "lsdtt3._cli:main"
 lsdtt-graphflood = "lsdtt3._cli:main"
 lsdtt-channel-network-analysis = "lsdtt3._cli:main"

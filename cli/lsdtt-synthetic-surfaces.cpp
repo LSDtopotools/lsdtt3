@@ -1,4 +1,4 @@
-// lsdtt_raster_synthetic_tests.cpp
+// lsdtt-synthetic-surfaces.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -7,17 +7,17 @@
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// lsdtt_raster_synthetic_tests
+// lsdtt-synthetic-surfaces
 //
 // Generates synthetic rasters for testing analysis routines and optionally
 // tests wavelet_quadratic_fit() against analytical reference surfaces.
 //
 // Usage:
-//   lsdtt_raster_synthetic_tests <path> <parameter_file>
-//   lsdtt_raster_synthetic_tests <parameter_file>
-//   lsdtt_raster_synthetic_tests -h
-//   lsdtt_raster_synthetic_tests -v
-//   lsdtt_raster_synthetic_tests -c
+//   lsdtt-synthetic-surfaces <path> <parameter_file>
+//   lsdtt-synthetic-surfaces <parameter_file>
+//   lsdtt-synthetic-surfaces -h
+//   lsdtt-synthetic-surfaces -v
+//   lsdtt-synthetic-surfaces -c
 //
 // The output uses write_path / write_fname from the parameter file.
 // -----------------------------------------------------------------------------
@@ -43,7 +43,7 @@
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
-static const std::string k_tool_name = "lsdtt-raster-synthetic-tests";
+static const std::string k_tool_name = "lsdtt-synthetic-surfaces";
 
 // -----------------------------------------------------------------------------
 // print_banner
@@ -52,15 +52,18 @@ static void print_banner()
 {
     std::cout
         << "=========================================================\n"
-        << "|| Welcome to lsdtt-raster-synthetic-tests             ||\n"
-        << "|| Synthetic raster generation and testing             ||\n"
+        << "|| Welcome to lsdtt-synthetic-surfaces                 ||\n"
+        << "|| One-shot analytical, stochastic, and truth fixtures ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
         << "|| CLI version: " << k_version  << "\n"
         << "|| Citation   : " << k_citation << "\n"
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
-        << "=========================================================\n\n";
+        << "=========================================================\n"
+        << "Creates one-shot surfaces and ground-truth fixtures.\n"
+        << "For optimised drainage topology use lsdtt-synthetic-networks;\n"
+        << "for process-driven landscape evolution use lsdtt-lem.\n\n";
 }
 
 // -----------------------------------------------------------------------------
@@ -449,8 +452,8 @@ int main(int argc, char* argv[])
             {"int","128","Number of columns in the synthetic raster.",""}},
         {"cell_size_metres",
             {"float","1.0","Cell size in metres.",
-             "Note: synthetic rasters have no CRS. wavelet_quadratic_fit() "
-              "is called with the supplied cell_size_metres."}},
+             "Generated rasters use the default synthetic projected georeference. "
+              "wavelet_quadratic_fit() is called with the supplied cell_size_metres."}},
         {"random_seed",
             {"int","33","Random seed for all stochastic generators.",""}},
         {"n_threads",
@@ -1312,7 +1315,7 @@ int main(int argc, char* argv[])
 
         pp.print_parameters();
 
-        std::cout << "\nlsdtt_raster_synthetic_tests: done.\n";
+        std::cout << "\nlsdtt-synthetic-surfaces: done.\n";
     }
     catch (const std::exception& e)
     {

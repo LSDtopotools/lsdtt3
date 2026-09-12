@@ -1,5 +1,5 @@
 # Phase 0b: the terrace staircase and alluvial fan generators, driven through
-# lsdtt-raster-synthetic-tests rather than through the test binary, so the
+# lsdtt-synthetic-surfaces rather than through the test binary, so the
 # user-facing path to both surfaces is covered too.
 read_path: __READ_PATH__
 write_path: __WRITE_PATH__
