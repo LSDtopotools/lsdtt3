@@ -53,7 +53,7 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra
 
 Everything below installs a pre-built release package: no compiler, no GDAL
 install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
-and troubleshooting, are in [`docs/install_lsdtt3.md`](docs/install_lsdtt3.md).**
+and troubleshooting, are in [the installation guide](docs/what_is_lsdtt3/install_lsdtt3.md).**
 
 Packages are on the [Releases page](../../releases/latest) and at
 <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>.
@@ -269,14 +269,14 @@ in-process timing measure each other). These tests are reported, never asserted,
 so a loaded machine cannot turn the suite red.
 
 Full methodology, the reference numbers to compare against, and the
-thread-scaling caveats are in `docs/testing_and_benchmarking.md` §6.
+thread-scaling caveats are in `docs/developer_notes/testing_and_benchmarking.md` §6.
 
 **No DEM is committed to this repository.** Tests that need real topography fetch
 it on demand from public keyless sources and cache it under
 `tests/data/dem_cache/` (gitignored), using `lsdtt-fetch-raster` itself.
 
 See `tests/README.md` for what each test does, and
-`docs/testing_and_benchmarking.md` for methodology, benchmark results, and the
+`docs/developer_notes/testing_and_benchmarking.md` for methodology, benchmark results, and the
 places where lsdtt3 and RichDEM deliberately differ.
 
 ---
@@ -364,7 +364,8 @@ The `docs/` tree is organised by audience:
 
 | Directory | Audience |
 |---|---|
-| `docs/` (top level) | **Users** — installation and overview. Also the source for the documentation site (`mkdocs.yml`). |
+| `docs/what_is_lsdtt3/` | **Users** — overview, installation, data, flow routing, benchmarks, and workflows. |
+| `docs/design_and_algorithms/` | **Users and developers** — scientific design, algorithms, and numerical choices. |
 | `docs/cli_reference/` | **Users** — one parameter reference per command-line tool. |
 | `docs/developer_notes/` | **Developers** — architecture, building, packaging. |
 | `docs/plan_docs/` | Working design documents. Not published, not committed. |
@@ -374,8 +375,9 @@ The `docs/` tree is organised by audience:
 
 | Document | Contents |
 |---|---|
-| `docs/install_lsdtt3.md` | **Start here.** Installing a release package on Linux, Windows (WSL2 or native), macOS, or Google Colab. |
-| `docs/overview.md` | What lsdtt3 is, what it does, and how it differs from LSDTopoTools2. |
+| `docs/what_is_lsdtt3/install_lsdtt3.md` | **Start here.** Installing a release package on Linux, Windows (WSL2 or native), macOS, or Google Colab. |
+| `docs/what_is_lsdtt3/overview.md` | What lsdtt3 is, what it does, and how it differs from LSDTopoTools2. |
+| `docs/design_and_algorithms/` | Scientific design and algorithm documentation. |
 | `docs/cli_reference/` | Parameter reference for every tool — see the table above for which file. |
 
 ### For developers
@@ -396,7 +398,7 @@ The `docs/` tree is organised by audience:
 | `docs/developer_notes/lsdtt3_in_windows.md` | Windows (WSL2) development setup. |
 | `docs/developer_notes/lsdtt3_in_macos.md` | macOS development setup via a Multipass Ubuntu VM. |
 | `docs/developer_notes/debian_packaging.md` | Building a Debian package. |
-| `docs/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
+| `docs/developer_notes/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
 | `tools/README.md` | Building redistributable bundles, and the git/gh commands for cutting a tagged release. |
 | `apptainer_def/apptainer_setup.md` | Apptainer container setup. |
 
