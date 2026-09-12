@@ -1,0 +1,19 @@
+# Compatibility coverage for the legacy channel-initiation key.
+read_path: __READ_PATH__
+read_fname: hilltop_cli_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hcc_legacy
+boundary_conditions: oooo
+source_pixels_threshold: 60
+basin_selection_choice: all_junctions
+min_basin_pixels: 80
+stream_network_padding_pixels: 2
+threshold_hilltop_gradient: 0.4
+remove_positive_curvature_hilltops: true
+critical_hillslope_slope: 0.8
+hilltop_points_write_vector_format: csv
+write_ridgelines: true
+write_vector_format: flatgeobuf
+write_hillslope_traces: false
+write_output_format: gtiff
+n_threads: 1

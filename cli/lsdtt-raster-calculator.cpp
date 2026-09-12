@@ -137,7 +137,10 @@ int main(int argc, char* argv[])
     string_default_map["resampling_method"] = "bilinear";
     help_map["resampling_method"] = {"string","bilinear",
         "GDAL resampling method used when warping second raster.",
-        "Allowed values follow GDAL warp methods: near, bilinear, cubic, "
+        "Bilinear is the conservative default for aligning an arbitrary second "
+        "raster because it does not introduce cubic overshoot before raster "
+        "algebra. Use near for categorical values. Allowed values follow GDAL "
+        "warp methods: near, bilinear, cubic, "
         "cubicspline, lanczos, average, mode, max, min, med, q1, q3, sum.",
         "Second raster and alignment", "param", ""};
 
@@ -149,8 +152,8 @@ int main(int argc, char* argv[])
         "Second raster and alignment", "param", ""};
 
     // --- DEM coregistration ---
-    bool_default_map["enable_dem_coregistration"] = false;
-    help_map["enable_dem_coregistration"] = {"bool","false",
+    bool_default_map["run_dem_coregistration"] = false;
+    help_map["run_dem_coregistration"] = {"bool","false",
         "Enable DEM coregistration before algebra outputs.",
         "If true, the second raster is coregistered to the first raster after "
         "optional resampling and before all algebra operations.",
@@ -162,92 +165,92 @@ int main(int argc, char* argv[])
         "Allowed values: nuth_kaab. Method reference: Nuth and Kaab (2011), "
         "https://doi.org/10.5194/tc-5-271-2011. This implementation was "
         "ported from xdem.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
-    bool_default_map["write_second_coregistered"] = false;
-    help_map["write_second_coregistered"] = {"bool","false",
+    bool_default_map["write_second_coregistered_raster"] = false;
+    help_map["write_second_coregistered_raster"] = {"bool","false",
         "Write the coregistered second raster.",
         "Output file: <second_raster_write_fname>_coregistered_to_<write_fname>.",
-        "DEM coregistration", "switch", "enable_dem_coregistration"};
+        "DEM coregistration", "switch", "run_dem_coregistration"};
 
     bool_default_map["write_dem_coreg_diagnostics_csv"] = false;
     help_map["write_dem_coreg_diagnostics_csv"] = {"bool","false",
         "Write per-iteration DEM coregistration diagnostics CSV.",
         "Output file: <write_fname>_and_<second_raster_write_fname>_coreg_diagnostics.csv.",
-        "DEM coregistration", "switch", "enable_dem_coregistration"};
+        "DEM coregistration", "switch", "run_dem_coregistration"};
 
     int_default_map["nuth_kaab_coreg_max_iterations"] = 8;
     help_map["nuth_kaab_coreg_max_iterations"] = {"int","8",
         "Maximum iterations for nuth_kaab DEM coregistration.",
         "Used only when dem_coregistration_method is nuth_kaab.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     float_default_map["nuth_kaab_coreg_offset_threshold_pixels"] = 0.001f;
     help_map["nuth_kaab_coreg_offset_threshold_pixels"] = {"float","0.001",
         "Convergence threshold in pixels for horizontal offset updates.",
         "Matches Nuth and Kaab style stopping criterion: stop when estimated "
         "horizontal residual offset per iteration falls below this value.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     float_default_map["nuth_kaab_coreg_slope_min_degrees"] = 0.0f;
     help_map["nuth_kaab_coreg_slope_min_degrees"] = {"float","0.0",
         "Minimum slope [degrees] used in nuth_kaab sample selection.",
         "Used only when dem_coregistration_method is nuth_kaab.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     float_default_map["nuth_kaab_coreg_slope_max_degrees"] = 90.0f;
     help_map["nuth_kaab_coreg_slope_max_degrees"] = {"float","90.0",
         "Maximum slope [degrees] used in nuth_kaab sample selection.",
         "Used only when dem_coregistration_method is nuth_kaab.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     int_default_map["nuth_kaab_coreg_aspect_bin_count"] = 72;
     help_map["nuth_kaab_coreg_aspect_bin_count"] = {"int","72",
         "Number of aspect bins used before cosine fitting.",
         "Nuth and Kaab fitting is performed on binned dh/tan(slope) by aspect.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     int_default_map["nuth_kaab_coreg_min_samples"] = 500;
     help_map["nuth_kaab_coreg_min_samples"] = {"int","500",
         "Minimum samples required after filtering.",
         "Used only when dem_coregistration_method is nuth_kaab.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     int_default_map["nuth_kaab_coreg_subsample_count"] = 500000;
     help_map["nuth_kaab_coreg_subsample_count"] = {"int","500000",
         "Maximum number of eligible pixels used for iterative fitting.",
         "Set -1 to use all eligible pixels; otherwise random subsample up to this count.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     bool_default_map["nuth_kaab_coreg_apply_vertical_shift"] = true;
     help_map["nuth_kaab_coreg_apply_vertical_shift"] = {"bool","true",
         "Allow vertical shift term in nuth_kaab fitting.",
         "If false, only horizontal shift is estimated.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_max_horizontal_step_m"] = 0.0f;
-    help_map["nuth_kaab_coreg_max_horizontal_step_m"] = {"float","0.0",
+    float_default_map["nuth_kaab_coreg_max_horizontal_step_metres"] = 0.0f;
+    help_map["nuth_kaab_coreg_max_horizontal_step_metres"] = {"float","0.0",
         "Maximum horizontal step per iteration [m].",
         "<= 0 disables per-iteration step capping.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_initial_dx_m"] = 0.0f;
-    help_map["nuth_kaab_coreg_initial_dx_m"] = {"float","0.0",
+    float_default_map["nuth_kaab_coreg_initial_dx_metres"] = 0.0f;
+    help_map["nuth_kaab_coreg_initial_dx_metres"] = {"float","0.0",
         "Initial easting shift guess [m] applied before iterations.",
         "Useful to seed the optimizer when large known offsets are present.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_initial_dy_m"] = 0.0f;
-    help_map["nuth_kaab_coreg_initial_dy_m"] = {"float","0.0",
+    float_default_map["nuth_kaab_coreg_initial_dy_metres"] = 0.0f;
+    help_map["nuth_kaab_coreg_initial_dy_metres"] = {"float","0.0",
         "Initial northing shift guess [m] applied before iterations.",
         "Useful to seed the optimizer when large known offsets are present.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
-    float_default_map["nuth_kaab_coreg_initial_dz_m"] = 0.0f;
-    help_map["nuth_kaab_coreg_initial_dz_m"] = {"float","0.0",
+    float_default_map["nuth_kaab_coreg_initial_dz_metres"] = 0.0f;
+    help_map["nuth_kaab_coreg_initial_dz_metres"] = {"float","0.0",
         "Initial vertical shift guess [m].",
         "If vertical-shift solving is enabled, iterations overwrite this with the final estimate.",
-        "DEM coregistration", "param", "enable_dem_coregistration"};
+        "DEM coregistration", "param", "run_dem_coregistration"};
 
     // --- Output format and diagnostics ---
     string_default_map["write_output_format"] = "cog";
@@ -256,55 +259,55 @@ int main(int argc, char* argv[])
         "Allowed values: cog, gtiff, same_as_input, png.",
         "Output format and diagnostics", "io", ""};
 
-    bool_default_map["write_overlap_mask"] = false;
-    help_map["write_overlap_mask"] = {"bool","false",
+    bool_default_map["write_overlap_mask_raster"] = false;
+    help_map["write_overlap_mask_raster"] = {"bool","false",
         "Write overlap mask raster.",
         "Writes <write_fname>_and_<second_raster_write_fname>[_coreg]_overlap_mask "
-        "where _coreg is added when enable_dem_coregistration=true; 1 means "
+        "where _coreg is added when run_dem_coregistration=true; 1 means "
         "both rasters are valid and 0 means at least one raster is nodata.",
         "Output format and diagnostics", "switch", ""};
 
     // --- Selected outputs ---
-    bool_default_map["write_sum"] = false;
-    help_map["write_sum"] = {"bool","false",
+    bool_default_map["write_sum_raster"] = false;
+    help_map["write_sum_raster"] = {"bool","false",
         "Write sum raster.",
         "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_sum.",
         "Selected outputs", "switch", ""};
 
-    bool_default_map["write_multiply"] = false;
-    help_map["write_multiply"] = {"bool","false",
+    bool_default_map["write_multiply_raster"] = false;
+    help_map["write_multiply_raster"] = {"bool","false",
         "Write multiply raster.",
         "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_multiply.",
         "Selected outputs", "switch", ""};
 
-    bool_default_map["write_ratio"] = false;
-    help_map["write_ratio"] = {"bool","false",
+    bool_default_map["write_ratio_raster"] = false;
+    help_map["write_ratio_raster"] = {"bool","false",
         "Write ratio raster (first / second).",
         "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_ratio. "
         "Division by zero is set to nodata.",
         "Selected outputs", "switch", ""};
 
-    bool_default_map["write_difference"] = true;
-    help_map["write_difference"] = {"bool","true",
+    bool_default_map["write_difference_raster"] = true;
+    help_map["write_difference_raster"] = {"bool","true",
         "Write difference raster (first - second).",
         "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_difference.",
         "Selected outputs", "switch", ""};
 
-    bool_default_map["write_absolute_difference"] = false;
-    help_map["write_absolute_difference"] = {"bool","false",
+    bool_default_map["write_absolute_difference_raster"] = false;
+    help_map["write_absolute_difference_raster"] = {"bool","false",
         "Write absolute difference raster.",
         "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_absolute_difference, "
         "computed as abs(first - second).",
         "Selected outputs", "switch", ""};
 
-    bool_default_map["write_first_on_overlap"] = false;
-    help_map["write_first_on_overlap"] = {"bool","false",
+    bool_default_map["write_first_on_overlap_raster"] = false;
+    help_map["write_first_on_overlap_raster"] = {"bool","false",
         "Write first raster where overlap with second is valid.",
         "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_first_on_overlap.",
         "Selected outputs", "switch", ""};
 
-    bool_default_map["write_second_on_overlap"] = false;
-    help_map["write_second_on_overlap"] = {"bool","false",
+    bool_default_map["write_second_on_overlap_raster"] = false;
+    help_map["write_second_on_overlap_raster"] = {"bool","false",
         "Write second raster where overlap with first is valid.",
         "Output file: <write_fname>_and_<second_raster_write_fname>[_coreg]_second_on_overlap.",
         "Selected outputs", "switch", ""};
@@ -333,6 +336,21 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"enable_dem_coregistration", "run_dem_coregistration"},
+        {"write_second_coregistered", "write_second_coregistered_raster"},
+        {"write_overlap_mask", "write_overlap_mask_raster"},
+        {"write_sum", "write_sum_raster"},
+        {"write_multiply", "write_multiply_raster"},
+        {"write_ratio", "write_ratio_raster"},
+        {"write_difference", "write_difference_raster"},
+        {"write_absolute_difference", "write_absolute_difference_raster"},
+        {"write_first_on_overlap", "write_first_on_overlap_raster"},
+        {"write_second_on_overlap", "write_second_on_overlap_raster"},
+        {"nuth_kaab_coreg_max_horizontal_step_m", "nuth_kaab_coreg_max_horizontal_step_metres"},
+        {"nuth_kaab_coreg_initial_dx_m", "nuth_kaab_coreg_initial_dx_metres"},
+        {"nuth_kaab_coreg_initial_dy_m", "nuth_kaab_coreg_initial_dy_metres"},
+        {"nuth_kaab_coreg_initial_dz_m", "nuth_kaab_coreg_initial_dz_metres"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -353,14 +371,14 @@ int main(int argc, char* argv[])
     (void)ifs;
 
     const bool any_output_requested =
-        bf["write_sum"] ||
-        bf["write_multiply"] ||
-        bf["write_ratio"] ||
-        bf["write_difference"] ||
-        bf["write_absolute_difference"] ||
-        bf["write_first_on_overlap"] ||
-        bf["write_second_on_overlap"] ||
-        bf["write_overlap_mask"];
+        bf["write_sum_raster"] ||
+        bf["write_multiply_raster"] ||
+        bf["write_ratio_raster"] ||
+        bf["write_difference_raster"] ||
+        bf["write_absolute_difference_raster"] ||
+        bf["write_first_on_overlap_raster"] ||
+        bf["write_second_on_overlap_raster"] ||
+        bf["write_overlap_mask_raster"];
 
     if (!any_output_requested)
     {
@@ -432,7 +450,7 @@ int main(int argc, char* argv[])
     }
 
     const std::string second_write_fname_for_products =
-        bf["enable_dem_coregistration"]
+        bf["run_dem_coregistration"]
             ? second_write_fname + "_coreg"
             : second_write_fname;
 
@@ -625,7 +643,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 5 - Optional DEM coregistration
     // -------------------------------------------------------------------------
-    if (bf["enable_dem_coregistration"])
+    if (bf["run_dem_coregistration"])
     {
         std::cout << "\n--- DEM coregistration ---\n";
         lsdtt::dem_coreg_method method = lsdtt::dem_coreg_method::none;
@@ -658,13 +676,13 @@ int main(int argc, char* argv[])
         coreg_options.nuth_kaab.nuth_kaab_coreg_apply_vertical_shift =
             bf["nuth_kaab_coreg_apply_vertical_shift"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_max_horizontal_step_m =
-            ff["nuth_kaab_coreg_max_horizontal_step_m"];
+            ff["nuth_kaab_coreg_max_horizontal_step_metres"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_initial_dx_m =
-            ff["nuth_kaab_coreg_initial_dx_m"];
+            ff["nuth_kaab_coreg_initial_dx_metres"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_initial_dy_m =
-            ff["nuth_kaab_coreg_initial_dy_m"];
+            ff["nuth_kaab_coreg_initial_dy_metres"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_initial_dz_m =
-            ff["nuth_kaab_coreg_initial_dz_m"];
+            ff["nuth_kaab_coreg_initial_dz_metres"];
 
         lsdtt::dem_coreg_result coreg_result;
         try
@@ -720,7 +738,7 @@ int main(int argc, char* argv[])
             std::cout << "Wrote DEM coreg diagnostics CSV: " << diag_path << "\n";
         }
 
-        if (bf["write_second_coregistered"])
+        if (bf["write_second_coregistered_raster"])
         {
             std::cout << "Writing coregistered second raster...\n";
             lsdtt::lsdtt_data_loader coreg_writer;
@@ -824,13 +842,13 @@ int main(int argc, char* argv[])
         return true;
     };
 
-    if (bf["write_overlap_mask"])
+    if (bf["write_overlap_mask_raster"])
     {
         std::cout << "Preparing overlap mask raster...\n";
         if (!write_raster(overlap_raster, combined_pair_stem + "_overlap_mask")) return 1;
     }
 
-    if (bf["write_sum"])
+    if (bf["write_sum_raster"])
     {
         std::cout << "Preparing sum raster...\n";
         const lsdtt::lsdtt_raster_cpu sum_raster =
@@ -838,7 +856,7 @@ int main(int argc, char* argv[])
         if (!write_raster(sum_raster, combined_pair_stem + "_sum")) return 1;
     }
 
-    if (bf["write_multiply"])
+    if (bf["write_multiply_raster"])
     {
         std::cout << "Preparing multiply raster...\n";
         const lsdtt::lsdtt_raster_cpu multiply_raster =
@@ -846,7 +864,7 @@ int main(int argc, char* argv[])
         if (!write_raster(multiply_raster, combined_pair_stem + "_multiply")) return 1;
     }
 
-    if (bf["write_ratio"])
+    if (bf["write_ratio_raster"])
     {
         std::cout << "Preparing ratio raster...\n";
         const lsdtt::lsdtt_raster_cpu ratio_raster =
@@ -854,7 +872,7 @@ int main(int argc, char* argv[])
         if (!write_raster(ratio_raster, combined_pair_stem + "_ratio")) return 1;
     }
 
-    if (bf["write_difference"])
+    if (bf["write_difference_raster"])
     {
         std::cout << "Preparing difference raster...\n";
         const lsdtt::lsdtt_raster_cpu difference_raster =
@@ -862,7 +880,7 @@ int main(int argc, char* argv[])
         if (!write_raster(difference_raster, combined_pair_stem + "_difference")) return 1;
     }
 
-    if (bf["write_absolute_difference"])
+    if (bf["write_absolute_difference_raster"])
     {
         std::cout << "Preparing absolute difference raster...\n";
         const lsdtt::lsdtt_raster_cpu difference_raster =
@@ -872,7 +890,7 @@ int main(int argc, char* argv[])
         if (!write_raster(abs_difference_raster, combined_pair_stem + "_absolute_difference")) return 1;
     }
 
-    if (bf["write_first_on_overlap"])
+    if (bf["write_first_on_overlap_raster"])
     {
         std::cout << "Preparing first-on-overlap raster...\n";
         const lsdtt::lsdtt_raster_cpu first_on_overlap =
@@ -880,7 +898,7 @@ int main(int argc, char* argv[])
         if (!write_raster(first_on_overlap, combined_pair_stem + "_first_on_overlap")) return 1;
     }
 
-    if (bf["write_second_on_overlap"])
+    if (bf["write_second_on_overlap_raster"])
     {
         std::cout << "Preparing second-on-overlap raster...\n";
         const lsdtt::lsdtt_raster_cpu second_on_overlap =

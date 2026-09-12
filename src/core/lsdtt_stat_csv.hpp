@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <cmath>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,10 @@
 #include "../utils/lsdtt_histogram.hpp"
 
 namespace lsdtt {
+
+// csv_number lives in ../utils/lsdtt_string_utils.hpp: it is a dependency-free
+// string utility, and lsdtt_data_loader.hpp needs it too (for
+// vector_field_value_to_string) while this header depends ON the loader.
 
 // -----------------------------------------------------------------------------
 // write_qq_csv

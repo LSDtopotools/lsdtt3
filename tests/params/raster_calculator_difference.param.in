@@ -8,11 +8,11 @@ second_raster_read_path: __READ_PATH__
 resample_second_to_first_grid: false
 
 write_output_format: gtiff
-write_sum: false
-write_multiply: false
-write_ratio: false
-write_difference: true
-write_absolute_difference: false
-write_first_on_overlap: false
-write_second_on_overlap: false
-write_overlap_mask: false
+write_sum_raster: false
+write_multiply_raster: false
+write_ratio_raster: false
+write_difference_raster: true
+write_absolute_difference_raster: false
+write_first_on_overlap_raster: false
+write_second_on_overlap_raster: false
+write_overlap_mask_raster: false

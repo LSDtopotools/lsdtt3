@@ -30,9 +30,15 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <limits>
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_natural_breaks.hpp"
 
 #include <string>
+#include <vector>
 
 namespace lsdtt { class lsdtt_data_loader; } // forward declaration
 
@@ -115,6 +121,16 @@ lsdtt_raster_cpu raster_positive_difference(
 // Unary transforms
 // operations that take one input raster and produce one output raster by transforming each pixel value.
 // -----------------------------------------------------------------------------
+
+/// Apply `transform` once, in row-major order, to every cell whose source mask
+/// is nonzero. The output keeps the source metadata and valid-cell domain (with
+/// canonical 0/1 mask values); masked output data is set to metadata nodata.
+/// Nodata-valued and non-finite data in valid cells is deliberately passed to
+/// the callback and its result is retained without additional filtering.
+lsdtt_raster_cpu raster_transform(
+    const lsdtt_raster_cpu&             source,
+    const std::function<float(float)>& transform
+);
 
 /// Absolute value: result = abs(a)
 lsdtt_raster_cpu raster_abs(
@@ -211,6 +227,42 @@ lsdtt_raster_cpu raster_normalise_nonnegative(
 // -----------------------------------------------------------------------------
 // Masking and conditional selection
 // -----------------------------------------------------------------------------
+
+// Reclassify source-mask-valid pixels to 1 when lround(value) is in `values`,
+// otherwise 0. The source mask and metadata are preserved verbatim, including
+// writing 0 data under masked pixels. Non-finite values never match. An empty
+// or duplicate-containing value set is valid.
+struct raster_value_set_mask_result
+{
+    lsdtt_raster_cpu raster;
+    std::int64_t     selected_pixels = 0;
+};
+
+raster_value_set_mask_result raster_mask_from_rounded_value_set(
+    const lsdtt_raster_cpu& source,
+    const std::vector<long>& values
+);
+
+// Build the landslide host mask `active AND NOT excluded`. Foreground means
+// nonzero and source-mask-valid (not > 0.5). A null active mask means all cells
+// are active. Exclusion nodata/masked cells are not excluded; valid nonzero
+// values, including non-finite values, are excluded.
+//
+// Output metadata come from `domain`, but its data and mask do not constrain
+// the result. The output mask is all-valid and inactive/excluded cells are valid
+// background 0. All supplied rasters must have the domain dimensions.
+struct raster_active_mask_result
+{
+    lsdtt_raster_cpu raster;
+    std::int64_t     active_pixels = 0;
+    std::int64_t     excluded_pixels = 0;
+};
+
+raster_active_mask_result raster_active_mask_and_not_excluded(
+    const lsdtt_raster_cpu& domain,
+    const lsdtt_raster_cpu* active_mask,
+    const lsdtt_raster_cpu& exclusion_mask
+);
 
 /// Binary threshold from above:
 /// result = 1 where a >= threshold, else 0.
@@ -331,6 +383,56 @@ float raster_stddev_value(const lsdtt_raster_cpu& a);
 
 /// Range (max - min) over all valid pixels.
 float raster_range_value(const lsdtt_raster_cpu& a);
+
+// Classify finite, unmasked, non-nodata pixels into Jenks classes 1..K.
+// Pixels invalid by any of those criteria are nodata and masked in the output.
+struct raster_jenks_classification_result
+{
+    lsdtt_raster_cpu  classified_raster;
+    lsdtt_jenks_result jenks;
+    std::int64_t      classified_pixels = 0;
+};
+
+raster_jenks_classification_result classify_jenks_categories(
+    const lsdtt_raster_cpu& input,
+    int                     requested_classes,
+    int                     max_histogram_bins
+);
+
+// -----------------------------------------------------------------------------
+// raster_difference_stats
+//
+// Error statistics for one raster against another, over the pixels where BOTH
+// are valid: RMSE, mean absolute error, maximum absolute error, and bias
+// (signed mean error, a - b).
+//
+// The masked intersection is the point. Comparing two rasters is not the same
+// as taking statistics of their difference, because a pixel valid in one and
+// nodata in the other must be excluded rather than differenced against a
+// sentinel.
+//
+// `count` is the number of pixels actually compared; when it is zero every
+// statistic is NaN rather than 0, so an empty comparison cannot be mistaken for
+// a perfect one.
+//
+// Written for lsdtt-raster-synthetic-tests, comparing a fitted surface against
+// an analytic one, but there was never anything synthetic-specific about it and
+// the benchmarking work wants exactly this for DEM-vs-DEM comparison.
+// -----------------------------------------------------------------------------
+struct raster_difference_result
+{
+    std::size_t count   = 0;
+    double      rmse    = std::numeric_limits<double>::quiet_NaN();
+    double      mae     = std::numeric_limits<double>::quiet_NaN();
+    double      max_abs = std::numeric_limits<double>::quiet_NaN();
+    double      bias    = std::numeric_limits<double>::quiet_NaN();
+};
+
+// Throws std::invalid_argument if the two rasters do not share a grid.
+raster_difference_result raster_difference_stats(
+    const lsdtt_raster_cpu& a,
+    const lsdtt_raster_cpu& b
+);
 
 
 // -----------------------------------------------------------------------------

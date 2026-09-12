@@ -87,7 +87,7 @@ A channel head is only ever matched to a divide that bounds **its own unit**. A 
 | `boundary_conditions` | string | `oooo` | Four‑character N, E, S, W string. `o` = open, `n` = no‑flux, `p` = periodic, `b` = forced outlet. |
 | `raster_is_filled` | bool | `false` | If false, `fill_pits()` runs before flow routing. |
 | `fill_min_slope` | float | `0.0001` | Minimum slope imposed by pit filling. Used only when `raster_is_filled` is false. |
-| `source_pixels_threshold` | int | `1000` | Contributing‑pixel threshold defining channel heads. Must be > 0. Lower it for a denser network and more heads — this is the main control on how many rows the metrics CSV has. |
+| `threshold_contributing_pixels` | int | `1000` | Contributing‑pixel threshold defining channel heads. Must be > 0. Lower it for a denser network and more heads — this is the main control on how many rows the metrics CSV has. |
 
 ---
 
@@ -95,13 +95,13 @@ A channel head is only ever matched to a divide that bounds **its own unit**. A 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `basin_outlet_file` | string | `NULL` | **Required.** Point dataset of outlet locations: CSV with latitude/longitude columns, or a point vector (FGB, GPKG, shapefile). Points are reprojected into the raster CRS on load. At least two must land inside the DEM. |
+| `basin_outlet_fname` | string | `NULL` | **Required.** Point dataset of outlet locations: CSV with latitude/longitude columns, or a point vector (FGB, GPKG, shapefile). Points are reprojected into the raster CRS on load. At least two must land inside the DEM. |
 | `outlet_cluster_field` | string | `NULL` | Attribute field holding cluster labels. `NULL` or empty means one unit per outlet. |
 | `outlet_cluster_mode` | string | `auto` | How labels are interpreted: `auto` groups numerically when *every* label parses as an integer and as text otherwise; `integer` requires integer labels and rejects the run if any is not; `string` always groups on the raw text. `auto` and `string` differ only when labels look numeric — e.g. `01` and `1` are one group under `auto`, two under `string`. |
 | `basin_outlet_snapping_method` | string | `downstream` | `none` (use the point as given), `downstream` (walk downstream to the first cell above the threshold), or `expanding_square` (search outward for the nearest such cell). |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing‑pixel threshold used when snapping. Higher values snap outlets onto larger channels. Must be > 0. |
-| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum expanding‑square search radius. `expanding_square` only. |
-| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum expanding‑square search radius. Must be ≥ the minimum. `expanding_square` only. |
+| `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum expanding‑square search radius. `expanding_square` only. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum expanding‑square search radius. Must be ≥ the minimum. `expanding_square` only. |
 
 Outlets that fail to snap are dropped with a message naming the point and the reason; the run continues on the remainder.
 
@@ -154,7 +154,7 @@ Edge cases are reported rather than hidden:
 | `write_channel_heads` | bool | `true` | `<write_fname>_channel_heads.fgb` \| `.gpkg` — channel heads as points, with the full metric set. |
 | `write_metrics_csv` | bool | `true` | `<write_fname>_divide_migration_metrics.csv` — the same metrics as a flat table. |
 | `write_pair_summary_csv` | bool | `false` | `<write_fname>_divide_pair_summary.csv` — one side‑vs‑side row per divide pair. See *Pair‑summary statistics* below. |
-| `vector_output_format` | string | `flatgeobuf` | `flatgeobuf` (or `fgb`) or `gpkg`. Applies to both vector outputs. |
+| `write_vector_format` | string | `flatgeobuf` | `flatgeobuf` (or `fgb`) or `gpkg`. Applies to both vector outputs. |
 
 Three provenance files are always written regardless of the switches above: `<write_fname>_README.html` and `<write_fname>_README.csv` (the parameter reference for this run) and `<write_fname>_ingested_params.param` (every parameter as actually parsed, including defaults you did not set — useful for reproducing a run exactly).
 
@@ -299,10 +299,10 @@ write_path:  /data/santa_cruz/divides/
 write_fname: sc
 
 # Required: the outlet points
-basin_outlet_file: outlets.csv
+basin_outlet_fname: outlets.csv
 
 # Channel network density: lower for more heads
-source_pixels_threshold: 500
+threshold_contributing_pixels: 500
 
 # Chi settings -- constrain m_over_n with lsdtt-chi-analysis first
 chi_A0:   1.0
@@ -322,7 +322,7 @@ read_fname:  santa_cruz.tif
 write_path:  /data/santa_cruz/divides/
 write_fname: sc_sides
 
-basin_outlet_file:    outlets.gpkg
+basin_outlet_fname:   outlets.gpkg
 outlet_cluster_field: range_side
 outlet_cluster_mode:  string
 
@@ -330,7 +330,7 @@ outlet_cluster_mode:  string
 basin_outlet_snapping_method: downstream
 basin_outlet_contributing_pixels_threshold: 5000
 
-source_pixels_threshold: 500
+threshold_contributing_pixels: 500
 m_over_n: 0.45
 
 # Impose a common base level so chi is comparable across the divide
@@ -338,7 +338,7 @@ outlet_control_mode: max_out_elevation
 
 write_metrics_csv:    true
 write_channel_heads:  true
-vector_output_format: gpkg
+write_vector_format: gpkg
 
 # The side-vs-side table, with a bootstrap uncertainty on each delta
 write_pair_summary_csv:  true
@@ -355,7 +355,7 @@ If you would rather do the statistics yourself, the per‑head CSV has everythin
 
 ## Troubleshooting
 
-### "basin_outlet_file must provide at least two points that map into the DEM extent"
+### "basin_outlet_fname must provide at least two points that map into the DEM extent"
 
 Almost always a **CRS or extent mismatch**. Outlet points are reprojected into the raster CRS on load, so this means the reprojected points fall outside the DEM, not that the file is unreadable. Check:
 
@@ -404,7 +404,7 @@ The heads were not matched to any divide. Either only one unit had basins that s
 
 Every uncertainty method needs at least **two valid values on both sides** of the metric. Check `n_<metric>_a` and `n_<metric>_b` on the row:
 
-- one of them is `0` or `1`: that side has too few heads. Lower `source_pixels_threshold` for a denser network, or check that side's basins survived `outlet_control_mode` filtering.
+- one of them is `0` or `1`: that side has too few heads. Lower `threshold_contributing_pixels` for a denser network, or check that side's basins survived `outlet_control_mode` filtering.
 - `n_heads_a` is healthy but `n_relief_a` or `n_gradient_a` is small: most of that side's heads have NaN relief, which means their nearest divide point landed on nodata — see the all‑NaN case above.
 
 A NaN here is deliberate: a standard error from one value would be meaningless, and reporting `0` would be worse than reporting nothing.
@@ -419,4 +419,80 @@ No head was matched to any divide, so there was nothing to summarise. The file i
 
 ### Too few or too many channel heads
 
-`source_pixels_threshold` is the control. It is a contributing‑*pixel* count, so its meaning in area depends on cell size: at 30 m, `1000` pixels ≈ 0.9 km². Lower it for a denser network.
+`threshold_contributing_pixels` is the control. It is a contributing‑*pixel* count, so its meaning in area depends on cell size: at 30 m, `1000` pixels ≈ 0.9 km². Lower it for a denser network.
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Routing / DEM
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string for north, east, south, west. o = open, n = no-flux, p = periodic, b = forced outlet. |
+| `fill_min_slope` | `float` | `0.0001` | `param` | `raster_is_filled` | Minimum slope used when pit filling is enabled. | Only used when raster_is_filled is false. |
+| `n_threads` | `int` | `0` | `param` | - | Number of OpenMP threads. | 0 = all available hardware threads. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `raster_is_filled` | `bool` | `false` | `switch` | - | Assert that the input raster has ALREADY been pit-filled. | ASKS: has the input already been filled? Filling is REQUIRED for this analysis, so this switch does not choose whether to fill -- it only lets the tool skip filling a surface that is filled already. Setting it true for a DEM that still contains pits gives BAD routing, not different routing. Do not confuse this with fill_before_routing, which asks whether to fill at all. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Outlets / clusters
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_fname` | `string` | `NULL` | `param` | - | Point dataset of outlet locations. | Required. Supports CSV latitude/longitude or point vectors (FGB/GPKG/etc.). |
+| `outlet_cluster_field` | `string` | `NULL` | `param` | - | Optional attribute field naming outlet clusters. | If NULL/empty, each outlet is treated as its own unit. |
+| `outlet_cluster_mode` | `string` | `auto` | `param` | `outlet_cluster_field` | How to interpret cluster field values. | Options: auto (numeric grouping if every label is an integer, otherwise string grouping), integer (labels must be integers, grouped numerically), string (labels always grouped as raw text, so 01 and 1 are different units). |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Outlet snapping method. | Options: none, downstream, expanding_square. |
+| `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | `basin_outlet_snapping_method` | Contributing-pixel threshold used in outlet snapping. | Higher values snap outlets onto larger channels. |
+| `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | `basin_outlet_snapping_method` | Minimum expanding-square snap radius (pixels). | Used only for basin_outlet_snapping_method=expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `basin_outlet_snapping_method` | Maximum expanding-square snap radius (pixels). | Used only for basin_outlet_snapping_method=expanding_square. |
+
+### Chi
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `chi_A0` | `float` | `1.0` | `param` | - | Reference area A0 for chi integration (m^2). | Used in chi = integral((A0/A)^(m/n) ds). |
+| `m_over_n` | `float` | `0.45` | `param` | - | Reference m/n (theta) for chi integration. | Must be &gt; 0. |
+| `outlet_control_mode` | `string` | `none` | `param` | - | Outlet/base-level control mode. | Options: none, elevation, max_out_elevation, complete_only. |
+| `outlet_control_min_elevation` | `float` | `-9999` | `param` | `outlet_control_mode` | Minimum base-level elevation for outlet_control_mode=elevation. | Ignored for other outlet_control_mode values. |
+
+### Divide metrics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `nearest_divide_method` | `string` | `euclidean` | `param` | - | Method to link channel heads to divide geometry. | Current phase supports: euclidean. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_divide_vectors` | `bool` | `true` | `io` | - | Write divide segment vectors. | Output path stem: &lt;write_fname&gt;_divides. |
+| `write_channel_heads` | `bool` | `true` | `io` | - | Write channel-head point vectors. | Output path stem: &lt;write_fname&gt;_channel_heads. |
+| `write_metrics_csv` | `bool` | `true` | `io` | - | Write per-channel-head metrics CSV. | Output path: &lt;write_fname&gt;_divide_migration_metrics.csv. |
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format. | Options: flatgeobuf/fgb or gpkg. |
+| `write_pair_summary_csv` | `bool` | `false` | `io` | - | Write the side-vs-side pair summary CSV. | One row per divide pair with side means, A-minus-B deltas (A is the LOWER-numbered unit) and an uncertainty per metric. Output path: &lt;write_fname&gt;_divide_pair_summary.csv. |
+| `pair_uncertainty_method` | `string` | `std_err` | `param` | `write_pair_summary_csv` | Uncertainty method for pair summaries. | Options: std_dev (pooled standard deviation of the two sides), std_err (standard error of the difference of means), bootstrap (95% CI half-width of the bootstrapped delta), ttest (two-sided Welch p-value). Needs two valid values on both sides, else NaN. |
+| `bootstrap_replicates` | `int` | `1000` | `param` | `pair_uncertainty_method` | Bootstrap replicate count for pair summary uncertainty. | Used when pair_uncertainty_method is bootstrap. Must be &gt; 0. |
+| `bootstrap_seed` | `int` | `5489` | `param` | `pair_uncertainty_method` | Random seed for bootstrap uncertainty. | Used when pair_uncertainty_method is bootstrap. The same seed and the same input always give bit-identical output. |
+
+<!-- END GENERATED CLI PARAMETERS -->

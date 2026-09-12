@@ -67,19 +67,21 @@ lsdtt3/
 │   ├── lsdtt-valley-centreline.cpp
 │   ├── lsdtt-water-centreline.cpp
 │   └── lsdtt-water-line-repair.cpp
-├── docs/                                   — organised by audience
-│   ├── index.md, overview.md               — user-facing, and the mkdocs site root
-│   ├── install_lsdtt3.md                   — user-facing install guide
-│   ├── testing_and_benchmarking.md
+├── docs/                                   — MkDocs source, organised by purpose
+│   ├── index.md                            — documentation site root
+│   ├── what_is_lsdtt3/                     — overview, install, data, routing, workflows
+│   ├── design_and_algorithms/              — scientific design and algorithms
 │   ├── cli_reference/                      — one parameter reference per CLI
-│   ├── developer_notes/                    — architecture, building, packaging
+│   ├── developer_notes/                    — architecture, building, packaging, testing
 │   │   ├── lsdtt3_architecture.md          — this file
 │   │   ├── developer_onboarding.md
 │   │   ├── building_from_source.md
 │   │   ├── making_release_packages.md
 │   │   ├── debian_packaging.md
 │   │   ├── lsdtt_utils_guide.md
-│   │   └── using_lsdtt_flowinfo.md
+│   │   ├── using_lsdtt_flowinfo.md
+│   │   ├── cli_parameter_conventions.md
+│   │   └── testing_and_benchmarking.md
 │   └── tex_technical/                      — LaTeX method write-ups (untracked)
 ├── graphflood/                             — third-party graph-based flood routing (Gailleton et al.)
 │   ├── graphflood.hpp
@@ -682,7 +684,7 @@ Current CLI programs are:
   Also has an independent `calculate_junction_area_ratios` switch that writes the
   per-junction drainage-area ratio table + distribution summary (see below).
   `write_basin_polygons` writes one basin-outline polygon per basin to a vector
-  layer (`basin_polygon_format` flatgeobuf/gpkg) with the per-basin hydromorphic,
+  layer (`write_vector_format` flatgeobuf/gpkg) with the per-basin hydromorphic,
   shape, and centre-of-mass metrics attached as typed attributes — i.e. the basin
   metrics joined to their basin polygons.
 
@@ -1090,6 +1092,64 @@ The `parse_double_vector` / `parse_float_vector` / `parse_int_vector` helpers ar
 on `lsdtt_param_parser` and expect the string to already have been registered via
 `string_default_map`.
 
+### Shared parameter declaration layer
+
+Files: `src/core/lsdtt_common_parameters.hpp/.cpp`
+
+**Architectural role:** A CLI declares no shared parameter name of its own. Every
+parameter shared by two or more CLIs is declared exactly once in the shared layer,
+and CLIs adopt it via a function call.
+
+This eliminates the root cause of parameter drift: each shared concept had been
+re-typed independently by each CLI, so one author wrote 0 and another wrote 1
+with no intent behind the difference, 20+ CLIs re-declared the same help text with
+silent corrections, and threshold values diverged without reason.
+
+**The pattern:** Each independently selectable semantic group gets one function
+that populates a caller's default and help maps. Flow parameters are deliberately
+granular because a CLI may support routing, one of two distinct fill concepts,
+or channel initiation without supporting all of them:
+
+```cpp
+lsdtt::declare_routing_core_parameters(
+    std::map<std::string, int>&         int_map,
+    std::map<std::string, std::string>& string_map,
+    lsdtt::lsdtt_help_registry&         help_map,
+    const std::string& prefix = ""      // optional, for multi-stage CLIs
+);
+
+lsdtt::declare_raster_is_filled_parameter(bool_map, help_map);
+lsdtt::declare_fill_before_routing_parameter(bool_map, help_map);
+lsdtt::declare_fill_min_slope_parameter(float_map, help_map);
+lsdtt::declare_channel_initiation_parameters(int_map, help_map);
+```
+
+On return, the maps contain only the selected shared parameters and their help
+entries, ready for a CLI to call `parse_all_parameters()`.
+
+**Adoption in a CLI:** Instead of hand-declaring shared parameters, a CLI
+composes only the declarations for concepts it actually supports:
+
+```cpp
+lsdtt::declare_routing_core_parameters(
+    int_default_map, string_default_map, help_map);
+lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
+lsdtt::declare_fill_min_slope_parameter(float_default_map, help_map);
+lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
+```
+
+After adoption, renaming that parameter is a one-line change in one file, not a
+twenty-CLI edit. This is why parameter renames in the remediation plan are low-risk:
+the shared layer makes them self-enforcing.
+
+**Migration status:** Not all CLIs have adopted the shared layer yet. Legacy CLIs
+that predate the shared layer still hand-declare their parameters. The remediation
+plan migrates them per-phase.
+
+**Naming standard:** Every shared parameter follows the conventions in
+`docs/developer_notes/cli_parameter_conventions.md`. That document is the durable record of what
+names are canonical, what units they use, and when to use `min_` vs `minimum_`,
+`threshold_` vs `min_`, and so on.
 
 ---
 
@@ -1877,7 +1937,7 @@ Steps 2–7 always operate on the (possibly reprojected) raster. If reprojection
 occurs the new file is reopened before step 2.
 
 **Threshold masking semantics:**
-`minimum_elevation` masks pixels **at or below** the threshold (i.e. `value <= min_elev`).
+`min_elevation` masks pixels **at or below** the threshold (i.e. `value <= min_elev`).
 Default is `0.0`, which catches ocean pixels that raster providers commonly set to exactly 0.
 `maximum_elevation` masks pixels above the threshold (`value > max_elev`); default `30000.0`.
 
@@ -1902,7 +1962,7 @@ fill_algorithm_choice: barnes2014 / barnesetal2021
 breach_algorithm_choice: lindsay2016 / least_cost
 nodata_fill_method_choice: laplacian / iterative_weighted_average
 hillshade_azimuth, hillshade_altitude, hillshade_z_factor
-fill_min_slope, minimum_elevation, maximum_elevation
+fill_min_slope, min_elevation, maximum_elevation
 breach_lc_max_dist, breach_lc_max_cost, breach_lc_flat_increment
 n_threads, nodata_fill_max_iter
 ```
@@ -1935,7 +1995,7 @@ flow_algorithm_choice: d8 / d_infinity / mfd   (default: d8)
 mfd_exponent: 1.0
 boundary_conditions: oooo
 fill_before_routing, fill_algorithm_choice, breach_algorithm_choice
-fill_min_slope, minimum_elevation, maximum_elevation
+fill_min_slope, min_elevation, maximum_elevation
 write_n_contributing_pixels_raster, write_flow_direction_raster
 write_twi_raster
 write_fill_raster, write_breached_raster
@@ -2554,9 +2614,9 @@ transient LEM surface may contain pits that must not stall routing.
 **Channel mask.** `compute_lem_channel_mask(dem, opts)` returns the Dirichlet
 channel set the hillslope step would use for a surface — the explicit mask when
 `opts.explicit_channel_mask` is supplied, else the pixels whose D-inf drainage area
-reaches `incision_threshold_area`. It shares its implementation with the hillslope
+reaches `incision_threshold_specific_area`. It shares its implementation with the hillslope
 step, so the mask a run *writes* is exactly the one it *used*. The CLI exposes it as
-`write_channel_mask_raster` (with an independent `channel_mask_threshold_area`, so a
+`write_channel_mask_raster` (with an independent `channel_mask_threshold_specific_area`, so a
 run that erodes fluvially everywhere can still emit a network), which lets a fluvial
 run freeze its network and feed it back as `channel_mask_fname` to a hillslopes-only
 run. `hold_channel_mask_fixed` additionally adds the masked pixels to `boundary_flats`,
@@ -2639,7 +2699,7 @@ Three transient hillslope laws, selected by `hillslope_transport_model`:
   — Crank-Nicolson linear diffusion via uncoupled ADI (Thomas algorithm) sweeps;
   no flow graph required.
 
-Channel pixels (drainage area ≥ `incision_threshold_area`) act as hillslope sinks
+Channel pixels (drainage area at or above `incision_threshold_specific_area`) act as hillslope sinks
 / Dirichlet nodes; the caller builds the `is_channel` mask for the FD laws.
 
 ### lsdtt_hillslope_steady_state_cpu (steady-state hillslope)

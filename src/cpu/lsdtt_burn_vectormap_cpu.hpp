@@ -35,12 +35,14 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "../core/lsdtt_types.hpp"
+#include "lsdtt_vector_to_junction_network.hpp"
 #include "lsdtt_raster_cpu.hpp"
 
 namespace lsdtt
@@ -199,6 +201,84 @@ struct lcp_burn_result
     std::vector<std::vector<lsdtt_xy>>*       accepted_clean      = nullptr,
     std::vector<int>*                         accepted_clean_line = nullptr,
     int                                       max_trace_steps     = 0
+);
+
+// -----------------------------------------------------------------------------
+// carve_inward_draining_edge_sources
+//
+// Carve a descending path inland from every channel source that sits on the DEM
+// boundary and, according to the vector network, drains INWARD.
+//
+// WHY THIS EXISTS. A vector channel that enters the DEM at its edge has its
+// source on the boundary. In the filled DEM that source is usually a local
+// minimum or a flat, so D8 either sends it straight back off the edge or
+// strands it: the network seeded from it never grows inland, and the burn has
+// nothing to snap to. Carving a descending path from the source along the
+// vector's own downstream geometry gives the routing a gradient to follow.
+//
+// HOW FAR IT CARVES, and why the test is a DISTANCE rather than "does it drain
+// off the edge yet". Near the boundary the filled DEM's flow tends to run ALONG
+// the edge and may never reach an outlet inside any sensible hop budget, so a
+// drains-off test would either stop far too early or run away. The carve
+// therefore continues until the terminus is at least
+// `interior_margin_metres` from the nearest edge, or the downstream path ends
+// at an outlet, or `carve_max_pixels` is reached -- whichever comes first. It
+// always carves at least `carve_pixels`.
+//
+// The path FOLLOWS THE RECEIVER CHAIN ACROSS JUNCTIONS, not just the one
+// immediate downstream edge. A channel that hugs the boundary for a short edge
+// before turning inland needs several edges to escape; carving only the first
+// leaves it stranded exactly as before.
+//
+// `source_is_dem_edge` is a per-source flag, non-zero meaning the source lies
+// on the DEM boundary. It is int64 rather than a bool or uint8 because that is
+// how the caller carries it; only zero / non-zero is read.
+//
+// `dem` is modified in place. A source is skipped when the vector network says
+// it is an outlet, has no receiver or no downstream edge, or when its receiver
+// is not lower than it -- that last is the guard that makes "drains inward"
+// mean something.
+//
+// Returns one record per source actually carved, in source order. Does not
+// print: the caller owns its own reporting. The caller is also responsible for
+// what has to happen afterwards -- re-resolving depressions on the carved DEM
+// and rebuilding flow routing -- because carving can leave a residual pit or
+// flat that D8 cannot cross.
+// -----------------------------------------------------------------------------
+struct edge_source_carve_options
+{
+    int    carve_pixels           = 3;
+    int    carve_max_pixels       = 40;
+    double carve_min_slope        = 1.0e-4;
+    double interior_margin_metres = 0.0;
+};
+
+// Why a carve stopped where it did.
+enum class edge_carve_terminus
+{
+    reached_interior_margin,
+    hit_pixel_cap,
+    followed_channel_to_downstream_end
+};
+
+struct edge_source_carve_record
+{
+    std::size_t         source_index = 0;
+    std::int32_t        junction_id  = -1;
+    std::size_t         pixels_carved = 0;
+    double              terminus_distance_to_boundary_metres = 0.0;
+    edge_carve_terminus terminus =
+        edge_carve_terminus::followed_channel_to_downstream_end;
+};
+
+[[nodiscard]] std::vector<edge_source_carve_record>
+carve_inward_draining_edge_sources(
+    lsdtt_raster_cpu&                       dem,
+    const lsdtt_vector_to_junction_network& vector_network,
+    const std::vector<std::int64_t>&        source_flats,
+    const std::vector<std::int64_t>&        source_is_dem_edge,
+    const std::vector<std::int32_t>&        source_junction_ids,
+    const edge_source_carve_options&        options
 );
 
 } // namespace lsdtt

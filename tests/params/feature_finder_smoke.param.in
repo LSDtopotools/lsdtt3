@@ -1,0 +1,16 @@
+# Smoke test for lsdtt-feature-finder.
+#
+# The largest CLI in the repo (174 parameters) and, until 2026-09-10, entirely
+# untested. This covers only the channel-candidate stage: enough that the
+# parameter plumbing and one raster output are exercised on every build.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: ff
+
+write_output_format: gtiff
+
+write_channel_candidate_score_raster: true
+write_channel_candidate_mask_raster: false
+write_channel_best_scale_raster: false
+write_channel_candidate_diagnostic_rasters: false

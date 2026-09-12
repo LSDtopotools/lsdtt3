@@ -172,7 +172,7 @@ def junction_table(build_dir: pathlib.Path, filled: pathlib.Path,
             "raster_is_filled": "true",
             "threshold_contributing_pixels": threshold,
             "write_channel_network_junctions": "true",
-            "channel_network_junctions_output_format": "csv",
+            "channel_network_junctions_write_vector_format": "csv",
         })
     if not csv_path.exists():
         raise RuntimeError(f"expected {csv_path}")
@@ -252,7 +252,7 @@ def basins_lsdtt3(build_dir: pathlib.Path, filled: pathlib.Path,
             "write_path": out, "write_fname": f"b{depth}",
             "raster_is_filled": "true",
             "threshold_contributing_pixels": threshold,
-            "basin_outlet_file": seeds,
+            "basin_outlet_fname": seeds,
             "select_basins_from_outlets": "true",
             "write_basin_index_raster": "true",
             "write_output_format": "gtiff",

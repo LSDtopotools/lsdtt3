@@ -1,0 +1,15 @@
+# Pure old-key transfer: every Phase 5 alias is nondefault and canonical-free.
+write_path: __WRITE_PATH__
+write_fname: ocnlegacy5
+n_rows: 8
+n_cols: 8
+cell_size: 99
+noise_blur_passes: 2
+incision_threshold_area: 20
+polygon_file: unused_legacy_polygon.geojson
+steady_state_tolerance_dz_m: 0.02
+domain_type: noise_island
+island_fill_fraction: 0.7
+n_iter: 10
+random_seed: 4
+write_output_format: gtiff

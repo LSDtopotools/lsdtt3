@@ -31,7 +31,7 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
     RASTER_IS_FILLED = "RASTER_IS_FILLED"
     FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
-    SOURCE_THRESHOLD = "SOURCE_THRESHOLD"
+    THRESHOLD_CONTRIBUTING_PIXELS = "THRESHOLD_CONTRIBUTING_PIXELS"
     SELECTION_MODE = "SELECTION_MODE"
     BASIN_OUTLET_FILE = "BASIN_OUTLET_FILE"
     VECTOR_FORMAT = "VECTOR_FORMAT"
@@ -69,9 +69,16 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_JUNCTION_ANGLES = "OUTPUT_JUNCTION_ANGLES"
     OUTPUT_STRAHLER_CHANNELS = "OUTPUT_STRAHLER_CHANNELS"
     OUTPUT_TOKUNAGA_CHANNELS = "OUTPUT_TOKUNAGA_CHANNELS"
+    OUTPUT_TOKUNAGA_CHANNEL_DATA = "OUTPUT_TOKUNAGA_CHANNEL_DATA"
     OUTPUT_TOKUNAGA_SUMMARY = "OUTPUT_TOKUNAGA_SUMMARY"
+    OUTPUT_TOKUNAGA_PAIR_COUNTS = "OUTPUT_TOKUNAGA_PAIR_COUNTS"
+    OUTPUT_TOKUNAGA_OFFSET_STATS = "OUTPUT_TOKUNAGA_OFFSET_STATS"
     OUTPUT_AREA_RATIOS = "OUTPUT_AREA_RATIOS"
+    OUTPUT_AREA_RATIO_SUMMARY = "OUTPUT_AREA_RATIO_SUMMARY"
+    OUTPUT_AREA_RATIO_DECADES = "OUTPUT_AREA_RATIO_DECADES"
     OUTPUT_COM_BEARINGS = "OUTPUT_COM_BEARINGS"
+    OUTPUT_LINK_BEARING_VECTORS = "OUTPUT_LINK_BEARING_VECTORS"
+    OUTPUT_JUNCTION_ANGLE_VECTORS = "OUTPUT_JUNCTION_ANGLE_VECTORS"
 
     VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg", "csv"]
     SELECTION_MODE_OPTIONS = [
@@ -117,8 +124,8 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterNumber(
-                self.SOURCE_THRESHOLD,
-                "Source threshold (pixels)",
+                self.THRESHOLD_CONTRIBUTING_PIXELS,
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
                 defaultValue=1000,
@@ -339,10 +346,35 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
         self.addOutput(
             QgsProcessingOutputVectorLayer(self.OUTPUT_TOKUNAGA_CHANNELS, "Tokunaga channels")
         )
-        self.addOutput(QgsProcessingOutputFile(self.OUTPUT_TOKUNAGA_SUMMARY, "Tokunaga summary"))
+        self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_TOKUNAGA_CHANNEL_DATA, "Tokunaga channel data")
+        )
+        self.addOutput(QgsProcessingOutputFile(self.OUTPUT_TOKUNAGA_SUMMARY, "Tokunaga fit summary"))
+        self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_TOKUNAGA_PAIR_COUNTS, "Tokunaga pair counts")
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_TOKUNAGA_OFFSET_STATS, "Tokunaga offset statistics")
+        )
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_AREA_RATIOS, "Junction area ratios"))
         self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_AREA_RATIO_SUMMARY, "Junction area-ratio summary")
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_AREA_RATIO_DECADES, "Junction area-ratio decades")
+        )
+        self.addOutput(
             QgsProcessingOutputFile(self.OUTPUT_COM_BEARINGS, "Junction centre-of-mass bearings")
+        )
+        self.addOutput(
+            QgsProcessingOutputVectorLayer(
+                self.OUTPUT_LINK_BEARING_VECTORS, "Channel-link bearing QA vectors"
+            )
+        )
+        self.addOutput(
+            QgsProcessingOutputVectorLayer(
+                self.OUTPUT_JUNCTION_ANGLE_VECTORS, "Junction-angle bearing QA vectors"
+            )
         )
 
         attach_backend_help(
@@ -360,11 +392,11 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
                 self.WRITE_COM_BEARINGS: "write_junction_centre_of_mass_bearings",
                 self.WRITE_LINK_BEARING_VECTORS: "write_channel_link_bearing_vectors",
                 self.WRITE_JUNCTION_ANGLE_VECTORS: "write_junction_angle_bearing_vectors",
-                self.VECTOR_FORMAT: "channel_link_bearings_output_format",
+                self.VECTOR_FORMAT: "write_vector_format",
                 self.SNAPPING_METHOD: "basin_outlet_snapping_method",
                 self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
-                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
-                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_snap_min_search_radius_pixels",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_snap_max_search_radius_pixels",
                 self.LINK_SAMPLING_MODE: "link_sampling_mode",
                 self.LINK_SAMPLING_FIXED_LENGTH: "link_sampling_fixed_length_metres",
                 self.LINK_SAMPLING_FIXED_N_PIXELS: "link_sampling_fixed_n_pixels",
@@ -372,7 +404,7 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
                 self.LINK_BEARING_ANCHOR: "channel_link_bearing_sample_anchor",
                 self.AREA_RATIO_BOOTSTRAP: "junction_area_ratio_bootstrap",
                 self.AREA_RATIO_SEED: "junction_area_ratio_seed",
-                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
             },
         )
 
@@ -410,10 +442,17 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             parameters, self.WRITE_AREA_RATIO_SUMMARY, context
         )
         write_com_bearings = self.parameterAsBool(parameters, self.WRITE_COM_BEARINGS, context)
+        write_link_bearing_vectors = self.parameterAsBool(
+            parameters, self.WRITE_LINK_BEARING_VECTORS, context
+        )
+        write_junction_angle_vectors = self.parameterAsBool(
+            parameters, self.WRITE_JUNCTION_ANGLE_VECTORS, context
+        )
         if not any([
             write_link_bearings, write_junction_angles, write_strahler, write_tokunaga,
             write_tokunaga_data, write_tokunaga_summary, write_area_ratio_data,
-            write_area_ratio_summary, write_com_bearings,
+            write_area_ratio_summary, write_com_bearings, write_link_bearing_vectors,
+            write_junction_angle_vectors,
         ]):
             raise QgsProcessingException("Enable at least one analysis output.")
 
@@ -436,16 +475,18 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             "calculate_spatial_index": self.parameterAsBool(
                 parameters, self.CALCULATE_SPATIAL_INDEX, context
             ),
+            "write_vector_format": vector_format,
+            "qa_write_vector_format": qa_format,
             "raster_is_filled": self.parameterAsBool(parameters, self.RASTER_IS_FILLED, context),
             "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
-            "source_pixels_threshold": self.parameterAsInt(
-                parameters, self.SOURCE_THRESHOLD, context
+            "threshold_contributing_pixels": self.parameterAsInt(
+                parameters, self.THRESHOLD_CONTRIBUTING_PIXELS, context
             ),
             self.SELECTION_MODE_KEYS[selection_mode]: True,
             "only_complete_basins": self.parameterAsBool(
                 parameters, self.ONLY_COMPLETE_BASINS, context
             ),
-            "minimum_basin_pixels": self.parameterAsInt(
+            "min_basin_pixels": self.parameterAsInt(
                 parameters, self.MINIMUM_BASIN_PIXELS, context
             ),
             # link sampling for bearings / junction angles
@@ -466,13 +507,9 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             ],
             # analysis outputs
             "write_channel_link_bearings": write_link_bearings,
-            "channel_link_bearings_output_format": vector_format,
             "write_junction_angles": write_junction_angles,
-            "junction_angles_output_format": vector_format,
             "write_strahler_channels": write_strahler,
-            "strahler_channels_output_format": vector_format,
             "write_tokunaga_channels": write_tokunaga,
-            "tokunaga_channels_output_format": vector_format,
             "write_tokunaga_channel_data": write_tokunaga_data,
             "write_tokunaga_summary_data": write_tokunaga_summary,
             "write_junction_area_ratio_data": write_area_ratio_data,
@@ -485,29 +522,23 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             ),
             "write_junction_centre_of_mass_bearings": write_com_bearings,
             # QA bearing vectors
-            "write_channel_link_bearing_vectors": self.parameterAsBool(
-                parameters, self.WRITE_LINK_BEARING_VECTORS, context
-            ),
-            "channel_link_bearing_vectors_output_format": qa_format,
-            "write_junction_angle_bearing_vectors": self.parameterAsBool(
-                parameters, self.WRITE_JUNCTION_ANGLE_VECTORS, context
-            ),
-            "junction_angle_bearing_vectors_output_format": qa_format,
+            "write_channel_link_bearing_vectors": write_link_bearing_vectors,
+            "write_junction_angle_bearing_vectors": write_junction_angle_vectors,
         }
 
         if outlet_file:
             param_values.update({
-                "basin_outlet_file": outlet_file,
+                "basin_outlet_fname": outlet_file,
                 "basin_outlet_snapping_method": self.SNAPPING_OPTIONS[
                     self.parameterAsEnum(parameters, self.SNAPPING_METHOD, context)
                 ],
                 "basin_outlet_contributing_pixels_threshold": self.parameterAsInt(
                     parameters, self.SNAPPING_THRESHOLD, context
                 ),
-                "basin_outlet_min_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_min_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MIN_RADIUS, context
                 ),
-                "basin_outlet_max_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_max_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MAX_RADIUS, context
                 ),
             })
@@ -538,20 +569,54 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
                 output_folder, output_prefix,
                 "_tokunaga_channels.{}".format(ext), "Tokunaga channels",
             )
+        if write_tokunaga_data:
+            outputs[self.OUTPUT_TOKUNAGA_CHANNEL_DATA] = require_output(
+                output_folder, output_prefix,
+                "_tokunaga_channel_data.csv", "Tokunaga channel data",
+            )
         if write_tokunaga_summary:
+            outputs[self.OUTPUT_TOKUNAGA_PAIR_COUNTS] = require_output(
+                output_folder, output_prefix,
+                "_tokunaga_summary_pair_counts.csv", "Tokunaga pair counts",
+            )
+            outputs[self.OUTPUT_TOKUNAGA_OFFSET_STATS] = require_output(
+                output_folder, output_prefix,
+                "_tokunaga_summary_offset_stats.csv", "Tokunaga offset statistics",
+            )
             outputs[self.OUTPUT_TOKUNAGA_SUMMARY] = require_output(
                 output_folder, output_prefix,
-                "_tokunaga_summary.csv", "Tokunaga summary",
+                "_tokunaga_summary_fit.csv", "Tokunaga fit summary",
             )
         if write_area_ratio_data:
             outputs[self.OUTPUT_AREA_RATIOS] = require_output(
                 output_folder, output_prefix,
                 "_junction_area_ratios.csv", "junction area ratios",
             )
+        if write_area_ratio_summary:
+            outputs[self.OUTPUT_AREA_RATIO_SUMMARY] = require_output(
+                output_folder, output_prefix,
+                "_junction_area_ratio_summary.csv", "junction area-ratio summary",
+            )
+            outputs[self.OUTPUT_AREA_RATIO_DECADES] = require_output(
+                output_folder, output_prefix,
+                "_junction_area_ratio_decades.csv", "junction area-ratio decades",
+            )
         if write_com_bearings:
             outputs[self.OUTPUT_COM_BEARINGS] = require_output(
                 output_folder, output_prefix,
                 "_junction_com_bearings.csv", "junction centre-of-mass bearings",
+            )
+        if write_link_bearing_vectors:
+            outputs[self.OUTPUT_LINK_BEARING_VECTORS] = require_output(
+                output_folder, output_prefix,
+                "_channel_link_bearing_vectors.{}".format(extension_for_format(qa_format)),
+                "channel-link bearing QA vectors",
+            )
+        if write_junction_angle_vectors:
+            outputs[self.OUTPUT_JUNCTION_ANGLE_VECTORS] = require_output(
+                output_folder, output_prefix,
+                "_junction_angle_bearing_vectors.{}".format(extension_for_format(qa_format)),
+                "junction-angle bearing QA vectors",
             )
         return outputs
 

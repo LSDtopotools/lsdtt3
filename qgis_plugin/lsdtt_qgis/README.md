@@ -14,5 +14,7 @@ Current status:
 
 Backend requirements:
 
-- set backend path in plugin settings to a folder containing `lsdtt-*` executables
+- set backend path to a versioned bundle with `backend_version >= 0.5.0` in
+  `manifest.json`; older and unversioned backends are rejected because the
+  wrappers emit the canonical `threshold_contributing_pixels` key
 - for Windows backend bundles, use the packaged `bin/` and `share/` layout

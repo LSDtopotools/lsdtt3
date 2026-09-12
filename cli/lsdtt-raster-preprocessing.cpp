@@ -66,6 +66,7 @@
 #include <sstream>
 
 
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
@@ -83,6 +84,7 @@
 #include "../src/cpu/lsdtt_fill_spill_merge_cpu.hpp"
 #include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -99,22 +101,7 @@ struct raster_attribute_request
     std::string attribute_name;
 };
 
-static std::vector<std::string> split_csv_simple(const std::string& line)
-{
-    std::vector<std::string> tokens;
-    std::stringstream ss(line);
-    std::string item;
 
-    while (std::getline(ss, item, ','))
-    {
-        // trim leading/trailing whitespace
-        const auto first = item.find_first_not_of(" \t\r\n");
-        const auto last  = item.find_last_not_of(" \t\r\n");
-        if (first == std::string::npos) tokens.push_back("");
-        else tokens.push_back(item.substr(first, last - first + 1));
-    }
-    return tokens;
-}
 
 
 static std::vector<raster_attribute_request> read_raster_attribute_csv(
@@ -125,7 +112,7 @@ static std::vector<raster_attribute_request> read_raster_attribute_csv(
     if (!in.is_open())
     {
         throw std::runtime_error(
-            "Cannot open raster_attribute_csv: " + csv_path
+            "Cannot open raster_attribute_fname: " + csv_path
         );
     }
 
@@ -133,11 +120,11 @@ static std::vector<raster_attribute_request> read_raster_attribute_csv(
     if (!std::getline(in, header_line))
     {
         throw std::runtime_error(
-            "raster_attribute_csv is empty: " + csv_path
+            "raster_attribute_fname is empty: " + csv_path
         );
     }
 
-    auto header = split_csv_simple(header_line);
+    auto header = lsdtt::csv_split_row_trimmed(header_line);
 
     int raster_col = -1;
     int attr_col   = -1;
@@ -151,7 +138,7 @@ static std::vector<raster_attribute_request> read_raster_attribute_csv(
     if (raster_col < 0 || attr_col < 0)
     {
         throw std::runtime_error(
-            "raster_attribute_csv must contain columns named "
+            "raster_attribute_fname must contain columns named "
             "'raster' and 'attribute'"
         );
     }
@@ -163,7 +150,7 @@ static std::vector<raster_attribute_request> read_raster_attribute_csv(
     {
         if (line.empty()) continue;
 
-        auto tokens = split_csv_simple(line);
+        auto tokens = lsdtt::csv_split_row_trimmed(line);
         if (static_cast<int>(tokens.size()) <= std::max(raster_col, attr_col))
         {
             continue;
@@ -307,7 +294,9 @@ int main(int argc, char* argv[])
     string_default_map["resampling_method"] = "cubic";
     help_map["resampling_method"] = {"string","cubic",
         "GDAL resampling algorithm used during reprojection.",
-        "Accepted values: near, bilinear, cubic (default), cubicspline, "
+        "Cubic is the default here because this workflow reprojects continuous "
+        "elevation surfaces. Use near or mode for categorical rasters. Accepted "
+        "values: near, bilinear, cubic (default), cubicspline, "
         "lanczos, average, mode, max, min, med, q1, q3, sum.",
         "Projection", "param", "enforce_projection"};
 
@@ -386,8 +375,8 @@ int main(int argc, char* argv[])
         "Vertical units", "param", ""};
 
     // --- Threshold masking ---
-    float_default_map["minimum_elevation"] = 0.0f;
-    help_map["minimum_elevation"] = {"float","0.0",
+    float_default_map["min_elevation"] = 0.0f;
+    help_map["min_elevation"] = {"float","0.0",
         "Pixels at or below this elevation (metres) are set to nodata.",
         "Default of 0.0 removes ocean and below-sea-level artefacts common "
         "in global DEMs. Set to a large negative number to disable.",
@@ -401,8 +390,8 @@ int main(int argc, char* argv[])
         "Threshold masking", "param", ""};
 
     // --- Binary mask application ---
-    bool_default_map["apply_binary_mask"] = false;
-    help_map["apply_binary_mask"] = {"bool","false",
+    bool_default_map["run_binary_mask"] = false;
+    help_map["run_binary_mask"] = {"bool","false",
         "Apply an external binary mask raster to the DEM.",
         "Loads the raster at binary_mask_fname and calls "
         "raster_mask_by_binary_keep: pixels where the mask > 0.5 are kept; "
@@ -419,8 +408,8 @@ int main(int argc, char* argv[])
         "Any GDAL-readable single-band raster is accepted. "
         "Pixels > 0.5 are treated as keep (foreground); "
         "all others set the DEM pixel to nodata. "
-        "Required when apply_binary_mask = true.",
-        "Binary mask", "param", "apply_binary_mask"};
+        "Required when run_binary_mask = true.",
+        "Binary mask", "param", "run_binary_mask"};
 
     // --- Interior nodata filling ---
     bool_default_map["write_filled_nodata_raster"] = false;
@@ -675,6 +664,7 @@ int main(int argc, char* argv[])
         "depressions are not currently supported.",
         "Pit filling", "param", "write_fill_raster"    
     };
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
 
     string_default_map["fsm_boundary_conditions"] = "oooo";
     help_map["fsm_boundary_conditions"] = {"string","oooo",
@@ -691,11 +681,11 @@ int main(int argc, char* argv[])
     // --- Pixel replacement ---
     //
     // A CSV-driven per-pixel edit: set named cells to arbitrary values. The
-    // raster-driven equivalent is apply_binary_mask; this covers the case where
+    // raster-driven equivalent is run_binary_mask; this covers the case where
     // you know the coordinates of a handful of bad cells and want to blank or
     // correct them without building a mask raster.
-    string_default_map["replace_pixels_from_csv"] = "";
-    help_map["replace_pixels_from_csv"] = {"string","",
+    string_default_map["replace_pixels_fname"] = "";
+    help_map["replace_pixels_fname"] = {"string","",
         "Point file listing pixels to overwrite with new values.",
         "CSV, FlatGeobuf or GeoPackage. Positions come from geometry, or from "
         "latitude/longitude, or from easting/northing in the raster CRS. The "
@@ -711,14 +701,14 @@ int main(int argc, char* argv[])
         "Without this the corrected DEM is still used by every later stage, but "
         "is not written on its own. Set it when the corrected DEM is the thing "
         "you want.",
-        "Pixel replacement", "switch", "replace_pixels_from_csv"};
+        "Pixel replacement", "switch", "replace_pixels_fname"};
 
     string_default_map["replace_pixels_value_field"] = "value";
     help_map["replace_pixels_value_field"] = {"string","value",
         "Column holding the replacement value.",
-        "Named field in replace_pixels_from_csv giving the new value for each "
+        "Named field in replace_pixels_fname giving the new value for each "
         "listed pixel.",
-        "Pixel replacement", "param", "replace_pixels_from_csv"};
+        "Pixel replacement", "param", "replace_pixels_fname"};
 
     // --- Sink candidates ---
     //
@@ -766,14 +756,8 @@ int main(int argc, char* argv[])
         "A small positive value (e.g. 0.01) suppresses near-zero fill artefacts.",
         "Depression polygons", "param", "write_depression_polygons"};
 
-    string_default_map["depression_polygons_output_format"] = "flatgeobuf";
-    help_map["depression_polygons_output_format"] = {"string", "flatgeobuf",
-        "Output format for depression polygons.",
-        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
-        "GeoPackage may have file I/O issues on some filesystems."
-        "CSV is not allowed for polygons.",
-        "Depression polygons", "param", "write_depression_polygons"
-    };
+    string_default_map["legacy_depression_polygons_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
 
     // --- Hillshade ---
@@ -852,12 +836,8 @@ int main(int argc, char* argv[])
         "clip_vector_data_to_raster is true.",
         "Vector clipping", "param", "clip_vector_data_to_raster"};
 
-    string_default_map["vector_clip_output_format"] = "flatgeobuf";
-    help_map["vector_clip_output_format"] = {"string","flatgeobuf",
-        "Output format for the clipped vector file.",
-        "Allowed values: flatgeobuf, fgb, gpkg. "
-        "FlatGeobuf is preferred, especially on WSL2.",
-        "Vector clipping", "param", "clip_vector_data_to_raster"};
+    string_default_map["legacy_vector_clip_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Clip raster to polygon ---
     bool_default_map["clip_raster_to_polygon"] = false;
@@ -926,20 +906,16 @@ int main(int argc, char* argv[])
         "If empty, the first layer is used, or the only layer if the file has one.",
         "Point sampling", "param", "sample_rasters_to_points"};
 
-    string_default_map["raster_attribute_csv"] = "";
-    help_map["raster_attribute_csv"] = {"string","",
+    string_default_map["raster_attribute_fname"] = "";
+    help_map["raster_attribute_fname"] = {"string","",
         "CSV file listing rasters to sample, with columns raster,attribute.",
         "The raster column gives the raster filename or path. "
         "The attribute column gives the name of the output attribute to append "
         "to the point file.",
         "Point sampling", "param", "sample_rasters_to_points"};
 
-    string_default_map["sampled_points_output_format"] = "flatgeobuf";
-    help_map["sampled_points_output_format"] = {"string","flatgeobuf",
-        "Output format for sampled point data.",
-        "Allowed values: flatgeobuf, fgb, gpkg. "
-        "FlatGeobuf is recommended.",
-        "Point sampling", "param", "sample_rasters_to_points"};
+    string_default_map["legacy_sampled_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
 
 
@@ -971,6 +947,18 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parse - fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
+    pp.set_deprecated_aliases({
+        {"apply_binary_mask", "run_binary_mask"},
+        {"raster_attribute_csv", "raster_attribute_fname"},
+        {"replace_pixels_from_csv", "replace_pixels_fname"},
+        {"minimum_elevation", "min_elevation"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"depression_polygons_output_format",
+         {"legacy_depression_polygons_write_vector_format", "write_vector_format"}},
+        {"vector_clip_output_format",
+         {"legacy_vector_clip_write_vector_format", "write_vector_format"}},
+        {"sampled_points_output_format",
+         {"legacy_sampled_points_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -1257,7 +1245,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 1b - Vertical units
     //
-    // Before ANY masking or analysis, so that minimum_elevation and every
+    // Before ANY masking or analysis, so that min_elevation and every
     // derived quantity below are in metres. Opt-in only; see the header of
     // lsdtt_raster_cpu.hpp for why this is never inferred.
     // -------------------------------------------------------------------------
@@ -1299,7 +1287,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 2 - Threshold masking
     // -------------------------------------------------------------------------
-    float min_elev = ff["minimum_elevation"];
+    float min_elev = ff["min_elevation"];
     float max_elev = ff["maximum_elevation"];
 
     // Count valid pixels before masking so we can detect any change.
@@ -1333,14 +1321,14 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 2b - Binary mask application
     // -------------------------------------------------------------------------
-    if (bf["apply_binary_mask"])
+    if (bf["run_binary_mask"])
     {
         std::cout << "\n--- Binary mask ---\n";
 
         const std::string& mask_path = sf["binary_mask_fname"];
         if (mask_path.empty())
         {
-            std::cerr << "Warning: apply_binary_mask is true but "
+            std::cerr << "Warning: run_binary_mask is true but "
                          "binary_mask_fname is empty - skipping.\n";
         }
         else
@@ -1461,14 +1449,14 @@ int main(int argc, char* argv[])
     // Runs before breaching, filling and nodata filling: this is a correction to
     // the source data, and anything downstream should see the corrected DEM.
     // -------------------------------------------------------------------------
-    if (!sf["replace_pixels_from_csv"].empty())
+    if (!sf["replace_pixels_fname"].empty())
     {
         std::cout << "\n--- Pixel replacement ---\n";
 
-        const std::filesystem::path given(sf["replace_pixels_from_csv"]);
+        const std::filesystem::path given(sf["replace_pixels_fname"]);
         const std::string points_path =
-            given.is_absolute() ? sf["replace_pixels_from_csv"]
-                                : pp.get_read_path() + sf["replace_pixels_from_csv"];
+            given.is_absolute() ? sf["replace_pixels_fname"]
+                                : pp.get_read_path() + sf["replace_pixels_fname"];
 
         const std::string value_field = sf["replace_pixels_value_field"];
 
@@ -2061,7 +2049,10 @@ int main(int argc, char* argv[])
             try
             {
                 const lsdtt::vector_output_format vec_fmt =
-                    lsdtt::resolve_vector_output_format(sf["depression_polygons_output_format"]);
+                    lsdtt::resolve_vector_output_format(
+                        lsdtt::resolve_output_format_override(
+                            sf["legacy_depression_polygons_write_vector_format"],
+                            sf["write_vector_format"]));
 
                 const std::string o =
                     pp.make_output_path( "_depressions" +
@@ -2079,23 +2070,11 @@ int main(int argc, char* argv[])
                 std::cout << "Found " << dep_result.records.size()
                           << " depression(s).\n";
 
-                loader.begin_vector_write(
-                    o,
-                    "depressions",
-                    dep_result.schema,
-                    filled_dem.get_meta().crs_wkt,
-                    vec_fmt
-                );
+                lsdtt::write_vector_records(
+                    loader, o, "depressions",
+                    dep_result.schema, dep_result.records,
+                    filled_dem.get_meta().crs_wkt, vec_fmt);
 
-                for (const lsdtt::lsdtt_vector_record& rec : dep_result.records)
-                {
-                    const auto& poly =
-                        std::get<lsdtt::lsdtt_polygon_geom>(rec.geometry);
-                    loader.write_polygon(poly.exterior, poly.holes,
-                                            rec.field_values);
-                }
-
-                loader.finish_vector_write();
                 std::cout << "Writing: " << o << "\n";
             }
             catch (const std::exception& e)
@@ -2203,7 +2182,9 @@ int main(int argc, char* argv[])
             {
                 const lsdtt::vector_output_format vec_fmt =
                     lsdtt::resolve_vector_output_format(
-                        sf["vector_clip_output_format"]
+                    lsdtt::resolve_output_format_override(
+                        sf["legacy_vector_clip_write_vector_format"],
+                        sf["write_vector_format"])
                     );
 
                 const std::string vec_out =
@@ -2240,7 +2221,7 @@ int main(int argc, char* argv[])
         const std::string point_path =
             pp.add_read_path_if_needed(sf["point_data_fname"]);
         const std::string list_csv =
-            pp.add_read_path_if_needed(sf["raster_attribute_csv"]);
+            pp.add_read_path_if_needed(sf["raster_attribute_fname"]);
         const std::string layer_name = sf["point_data_layer_name"];
 
         if (sf["point_data_fname"].empty())
@@ -2248,10 +2229,10 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: sample_rasters_to_points is true but "
                         "point_data_fname is empty - skipping.\n";
         }
-        else if (sf["raster_attribute_csv"].empty())
+        else if (sf["raster_attribute_fname"].empty())
         {
             std::cerr << "Warning: sample_rasters_to_points is true but "
-                        "raster_attribute_csv is empty - skipping.\n";
+                        "raster_attribute_fname is empty - skipping.\n";
         }
         else
         {
@@ -2286,7 +2267,7 @@ int main(int argc, char* argv[])
                 if (requests.empty())
                 {
                     throw std::runtime_error(
-                        "No raster requests found in raster_attribute_csv."
+                        "No raster requests found in raster_attribute_fname."
                     );
                 }
 
@@ -2326,7 +2307,9 @@ int main(int argc, char* argv[])
 
                 const lsdtt::point_output_format pt_fmt =
                     lsdtt::resolve_point_output_format(
-                        sf["sampled_points_output_format"]
+                        lsdtt::resolve_output_format_override(
+                            sf["legacy_sampled_points_write_vector_format"],
+                            sf["write_vector_format"])
                     );
 
                 if (pt_fmt == lsdtt::point_output_format::csv)

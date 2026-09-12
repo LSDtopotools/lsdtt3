@@ -588,7 +588,7 @@ OCTOPUS's published rates, which are computed per pixel by CAIRN — see §6.3.
 ## 8. Testing
 
 The cosmogenic code is the most heavily tested part of lsdtt3. Full detail is in
-[Benchmarking and testing](testing_and_benchmarking.md); this is the summary.
+[Benchmarking and testing](../developer_notes/testing_and_benchmarking.md); this is the summary.
 
 ### 8.1 The numerics lock
 
@@ -702,7 +702,7 @@ write `<write_fname>_CN_ERATE.csv`.
 
 Use it when you have measured nuclide concentrations and want erosion rates.
 
-[Full parameter reference](cli_reference/cli_reference_lsdtt_cosmo_tool.md)
+[Full parameter reference](../cli_reference/cli_reference_lsdtt_cosmo_tool.md)
 
 ### 9.2 `lsdtt-cosmo-prediction` — erosion scenarios → predicted concentrations
 
@@ -742,7 +742,7 @@ the data, and to check inversion machinery against a known answer.
 The forward tool also **generates** the scenario, rather than only consuming
 one — see §10.
 
-[Full parameter reference](cli_reference/cli_reference_lsdtt_cosmo_prediction.md)
+[Full parameter reference](../cli_reference/cli_reference_lsdtt_cosmo_prediction.md)
 
 ### 9.3 `lsdtt-cosmo-column-tool` — one column, arbitrary history
 
@@ -760,7 +760,7 @@ recent** and years BP increase with index. A reversed record is rejected
 fatally — before that check existed it returned a confidently wrong number with
 no warning.
 
-[Full parameter reference](cli_reference/cli_reference_lsdtt_cosmo_column_tool.md)
+[Full parameter reference](../cli_reference/cli_reference_lsdtt_cosmo_column_tool.md)
 
 ### 9.4 `lsdtt-cosmo-landslides` — landslide fields for cosmogenic coupling
 
@@ -789,7 +789,7 @@ Use it to test how landslide-induced variability in cosmogenic concentrations
 affects erosion-rate studies, and to design sampling strategies that are robust to
 landsliding.
 
-[Full parameter reference](cli_reference/cli_reference_lsdtt_cosmo_landslides.md)
+[Full parameter reference](../cli_reference/cli_reference_lsdtt_cosmo_landslides.md)
 
 ---
 

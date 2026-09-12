@@ -33,8 +33,8 @@ files may be different outputs (e.g. two DEMs) but must share the column name.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `bearing_file_1` | string | `NULL` | **Required.** CSV file for the first bearing sample. Must contain the column named by `bearing_column`. |
-| `bearing_file_2` | string | `NULL` | **Required.** CSV file for the second bearing sample. Must contain the column named by `bearing_column`. |
+| `bearing_fname_1` | string | `NULL` | **Required.** CSV file for the first bearing sample. Must contain the column named by `bearing_column`. |
+| `bearing_fname_2` | string | `NULL` | **Required.** CSV file for the second bearing sample. Must contain the column named by `bearing_column`. |
 | `bearing_column` | string | `bearing_deg` | Name of the CSV column holding bearings in degrees. E.g. `bearing_deg` from a `_channel_link_bearings` or `_junction_com_bearings` output. |
 
 ---
@@ -54,7 +54,7 @@ files may be different outputs (e.g. two DEMs) but must share the column name.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory prepended to relative `bearing_file_1` / `bearing_file_2` paths. |
+| `read_path` | string | directory of parameter file | Directory prepended to relative `bearing_fname_1` / `bearing_fname_2` paths. |
 | `write_path` | string | same as `read_path` | Directory for the output CSV. |
 | `write_fname` | string | parameter file stem | Output filename stem. |
 
@@ -66,8 +66,8 @@ Output file: `<write_fname>_bearing_comparison.csv` — a single data row.
 
 | Column | Description |
 |---|---|
-| `n_x` | Number of bearings read from `bearing_file_1` |
-| `n_y` | Number of bearings read from `bearing_file_2` |
+| `n_x` | Number of bearings read from `bearing_fname_1` |
+| `n_y` | Number of bearings read from `bearing_fname_2` |
 | `axial` | 1 if axial (period 180°), 0 if directional (period 360°) |
 | `rotation_invariant` | 1 if a global rotation of sample 2 was allowed, else 0 |
 | `period_deg` | Angular period used (180 or 360) |
@@ -99,8 +99,8 @@ read_path:   /data/output/
 write_path:  /data/output/
 write_fname: dem_pair
 
-bearing_file_1: dem_A_channel_link_bearings.csv
-bearing_file_2: dem_B_channel_link_bearings.csv
+bearing_fname_1: dem_A_channel_link_bearings.csv
+bearing_fname_2: dem_B_channel_link_bearings.csv
 bearing_column: bearing_deg
 
 data_is_axial:      false
@@ -110,10 +110,38 @@ rotation_invariant: false
 ## Example: compare a single stream order, shape only
 
 ```
-bearing_file_1:      dem_A_channel_link_bearings.csv
-bearing_file_2:      dem_B_channel_link_bearings.csv
+bearing_fname_1:     dem_A_channel_link_bearings.csv
+bearing_fname_2:     dem_B_channel_link_bearings.csv
 bearing_column:      bearing_deg
 stream_order_filter: 2
 stream_order_column: stream_order
 rotation_invariant:  true
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### -
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `bearing_fname_1` | `string` | `NULL` | `param` | - | CSV file for the first bearing sample. | Must contain the column named by bearing_column. |
+| `bearing_fname_2` | `string` | `NULL` | `param` | - | CSV file for the second bearing sample. | Must contain the column named by bearing_column. |
+| `bearing_column` | `string` | `bearing_deg` | `param` | - | Name of the CSV column holding bearings in degrees. | e.g. bearing_deg from a channel_link_bearings or junction_com_bearings output. |
+| `data_is_axial` | `bool` | `false` | `param` | - | Treat bearings as axial (orientation) data with period 180 degrees. | Use for line orientations where theta and theta+180 are equivalent. Directional (default) uses period 360 degrees. |
+| `rotation_invariant` | `bool` | `false` | `param` | - | Allow one global rotation of sample 2 before the Wasserstein distance. | Use when only distribution shape matters, not absolute orientation. |
+| `stream_order_filter` | `int` | `-1` | `param` | - | If &gt; 0, keep only rows whose stream_order_column equals this value. | -1 (default) uses all rows. |
+| `stream_order_column` | `string` | `stream_order` | `param` | - | Column used by stream_order_filter. | Only consulted when stream_order_filter &gt; 0. |
+
+<!-- END GENERATED CLI PARAMETERS -->

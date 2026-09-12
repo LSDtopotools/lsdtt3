@@ -103,10 +103,10 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.THRESHOLD_CONTRIBUTING_PIXELS,
-                "Source threshold (contributing pixels)",
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
-                defaultValue=500,
+                defaultValue=1000,
             )
         )
         self.addParameter(
@@ -296,14 +296,14 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
             self,
             "lsdtt-basin-stats",
             overrides={
-                self.INPUT_OUTLETS: "basin_outlet_csv",
+                self.INPUT_OUTLETS: "basin_outlet_fname",
                 self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
                 self.CALCULATE_COM_BEARING: "calculate_centre_of_mass_bearing",
-                self.BASIN_POLYGON_FORMAT: "basin_polygon_format",
+                self.BASIN_POLYGON_FORMAT: "write_vector_format",
                 self.SNAPPING_METHOD: "basin_outlet_snapping_method",
                 self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
-                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
-                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_snap_min_search_radius_pixels",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_snap_max_search_radius_pixels",
                 self.WRITE_BASIN_PDF_CDF: "write_basin_pdf_cdf_csv",
                 self.JUNCTION_AREA_RATIO_BOOTSTRAP: "junction_area_ratio_bootstrap",
             },
@@ -338,10 +338,6 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
         )
         write_polygons = self.parameterAsBool(parameters, self.WRITE_BASIN_POLYGONS, context)
         write_hillshade = self.parameterAsBool(parameters, self.WRITE_HILLSHADE, context)
-        if calculate_area_ratios and not calculate_channel_stats:
-            raise QgsProcessingException(
-                "Junction drainage-area ratios require channel statistics to be enabled."
-            )
         polygon_format = self.VECTOR_FORMAT_OPTIONS[
             self.parameterAsEnum(parameters, self.BASIN_POLYGON_FORMAT, context)
         ]
@@ -355,20 +351,20 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
             "write_output_format": self.OUTPUT_FORMAT_OPTIONS[
                 self.parameterAsEnum(parameters, self.OUTPUT_FORMAT, context)
             ],
-            "basin_outlet_csv": outlet_csv,
+            "basin_outlet_fname": outlet_csv,
             "basin_outlet_snapping_method": self.SNAPPING_OPTIONS[
                 self.parameterAsEnum(parameters, self.SNAPPING_METHOD, context)
             ],
             "basin_outlet_contributing_pixels_threshold": self.parameterAsInt(
                 parameters, self.SNAPPING_THRESHOLD, context
             ),
-            "basin_outlet_min_search_radius_pixels": self.parameterAsInt(
+            "basin_outlet_snap_min_search_radius_pixels": self.parameterAsInt(
                 parameters, self.SNAPPING_MIN_RADIUS, context
             ),
-            "basin_outlet_max_search_radius_pixels": self.parameterAsInt(
+            "basin_outlet_snap_max_search_radius_pixels": self.parameterAsInt(
                 parameters, self.SNAPPING_MAX_RADIUS, context
             ),
-            "minimum_elevation": self.parameterAsDouble(
+            "min_elevation": self.parameterAsDouble(
                 parameters, self.MINIMUM_ELEVATION, context
             ),
             "fill_before_routing": self.parameterAsBool(
@@ -399,7 +395,7 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
                 parameters, self.CALCULATE_COM_BEARING, context
             ),
             "write_basin_polygons": write_polygons,
-            "basin_polygon_format": polygon_format,
+            "write_vector_format": polygon_format,
             "write_basin_pdf_cdf_csv": self.parameterAsBool(
                 parameters, self.WRITE_BASIN_PDF_CDF, context
             ),

@@ -160,8 +160,8 @@ scikit-build-core = ">=0.10"
 # --strict turns broken internal links and pages missing from the nav into
 # errors. A docs build that "succeeds" with dangling links is how a site rots.
 [feature.docs.tasks]
-docs-serve = "python -m pip install --no-deps --no-build-isolation --editable ./python_bindings && mkdocs serve"
-docs-build = "python -m pip install --no-deps --no-build-isolation --editable ./python_bindings && mkdocs build --strict"
+docs-serve = "PYTHONPATH=./python_bindings/src mkdocs serve"
+docs-build = "PYTHONPATH=./python_bindings/src mkdocs build --strict"
 
 # Workflow orchestration tools (Snakemake + helpers), kept out of the default
 # env because workflow execution is optional and can pull a larger solve.

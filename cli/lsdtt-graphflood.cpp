@@ -42,6 +42,7 @@
 #include "../src/cpu/lsdtt_hydraulic_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.1.1";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -231,14 +232,14 @@ int main(int argc, char* argv[])
         "Used by run_until_converged.",
         "Point inflow", "param", ""};
 
-    float_default_map["tol_median_abs_dhw"] = 1.0e-6f;
-    help_map["tol_median_abs_dhw"] = {"float","1e-6",
+    float_default_map["median_dhw_convergence_tolerance_metres"] = 1.0e-6f;
+    help_map["median_dhw_convergence_tolerance_metres"] = {"float","1e-6",
         "Absolute median dhw convergence threshold in metres.",
         "Used by run_until_converged.",
         "Point inflow", "param", ""};
 
-    float_default_map["tol_median_rel_dhw"] = 1.0e-4f;
-    help_map["tol_median_rel_dhw"] = {"float","1e-4",
+    float_default_map["median_dhw_relative_convergence_tolerance"] = 1.0e-4f;
+    help_map["median_dhw_relative_convergence_tolerance"] = {"float","1e-4",
         "Relative median dhw convergence threshold.",
         "Used by run_until_converged.",
         "Point inflow", "param", ""};
@@ -357,6 +358,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Renamed onto the project conventions: no `tol` abbreviation
+    // (docs/cli_parameter_conventions.md). Old keys still work, with a warning.
+    pp.set_deprecated_aliases({
+        {"tol_median_abs_dhw", "median_dhw_convergence_tolerance_metres"},
+        {"tol_median_rel_dhw", "median_dhw_relative_convergence_tolerance"},
+    });
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -369,9 +377,7 @@ int main(int argc, char* argv[])
     // Cross-parameter logic
     // -------------------------------------------------------------------------
     std::string routing_method = sf["flow_routing_method"];
-    std::transform(routing_method.begin(), routing_method.end(),
-                   routing_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    routing_method = lsdtt::to_lower_ascii(routing_method);
 
     if (routing_method != "mfd" && routing_method != "dinf")
     {
@@ -381,9 +387,7 @@ int main(int argc, char* argv[])
     }
 
     std::string bed_preprocessing = sf["bed_preprocessing"];
-    std::transform(bed_preprocessing.begin(), bed_preprocessing.end(),
-                   bed_preprocessing.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    bed_preprocessing = lsdtt::to_lower_ascii(bed_preprocessing);
     if (bed_preprocessing != "none" && bed_preprocessing != "fill")
     {
         std::cerr << "FATAL: bed_preprocessing must be 'none' or 'fill'. Got: "
@@ -643,8 +647,8 @@ int main(int argc, char* argv[])
                 ii["n_steps"],
                 ii["report_every"],
                 ii["convergence_check_every"],
-                ff["tol_median_abs_dhw"],
-                ff["tol_median_rel_dhw"]
+                ff["median_dhw_convergence_tolerance_metres"],
+                ff["median_dhw_relative_convergence_tolerance"]
             );
 
             if (!converged)

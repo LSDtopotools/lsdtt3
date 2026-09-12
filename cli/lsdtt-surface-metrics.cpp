@@ -62,6 +62,7 @@
 
 #ifdef LSDTT_HAS_OPENCV
 #include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 #endif
 
 static const std::string k_version  = "0.2.0";
@@ -85,28 +86,6 @@ static void print_banner()
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// resolve_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::raster_output_format resolve_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "gtiff")
-    {
-        return lsdtt::raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return lsdtt::raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' - defaulting to cog.\n";
-    }
-    return lsdtt::raster_output_format::cog;
 }
 
 
@@ -207,108 +186,15 @@ static std::vector<std::string> split_csv(const std::string& csv)
     return out;
 }
 
-// -----------------------------------------------------------------------------
-// polyfit_metric_entry
-// -----------------------------------------------------------------------------
-struct polyfit_metric_entry
-{
-    const char*           name;
-    lsdtt::polyfit_metric metric;
-    const char*           suffix;
-};
+// Polyfit metric names, parsing and output suffixes now live in the library:
+//   lsdtt::all_polyfit_metrics / polyfit_metric_name /
+//   polyfit_metric_from_string / polyfit_metric_output_suffix /
+//   parse_polyfit_metric_list   (src/cpu/lsdtt_raster_surface_metrics_cpu.hpp)
+// This CLI, lsdtt-ridgeline-analysis and lsdtt-basin-surface-metrics each kept
+// a private copy; the third had drifted six metrics behind, so a name accepted
+// here was rejected there. One table, next to the enum, with a unit test that
+// fails if the two fall out of step.
 
-// -----------------------------------------------------------------------------
-// polyfit_metric_table
-// -----------------------------------------------------------------------------
-static const std::vector<polyfit_metric_entry>& polyfit_metric_table()
-{
-    static const std::vector<polyfit_metric_entry> table =
-    {
-        {"fitted_surface",               lsdtt::polyfit_metric::fitted_surface,              "_polyfit_fitted_surface.tif"},
-        {"dzdx",                         lsdtt::polyfit_metric::dzdx,                        "_polyfit_dzdx.tif"},
-        {"dzdy",                         lsdtt::polyfit_metric::dzdy,                        "_polyfit_dzdy.tif"},
-        {"d2zdx2",                       lsdtt::polyfit_metric::d2zdx2,                      "_polyfit_d2zdx2.tif"},
-        {"d2zdxdy",                      lsdtt::polyfit_metric::d2zdxdy,                     "_polyfit_d2zdxdy.tif"},
-        {"d2zdy2",                       lsdtt::polyfit_metric::d2zdy2,                      "_polyfit_d2zdy2.tif"},
-        {"slope",                        lsdtt::polyfit_metric::slope,                       "_polyfit_slope.tif"},
-        {"slope_degrees",                lsdtt::polyfit_metric::slope_degrees,               "_polyfit_slope_degrees.tif"},
-        {"aspect_radians",               lsdtt::polyfit_metric::aspect_radians,              "_polyfit_aspect_radians.tif"},
-        {"aspect_degrees",               lsdtt::polyfit_metric::aspect_degrees,              "_polyfit_aspect_degrees.tif"},
-        {"laplacian",                    lsdtt::polyfit_metric::laplacian,                   "_polyfit_laplacian.tif"},
-        {"hessian_determinant",          lsdtt::polyfit_metric::hessian_determinant,         "_polyfit_hessian_determinant.tif"},
-        {"mean_curvature",               lsdtt::polyfit_metric::mean_curvature,              "_polyfit_mean_curvature.tif"},
-        {"gaussian_curvature",           lsdtt::polyfit_metric::gaussian_curvature,          "_polyfit_gaussian_curvature.tif"},
-        {"maximum_curvature",            lsdtt::polyfit_metric::maximum_curvature,           "_polyfit_maximum_curvature.tif"},
-        {"minimum_curvature",            lsdtt::polyfit_metric::minimum_curvature,           "_polyfit_minimum_curvature.tif"},
-        {"curvedness",                   lsdtt::polyfit_metric::curvedness,                  "_polyfit_curvedness.tif"},
-        {"shape_index",                  lsdtt::polyfit_metric::shape_index,                 "_polyfit_shape_index.tif"},
-        {"profile_curvature",            lsdtt::polyfit_metric::profile_curvature,           "_polyfit_profile_curvature.tif"},
-        {"plan_curvature",               lsdtt::polyfit_metric::plan_curvature,              "_polyfit_plan_curvature.tif"},
-        {"tangential_curvature",         lsdtt::polyfit_metric::tangential_curvature,        "_polyfit_tangential_curvature.tif"},
-        {"difference_curvature",         lsdtt::polyfit_metric::difference_curvature,        "_polyfit_difference_curvature.tif"},
-        {"horizontal_excess_curvature",  lsdtt::polyfit_metric::horizontal_excess_curvature, "_polyfit_horizontal_excess_curvature.tif"},
-        {"vertical_excess_curvature",    lsdtt::polyfit_metric::vertical_excess_curvature,   "_polyfit_vertical_excess_curvature.tif"},
-        {"accumulation_curvature",       lsdtt::polyfit_metric::accumulation_curvature,      "_polyfit_accumulation_curvature.tif"},
-        {"ring_curvature",               lsdtt::polyfit_metric::ring_curvature,              "_polyfit_ring_curvature.tif"},
-        {"rotor",                        lsdtt::polyfit_metric::rotor,                       "_polyfit_rotor.tif"}
-    };
-
-    return table;
-}
-
-// -----------------------------------------------------------------------------
-// parse_polyfit_metrics
-// -----------------------------------------------------------------------------
-static std::vector<lsdtt::polyfit_metric> parse_polyfit_metrics(
-    const std::string& csv)
-{
-    std::vector<lsdtt::polyfit_metric> metrics;
-    std::set<lsdtt::polyfit_metric>    seen;
-
-    const std::vector<std::string> tokens = split_csv(csv);
-    if (tokens.empty())
-    {
-        return metrics;
-    }
-
-    for (const std::string& token : tokens)
-    {
-        if (token == "all")
-        {
-            for (const auto& entry : polyfit_metric_table())
-            {
-                if (seen.insert(entry.metric).second)
-                {
-                    metrics.push_back(entry.metric);
-                }
-            }
-            continue;
-        }
-
-        bool found = false;
-        for (const auto& entry : polyfit_metric_table())
-        {
-            if (token == entry.name)
-            {
-                found = true;
-                if (seen.insert(entry.metric).second)
-                {
-                    metrics.push_back(entry.metric);
-                }
-                break;
-            }
-        }
-
-        if (!found)
-        {
-            throw std::runtime_error(
-                "Unknown polyfit metric: " + token
-            );
-        }
-    }
-
-    return metrics;
-}
 
 // -----------------------------------------------------------------------------
 // parse_slope_thresholds
@@ -345,31 +231,6 @@ static std::vector<float> parse_slope_thresholds(const std::string& csv)
 }
 
 
-// -----------------------------------------------------------------------------
-// polyfit_metric_suffix
-//
-// Returns the output filename suffix for a given metric and method.
-// method must be "wavelet" or "direct".  The table stores "_polyfit_*.tif";
-// the method is prepended to give "_wavelet_polyfit_*.tif" etc.
-// -----------------------------------------------------------------------------
-static std::string polyfit_metric_suffix(
-    lsdtt::polyfit_metric metric,
-    const std::string&    method = "wavelet")
-{
-    for (const auto& entry : polyfit_metric_table())
-    {
-        if (entry.metric == metric)
-        {
-            // entry.suffix is "_polyfit_xxx.tif"; prepend "_<method>" so
-            // the result is "_wavelet_polyfit_xxx.tif" or "_direct_polyfit_xxx.tif".
-            return std::string("_") + method + entry.suffix;
-        }
-    }
-
-    throw std::runtime_error(
-        "No output suffix defined for requested polyfit metric."
-    );
-}
 
 // =============================================================================
 // main
@@ -402,10 +263,11 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
-    int_default_map["n_threads"] = 1;
-    help_map["n_threads"] = {"int","1",
+    int_default_map["n_threads"] = 0;
+    help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
-        "0 = use all hardware threads. 1 = serial (default). "
+        "0 = use all hardware threads (default). 1 = serial. In shared "
+        "environments, set an explicit limit no greater than the physical-core allocation. "
         "Applies to the direct and wavelet quadratic fits, polyfit metric "
         "engine, and OpenCV normalisation passes.",
         "Threading", "io", ""};
@@ -414,9 +276,13 @@ int main(int argc, char* argv[])
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
+        "Allowed values: cog, gtiff, same_as_input, png. "
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format.",
+        "same_as_input: match the input raster format. "
+        "png: 8-bit scaled image with a worldfile and PAM sidecar for "
+        "georeferencing - for quick visualisation only, not for analysis "
+        "reuse. Output files take the extension of the chosen format.",
         "Output format", "io", ""};
 
     // --- Hillshade ---
@@ -568,8 +434,8 @@ int main(int argc, char* argv[])
     };
 
     // --- Surface shape classification (SMAP, TopoCurve-style) ---
-    bool_default_map["write_shape_classification"] = false;
-    help_map["write_shape_classification"] = {"bool","false",
+    bool_default_map["write_shape_classification_raster"] = false;
+    help_map["write_shape_classification_raster"] = {"bool","false",
         "Write the morphological surface-shape classification raster (SMAP).",
         "Reproduces the differential-geometry shape classification of the "
         "TopoCurve approach. Each pixel is labelled by the signs of Gaussian "
@@ -578,7 +444,7 @@ int main(int argc, char* argv[])
         "synform (-1), synformal saddle (-2), basin (-3), perfect saddle (-4). "
         "Requires the polynomial fit; maximum_curvature and minimum_curvature "
         "are added to the requested metrics automatically. "
-        "Output: _<method>_shape_class.tif.",
+        "Output: _<method>_shape_class.<ext>; write_output_format selects the extension.",
         "Surface shape classification (SMAP, TopoCurve-style)", "switch", ""};
 
     string_default_map["shape_curvature_method"] = "polyfit";
@@ -593,7 +459,7 @@ int main(int argc, char* argv[])
         "fundamental_form the polyfit fitted_surface is used as the smoothed "
         "input (smoothing scale set by polyfit_lambda_metres), and the "
         "fundamental-form principal curvatures are written as "
-        "_<method>_ff_maximum_curvature.tif / _<method>_ff_minimum_curvature.tif.",
+        "_<method>_ff_maximum_curvature.<ext> / _<method>_ff_minimum_curvature.<ext>.",
         "Surface shape classification (SMAP, TopoCurve-style)", "param", ""};
 
     float_default_map["shape_curvature_threshold"] = 0.0f;
@@ -613,9 +479,9 @@ int main(int argc, char* argv[])
         "the shape classification.",
         "These differ from the raw gaussian_curvature/mean_curvature polyfit "
         "metrics because they reflect shape_curvature_threshold (kt). "
-        "Outputs: _<method>_shape_gaussian_curvature.tif, "
-        "_<method>_shape_mean_curvature.tif. "
-        "Only active when write_shape_classification = true.",
+        "Outputs: _<method>_shape_gaussian_curvature.<ext>, "
+        "_<method>_shape_mean_curvature.<ext>. "
+        "Only active when write_shape_classification_raster = true.",
         "Surface shape classification (SMAP, TopoCurve-style)", "switch", ""};
 
     // --- MADk2 roughness ---
@@ -665,8 +531,8 @@ int main(int argc, char* argv[])
     float_default_map["frangi_sigma_max_metres"] = 5.0f;
     help_map["frangi_sigma_max_metres"] = {"float","5.0",
         "Maximum Frangi scale in metres.",
-        "This is the largest Gaussian smoothing scale tested by the Frangi "
-        "filter.",
+        "This general terrain-metrics workflow searches broader lineaments up to "
+        "5 m; the drain-specific feature finder deliberately stops at 2.5 m.",
         "Frangi filter", "param", ""};
 
     int_default_map["frangi_n_scales"] = 4;
@@ -680,13 +546,16 @@ int main(int argc, char* argv[])
     help_map["frangi_beta"] = {"float","0.5",
         "Frangi beta parameter.",
         "Controls suppression of blob-like structure relative to line-like "
-        "structure.",
+        "structure. The neutral 0.5 default supports general ridge/valley "
+        "exploration; the drain finder uses 0.4 to prefer narrow lines more strongly.",
         "Frangi filter", "param", ""};
 
-    float_default_map["frangi_c"] = 15.0f;
-    help_map["frangi_c"] = {"float","15.0",
+    float_default_map["frangi_c"] = 1.0f;
+    help_map["frangi_c"] = {"float","1.0",
         "Frangi c parameter.",
-        "Controls suppression of low-structureness responses.",
+        "Controls suppression of low-structureness responses. Phase 5 decision D7 "
+        "intentionally changed the scientific default from 15 to 1, matching "
+        "lsdtt-feature-finder; set 15 explicitly to reproduce the former response.",
         "Frangi filter", "param", ""};
 
     string_default_map["frangi_target"] = "ridges";
@@ -723,8 +592,8 @@ int main(int argc, char* argv[])
         "and compute cost.",
         "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
 
-    float_default_map["hough_theta_deg"] = 1.0f;
-    help_map["hough_theta_deg"] = {"float","1.0",
+    float_default_map["hough_theta_degrees"] = 1.0f;
+    help_map["hough_theta_degrees"] = {"float","1.0",
         "Angle resolution of the Hough accumulator in degrees.",
         "Converted to radians internally. Typical range: 0.5-2.0 degrees.",
         "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
@@ -770,8 +639,8 @@ int main(int argc, char* argv[])
         "Shared Canny parameters (used by Hough; also available standalone)", "param", ""};
 
     // --- Curvature skeleton (VEC + plan curvature relief) ---
-    bool_default_map["write_curvature_skeletons"] = false;
-    help_map["write_curvature_skeletons"] = {"bool","false",
+    bool_default_map["write_curvature_skeleton_rasters"] = false;
+    help_map["write_curvature_skeleton_rasters"] = {"bool","false",
         "Extract slope-break skeletons directly from curvature rasters.",
         "Computes vertical_excess_curvature and plan_curvature via direct polyfit "
         "(curvature_skeleton_lambda_metres), then: "
@@ -779,9 +648,10 @@ int main(int argc, char* argv[])
         "and skeletonises; "
         "(2) computes local relief of plan_curvature over plan_relief_window_metres, "
         "thresholds at plan_relief_threshold, and skeletonises. "
-        "Outputs: _vec_skeleton_curvature.tif, _vec_skeleton_binary.tif, "
-        "_vec_skeleton.tif, _profile_curvature.tif, _profile_curvature_relief.tif, "
-        "_profile_skeleton_binary.tif, _profile_skeleton.tif.",
+        "Outputs use the selected raster extension: _vec_skeleton_curvature.<ext>, "
+        "_vec_skeleton_binary.<ext>, _vec_skeleton.<ext>, _profile_curvature.<ext>, "
+        "_profile_curvature_relief.<ext>, _profile_skeleton_binary.<ext>, "
+        "_profile_skeleton.<ext>.",
         "Curvature skeleton (VEC + plan curvature relief)", "switch", ""};
 
     float_default_map["curvature_skeleton_lambda_metres"] = 100.0f;
@@ -789,64 +659,64 @@ int main(int argc, char* argv[])
         "Polyfit half-wavelength (m) for the direct fit used by curvature skeleton.",
         "Controls the smoothing scale of the fitted surface. "
         "Larger values suppress noise; smaller values resolve finer features.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     float_default_map["vec_skeleton_threshold"] = 0.0f;
     help_map["vec_skeleton_threshold"] = {"float","0.0",
         "VEC threshold for binarising vertical_excess_curvature.",
         "Pixels with VEC >= this value are classified as slope-break candidates. "
-        "Run once with write_curvature_skeletons=true and read the printed CDF "
+        "Run once with write_curvature_skeleton_rasters=true and read the printed CDF "
         "divergence threshold to choose an appropriate value. "
         "Ignored when vec_skeleton_use_cdf_threshold=true.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     bool_default_map["vec_skeleton_use_cdf_threshold"] = false;
     help_map["vec_skeleton_use_cdf_threshold"] = {"bool","false",
         "Auto-select the VEC threshold using CDF divergence.",
         "Overrides vec_skeleton_threshold when true.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     bool_default_map["vec_skeleton_write_cdf"] = false;
     help_map["vec_skeleton_write_cdf"] = {"bool","false",
         "Write the VEC CDF to a CSV file alongside the skeleton outputs.",
         "Output suffix: _vec_skeleton_cdf.csv.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     float_default_map["profile_relief_window_metres"] = 50.0f;
     help_map["profile_relief_window_metres"] = {"float","50.0",
         "Circular moving-window radius (m) for the profile curvature local relief.",
         "Larger windows smooth sign-change boundaries but blur fine features.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     float_default_map["profile_relief_threshold"] = 0.1f;
     help_map["profile_relief_threshold"] = {"float","0.1",
         "Threshold on profile curvature local relief for binarisation.",
         "Pixels whose within-window profile curvature range >= this value are "
         "classified as slope-break candidates.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     int_default_map["curvature_skeleton_spur_max_pixels"] = 10;
     help_map["curvature_skeleton_spur_max_pixels"] = {"int","10",
         "Maximum endpoint-rooted spur length (pixels) pruned from curvature skeletons.",
         "0 = skip spur pruning.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     int_default_map["curvature_skeleton_min_component_pixels"] = 1;
     help_map["curvature_skeleton_min_component_pixels"] = {"int","1",
         "Minimum component size (pixels) retained in curvature skeletons.",
         "Applied after thinning and spur pruning.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     // --- VEC adaptive thresholding (requires OpenCV) ---
-    bool_default_map["write_vec_adaptive_threshold"] = false;
-    help_map["write_vec_adaptive_threshold"] = {"bool","false",
+    bool_default_map["write_vec_adaptive_threshold_rasters"] = false;
+    help_map["write_vec_adaptive_threshold_rasters"] = {"bool","false",
         "Apply adaptive mean and Gaussian thresholding to vertical_excess_curvature.",
         "Requires OpenCV (LSDTT_HAS_OPENCV). Uses curvature_skeleton_lambda_metres "
         "for the polyfit scale. Each pixel is compared to the mean (or Gaussian-weighted "
         "mean) of its local neighbourhood minus the constant vec_adaptive_C: a pixel is "
         "foreground if its normalised 8-bit value > local_mean - vec_adaptive_C. "
         "Negative C is stricter (retains only locally brightest pixels). "
-        "Outputs: _vec_adaptive_mean.tif, _vec_adaptive_gaussian.tif, "
+        "Outputs: _vec_adaptive_mean.<ext>, _vec_adaptive_gaussian.<ext>, "
         "and optionally their Zhang-Suen skeletons.",
         "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
 
@@ -875,13 +745,13 @@ int main(int argc, char* argv[])
         "before the local threshold is applied.",
         "VEC adaptive thresholding (requires OpenCV)", "param", ""};
 
-    bool_default_map["write_vec_adaptive_skeletons"] = false;
-    help_map["write_vec_adaptive_skeletons"] = {"bool","false",
+    bool_default_map["write_vec_adaptive_skeleton_rasters"] = false;
+    help_map["write_vec_adaptive_skeleton_rasters"] = {"bool","false",
         "Thin the adaptive-threshold VEC binary masks to 1-pixel skeletons.",
         "Applies Zhang-Suen thinning (and curvature_skeleton_spur_max_pixels pruning) "
         "to both the mean and Gaussian adaptive outputs. "
-        "Outputs: _vec_adaptive_mean_skeleton.tif, _vec_adaptive_gaussian_skeleton.tif."
-        "Only active when write_vec_adaptive_threshold = true.",
+        "Outputs: _vec_adaptive_mean_skeleton.<ext>, _vec_adaptive_gaussian_skeleton.<ext>."
+        "Only active when write_vec_adaptive_threshold_rasters = true.",
         "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
 
     // --- Cloth drape ---
@@ -891,7 +761,7 @@ int main(int argc, char* argv[])
         "Runs a Verlet cloth simulation: a flat sheet at max DEM elevation falls "
         "under gravity and comes to rest on ridges and summits. The resting "
         "position is the upper landscape envelope. "
-        "Output: _cloth_envelope.tif. "
+        "Output: _cloth_envelope.<ext>. "
         "For best results supply a pit-filled or breached DEM.",
         "Cloth drape", "switch", ""};
 
@@ -901,7 +771,7 @@ int main(int argc, char* argv[])
         "Positive values indicate how far the terrain surface lies below the "
         "envelope at each pixel (valley incision depth). Negative values "
         "indicate residual pits or nodata artefacts above the envelope. "
-        "Output: _cloth_incision.tif.",
+        "Output: _cloth_incision.<ext>.",
         "Cloth drape", "switch", ""};
 
     bool_default_map["write_cloth_crest_mask_raster"] = false;
@@ -910,7 +780,7 @@ int main(int argc, char* argv[])
         "1 = cloth particle was pinned by terrain contact (ridge or summit); "
         "0 = particle settled freely between ridges. Useful for diagnosing "
         "which features govern the envelope shape. "
-        "Output: _cloth_crest_mask.tif.",
+        "Output: _cloth_crest_mask.<ext>.",
         "Cloth drape", "switch", ""};
 
     float_default_map["cloth_rigidity"] = 1.0f;
@@ -942,12 +812,12 @@ int main(int argc, char* argv[])
     int_default_map["cloth_max_iterations"] = 500;
     help_map["cloth_max_iterations"] = {"int","500",
         "Maximum number of Verlet integration steps.",
-        "The simulation stops early when max_displacement < cloth_convergence_tol. "
+        "The simulation stops early when max_displacement < cloth_convergence_tolerance_metres. "
         "Increase for large or complex DEMs where convergence is slow.",
         "Cloth drape", "param", ""};
 
-    float_default_map["cloth_convergence_tol"] = 0.005f;
-    help_map["cloth_convergence_tol"] = {"float","0.005",
+    float_default_map["cloth_convergence_tolerance_metres"] = 0.005f;
+    help_map["cloth_convergence_tolerance_metres"] = {"float","0.005",
         "Convergence tolerance: maximum cloth displacement (m) per step to declare settled.",
         "Tighten to 0.001 m for precise incision mapping on smooth terrain. "
         "Loosen to 0.01 m for faster runs on coarse DEMs where sub-centimetre "
@@ -981,6 +851,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"write_shape_classification", "write_shape_classification_raster"},
+        {"write_curvature_skeletons", "write_curvature_skeleton_rasters"},
+        {"write_vec_adaptive_threshold", "write_vec_adaptive_threshold_rasters"},
+        {"write_vec_adaptive_skeletons", "write_vec_adaptive_skeleton_rasters"},
+        {"hough_theta_deg", "hough_theta_degrees"},
+        {"cloth_convergence_tol", "cloth_convergence_tolerance_metres"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -996,7 +873,7 @@ int main(int argc, char* argv[])
     std::vector<lsdtt::polyfit_metric> requested_polyfit_metrics;
     try
     {
-        requested_polyfit_metrics = parse_polyfit_metrics(sf["polyfit_metrics"]);
+        requested_polyfit_metrics = lsdtt::parse_polyfit_metric_list(sf["polyfit_metrics"]);
     }
     catch (const std::exception& e)
     {
@@ -1036,15 +913,15 @@ int main(int argc, char* argv[])
     {
         static const char* const k_output_switches[] = {
             "write_hillshade_raster", "write_local_relief_raster",
-            "write_polyfit_rasters",  "write_shape_classification",
+            "write_polyfit_rasters",  "write_shape_classification_raster",
             "write_shape_curvature_rasters", "write_madk2_rasters",
             "write_slope_threshold_layers",
             "write_cloth_envelope_raster", "write_cloth_incision_raster",
             "write_cloth_crest_mask_raster",
             "write_frangi_raster", "write_frangi_scale_raster",
             "write_otsu_raster", "write_hough_lines_raster",
-            "write_curvature_skeletons",
-            "write_vec_adaptive_threshold", "write_vec_adaptive_skeletons"
+            "write_curvature_skeleton_rasters",
+            "write_vec_adaptive_threshold_rasters", "write_vec_adaptive_skeleton_rasters"
         };
 
         bool any_output = !requested_polyfit_metrics.empty();
@@ -1068,16 +945,26 @@ int main(int argc, char* argv[])
 
     const int n_threads = ifs["n_threads"];
     const lsdtt::raster_output_format out_fmt =
-        resolve_output_format(sf["write_output_format"]);
+        lsdtt::resolve_raster_output_format(sf["write_output_format"]);
+
+    // The output extension follows the output format: png outputs get a .png
+    // extension, same_as_input inherits the extension of the input raster.
+    std::string output_ext = ".tif";
+    if (out_fmt == lsdtt::raster_output_format::png)
+    {
+        output_ext = ".png";
+    }
+    else if (out_fmt == lsdtt::raster_output_format::same_as_input)
+    {
+        output_ext = pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext();
+    }
 
     std::cout << "Output format: " << sf["write_output_format"] << "\n";
 
     // Apply the global compute-backend preference. Dispatched kernels (e.g.
     // direct_polyfit) read this; everything without a GPU port stays on CPU.
     {
-        std::string cb = sf["compute_backend"];
-        std::transform(cb.begin(), cb.end(), cb.begin(),
-                       [](unsigned char ch){ return std::tolower(ch); });
+        std::string cb = lsdtt::to_lower_ascii(sf["compute_backend"]);
         if (cb == "cpu")
             lsdtt::set_compute_backend(lsdtt::backend_type::cpu);
         else if (cb == "gpu")
@@ -1099,12 +986,12 @@ int main(int argc, char* argv[])
         if (pm == "both" || pm == "wavelet")
         {
             for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
-                std::cout << " " << polyfit_metric_suffix(metric, "wavelet");
+                std::cout << " " << lsdtt::polyfit_metric_output_suffix(metric, "wavelet", output_ext);
         }
         if (pm == "both" || pm == "direct")
         {
             for (const lsdtt::polyfit_metric metric : requested_polyfit_metrics)
-                std::cout << " " << polyfit_metric_suffix(metric, "direct");
+                std::cout << " " << lsdtt::polyfit_metric_output_suffix(metric, "direct", output_ext);
         }
         std::cout << "\n";
     }
@@ -1125,13 +1012,24 @@ int main(int argc, char* argv[])
                     "because you want me to write_slope_threshold_layers \n";
             requested_polyfit_metrics.push_back(lsdtt::polyfit_metric::slope_degrees);
         }
+
+        // The threshold layers are built by re-opening the slope_degrees raster
+        // written earlier in this run. png output is 8-bit scaled, so the values
+        // read back would not be slopes in degrees.
+        if (out_fmt == lsdtt::raster_output_format::png)
+        {
+            std::cerr << "Warning: write_slope_threshold_layers re-reads the "
+                         "slope_degrees raster it wrote, but write_output_format "
+                         "is png (8-bit scaled). The thresholds will not be in "
+                         "degrees. Use gtiff or cog for this option.\n";
+        }
     }
 
     // Cross-parameter logic for the surface shape classification (SMAP).
     // The classifier needs the two principal curvatures. With the polyfit
     // method they come straight from the polyfit metrics; with the
     // fundamental_form method they are computed from the polyfit fitted_surface.
-    if (bf["write_shape_classification"])
+    if (bf["write_shape_classification_raster"])
     {
         auto ensure_metric = [&](lsdtt::polyfit_metric m)
         {
@@ -1149,7 +1047,7 @@ int main(int argc, char* argv[])
         {
             ensure_metric(lsdtt::polyfit_metric::fitted_surface);
             std::cout << "I am adding fitted_surface to the requested polyfit "
-                         "metrics because write_shape_classification uses the "
+                         "metrics because write_shape_classification_raster uses the "
                          "fundamental_form curvature method (smoothed surface "
                          "input).\n";
         }
@@ -1159,7 +1057,7 @@ int main(int argc, char* argv[])
             ensure_metric(lsdtt::polyfit_metric::minimum_curvature);
             std::cout << "I am adding maximum_curvature and minimum_curvature to "
                          "the requested polyfit metrics because you want me to "
-                         "write_shape_classification \n";
+                         "write_shape_classification_raster \n";
         }
     }
 
@@ -1231,7 +1129,7 @@ int main(int argc, char* argv[])
                       << std::chrono::duration<double>(hs_t1 - hs_t0).count()
                       << " s)\n";
 
-            const std::string o = pp.make_output_path( "_hillshade.tif");
+            const std::string o = pp.make_output_path( "_hillshade" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 hillshade.get_data(),
@@ -1268,7 +1166,7 @@ int main(int argc, char* argv[])
                     local_relief_shape
                 );
 
-            const std::string o = pp.make_output_path( "_local_relief.tif");
+            const std::string o = pp.make_output_path( "_local_relief" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 local_relief.get_data(),
@@ -1327,12 +1225,12 @@ int main(int argc, char* argv[])
                 };
                 const coeff_entry entries[] =
                 {
-                    {fitted.a, "_" + method_str + "_polyfit_a.tif"},
-                    {fitted.b, "_" + method_str + "_polyfit_b.tif"},
-                    {fitted.c, "_" + method_str + "_polyfit_c.tif"},
-                    {fitted.d, "_" + method_str + "_polyfit_d.tif"},
-                    {fitted.e, "_" + method_str + "_polyfit_e.tif"},
-                    {fitted.f, "_" + method_str + "_polyfit_f.tif"}
+                    {fitted.a, "_" + method_str + "_polyfit_a" + output_ext},
+                    {fitted.b, "_" + method_str + "_polyfit_b" + output_ext},
+                    {fitted.c, "_" + method_str + "_polyfit_c" + output_ext},
+                    {fitted.d, "_" + method_str + "_polyfit_d" + output_ext},
+                    {fitted.e, "_" + method_str + "_polyfit_e" + output_ext},
+                    {fitted.f, "_" + method_str + "_polyfit_f" + output_ext}
                 };
                 for (const auto& entry : entries)
                 {
@@ -1366,7 +1264,7 @@ int main(int argc, char* argv[])
                     if (!metric_result.has(metric)) continue;
 
                     const std::string o =
-                        pp.make_output_path( polyfit_metric_suffix(metric, method_str));
+                        pp.make_output_path( lsdtt::polyfit_metric_output_suffix(metric, method_str, output_ext));
                     std::cout << "Writing: " << o << "\n";
 
                     const auto write_t0 = std::chrono::steady_clock::now();
@@ -1391,7 +1289,7 @@ int main(int argc, char* argv[])
                 // metrics, or (fundamental_form method) from the CurveCalc port
                 // applied to the polyfit fitted_surface. The cross-parameter
                 // logic above guarantees the needed metrics were requested.
-                if (bf["write_shape_classification"])
+                if (bf["write_shape_classification_raster"])
                 {
                     lsdtt::polyfit_metric_request shape_request;
                     shape_request.metrics = {
@@ -1430,7 +1328,7 @@ int main(int argc, char* argv[])
                             // Write the fundamental-form principal curvatures -
                             // the alternative k_max / k_min this method produces.
                             const std::string o_kmax = pp.make_output_path(
-                                "_" + method_str + "_ff_maximum_curvature.tif");
+                                "_" + method_str + "_ff_maximum_curvature" + output_ext);
                             std::cout << "Writing: " << o_kmax << "\n";
                             loader.write_full(
                                 kmax_r->get_data(), kmax_r->get_meta(),
@@ -1438,7 +1336,7 @@ int main(int argc, char* argv[])
                             );
 
                             const std::string o_kmin = pp.make_output_path(
-                                "_" + method_str + "_ff_minimum_curvature.tif");
+                                "_" + method_str + "_ff_minimum_curvature" + output_ext);
                             std::cout << "Writing: " << o_kmin << "\n";
                             loader.write_full(
                                 kmin_r->get_data(), kmin_r->get_meta(),
@@ -1467,7 +1365,7 @@ int main(int argc, char* argv[])
                         );
 
                     const std::string o_class =
-                        pp.make_output_path("_" + method_str + "_shape_class.tif");
+                        pp.make_output_path("_" + method_str + "_shape_class" + output_ext);
                     std::cout << "Writing: " << o_class << "\n";
                     loader.write_full(
                         shape.shape_class.get_data(),
@@ -1478,7 +1376,7 @@ int main(int argc, char* argv[])
                     if (bf["write_shape_curvature_rasters"])
                     {
                         const std::string o_kg = pp.make_output_path(
-                            "_" + method_str + "_shape_gaussian_curvature.tif");
+                            "_" + method_str + "_shape_gaussian_curvature" + output_ext);
                         std::cout << "Writing: " << o_kg << "\n";
                         loader.write_full(
                             shape.gaussian_curvature.get_data(),
@@ -1487,7 +1385,7 @@ int main(int argc, char* argv[])
                         );
 
                         const std::string o_km = pp.make_output_path(
-                            "_" + method_str + "_shape_mean_curvature.tif");
+                            "_" + method_str + "_shape_mean_curvature" + output_ext);
                         std::cout << "Writing: " << o_km << "\n";
                         loader.write_full(
                             shape.mean_curvature.get_data(),
@@ -1609,7 +1507,7 @@ int main(int argc, char* argv[])
             for (const std::string& method_str : methods)
             {
                 // Build the path to the slope_degrees raster written in Step 3.
-                const std::string slope_input_path = pp.make_output_path(polyfit_metric_suffix(lsdtt::polyfit_metric::slope_degrees, method_str));
+                const std::string slope_input_path = pp.make_output_path(lsdtt::polyfit_metric_output_suffix(lsdtt::polyfit_metric::slope_degrees, method_str, output_ext));
 
                 std::cout << "\nOpening slope degrees raster: " << slope_input_path << "\n";
 
@@ -1645,7 +1543,7 @@ int main(int argc, char* argv[])
                     // Build output suffix, e.g. "_wavelet_slope_threshold_15.0.tif"
                     const std::string suffix =
                         "_" + method_str + "_slope_threshold_"
-                        + std::to_string(static_cast<int>(threshold)) + ".tif";
+                        + std::to_string(static_cast<int>(threshold)) + output_ext;
                     const std::string o = pp.make_output_path(suffix);
 
                     std::cout << "  Writing: " << o << "\n";
@@ -1678,9 +1576,9 @@ int main(int argc, char* argv[])
                     n_threads
                 );
 
-            const std::string o_or  = pp.make_output_path( "_madk2_or.tif");
-            const std::string o_dmc = pp.make_output_path( "_madk2_dmc.tif");
-            const std::string o_ra  = pp.make_output_path( "_madk2_ra.tif");
+            const std::string o_or  = pp.make_output_path( "_madk2_or" + output_ext);
+            const std::string o_dmc = pp.make_output_path( "_madk2_dmc" + output_ext);
+            const std::string o_ra  = pp.make_output_path( "_madk2_ra" + output_ext);
 
             std::cout << "Writing: " << o_or  << "\n";
             loader.write_full(
@@ -1745,7 +1643,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_frangi_raster"])
             {
-                const std::string o = pp.make_output_path( "_frangi.tif");
+                const std::string o = pp.make_output_path( "_frangi" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     frangi.response.get_data(),
@@ -1757,7 +1655,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_frangi_scale_raster"])
             {
-                const std::string o = pp.make_output_path( "_frangi_scale.tif");
+                const std::string o = pp.make_output_path( "_frangi_scale" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     frangi.best_scale_metres.get_data(),
@@ -1794,7 +1692,7 @@ int main(int argc, char* argv[])
                     0   // disable OpenCV pool; we use n_threads
                 );
 
-            const std::string o = pp.make_output_path( "_otsu.tif");
+            const std::string o = pp.make_output_path( "_otsu" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 otsu_result.get_data(),
@@ -1819,7 +1717,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Hough line extraction ---\n";
         std::cout << "rho          : " << ff["hough_rho"]            << " px\n";
-        std::cout << "theta        : " << ff["hough_theta_deg"]      << " deg\n";
+        std::cout << "theta        : " << ff["hough_theta_degrees"] << " deg\n";
         std::cout << "threshold    : " << ifs["hough_threshold"]     << " votes\n";
         std::cout << "min length   : " << ff["hough_min_line_length"] << " px\n";
         std::cout << "max gap      : " << ff["hough_max_line_gap"]   << " px\n";
@@ -1833,7 +1731,7 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::extract_lines_hough(
                     dem,
                     ff["hough_rho"],
-                    ff["hough_theta_deg"],
+                    ff["hough_theta_degrees"],
                     ifs["hough_threshold"],
                     ff["hough_min_line_length"],
                     ff["hough_max_line_gap"],
@@ -1844,7 +1742,7 @@ int main(int argc, char* argv[])
                     0
                 );
 
-            const std::string o = pp.make_output_path( "_hough_lines.tif");
+            const std::string o = pp.make_output_path( "_hough_lines" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 hough_result.get_data(),
@@ -1864,7 +1762,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 8 - Curvature skeleton (VEC threshold + plan curvature relief)
     // -------------------------------------------------------------------------
-    if (bf["write_curvature_skeletons"])
+    if (bf["write_curvature_skeleton_rasters"])
     {
         std::cout << "\n--- Curvature skeletons ---\n";
         std::cout << "Lambda             : " << ff["curvature_skeleton_lambda_metres"] << " m\n";
@@ -1897,13 +1795,13 @@ int main(int argc, char* argv[])
 
             // Write the curvature rasters so the user can inspect them
             {
-                const std::string o = pp.make_output_path( "_vec_skeleton_curvature.tif");
+                const std::string o = pp.make_output_path( "_vec_skeleton_curvature" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(vec_raster.get_data(),
                                   vec_raster.get_meta(), o, out_fmt);
             }
             {
-                const std::string o = pp.make_output_path( "_profile_curvature.tif");
+                const std::string o = pp.make_output_path( "_profile_curvature" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(profile_raster.get_data(),
                                   profile_raster.get_meta(), o, out_fmt);
@@ -1935,11 +1833,11 @@ int main(int argc, char* argv[])
                 loader.write_full(r.get_data(), r.get_meta(), o, out_fmt);
             };
 
-            write_r(cskres.vec_binary,       "_vec_skeleton_binary.tif");
-            write_r(cskres.vec_skeleton,     "_vec_skeleton.tif");
-            write_r(cskres.profile_relief,   "_profile_curvature_relief.tif");
-            write_r(cskres.profile_binary,   "_profile_skeleton_binary.tif");
-            write_r(cskres.profile_skeleton, "_profile_skeleton.tif");
+            write_r(cskres.vec_binary,       "_vec_skeleton_binary" + output_ext);
+            write_r(cskres.vec_skeleton,     "_vec_skeleton" + output_ext);
+            write_r(cskres.profile_relief,   "_profile_curvature_relief" + output_ext);
+            write_r(cskres.profile_binary,   "_profile_skeleton_binary" + output_ext);
+            write_r(cskres.profile_skeleton, "_profile_skeleton" + output_ext);
         }
         catch (const std::exception& e)
         {
@@ -1951,7 +1849,7 @@ int main(int argc, char* argv[])
     // Step 9 - VEC adaptive thresholding (requires OpenCV)
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
-    if (bf["write_vec_adaptive_threshold"])
+    if (bf["write_vec_adaptive_threshold_rasters"])
     {
         std::cout << "\n--- VEC adaptive thresholding ---\n";
         std::cout << "Lambda     : " << ff["curvature_skeleton_lambda_metres"] << " m\n";
@@ -1979,7 +1877,7 @@ int main(int argc, char* argv[])
 
             // Write the VEC raster for inspection
             {
-                const std::string o = pp.make_output_path( "_vec_adaptive_curvature.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_curvature" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(vec_raster.get_data(),
                                   vec_raster.get_meta(), o, out_fmt);
@@ -1994,7 +1892,7 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::threshold_adaptive_mean(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
-                const std::string o = pp.make_output_path( "_vec_adaptive_mean.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_mean" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(mean_binary.get_data(),
                                   mean_binary.get_meta(), o, out_fmt);
@@ -2005,14 +1903,14 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::threshold_adaptive_gaussian(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
-                const std::string o = pp.make_output_path( "_vec_adaptive_gaussian.tif");
+                const std::string o = pp.make_output_path( "_vec_adaptive_gaussian" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(gauss_binary.get_data(),
                                   gauss_binary.get_meta(), o, out_fmt);
             }
 
             // Optional skeleton extraction
-            if (bf["write_vec_adaptive_skeletons"])
+            if (bf["write_vec_adaptive_skeleton_rasters"])
             {
                 const int spur_px  = ifs["curvature_skeleton_spur_max_pixels"];
                 const int min_comp = ifs["curvature_skeleton_min_component_pixels"];
@@ -2030,8 +1928,8 @@ int main(int argc, char* argv[])
                     loader.write_full(skel.get_data(), skel.get_meta(), o, out_fmt);
                 };
 
-                make_skeleton(mean_binary,  "_vec_adaptive_mean_skeleton.tif");
-                make_skeleton(gauss_binary, "_vec_adaptive_gaussian_skeleton.tif");
+                make_skeleton(mean_binary,  "_vec_adaptive_mean_skeleton" + output_ext);
+                make_skeleton(gauss_binary, "_vec_adaptive_gaussian_skeleton" + output_ext);
             }
         }
         catch (const std::exception& e)
@@ -2041,9 +1939,9 @@ int main(int argc, char* argv[])
         }
     }
 #else
-    if (bf["write_vec_adaptive_threshold"])
+    if (bf["write_vec_adaptive_threshold_rasters"])
     {
-        std::cerr << "Warning: write_vec_adaptive_threshold requested but this "
+        std::cerr << "Warning: write_vec_adaptive_threshold_rasters requested but this "
                      "build does not include OpenCV. Skipping.\n";
     }
 #endif
@@ -2060,7 +1958,7 @@ int main(int argc, char* argv[])
         std::cout << "Gravity           : " << ff["cloth_gravity"]          << " m/step^2\n";
         std::cout << "Class threshold   : " << ff["cloth_class_threshold"]  << " m\n";
         std::cout << "Max iterations    : " << ifs["cloth_max_iterations"]  << "\n";
-        std::cout << "Convergence tol   : " << ff["cloth_convergence_tol"]  << " m\n";
+        std::cout << "Convergence tol   : " << ff["cloth_convergence_tolerance_metres"] << " m\n";
 
         try
         {
@@ -2069,7 +1967,7 @@ int main(int argc, char* argv[])
             drape_opts.gravity          = ff["cloth_gravity"];
             drape_opts.class_threshold  = ff["cloth_class_threshold"];
             drape_opts.max_iterations   = ifs["cloth_max_iterations"];
-            drape_opts.convergence_tol  = ff["cloth_convergence_tol"];
+            drape_opts.convergence_tol = ff["cloth_convergence_tolerance_metres"];
             drape_opts.n_threads        = n_threads;
 
             lsdtt::lsdtt_cloth_drape_result drape =
@@ -2077,7 +1975,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_envelope_raster"])
             {
-                const std::string o = pp.make_output_path( "_cloth_envelope.tif");
+                const std::string o = pp.make_output_path( "_cloth_envelope" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.envelope.get_data(),
@@ -2088,7 +1986,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_incision_raster"])
             {
-                const std::string o = pp.make_output_path( "_cloth_incision.tif");
+                const std::string o = pp.make_output_path( "_cloth_incision" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.incision.get_data(),
@@ -2099,7 +1997,7 @@ int main(int argc, char* argv[])
 
             if (bf["write_cloth_crest_mask_raster"])
             {
-                const std::string o = pp.make_output_path( "_cloth_crest_mask.tif");
+                const std::string o = pp.make_output_path( "_cloth_crest_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drape.crest_mask.get_data(),

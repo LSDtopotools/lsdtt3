@@ -59,6 +59,8 @@
 
 namespace lsdtt {
 
+class lsdtt_flow_base;
+
 // -----------------------------------------------------------------------------
 // relief_scale
 //
@@ -254,6 +256,13 @@ lsdtt_raster_cpu find_mountain_front_outlets(
     const lsdtt_raster_cpu& mountain_mask,
     const lsdtt_raster_cpu& n_contributing_pixels,
     int                     min_contributing_pixels
+);
+
+// Retains only candidates that have no other candidate downstream. Routing
+// stops at an outlet, nodata receiver, invalid index, masked cell, or cycle.
+lsdtt_raster_cpu retain_downstream_most_mountain_front_outlets(
+    const lsdtt_raster_cpu& outlets,
+    const lsdtt_flow_base& flow
 );
 
 } // namespace lsdtt

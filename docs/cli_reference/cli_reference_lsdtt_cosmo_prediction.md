@@ -73,7 +73,7 @@ At least one must be set to `true`.
 | `calculate_crn_concentration_raster` | bool | `false` | Compute steady-state concentration at every pixel. Requires erosion rate field and shielding rasters. |
 | `calculate_step_change_crn_concentration_raster` | bool | `false` | Compute transient concentration after an instantaneous step change in erosion rate. Requires `step_change_eff_erate_old/new` and `time_since_change`. |
 | `calculate_multi_isotope_step_change` | bool | `false` | Carry Be-10, Al-26 and C-14 through the **same** step change at every pixel, and write the two isotope-ratio rasters. |
-| `calculate_multi_isotope_transient` | bool | `false` | The same three nuclides through an **arbitrary erosion history** from `transient_history_file`. The general case of the step-change mode. |
+| `calculate_multi_isotope_transient` | bool | `false` | The same three nuclides through an **arbitrary erosion history** from `transient_history_fname`. The general case of the step-change mode. |
 | `calculate_accumulated_crn_concentration` | bool | `false` | Accumulate concentration downstream using D8 flow routing. In multi-isotope mode (with no `concentration_raster_prefix`), Be10/Al26/C14 are accumulated together in one pass and accumulated ratios can be written. |
 
 Three further capabilities are *modifiers* rather than modes, each opt-in and a
@@ -89,7 +89,7 @@ no-op when left alone:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `transient_history_file` | string | `NULL` | CSV erosion history for `calculate_multi_isotope_transient`: `time,rate,removal` (yr BP, m/yr, m). Rows run most-recent-first; the last row must be `time = -9999` carrying the background rate. Unordered records are rejected fatally. |
+| `transient_history_fname` | string | `NULL` | CSV erosion history for `calculate_multi_isotope_transient`. `NULL` is deliberate because transient prediction is optional; the file is required when that mode is enabled. Columns are `time,rate,removal` (yr BP, m/yr, m); rows run most-recent-first and end with `time = -9999`. |
 | `transient_rock_density_kg_m3` | float | `2650` | Density converting that history's metre-based rates and removals into effective depths. |
 | `write_isotope_ratio_rasters` | bool | `true` | In multi-isotope step-change/transient mode, write `_R2610_step.tif` (Al26/Be10) and `_R1410_step.tif` (C14/Be10). If accumulation is also on, also write `_R2610_acc.tif` and `_R1410_acc.tif` from accumulated basin means. |
 
@@ -97,7 +97,7 @@ no-op when left alone:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `scaling_scheme` | string | `stone` | `stone` = Stone (2000)/Lal, the default and the CAIRN/OCTOPUS scaling. `lsdn` = Lifton, Sato & Dunai (2014), interpolated from the LSDn2015 grids; needs those grids in `crn_parameters.nc` and supports `Be10`, `Al26`, `C14` only. Both are evaluated **per pixel**. `muon_scheme` is unaffected: LSDn is a spallation scaling and the muon pathways receive it through the same Vermeesch redistribution as Stone. |
+| `scaling_scheme` | string | `stone` | `stone` = Stone (2000)/Lal, the site-based raster-prediction default and the CAIRN/OCTOPUS scaling. The landslide generator instead defaults to `uniform` to preserve its legacy scalar path. `lsdn` = Lifton, Sato & Dunai (2014), interpolated from the LSDn2015 grids. Both site schemes are evaluated **per pixel**. |
 
 ---
 
@@ -110,8 +110,8 @@ By default the Stone 2000 spallation production rate is computed from DEM elevat
 | `load_production_raster` | bool | `false` | Load production raster from disk instead of computing. |
 | `production_raster_prefix` | string | `NULL` | Filename prefix (no extension) for a pre-computed production raster. Path: `read_path + prefix + .tif`. Used when `load_production_raster: true`. |
 | `write_production_raster` | bool | `false` | Write the computed production raster to disk. Output: `<write_fname>_crn_prod.tif`. |
-| `crn_nc_file` | string | _(empty)_ | Path to `crn_parameters.nc` for ERA40 atmospheric scaling and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically); if absent, standard-atmosphere Stone 2000. |
-| `sample_age_yr` | float | `0` | Sample exposure age (yr) for palaeomagnetic correction. Only used when `crn_nc_file` is set and value > 0. |
+| `crn_nc_fname` | string | _(empty)_ | Path to `crn_parameters.nc` for ERA40 atmospheric scaling and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically); if absent, standard-atmosphere Stone 2000. |
+| `sample_age_yr` | float | `0` | Sample exposure age (yr) for palaeomagnetic correction. Only used when `crn_nc_fname` is set and value > 0. |
 | `atmosphere` | string | `ERA40` | `ERA40` (Balco/Lifton climatology + latitude-dependent lapse, the default), `NCEP` (the atmosphere CAIRN/OCTOPUS use; needs the NCEP grids), or `standard` (SLHL barometric formula). `ERA40`/`NCEP` fall back to `standard` if their grids are absent; an unknown name is fatal. **Match this to `lsdtt-cosmo-tool` when using the two together** — the atmosphere sets the pressure at every pixel, so forward-modelling under one and inverting under another silently biases the recovered erosion rate. |
 
 ---
@@ -182,7 +182,7 @@ concentration kernel **in memory** — there is no round trip through disk.
 | `make_step_change_rasters` | bool | `false` | Generate the erosion-rate, time-since-change and topography fields instead of loading them. |
 | `step_change_uplift_old_m_yr` | float | `0.0001` | Uplift (= steady erosion) rate before the step, **m/yr**. |
 | `step_change_uplift_new_m_yr` | float | `0.001` | Uplift rate after the step, **m/yr**. |
-| `step_change_target_relief_m` | float | `1000` | Relief the old steady-state landscape should have. `K` is back-calculated from it. |
+| `step_change_target_relief_metres` | float | `1000` | Relief the old steady-state landscape should have. `K` is back-calculated from it. |
 | `step_change_age_yr` | float | `100000` | Time since the step reached the basin outlet. Every pixel gets its own, smaller, elapsed time. |
 | `step_change_n` | float | `1` | Slope exponent `n` in `E = K A^m S^n`. |
 | `step_change_m_over_n` | float | `0.45` | Concavity for the chi integral. |
@@ -190,14 +190,14 @@ concentration kernel **in memory** — there is no round trip through disk.
 | `step_change_channel_pixels` | int | `500` | Contributing-pixel count above which a pixel is a channel; below it a critical hillslope gradient is imposed. |
 | `step_change_Sc_old` | float | `0.25` | Critical hillslope gradient in the unadjusted part of the landscape. |
 | `step_change_Sc_new` | float | `0.4` | Critical hillslope gradient in the adjusted part. |
-| `step_change_basin_outlet_csv` | string | `NULL` | CSV of `latitude,longitude` giving the basin outlet. The first point is used and snapped to the channel network. `NULL` uses the largest basin in the DEM. |
+| `step_change_basin_outlet_fname` | string | `NULL` | CSV of `latitude,longitude` giving the basin outlet. The first point is used and snapped to the channel network. `NULL` uses the largest basin in the DEM. |
 | `rock_density_kg_m3` | float | `2650` | Converts the uplift rates (m/yr) to effective erosion rates (g/cm²/yr). |
 | `step_change_production_from_generated_dem` | bool | `true` | Compute production from the generated topography rather than the input DEM. |
 | `step_change_route_on_generated_dem` | bool | `true` | Build D8 flow routing on the generated topography for accumulation. Set `false` to route on the original DEM instead. |
 | `write_step_change_rasters` | bool | `false` | Write `_SC_DEM`, `_SC_ERATE`, `_SC_STEPTIME`, `_SC_TAG` and `_SC_CHI`. |
 
 **Read the derived numbers.** `K` is back-calculated from
-`step_change_target_relief_m`, so the entire configuration — knickpoint
+`step_change_target_relief_metres`, so the entire configuration — knickpoint
 position, wave celerity, the whole time-since-change field — follows from a
 relief you chose rather than a rate constant you typed. The run prints `K`, both
 steepness indices, the knickpoint position and elevation, and the adjusted area.
@@ -254,7 +254,7 @@ write_fname: sc
 make_step_change_rasters: true
 step_change_uplift_old_m_yr: 0.0001
 step_change_uplift_new_m_yr: 0.0005
-step_change_target_relief_m: 1200
+step_change_target_relief_metres: 1200
 step_change_age_yr: 500000
 step_change_n: 1.0
 step_change_channel_pixels: 500
@@ -277,7 +277,7 @@ time-of-failure and excavation-depth rasters written by `lsdtt-cosmo-landslides`
 | `landslide_excavation_raster_prefix` | string | `NULL` | Prefix of `<stem>_LS_EXCAVATION`. |
 | `landslide_report_time_yr` | float | `0` | Present time on the same clock as the failure-time raster. |
 | `flush_time_threshold_yr` | float | `100` | How long a scar keeps delivering debris (used by `both`). |
-| `scar_density_kg_m3` | float | `1500` | Density of the material the landslide **excavated**. |
+| `scar_density_kg_m3` | float | `1500` | Density of material already represented by an imported excavation raster; the explicit soil-like default is independent of any area-volume preset. The generating landslide CLI uses a negative sentinel to inherit its active preset instead. |
 | `write_delivery_mass_raster` | bool | `false` | Write `<stem>_LS_DELIVERY.tif`, the downstream mixing weight. |
 
 **The `scar` scenario.** The landslide material has long since left the system.
@@ -405,9 +405,9 @@ concentrations without accounting for that is **wrong**, not merely imprecise.
 | `quartz_fertility_raster_prefix` | string | `NULL` | Per-pixel fertility, typically a reclassified lithology map. |
 | `quartz_fertility_regolith` | float | `-1` | Two-layer model: regolith fraction. Negative = off. |
 | `quartz_fertility_bedrock` | float | `-1` | Two-layer model: fresh-bedrock fraction. |
-| `quartz_fertility_regolith_depth_m` | float | `0` | Regolith thickness separating the layers. |
+| `quartz_fertility_regolith_depth_metres` | float | `0` | Regolith thickness separating the layers. |
 | `ice_mask_raster_prefix` | string | `NULL` | Present-day ice cover (non-zero = ice). |
-| `ice_thickness_m` | float | `50` | Uniform ice thickness. |
+| `ice_thickness_metres` | float | `50` | Uniform ice thickness. |
 | `ice_density_kg_m3` | float | `917` | Density of ice; lower for firn. |
 | `erate_under_ice_g_cm2_yr` | float | `0` | Erosion rate beneath the ice. |
 | `quartz_fertility_under_ice` | float | `0` | Quartz fraction beneath the ice. |
@@ -504,10 +504,10 @@ model and recovered by the inversion.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `sample_points_filename` | string | `NULL` | CSV of `latitude,longitude` at which to sample the accumulated raster. Needs `calculate_accumulated_crn_concentration: true`. |
+| `sample_points_fname` | string | `NULL` | CSV of `latitude,longitude` at which to sample the accumulated raster. Needs `calculate_accumulated_crn_concentration: true`. |
 | `sample_column_name` | string | `sample_name` | Optional sample-identifier column copied through from the points CSV. Omitted from the output if absent. |
 | `threshold_contributing_pixels` | int | `1000` | Minimum contributing pixels for a node to count as a channel when snapping. Matches `lsdtt-cosmo-tool`. |
-| `snap_search_radius_pixels` | int | `8` | Maximum search radius when snapping a point to the channel network. Matches `lsdtt-cosmo-tool`. |
+| `sample_snap_max_search_radius_pixels` | int | `8` | Maximum search radius when snapping a point to the channel network. Matches `lsdtt-cosmo-tool`. |
 
 Output is `<write_fname>_sampled_crn_conc.csv`.
 
@@ -531,7 +531,7 @@ without editing columns or re-running the forward model.
 Snapping mirrors `lsdtt-cosmo-tool` so both tools resolve the same node.
 
 `threshold_contributing_pixels` is also used to snap
-`step_change_basin_outlet_csv` when generating a step change.
+`step_change_basin_outlet_fname` when generating a step change.
 
 ---
 
@@ -671,7 +671,7 @@ approaches its endpoint from below — it does not overshoot.
 
 `calculate_multi_isotope_transient` generalises the step-change mode: instead of
 one change in erosion rate, every pixel follows the history in
-`transient_history_file`. A two-row history reproduces the step-change mode
+`transient_history_fname`. A two-row history reproduces the step-change mode
 **bitwise**, so this is a strict generalisation rather than a parallel
 implementation — the per-pixel walk is the same code the column tool uses.
 
@@ -695,3 +695,181 @@ produce negative timesteps and a confidently wrong answer.
 Outputs are the same five rasters as the step-change mode. Cost is
 `O(pixels × history rows)`, so this is substantially slower — inherent, since an
 arbitrary history has no closed form.
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+| `write_output_format` | `string` | `cog` | `io` | - | Output raster format: cog, gtiff, or same_as_input. | - |
+
+### Nuclide and muon scheme
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `nuclide` | `string` | `Be10` | `param` | - | Nuclide to predict: Be10, Al26, or C14. | - |
+| `muon_scheme` | `string` | `BraucherBorchers` | `param` | - | Muon production scheme. | Braucher, BraucherBorchers, Granger, Schaller, newCRONUS, cronusEmulatorSt, cronusEmulatorLSDn. The cronusEmulator schemes fit lsdtt3's three muon pathways to the CRONUS v3 tabulated model-1A muon inventory and are pressure-dependent; a pressure raster is computed automatically. |
+| `scaling_scheme` | `string` | `stone` | `param` | - | Production-rate scaling scheme. | stone = Stone (2000)/Lal, the lsdtt3 default and the CAIRN/OCTOPUS scheme. This raster prediction workflow is site-based by default; the landslide generator instead defaults to uniform to preserve its legacy scalar path. lsdn = Lifton, Sato &amp; Dunai (2014) nuclide-specific scaling, interpolated from the LSDn2015 scaling grids; requires the LSDn grids in crn_parameters.nc and supports Be10, Al26 and C14 only. Both schemes are evaluated per pixel, including when sample_age_yr &gt; 0. muon_scheme is unaffected: LSDn is a spallation scaling and the muon pathways receive it through the same Vermeesch redistribution as Stone. |
+
+### Prediction modes
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `calculate_crn_concentration_raster` | `bool` | `false` | `switch` | - | Compute steady-state CRN concentration at every pixel. | Requires: erosion raster (or effective_erosion_rate), production raster, shielding. |
+| `calculate_step_change_crn_concentration_raster` | `bool` | `false` | `switch` | - | Compute transient CRN concentration after a step change in erosion rate. | Requires: time_since_change raster, step_change_eff_erate_old/new, production raster, topo shielding. |
+| `calculate_multi_isotope_step_change` | `bool` | `false` | `switch` | - | Carry Be-10, Al-26 and C-14 through the SAME step change at every pixel, and write the two isotope-ratio rasters. | The isotope RATIOS are what carry a transient signal: the half-lives differ by orders of magnitude (C-14 5.7 kyr, Al-26 0.7 Myr, Be-10 1.39 Myr), so a pair dates the perturbation in a way one nuclide alone cannot. A ratio is only meaningful if both members saw an identical scenario, so all three are computed from ONE particle evolution per pixel -- same shielding, same rates, same elapsed time -- rather than from three separate runs. Each nuclide is bitwise identical to what calculate_step_change_crn_concentration_raster returns for the same inputs, and costs little more than a single-nuclide run. Uses the same inputs as that mode: time_since_change raster, step_change_eff_erate_old/new, production raster, topographic shielding. The nuclide parameter is ignored here -- all three are always produced. |
+| `calculate_multi_isotope_transient` | `bool` | `false` | `switch` | - | Carry Be-10, Al-26 and C-14 through an ARBITRARY erosion history at every pixel, and write the two isotope-ratio rasters. | The general case of calculate_multi_isotope_step_change: instead of one step, the pixels follow a user-supplied history from transient_history_fname. A two-row history reproduces the step-change mode exactly (bitwise), so this is a strict generalisation. COST: every pixel walks the whole history, so this is O(pixels x history rows) and is much slower than the step-change mode -- inherent, since an arbitrary history has no closed form. The nuclide parameter is ignored; all three are always produced. |
+| `transient_rock_density_kg_m3` | `float` | `2650` | `param` | `calculate_multi_isotope_transient` | Rock density (kg/m3) used to convert the erosion history's metre-based rates and removals into effective depths. | Only used by calculate_multi_isotope_transient. The history file gives rates in m/yr and removals in m; the physics works in g/cm2, and this is the conversion. |
+| `transient_history_fname` | `string` | `NULL` | `param` | `calculate_multi_isotope_transient` | CSV erosion history for calculate_multi_isotope_transient. | NULL is deliberate because transient prediction is an optional mode and the file becomes required only when that mode is enabled. Three columns: time,rate,removal -- time in yr BP, rate in m/yr, removal in m. Rows run from the MOST RECENT (index 0) to the oldest, and the LAST row must have time = -9999 carrying the long-term background rate. A row with rate = 0 and a non-zero removal is an instantaneous stripping event and must share the time of the row before it. An unordered record is rejected: it would produce negative timesteps and a silently wrong answer. |
+| `calculate_accumulated_crn_concentration` | `bool` | `false` | `switch` | - | Accumulate CRN concentration downstream using D8 flow routing. | Requires a concentration raster (computed in the same run or loaded separately). |
+
+### Production raster
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `load_production_raster` | `bool` | `false` | `param` | `write_production_raster` | Load the Stone 2000 production raster from disk instead of computing it. | File: read_path + production_raster_prefix + .tif |
+| `production_raster_prefix` | `string` | `NULL` | `param` | `write_production_raster` | Filename prefix (no extension) for loading a pre-computed production raster. | Used when load_production_raster is true. |
+| `write_production_raster` | `bool` | `false` | `switch` | - | Write the production raster to a GeoTIFF. | Output: write_path + write_fname + _crn_prod.tif |
+| `crn_nc_fname` | `string` | - | `param` | `write_production_raster` | Path to crn_parameters.nc for ERA40 atmospheric scaling and palaeomagnetic correction. | Leave empty to use the crn_parameters.nc bundled with lsdtt3 (found automatically); if absent, standard-atmosphere Stone 2000 (no palaeomagnetic correction). |
+| `sample_age_yr` | `float` | `0` | `param` | `write_production_raster` | Sample exposure age (yr BP) driving the time-integrated production correction; what it selects depends on scaling_scheme. | Only used when crn_nc_fname is set and &gt; 0. Under scaling_scheme=stone this is the Muscheler VDM palaeomagnetic correction to Stone 2000 scaling. Under scaling_scheme=lsdn it drives the duration-weighted average of LSDn production over the Pavon-Carrasco geomagnetic record (Holocene moving paleopole, then a GAD dipole record to ~20 Ma), making it longitude-dependent as well as latitude-dependent. NOTE: "now" is assumed to be 2010 (the packed record's reference year); lsdtt3 has no sample-collection-year input yet, so no (collection year - 2010) shift is applied - negligible (&lt;=~16 yr against 1e2-1e7 yr records) but an assumption, not an exact treatment. |
+| `atmosphere` | `string` | `ERA40` | `param` | `write_production_raster` | Atmosphere model: ERA40 (default), NCEP, or standard. | ERA40 = Balco/Lifton ERA40 climatology + latitude-dependent lapse (the lsdtt3 default). NCEP = Balco NCEPatm_2, the atmosphere CAIRN/OCTOPUS use; requires the NCEP grids in crn_parameters.nc. standard = SLHL barometric formula, no climatology. ERA40/NCEP fall back to standard if the required grids are absent. MATCH THIS TO lsdtt-cosmo-tool when using the two together: the atmosphere sets the pressure at every pixel, so forward-modelling under one and inverting under another silently biases the recovered erosion rate. |
+
+### Topographic shielding
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `topographic_shielding_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of topographic shielding raster (dimensionless, 0-1). | If NULL, uniform value topo_shield_value is used. |
+| `topo_shield_value` | `float` | `1` | `param` | - | Uniform topographic shielding factor (dimensionless, 0-1; 1 = unshielded). | Used when topographic_shielding_raster_prefix is NULL. |
+
+### Snow shielding
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `snow_shielding_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of snow shielding raster (effective depth, g/cm2). | If NULL, uniform value snow_shield_eff_thickness is used. |
+| `snow_shield_eff_thickness` | `float` | `0` | `param` | - | Uniform snow shielding as effective depth (g/cm2; 0 = no snow). | Used when snow_shielding_raster_prefix is NULL. |
+
+### Self shielding
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `self_shielding_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of self/sample shielding raster (effective depth, g/cm2). | If NULL, uniform value self_shield_eff_thickness is used. |
+| `self_shield_eff_thickness` | `float` | `0` | `param` | - | Uniform self shielding as effective depth (g/cm2; 0 = surface sample). | Used when self_shielding_raster_prefix is NULL. |
+
+### Background erosion rate
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `background_erosion_rate_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of raster giving effective erosion rate (g/cm2/yr) at each pixel. | If NULL, uniform value effective_erosion_rate is used. |
+| `effective_erosion_rate` | `float` | `0.001` | `param` | - | Uniform effective erosion rate (g/cm2/yr) across the raster. | Used when background_erosion_rate_raster_prefix is NULL. ~0.001 ~= 3.8 mm/kyr for rho=2650. |
+
+### Step change parameters
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `step_change_eff_erate_old_g_cm2_yr` | `float` | `0.001` | `param` | - | Old (pre-change) effective erosion rate for step change calculation (g/cm2/yr). | - |
+| `step_change_eff_erate_new_g_cm2_yr` | `float` | `0.01` | `param` | - | New (post-change) effective erosion rate for step change calculation (g/cm2/yr). | - |
+| `time_since_change_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of raster giving years since the step change at each pixel. | Pixels with value 0 receive SS concentration at the new erosion rate. |
+| `time_since_change_yr` | `float` | `10000` | `param` | - | Uniform time since step change (yr) used when time_since_change_raster_prefix is NULL. | - |
+
+### Generate the step change
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `make_step_change_rasters` | `bool` | `false` | `switch` | - | Generate the erosion-rate, time-since-change and topography rasters from an analytical step change in uplift, instead of loading them. | The time-since-change field is not a free input: it is the arrival time of the incision wave, from the detachment-limited stream-power solution in chi (Royden &amp; Perron 2013; Mitchell &amp; Yanites 2019). The generated rasters feed the step-change concentration modes IN MEMORY, so no round trip through disk is needed. K is back-calculated from step_change_target_relief_metres and is echoed at run time -- read it. The generated fields cover ONE basin, so the concentration output is restricted to that basin. |
+| `step_change_uplift_old_m_yr` | `float` | `0.0001` | `param` | `make_step_change_rasters` | Uplift (= steady erosion) rate before the step, in METRES per year. | Metres per year, not mm/yr. Converted to an effective erosion rate with rock_density_kg_m3, and that conversion OVERRIDES step_change_eff_erate_old_g_cm2_yr when make_step_change_rasters is on. |
+| `step_change_uplift_new_m_yr` | `float` | `0.001` | `param` | `make_step_change_rasters` | Uplift rate after the step, in METRES per year. | Overrides step_change_eff_erate_new_g_cm2_yr as above. |
+| `step_change_target_relief_metres` | `float` | `1000` | `param` | `make_step_change_rasters` | Relief the OLD steady-state landscape should have (m). K is back-calculated from it. | This is how a user without a calibrated K gets a landscape of the right size. Everything else -- knickpoint position, wave celerity, the whole time-since-change field -- follows from the K it implies, so the derived K is printed and should be reported. |
+| `step_change_age_yr` | `float` | `100000` | `param` | `make_step_change_rasters` | Time since the step change reached the basin outlet (yr). | Every pixel gets its own, smaller, time since the wave reached IT. |
+| `step_change_n` | `float` | `1` | `param` | `make_step_change_rasters` | Slope exponent n in E = K A^m S^n. | n &gt;= 1 with rising uplift gives a migrating knickpoint (a shock); n &lt; 1 gives a rarefaction fan in which the erosion rate varies continuously between the old and new values. A FALLING step swaps the two, which is handled. n = 1 is the classical case. |
+| `step_change_m_over_n` | `float` | `0.45` | `param` | `make_step_change_rasters` | Concavity m/n used for the chi integral. | - |
+| `step_change_A_0` | `float` | `1` | `param` | `make_step_change_rasters` | Reference drainage area for the chi integral (m2). | Any positive value is handled exactly; the A_0 dependence is carried through the steepness and the wave celerity rather than assumed away. |
+| `step_change_channel_pixels` | `int` | `500` | `param` | `make_step_change_rasters` | Contributing-pixel count above which a pixel is a channel. | Below it the pixel is a hillslope and is given a critical gradient instead of the fluvial solution. Hillslopes inherit the erosion rate and time-since-change of the channel they drain to. |
+| `step_change_Sc_old` | `float` | `0.25` | `param` | `make_step_change_rasters` | Critical hillslope gradient in the unadjusted part of the landscape. | - |
+| `step_change_Sc_new` | `float` | `0.4` | `param` | `make_step_change_rasters` | Critical hillslope gradient in the adjusted part of the landscape. | - |
+| `step_change_basin_outlet_fname` | `string` | `NULL` | `param` | `make_step_change_rasters` | CSV of latitude,longitude giving the basin outlet to model. | The first point is used and any others ignored. It is snapped to the channel network using threshold_contributing_pixels and sample_snap_max_search_radius_pixels. If NULL the largest basin in the DEM is used. |
+| `rock_density_kg_m3` | `float` | `2650` | `param` | `make_step_change_rasters` | Rock density (kg/m3) converting the generated uplift rates (m/yr) to effective erosion rates (g/cm2/yr). | eff = rate_m_yr * rho_kg_m3 * 0.1. Matches lsdtt-cosmo-tool's parameter of the same name. Distinct from transient_rock_density_kg_m3, which belongs to the erosion-history file read by calculate_multi_isotope_transient. |
+| `step_change_production_from_generated_dem` | `bool` | `true` | `switch` | `make_step_change_rasters` | Compute the production raster from the GENERATED topography rather than the input DEM. | On by default because the generated surface is the landscape the scenario describes: using the real DEM's elevations with the scenario's erosion rates mixes two landscapes, and production depends on elevation through pressure. The generated surface is offset so its outlet sits at the input DEM's outlet elevation, keeping the base level real. Set false to reproduce the legacy behaviour, which built production from the input DEM. |
+| `step_change_route_on_generated_dem` | `bool` | `true` | `switch` | `make_step_change_rasters` | Build the accumulation flow routing on the GENERATED topography. Set false to route on the ORIGINAL input DEM instead. | Only has an effect when step_change_production_from_generated_dem is true, since that is what replaces the working DEM. The default preserves historical behaviour, but false is the more defensible choice and here is why. The generator snaps hillslopes draining below the knickpoint to step_change_Sc_new and the rest to step_change_Sc_old. Each side is built up from its own channel and nothing reconciles them at the drainage divide, so the generated surface carries an elevation CLIFF along the divide -- measured on the Meghalaya 5x case at a median 56 m, with the steepened side higher in 92 % of boundary cells. Rebuilding D8 on that surface makes divide pixels drain ACROSS the divide into the neighbouring unadjusted catchment: 5.4 % of hillslope-new pixels did so there, carrying post-knickpoint material into basins that are supposed to be entirely pre-knickpoint. A real landscape would migrate the divide rather than hold a cliff on it; representing that needs the divides iterated as the canyons steepen, which the one-pass construction cannot do. Routing on the original DEM sidesteps the artefact, at the cost of a flow network that no longer matches the modelled topography. Production, elevation and the step-change fields still come from the generated surface either way. |
+| `write_step_change_rasters` | `bool` | `false` | `switch` | `make_step_change_rasters` | Write the generated topography, erosion rate, time-since-change, tag and chi rasters. | Files: &lt;write_fname&gt;_SC_DEM, _SC_ERATE, _SC_STEPTIME, _SC_TAG, _SC_CHI. The tag raster is 1 = unadjusted channel, 2 = unadjusted hillslope, 3 = adjusted channel, 4 = adjusted hillslope, 5/6 = the same inside a rarefaction fan. USE THE TAG RASTER, not chi, to ask whether a pixel has been rejuvenated: a hillslope always has a larger chi than the channel it drains to, so an adjusted hillslope legitimately sits above the knickpoint in chi. |
+
+### Landslide coupling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `landslide_coupling` | `string` | `none` | `param` | - | How landslides modify the step-change concentration: none, scar, flush or both. | scar = the landslide material has long since left the system, and what remains is a scar eroding at the catchment rate from a column whose inheritance was stripped when it failed. flush = the debris is still in the channel, so the sample contains the whole excavated slab. both = flush inside flush_time_threshold_yr and scar outside it, which is the physically complete case. Needs landslide_time_raster_prefix and landslide_excavation_raster_prefix, both written by lsdtt-cosmo-landslides. Requires a step-change mode. |
+| `landslide_time_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of the time-of-failure raster (lsdtt-cosmo-landslides &lt;stem&gt;_LS_TFAIL). | This holds an ABSOLUTE failure time on the model clock, with nodata where nothing failed. It is converted here to elapsed years using landslide_report_time_yr; 'never failed' is carried as a distinct state, NOT as nodata, so unfailed ground stays in the raster and in any basin average taken from it. |
+| `landslide_excavation_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of the excavation-depth raster (lsdtt-cosmo-landslides &lt;stem&gt;_LS_EXCAVATION). | Real metres of material removed, not a rock-equivalent thickness. It is converted to a mass depth with scar_density_kg_m3. |
+| `landslide_report_time_yr` | `float` | `0` | `param` | - | Present time on the same clock as the time-of-failure raster (yr). | elapsed = landslide_report_time_yr - time_of_failure. A failure at or after this time has not happened yet and is treated as 'never'. |
+| `flush_time_threshold_yr` | `float` | `100` | `param` | - | How long a scar keeps delivering its debris to the channel (yr). | Used by landslide_coupling: both. This is an AGE, following Niemi et al. (2005), whose model has no sediment storage at all -- landslide material passes through within one 100 yr timestep and mixes homogeneously, which is where this default comes from. Set it to the event recurrence interval to reproduce that convention. How long landslide sediment actually persists in a channel network is a separate research question and is not modelled here. |
+| `write_delivery_mass_raster` | `bool` | `false` | `switch` | - | Write the delivery-mass raster: the weight a downstream mixing calculation should use. | File: &lt;write_fname&gt;_LS_DELIVERY.tif, in kg m^-2 yr^-1. A flushing pixel delivers its whole excavated slab over the flush window; everything else delivers its background erosion. The erosion-rate raster is left untouched, so the TRUE erosion rate stays available to compare an apparent rate against. |
+| `scar_density_kg_m3` | `float` | `1500` | `param` | - | Density of the material a landslide EXCAVATED (kg/m3). | A DIFFERENT quantity from rock_density_kg_m3, which is the eroding bedrock column. The excavation depth is a true geometric thickness of whatever failed, and for a shallow landslide that is soil at roughly 1500 kg/m3. Carrying it at 2650 overstates the mass depth by about a factor of 1.77 and changes the delivered concentration by more than a factor of two. Set 2650 for bedrock failures. The default matches lsdtt-cosmo-landslides' larsen_soil_scar preset. |
+
+### Quartz fertility and ice
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `quartz_fertility` | `float` | `1` | `param` | - | Uniform quartz mass fraction (0-1) used as the downstream mixing weight. | A basin-averaged sample is a mixture of QUARTZ, not of rock. Two pixels eroding at the same rate contribute unequally if their rock carries different quartz, and a quartz-free unit (limestone, basalt, many volcanics) contributes sediment but no sample at all. In mixed-lithology terrain, routing concentrations without this is simply wrong. The default of 1 makes the whole feature a no-op: nothing changes unless you opt in. |
+| `quartz_fertility_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of a raster of quartz mass fraction (0-1), typically a reclassified lithology map. | Overrides quartz_fertility where present. Values outside [0,1] are clamped and the number clamped is reported, so a map supplied as percentages rather than fractions surfaces rather than being silently truncated. |
+| `quartz_fertility_regolith` | `float` | `-1` | `param` | - | Quartz fraction of the regolith, for the two-layer model. Negative = off. | Chemical weathering removes soluble minerals and leaves quartz behind, so regolith is enriched relative to the fresh bedrock a deep landslide scar exposes. Set this, quartz_fertility_bedrock and quartz_fertility_regolith_depth_metres together to test whether that makes landslide debris under-represented in the quartz separate, and so weakens the dilution a landslide causes. |
+| `quartz_fertility_bedrock` | `float` | `-1` | `param` | - | Quartz fraction of fresh bedrock, for the two-layer model. Negative = off. | - |
+| `quartz_fertility_regolith_depth_metres` | `float` | `0` | `param` | - | Regolith thickness (m) separating the two fertility layers. 0 = off. | - |
+| `ice_mask_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of a raster marking present-day ice cover (non-zero = ice). | Ice changes exactly three things and lsdtt3 already has a field for each: the ice column shields cosmic rays (SNOW SHIELDING, as an effective depth), the erosion rate differs or is zero, and little or no quartz reaches the sample. LIMITATION: this is PRESENT-DAY ice only. Concentrations depend on the shielding HISTORY and lsdtt3 cannot yet express a per-pixel time-varying shielding, so a glacial-interglacial cycle is not representable and concentrations under formerly glaciated ground are overestimated. |
+| `ice_thickness_metres` | `float` | `50` | `param` | - | Uniform ice thickness (m) used where the mask marks ice. | Converted to a snow-shielding mass depth at ice_density_kg_m3. Ten metres of ice is already essentially total shielding (0.3 % of spallation survives). |
+| `ice_density_kg_m3` | `float` | `917` | `param` | - | Density of ice (kg/m3). Lower for firn. | - |
+| `erate_under_ice_g_cm2_yr` | `float` | `0` | `param` | - | Effective erosion rate beneath the ice (g/cm2/yr). | Zero is the cold-based idealisation and is numerically safe: the steady-state kernel forms its denominator as (eps + Gamma*lambda), never divides by eps, and returns the saturation concentration P/lambda. |
+| `quartz_fertility_under_ice` | `float` | `0` | `param` | - | Quartz fraction beneath the ice. | Zero means the ice contributes nothing to the sample, which is the usual assumption when the erosion rate under it is also zero. |
+| `write_quartz_weight_raster` | `bool` | `false` | `switch` | - | Write the quartz mixing-weight raster. | File: &lt;write_fname&gt;_QUARTZ_WEIGHT.tif, kg of quartz m^-2 yr^-1. This is what the accumulation mixes on when fertility or ice is active. |
+
+### Concentration raster loading (for accumulation)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `concentration_raster_prefix` | `string` | `NULL` | `param` | - | Prefix of a pre-computed concentration raster to use for accumulation. | If NULL and a concentration raster was computed in the same run, that is used. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_before_routing` | `bool` | `true` | `switch` | - | Choose whether to pit-fill the DEM before building the flow network. | ASKS: should the DEM be filled at all? Filling is OPTIONAL here and this is a genuine analytical choice. True (the default) routes over a pit-free surface. False builds the flow network on the UNFILLED surface, so flow paths terminate at sinks instead of being carried through them. Do not confuse this with raster_is_filled, which is an assertion that the input is already filled. |
+
+### Flow routing (for accumulation)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `min_slope_for_fill` | `float` | `0.0001` | `param` | - | Minimum imposed slope during pit filling (m/m). | - |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | D8 flow routing boundary conditions (N,E,S,W): o=open, b=forced outlet. | - |
+
+### Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `sample_points_fname` | `string` | `NULL` | `param` | - | CSV of latitude,longitude points at which to sample the accumulated CRN raster. | When set (not NULL), each point is snapped to the channel network and the accumulated (basin-averaged) result at the snapped node is written to &lt;write_fname&gt;_sampled_crn_conc.csv. Single-isotope mode writes &lt;nuclide&gt;_CONC; multi-isotope mode writes Be10_CONC, Al26_CONC, C14_CONC and the accumulated ratios R2610_ACC and R1410_ACC, plus one per-nuclide bridge CSV (&lt;write_fname&gt;_sampled_crn_conc_Be10.csv etc.) for direct inversion with lsdtt-cosmo-tool. The CSV is directly usable by lsdtt-cosmo-tool via concentration_column_name (for example Be10_CONC). Requires calculate_accumulated_crn_concentration: true. |
+| `sample_points_stride` | `int` | `1` | `param` | - | Keep every Nth point from sample_points_fname (1 = keep all). | For thinning a dense channel-node CSV to a manageable sample set. Points are thinned BEFORE snapping, in input order. Values &lt; 1 are treated as 1. |
+| `sample_column_name` | `string` | `sample_name` | `param` | - | Optional sample identifier column copied through from the points CSV. | If absent from the points CSV, the column is omitted from the output. |
+| `sample_snap_max_search_radius_pixels` | `int` | `8` | `param` | - | Maximum search radius (pixels) when snapping sample points to the channel network. | Matches lsdtt-cosmo-tool. Used only when sample_points_fname is set. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Output write toggles
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_crn_concentration_raster` | `bool` | `true` | `switch` | - | Write the computed CRN concentration raster. | Output: write_fname + _&lt;nuclide&gt;_crn_conc.tif |
+| `write_step_change_concentration_raster` | `bool` | `true` | `switch` | - | Write the step-change CRN concentration raster. | Output: write_fname + _&lt;nuclide&gt;_step_crn_conc.tif |
+| `write_isotope_ratio_rasters` | `bool` | `true` | `switch` | `calculate_multi_isotope_step_change` | Write the Al26/Be10 and C14/Be10 ratio rasters. | In multi-isotope step-change/transient mode writes _R2610_step.tif and _R1410_step.tif. If accumulation is also on, writes _R2610_acc.tif and _R1410_acc.tif from the accumulated basin-mean concentrations. |
+| `write_accumulated_crn_raster` | `bool` | `true` | `switch` | - | Write the accumulated CRN concentration raster. | Output: write_fname + _&lt;nuclide&gt;_crn_acc.tif |
+| `write_upstream_mean_erate_raster` | `bool` | `false` | `switch` | - | Write the arithmetic upstream mean erosion rate (g/cm2/yr) -- the basin's ACTUAL mean erosion rate above each pixel, which is what an erosion rate inverted from the accumulated concentration should be compared against. Sampled to CSV as upstream_mean_eff_erate_g_cm2_yr regardless of this switch. | Output: write_fname + _mean_erate_acc.tif |
+
+<!-- END GENERATED CLI PARAMETERS -->

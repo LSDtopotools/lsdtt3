@@ -112,32 +112,17 @@ lsdtt_outlet_basin_verification_result verify_outlet_group_basins(
             all_ok = false; failure = "outlet lies outside DEM"; break;
         }
 
-        std::int64_t snapped = -1;
-        if (snapping == "none")
+        const lsdtt_snap_result result = snap_pixel_by_method(
+            flow, row, col, snapping, square_options, downstream_options);
+        if (result.status != lsdtt_snap_status::success)
         {
-            snapped = flow.flat_index(row, col);
-            if (!flow.is_valid_cell(snapped)) { all_ok = false; failure = "outlet pixel is invalid on DEM"; break; }
+            all_ok = false;
+            failure = snapping == "none"
+                ? "outlet pixel is invalid on DEM"
+                : "could not snap outlet to channel cell (" + snapping + ")";
+            break;
         }
-        else if (snapping == "expanding_square")
-        {
-            const lsdtt_snap_result result =
-                snap_pixel_to_contributing_pixels_threshold_expanding_square(flow, row, col, square_options);
-            if (result.status != lsdtt_snap_status::success)
-            {
-                all_ok = false; failure = "could not snap outlet to channel cell (expanding_square)"; break;
-            }
-            snapped = result.snapped_flat;
-        }
-        else
-        {
-            const lsdtt_snap_result result =
-                snap_pixel_to_contributing_pixels_threshold_downstream(flow, row, col, downstream_options);
-            if (result.status != lsdtt_snap_status::success)
-            {
-                all_ok = false; failure = "could not snap outlet to channel cell (downstream)"; break;
-            }
-            snapped = result.snapped_flat;
-        }
+        const std::int64_t snapped = result.snapped_flat;
 
         out.snapped_outlets.push_back({outlets[index].point_id, snapped,
                                        flow.row_from_flat_unchecked(snapped),

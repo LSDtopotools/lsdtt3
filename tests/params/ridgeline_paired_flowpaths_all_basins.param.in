@@ -4,7 +4,7 @@ write_path: __WRITE_PATH__
 write_fname: pfsall
 
 boundary_conditions: oooo
-source_pixels_threshold: 50
+threshold_contributing_pixels: 50
 m_over_n: 0.45
 
 ridgeline_analysis_mode: interfluvial_divide_ridgelines
@@ -17,6 +17,6 @@ ridgeline_analysis_mode: interfluvial_divide_ridgelines
 # than of the pair source.
 select_all_basins: true
 
-print_paired_flowpath_statistics: true
+write_paired_flowpath_statistics: true
 paired_flowpath_threshold_divide_distance: 0
 paired_flowpath_straight_link: true

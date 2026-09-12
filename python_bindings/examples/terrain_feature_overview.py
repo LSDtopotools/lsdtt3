@@ -17,8 +17,9 @@ flats = lsdtt3.find_flat_surfaces(
 )
 roads = lsdtt3.find_roads(dem, smoothing_window_metres=3.0)
 road_flow = lsdtt3.find_road_flow_discrimination(
-    dem, regional_smoothing_metres=5.0, flow_accumulation_threshold_pixels=5,
+    dem, regional_smoothing_metres=5.0, threshold_contributing_pixels=5,
     intermediate_window_metres=3.0, roughness_radius_metres=1.0,
+    raster_is_filled=False,
 )
 # Marsh extraction is demonstrated on a separate, low-relief synthetic tile.
 marsh_dem = lsdtt3.Raster.from_numpy(

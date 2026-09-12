@@ -33,6 +33,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/utils/lsdtt_statistics.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/utils/lsdtt_polygon_geometry.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -57,71 +58,7 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// planar_distance - copied from
-//    src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.cpp
-//    src/cpu/lsdtt_channel_network_analysis.cpp
-// might be usefull to move to utils/ or core/
-// -----------------------------------------------------------------------------
-double planar_distance(
-    const lsdtt::lsdtt_xy& a,
-    const lsdtt::lsdtt_xy& b
-)
-{
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    return std::sqrt(dx * dx + dy * dy);
-}
 
-// -----------------------------------------------------------------------------
-// calculate_length - calculate the distance between a series of lsdtt_xy
-// coordinates
-// -----------------------------------------------------------------------------
-double calculate_length(const std::vector<lsdtt::lsdtt_xy>& points) {
-    if (points.size() < 2) {
-        return 0.0;
-    }
-    double result = 0.0;
-    auto previous_pt = points.begin();
-    for (auto next_pt = std::next(points.begin()); next_pt != points.end(); next_pt++) {
-        result += planar_distance(*previous_pt, *next_pt);
-        previous_pt = next_pt;
-    }
-
-    return result;
-}
-
-// -----------------------------------------------------------------------------
-// interpolate_along - finds a point at a given distance along a line
-// -----------------------------------------------------------------------------
-lsdtt::lsdtt_xy interpolate_along(const std::vector<lsdtt::lsdtt_xy>& points, double distance) {
-    double length = calculate_length(points);
-    if (points.size() < 2) {
-        throw std::runtime_error("interpolate_along: A line should have at least two points");
-    }
-    if (length < distance) {
-        throw std::runtime_error("interpolate_along: 'distance' is larger than the line's length");
-    }
-
-    auto it_pt = points.begin();
-    auto it_next_pt = std::next(points.begin());
-    double distance_to_next_pt = planar_distance(*it_pt, *it_next_pt);
-
-    while (distance > distance_to_next_pt) {
-        distance -= distance_to_next_pt;
-        it_pt ++;
-        it_next_pt ++;
-        distance_to_next_pt = planar_distance(*it_pt, *it_next_pt);
-    }
-
-    const lsdtt::lsdtt_xy& pt = *it_pt;
-    const lsdtt::lsdtt_xy& next_pt = *it_next_pt;
-    lsdtt::lsdtt_xy result;
-    result.x = (distance / distance_to_next_pt) * (next_pt.x - pt.x) + pt.x,
-    result.y = (distance / distance_to_next_pt) * (next_pt.y - pt.y) + pt.y;
-
-    return result;
-}
 
 // =============================================================================
 // main
@@ -174,10 +111,10 @@ int main(int argc, char* argv[])
     };
 
     // --- Output ---
-    string_default_map["output_format"] = "flatgeobuf";
-    help_map["output_format"] = {"string","flatgeobuf",
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
         "Format for the output file.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
+        "Allowed values: gpkg, flatgeobuf/fgb.",
         "Output", "param", ""};
 
     // -------------------------------------------------------------------------
@@ -207,6 +144,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({ {"output_format", "write_vector_format"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -259,7 +197,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::vector_output_format output_format =
         lsdtt::resolve_vector_output_format(
-            sf["output_format"]
+            sf["write_vector_format"]
         );
 
     const std::string output_extension =
@@ -313,60 +251,74 @@ int main(int argc, char* argv[])
     results.reserve(layer.records.size());
     //for (const auto& layer_name : vector_loader.get_layer_names())
     {
+        std::size_t line_index = 0;
         for (const auto& record : layer.records)
 		{
+            ++line_index;
 
             if (!std::holds_alternative<lsdtt::lsdtt_line_geom>(record.geometry))
                 continue;
 
             lsdtt::lsdtt_line_geom line = layer.as_line(record);
 
-            float distance = 0;
-            int point_idx = 0;
-            double line_length = calculate_length(line.points);
-            const int num_points = ceil(line_length / stride_length);
-            std::vector<double> values(num_points);
-            bool bounds_overstepped = false;
-            while (distance < line_length)
-			{
-                const lsdtt::lsdtt_xy point = interpolate_along(line.points, distance);
+            // A polyline may leave the raster, or end exactly on its edge, and
+            // that is not an error: sample the part that IS inside and describe
+            // that. Previously the first outside point abandoned the whole line
+            // (and a point exactly on the south or east edge ABORTED the run --
+            // point_within_raster admits y == y_min within its tolerance, while
+            // row_from_y then computes row == n_rows and throws out_of_range).
+            //
+            // So: bounds are checked on the derived row/col, which is the thing
+            // that actually has to be valid, and an outside sample is skipped
+            // rather than fatal.
+            double distance = 0.0;
+            const double line_length = lsdtt::polyline_length(line.points);
+            std::vector<double> values;
+            values.reserve(static_cast<std::size_t>(
+                std::ceil(line_length / stride_length)) + 1u);
 
-                if (!lsdtt::point_within_raster(raster.meta(), point.x, point.y))
-				{
-                    std::cerr << "Curve is not contained in raster\n";
-                    std::cout << " point: " << point.x << ", " << point.y << '\n';
-                    std::cout << " raster extent: "
-                        << raster.meta().x_min << ", "
-                        << raster.meta().x_max() << "; "
-                        << raster.meta().y_min << ", "
-                        << raster.meta().y_max() << ", "
-                        << '\n';
-                    bounds_overstepped = true;
-                    results.emplace_back(std::nullopt);
-                    break;
+            std::size_t n_outside = 0;
+
+            while (distance < line_length)
+            {
+                const lsdtt::lsdtt_xy point =
+                    lsdtt::point_at_distance_along_polyline(line.points, distance);
+
+                const lsdtt::lsdtt_raster_meta& rmeta = raster.meta();
+                const int col = static_cast<int>(
+                    std::floor((point.x - rmeta.x_min) / rmeta.cell_size));
+                const int row = static_cast<int>(
+                    std::floor((rmeta.y_max() - point.y) / rmeta.cell_size));
+
+                if (row < 0 || row >= rmeta.n_rows ||
+                    col < 0 || col >= rmeta.n_cols)
+                {
+                    ++n_outside;
+                    distance += stride_length;
+                    continue;
                 }
 
-                int col = lsdtt::col_from_x(raster.meta(), point.x);
-                int row = lsdtt::row_from_y(raster.meta(), point.y);
-
-				/*
-                std::cout << " "
-                    << "[" << point_idx << "/" << values.size() << "] "
-                    << distance << "/" << line_length << ": "
-                    << point.x << ", " << point.y
-                    << " -> "
-                    << col << ", " << row
-                    << " = "
-                    << raster.get_data_array().at(row, col)
-                    << '\n';
-				*/
-                values[point_idx] = raster.get_data_array().at(row, col);
+                values.push_back(raster.get_data_array().at(row, col));
                 distance += stride_length;
-                point_idx ++;
             }
 
-            if (!bounds_overstepped)
-			{
+            if (n_outside > 0)
+            {
+                std::cout << "  Line " << line_index << ": " << n_outside
+                          << " of " << (n_outside + values.size())
+                          << " sample point(s) fall outside the raster and were "
+                             "skipped.\n";
+            }
+
+            if (values.empty())
+            {
+                std::cerr << "Warning: line " << line_index
+                          << " lies entirely outside the raster; no statistics "
+                             "written for it.\n";
+                results.emplace_back(std::nullopt);
+            }
+            else
+            {
                 results.push_back(lsdtt::compute_descriptive_stats(values));
             }
         }
@@ -434,7 +386,7 @@ int main(int argc, char* argv[])
 		}
 
         auto result = results[i].value();
-        double line_length = calculate_length(layer.as_line(layer.records[i]).points);
+        double line_length = lsdtt::polyline_length(layer.as_line(layer.records[i]).points);
         output_loader.write_line(
             layer.as_line(layer.records[i]).points,
             {

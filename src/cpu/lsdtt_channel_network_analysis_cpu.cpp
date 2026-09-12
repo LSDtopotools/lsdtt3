@@ -18,6 +18,7 @@
 #include <sstream>
 
 #include "../utils/lsdtt_raster_geometry.hpp"
+#include "../utils/lsdtt_polygon_geometry.hpp"
 #include "../utils/lsdtt_regression.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
@@ -361,16 +362,6 @@ std::vector<std::int32_t> resolve_upstream_junctions_to_analyse(
     return junctions;
 }
 
-
-double planar_distance(
-    const lsdtt_xy& a,
-    const lsdtt_xy& b
-)
-{
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    return std::sqrt(dx * dx + dy * dy);
-}
 
 std::vector<double> build_cumulative_distance(
     const std::vector<lsdtt_xy>& xy

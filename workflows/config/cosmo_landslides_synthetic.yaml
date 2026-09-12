@@ -62,7 +62,7 @@ cosmo_landslides_series:
   sample_points_count: 5
   n_realisations: 40
   ensemble_seed_stride: 7919
-  sample_snap_radius_pixels: 120
+  sample_snap_max_search_radius_pixels: 120
 
 cosmo_landslides_diagnostics:
   larsen_alpha: 0.2344

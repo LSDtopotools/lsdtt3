@@ -14,7 +14,7 @@ RASTER_PREPROCESSING_RASTER_SUFFIXES = {
     "write_multidirectional_hillshade_raster": "_hillshade_multidirectional.tif",
     "write_filled_nodata_raster": "_nodata_filled.tif",
     "write_clipped_rectangle_raster": "_clipped_rect.tif",
-    "apply_binary_mask": "_binary_masked.tif",
+    "run_binary_mask": "_binary_masked.tif",
     "clip_raster_to_polygon": "_polygon_clipped.tif",
 }
 
@@ -60,8 +60,8 @@ CHANNEL_EXTRACTION_SUFFIXES = {
     "write_flow_lines": "_flow_lines",
     "write_arcmap_d8_flowdirection_raster": "_arcmap_d8_flowdirection.tif",
     "write_burned_stream_profiles": "_burned_stream_profiles",
-    "wiener_write_filtered_dem": "_wiener_filtered_dem.tif",
-    "wiener_write_tangential_curvature": "_wiener_tangential_curvature.tif",
+    "write_wiener_filtered_dem_raster": "_wiener_filtered_dem.tif",
+    "write_wiener_tangential_curvature_raster": "_wiener_tangential_curvature.tif",
     "wiener_write_qq_table": "_wiener_qq.csv",
 }
 
@@ -124,7 +124,7 @@ def test_channel_extraction_flow_outputs():
 # src/cpu/lsdtt_chi_data_maps_cpu.cpp.
 CHI_ANALYSIS_SUFFIXES = {
     "fit_chi_networks": "_chi_disorder_sweep.csv",
-    "print_chi_data_maps": "_chi_data_maps",
+    "write_chi_data_maps": "_chi_data_maps",
     "write_chi_data_map_lines": "_chi_data_map_lines",
     "run_inversion(best)": "_chi_ksn_inversion_best.csv",
     "run_inversion(trials)": "_chi_ksn_inversion_trials.csv",
@@ -137,7 +137,7 @@ def test_chi_analysis_suffixes():
     ).endswith("demo_chi_disorder_sweep.csv")
     assert expected_output_path(
         "/out", "demo",
-        CHI_ANALYSIS_SUFFIXES["print_chi_data_maps"]
+        CHI_ANALYSIS_SUFFIXES["write_chi_data_maps"]
         + "." + extension_for_format("csv"),
     ).endswith("demo_chi_data_maps.csv")
     assert expected_output_path(
@@ -199,7 +199,9 @@ CHANNEL_NETWORK_ANALYSIS_SUFFIXES = {
     "write_strahler_channels": "_strahler_channels",
     "write_tokunaga_channels": "_tokunaga_channels",
     "write_tokunaga_channel_data": "_tokunaga_channel_data.csv",
-    "write_tokunaga_summary_data": "_tokunaga_summary.csv",
+    "write_tokunaga_summary_data(pair_counts)": "_tokunaga_summary_pair_counts.csv",
+    "write_tokunaga_summary_data(offset_stats)": "_tokunaga_summary_offset_stats.csv",
+    "write_tokunaga_summary_data(fit)": "_tokunaga_summary_fit.csv",
     "write_junction_area_ratio_data": "_junction_area_ratios.csv",
     "write_junction_area_ratio_summary": "_junction_area_ratio_summary.csv",
     "write_junction_centre_of_mass_bearings": "_junction_com_bearings.csv",
@@ -224,8 +226,11 @@ def test_channel_network_analysis_layer_suffixes_follow_format():
 
 def test_channel_network_analysis_summary_tables_are_csv():
     for key in (
-        "write_tokunaga_summary_data",
+        "write_tokunaga_summary_data(pair_counts)",
+        "write_tokunaga_summary_data(offset_stats)",
+        "write_tokunaga_summary_data(fit)",
         "write_junction_area_ratio_data",
+        "write_junction_area_ratio_summary",
         "write_junction_centre_of_mass_bearings",
     ):
         assert CHANNEL_NETWORK_ANALYSIS_SUFFIXES[key].endswith(".csv")
@@ -241,7 +246,7 @@ def test_channel_network_analysis_summary_tables_are_csv():
 SURFACE_METRICS_SUFFIXES = {
     "write_hillshade_raster": "_hillshade.tif",
     "write_local_relief_raster": "_local_relief.tif",
-    "write_shape_classification": "_direct_shape_class.tif",
+    "write_shape_classification_raster": "_direct_shape_class.tif",
     "write_shape_curvature_rasters": "_direct_shape_gaussian_curvature.tif",
     "write_madk2_rasters": "_madk2_ra.tif",
     "write_cloth_envelope_raster": "_cloth_envelope.tif",
@@ -260,7 +265,7 @@ def test_surface_metrics_suffixes():
         "/out", "demo", SURFACE_METRICS_SUFFIXES["write_local_relief_raster"]
     ).endswith("demo_local_relief.tif")
     assert expected_output_path(
-        "/out", "demo", SURFACE_METRICS_SUFFIXES["write_shape_classification"]
+        "/out", "demo", SURFACE_METRICS_SUFFIXES["write_shape_classification_raster"]
     ).endswith("demo_direct_shape_class.tif")
     assert expected_output_path(
         "/out", "demo", SURFACE_METRICS_SUFFIXES["write_cloth_incision_raster"]

@@ -45,6 +45,7 @@
 
 #pragma once
 
+#include <string>
 #include <cstdint>
 #include <vector>
 
@@ -90,6 +91,35 @@ enum class lsdtt_snap_status
     threshold_not_found_in_search_window,
     outlet_reached_before_threshold
 };
+
+// -----------------------------------------------------------------------------
+// snap_status_to_string
+//
+// The enumerator's own name, for reporting a failed snap to the user. Total
+// over the enum: "unknown" is returned only if this switch has fallen out of
+// step with the enum above, which is a bug rather than a value.
+//
+// Three CLIs (basin-extraction, basin-stats, divide-migration) each carried a
+// byte-identical copy of this switch. The strings are part of the user-facing
+// output of all three, so they must not be allowed to drift apart.
+// -----------------------------------------------------------------------------
+inline const char* snap_status_to_string(const lsdtt_snap_status status)
+{
+    switch (status)
+    {
+        case lsdtt_snap_status::success:
+            return "success";
+        case lsdtt_snap_status::input_out_of_bounds:
+            return "input_out_of_bounds";
+        case lsdtt_snap_status::input_invalid_flow_cell:
+            return "input_invalid_flow_cell";
+        case lsdtt_snap_status::threshold_not_found_in_search_window:
+            return "threshold_not_found_in_search_window";
+        case lsdtt_snap_status::outlet_reached_before_threshold:
+            return "outlet_reached_before_threshold";
+    }
+    return "unknown";
+}
 
 // -----------------------------------------------------------------------------
 // lsdtt_square_snap_options
@@ -252,6 +282,32 @@ snap_flats_to_contributing_pixels_threshold_downstream(
     const std::vector<std::int64_t>&        flats,
     const lsdtt_downstream_snap_options&    options =
         lsdtt_downstream_snap_options{}
+);
+
+// -----------------------------------------------------------------------------
+// snap_pixel_by_method
+//
+// Dispatch to the snapping routine named by `method`, so a caller that takes
+// the method as a string parameter does not have to spell the if/else out.
+//
+//   "none"              no snapping; the input pixel is returned with
+//                       status success, so a caller can treat all three
+//                       methods uniformly
+//   "expanding_square"  snap_pixel_to_contributing_pixels_threshold_expanding_square
+//   "downstream"        snap_pixel_to_contributing_pixels_threshold_downstream
+//
+// Throws std::invalid_argument on an unrecognised method, rather than silently
+// falling through to no snapping: a typo in a parameter file would otherwise
+// produce unsnapped outlets that look like a modelling choice.
+//
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_snap_result snap_pixel_by_method(
+    const lsdtt_flow_base&               flow,
+    int                                  row,
+    int                                  col,
+    const std::string&                   method,
+    const lsdtt_square_snap_options&     square_options,
+    const lsdtt_downstream_snap_options& downstream_options
 );
 
 } // namespace lsdtt

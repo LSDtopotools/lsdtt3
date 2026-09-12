@@ -53,6 +53,7 @@
 
 #pragma once
 
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -232,6 +233,36 @@ struct point_role_input
 [[nodiscard]] std::vector<std::int64_t> load_role_point_flats(
     const point_role_input&  role,
     const lsdtt_raster_meta& meta
+);
+
+// -----------------------------------------------------------------------------
+// load_role_point_flats_by_key
+//
+// The same load, with the PARAMETER-KEY CONVENTION applied for you:
+//
+//     <role>_points<path_key_suffix>          e.g. source_points_fname
+//     <role>_points_input_format
+//     <role>_points_layer_name
+//     <role>_points_latitude_field_name
+//     <role>_points_longitude_field_name
+//
+// `get_string` returns the value for a key. Two CLIs (lsdtt-valley-centreline
+// and lsdtt-fluvial-surfaces) each spelled these five keys out by hand, once
+// per role, which is where the two drifted: one uses `_points_path` and takes
+// the value verbatim, the other uses `_points_fname` and resolves it against
+// read_path. Both differences are expressed through the two arguments rather
+// than by keeping two copies.
+//
+// WHY A CALLBACK RATHER THAN THE PARAMETER PARSER. Nothing in src/cpu depends
+// on lsdtt_param_parser, and that boundary is worth keeping: the compute layer
+// should not know that parameter files exist. The caller passes a lambda over
+// its own string map, and applies any path resolution inside it.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<std::int64_t> load_role_point_flats_by_key(
+    const std::string&                                   role,
+    const std::string&                                   path_key_suffix,
+    const std::function<std::string(const std::string&)>& get_string,
+    const lsdtt_raster_meta&                             meta
 );
 
 // -----------------------------------------------------------------------------

@@ -89,7 +89,15 @@ class SampleRastersToPointsAlgorithm(QgsProcessingAlgorithm):
 
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_POINTS, "Sampled points"))
 
-        attach_backend_help(self, "lsdtt-raster-preprocessing")
+        attach_backend_help(
+            self,
+            "lsdtt-raster-preprocessing",
+            overrides={
+                self.INPUT_POINTS: "point_data_fname",
+                self.RASTER_ATTRIBUTE_CSV: "raster_attribute_fname",
+                self.LAYER_NAME: "point_data_layer_name",
+            },
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)
@@ -120,11 +128,11 @@ class SampleRastersToPointsAlgorithm(QgsProcessingAlgorithm):
             "write_fname": output_prefix,
             "enforce_projection": self.parameterAsBool(parameters, self.ENFORCE_PROJECTION, context),
             # Disable the default sea-level masking: this algorithm only samples.
-            "minimum_elevation": -99999.0,
+            "min_elevation": -99999.0,
             "sample_rasters_to_points": True,
             "point_data_fname": layer_file_path(points_layer.source()),
-            "raster_attribute_csv": csv_path,
-            "sampled_points_output_format": points_format,
+            "raster_attribute_fname": csv_path,
+            "write_vector_format": points_format,
         }
 
         layer_name = self.parameterAsString(parameters, self.LAYER_NAME, context)

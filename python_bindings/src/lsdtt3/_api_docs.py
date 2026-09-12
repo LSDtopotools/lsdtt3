@@ -592,7 +592,7 @@ class SpectralResult:
 
 def frangi_filter(raster: Raster, sigma_min_metres: float = 1.0,
                   sigma_max_metres: float = 5.0, n_scales: int = 4,
-                  beta: float = 0.5, c: float = 15.0, target: str = "ridges",
+                   beta: float = 0.5, c: float = 1.0, target: str = "ridges",
                   n_threads: int = 0) -> FrangiResult:
     """Run a multiscale Frangi ridge or valley filter.
 
@@ -1181,10 +1181,6 @@ class VectorBounds:
 
 def opentopography_datasets() -> list[dict[str, Any]]:
     """Return OpenTopography DEM catalogue records.
-
-    Parameters
-    ----------
-    None
 
     Returns
     -------

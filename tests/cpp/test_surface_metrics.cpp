@@ -59,6 +59,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -69,7 +70,11 @@
 #include <string>
 #include <vector>
 
+#ifdef LSDTT_HAS_OPENCV
+#include "lsdtt_raster_opencv_cpu.hpp"
+#endif
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_feature_finder_cpu.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
@@ -1257,6 +1262,23 @@ bool bitwise_identical(const lsdtt_raster_cpu& x, const lsdtt_raster_cpu& y, lon
     return n_diff == 0;
 }
 
+std::uint64_t raster_bit_checksum(const lsdtt_raster_cpu& raster)
+{
+    std::uint64_t hash = 1469598103934665603ULL;
+    const auto& data = raster.get_data_array().get_vector();
+    const auto& mask = raster.get_mask_array().get_vector();
+    for (std::size_t i = 0; i < data.size(); ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &data[i], sizeof(bits));
+        hash ^= bits;
+        hash *= 1099511628211ULL;
+        hash ^= mask[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
 
 void test_thread_determinism()
 {
@@ -1296,6 +1318,87 @@ void test_thread_determinism()
             << " metrics";
         check(nm2.str(), metric_diff == 0, dt2.str());
     }
+
+    lsdtt::frangi_request frangi_opts;
+    frangi_opts.sigma_min_metres = 10.0;
+    frangi_opts.sigma_max_metres = 30.0;
+    frangi_opts.n_scales = 3;
+    frangi_opts.c = 1.0;
+    frangi_opts.n_threads = 1;
+    const auto frangi_ref = lsdtt::frangi_filter(surf.dem, frangi_opts);
+    frangi_opts.n_threads = 8;
+    const auto frangi_mt = lsdtt::frangi_filter(surf.dem, frangi_opts);
+    long frangi_response_diff = 0, frangi_scale_diff = 0;
+    bitwise_identical(frangi_ref.response, frangi_mt.response,
+                      frangi_response_diff);
+    bitwise_identical(frangi_ref.best_scale_metres,
+                      frangi_mt.best_scale_metres, frangi_scale_diff);
+    check("C4 Frangi c=1 request is bit-identical across thread counts",
+          frangi_response_diff + frangi_scale_diff == 0,
+          std::to_string(frangi_response_diff + frangi_scale_diff) +
+              " differing pixels");
+
+    frangi_opts.c = 15.0;
+    frangi_opts.n_threads = 1;
+    const auto frangi_c15 = lsdtt::frangi_filter(surf.dem, frangi_opts);
+    const std::uint64_t c1_checksum = raster_bit_checksum(frangi_ref.response);
+    const std::uint64_t c15_checksum = raster_bit_checksum(frangi_c15.response);
+    check("C4 approved Frangi c=1 raster checksum oracle",
+          c1_checksum == 4516693747099579419ULL, std::to_string(c1_checksum));
+    check("C4 former Frangi c=15 raster checksum negative control",
+          c15_checksum == 17196153223744428131ULL,
+          std::to_string(c15_checksum));
+    long c1_c15_diff = 0;
+    bitwise_identical(frangi_ref.response, frangi_c15.response, c1_c15_diff);
+    check("C4 Frangi c=1 is behaviorally distinct from explicit c=15",
+          c1_c15_diff > 0,
+          std::to_string(c1_c15_diff) + " differing response pixels");
+
+#ifdef LSDTT_HAS_FFTW
+    const poly_fit_coeffs wavelet_ref =
+        lsdtt::wavelet_quadratic_fit(surf.dem, 60.0, 1);
+    const poly_fit_coeffs wavelet_mt =
+        lsdtt::wavelet_quadratic_fit(surf.dem, 60.0, 8);
+    long wavelet_diff = 0, wavelet_this_diff = 0;
+    const lsdtt_raster_cpu* wr[6] = {&wavelet_ref.a, &wavelet_ref.b,
+        &wavelet_ref.c, &wavelet_ref.d, &wavelet_ref.e, &wavelet_ref.f};
+    const lsdtt_raster_cpu* wm[6] = {&wavelet_mt.a, &wavelet_mt.b,
+        &wavelet_mt.c, &wavelet_mt.d, &wavelet_mt.e, &wavelet_mt.f};
+    for (int i = 0; i < 6; ++i)
+    {
+        bitwise_identical(*wr[i], *wm[i], wavelet_this_diff);
+        wavelet_diff += wavelet_this_diff;
+    }
+    check("C4 wavelet_polyfit is bit-identical across thread counts",
+          wavelet_diff == 0,
+          std::to_string(wavelet_diff) + " differing coefficient pixels");
+
+    lsdtt::lsdtt_spectral_analysis_options spectral_opts;
+    spectral_opts.n_background_iterations = 2;
+    spectral_opts.background_seed = 1234;
+    spectral_opts.n_threads = 1;
+    const auto spectral_ref =
+        lsdtt::full_spectral_analysis(surf.dem, spectral_opts);
+    spectral_opts.n_threads = 8;
+    const auto spectral_mt =
+        lsdtt::full_spectral_analysis(surf.dem, spectral_opts);
+    const bool spectral_equal =
+        spectral_ref.psd_2d.get_vector() == spectral_mt.psd_2d.get_vector() &&
+        spectral_ref.background_psd_2d.get_vector() ==
+            spectral_mt.background_psd_2d.get_vector() &&
+        spectral_ref.normalised_psd == spectral_mt.normalised_psd;
+    check("C4 full spectral analysis is bit-identical across thread counts",
+          spectral_equal);
+#endif
+
+#ifdef LSDTT_HAS_OPENCV
+    const auto otsu_ref = lsdtt::opencv_cpu::threshold_otsu(surf.dem, 1, 0);
+    const auto otsu_mt = lsdtt::opencv_cpu::threshold_otsu(surf.dem, 8, 0);
+    long otsu_diff = 0;
+    bitwise_identical(otsu_ref, otsu_mt, otsu_diff);
+    check("C4 OpenCV Otsu path is bit-identical across thread counts",
+          otsu_diff == 0, std::to_string(otsu_diff) + " differing pixels");
+#endif
 }
 
 

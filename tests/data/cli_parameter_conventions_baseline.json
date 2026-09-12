@@ -1,0 +1,19 @@
+{
+  "README": [
+    "Baseline allow-list for tests/scripts/check_cli_parameter_conventions.py",
+    "(Phase 0d of docs/plan_docs/cli_consistency_remediation_plan.md).",
+    "",
+    "Every entry is a CLI parameter that violates a section-3 naming",
+    "convention TODAY and is knowingly tolerated until the phase that renames",
+    "it lands.  The test passes on these and fails only on violations that are",
+    "NOT listed here.",
+    "",
+    "THIS LIST MUST ONLY EVER SHRINK.  Edit it by DELETING lines.  Do not",
+    "regenerate it wholesale with --write-baseline: doing so launders every",
+    "violation introduced since the last refresh into the allow-list and the",
+    "guard stops guarding.  A stale entry (one whose violation no longer",
+    "occurs) is reported by the test but does not fail it, so deleting stale",
+    "lines is never urgent and never blocks a phase."
+  ],
+  "violations": []
+}

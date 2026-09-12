@@ -1,0 +1,5 @@
+# Sensitive defaults oracle: dimensions 128x128, cell size 1 m, seed 33.
+write_path: __WRITE_PATH__
+write_fname: rasterdefaults5
+write_uniform_random_surface: true
+write_output_format: gtiff

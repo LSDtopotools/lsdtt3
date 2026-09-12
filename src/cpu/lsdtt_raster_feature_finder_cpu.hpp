@@ -145,7 +145,7 @@ struct frangi_request
     double sigma_max_metres = 5.0;
     int    n_scales         = 4;
     double beta             = 0.5;
-    double c                = 15.0;
+    double c                = 1.0; // Phase 5 D7 scientific default; formerly 15.
     frangi_target target    = frangi_target::ridges;
     int    n_threads        = 0;
 };

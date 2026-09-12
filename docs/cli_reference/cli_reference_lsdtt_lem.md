@@ -88,12 +88,12 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `nrows` | int | `200` | Number of rows in the model domain. |
-| `ncols` | int | `400` | Number of columns in the model domain. |
-| `grid_resolution` | float | `30` | Cell size in metres. |
-| `initial_surface_type` | string | `flat` | Surface type: `flat`, `white_noise`, `red_noise`, `diamond_square`. `flat` = all zeros. |
+| `n_rows` | int | `200` | Number of rows in the model domain. Former `nrows` is an unchanged-value alias. |
+| `n_cols` | int | `400` | Number of columns in the model domain. Former `ncols` is an unchanged-value alias. |
+| `cell_size_metres` | float | `30` | Cell size in metres. Former `grid_resolution` is an unchanged-value alias. |
+| `noise_type` | string | `flat` | Surface type: `flat`, `white_noise`, `red_noise`, `diamond_square`. Former `initial_surface_type` is an unchanged-value alias. |
 | `max_initial_elevation` | float | `1.0` | Maximum elevation (m) of a `white_noise` surface. Minimum is 0. |
-| `noise_target_stddev` | float | `1.0` | Target standard deviation (m) for `red_noise` and `diamond_square` surfaces. |
+| `noise_target_stddev_metres` | float | `1.0` | Target standard deviation for `red_noise` and `diamond_square` surfaces. Former `noise_target_stddev` is an unchanged-value alias. |
 | `noise_blur_passes` | int | `6` | Number of blur passes for `red_noise` surface generation. |
 | `diamond_square_roughness` | float | `0.55` | Roughness exponent (0–1) for `diamond_square`. Higher = rougher. |
 | `random_seed` | int | `33` | Random seed for initial noise surface. |
@@ -129,8 +129,8 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 | `erodibility` | float | `1e-3` | Stream-power erodibility K (m^(1−2m) yr⁻¹). |
 | `m_exponent` | float | `0.45` | Drainage-area exponent m. |
 | `n_exponent` | float | `1.0` | Slope exponent n. n=1 uses a closed-form solver; n≠1 uses Newton–Raphson. |
-| `incision_threshold_area` | float | `0` | Minimum drainage area (m²) for fluvial incision. `0` = no threshold. Also defines channel pixels for hillslope coupling. |
-| `divide_area_by_dx` | bool | `true` | Divide drainage area by cell size to obtain specific area before comparing against `incision_threshold_area`. |
+| `incision_threshold_specific_area` | float | `0` | **With `divide_area_by_dx: true` (default):** specific catchment area A/dx in metres. **With `false`:** total map area A in m². `0` = no threshold. Also defines channel pixels for hillslope coupling. The former `incision_threshold_area` spelling is an unchanged-value alias. |
+| `divide_area_by_dx` | bool | `true` | Divide drainage area by cell size to obtain specific area before comparing against `incision_threshold_specific_area`. |
 | `slope_clamp` | float | `1e-5` | Minimum slope used as Newton–Raphson fallback in the stream-power solver. |
 
 ---
@@ -143,6 +143,7 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 | `hillslope_diffusivity` | float | `1e-3` | Hillslope diffusivity κ (m² yr⁻¹). |
 | `critical_hillslope_slope` | float | `0.8` | Critical slope Sc (m/m) for nonlinear hillslope transport. |
 | `channel_mask_fname` | string | `` | Optional raster (in `read_path`) whose cells > 0.5 are fixed-elevation channel pixels for the hillslope Dirichlet set, overriding the drainage-area threshold. Must match the DEM grid. Empty = derive channels from drainage area. |
+| `channel_mask_threshold_specific_area` | float | `0` | **With `divide_area_by_dx: true` (default):** A/dx in metres. **With `false`:** map area A in m². Threshold for a written channel mask; `0` uses `incision_threshold_specific_area`. The former `channel_mask_threshold_area` spelling is an unchanged-value alias. |
 
 ### `cellular` transport and tracing
 
@@ -170,10 +171,10 @@ These only apply when `hillslope_model: roering_implicit`.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `hillslope_implicit_time_integrator` | int | `0` | Time integrator: `0` = backward Euler (1st order, robust), `1` = TR-BDF2 (2nd order, L-stable, embedded-error PI step control — use for time-accurate transients). |
-| `hillslope_implicit_error_tol` | float | `0` | TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller (`0` = auto = a small fraction of the relief). Only used when `time_integrator = 1`. |
+| `hillslope_implicit_error_tolerance_metres` | float | `0` | TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller (`0` = auto = a small fraction of the relief). Only used when `time_integrator = 1`. |
 | `hillslope_implicit_solver_choice` | int | `0` | Linear solver: `0` = SimplicialLDLT (robust, moderate grids), `1` = CG + IncompleteCholesky (scales better on very large grids). |
 | `hillslope_implicit_relaxation_omega` | float | `0.7` | Damped-Picard relaxation factor ω (≤ 1) for the nonlinear iteration. |
-| `hillslope_implicit_picard_tol` | float | `1e-4` | Picard convergence tolerance on max\|Δz\| between iterates. |
+| `hillslope_implicit_picard_tolerance_metres` | float | `1e-4` | Picard convergence tolerance on max\|Δz\| between iterates. |
 | `hillslope_implicit_picard_max_iter` | int | `50` | Maximum Picard iterations per sub-step. |
 | `hillslope_implicit_slope_ratio_cap` | float | `0.99` | Regularised slope-ratio cap r_max (< 1) bounding D_eff near Sc. |
 | `hillslope_implicit_dt_init` | float | `0` | Initial adaptive sub-step (`0` = auto = the LEM timestep). |
@@ -244,8 +245,8 @@ executes `steady_state_n_cycles` cycles.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `steady_state_check_convergence` | bool | `false` | Enable convergence-based early stopping. |
-| `steady_state_tolerance_dz_over_relief` | float | `1e-3` | Convergence tolerance on max\|Δz\|/relief between cycles. Used when `steady_state_tolerance_dz_m` is `0`. |
-| `steady_state_tolerance_dz_m` | float | `0` | Absolute tolerance on max\|Δz\| (m) between cycles. When `> 0` this **overrides** `steady_state_tolerance_dz_over_relief`. |
+| `steady_state_tolerance_dz_over_relief` | float | `1e-3` | Convergence tolerance on max\|Δz\|/relief between cycles. Used when `steady_state_tolerance_dz_metres` is `0`. |
+| `steady_state_tolerance_dz_metres` | float | `0` | Absolute tolerance on max\|Δz\| (m) between cycles. When `> 0` this **overrides** `steady_state_tolerance_dz_over_relief`. |
 | `steady_state_tolerance_receiver_fraction` | float | `1e-3` | Convergence tolerance on the fraction of pixels changing receiver each cycle. Set `<= 0` to disable this criterion. |
 | `steady_state_convergence_patience` | int | `2` | Consecutive converged cycles required before stopping. Cycle 1 is never eligible, since there is no previous cycle to compare against. |
 
@@ -267,7 +268,7 @@ and a patience-1 run would otherwise declare convergence having compared nothing
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `run_hillslope_steady_state` | bool | `false` | Solve hillslope steady-state elevations after fluvial steady-state. Requires `run_steady_state: true` and `incision_threshold_area > 0`. Channel pixels become Dirichlet boundary conditions. |
+| `run_hillslope_steady_state` | bool | `false` | Solve hillslope steady-state elevations after fluvial steady-state. Requires `run_steady_state: true` and `incision_threshold_specific_area > 0`. Channel pixels become Dirichlet boundary conditions. |
 | `hillslope_ss_model` | string | `roering` | Hillslope steady-state solver. `linear`: Red-Black SOR solving D·∇²z = −U. `roering`: Red-Black SOR solving the nonlinear Roering (1999) law. `cidre`: pseudo-transient Carretier (2016) iterated to steady state (rebuilds D-inf flow graph each iteration). At steady state the nonlinear Roering and Cidre solvers produce the same elevation field. |
 | `hillslope_ss_tolerance` | float | `1e-4` | Convergence criterion: max|Δz| over hillslope pixels per iteration. |
 | `hillslope_ss_max_iterations` | int | `10000` | Maximum iterations for the hillslope steady-state solver. |
@@ -281,7 +282,7 @@ These apply only when `use_landscape_equilibration_cycle` and
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `hillslope_every_cycle` | bool | `true` | Solve the hillslopes on every cycle, not just the last one. Costs one extra solve per cycle, but it is the only way to show the divide is stable **under re-routing** — with `false` the hillslopes are solved once on the delivered surface, so a divide that would move if the hillslopes were re-solved never gets the chance to. |
-| `channel_hysteresis_factor` | float | `0.5` | Hysteresis on the channel (Dirichlet) set between cycles. A pixel already flagged as channel stays channel until its drainage area falls below `channel_hysteresis_factor × incision_threshold_area`. Stops the Dirichlet set flickering from cycle to cycle. `1.0` disables the hysteresis. |
+| `channel_hysteresis_factor` | float | `0.5` | Hysteresis on the channel (Dirichlet) set between cycles. A pixel already flagged as channel stays channel until its drainage area falls below `channel_hysteresis_factor × incision_threshold_specific_area`. Stops the Dirichlet set flickering from cycle to cycle. `1.0` disables the hysteresis. |
 
 > **If the nonlinear solver diverges, set `hillslope_sor_omega` manually.** With
 > `hillslope_ss_model: roering` the auto-omega estimate has been observed to
@@ -412,7 +413,7 @@ steady_state_n_cycles:        10
 
 erodibility:                  0.0005
 uplift_rate:                  0.0001
-incision_threshold_area:      1000000
+incision_threshold_specific_area: 1000000
 
 hillslope_ss_model:           roering
 hillslope_diffusivity:        0.005
@@ -441,7 +442,7 @@ steady_state_n_cycles:                     40
 
 erodibility:                               0.0005
 uplift_rate:                               0.0001
-incision_threshold_area:                   1000000
+incision_threshold_specific_area:          1000000
 
 steady_state_check_convergence:            true
 steady_state_tolerance_dz_over_relief:     0.001
@@ -472,10 +473,10 @@ combining it with the equilibration cycle is a fatal error, not a fallback.
 write_path:  /data/output/
 write_fname: lem_run
 
-nrows:               200
-ncols:               400
-grid_resolution:     30
-initial_surface_type: white_noise
+n_rows:           200
+n_cols:           400
+cell_size_metres: 30
+noise_type:       white_noise
 max_initial_elevation: 1.0
 parabola_relief:     5.0
 post_breach_noise_relief: 0.05
@@ -493,10 +494,234 @@ n_exponent:                  1.0
 hillslope_diffusivity:       0.005
 critical_hillslope_slope:    0.8
 uplift_rate:                 0.0001
-incision_threshold_area:     500000
+incision_threshold_specific_area: 500000
 timestep:                    500
 number_of_iterations:        2000
 frequency_of_output_writing: 200
 
 write_elevation_stats_csv:   true
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### DEM loading vs synthetic surface
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_initial_dem` | `bool` | `false` | `param` | - | Load initial topography from read_fname instead of building a synthetic surface. | If true, the read_path / read_fname / read_ext from the parameter file are used. |
+
+### Synthetic domain
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_rows` | `int` | `200` | `param` | - | Number of rows in the synthetic model domain. | Used only when the domain is generated rather than read from a DEM. |
+| `n_cols` | `int` | `400` | `param` | - | Number of columns in the synthetic model domain. | Used only when the domain is generated rather than read from a DEM. |
+| `cell_size_metres` | `float` | `30` | `param` | - | Cell size of the synthetic model domain in metres. | Sets the map scale of the generated surface. Anything expressed as a pixel count (for example threshold_contributing_pixels) corresponds to a different ground area as this changes. |
+| `random_seed` | `int` | `33` | `param` | - | Seed for every stochastic generator used to build the domain. | A fixed seed makes a run reproducible. Change it to draw a different realisation of the same statistical surface. |
+
+### Grid (when not loading a DEM)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `synthetic_crs_wkt` | `string` | - | `param` | - | Coordinate Reference System WKT string for synthetic surfaces. | If left empty (the default), this automatically assigns EPSG:32601 (UTM Zone 1N) and places the lower-left corner at 500000E, 0N. |
+
+### Synthetic noise
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `noise_type` | `string` | `flat` | `param` | - | Type of noise surface to generate: flat, white_noise, red_noise, diamond_square. | flat = all zeros, i.e. no noise; white_noise = uniform random, equal power at every wavelength; red_noise = low-frequency dominated; diamond_square = fractal terrain whose roughness is set by diamond_square_roughness. |
+| `noise_target_stddev_metres` | `float` | `1.0` | `param` | - | Target standard deviation of the generated noise surface (metres). | The raw surface is rescaled to this standard deviation. Used when noise_type is red_noise or diamond_square. |
+
+### Initial conditions
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `max_initial_elevation` | `float` | `1.0` | `param` | - | Max elevation of white-noise surface (m). Min is 0. | Used when noise_type is white_noise. |
+| `noise_blur_passes` | `int` | `6` | `param` | - | Number of blur passes for red_noise surface generation. | - |
+| `diamond_square_roughness` | `float` | `0.55` | `param` | - | Roughness exponent (0-1) for diamond-square surface. Higher = rougher. | - |
+| `parabola_relief` | `float` | `0` | `param` | - | Peak elevation (m) of a N-S parabola added to random initial surfaces. | The parabola is zero at the north and south boundaries and peaks at the centre row. Adding it biases drainage toward both N/S boundaries, reducing internal basins. Set &gt; 0 to enable; typical values 2-5x the noise relief. |
+| `initial_surface_slope` | `float` | `0.0001` | `param` | - | Small regional slope added to generated surfaces toward the nearest declared open boundary. Prevents unresolved flats and gives initial flow a boundary-consistent direction. Set to 0 to disable. | - |
+| `post_breach_noise_relief` | `float` | `0` | `param` | - | Half-amplitude (m) of uniform noise added after breaching the initial surface. | Breaking up post-breach flats prevents unnaturally regular drainage. Set &gt; 0 to enable; typical values 0.01-0.1 m. Breaching is performed whenever parabola_relief &gt; 0 or post_breach_noise_relief &gt; 0. |
+| `fill_initial_surface` | `bool` | `false` | `param` | - | Apply pit-filling to the initial surface before running. | Applied after breaching/noise conditioning when those are also enabled. |
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed by pit filling. | Used when fill_initial_surface is true. |
+
+### Sinuous Boundaries
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `enable_sinuous_n_boundary` | `bool` | `false` | `switch` | - | Apply a sinuous (sine wave) mask to the North domain boundary. | - |
+| `sinuous_n_amplitude_fraction` | `float` | `0.25` | `param` | - | Amplitude of the North sinuous boundary as a fraction of total N-S domain length. | This can max be 0.25, as it create waves that span half the N-S domain. |
+| `sinuous_n_n_waves` | `int` | `1` | `param` | - | Number of complete sine waves along the North boundary. | - |
+| `sinuous_n_phase_offset` | `float` | `0.0` | `param` | - | Phase offset of the North sinuous boundary as a fractional value [0, 1]. | - |
+| `enable_sinuous_s_boundary` | `bool` | `false` | `switch` | - | Apply a sinuous (sine wave) mask to the South domain boundary. | - |
+| `sinuous_s_amplitude_fraction` | `float` | `0.25` | `param` | - | Amplitude of the South sinuous boundary as a fraction of total N-S domain length. | This can max be 0.25, as it create waves that span half the N-S domain. |
+| `sinuous_s_n_waves` | `int` | `1` | `param` | - | Number of complete sine waves along the South boundary. | - |
+| `sinuous_s_phase_offset` | `float` | `0.0` | `param` | - | Phase offset of the South sinuous boundary as a fractional value [0, 1]. | - |
+
+### Process switches
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `enable_d8_fluvial_erosion` | `bool` | `true` | `switch` | - | Enable D8 stream-power fluvial incision. | D8 with n=1 always uses closed-form and is therefore very stable. For other n uses Newton-Raphson. |
+| `enable_dinf_fluvial_erosion` | `bool` | `false` | `switch` | - | Enable D-infinity stream-power fluvial incision. | Uses stable closed-form for n=1 only on nodes that have only a single receiver, otherwise uses Newton-Raphson. |
+| `enable_hillslope_transport` | `bool` | `false` | `switch` | - | Enable Cidre hillslope diffusion. | - |
+| `enable_nonlinear_hillslopes` | `bool` | `false` | `switch` | - | Use nonlinear transport (Roering 1999 or Carretier et al. 2016 depending on hillslope_model). | Requires enable_hillslope_transport. |
+| `critical_slope_clamp_only` | `bool` | `false` | `switch` | - | With hillslope_ss_model: critical_slope, LOWER cells above the target gradient instead of imposing it everywhere. | The default imposes z = z_receiver + dx*S_c on every hillslope cell, manufacturing a landscape of uniform critical slopes and destroying whatever form the input had. Clamping preserves the input wherever it is already admissible and cuts back only the super-critical parts. Intended for handing an equilibrated LINEAR landscape to a Roering run: linear diffusion has no critical slope, so its steady state routinely carries gradients above S_c where the Roering flux law is singular. NOTE this limits the gradient ALONG THE FLOW PATH, not the full gradient magnitude the flux law uses -- cross-slope can still exceed S_c, so use critical_slope_clamp_fraction to leave headroom. |
+| `critical_slope_clamp_fraction` | `float` | `0` | `param` | - | Multiply S_c by this before clamping. 0 = use S_c unchanged. | Clamping to exactly S_c leaves the Roering flux law at its singularity, where alpha = 1/(1-(S/S_c)^2) diverges. Clamping to 0.9 S_c gives alpha ~ 5, and 0.8 gives alpha ~ 2.8 -- both comfortably solvable. It also leaves headroom for the cross-slope component that the along-flow clamp does not control. |
+| `hillslope_force_sor` | `bool` | `false` | `switch` | - | Force the legacy SOR + Picard steady-state solver instead of Newton. | Steady-state hillslope solves default to Newton, which is faster and more accurate for the linear problem and converges near Sc where Picard limit-cycles. SOR is still used automatically when Newton is unavailable (a build without Eigen) or fails to converge; this switch forces it for comparison or reproduction of an older run. With SOR the nonlinear operator needs hillslope_sor_omega set low (0.3-0.5); the auto value is the LINEAR optimum and diverges. |
+| `hillslope_model` | `string` | `cidre` | `param` | - | Hillslope transport model: cellular, roering_implicit, cidre, or adi. | cellular: conservative soft-critical face transfers with optional bounded nonlocal transport and sparse Lagrangian tracing; permits finite-lived slopes above Sc and is the recommended fast nonlinear transient model. roering_implicit: unconditionally-stable implicit solver for the Roering (1999) nonlinear law. Steady-state runs use Newton; transient runs use backward Euler with adaptive sub-stepping. Channels are Dirichlet sinks from the area threshold or channel_mask_fname; needs a non-empty channel set or the step is skipped. Set enable_nonlinear_hillslopes false for linear diffusion. cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; unconditionally stable near Sc via slope-restoration. The ONLY model that works with an emergent channel network (incision_threshold_specific_area = 0). adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps (transient only; steady-state runs use Newton regardless). NOTE: 'linear' and 'roering' select EXPLICIT solvers. They are CFL-limited and less stable than the implicit path, and are retained only for testing and for builds without Eigen; both are redirected to roering_implicit with a warning. Requires enable_hillslope_transport. |
+
+### Timestep control
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `adaptive_timestep` | `bool` | `false` | `switch` | - | Adapt the LEM timestep to keep the coupled solve accurate. | Both halves of a coupled run can be unconditionally STABLE and the run still be wrong at a large timestep: stability describes one operator, accuracy of an operator-split PAIR is a different question. The controller keys on the achieved maximum local elevation change of each step against the relief across one cell (dx * median gradient), holding that ratio near timestep_target_ratio. It shrinks faster than it grows, because an oversized step corrupts the landscape while an undersized one only costs time. `timestep` becomes the starting value. |
+| `timestep_target_ratio` | `float` | `0.7` | `param` | - | Target for (elevation change per step) / (relief across one cell). | Measured on a 200x200 grid at 5 m: ratios of 0.13-0.67 gave 4-5% grid-scale roughness and a stable hillslope length; 2.67 gave 12.2% roughness and a hillslope length wrong by 5.7x, while still converging and still reporting ~99% of the uplift rate. Used both by the pre-run check and, with adaptive_timestep, by the controller. |
+| `steady_state_dz_tolerance` | `float` | `0.0001` | `param` | - | Stop early when no cell moves more than this in one step (m). | The run ends at whichever comes first: this steady-state criterion or run_until_time / number_of_iterations. Convergence is REFUSED while the timestep is below steady_state_min_dt_fraction of its initial value, because an absolute per-step tolerance is trivially met by a collapsing timestep while the landscape is still evolving as fast as ever. Set 0 to disable early stopping. |
+| `steady_state_rate_tolerance` | `float` | `0` | `param` | - | Steady state as a RATE (m/yr), dt-independent. 0 = use the per-step tolerance alone. | The per-step tolerance is dt-dependent: halving the timestep halves every change without the landscape being any steadier (the same relaxed landscape measured 0.006 m/step at dt = 250 and 0.029 m/step at dt = 2000). A rate means the same thing at any timestep. The measured floor for a coupled run is 1.4e-5 to 2.8e-5 m/yr -- 3.6-7.0% of the uplift rate -- set by continual reorganisation of the drainage network, so a tolerance below that cannot be met however long the run goes. A sensible choice is a small fraction of uplift_rate. |
+| `steady_state_patience` | `int` | `5` | `param` | - | Consecutive steps below tolerance before declaring steady state. | One quiet step can happen by accident. |
+| `steady_state_min_dt_fraction` | `float` | `0.25` | `param` | - | Refuse to declare steady state while dt is below this fraction of its initial value. | Guards against a collapsing adaptive timestep faking convergence. |
+| `stop_on_stall` | `bool` | `false` | `switch` | - | End the run when a stall or oscillation is detected, rather than warning. | Off by default: stall detection is heuristic, and a false positive throws away a healthy run while a false negative only costs the time the run was going to take anyway. Convergence is a definite test and always stops the run; a stall only warns unless this is set. |
+| `stall_window` | `int` | `1000` | `param` | - | Steps over which a lack of progress is judged (0 disables). | If max\|dz\| has not fallen over this window while still above tolerance, the run is reported as STALLED, and as OSCILLATING when the step-to-step changes alternate in sign -- a period-2 cycle, which points at the numerics (timestep too large, or a limit cycle in the nonlinear solve) rather than at needing more model time. A stalled run is NOT a converged one and must not be reported as steady state. |
+| `run_until_time` | `float` | `0` | `param` | - | Run until this much model time has elapsed (yr). 0 = use number_of_iterations instead. | With a FIXED timestep the two are equivalent, but with adaptive_timestep they are not: if the controller shrinks dt, a fixed iteration count covers proportionally less model time, and different runs in a sweep end at different times. Measured on a 7-run sweep intended to cover 6 Myr each: the runs actually reached 0.70, 1.12 and 1.26 Myr because dt fell by up to 15x. Set this instead of number_of_iterations whenever the timestep adapts. number_of_iterations then acts as a safety cap. |
+| `timestep_min` | `float` | `0` | `param` | - | Floor for the adaptive timestep (yr). 0 = timestep / 100. | - |
+| `timestep_max` | `float` | `0` | `param` | - | Ceiling for the adaptive timestep (yr). 0 = timestep * 100. | - |
+
+### Cellular hillslopes
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `cellular_r_match` | `float` | `0.85` | `param` | `hillslope_model` | Slope ratio below which cellular transport exactly follows Roering. | Above this ratio the mobility follows a finite tangent continuation. Only used when hillslope_model is cellular. |
+| `cellular_cfl_safety` | `float` | `0.8` | `param` | `hillslope_model` | Explicit cellular stability safety factor in (0,1]. | Only used when hillslope_model is cellular. |
+| `cellular_nonlocal_fraction` | `float` | `0` | `param` | `hillslope_model` | Fraction [0,1] of near-critical excess flux routed nonlocally. | Zero gives local soft-critical transport. Only used when hillslope_model is cellular. |
+| `cellular_nonlocal_activation_ratio` | `float` | `0.8` | `param` | `cellular_nonlocal_fraction` | Slope ratio at which nonlocal routing begins. | Only used when cellular_nonlocal_fraction is greater than 0. |
+| `cellular_nonlocal_deposition_probability` | `float` | `0.5` | `param` | `cellular_nonlocal_fraction` | Per-cell geometric deposition probability for nonlocal volume. | Only used when cellular_nonlocal_fraction is greater than 0. |
+| `cellular_nonlocal_max_hops` | `int` | `4` | `param` | `cellular_nonlocal_fraction` | Maximum nonlocal travel distance in cells (&gt;=2). | Only used when cellular_nonlocal_fraction is greater than 0. |
+
+### Cellular particle tracing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `enable_cellular_particles` | `bool` | `false` | `switch` | `hillslope_model` | Track sparse Lagrangian sediment superparticles. | Only valid when hillslope_model is cellular. |
+| `cellular_particle_inverse_density` | `int` | `100` | `param` | `enable_cellular_particles` | Active cells represented per seeded superparticle. | 100 is the validated standard; smaller values seed more particles. |
+| `cellular_particle_mixing_depth` | `float` | `1` | `param` | `enable_cellular_particles` | Well-mixed active-layer depth represented by particles (m). | - |
+| `cellular_particle_seed` | `int` | `1` | `param` | `enable_cellular_particles` | Deterministic particle sampling seed. | - |
+| `cellular_particle_restart_fname` | `string` | - | `file` | `enable_cellular_particles` | Particle CSV to restart from, relative to read_path. | Empty seeds a new population. |
+
+### roering_implicit solver knobs (used only when hillslope_model = roering_implicit)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `hillslope_implicit_relaxation_omega` | `float` | `0.7` | `param` | - | Damped-Picard relaxation factor omega (0&lt;omega&lt;=1) for roering_implicit. | Values below 1 stabilise the nonlinear iteration near Sc; the controller auto-tunes it down further on divergence. Ignored by other hillslope models. |
+| `hillslope_implicit_picard_tolerance_metres` | `float` | `1e-4` | `param` | - | Convergence tolerance max\|delta_z\| for the Picard iteration (roering_implicit). | - |
+| `hillslope_implicit_picard_max_iter` | `int` | `50` | `param` | - | Maximum Picard iterations per sub-step (roering_implicit). | - |
+| `hillslope_implicit_slope_ratio_cap` | `float` | `0.99` | `param` | - | Regularised slope-ratio cap r_max (&lt;1) bounding D_eff near Sc (roering_implicit). | - |
+| `hillslope_implicit_solver_choice` | `int` | `0` | `param` | - | Linear solver for roering_implicit: 0 = SimplicialLDLT, 1 = CG+IncompleteCholesky. | LDLT is robust for moderate grids; CG+IC scales better on very large grids. |
+| `hillslope_implicit_time_integrator` | `int` | `0` | `param` | - | Time integrator for roering_implicit: 0 = backward Euler, 1 = TR-BDF2 (2nd order). | TR-BDF2 is L-stable and time-accurate with embedded PI error control; use it for time-accurate transients rather than just the approach to steady state. |
+| `hillslope_implicit_error_tolerance_metres` | `float` | `0` | `param` | - | TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller (0 = auto = a small fraction of the relief). Only used when time_integrator = 1. | - |
+| `hillslope_implicit_dt_init` | `float` | `0` | `param` | - | Initial adaptive sub-step for roering_implicit (0 = auto = the LEM timestep). | - |
+| `hillslope_implicit_dt_min` | `float` | `0` | `param` | - | Floor on the adaptive sub-step for roering_implicit (0 = auto). | - |
+| `hillslope_implicit_dt_max` | `float` | `0` | `param` | - | Cap on the adaptive sub-step for roering_implicit (0 = the LEM timestep). | - |
+| `channel_mask_fname` | `string` | - | `param` | - | Optional raster (in read_path) whose cells &gt; 0.5 are fixed-elevation channel pixels for the hillslope Dirichlet set, overriding the drainage-area threshold. | Must match the DEM grid. Empty (default) = derive channels from incision_threshold_specific_area. Useful for prescribed-channel / hillslope-strip runs. |
+| `hold_channel_mask_fixed` | `bool` | `false` | `param` | - | Hold the channel_mask_fname pixels at fixed elevation through every step. | Requires channel_mask_fname. The masked pixels join the open-edge boundary pixels as fixed-elevation cells, so uplift does not lift the channel network away from the hillslopes relaxing toward it. Use for hillslopes-only runs on a frozen network; leave false for coupled runs where the channels must incise. |
+| `write_channel_mask_raster` | `bool` | `false` | `switch` | - | Write the hillslope Dirichlet channel mask (1 = channel). | Output file: &lt;write_fname&gt;_channel_mask.tif for the final topography, plus &lt;write_fname&gt;_model_iteration_&lt;N&gt;_channel_mask.tif at every output frame when frequency_of_output_writing &gt; 0 (the migrating network of an animation). The mask is the one the hillslope step would use: the channel_mask_fname raster when supplied, else the pixels whose D-infinity drainage area reaches incision_threshold_specific_area (or channel_mask_threshold_specific_area). Feed it back in as channel_mask_fname to freeze a fluvially-evolved network for a hillslopes-only run. |
+| `write_erosion_rate_raster` | `bool` | `false` | `switch` | - | Write the per-pixel erosion rate (m/yr, positive = erosion, uplift backed out). | Output file: &lt;write_fname&gt;_model_iteration_&lt;N&gt;_erosion_rate.tif at every output frame (needs frequency_of_output_writing &gt; 0), plus &lt;write_fname&gt;_erosion_rate.tif for the final step. This is the field in which a transient pulse of incision is visible: knickpoints appear as a band of high erosion rate migrating up the channel network. Deposition appears as negative values. |
+| `channel_mask_threshold_specific_area` | `float` | `0` | `param` | - | A/dx threshold in metres when divide_area_by_dx=true; map area A in m^2 when false. Defines the written channel mask (0 = use incision_threshold_specific_area). | Only affects write_channel_mask_raster; the model itself is unchanged. Lets a run erode fluvially everywhere (incision_threshold_specific_area: 0) while still writing a channel network defined at a positive threshold. The run header resolves the threshold into specific area, map area, and contributing pixels. |
+| `enable_uplift` | `bool` | `true` | `switch` | - | Apply uniform tectonic uplift. | - |
+
+### Process parameters
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `uplift_rate` | `float` | `1e-4` | `param` | - | Tectonic uplift rate (m/yr). | Applied uniformly to all valid pixels. Constant unless overridden by forcing_history_fname. |
+| `baselevel_fall_rate` | `float` | `0` | `param` | - | Rate at which base level falls (m/yr, positive = down). | The fixed-elevation boundary pixels are lowered at this rate instead of being held at their pre-step elevation, so a wave of incision propagates up the channel network. 0 (default) = static base level. Constant unless overridden by forcing_history_fname. |
+| `forcing_history_fname` | `string` | - | `param` | - | Optional CSV (in read_path) making uplift_rate and baselevel_fall_rate functions of model time. | Columns: time_yr, uplift_rate, baselevel_fall_rate (the latter two optional, default 0; any column order). Applied as a piecewise-constant step function of model time -- the row in force is the last one with time_yr &lt;= t -- so a pulse has sharp on/off edges. Overrides the constant uplift_rate and baselevel_fall_rate parameters for the whole run. Use it to impose a pulse of incision: a window of rapid base-level fall that sends knickpoints up the network, which the hillslopes then respond to. The forcing actually applied at each step is recorded in the uplift_rate / baselevel_fall_rate columns of &lt;write_fname&gt;_model_elevation_stats.csv. |
+| `erodibility` | `float` | `1e-3` | `param` | - | Stream-power erodibility K (m^(1-2m) yr^-1). | Scales fluvial incision rate. |
+| `m_exponent` | `float` | `0.45` | `param` | - | Drainage area exponent m in stream power law. | - |
+| `n_exponent` | `float` | `1.0` | `param` | - | Slope exponent n in stream power law. | n=1 uses closed-form solver; n!=1 uses Newton-Raphson. |
+| `hillslope_diffusivity` | `float` | `1e-3` | `param` | - | Hillslope diffusivity kappa (m^2/yr). | Used when enable_hillslope_transport is true. |
+| `critical_hillslope_slope` | `float` | `0.8` | `param` | - | Critical slope Sc (m/m) for nonlinear hillslope transport. | - |
+| `incision_threshold_specific_area` | `float` | `0` | `param` | - | A/dx channel threshold in metres when divide_area_by_dx=true; map area A in m^2 when false. 0 = no threshold. | With divide_area_by_dx true (the DEFAULT) the threshold is compared against specific catchment area a = A/dx, a length in metres; with it false, against map area A in m^2. Two consequences worth knowing before choosing a value: (1) under the default, threshold T selects cells with at least T/dx upstream pixels, so the same .param file carried from a 10 m DEM to a 1 m DEM asks for a ten times larger network in pixel terms; (2) a value picked as though it were m^2 is wrong by a factor of dx - on a 10 m grid '1000' means 100 pixels, not the 10 that 1000 m^2 would give. The run header prints the resolved threshold in all three forms. The specific-area convention follows Bonetti et al. (2020) and Litwin et al. (2022) and exists to remove grid dependence from the erosion law; only its documentation was ever wrong. Also defines channel pixels for hillslope coupling. |
+| `hillslope_channel_coupling` | `string` | `auto` | `param` | - | Which channel/hillslope coupling to run: auto, coupled, or channels_as_boundaries. | lsdtt3 contains BOTH standard couplings, and which one you get has until now been an unreported side effect of incision_threshold_specific_area. channels_as_boundaries makes channels FIXED (Dirichlet) nodes for the hillslope solve, so drainage density is an INPUT - the MuddPILE configuration, D8 routing. coupled gives no Dirichlet set: both processes act everywhere and valley spacing, hillslope length and drainage density EMERGE - the DonkModel configuration, which needs D-infinity because D8 on a diverging hillslope manufactures channel heads. These are different experiments, not different settings. 'auto' reproduces the historical inference exactly and only reports it, and is the default because parameter files across this project already depend on the implicit behaviour. NOTE roering_implicit cannot run the coupled regime: it needs a Dirichlet set, so the most robust hillslope solver is the one that cannot do the emergent-drainage-density experiment. |
+| `divide_area_by_dx` | `bool` | `true` | `param` | - | Divide drainage area by cell size to get specific area a = A/dx. | Applies to both fluvial incision and the hillslope coupling threshold, and changes the interpretation of incision_threshold_specific_area from map area in m^2 to specific area in metres. True is the Bonetti et al. (2020) / Litwin et al. (2022) convention (specific area, grid-independent); false is the Perron et al. (2008) total-area convention. The choice also changes the exponent in the landscape Peclet number, so it is not a free setting. |
+| `slope_clamp` | `float` | `1e-5` | `param` | - | Minimum slope used as Newton-Raphson fallback in stream power solver. | - |
+
+### Analytical steady-state
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_steady_state` | `bool` | `false` | `switch` | - | Compute analytical steady-state topography instead of running a time-stepping LEM. | Uses the flow algorithm selected by enable_d8_fluvial_erosion or enable_dinf_fluvial_erosion. Writes _steady_state_elevation.tif and returns. |
+| `steady_state_mode` | `string` | `K` | `param` | `run_steady_state` | Steady-state solver mode: K or relief. | K-mode: K (erodibility) is specified by the user. Relief-mode: target_relief is specified and K is back-calculated. |
+| `target_relief` | `float` | `1000` | `param` | `run_steady_state` | Target maximum relief (m) for relief-mode steady-state. | The highest point in the output raster will be baselevel_elevation + target_relief. |
+| `baselevel_elevation` | `float` | `0` | `param` | `run_steady_state` | Elevation (m) assigned to outlet nodes in the steady-state solution. | - |
+| `steady_state_n_cycles` | `int` | `1` | `param` | `run_steady_state` | Number of snapping cycles for steady-state computation. | Each cycle recomputes the flow graph from the previous cycle's elevation, allowing drainage divides to migrate one pixel per cycle. Iterating (typically 5-20 cycles) smooths the sharp elevation breaks across divides that appear in a single-pass steady-state snap. The DEM is pit-filled between cycles. |
+| `use_landscape_equilibration_cycle` | `bool` | `false` | `param` | `run_steady_state` | Route analytical steady-state through the landscape equilibration cycle module. | Default false keeps legacy steady-state behavior unchanged. |
+| `divide_merge_search_steps` | `int` | `5` | `param` | `use_landscape_equilibration_cycle` | Downstream search depth used by divide diagnostics in equilibration-cycle runs. | Must be &gt; 0 when use_landscape_equilibration_cycle is true. |
+| `divide_use_d8_diagonals` | `bool` | `true` | `param` | `use_landscape_equilibration_cycle` | Include diagonal neighbors in divide-step diagnostics (D8 adjacency). | Only used by equilibration-cycle diagnostics outputs/convergence checks. |
+| `steady_state_check_convergence` | `bool` | `false` | `param` | `use_landscape_equilibration_cycle` | Enable convergence-based early stopping in equilibration-cycle steady-state runs. | Default false keeps current behavior (always runs steady_state_n_cycles). |
+| `steady_state_tolerance_dz_over_relief` | `float` | `1e-3` | `param` | `steady_state_check_convergence` | Convergence tolerance for max\|dz\|/relief between equilibration cycles. | Used when steady_state_check_convergence is true and steady_state_tolerance_dz_metres is 0. |
+| `steady_state_tolerance_dz_metres` | `float` | `0` | `param` | `steady_state_check_convergence` | Absolute convergence tolerance for max\|dz\| (m) between equilibration cycles. | If &gt; 0 this overrides steady_state_tolerance_dz_over_relief. |
+| `steady_state_tolerance_receiver_fraction` | `float` | `1e-3` | `param` | `steady_state_check_convergence` | Convergence tolerance for fraction of pixels changing receiver each cycle. | Set &lt;= 0 to disable this convergence criterion. |
+| `divide_gradient_target` | `float` | `0` | `param` | `use_landscape_equilibration_cycle` | Optional divide-gradient acceptance target for equilibration diagnostics. | Reporting-only threshold: when &gt; 0, the final cycle reports whether divide gradient median &lt;= this target; it does not change stopping. |
+| `steady_state_convergence_patience` | `int` | `2` | `param` | `steady_state_check_convergence` | Required number of consecutive converged cycles before early stopping. | Only used when steady_state_check_convergence is true. |
+
+### Hillslope steady-state
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_hillslope_on_loaded_dem` | `bool` | `false` | `switch` | - | Solve hillslopes on the loaded DEM without re-snapping the fluvial field. | Requires read_initial_dem: true, run_hillslope_steady_state: true and incision_threshold_specific_area &gt; 0. Channels at or above the resolved threshold keep the elevations they arrived with and act as Dirichlet boundaries; only hillslope pixels are solved. Use this when the fluvial field is a TRANSIENT that must be preserved -- a step-change landscape carries a migrating knickpoint, and run_steady_state would snap the channels to a single ksn and erase it. Exits after writing &lt;write_fname&gt;_hillslope_on_loaded_dem. |
+| `run_hillslope_steady_state` | `bool` | `false` | `switch` | - | Solve for hillslope steady-state elevations after fluvial steady-state. | Solver is selected by hillslope_ss_model: linear, roering, or cidre. Requires run_steady_state: true and incision_threshold_specific_area &gt; 0. Channel pixels at or above the resolved threshold become Dirichlet BCs. |
+| `hillslope_ss_tolerance` | `float` | `1e-4` | `param` | `run_hillslope_steady_state` | Convergence criterion for hillslope steady-state: max\|delta_z\| over hillslope pixels. | - |
+| `hillslope_ss_max_iterations` | `int` | `10000` | `param` | `run_hillslope_steady_state` | Maximum SOR iterations for hillslope steady-state solver. | - |
+| `hillslope_ss_model` | `string` | `roering` | `param` | `run_hillslope_steady_state` | Hillslope steady-state solver: linear, roering, cidre, or critical_slope. | linear: Red-Black SOR solving D*grad^2z = -U (standard Laplacian diffusion). roering: Red-Black SOR solving D*grad*[gradz/(1-(\|gradz\|/Sc)^2)] = -U (nonlinear). Both SOR solvers converge in O(N) iterations with auto-tuned omega. critical_slope: imposes Sc by upslope integration from the channels -- not an elliptic solve, so it never finds a divide position, it inherits one; only available with run_hillslope_on_loaded_dem. cidre: pseudo-transient Cidre (Carretier 2016) iterated until steady state. Rebuilds the D-inf flow graph each iteration (Picard update of routing directions). The nonlinear flag for cidre is taken from enable_nonlinear_hillslopes. At steady state the nonlinear Cidre and Roering solvers produce the same elevation field (Carretier et al. 2016 Sec3.3). |
+| `hillslope_every_cycle` | `bool` | `true` | `param` | `run_hillslope_steady_state` | Solve the hillslopes on every equilibration cycle, not just the last one. | Only used when use_landscape_equilibration_cycle and run_hillslope_steady_state are both true. Solving every cycle costs one extra solve per cycle but is the only way to show the divide is stable under re-routing; false solves once on the delivered surface. |
+| `channel_hysteresis_factor` | `float` | `0.5` | `param` | `run_hillslope_steady_state` | Hysteresis on the channel (Dirichlet) set between equilibration cycles. | A pixel already flagged as channel stays channel until its drainage area falls below channel_hysteresis_factor * incision_threshold_specific_area. Stops the Dirichlet set flickering from cycle to cycle. 1.0 disables the hysteresis. |
+| `hillslope_sor_omega` | `float` | `0` | `param` | `run_hillslope_steady_state` | SOR relaxation factor omega for hillslope steady-state (0 = auto). | Values in (1, 2) accelerate convergence. 0 = auto-estimate from grid size (capped at 1.95). Typical manual values: 1.5 (safe) to 1.9 (fast). Reduce toward 1.3 if the nonlinear solver diverges. |
+
+### Hillshade output (steady-state runs only)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_hillshade_png` | `bool` | `false` | `switch` | - | Write a hillshade PNG of the final steady-state elevation. | Computes a standard Horn (1981) hillshade and saves it as a PNG alongside the elevation output. If run_hillslope_steady_state is also true, a second hillshade of the combined fluvial+hillslope surface is written. PNG is always used regardless of write_output_format. |
+| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_png` | Sun azimuth for hillshade, degrees clockwise from north. | 315 = northwest (ESRI/QGIS default). |
+| `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_png` | Sun altitude above the horizon for hillshade, degrees. | 45 is the standard default. |
+| `hillshade_z_factor` | `float` | `1` | `param` | `write_hillshade_png` | Vertical exaggeration factor for hillshade. | Use values &gt; 1 to emphasise relief on low-gradient landscapes. |
+
+### Timestepping
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `timestep` | `float` | `100` | `param` | - | Model timestep (yr). | Stability depends on erodibility, resolution and slope. |
+| `number_of_iterations` | `int` | `100` | `param` | - | Number of timesteps to run. | Ignored when stop_at_steady_state is true. |
+| `stop_at_steady_state` | `bool` | `false` | `param` | - | Stop when mean erosion rate is within 1% of uplift rate for 100 consecutive steps. | After detection, runs 20x that step count more before stopping. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `frequency_of_output_writing` | `int` | `0` | `param` | `write_elevation_stats_csv` | Write an intermediate raster every N iterations. 0 = write final only. | - |
+| `write_output_format` | `string` | `cog` | `io` | - | Output raster format: cog, gtiff, same_as_input, png. | png: 8-bit greyscale PNG for quick visualisation. Float32 elevation is normalised to 1-255 (nodata-&gt;0). A worldfile (.pgw) and GDAL PAM sidecar (.png.aux.xml) are written alongside for georeferencing. PNG cannot store float32 values or embed a CRS natively, so use cog/gtiff for analysis. |
+| `write_elevation_stats_csv` | `bool` | `true` | `switch` | - | Write per-timestep elevation statistics to a CSV file. | - |
+| `write_snap_convergence_csv` | `bool` | `true` | `switch` | - | Write per-cycle snap convergence diagnostics for the landscape equilibration path. | Only used when run_steady_state and use_landscape_equilibration_cycle are both true. |
+| `write_divide_step_raster` | `bool` | `false` | `switch` | - | Write a divide-step raster from the final equilibration-cycle steady-state DEM. | Only used when run_steady_state and use_landscape_equilibration_cycle are both true. |
+
+### Routing and threading
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Flow routing boundary conditions (north/east/south/west). | o=open, n=no-flux, p=periodic, b=forced outlet. |
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. 0 = all available. | - |
+
+<!-- END GENERATED CLI PARAMETERS -->

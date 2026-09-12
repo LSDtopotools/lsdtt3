@@ -9,7 +9,7 @@ self-contained directory of measurements you can use to see how fast and how mem
 
 If you want the reasoning behind the design — why particular comparisons are
 valid and others are not — see
-[Testing and benchmarking](testing_and_benchmarking.md). This page is just how
+[Testing and benchmarking](../developer_notes/testing_and_benchmarking.md). This page is just how
 to run it.
 
 It should be noted here that the comparisons are not all like-for-like. Details about different implemetations and choices made are available in the report produced by these benchmarking tests. 
@@ -322,7 +322,7 @@ Two practical consequences:
 
 The measured breakdown — which pass fails to scale and why, and a NUMA
 first-touch hypothesis for multi-socket machines — is in
-[Testing and benchmarking](testing_and_benchmarking.md).
+[Testing and benchmarking](../developer_notes/testing_and_benchmarking.md).
 
 ---
 
@@ -744,7 +744,7 @@ results, so you can check the ratio for yourself rather than guessing.
     **overrides the environment**. Only `n_threads: 0` falls through to
     `omp_get_max_threads()`, which is what actually reads `OMP_NUM_THREADS`.
 
-    `lsdtt-surface-metrics` defaults to `n_threads: 1`. Since the harness never
+    `lsdtt-surface-metrics` defaulted to `n_threads: 1` at the time. Since the harness never
     wrote `n_threads` into the generated `.param` file, every surface-metrics
     measurement ran **single-threaded at every thread count**, and the resulting
     scaling curves are flat by construction rather than by measurement.
@@ -757,6 +757,10 @@ results, so you can check the ratio for yourself rather than guessing.
     you have a campaign from before the fix, you do **not** need to repeat it:
     re-run `--suites surface` as above and substitute the new scaling table. The
     non-surface numbers in your existing `SUMMARY.md` are unaffected.
+
+Current `lsdtt-surface-metrics` and `lsdtt-spectral-analysis` defaults use
+`n_threads: 0` (all hardware threads). Benchmark and shared-host runs should
+still state an explicit physical-core limit rather than relying on that default.
 
 ---
 
@@ -971,4 +975,4 @@ Two things to state alongside any number you quote:
   figure without its terrain is not interpretable;
 - **that value correctness is not tested here.** This suite measures speed and
   memory. Correctness lives in the CTest suite; see
-  [Testing and benchmarking](testing_and_benchmarking.md).
+  [Testing and benchmarking](../developer_notes/testing_and_benchmarking.md).

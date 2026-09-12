@@ -595,12 +595,12 @@ tectonic basins — terrain with real depressions inside depressions.
 
 On a rough surface, **every innermost hollow is tiny**. Combining
 `depression_hierarchy` with `sink_leaves_only: true` and a
-`minimum_pixels_in_patch` threshold can therefore filter out *every* sink and
+`min_pixels_in_patch` threshold can therefore filter out *every* sink and
 return an empty result, with no error.
 
 This is not hypothetical. On an 18 m Greenland ablation-zone DEM (17.4 Mpx) with
 the configuration that reproduces the published work
-(`minimum_pixels_in_patch: 1000`):
+(`min_pixels_in_patch: 1000`):
 
 | detector | sinks found | runtime |
 |---|---|---|

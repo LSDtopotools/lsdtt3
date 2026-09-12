@@ -1,0 +1,20 @@
+# Smoke test for lsdtt-linear-stats.
+#
+# This CLI is a small orphan with no clearly established use, so this is a
+# deliberate floor: it runs, it reads a polyline layer, it samples the raster
+# along the lines, it writes a vector. No oracle.
+#
+# The lines are STRICTLY INTERIOR (ten cells in from every edge). A vertex lying
+# exactly on the raster boundary makes this CLI abort with an uncaught
+# std::out_of_range from row_from_y ("y lies outside raster extent") -- a core
+# dump, not a diagnostic. That is a real defect, recorded in the plan; keep the
+# fixture interior until it is fixed, or this test dies on a SIGABRT rather than
+# reporting anything useful.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ls
+
+vector_fname: __READ_PATH__/linear_stats_lines.fgb
+interpolating_step_length: 60.0
+write_vector_format: flatgeobuf

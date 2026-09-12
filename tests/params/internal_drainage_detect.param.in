@@ -4,10 +4,10 @@ write_path: __WRITE_PATH__
 write_fname: phase4_detect
 
 internal_drainage_stage: detect
-minimum_pixels_in_patch: 100
+min_pixels_in_patch: 100
 write_sink_candidate_points: true
 write_sink_candidate_csv: true
 write_sink_depression_polygons: true
 write_sink_depression_csv: true
-sink_vector_format: flatgeobuf
+write_vector_format: flatgeobuf
 write_output_format: gtiff

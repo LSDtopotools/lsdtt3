@@ -1,0 +1,12 @@
+# Phase 4 compatibility characterization for the legacy source threshold key.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: cna_legacy
+
+n_threads: 1
+raster_is_filled: false
+source_pixels_threshold: 3
+
+write_tokunaga_channel_data: true
+calculate_spatial_index: false

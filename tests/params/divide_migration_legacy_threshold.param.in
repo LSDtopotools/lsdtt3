@@ -1,0 +1,9 @@
+# Compatibility coverage for the legacy channel-initiation key.
+read_path: __READ_PATH__
+read_fname: divmig_valleys.tif
+write_path: __WRITE_PATH__
+write_fname: divmig_legacy
+basin_outlet_file: divmig_outlets.fgb
+basin_outlet_snapping_method: none
+source_pixels_threshold: 40
+m_over_n: 0.45

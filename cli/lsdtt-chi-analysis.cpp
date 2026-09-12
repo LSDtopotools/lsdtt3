@@ -45,6 +45,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
@@ -58,6 +59,9 @@
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/utils/lsdtt_numeric_utils.hpp"
+#include "../src/cpu/lsdtt_outlet_resolution_cpu.hpp"
 
 static const std::string k_version  = "0.3.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -82,15 +86,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-static std::string to_lower_copy(std::string s)
-{
-    for (char& ch : s)
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return s;
-}
 
 static std::string mn_suffix(double mn)
 {
@@ -114,10 +109,7 @@ static std::vector<double> build_mn_vector(double mn_min, double mn_max, double 
     if (mn_max < mn_min)
         throw std::invalid_argument("mn_max must be >= mn_min.");
 
-    std::vector<double> tested;
-    for (double mn = mn_min; mn <= mn_max + 0.5 * mn_step; mn += mn_step)
-        tested.push_back(mn);
-    return tested;
+    return lsdtt::inclusive_numeric_range(mn_min, mn_max, mn_step);
 }
 
 static std::vector<double> parse_mn_override(
@@ -162,212 +154,6 @@ static std::int32_t count_main_stem_nodes(
     return count;
 }
 
-// -----------------------------------------------------------------------------
-// resolve_outlet_flats
-//
-// Returns a vector of flat indices representing basin outlets, either loaded
-// from a file (and snapped) or auto-detected as the largest basin.
-// -----------------------------------------------------------------------------
-static std::vector<std::int64_t> resolve_outlet_flats(
-    const lsdtt::lsdtt_param_parser& pp,
-    const lsdtt::lsdtt_raster_cpu& dem,
-    const lsdtt::lsdtt_flow_base& flow,
-    const std::string& outlet_file,
-    const std::string& snapping_method,
-    int snap_threshold_pixels,
-    int min_search_radius_pixels,
-    int max_search_radius_pixels,
-    int source_pixels_threshold,
-    int n_pixels_move_outlet_upstream)
-{
-    if (outlet_file == "NULL" || outlet_file.empty())
-    {
-        std::vector<std::int64_t> all_outlets =
-            lsdtt::get_all_basin_outlet_flats(flow, source_pixels_threshold);
-        std::cout << "No outlet file supplied; seeding chi extraction from all "
-                  << all_outlets.size() << " basin outlet(s) above the source "
-                     "threshold.\n";
-        if (all_outlets.empty())
-            throw std::runtime_error(
-                "No basin outlets found in the flow object.");
-
-        // Interior (non-edge) outlets drain to nodata (e.g. an island coast);
-        // lift them off the nodata fringe by walking up the main stem. Re-check
-        // the source threshold afterwards and de-duplicate convergent outlets.
-        std::vector<std::int64_t> resolved;
-        resolved.reserve(all_outlets.size());
-        int n_moved = 0;
-        for (const std::int64_t o : all_outlets)
-        {
-            std::int64_t outlet = o;
-            if (n_pixels_move_outlet_upstream > 0 &&
-                !lsdtt::is_flat_on_dem_edge(flow, o))
-            {
-                outlet = lsdtt::move_outlet_upstream(
-                    flow, o, n_pixels_move_outlet_upstream);
-                if (outlet != o)
-                    ++n_moved;
-            }
-            if (flow.s_vector_size_unchecked(outlet) <
-                static_cast<std::uint64_t>(source_pixels_threshold))
-                continue;  // dropped below threshold after the move
-            resolved.push_back(outlet);
-        }
-
-        std::sort(resolved.begin(), resolved.end());
-        resolved.erase(std::unique(resolved.begin(), resolved.end()),
-                       resolved.end());
-
-        std::cout << "  Moved " << n_moved << " interior outlet(s) "
-                  << n_pixels_move_outlet_upstream << " pixel(s) upstream; "
-                  << resolved.size() << " unique outlet(s) remain. The largest "
-                     "complete basins are selected via n_largest_basins.\n";
-        if (resolved.empty())
-            throw std::runtime_error(
-                "No basin outlets remain after the upstream move / threshold "
-                "filter.");
-        return resolved;
-    }
-
-    const std::string outlet_file_path = pp.add_read_path_if_needed(outlet_file);
-    std::cout << "Reading outlet file: " << outlet_file_path << "\n";
-
-    {
-        const auto& p = outlet_file_path;
-        const bool looks_like_csv =
-            p.size() >= 4 &&
-            to_lower_copy(p.substr(p.size() - 4)) == ".csv";
-        if (looks_like_csv)
-            std::cout << "Outlet file is CSV: latitude and longitude columns "
-                         "(EPSG:4326) will be transformed to raster CRS.\n";
-        else
-            std::cout << "Outlet file is a vector layer: coordinates will be "
-                         "transformed from layer CRS to raster CRS.\n";
-    }
-
-    std::vector<lsdtt::lsdtt_input_point> requested_outlets =
-        lsdtt::load_points_in_raster_crs(outlet_file_path, dem.get_meta());
-
-    if (requested_outlets.empty())
-        throw std::runtime_error("Outlet file contained no usable points.");
-
-    {
-        int n_transform_failed = 0, n_unsupported_geom = 0;
-        int n_outside = 0, n_empty_geom = 0, n_missing_crs = 0;
-        for (const auto& pt : requested_outlets)
-        {
-            switch (pt.status)
-            {
-                case lsdtt::lsdtt_point_input_status::coordinate_transform_failed:
-                    ++n_transform_failed; break;
-                case lsdtt::lsdtt_point_input_status::unsupported_geometry_type:
-                    ++n_unsupported_geom; break;
-                case lsdtt::lsdtt_point_input_status::outside_raster_extent:
-                    ++n_outside; break;
-                case lsdtt::lsdtt_point_input_status::empty_geometry:
-                    ++n_empty_geom; break;
-                case lsdtt::lsdtt_point_input_status::missing_source_crs:
-                    ++n_missing_crs; break;
-                default: break;
-            }
-        }
-        if (n_transform_failed > 0)
-        {
-            std::cerr << "Warning: " << n_transform_failed
-                      << " point(s) failed coordinate transformation.\n";
-            const auto& p = outlet_file_path;
-            if (p.size() >= 4 &&
-                to_lower_copy(p.substr(p.size() - 4)) == ".csv")
-                std::cerr << "  -> CSV files must have columns named "
-                             "'latitude' and 'longitude'.\n";
-        }
-        if (n_unsupported_geom > 0)
-            std::cerr << "Warning: " << n_unsupported_geom
-                      << " feature(s) skipped - not point geometry.\n";
-        if (n_missing_crs > 0)
-            std::cerr << "Warning: " << n_missing_crs
-                      << " feature(s) had no source CRS.\n";
-        if (n_empty_geom > 0)
-            std::cerr << "Warning: " << n_empty_geom
-                      << " feature(s) had empty geometry and were skipped.\n";
-        if (n_outside > 0)
-            std::cout << "Note: " << n_outside
-                      << " point(s) fall outside the raster extent "
-                         "and will be skipped.\n";
-    }
-
-    lsdtt::lsdtt_square_snap_options square_snap_options;
-    square_snap_options.contributing_pixels_threshold =
-        static_cast<std::uint64_t>(snap_threshold_pixels);
-    square_snap_options.min_search_radius_pixels = min_search_radius_pixels;
-    square_snap_options.max_search_radius_pixels = max_search_radius_pixels;
-
-    lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
-    downstream_snap_options.contributing_pixels_threshold =
-        static_cast<std::uint64_t>(snap_threshold_pixels);
-
-    std::vector<std::int64_t> outlet_flats;
-    outlet_flats.reserve(requested_outlets.size());
-
-    for (const auto& pt : requested_outlets)
-    {
-        if (pt.status != lsdtt::lsdtt_point_input_status::success)
-        {
-            std::cerr << "Warning: outlet point " << pt.point_id
-                      << " did not map to a valid raster cell; skipping.\n";
-            continue;
-        }
-
-        int row = pt.row;
-        int col = pt.col;
-        std::int64_t flat = pt.flat;
-
-        if (snapping_method == "expanding_square")
-        {
-            const lsdtt::lsdtt_snap_result snapped =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                    flow, row, col, square_snap_options);
-
-            if (snapped.status != lsdtt::lsdtt_snap_status::success)
-            {
-                std::cerr << "Warning: outlet point " << pt.point_id
-                          << " could not be snapped with expanding_square; skipping.\n";
-                continue;
-            }
-            flat = snapped.snapped_flat;
-        }
-        else if (snapping_method == "downstream")
-        {
-            const lsdtt::lsdtt_snap_result snapped =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                    flow, row, col, downstream_snap_options);
-
-            if (snapped.status != lsdtt::lsdtt_snap_status::success)
-            {
-                std::cerr << "Warning: outlet point " << pt.point_id
-                          << " could not be snapped downstream; skipping.\n";
-                continue;
-            }
-            flat = snapped.snapped_flat;
-        }
-        else
-        {
-            if (!flow.is_valid_cell(flat))
-            {
-                std::cerr << "Warning: outlet point " << pt.point_id
-                          << " maps to invalid flow cell; skipping.\n";
-                continue;
-            }
-        }
-
-        outlet_flats.push_back(flat);
-    }
-
-    if (outlet_flats.empty())
-        throw std::runtime_error("No valid outlet flats were produced from the CSV.");
-
-    return outlet_flats;
-}
 
 // =============================================================================
 // main
@@ -404,11 +190,7 @@ int main(int argc, char* argv[])
         "Threading / routing", "param", ""};
 
     // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled.",
-        "If false (default), fill_pits() is called before routing.",
-        "DEM preparation", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -417,8 +199,8 @@ int main(int argc, char* argv[])
         "DEM preparation", "param", ""};
 
     // --- Basin outlet input ---
-    string_default_map["basin_outlet_file"] = "NULL";
-    help_map["basin_outlet_file"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "File of basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "If NULL (default), the largest basin outlet in the DEM is used. "
         "CSV files must have 'latitude' and 'longitude' columns (EPSG:4326).",
@@ -436,21 +218,21 @@ int main(int argc, char* argv[])
         "Total upslope contributing pixels required at the snapped cell.",
         "Basin outlet input", "param", ""};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square.",
         "Basin outlet input", "param", ""};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square.",
         "Basin outlet input", "param", ""};
 
     // --- Diagnostic data maps ---
-    bool_default_map["print_chi_data_maps"] = false;
-    help_map["print_chi_data_maps"] = {"bool","false",
+    bool_default_map["write_chi_data_maps"] = false;
+    help_map["write_chi_data_maps"] = {"bool","false",
         "Extract chi networks and print per-node data maps for diagnostic purposes.",
         "Writes nodes (chi, drainage_area, flow_distance, elevation, source_key, "
         "basin_key), valid basin outlets, source-head points, and basin polygons. "
@@ -458,8 +240,8 @@ int main(int argc, char* argv[])
         "Runs before fit_chi_networks so extraction can be verified independently.",
         "Diagnostic data maps", "switch", ""};
 
-    string_default_map["chi_data_maps_output_format"] = "csv";
-    help_map["chi_data_maps_output_format"] = {"string","csv",
+    string_default_map["chi_data_maps_write_vector_format"] = "csv";
+    help_map["chi_data_maps_write_vector_format"] = {"string","csv",
         "Output format for chi data map point files.",
         "csv: latitude/longitude in EPSG:4326 (requires raster CRS). "
         "gpkg: GeoPackage in raster CRS. flatgeobuf/fgb: FlatGeobuf in raster CRS. "
@@ -475,11 +257,8 @@ int main(int argc, char* argv[])
         "Keys match those in the chi data map point output.",
         "Diagnostic data maps", "switch", ""};
 
-    string_default_map["chi_data_map_lines_output_format"] = "flatgeobuf";
-    help_map["chi_data_map_lines_output_format"] = {"string","flatgeobuf",
-        "Output format for chi data map polylines.",
-        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines.",
-        "Diagnostic data maps", "param", ""};
+    string_default_map["legacy_chi_data_map_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Chi coordinate raster ---
     bool_default_map["write_chi_coordinate_raster"] = false;
@@ -489,8 +268,8 @@ int main(int argc, char* argv[])
         "the outlet) across the whole upslope domain, so hillslope pixels get a "
         "chi value as well as channel pixels: this is the chi map used for "
         "divide-migration and cross-divide chi-contrast analysis. Basins are "
-        "selected exactly as for the other chi outputs (source_pixels_threshold, "
-        "then minimum_channel_pixels, then n_largest_basins), except that the "
+        "selected exactly as for the other chi outputs (threshold_contributing_pixels, "
+        "then min_channel_pixels, then n_largest_basins), except that the "
         "completeness filter always runs: basins whose upslope area touches "
         "nodata or the DEM edge are never written, and every pixel outside the "
         "retained basins is nodata. Uses one m/n value per run (the first value "
@@ -499,14 +278,10 @@ int main(int argc, char* argv[])
         "Chi coordinate raster", "switch", ""};
 
     // --- Source extraction ---
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define channel heads.",
-        "Chi is computed only on pixels upstream of channel heads.",
-        "Source extraction", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
-    int_default_map["minimum_channel_pixels"] = 20;
-    help_map["minimum_channel_pixels"] = {"int","20",
+    int_default_map["min_channel_pixels"] = 20;
+    help_map["min_channel_pixels"] = {"int","20",
         "Reject basins whose extracted channel has fewer than this many pixels.",
         "After chi extraction, any basin with fewer than this number of chi "
         "network nodes (channel pixels) is discarded before fitting, disorder, "
@@ -517,7 +292,7 @@ int main(int argc, char* argv[])
     int_default_map["n_pixels_move_outlet_upstream"] = 10;
     help_map["n_pixels_move_outlet_upstream"] = {"int","10",
         "Move interior (non-edge) auto-detected outlets this many pixels upstream.",
-        "When no basin_outlet_file is supplied, outlets are auto-detected. An "
+        "When no basin_outlet_fname is supplied, outlets are auto-detected. An "
         "outlet not on the DEM bounding-box edge drains to interior nodata (e.g. "
         "an island coast where the sea is masked); it is walked this many pixels "
         "up the main stem so the resulting basin clears the coastal nodata fringe "
@@ -527,7 +302,7 @@ int main(int argc, char* argv[])
     int_default_map["n_largest_basins"] = 5;
     help_map["n_largest_basins"] = {"int","5",
         "Keep only the N largest complete basins for all chi outputs.",
-        "After the minimum_channel_pixels filter, incomplete basins (upslope "
+        "After the min_channel_pixels filter, incomplete basins (upslope "
         "area touches the DEM edge / nodata) are dropped and only the N largest "
         "remaining complete basins, ranked by total basin pixels (drainage area), "
         "are analysed. This applies consistently to data maps, fitting, disorder, "
@@ -539,7 +314,7 @@ int main(int argc, char* argv[])
     bool_default_map["fit_chi_networks"] = false;
     help_map["fit_chi_networks"] = {"bool","false",
         "Run the piecewise-linear chi-network fitting and disorder sweep.",
-        "When false (default) only print_chi_data_maps (if enabled) and the "
+        "When false (default) only write_chi_data_maps (if enabled) and the "
         "inversion (if enabled) run. Set to true for the full m/n sweep.",
         "Chi extraction / fitting", "switch", ""};
 
@@ -581,8 +356,8 @@ int main(int argc, char* argv[])
         "overrides mn_min/mn_max/mn_step for chi data maps, fitting, and inversion.",
         "Chi extraction / fitting", "param", "fit_chi_networks"};
 
-    float_default_map["fit_critical_divergence_m"] = 5.0f;
-    help_map["fit_critical_divergence_m"] = {"float","5.0",
+    float_default_map["fit_critical_divergence_metres"] = 5.0f;
+    help_map["fit_critical_divergence_metres"] = {"float","5.0",
         "Critical elevation divergence (m) used to split chi-elevation branches.", "",
         "Chi extraction / fitting", "param", "fit_chi_networks"};
 
@@ -690,17 +465,15 @@ int main(int argc, char* argv[])
         "n_nodes. Written once per m/n value tested.",
         "Outputs", "switch", ""};
 
-    string_default_map["chi_fit_segment_lines_output_format"] = "flatgeobuf";
-    help_map["chi_fit_segment_lines_output_format"] = {"string","flatgeobuf",
-        "Output format for fitted chi segment polylines.",
-        "Allowed values: flatgeobuf, fgb, gpkg. CSV is not supported for lines.",
-        "Outputs", "param", ""};
+    string_default_map["legacy_chi_fit_segment_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     bool_default_map["calculate_spatial_index"] = false;
     help_map["calculate_spatial_index"] = {"bool","false",
         "Calculate a spatial index for vector outputs.",
-        "A spatial index speeds up GIS spatial queries but requires buffering "
-        "all features in memory before writing. Disable for large datasets.",
+        "Unlike the smaller vector-export CLIs, chi analysis leaves this off by "
+        "default because its per-m/n outputs can be large. Enabling it speeds up "
+        "later GIS queries but buffers each layer in memory before writing.",
         "Outputs", "io", ""};
 
     bool_default_map["write_disorder_sample_tables"] = false;
@@ -713,6 +486,7 @@ int main(int argc, char* argv[])
         "Raster output format for the chi coordinate and inversion rasters.",
         "Allowed values: cog, gtiff, same_as_input.",
         "Outputs", "io", ""};
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
 
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
@@ -738,6 +512,20 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"print_chi_data_maps", "write_chi_data_maps"},
+        {"basin_outlet_file", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"minimum_channel_pixels", "min_channel_pixels"},
+        {"fit_critical_divergence_m", "fit_critical_divergence_metres"},
+        {"chi_data_maps_output_format", "chi_data_maps_write_vector_format"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"chi_data_map_lines_output_format",
+         {"legacy_chi_data_map_lines_write_vector_format", "write_vector_format"}},
+        {"chi_fit_segment_lines_output_format",
+         {"legacy_chi_fit_segment_lines_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
 
@@ -747,10 +535,10 @@ int main(int argc, char* argv[])
     auto sf  = pp.get_string_parameters();
 
     const std::string snapping_method =
-        to_lower_copy(sf["basin_outlet_snapping_method"]);
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
     const std::size_t minimum_channel_pixels =
-        ifs["minimum_channel_pixels"] > 0
-            ? static_cast<std::size_t>(ifs["minimum_channel_pixels"])
+        ifs["min_channel_pixels"] > 0
+            ? static_cast<std::size_t>(ifs["min_channel_pixels"])
             : std::size_t{0};
     const std::size_t n_largest_basins =
         ifs["n_largest_basins"] > 0
@@ -759,16 +547,20 @@ int main(int argc, char* argv[])
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
     const lsdtt::vector_output_format chi_dm_lines_fmt =
-        lsdtt::resolve_vector_output_format(sf["chi_data_map_lines_output_format"]);
+        lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_chi_data_map_lines_write_vector_format"],
+            sf["write_vector_format"]));
     const lsdtt::vector_output_format chi_fit_lines_fmt =
-        lsdtt::resolve_vector_output_format(sf["chi_fit_segment_lines_output_format"]);
+        lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_chi_fit_segment_lines_write_vector_format"],
+            sf["write_vector_format"]));
 
     // -------------------------------------------------------------------------
     // Validate params
     // -------------------------------------------------------------------------
-    if (ifs["source_pixels_threshold"] <= 0)
+    if (ifs["threshold_contributing_pixels"] <= 0)
     {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -913,16 +705,95 @@ int main(int argc, char* argv[])
     std::vector<std::int64_t> outlet_flats;
     try
     {
-        outlet_flats = resolve_outlet_flats(
-            pp, dem, *flow,
-            sf["basin_outlet_file"],
-            snapping_method,
-            ifs["basin_outlet_contributing_pixels_threshold"],
-            ifs["basin_outlet_min_search_radius_pixels"],
-            ifs["basin_outlet_max_search_radius_pixels"],
-            ifs["source_pixels_threshold"],
-            ifs["n_pixels_move_outlet_upstream"]
-        );
+        // Outlet resolution lives in lsdtt_outlet_resolution_cpu and does not
+        // print; the reporting below is this CLI's.
+        lsdtt::outlet_resolution_options ores;
+        ores.snapping_method = snapping_method;
+        ores.square_snap.contributing_pixels_threshold =
+            static_cast<std::uint64_t>(
+                ifs["basin_outlet_contributing_pixels_threshold"]);
+        ores.square_snap.min_search_radius_pixels =
+            ifs["basin_outlet_snap_min_search_radius_pixels"];
+        ores.square_snap.max_search_radius_pixels =
+            ifs["basin_outlet_snap_max_search_radius_pixels"];
+        ores.downstream_snap.contributing_pixels_threshold =
+            static_cast<std::uint64_t>(
+                ifs["basin_outlet_contributing_pixels_threshold"]);
+        ores.source_pixels_threshold       = ifs["threshold_contributing_pixels"];
+        ores.n_pixels_move_outlet_upstream = ifs["n_pixels_move_outlet_upstream"];
+
+        lsdtt::outlet_resolution_report orep;
+        const std::string outlet_file = sf["basin_outlet_fname"];
+
+        if (outlet_file == "NULL" || outlet_file.empty())
+        {
+            outlet_flats = lsdtt::resolve_outlet_flats_auto(*flow, ores, orep);
+
+            std::cout << "No outlet file supplied; seeding chi extraction from all "
+                      << orep.n_detected << " basin outlet(s) above the source "
+                         "threshold.\n";
+            std::cout << "  Moved " << orep.n_moved_upstream
+                      << " interior outlet(s) "
+                      << ifs["n_pixels_move_outlet_upstream"]
+                      << " pixel(s) upstream; " << outlet_flats.size()
+                      << " unique outlet(s) remain. The largest complete basins "
+                         "are selected via n_largest_basins.\n";
+        }
+        else
+        {
+            const std::string outlet_file_path =
+                pp.add_read_path_if_needed(outlet_file);
+            std::cout << "Reading outlet file: " << outlet_file_path << "\n";
+
+            const bool looks_like_csv =
+                outlet_file_path.size() >= 4 &&
+                lsdtt::to_lower_ascii(
+                    outlet_file_path.substr(outlet_file_path.size() - 4)) == ".csv";
+            if (looks_like_csv)
+                std::cout << "Outlet file is CSV: latitude and longitude columns "
+                             "(EPSG:4326) will be transformed to raster CRS.\n";
+            else
+                std::cout << "Outlet file is a vector layer: coordinates will be "
+                             "transformed from layer CRS to raster CRS.\n";
+
+            outlet_flats = lsdtt::resolve_outlet_flats_from_file(
+                dem, *flow, outlet_file_path, ores, orep);
+
+            const auto& s = orep.input_summary;
+            if (s.transform_failed > 0)
+            {
+                std::cerr << "Warning: " << s.transform_failed
+                          << " point(s) failed coordinate transformation.\n";
+                if (looks_like_csv)
+                    std::cerr << "  -> CSV files must have columns named "
+                                 "'latitude' and 'longitude'.\n";
+            }
+            if (s.unsupported_geom > 0)
+                std::cerr << "Warning: " << s.unsupported_geom
+                          << " feature(s) skipped - not point geometry.\n";
+            if (s.missing_source_crs > 0)
+                std::cerr << "Warning: " << s.missing_source_crs
+                          << " feature(s) had no source CRS.\n";
+            if (s.empty_geometry > 0)
+                std::cerr << "Warning: " << s.empty_geometry
+                          << " feature(s) had empty geometry and were skipped.\n";
+            if (s.outside_raster > 0)
+                std::cout << "Note: " << s.outside_raster
+                          << " point(s) fall outside the raster extent "
+                             "and will be skipped.\n";
+
+            for (const std::int32_t pid : orep.unsnappable_point_ids)
+            {
+                std::cerr << "Warning: outlet point " << pid;
+                if (snapping_method == "expanding_square")
+                    std::cerr << " could not be snapped with expanding_square";
+                else if (snapping_method == "downstream")
+                    std::cerr << " could not be snapped downstream";
+                else
+                    std::cerr << " did not map to a valid raster cell";
+                std::cerr << "; skipping.\n";
+            }
+        }
     }
     catch (const std::exception& e)
     {
@@ -944,7 +815,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Chi data maps (diagnostic - verify chi extraction before fitting)
     // -------------------------------------------------------------------------
-    if (bf["print_chi_data_maps"])
+    if (bf["write_chi_data_maps"])
     {
         std::cout << "\n--- Chi data maps ---\n";
 
@@ -956,7 +827,7 @@ int main(int argc, char* argv[])
         }
 
         const lsdtt::point_output_format dm_fmt =
-            lsdtt::resolve_point_output_format(sf["chi_data_maps_output_format"]);
+            lsdtt::resolve_point_output_format(sf["chi_data_maps_write_vector_format"]);
 
         lsdtt::lsdtt_chi_options chi_opts_dm;
         chi_opts_dm.m_over_n = tested_mn.front();
@@ -970,7 +841,7 @@ int main(int argc, char* argv[])
         try
         {
             chi_dm = lsdtt::get_chi_from_outlets_zero_base_threshold(
-                *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts_dm);
+                *flow, outlet_flats, ifs["threshold_contributing_pixels"], chi_opts_dm);
         }
         catch (const std::exception& e)
         {
@@ -1069,7 +940,7 @@ int main(int argc, char* argv[])
 
             lsdtt::lsdtt_chi_collection_result chi_networks =
                 lsdtt::get_chi_from_outlets_zero_base_threshold(
-                    *flow, outlet_flats, ifs["source_pixels_threshold"],
+                    *flow, outlet_flats, ifs["threshold_contributing_pixels"],
                     chi_opts_raster);
 
             if (minimum_channel_pixels > 1)
@@ -1142,7 +1013,7 @@ int main(int argc, char* argv[])
 
             lsdtt::lsdtt_chi_collection_result chi_networks =
                 lsdtt::get_chi_from_outlets_zero_base_threshold(
-                    *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
+                    *flow, outlet_flats, ifs["threshold_contributing_pixels"], chi_opts);
 
             if (minimum_channel_pixels > 1)
             {
@@ -1204,7 +1075,7 @@ int main(int argc, char* argv[])
                 std::cout.flush();
 
                 chi_networks = lsdtt::get_chi_from_outlets_zero_base_threshold(
-                    *flow, outlet_flats, ifs["source_pixels_threshold"], chi_opts);
+                    *flow, outlet_flats, ifs["threshold_contributing_pixels"], chi_opts);
 
                 if (minimum_channel_pixels > 1)
                 {
@@ -1237,7 +1108,7 @@ int main(int argc, char* argv[])
                 std::cout.flush();
 
                 lsdtt::lsdtt_chi_network_fit_options fit_opts;
-                fit_opts.critical_divergence_m = ff["fit_critical_divergence_m"];
+                fit_opts.critical_divergence_m = ff["fit_critical_divergence_metres"];
                 fit_opts.mainstem_choice =
                     lsdtt::lsdtt_chi_mainstem_choice::max_flow_length;
 

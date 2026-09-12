@@ -22,7 +22,7 @@ fetch:
 
 extract:
   minimum_basin_count: 4
-  source_pixels_threshold: 1000
+  threshold_contributing_pixels: 1000
   max_search_stream_order: 20
 
 analysis:
@@ -30,11 +30,11 @@ analysis:
 
 check_basins:
   outlets_file: "../tests/data/cosmo_tiny_points.csv"
-  source_pixels_threshold: 20
+  threshold_contributing_pixels: 20
   basin_outlet_snapping_method: "downstream"
   basin_outlet_contributing_pixels_threshold: 20
-  basin_outlet_min_search_radius_pixels: 0
-  basin_outlet_max_search_radius_pixels: 25
+  basin_outlet_snap_min_search_radius_pixels: 0
+  basin_outlet_snap_max_search_radius_pixels: 25
   write_basin_outlet_points: true
 
 cosmo_landslides:
@@ -93,7 +93,7 @@ cosmo_landslides_series:
   sample_points_count: 5
   n_realisations: 40
   ensemble_seed_stride: 7919
-  sample_snap_radius_pixels: 120
+  sample_snap_max_search_radius_pixels: 120
 
 cosmo_landslides_diagnostics:
   larsen_alpha: 0.2344
@@ -113,7 +113,7 @@ synthetic_network:
 cosmo_step_change:
   step_change_uplift_old_m_yr: 0.0001
   step_change_uplift_new_m_yr: 0.0005
-  step_change_target_relief_m: 400.0
+  step_change_target_relief_metres: 400.0
   step_change_age_yr: 1000000.0
   step_change_n: 1.0
   step_change_channel_pixels: 20
@@ -130,14 +130,14 @@ cosmo_step_change:
 # ---------------------------------------------------------------------------
 cosmo_transient_landslides:
   # The directory holding the source DEM. It is used verbatim as read_path for
-  # the prep stage, so it MUST also contain crn_nc_file and basin_outlet_csv:
-  # crn_nc_file is resolved as read_path + crn_nc_file, never relative to the
+  # the prep stage, so it MUST also contain crn_nc_fname and basin_outlet_fname:
+  # crn_nc_fname is resolved as read_path + crn_nc_fname, never relative to the
   # working directory, and without it atmosphere: ERA40 silently degrades to
   # standard.
   source_dir: "/mnt/c/LSDTopoTools/data/cosmo_transient_test/lsdtt3_version"
   source_dem_fname: "Mega_clp.bil"
-  crn_nc_file: "crn_parameters.nc"
-  basin_outlet_csv: "basin_outlet.csv"
+  crn_nc_fname: "crn_parameters.nc"
+  basin_outlet_fname: "basin_outlet.csv"
 
   # --- ensemble axes -------------------------------------------------------
   # The full phase-5 ensemble is 10 seeds x 2 magnitudes x 4 couplings,
@@ -225,11 +225,11 @@ cosmo_transient_landslides:
     # NOT interchangeable with crn.rock_density_kg_m3.
     scar_density_kg_m3: 1500
     # Event magnitude as years of post-step erosion (plan section 5, "low"):
-    #   event_volume_per_area_m = uplift_new * recurrence * rho_rock/rho_scar
+    #   event_volume_per_area_metres = uplift_new * recurrence * rho_rock/rho_scar
     # which gives 0.17667 m at 5x and 0.35333 m at 10x, matching the hand runs.
-    # Set event_volume_per_area_m to pin the value directly instead.
+    # Set event_volume_per_area_metres to pin the value directly instead.
     recurrence_yr: 200
-    event_volume_per_area_m: null
+    event_volume_per_area_metres: null
 
   coupling:
     flush_time_threshold_yr: 100
@@ -240,9 +240,9 @@ cosmo_transient_landslides:
     min_slope_for_fill: 0.0001
     boundary_conditions: "oooo"
     threshold_contributing_pixels: 1000
-    snap_search_radius_pixels: 8
+    sample_snap_max_search_radius_pixels: 8
   sampling:
-    source_pixels_threshold: 2000
+    threshold_contributing_pixels: 2000
     sample_points_stride: 20
 
   # --- statistics and validation -------------------------------------------

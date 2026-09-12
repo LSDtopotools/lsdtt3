@@ -60,6 +60,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "../core/lsdtt_types.hpp"
@@ -127,6 +128,28 @@ inline double polygon_perimeter(const std::vector<lsdtt_xy>& ring)
 }
 
 // -----------------------------------------------------------------------------
+// planar_distance
+//
+// Euclidean distance between two planar points. The coordinates are assumed to
+// be PROJECTED (metres); this is not a great-circle distance and must not be
+// handed lat/lon.
+//
+// Deliberately plain sqrt(dx*dx + dy*dy) rather than std::hypot: that is what
+// the three copies this replaces all did (src/cpu/lsdtt_strahler_tokunaga_
+// analysis_cpu.cpp, src/cpu/lsdtt_channel_network_analysis_cpu.cpp and
+// cli/lsdtt-linear-stats.cpp), and it matches the inline distance arithmetic in
+// polyline_length / polygon_perimeter above, so unifying on it is bit-for-bit
+// behaviour-preserving. sqrt overflows to inf for separations above ~1.3e154,
+// which no projected coordinate pair reaches.
+// -----------------------------------------------------------------------------
+inline double planar_distance(const lsdtt_xy& a, const lsdtt_xy& b)
+{
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// -----------------------------------------------------------------------------
 // polyline_length
 //
 // Arc length of an OPEN polyline (no implied closing edge - unlike
@@ -145,6 +168,46 @@ inline double polyline_length(const std::vector<lsdtt_xy>& points)
         len += std::sqrt(dx * dx + dy * dy);
     }
     return len;
+}
+
+// Point at the requested arc distance along an open polyline. Zero-length
+// segments are skipped. Distance zero returns the first vertex and a distance
+// equal to the total length returns the last vertex.
+inline lsdtt_xy point_at_distance_along_polyline(
+    const std::vector<lsdtt_xy>& points,
+    double distance)
+{
+    if (points.size() < 2)
+        throw std::invalid_argument(
+            "point_at_distance_along_polyline: polyline needs at least two points");
+    if (!std::isfinite(distance) || distance < 0.0)
+        throw std::invalid_argument(
+            "point_at_distance_along_polyline: distance must be finite and non-negative");
+
+    const double total_length = polyline_length(points);
+    if (distance > total_length)
+        throw std::out_of_range(
+            "point_at_distance_along_polyline: distance exceeds polyline length");
+    if (distance == 0.0) return points.front();
+    if (distance == total_length) return points.back();
+
+    double traversed = 0.0;
+    for (std::size_t i = 1; i < points.size(); ++i)
+    {
+        const double segment_length = planar_distance(points[i - 1], points[i]);
+        if (segment_length == 0.0) continue;
+
+        if (distance <= traversed + segment_length)
+        {
+            const double t = (distance - traversed) / segment_length;
+            return lsdtt_xy{
+                points[i - 1].x + t * (points[i].x - points[i - 1].x),
+                points[i - 1].y + t * (points[i].y - points[i - 1].y)};
+        }
+        traversed += segment_length;
+    }
+
+    return points.back();
 }
 
 // -----------------------------------------------------------------------------

@@ -44,6 +44,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_raster_reproject.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_connectivity_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
@@ -54,7 +55,7 @@
 #include "../src/cpu/lsdtt_sti_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
-#include "../src/utils/lsdtt_natural_breaks.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -86,7 +87,8 @@ static void print_banner()
 // Keep only valid pixels whose value is at or above the requested percentile
 // threshold; all other valid pixels are set to nodata and masked out.
 //
-// Percentile uses nearest-rank selection over valid input pixels.
+// Percentile uses type-7 linear interpolation (project decision D4),
+// matching lsdtt::raster_percentile. It was nearest-rank before.
 // -----------------------------------------------------------------------------
 static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
     const lsdtt::lsdtt_raster_cpu& input,
@@ -125,13 +127,57 @@ static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
         return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
     }
 
+    // TYPE-7 (linear interpolation), matching lsdtt::raster_percentile
+    // (src/cpu/lsdtt_raster_algebra.cpp) and lsdtt::compute_percentile. This
+    // replaced a NEAREST-RANK selection, ceil(p/100 * n), which returned an
+    // observed data value; type-7 interpolates between the two values
+    // straddling a fractional rank and is what R's quantile(), numpy and
+    // MATLAB return by default. Project decision D4.
+    //
+    // WHY THE FORMULA IS REPEATED HERE RATHER THAN CALLING raster_percentile.
+    // The library's collect_valid() admits a pixel on its MASK BYTE ALONE,
+    // while the loop above additionally rejects non-finite values and the
+    // nodata sentinel. On a raster obeying the usual invariant (mask 0
+    // wherever nodata) the two agree, but the extra guards here are
+    // deliberate, and a NaN admitted into the vector would corrupt the
+    // nth_element ordering rather than fail loudly. Calling the library
+    // directly would therefore change validity semantics as well as the
+    // percentile definition, which is more than D4 decided. Resolve the mask
+    // invariant first, then this whole function can go.
     const double p = std::clamp(percentile, 0.0, 100.0);
-    std::size_t rank = static_cast<std::size_t>(std::ceil((p / 100.0) * valid_values.size()));
-    rank = std::clamp<std::size_t>(rank, 1, valid_values.size());
-    const std::size_t kth = rank - 1;
+    const std::size_t n = valid_values.size();
 
-    std::nth_element(valid_values.begin(), valid_values.begin() + kth, valid_values.end());
-    threshold = valid_values[kth];
+    if (n == 1)
+    {
+        threshold = valid_values[0];
+    }
+    else
+    {
+        const double rank = (p / 100.0) * static_cast<double>(n - 1);
+        const std::size_t lower_index = static_cast<std::size_t>(std::floor(rank));
+        const std::size_t upper_index = static_cast<std::size_t>(std::ceil(rank));
+
+        std::nth_element(valid_values.begin(),
+                         valid_values.begin() + static_cast<std::ptrdiff_t>(upper_index),
+                         valid_values.end());
+        const float upper_value = valid_values[upper_index];
+
+        if (lower_index == upper_index)
+        {
+            threshold = upper_value;
+        }
+        else
+        {
+            std::nth_element(valid_values.begin(),
+                             valid_values.begin() + static_cast<std::ptrdiff_t>(lower_index),
+                             valid_values.begin() + static_cast<std::ptrdiff_t>(upper_index) + 1);
+            const float lower_value = valid_values[lower_index];
+            const double frac = rank - std::floor(rank);
+            threshold = static_cast<float>(
+                static_cast<double>(lower_value) +
+                frac * (static_cast<double>(upper_value) - static_cast<double>(lower_value)));
+        }
+    }
 
     const float nodata_f = static_cast<float>(meta.no_data_value);
     for (std::size_t i = 0; i < src_data.size(); ++i)
@@ -154,79 +200,6 @@ static lsdtt::lsdtt_raster_cpu keep_top_percentile_pixels(
     return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
 }
 
-// -----------------------------------------------------------------------------
-// classify_jenks_categories
-//
-// Classify valid pixels into Jenks natural-break classes (1..K) and preserve
-// nodata mask. Invalid pixels are set to nodata in the output.
-// -----------------------------------------------------------------------------
-static lsdtt::lsdtt_raster_cpu classify_jenks_categories(
-    const lsdtt::lsdtt_raster_cpu& input,
-    const int                      requested_classes,
-    const int                      max_histogram_bins,
-    lsdtt::lsdtt_jenks_result&     jenks,
-    std::int64_t&                  classified_pixels)
-{
-    const auto& src_data = input.get_data();
-    const auto& src_mask = input.get_mask();
-    const auto& meta = input.get_meta();
-
-    if (src_data.size() != src_mask.size())
-    {
-        throw std::runtime_error("classify_jenks_categories: data/mask size mismatch");
-    }
-
-    std::vector<double> values;
-    values.reserve(src_data.size());
-    for (std::size_t i = 0; i < src_data.size(); ++i)
-    {
-        if (src_mask[i] == 0) continue;
-        const float v = src_data[i];
-        if (!std::isfinite(v) || meta.is_nodata(v)) continue;
-        values.push_back(static_cast<double>(v));
-    }
-
-    lsdtt::lsdtt_jenks_options opts;
-    opts.n_classes = requested_classes;
-    opts.max_histogram_bins = max_histogram_bins;
-    jenks = lsdtt::compute_jenks_breaks(values, opts);
-
-    std::vector<float> out_data = src_data;
-    std::vector<std::uint8_t> out_mask = src_mask;
-    const float nodata_f = static_cast<float>(meta.no_data_value);
-    classified_pixels = 0;
-
-    for (std::size_t i = 0; i < src_data.size(); ++i)
-    {
-        if (src_mask[i] == 0)
-        {
-            out_data[i] = nodata_f;
-            continue;
-        }
-        const float v = src_data[i];
-        if (!std::isfinite(v) || meta.is_nodata(v))
-        {
-            out_data[i] = nodata_f;
-            out_mask[i] = 0;
-            continue;
-        }
-
-        const int cls = lsdtt::classify_jenks_value(
-            static_cast<double>(v),
-            jenks.upper_breaks
-        );
-        if (cls <= 0)
-        {
-            out_data[i] = nodata_f;
-            out_mask[i] = 0;
-            continue;
-        }
-        out_data[i] = static_cast<float>(cls);
-        ++classified_pixels;
-    }
-
-    return lsdtt::lsdtt_raster_cpu(std::move(out_data), std::move(out_mask), meta);
-}
 // =============================================================================
 // main
 // =============================================================================
@@ -266,12 +239,7 @@ int main(int argc, char* argv[])
         "Threading / routing", "param", ""};
 
     // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled and ready for routing.",
-        "If false (default), the CLI will call fill_pits() before building "
-        "flow routing. If true, the DEM is assumed to already be suitable.",
-        "DEM preparation", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -344,8 +312,8 @@ int main(int argc, char* argv[])
         "D-infinity (default) is generally preferred for hillslope TWI.",
         "Topographic Wetness Index", "param", "write_twi_raster"};
 
-    float_default_map["twi_window_radius"] = 100.0f;
-    help_map["twi_window_radius"] = {"float","100.0",
+    float_default_map["twi_window_radius_metres"] = 100.0f;
+    help_map["twi_window_radius_metres"] = {"float","100.0",
         "Polyfit window radius (metres) for slope computation in TWI.",
         "Passed to direct_polyfit(). Larger values smooth out local "
         "roughness; smaller values capture fine-scale slope variation.",
@@ -434,7 +402,7 @@ int main(int argc, char* argv[])
     string_default_map["sti_term_mode"] = "ksd";
     string_default_map["sti_spr_transform"] = "ln_1_minus_spr";
 
-    float_default_map["sti_window_radius"] = 100.0f;
+    float_default_map["sti_window_radius_metres"] = 100.0f;
     float_default_map["sti_depth_cap_cm"] = 100.0f;
     float_default_map["sti_min_valid_depth_cm"] = 30.0f;
     float_default_map["sti_ks_unit_scale_to_m_per_day"] = 1.0f;
@@ -458,13 +426,14 @@ int main(int argc, char* argv[])
 
     float_default_map["connectivity_area_threshold_m2"] = 1.0e6f;
     help_map["connectivity_area_threshold_m2"] = {"float","1e6",
-        "Drainage area threshold (m^2) defining channel / sink pixels.",
-        "Pixels at or above this threshold are treated as channels. "
+        "Map drainage-area threshold in square metres defining channel / sink pixels.",
+        "This remains total map area in m^2 and is not a contributing-pixel or "
+        "specific-area threshold. Pixels at or above it are treated as channels. "
         "D_down accumulation stops when the flow path reaches a channel.",
         "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
-    float_default_map["connectivity_window_radius"] = 100.0f;
-    help_map["connectivity_window_radius"] = {"float","100.0",
+    float_default_map["connectivity_window_radius_metres"] = 100.0f;
+    help_map["connectivity_window_radius_metres"] = {"float","100.0",
         "Moving-window radius (metres) for slope and roughness computation.",
         "Used for the polyfit slope and for the roughness metric (MADk2 or "
         "IQR of residuals). Square window always used.",
@@ -491,17 +460,10 @@ int main(int argc, char* argv[])
         "Write a height-above-channel raster.",
         "For each pixel: elevation difference to the nearest downstream channel "
         "pixel along the D8 flow path. Channel pixels are those whose D8 "
-        "contributing-pixel count >= channel_threshold_contributing_pixels.",
+        "contributing-pixel count >= threshold_contributing_pixels.",
         "Connectivity index (Cavalli et al. 2013)", "switch", ""};
 
-    int_default_map["channel_threshold_contributing_pixels"] = 1000;
-    help_map["channel_threshold_contributing_pixels"] = {"int","1000",
-        "Minimum contributing-pixel count to classify a pixel as a channel.",
-        "Used by write_height_above_channel_raster. Pixels with D8 "
-        "contributing-pixel count >= this threshold are treated as channels. "
-        "Tune relative to DEM resolution: at 5 m a value of 1000 corresponds "
-        "to ~0.025 km^2; at 30 m the same count is ~0.9 km^2.",
-        "Connectivity index (Cavalli et al. 2013)", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
@@ -537,6 +499,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"channel_threshold_contributing_pixels",
+         "threshold_contributing_pixels"},
+        {"twi_window_radius", "twi_window_radius_metres"},
+        {"sti_window_radius", "sti_window_radius_metres"},
+        {"connectivity_window_radius", "connectivity_window_radius_metres"} });
+
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -553,37 +522,25 @@ int main(int argc, char* argv[])
 
     // Normalise method strings to lowercase for comparison.
     std::string twi_method = sf["twi_drainage_area_method"];
-    std::transform(twi_method.begin(), twi_method.end(), twi_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    twi_method = lsdtt::to_lower_ascii(twi_method);
 
     std::string conn_area_method = sf["connectivity_drainage_area_method"];
-    std::transform(conn_area_method.begin(), conn_area_method.end(),
-                   conn_area_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    conn_area_method = lsdtt::to_lower_ascii(conn_area_method);
 
     std::string conn_slope_method = sf["connectivity_slope_method"];
-    std::transform(conn_slope_method.begin(), conn_slope_method.end(),
-                   conn_slope_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    conn_slope_method = lsdtt::to_lower_ascii(conn_slope_method);
 
     std::string conn_roughness_method = sf["connectivity_roughness_method"];
-    std::transform(conn_roughness_method.begin(), conn_roughness_method.end(),
-                   conn_roughness_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    conn_roughness_method = lsdtt::to_lower_ascii(conn_roughness_method);
 
     std::string sti_method = sf["sti_drainage_area_method"];
-    std::transform(sti_method.begin(), sti_method.end(), sti_method.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    sti_method = lsdtt::to_lower_ascii(sti_method);
 
     std::string sti_term_mode_str = sf["sti_term_mode"];
-    std::transform(sti_term_mode_str.begin(), sti_term_mode_str.end(),
-                   sti_term_mode_str.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    sti_term_mode_str = lsdtt::to_lower_ascii(sti_term_mode_str);
 
     std::string sti_spr_transform_str = sf["sti_spr_transform"];
-    std::transform(sti_spr_transform_str.begin(), sti_spr_transform_str.end(),
-                   sti_spr_transform_str.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    sti_spr_transform_str = lsdtt::to_lower_ascii(sti_spr_transform_str);
 
     const bool write_sti = bf["write_sti_raster"];
     const bool write_sti_proxy = bf["write_sti_proxy_raster"];
@@ -707,10 +664,10 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        if (ff["sti_window_radius"] <= 0.0f)
+        if (ff["sti_window_radius_metres"] <= 0.0f)
         {
-            std::cerr << "FATAL: sti_window_radius must be > 0. "
-                      << "Got: " << ff["sti_window_radius"] << "\n";
+            std::cerr << "FATAL: sti_window_radius_metres must be > 0. "
+                      << "Got: " << ff["sti_window_radius_metres"] << "\n";
             return 1;
         }
 
@@ -1104,8 +1061,7 @@ int main(int argc, char* argv[])
             slope_res.at(lsdtt::polyfit_metric::slope);
 
         std::string method_lc = area_method;
-        std::transform(method_lc.begin(), method_lc.end(), method_lc.begin(),
-                       [](unsigned char c){ return std::tolower(c); });
+        method_lc = lsdtt::to_lower_ascii(method_lc);
 
         lsdtt::lsdtt_raster_result area_result;
         try
@@ -1280,7 +1236,7 @@ int main(int argc, char* argv[])
         {
             twi_raster = compute_twi_raster(
                 sf["twi_drainage_area_method"],
-                ff["twi_window_radius"],
+                ff["twi_window_radius_metres"],
                 "TWI"
             );
         }
@@ -1323,7 +1279,7 @@ int main(int argc, char* argv[])
                   << (write_sti_p95_jenks ? " (+ Jenks class rasters)" : "")
                   << "\n";
         std::cout << "STI drainage method     : " << sf["sti_drainage_area_method"] << "\n";
-        std::cout << "STI slope window radius : " << ff["sti_window_radius"] << " m\n";
+        std::cout << "STI slope window radius : " << ff["sti_window_radius_metres"] << " m\n";
         std::cout << "STI term mode           : " << sf["sti_term_mode"] << "\n";
         std::cout << "STI SPR transform       : " << sf["sti_spr_transform"] << "\n";
         std::cout << "\nWARNING: STI unit assumptions are not yet validated automatically.\n";
@@ -1506,7 +1462,7 @@ int main(int argc, char* argv[])
         {
             sti_twi = compute_twi_raster(
                 sf["sti_drainage_area_method"],
-                ff["sti_window_radius"],
+                ff["sti_window_radius_metres"],
                 "STI"
             );
         }
@@ -1611,14 +1567,11 @@ int main(int argc, char* argv[])
 
                     if (write_sti_p95_jenks)
                     {
-                        lsdtt::lsdtt_jenks_result jenks;
-                        std::int64_t classified = 0;
-                        lsdtt::lsdtt_raster_cpu sti_p95_jenks = classify_jenks_categories(
+                        lsdtt::algebra::raster_jenks_classification_result classification =
+                            lsdtt::algebra::classify_jenks_categories(
                             sti_p95,
                             ifs["sti_p95_jenks_n_classes"],
-                            ifs["sti_p95_jenks_max_histogram_bins"],
-                            jenks,
-                            classified
+                            ifs["sti_p95_jenks_max_histogram_bins"]
                         );
                         const std::string sti_p95_jenks_file = pp.make_output_path(
                             "_sti_p95_jenks" + std::to_string(ifs["sti_p95_jenks_n_classes"]),
@@ -1626,23 +1579,24 @@ int main(int argc, char* argv[])
                         );
                         std::cout << "Writing: " << sti_p95_jenks_file << "\n";
                         loader.write_full(
-                            sti_p95_jenks.get_data(),
-                            sti_p95_jenks.get_meta(),
+                            classification.classified_raster.get_data(),
+                            classification.classified_raster.get_meta(),
                             sti_p95_jenks_file,
                             out_fmt
                         );
 
                         std::cout << "STI ksd Jenks classes requested/effective: "
-                                  << jenks.requested_classes << " / " << jenks.effective_classes << "\n";
+                                  << classification.jenks.requested_classes << " / "
+                                  << classification.jenks.effective_classes << "\n";
                         std::cout << "STI ksd Jenks classified pixels          : "
-                                  << classified << " / " << kept_pixels << "\n";
+                                  << classification.classified_pixels << " / " << kept_pixels << "\n";
                         std::cout << "STI ksd Jenks GVF                        : "
-                                  << jenks.goodness_of_variance_fit << "\n";
+                                  << classification.jenks.goodness_of_variance_fit << "\n";
                         std::cout << "STI ksd Jenks upper breaks               : ";
-                        for (std::size_t bi = 0; bi < jenks.upper_breaks.size(); ++bi)
+                        for (std::size_t bi = 0; bi < classification.jenks.upper_breaks.size(); ++bi)
                         {
                             if (bi > 0) std::cout << ", ";
-                            std::cout << jenks.upper_breaks[bi];
+                            std::cout << classification.jenks.upper_breaks[bi];
                         }
                         std::cout << "\n";
                     }
@@ -1763,14 +1717,11 @@ int main(int argc, char* argv[])
 
                     if (write_sti_p95_jenks)
                     {
-                        lsdtt::lsdtt_jenks_result jenks;
-                        std::int64_t classified = 0;
-                        lsdtt::lsdtt_raster_cpu sti_proxy_p95_jenks = classify_jenks_categories(
+                        lsdtt::algebra::raster_jenks_classification_result classification =
+                            lsdtt::algebra::classify_jenks_categories(
                             sti_proxy_p95,
                             ifs["sti_p95_jenks_n_classes"],
-                            ifs["sti_p95_jenks_max_histogram_bins"],
-                            jenks,
-                            classified
+                            ifs["sti_p95_jenks_max_histogram_bins"]
                         );
                         const std::string sti_proxy_p95_jenks_file = pp.make_output_path(
                             "_sti_proxy_p95_jenks" + std::to_string(ifs["sti_p95_jenks_n_classes"]),
@@ -1778,23 +1729,24 @@ int main(int argc, char* argv[])
                         );
                         std::cout << "Writing: " << sti_proxy_p95_jenks_file << "\n";
                         loader.write_full(
-                            sti_proxy_p95_jenks.get_data(),
-                            sti_proxy_p95_jenks.get_meta(),
+                            classification.classified_raster.get_data(),
+                            classification.classified_raster.get_meta(),
                             sti_proxy_p95_jenks_file,
                             out_fmt
                         );
 
                         std::cout << "STI proxy Jenks classes requested/effective: "
-                                  << jenks.requested_classes << " / " << jenks.effective_classes << "\n";
+                                  << classification.jenks.requested_classes << " / "
+                                  << classification.jenks.effective_classes << "\n";
                         std::cout << "STI proxy Jenks classified pixels          : "
-                                  << classified << " / " << kept_pixels << "\n";
+                                  << classification.classified_pixels << " / " << kept_pixels << "\n";
                         std::cout << "STI proxy Jenks GVF                        : "
-                                  << jenks.goodness_of_variance_fit << "\n";
+                                  << classification.jenks.goodness_of_variance_fit << "\n";
                         std::cout << "STI proxy Jenks upper breaks               : ";
-                        for (std::size_t bi = 0; bi < jenks.upper_breaks.size(); ++bi)
+                        for (std::size_t bi = 0; bi < classification.jenks.upper_breaks.size(); ++bi)
                         {
                             if (bi > 0) std::cout << ", ";
-                            std::cout << jenks.upper_breaks[bi];
+                            std::cout << classification.jenks.upper_breaks[bi];
                         }
                         std::cout << "\n";
                     }
@@ -1883,10 +1835,10 @@ int main(int argc, char* argv[])
         std::cout << "Area method      : " << sf["connectivity_drainage_area_method"] << "\n";
         std::cout << "Slope method     : " << sf["connectivity_slope_method"] << "\n";
         std::cout << "Roughness method : " << sf["connectivity_roughness_method"] << "\n";
-        std::cout << "Window radius    : " << ff["connectivity_window_radius"] << " m\n";
+        std::cout << "Window radius    : " << ff["connectivity_window_radius_metres"] << " m\n";
         std::cout << "Area threshold   : " << ff["connectivity_area_threshold_m2"] << " m^2\n";
 
-        const double   conn_radius = static_cast<double>(ff["connectivity_window_radius"]);
+        const double   conn_radius = static_cast<double>(ff["connectivity_window_radius_metres"]);
         const float    conn_thresh = ff["connectivity_area_threshold_m2"];
 
         try
@@ -2001,7 +1953,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Height above channel ---\n";
         std::cout << "Channel threshold: "
-                  << ifs["channel_threshold_contributing_pixels"]
+                  << ifs["threshold_contributing_pixels"]
                   << " contributing pixels\n";
 
         try
@@ -2009,7 +1961,7 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_raster_result hac = d8_flow->get_height_above_channel_raster(
                 routed_dem.get_data(),
                 routed_dem.get_mask(),
-                ifs["channel_threshold_contributing_pixels"]
+                ifs["threshold_contributing_pixels"]
             );
 
             const std::string hac_file =

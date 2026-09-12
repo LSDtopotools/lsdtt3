@@ -4,11 +4,11 @@ write_fname: ocnpolymissing
 
 n_rows: 16
 n_cols: 16
-cell_size: 250.0
+cell_size_metres: 250.0
 
 domain_type: polygon
 polygon_sizing: true_area
-polygon_file: does_not_exist.fgb
+polygon_fname: does_not_exist.fgb
 
 energy_exponent_gamma: 0.5
 n_iter: 200

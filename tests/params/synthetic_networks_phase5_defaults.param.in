@@ -1,0 +1,5 @@
+# Sensitive defaults oracle: 128x128, cell size 1 m, seed 33.
+write_path: __WRITE_PATH__
+write_fname: ocndefaults5
+n_iter: 1
+write_output_format: gtiff

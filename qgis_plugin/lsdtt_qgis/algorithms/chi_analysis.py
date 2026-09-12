@@ -32,7 +32,7 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
     RASTER_IS_FILLED = "RASTER_IS_FILLED"
     FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
-    SOURCE_THRESHOLD = "SOURCE_THRESHOLD"
+    THRESHOLD_CONTRIBUTING_PIXELS = "THRESHOLD_CONTRIBUTING_PIXELS"
     MINIMUM_CHANNEL_PIXELS = "MINIMUM_CHANNEL_PIXELS"
     N_LARGEST_BASINS = "N_LARGEST_BASINS"
     BASIN_OUTLET_FILE = "BASIN_OUTLET_FILE"
@@ -124,8 +124,8 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterNumber(
-                self.SOURCE_THRESHOLD,
-                "Source threshold (pixels)",
+                self.THRESHOLD_CONTRIBUTING_PIXELS,
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
                 defaultValue=1000,
@@ -468,22 +468,22 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             overrides={
                 self.BOOTSTRAP_SEED: "bootstrap_random_seed",
                 self.FIT_NETWORKS: "fit_chi_networks",
-                self.PRINT_DATA_MAPS: "print_chi_data_maps",
-                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.PRINT_DATA_MAPS: "write_chi_data_maps",
+                self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
                 self.WRITE_DATA_MAP_LINES: "write_chi_data_map_lines",
                 self.WRITE_KSN_SUMMARY: "write_ksn_basin_summary",
                 self.WRITE_SEGMENT_LINES: "write_chi_fit_segment_lines",
                 self.BOOTSTRAP_FULL_TRIBUTARY_COUNT: "bootstrap_sample_full_tributary_count",
                 self.BOOTSTRAP_N_SIDE_BRANCHES: "bootstrap_n_side_branches_per_replicate",
-                self.DATA_MAPS_FORMAT: "chi_data_maps_output_format",
-                self.DATA_MAP_LINES_FORMAT: "chi_data_map_lines_output_format",
-                self.FIT_CRITICAL_DIVERGENCE: "fit_critical_divergence_m",
+                self.DATA_MAPS_FORMAT: "chi_data_maps_write_vector_format",
+                self.DATA_MAP_LINES_FORMAT: "write_vector_format",
+                self.FIT_CRITICAL_DIVERGENCE: "fit_critical_divergence_metres",
                 self.INVERSION_USE_MAE: "inversion_use_mae_for_model_selection",
                 self.MOVE_OUTLET_UPSTREAM: "n_pixels_move_outlet_upstream",
-                self.SEGMENT_LINES_FORMAT: "chi_fit_segment_lines_output_format",
-                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SEGMENT_LINES_FORMAT: "write_vector_format",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_snap_max_search_radius_pixels",
                 self.SNAPPING_METHOD: "basin_outlet_snapping_method",
-                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_snap_min_search_radius_pixels",
                 self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
                 self.SUBSET_N_SIDE_BRANCHES: "subset_n_side_branches_per_sample",
             },
@@ -509,6 +509,11 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
 
         fit_networks = self.parameterAsBool(parameters, self.FIT_NETWORKS, context)
         write_segment_lines = self.parameterAsBool(parameters, self.WRITE_SEGMENT_LINES, context)
+        if write_segment_lines and not fit_networks:
+            fit_networks = True
+            feedback.pushInfo(
+                "Chi fit segment lines require network fitting; enabling fit_chi_networks."
+            )
         print_data_maps = self.parameterAsBool(parameters, self.PRINT_DATA_MAPS, context)
         write_data_map_lines = self.parameterAsBool(parameters, self.WRITE_DATA_MAP_LINES, context)
         run_inversion = self.parameterAsBool(parameters, self.RUN_INVERSION, context)
@@ -536,6 +541,11 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         data_map_lines_format = self.VECTOR_FORMAT_OPTIONS[
             self.parameterAsEnum(parameters, self.DATA_MAP_LINES_FORMAT, context)
         ]
+        if write_segment_lines and write_data_map_lines and segment_format != data_map_lines_format:
+            raise QgsProcessingException(
+                "Chi segment and data-map lines share write_vector_format; choose the same format."
+            )
+        line_format = segment_format if write_segment_lines else data_map_lines_format
 
         param_values = {
             "read_path": read_path,
@@ -547,14 +557,17 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             "write_output_format": self.OUTPUT_FORMAT_OPTIONS[
                 self.parameterAsEnum(parameters, self.OUTPUT_FORMAT, context)
             ],
+            "write_vector_format": line_format,
             "calculate_spatial_index": self.parameterAsBool(
                 parameters, self.CALCULATE_SPATIAL_INDEX, context
             ),
             # DEM preparation and network extraction
             "raster_is_filled": self.parameterAsBool(parameters, self.RASTER_IS_FILLED, context),
             "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
-            "source_pixels_threshold": self.parameterAsInt(parameters, self.SOURCE_THRESHOLD, context),
-            "minimum_channel_pixels": self.parameterAsInt(parameters, self.MINIMUM_CHANNEL_PIXELS, context),
+            "threshold_contributing_pixels": self.parameterAsInt(
+                parameters, self.THRESHOLD_CONTRIBUTING_PIXELS, context
+            ),
+            "min_channel_pixels": self.parameterAsInt(parameters, self.MINIMUM_CHANNEL_PIXELS, context),
             "n_largest_basins": self.parameterAsInt(parameters, self.N_LARGEST_BASINS, context),
             "n_pixels_move_outlet_upstream": self.parameterAsInt(
                 parameters, self.MOVE_OUTLET_UPSTREAM, context
@@ -565,18 +578,16 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             "mn_max": self.parameterAsDouble(parameters, self.MN_MAX, context),
             "mn_step": self.parameterAsDouble(parameters, self.MN_STEP, context),
             "fit_chi_networks": fit_networks,
-            "fit_critical_divergence_m": self.parameterAsDouble(
+            "fit_critical_divergence_metres": self.parameterAsDouble(
                 parameters, self.FIT_CRITICAL_DIVERGENCE, context
             ),
             "write_fit_tables": self.parameterAsBool(parameters, self.WRITE_FIT_TABLES, context),
             "write_ksn_basin_summary": self.parameterAsBool(parameters, self.WRITE_KSN_SUMMARY, context),
             "write_chi_fit_segment_lines": write_segment_lines,
-            "chi_fit_segment_lines_output_format": segment_format,
             # diagnostic data maps
-            "print_chi_data_maps": print_data_maps,
-            "chi_data_maps_output_format": data_maps_format,
+            "write_chi_data_maps": print_data_maps,
+            "chi_data_maps_write_vector_format": data_maps_format,
             "write_chi_data_map_lines": write_data_map_lines,
-            "chi_data_map_lines_output_format": data_map_lines_format,
             # disorder uncertainty
             "run_subset_sensitivity": self.parameterAsBool(
                 parameters, self.RUN_SUBSET_SENSITIVITY, context
@@ -622,17 +633,17 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         outlet_file = self.parameterAsFile(parameters, self.BASIN_OUTLET_FILE, context)
         if outlet_file:
             param_values.update({
-                "basin_outlet_file": outlet_file,
+                "basin_outlet_fname": outlet_file,
                 "basin_outlet_snapping_method": self.SNAPPING_OPTIONS[
                     self.parameterAsEnum(parameters, self.SNAPPING_METHOD, context)
                 ],
                 "basin_outlet_contributing_pixels_threshold": self.parameterAsInt(
                     parameters, self.SNAPPING_THRESHOLD, context
                 ),
-                "basin_outlet_min_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_min_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MIN_RADIUS, context
                 ),
-                "basin_outlet_max_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_max_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MAX_RADIUS, context
                 ),
             })
@@ -659,8 +670,12 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
                 ),
             )
             segment_matches = sorted(glob.glob(segment_pattern))
-            if segment_matches:
-                outputs[self.OUTPUT_SEGMENT_LINES] = segment_matches[0]
+            if not segment_matches:
+                raise QgsProcessingException(
+                    "Expected chi fit segment lines output not found: {}. "
+                    "Check the run log in the output folder for warnings.".format(segment_pattern)
+                )
+            outputs[self.OUTPUT_SEGMENT_LINES] = segment_matches[0]
         if print_data_maps:
             outputs[self.OUTPUT_DATA_MAPS] = require_output(
                 output_folder, output_prefix,

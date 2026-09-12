@@ -796,4 +796,56 @@ snap_flats_to_contributing_pixels_threshold_downstream(
     return results;
 }
 
+
+lsdtt_snap_result snap_pixel_by_method(
+    const lsdtt_flow_base&               flow,
+    const int                            row,
+    const int                            col,
+    const std::string&                   method,
+    const lsdtt_square_snap_options&     square_options,
+    const lsdtt_downstream_snap_options& downstream_options
+)
+{
+    if (method == "expanding_square")
+    {
+        return snap_pixel_to_contributing_pixels_threshold_expanding_square(
+            flow, row, col, square_options);
+    }
+
+    if (method == "downstream")
+    {
+        return snap_pixel_to_contributing_pixels_threshold_downstream(
+            flow, row, col, downstream_options);
+    }
+
+    if (method == "none")
+    {
+        // Report the input pixel as the answer, so a caller can handle all
+        // three methods through one code path. The pixel is still validated:
+        // "no snapping" should not mean "no checking".
+        lsdtt_snap_result out;
+        out.input_row  = row;
+        out.input_col  = col;
+
+        if (!flow.is_valid_cell(row, col))
+        {
+            out.status = lsdtt_snap_status::input_invalid_flow_cell;
+            return out;
+        }
+
+        const std::int64_t flat = flow.flat_index(row, col);
+        out.input_flat                = flat;
+        out.input_is_valid_flow_cell  = true;
+        out.snapped_flat              = flat;
+        out.snapped_row               = row;
+        out.snapped_col               = col;
+        out.status                    = lsdtt_snap_status::success;
+        return out;
+    }
+
+    throw std::invalid_argument(
+        "snap_pixel_by_method: unknown snapping method '" + method +
+        "'. Expected one of: none, expanding_square, downstream.");
+}
+
 } // namespace lsdtt

@@ -353,4 +353,25 @@ tag_upslope_of_sinks(const lsdtt_flow_base&           flow,
                      sink_mode                         mode,
                      const sink_tagging_options&       opts = {});
 
+// -----------------------------------------------------------------------------
+// sink_channel_sources
+//
+// The channel heads of the network draining into tagged sinks: every tagged
+// cell whose upslope count meets `threshold_contributing_pixels` and which has
+// no donor that also qualifies AND belongs to the same sink.
+//
+// The same-sink condition is what distinguishes this from the general
+// source-finding in lsdtt_flow_base::get_sources_index_threshold. Without it,
+// a qualifying cell immediately downstream of a DIFFERENT sink's network would
+// be treated as having an upstream donor and so not reported as a head, and the
+// second sink would silently lose its channel head at the junction.
+//
+// Returns flat indices in ascending order.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<std::int64_t> sink_channel_sources(
+    const lsdtt_flow_base&     flow,
+    const sink_tagging_result& tagged,
+    std::uint64_t              threshold_contributing_pixels
+);
+
 } // namespace lsdtt

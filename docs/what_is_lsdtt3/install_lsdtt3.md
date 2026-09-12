@@ -8,7 +8,7 @@ every library they depend on.
 > **Want the very latest code instead of a release?**
 > Then you need to compile it yourself. That is a developer activity and is
 > documented separately in
-> [`docs/developer_notes/building_from_source.md`](developer_notes/building_from_source.md).
+> [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md).
 
 ---
 
@@ -332,9 +332,9 @@ developers.
 
 ## See also
 
-- [`docs/developer_notes/building_from_source.md`](developer_notes/building_from_source.md)
+- [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md)
   — compiling lsdtt3 yourself, on Linux, Windows or macOS
-- [`docs/developer_notes/making_release_packages.md`](developer_notes/making_release_packages.md)
+- [`docs/developer_notes/making_release_packages.md`](../developer_notes/making_release_packages.md)
   — how these packages are built and published
-- [Command-line reference](cli_reference/cli_reference_lsdtt_raster_preprocessing.md)
+- [Command-line reference](../cli_reference/cli_reference_lsdtt_raster_preprocessing.md)
   — what to do once it is installed

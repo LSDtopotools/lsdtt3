@@ -4,12 +4,12 @@ write_fname: ocnisl
 
 n_rows: 40
 n_cols: 40
-cell_size: 100.0
+cell_size_metres: 100.0
 
 domain_type: noise_island
 outlet_mode: auto
 island_fill_fraction: 0.6
-noise_blur_passes: 6
+coastline_blur_passes: 6
 
 energy_exponent_gamma: 0.5
 n_iter: 20000

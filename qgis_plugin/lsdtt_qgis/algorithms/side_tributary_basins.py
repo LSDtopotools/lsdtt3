@@ -34,7 +34,7 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
     MODE = "MODE"
     RASTER_IS_FILLED = "RASTER_IS_FILLED"
     FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
-    SOURCE_THRESHOLD = "SOURCE_THRESHOLD"
+    THRESHOLD_CONTRIBUTING_PIXELS = "THRESHOLD_CONTRIBUTING_PIXELS"
     MIN_CONTRIBUTING_PIXELS = "MIN_CONTRIBUTING_PIXELS"
     REJECT_INCOMPLETE = "REJECT_INCOMPLETE"
     WRITE_MAIN_CHANNEL = "WRITE_MAIN_CHANNEL"
@@ -105,8 +105,8 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterNumber(
-                self.SOURCE_THRESHOLD,
-                "Source threshold (pixels)",
+                self.THRESHOLD_CONTRIBUTING_PIXELS,
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
                 defaultValue=1000,
@@ -168,7 +168,7 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
             self,
             "lsdtt-basin-extraction",
             overrides={
-                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
                 self.WRITE_MAIN_CHANNEL: "write_side_tributary_main_channel",
                 self.WRITE_OUTLETS: "write_side_tributary_outlets",
                 self.WRITE_OUTLINES: "write_side_tributary_basin_outlines",
@@ -178,7 +178,7 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
                 self.REJECT_INCOMPLETE: "reject_incomplete_side_tributary_basins",
                 self.STOPPING_WINDOW: "side_tributary_stopping_point_window_pixels",
                 self.USE_STOPPING_POINT: "include_side_tributary_stopping_point",
-                self.VECTOR_FORMAT: "side_tributary_vector_output_format",
+                self.VECTOR_FORMAT: "side_tributary_write_vector_format",
             },
         )
 
@@ -220,7 +220,9 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
             "write_fname": output_prefix,
             "raster_is_filled": self.parameterAsBool(parameters, self.RASTER_IS_FILLED, context),
             "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
-            "source_pixels_threshold": self.parameterAsInt(parameters, self.SOURCE_THRESHOLD, context),
+            "threshold_contributing_pixels": self.parameterAsInt(
+                parameters, self.THRESHOLD_CONTRIBUTING_PIXELS, context
+            ),
             "side_tributary_minimum_contributing_pixels": self.parameterAsInt(
                 parameters, self.MIN_CONTRIBUTING_PIXELS, context
             ),
@@ -230,7 +232,7 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
             "write_side_tributary_main_channel": write_main_channel,
             "write_side_tributary_outlets": write_outlets,
             "write_side_tributary_basin_outlines": write_outlines,
-            "side_tributary_vector_output_format": vector_format,
+            "side_tributary_write_vector_format": vector_format,
             "calculate_spatial_index": self.parameterAsBool(
                 parameters, self.CALCULATE_SPATIAL_INDEX, context
             ),

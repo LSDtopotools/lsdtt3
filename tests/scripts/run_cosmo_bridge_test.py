@@ -91,9 +91,9 @@ def forward(pred_exe, workdir, data_dir, erate, knobs, tag):
         "calculate_crn_concentration_raster: true",
         "calculate_accumulated_crn_concentration: true",
         f"effective_erosion_rate: {erate}",
-        "sample_points_filename: cosmo_tiny_points.csv",
+        "sample_points_fname: cosmo_tiny_points.csv",
         "threshold_contributing_pixels: 2",
-        "snap_search_radius_pixels: 3",
+        "sample_snap_max_search_radius_pixels: 3",
     ]
     lines += [f"{k}: {q(v)}" for k, v in knobs.items()]
     param = workdir / f"{base}.param"
@@ -118,9 +118,9 @@ def inverse(tool_exe, workdir, data_dir, points_csv, knobs, tag):
         "read_fname: tiny_dem.asc",
         f"write_path: {workdir}",
         f"write_fname: {base}",
-        f"points_filename: {points_csv}",
+        f"sample_points_fname: {points_csv}",
         "threshold_contributing_pixels: 2",
-        "snap_search_radius_pixels: 3",
+        "sample_snap_max_search_radius_pixels: 3",
     ]
     lines += [f"{k}: {q(v)}" for k, v in knobs.items()]
     param = workdir / f"{base}.param"

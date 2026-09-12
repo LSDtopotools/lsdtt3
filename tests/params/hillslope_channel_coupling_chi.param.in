@@ -4,15 +4,15 @@ write_path: __WRITE_PATH__
 write_fname: hccchi
 
 boundary_conditions: oooo
-source_pixels_threshold: 60
+threshold_contributing_pixels: 60
 basin_selection_choice: all_junctions
-minimum_basin_pixels: 80
+min_basin_pixels: 80
 stream_network_padding_pixels: 2
 critical_hillslope_slope: 0.8
 
 run_chi_analysis: true
 m_over_n: 0.45
 
-hilltop_points_output_format: csv
+hilltop_points_write_vector_format: csv
 write_output_format: gtiff
 n_threads: 1

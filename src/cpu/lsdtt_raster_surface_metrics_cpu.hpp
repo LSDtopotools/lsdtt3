@@ -133,7 +133,12 @@
 // -----------------------------------------------------------------------------
 
 
+#include <cctype>
+#include <cstddef>
 #include <map>
+#include <set>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -377,6 +382,234 @@ enum class polyfit_metric
 };
 
 // -----------------------------------------------------------------------------
+// polyfit_metric_entry
+//
+// One row of the canonical polyfit metric table: the string name accepted on
+// the command line, the enum value, and the stored output filename suffix.
+//
+// The stored suffix is always of the form "_polyfit_<name>.tif". The method
+// prefix ("wavelet" or "direct") and any alternative file extension are
+// applied by polyfit_metric_output_suffix().
+//
+// This table is the single home for the name/suffix mapping. It must carry
+// every member of polyfit_metric; the unit test
+// test_surface_metrics_polyfit_metric_table asserts completeness so that a
+// future enum addition cannot silently omit an entry.
+// -----------------------------------------------------------------------------
+struct polyfit_metric_entry
+{
+    const char*    name;
+    polyfit_metric metric;
+    const char*    suffix;
+};
+
+// -----------------------------------------------------------------------------
+// all_polyfit_metrics
+//
+// Returns the canonical table, in the order in which "all" expands.
+// -----------------------------------------------------------------------------
+inline const std::vector<polyfit_metric_entry>& all_polyfit_metrics()
+{
+    static const std::vector<polyfit_metric_entry> table =
+    {
+        {"fitted_surface",               polyfit_metric::fitted_surface,              "_polyfit_fitted_surface.tif"},
+        {"dzdx",                         polyfit_metric::dzdx,                        "_polyfit_dzdx.tif"},
+        {"dzdy",                         polyfit_metric::dzdy,                        "_polyfit_dzdy.tif"},
+        {"d2zdx2",                       polyfit_metric::d2zdx2,                      "_polyfit_d2zdx2.tif"},
+        {"d2zdxdy",                      polyfit_metric::d2zdxdy,                     "_polyfit_d2zdxdy.tif"},
+        {"d2zdy2",                       polyfit_metric::d2zdy2,                      "_polyfit_d2zdy2.tif"},
+        {"slope",                        polyfit_metric::slope,                       "_polyfit_slope.tif"},
+        {"slope_degrees",                polyfit_metric::slope_degrees,               "_polyfit_slope_degrees.tif"},
+        {"aspect_radians",               polyfit_metric::aspect_radians,              "_polyfit_aspect_radians.tif"},
+        {"aspect_degrees",               polyfit_metric::aspect_degrees,              "_polyfit_aspect_degrees.tif"},
+        {"laplacian",                    polyfit_metric::laplacian,                   "_polyfit_laplacian.tif"},
+        {"hessian_determinant",          polyfit_metric::hessian_determinant,         "_polyfit_hessian_determinant.tif"},
+        {"mean_curvature",               polyfit_metric::mean_curvature,              "_polyfit_mean_curvature.tif"},
+        {"gaussian_curvature",           polyfit_metric::gaussian_curvature,          "_polyfit_gaussian_curvature.tif"},
+        {"maximum_curvature",            polyfit_metric::maximum_curvature,           "_polyfit_maximum_curvature.tif"},
+        {"minimum_curvature",            polyfit_metric::minimum_curvature,           "_polyfit_minimum_curvature.tif"},
+        {"curvedness",                   polyfit_metric::curvedness,                  "_polyfit_curvedness.tif"},
+        {"shape_index",                  polyfit_metric::shape_index,                 "_polyfit_shape_index.tif"},
+        {"profile_curvature",            polyfit_metric::profile_curvature,           "_polyfit_profile_curvature.tif"},
+        {"plan_curvature",               polyfit_metric::plan_curvature,              "_polyfit_plan_curvature.tif"},
+        {"tangential_curvature",         polyfit_metric::tangential_curvature,        "_polyfit_tangential_curvature.tif"},
+        {"difference_curvature",         polyfit_metric::difference_curvature,        "_polyfit_difference_curvature.tif"},
+        {"horizontal_excess_curvature",  polyfit_metric::horizontal_excess_curvature, "_polyfit_horizontal_excess_curvature.tif"},
+        {"vertical_excess_curvature",    polyfit_metric::vertical_excess_curvature,   "_polyfit_vertical_excess_curvature.tif"},
+        {"accumulation_curvature",       polyfit_metric::accumulation_curvature,      "_polyfit_accumulation_curvature.tif"},
+        {"ring_curvature",               polyfit_metric::ring_curvature,              "_polyfit_ring_curvature.tif"},
+        {"rotor",                        polyfit_metric::rotor,                       "_polyfit_rotor.tif"}
+    };
+
+    return table;
+}
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_count
+//
+// Number of members of polyfit_metric. all_polyfit_metrics() must have exactly
+// this many entries; the unit test enforces it.
+// -----------------------------------------------------------------------------
+inline constexpr std::size_t polyfit_metric_count = 27;
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_name
+//
+// Canonical string name of a metric. Total over the enum: every value has a
+// name. Returns "unknown" only if the table has fallen out of step with the
+// enum, which the unit test is there to prevent.
+// -----------------------------------------------------------------------------
+inline const char* polyfit_metric_name(polyfit_metric metric)
+{
+    for (const auto& entry : all_polyfit_metrics())
+    {
+        if (entry.metric == metric)
+        {
+            return entry.name;
+        }
+    }
+
+    return "unknown";
+}
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_from_string
+//
+// Resolves a command-line metric name to its enum value. Throws on an
+// unrecognised name.
+// -----------------------------------------------------------------------------
+inline polyfit_metric polyfit_metric_from_string(const std::string& token)
+{
+    for (const auto& entry : all_polyfit_metrics())
+    {
+        if (token == entry.name)
+        {
+            return entry.metric;
+        }
+    }
+
+    throw std::runtime_error(
+        "Unknown polyfit metric: " + token
+    );
+}
+
+// -----------------------------------------------------------------------------
+// polyfit_metric_output_suffix
+//
+// Returns the output filename suffix for a given metric and method.
+// method is normally "wavelet" or "direct". The table stores
+// "_polyfit_*.tif"; the method is prepended to give "_wavelet_polyfit_*.tif"
+// and the stored ".tif" is swapped for ext so that "_direct_polyfit_*.png"
+// and similar are available for non-raster output.
+// -----------------------------------------------------------------------------
+inline std::string polyfit_metric_output_suffix(
+    polyfit_metric     metric,
+    const std::string& method = "wavelet",
+    const std::string& ext    = ".tif")
+{
+    for (const auto& entry : all_polyfit_metrics())
+    {
+        if (entry.metric == metric)
+        {
+            std::string suffix = std::string("_") + method + entry.suffix;
+            if (suffix.size() >= 4 &&
+                suffix.compare(suffix.size() - 4, 4, ".tif") == 0)
+            {
+                suffix.replace(suffix.size() - 4, 4, ext);
+            }
+            return suffix;
+        }
+    }
+
+    throw std::runtime_error(
+        "No output suffix defined for requested polyfit metric."
+    );
+}
+
+// -----------------------------------------------------------------------------
+// parse_polyfit_metric_list
+//
+// Parses a comma-separated list of metric names. Whitespace around tokens is
+// trimmed and empty tokens are dropped. The token "all" expands to every
+// table entry in table order. Duplicates are removed, preserving first-seen
+// order. An empty input gives an empty list. An unrecognised token throws.
+// -----------------------------------------------------------------------------
+inline std::vector<polyfit_metric> parse_polyfit_metric_list(
+    const std::string& csv)
+{
+    std::vector<polyfit_metric> metrics;
+    std::set<polyfit_metric>    seen;
+
+    // Split on commas, trimming surrounding whitespace and dropping empties.
+    std::vector<std::string> tokens;
+    {
+        std::string current;
+
+        auto flush = [&tokens, &current]()
+        {
+            std::size_t start = 0;
+            while (start < current.size() &&
+                   std::isspace(static_cast<unsigned char>(current[start])))
+            {
+                ++start;
+            }
+
+            std::size_t end = current.size();
+            while (end > start &&
+                   std::isspace(static_cast<unsigned char>(current[end - 1])))
+            {
+                --end;
+            }
+
+            if (end > start)
+            {
+                tokens.push_back(current.substr(start, end - start));
+            }
+
+            current.clear();
+        };
+
+        for (char ch : csv)
+        {
+            if (ch == ',')
+            {
+                flush();
+            }
+            else
+            {
+                current.push_back(ch);
+            }
+        }
+
+        flush();
+    }
+
+    for (const std::string& token : tokens)
+    {
+        if (token == "all")
+        {
+            for (const auto& entry : all_polyfit_metrics())
+            {
+                if (seen.insert(entry.metric).second)
+                {
+                    metrics.push_back(entry.metric);
+                }
+            }
+            continue;
+        }
+
+        // Throws on an unknown name.
+        const polyfit_metric metric = polyfit_metric_from_string(token);
+        if (seen.insert(metric).second)
+        {
+            metrics.push_back(metric);
+        }
+    }
+
+    return metrics;
+}
+
+// -----------------------------------------------------------------------------
 // polyfit_metric_request
 //
 // Request describing which polyfit-derived metrics should be computed.
@@ -479,6 +712,32 @@ poly_fit_coeffs direct_polyfit(
     const lsdtt_raster_cpu& raster,
     double lambda_metres = 100.0,
     int    n_threads     = 0
+);
+
+// -----------------------------------------------------------------------------
+// direct_polyfit_with_boundary_conditions
+//
+// direct_polyfit at the 3x3 scale (lambda = cell_size), honouring periodic
+// boundaries: the raster is padded by one pixel with wrap-around on any
+// periodic axis, fitted, and the six coefficient rasters are cropped back to
+// the original grid.
+//
+// WHY THIS IS NOT JUST A CONVENIENCE. Without the padding, a 3x3 fit at a
+// periodic edge sees nodata where the modelled domain has real neighbours, so
+// every edge cell gets a fit computed from a truncated stencil. On a wrapped
+// domain -- a LEM run, say -- that is wrong at exactly the cells a divide or a
+// ridgeline is most likely to occupy.
+//
+// With no periodic axis this is `direct_polyfit(raster, cell_size, n_threads)`
+// and nothing else, so it is safe to call unconditionally.
+//
+// `boundary_conditions` is the usual four characters (N, E, S, W); an axis
+// counts as periodic only when both of its edges are 'p'.
+// -----------------------------------------------------------------------------
+poly_fit_coeffs direct_polyfit_with_boundary_conditions(
+    const lsdtt_raster_cpu& raster,
+    const std::string&      boundary_conditions,
+    int                     n_threads = 0
 );
 
 // -----------------------------------------------------------------------------

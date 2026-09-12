@@ -1,0 +1,35 @@
+# Guard for C2 and C3 in lsdtt-ridgeline-analysis.
+#
+# The three existing ridgeline tests are all paired_flowpaths and reach NEITHER
+# of these code paths -- a reminder that "the CLI has tests" is not the same as
+# "this code has tests".
+#
+# C2: ridgeline_analysis_mode = range_defined_ridgelines with no
+#     corner_coordinates_fname takes resolve_dem_corners() and then
+#     extract_boundary_segments() -- the ~150 lines of boundary tracing and
+#     cardinal segmentation.
+#
+# C3: calculate_polyfit_metrics_directly_on_dem adds the "raw_dem_3x3" method,
+#     which is run_raw_dem_3x3_polyfit_with_bcs() -- the ~85 lines that pad the
+#     DEM according to its boundary conditions, fit, and crop back.
+#
+# TWO CASES, oooo and opop. C3's substance is the PERIODIC wrap-around padding,
+# and under fully open boundaries there is nothing to wrap. The two runs produce
+# different slope rasters, which is what makes the opop case worth having: with
+# oooo alone the padding branch is never exercised.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: rg_opop
+
+write_output_format: gtiff
+raster_is_filled: false
+fill_min_slope: 0.0001
+boundary_conditions: opop
+
+ridgeline_analysis_mode: range_defined_ridgelines
+threshold_contributing_pixels: 150
+
+calculate_polyfit_metrics_directly_on_dem: true
+polyfit_metrics: slope,maximum_curvature
+polyfit_lambda_metres: 60

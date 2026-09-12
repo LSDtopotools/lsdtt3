@@ -22,7 +22,7 @@ write_fname: empty
 n_threads: 1
 write_output_format: gtiff
 
-fallback_relief_window_pixels: 5
+fallback_relief_window_radius_pixels: 5
 fallback_relief_threshold_metres: 2.0
 min_component_pixels: 100000
 
@@ -31,7 +31,7 @@ ladder_break_algorithm_choice: jenks
 ladder_level_count: 4
 vertical_accuracy_metres: 0.5
 
-channel_threshold_contributing_pixels: 500
+threshold_contributing_pixels: 500
 floodplain_max_height_metres: 5.0
 terrace_min_height_metres: 5.0
 

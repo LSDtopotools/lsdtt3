@@ -46,6 +46,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
@@ -57,22 +58,15 @@
 #include "../src/cpu/lsdtt_side_tributary_basins_cpu.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
+#include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 // ---------------------------------------------------------------------------
 // Small geometry helpers for the line-crossing basin analysis.
 // ---------------------------------------------------------------------------
 namespace {
 
-// Geographic bearing of (ox,oy)->(cx,cy): degrees from North, clockwise [0,360).
-double bearing_north(double ox, double oy, double cx, double cy)
-{
-    const double de = cx - ox, dn = cy - oy;
-    if (de == 0.0 && dn == 0.0)
-        return std::numeric_limits<double>::quiet_NaN();
-    double b = std::atan2(de, dn) * 180.0 / M_PI;
-    if (b < 0.0) b += 360.0;
-    return b;
-}
 
 // Wrap an angle to (-180, 180].
 double wrap180(double a)
@@ -82,13 +76,6 @@ double wrap180(double a)
     return r - 180.0;
 }
 
-std::string precise_string(double v)
-{
-    std::ostringstream ss;
-    ss.precision(10);
-    ss << v;
-    return ss.str();
-}
 
 struct lsdtt_seg_hit { double tan_az; double nx; double ny; };
 
@@ -113,7 +100,7 @@ lsdtt_seg_hit nearest_fault_segment(
             best = d2;
             hit.nx = cx;
             hit.ny = cy;
-            hit.tan_az = bearing_north(x0, y0, x1, y1);
+            hit.tan_az = lsdtt::bearing_from_north_degrees(x0, y0, x1, y1);
         }
     }
     return hit;
@@ -186,12 +173,7 @@ int main(int argc, char* argv[])
         "Threading / routing", "param", ""};
 
     // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled and ready for routing.",
-        "If false (default), the CLI will call fill_pits() before building flow routing. "
-        "If true, the DEM is assumed to already be suitable for routing.",
-        "DEM preparation", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -201,14 +183,10 @@ int main(int argc, char* argv[])
         "DEM preparation", "param", ""};
 
     // --- Source extraction ---
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define source channel heads.",
-        "Channel heads are extracted from the flow-routing object using a "
-        "contributing-pixel threshold. Reduce this value to extract denser networks.",
-        "Source extraction", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Output --- general
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool", "true",
         "Whether or not to calculate a spatial index for vector data writes.",
@@ -230,13 +208,8 @@ int main(int argc, char* argv[])
         "area at each channel pixel.",
         "Output", "switch", ""};
 
-    string_default_map["channel_network_points_output_format"] = "flatgeobuf";
-    help_map["channel_network_points_output_format"] = {"string","flatgeobuf",
-        "Output format for the exported channel network points.",
-        "csv: writes latitude/longitude point rows in EPSG:4326. "
-        "gpkg: writes a GeoPackage in the raster CRS. "
-        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
-        "Output", "param", ""};
+    string_default_map["legacy_channel_network_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Output --- channel network lines
     bool_default_map["write_channel_network_lines"] = false;
@@ -245,18 +218,14 @@ int main(int argc, char* argv[])
         "link (defined between source or upstream junction and outlet or "
         "downstream junction) is a feature.",
         "Does not support csv writes, only gpkg and flatgeobuf/fgb. "
+        "It is off by default because basin extraction does not require a channel-line deliverable. "
         "Compared to write_channel_network as points, the lines filesize "
         "will be smaller (there are fewer features), at the cost of not "
         "recording drainage area at each channel pixel.",
         "Output", "switch", ""};
 
-    string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
-    help_map["channel_network_lines_output_format"] = {"string", "flatgeobuf",
-        "Output format for channel network lines.",
-        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
-        "GeoPackage may have file I/O issues on some filesystems. "
-        "CSV is not allowed for channel network lines.",
-        "Output", "param", ""};
+    string_default_map["legacy_channel_network_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Output --- junctions
     bool_default_map["write_channel_network_junctions"] = false;
@@ -266,13 +235,8 @@ int main(int argc, char* argv[])
         "and stream_order.",
         "Output", "switch", ""};
 
-    string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
-    help_map["channel_network_junctions_output_format"] = {"string","flatgeobuf",
-        "Output format for the exported channel network junctions.",
-        "csv: writes latitude/longitude point rows in EPSG:4326. "
-        "gpkg: writes a GeoPackage in the raster CRS. "
-        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
-        "Output", "param", ""};
+    string_default_map["legacy_channel_network_junctions_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Single-channel side-basin extraction ---
     bool_default_map["extract_basins_from_single_channel"] = false;
@@ -361,7 +325,7 @@ int main(int argc, char* argv[])
         "The main channel is the set of D8 flow paths from the source points "
         "down to the outlet or stopping point, from which side tributaries are "
         "extracted. Output file: <write_fname>_side_tributary_main_channel.fgb "
-        "or .gpkg. Uses side_tributary_vector_output_format.",
+        "or .gpkg. Uses side_tributary_write_vector_format.",
         "Side-tributary basin extraction from seed points", "switch", ""};
 
     bool_default_map["write_side_tributary_outlets"] = true;
@@ -378,8 +342,9 @@ int main(int argc, char* argv[])
         "Output file: <write_fname>_side_tributary_basin_outlines.fgb or .gpkg.",
         "Side-tributary basin extraction from seed points", "switch", ""};
 
-    string_default_map["side_tributary_vector_output_format"] = "flatgeobuf";
-    help_map["side_tributary_vector_output_format"] = {"string","flatgeobuf",
+    string_default_map["side_tributary_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["side_tributary_write_vector_format"] = {"string","same_as_write_vector_format",
         "Vector output format for side-tributary outputs.",
         "Valid options: flatgeobuf, fgb, gpkg. FlatGeobuf is recommended because "
         "it is a single-file binary GIS format and is more robust than GeoPackage "
@@ -387,8 +352,8 @@ int main(int argc, char* argv[])
         "Side-tributary basin extraction from seed points", "param", ""};
 
     // --- Basin outlet input ---
-    string_default_map["basin_outlet_file"] = "NULL";
-    help_map["basin_outlet_file"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "File of requested basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "Required when select_basins_from_outlets or "
         "select_basins_from_outlets_nested is true. "
@@ -421,15 +386,15 @@ int main(int argc, char* argv[])
         "flow-routing object, not the number of direct donors to a pixel.",
         "Basin outlet snapping", "param", "write_basin_outlet_points"};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "0 means the mapped input pixel is tested first.",
         "Basin outlet snapping", "param", "write_basin_outlet_points"};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "The search stops at the first radius containing one or more qualifying pixels.",
@@ -448,14 +413,14 @@ int main(int argc, char* argv[])
     bool_default_map["select_basins_from_outlets"] = false;
     help_map["select_basins_from_outlets"] = {"bool","false",
         "Select basins from supplied basin outlet points.",
-        "Reads basin_outlet_file, optionally snaps the mapped pixels, and then "
+        "Reads basin_outlet_fname, optionally snaps the mapped pixels, and then "
         "constructs one lsdtt_junction_basin per supplied basin outlet.",
         "Basin selection", "switch", ""};
 
     bool_default_map["select_basins_from_outlets_nested"] = false;
     help_map["select_basins_from_outlets_nested"] = {"bool","false",
         "Select supplied basin outlets and all nested upstream basins.",
-        "Reads basin_outlet_file, optionally snaps the mapped pixels, constructs "
+        "Reads basin_outlet_fname, optionally snaps the mapped pixels, constructs "
         "one lsdtt_junction_basin per supplied basin outlet, and then expands "
         "selection to include all upstream nested basins from the junction-network "
         "s_vector.",
@@ -577,7 +542,7 @@ int main(int argc, char* argv[])
     help_map["write_basin_outlines"] = {"bool","false",
         "Write selected basin outlines as vector features.",
         "Features are labelled by their junction number. Use "
-        "basin_outlines_output_format to specify output format. To get basin "
+        "basin_outlines_write_vector_format to specify an override. To get basin "
         "outlines as polygons rather than polylines, use "
         "write_basin_outlines_as_polygon. To write basin outlines per stream "
         "order, use write_basin_outlines_per_order.",
@@ -596,8 +561,9 @@ int main(int argc, char* argv[])
         "For FlatGeobuf output, this writes multiple files, one per stream order.",
         "Basin printing to vector", "switch", ""};
 
-    string_default_map["basin_outlines_output_format"] = "flatgeobuf";
-    help_map["basin_outlines_output_format"] = {"string", "flatgeobuf",
+    string_default_map["basin_outlines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["basin_outlines_write_vector_format"] = {"string", "same_as_write_vector_format",
         "Output format for basin outline visualisation.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
         "GeoPackage may have file I/O issues on some filesystems. "
@@ -618,7 +584,7 @@ int main(int argc, char* argv[])
         "Outputs a _selected_basin_outlets.csv file with longitude, latitude, "
         "basin_junction_number, basin_outlet_flat_index, and the basin size as "
         "basin_n_pixels, basin_area_km2 and basin_fraction_of_domain. "
-        "This file can be directly read back into lsdtt as a basin_outlet_file."
+        "This file can be directly read back into lsdtt as basin_outlet_fname. "
         "Note: write_basin_outlet_points writes the requested outlets, but "
         "this option writes the outlets of the selected basins.",
         "Basin outlet writing", "switch", ""};
@@ -665,6 +631,20 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"basin_outlet_file", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"side_tributary_vector_output_format", "side_tributary_write_vector_format"},
+        {"basin_outlines_output_format", "basin_outlines_write_vector_format"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"channel_network_points_output_format",
+         {"legacy_channel_network_points_write_vector_format", "write_vector_format"}},
+        {"channel_network_lines_output_format",
+         {"legacy_channel_network_lines_write_vector_format", "write_vector_format"}},
+        {"channel_network_junctions_output_format",
+         {"legacy_channel_network_junctions_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -673,23 +653,12 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    auto to_lower_copy = [](std::string s)
-    {
-        for (char& ch : s)
-        {
-            ch = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(ch))
-            );
-        }
-        return s;
-    };
-
     // -------------------------------------------------------------------------
     // Cross-parameter logic
     // -------------------------------------------------------------------------
-    if (ifs["source_pixels_threshold"] <= 0)
+    if (ifs["threshold_contributing_pixels"] <= 0)
     {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -713,32 +682,44 @@ int main(int argc, char* argv[])
 
     lsdtt::point_output_format cn_points_output_format =
         lsdtt::resolve_point_output_format(
-            sf["channel_network_points_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_network_points_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format cn_lines_output_format =
         lsdtt::resolve_vector_output_format(
-            sf["channel_network_lines_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_network_lines_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format cn_junctions_output_format =
         lsdtt::resolve_point_output_format(
-            sf["channel_network_junctions_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_network_junctions_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format basin_outline_lines_format =
         lsdtt::resolve_vector_output_format(
-            sf["basin_outlines_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["basin_outlines_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format side_tributary_vector_format =
         lsdtt::resolve_vector_output_format(
-            sf["side_tributary_vector_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["side_tributary_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format side_tributary_point_format =
         lsdtt::resolve_point_output_format(
-            sf["side_tributary_vector_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["side_tributary_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     const bool select_basins_from_outlets =
@@ -796,7 +777,7 @@ int main(int argc, char* argv[])
     }
 
     const std::string basin_outlet_snapping_method =
-        to_lower_copy(sf["basin_outlet_snapping_method"]);
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
 
     if (basin_outlet_snapping_method != "none" &&
         basin_outlet_snapping_method != "expanding_square" &&
@@ -814,25 +795,25 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    if (ifs["basin_outlet_snap_min_search_radius_pixels"] < 0)
     {
-        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels "
+        std::cerr << "FATAL: basin_outlet_snap_min_search_radius_pixels "
                   << "must be >= 0.\n";
         return 1;
     }
 
-    if (ifs["basin_outlet_max_search_radius_pixels"] <
-        ifs["basin_outlet_min_search_radius_pixels"])
+    if (ifs["basin_outlet_snap_max_search_radius_pixels"] <
+        ifs["basin_outlet_snap_min_search_radius_pixels"])
     {
-        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
-                  << "basin_outlet_min_search_radius_pixels.\n";
+        std::cerr << "FATAL: basin_outlet_snap_max_search_radius_pixels must be >= "
+                  << "basin_outlet_snap_min_search_radius_pixels.\n";
         return 1;
     }
 
     if ((select_basins_from_outlets || select_basins_from_outlets_nested) &&
-        (sf["basin_outlet_file"] == "NULL" || sf["basin_outlet_file"].empty()))
+        (sf["basin_outlet_fname"] == "NULL" || sf["basin_outlet_fname"].empty()))
     {
-        std::cerr << "FATAL: basin_outlet_file is required when selecting "
+        std::cerr << "FATAL: basin_outlet_fname is required when selecting "
                   << "basins from supplied outlet points.\n";
         return 1;
     }
@@ -876,7 +857,7 @@ int main(int argc, char* argv[])
     if (select_basins_from_outlets || select_basins_from_outlets_nested)
     {
         std::cout << "Basin outlet file            : "
-                  << sf["basin_outlet_file"] << "\n";
+                  << sf["basin_outlet_fname"] << "\n";
         std::cout << "Basin outlet snapping method : "
                   << basin_outlet_snapping_method << "\n";
 
@@ -888,9 +869,9 @@ int main(int argc, char* argv[])
             if (basin_outlet_snapping_method == "expanding_square")
             {
                 std::cout << "Snapping min search radius   : "
-                          << ifs["basin_outlet_min_search_radius_pixels"] << "\n";
+                          << ifs["basin_outlet_snap_min_search_radius_pixels"] << "\n";
                 std::cout << "Snapping max search radius   : "
-                          << ifs["basin_outlet_max_search_radius_pixels"] << "\n";
+                          << ifs["basin_outlet_snap_max_search_radius_pixels"] << "\n";
             }
         }
     }
@@ -1217,14 +1198,14 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source extraction ---\n";
     std::cout << "Contributing-pixel threshold: "
-              << ifs["source_pixels_threshold"] << "\n";
+              << ifs["threshold_contributing_pixels"] << "\n";
 
     std::vector<std::int64_t> source_flats;
     try
     {
         source_flats =
             flow->get_sources_index_threshold(
-                ifs["source_pixels_threshold"]
+                ifs["threshold_contributing_pixels"]
             );
     }
     catch (const std::exception& e)
@@ -1236,7 +1217,7 @@ int main(int argc, char* argv[])
     if (source_flats.empty())
     {
         std::cerr << "FATAL: source extraction returned no source pixels. "
-                  << "Try lowering source_pixels_threshold.\n";
+                  << "Try lowering threshold_contributing_pixels.\n";
         return 1;
     }
 
@@ -1533,7 +1514,7 @@ int main(int argc, char* argv[])
         else
         {
             const std::string basin_outlet_file_path =
-                pp.add_read_path_if_needed(sf["basin_outlet_file"]);
+                pp.add_read_path_if_needed(sf["basin_outlet_fname"]);
 
             // The selection proper ends here. Everything below is reading
             // the outlet file and printing coordinate diagnostics, which is
@@ -1578,7 +1559,7 @@ int main(int argc, char* argv[])
                 const auto& p = basin_outlet_file_path;
                 const bool looks_like_csv =
                     p.size() >= 4 &&
-                    to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                    lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
                 if (looks_like_csv)
                     std::cout << "\nOutlet file is CSV: latitude and longitude "
                                  "columns (EPSG:4326) will be transformed to "
@@ -1638,7 +1619,7 @@ int main(int argc, char* argv[])
                     const auto& p = basin_outlet_file_path;
                     const bool looks_like_csv =
                         p.size() >= 4 &&
-                        to_lower_copy(p.substr(p.size() - 4)) == ".csv";
+                        lsdtt::to_lower_ascii(p.substr(p.size() - 4)) == ".csv";
                     if (looks_like_csv)
                         std::cerr << "  -> CSV files must have columns named "
                                      "'latitude' and 'longitude'.\n";
@@ -1785,9 +1766,9 @@ int main(int argc, char* argv[])
                     ifs["basin_outlet_contributing_pixels_threshold"]
                 );
             square_snap_options.min_search_radius_pixels =
-                ifs["basin_outlet_min_search_radius_pixels"];
+                ifs["basin_outlet_snap_min_search_radius_pixels"];
             square_snap_options.max_search_radius_pixels =
-                ifs["basin_outlet_max_search_radius_pixels"];
+                ifs["basin_outlet_snap_max_search_radius_pixels"];
 
             lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
             downstream_snap_options.contributing_pixels_threshold =
@@ -1795,24 +1776,6 @@ int main(int argc, char* argv[])
                     ifs["basin_outlet_contributing_pixels_threshold"]
                 );
 
-            auto snap_status_to_string = [](lsdtt::lsdtt_snap_status status)
-            {
-                switch (status)
-                {
-                    case lsdtt::lsdtt_snap_status::success:
-                        return std::string("success");
-                    case lsdtt::lsdtt_snap_status::input_out_of_bounds:
-                        return std::string("input_out_of_bounds");
-                    case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
-                        return std::string("input_invalid_flow_cell");
-                    case lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window:
-                        return std::string("threshold_not_found_in_search_window");
-                    case lsdtt::lsdtt_snap_status::outlet_reached_before_threshold:
-                        return std::string("outlet_reached_before_threshold");
-                }
-
-                return std::string("unknown");
-            };
 
             std::vector<std::int64_t> basin_outlet_flat_indices;
             basin_outlet_flat_indices.reserve(requested_outlets.size());
@@ -1844,29 +1807,37 @@ int main(int argc, char* argv[])
                     int col = outlet.col;
                     std::int64_t flat = outlet.flat;
 
-                    if (basin_outlet_snapping_method == "expanding_square")
-                    {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                                *flow,
-                                row,
-                                col,
-                                square_snap_options
-                            );
+                    const lsdtt::lsdtt_snap_result snapped =
+                        lsdtt::snap_pixel_by_method(
+                            *flow, row, col, basin_outlet_snapping_method,
+                            square_snap_options, downstream_snap_options);
 
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
+                    if (snapped.status != lsdtt::lsdtt_snap_status::success)
+                    {
+                        if (basin_outlet_snapping_method == "none")
                         {
                             std::cerr << "Warning: basin outlet " << outlet.point_id
-                                      << " could not be snapped with expanding_square ("
-                                      << snap_status_to_string(snapped.status)
-                                      << "); skipping.\n";
-                            continue;
+                                      << " maps to an invalid or nodata flow pixel; skipping.\n";
                         }
+                        else
+                        {
+                            std::cerr << "Warning: basin outlet " << outlet.point_id
+                                      << " could not be snapped "
+                                      << (basin_outlet_snapping_method == "downstream"
+                                              ? "downstream" : "with expanding_square")
+                                      << " ("
+                                      << lsdtt::snap_status_to_string(snapped.status)
+                                      << "); skipping.\n";
+                        }
+                        continue;
+                    }
 
-                        row  = snapped.snapped_row;
-                        col  = snapped.snapped_col;
-                        flat = snapped.snapped_flat;
+                    row  = snapped.snapped_row;
+                    col  = snapped.snapped_col;
+                    flat = snapped.snapped_flat;
 
+                    if (basin_outlet_snapping_method == "expanding_square")
+                    {
                         std::cout << "  Snapped      : row=" << row
                                   << " col=" << col
                                   << " radius=" << snapped.search_radius_pixels
@@ -1875,43 +1846,12 @@ int main(int argc, char* argv[])
                     }
                     else if (basin_outlet_snapping_method == "downstream")
                     {
-                        const lsdtt::lsdtt_snap_result snapped =
-                            lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                                *flow,
-                                row,
-                                col,
-                                downstream_snap_options
-                            );
-
-                        if (snapped.status != lsdtt::lsdtt_snap_status::success)
-                        {
-                            std::cerr << "Warning: basin outlet " << outlet.point_id
-                                      << " could not be snapped downstream ("
-                                      << snap_status_to_string(snapped.status)
-                                      << "); skipping.\n";
-                            continue;
-                        }
-
-                        row  = snapped.snapped_row;
-                        col  = snapped.snapped_col;
-                        flat = snapped.snapped_flat;
-
                         std::cout << "  Snapped      : row=" << row
                                   << " col=" << col
                                   << " steps=" << snapped.downstream_steps
                                   << " contributing_pixels="
                                   << snapped.snapped_contributing_pixels << "\n";
                     }
-                    else
-                    {
-                        if (!flow->is_valid_cell(flat))
-                        {
-                            std::cerr << "Warning: basin outlet " << outlet.point_id
-                                      << " maps to an invalid or nodata flow pixel; skipping.\n";
-                            continue;
-                        }
-                    }
-
                     basin_outlet_flat_indices.push_back(flat);
                 }
                 catch (const std::exception& e)
@@ -2073,25 +2013,25 @@ int main(int argc, char* argv[])
                 const double area_px = static_cast<double>(npix.data[oi]);
                 const double com_x = m.x_min + static_cast<double>(sx.data[oi]) / area_px;
                 const double com_y = m.y_min + static_cast<double>(sy.data[oi]) / area_px;
-                const double bearing = bearing_north(ox, oy, com_x, com_y);
+                const double bearing = lsdtt::bearing_from_north_degrees(ox, oy, com_x, com_y);
 
                 const lsdtt_seg_hit hit =
                     nearest_fault_segment(com_x, com_y, fault_segments);
                 const std::string side = (com_x >= hit.nx) ? "east" : "west";
                 const double n1 = std::fmod(hit.tan_az + 90.0, 360.0);
                 const double n2 = std::fmod(hit.tan_az - 90.0 + 360.0, 360.0);
-                const double to_com = bearing_north(hit.nx, hit.ny, com_x, com_y);
+                const double to_com = lsdtt::bearing_from_north_degrees(hit.nx, hit.ny, com_x, com_y);
                 const double normal =
                     (std::fabs(wrap180(n1 - to_com))
                      <= std::fabs(wrap180(n2 - to_com))) ? n1 : n2;
                 const double defl = wrap180(bearing - normal);
 
                 rows.push_back({
-                    std::to_string(i), precise_string(area_px * cell_area),
-                    precise_string(ox), precise_string(oy),
-                    precise_string(com_x), precise_string(com_y),
-                    precise_string(bearing), precise_string(hit.tan_az),
-                    side, precise_string(defl)});
+                    std::to_string(i), lsdtt::csv_number(area_px * cell_area, 10),
+                    lsdtt::csv_number(ox, 10), lsdtt::csv_number(oy, 10),
+                    lsdtt::csv_number(com_x, 10), lsdtt::csv_number(com_y, 10),
+                    lsdtt::csv_number(bearing, 10), lsdtt::csv_number(hit.tan_az, 10),
+                    side, lsdtt::csv_number(defl, 10)});
             }
 
             const std::string out =
@@ -2374,14 +2314,14 @@ int main(int argc, char* argv[])
                         static_cast<double>(flow->s_vector_size(flat));
 
                     rows.push_back({
-                        precise_string(lon),
-                        precise_string(lat),
+                        lsdtt::csv_number(lon, 10),
+                        lsdtt::csv_number(lat, 10),
                         std::to_string(junc),
                         std::to_string(flat),
                         std::to_string(static_cast<std::int64_t>(n_pix)),
-                        precise_string(n_pix * cell_area_km2),
-                        precise_string(n_valid_cells > 0.0
-                                           ? n_pix / n_valid_cells : 0.0)
+                        lsdtt::csv_number(n_pix * cell_area_km2, 10),
+                        lsdtt::csv_number(n_valid_cells > 0.0
+                                           ? n_pix / n_valid_cells : 0.0, 10)
                     });
                 }
 

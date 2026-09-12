@@ -113,7 +113,7 @@ calculate_step_change_crn_concentration_raster: true
 make_step_change_rasters: true
 step_change_uplift_old_m_yr: 0.0001
 step_change_uplift_new_m_yr: 0.0005
-step_change_target_relief_m: 400
+step_change_target_relief_metres: 400
 step_change_age_yr: 1000000
 step_change_n: 1.0
 write_step_change_rasters: true

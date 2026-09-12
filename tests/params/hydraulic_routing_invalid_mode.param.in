@@ -5,7 +5,11 @@ write_fname: tiny_hydraulic_invalid_mode
 
 write_output_format: gtiff
 
-hydraulic_run_mode: not_a_mode
+# hydraulic_run_mode was removed in the 2026-09-04 rewrite. This test's intent
+# is that an invalid enum value fails cleanly with a message naming the allowed
+# values, so it now uses flow_routing_method. That check runs before the
+# required-raster checks, so no node-state/rainfall/friction raster is needed.
+flow_routing_method: not_a_method
 n_steps: 1
 
 write_water_depth_raster: true

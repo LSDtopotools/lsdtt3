@@ -17,7 +17,7 @@ write_output_format: gtiff
 # the tool is proven to work on its own as well as downstream of
 # lsdtt-flat-surface-finder.
 fallback_admission_algorithm_choice: relief
-fallback_relief_window_pixels: 5
+fallback_relief_window_radius_pixels: 5
 fallback_relief_threshold_metres: 2.0
 min_component_pixels: 50
 
@@ -27,7 +27,7 @@ ladder_level_count: 4
 vertical_accuracy_metres: 0.5
 ladder_resolvability_kappa: 3.0
 
-channel_threshold_contributing_pixels: 500
+threshold_contributing_pixels: 500
 floodplain_max_height_metres: 5.0
 terrace_min_height_metres: 5.0
 

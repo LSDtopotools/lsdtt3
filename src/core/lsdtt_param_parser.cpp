@@ -16,13 +16,17 @@
 #include "lsdtt_param_parser.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
-#include <set>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
+#include <limits>
+#include <locale>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -161,10 +165,23 @@ void lsdtt_param_parser::parse_file_io()
 //
 // Order matters. Removed keys are checked first and stop the run, because there
 // is no point warning about aliases in a file that is going to be rejected
-// anyway. Aliases are then rewritten into parameter_map_ so the typed parses
-// that follow pick the value up under its new name, and the old key is erased
-// so it does not also surface as unknown. Whatever is left over is unknown.
+// anyway. Transformed aliases and then ordinary aliases are rewritten into
+// parameter_map_ so the typed parses that follow pick values up under their new
+// names. Consumed old keys are erased so they do not also surface as unknown.
 // -----------------------------------------------------------------------------
+void lsdtt_param_parser::set_deprecated_compatibility_aliases(
+    std::map<std::string, lsdtt_deprecated_compatibility_alias> aliases)
+{
+    deprecated_compatibility_alias_map_ = std::move(aliases);
+    compatibility_storage_keys_.clear();
+    for (const auto& [old_key, policy] : deprecated_compatibility_alias_map_)
+    {
+        (void)old_key;
+        if (!policy.storage_key.empty())
+            compatibility_storage_keys_.insert(policy.storage_key);
+    }
+}
+
 void lsdtt_param_parser::apply_key_policy(
     const std::vector<std::string>& declared_keys)
 {
@@ -197,7 +214,132 @@ void lsdtt_param_parser::apply_key_policy(
         std::exit(1);
     }
 
-    // --- 2. Deprecated aliases: carry the value across, name the replacement --
+    // A key cannot have two incompatible alias policies. Check the maps, not
+    // just keys present in this file, so configuration errors are deterministic.
+    for (const auto& [old_key, policy] : deprecated_numeric_alias_map_)
+    {
+        (void)policy;
+        if (!deprecated_alias_map_.count(old_key)) continue;
+        std::cerr << "FATAL: deprecated key '" << old_key
+                  << "' is registered as both an ordinary and transformed "
+                     "numeric alias.\n";
+        std::exit(1);
+    }
+
+    for (const auto& [old_key, policy] : deprecated_compatibility_alias_map_)
+    {
+        if (deprecated_alias_map_.count(old_key) ||
+            deprecated_numeric_alias_map_.count(old_key) ||
+            policy.storage_key.empty() || policy.replacement_key.empty())
+        {
+            std::cerr << "FATAL: invalid or duplicate compatibility alias policy for '"
+                      << old_key << "'.\n";
+            std::exit(1);
+        }
+    }
+
+    // --- 2. Transformed numeric aliases --------------------------------------
+    for (const auto& [old_key, policy] : deprecated_numeric_alias_map_)
+    {
+        if (!parameter_map_.count(old_key)) continue;
+
+        auto format_number = [](double value)
+        {
+            std::ostringstream out;
+            out.imbue(std::locale::classic());
+            out << std::setprecision(std::numeric_limits<double>::max_digits10)
+                << value;
+            return out.str();
+        };
+        const std::string transform =
+            "new = old * " + format_number(policy.scale) + " + " +
+            format_number(policy.offset) +
+            (policy.preserve_zero ? "; zero remains zero" : "");
+
+        if (policy.new_key.empty() || !std::isfinite(policy.scale) ||
+            !std::isfinite(policy.offset))
+        {
+            std::cerr << "FATAL: invalid transformed numeric alias policy for '"
+                      << old_key << "'.\n";
+            std::exit(1);
+        }
+
+        const std::string& text = parameter_map_[old_key];
+        double old_value = 0.0;
+        std::size_t consumed = 0;
+        try
+        {
+            old_value = std::stod(text, &consumed);
+        }
+        catch (const std::exception&)
+        {
+            consumed = 0;
+        }
+        if (consumed != text.size() || !std::isfinite(old_value))
+        {
+            std::cerr << "FATAL: deprecated numeric parameter '" << old_key
+                      << "' must be a finite number for transformation to '"
+                      << policy.new_key << "' (" << transform << "); got '"
+                      << text << "'.\n";
+            std::exit(1);
+        }
+
+        const bool canonical_supplied = parameter_map_.count(policy.new_key) != 0;
+        if (canonical_supplied)
+        {
+            std::cerr << "WARNING: '" << old_key << "' is deprecated and '"
+                      << policy.new_key << "' was also supplied. Using '"
+                      << policy.new_key << "'; the deprecated key is ignored "
+                      << "and its numeric transformation (" << transform
+                      << ") was not applied.\n";
+        }
+        else
+        {
+            const double new_value =
+                (policy.preserve_zero && old_value == 0.0)
+                    ? 0.0
+                    : old_value * policy.scale + policy.offset;
+            if (!std::isfinite(new_value))
+            {
+                std::cerr << "FATAL: transformed value for deprecated numeric "
+                             "parameter '" << old_key << "' is not finite ("
+                          << transform << ").\n";
+                std::exit(1);
+            }
+            parameter_map_[policy.new_key] = format_number(new_value);
+            std::cerr << "WARNING: '" << old_key << "' is deprecated; use '"
+                      << policy.new_key << "'. Its numeric value has been "
+                      << "transformed (" << transform << ") and applied to '"
+                      << policy.new_key << "' for this run.\n";
+        }
+        parameter_map_.erase(old_key);
+    }
+
+    // Compatibility aliases are injective storage rewrites. The hidden storage
+    // key preserves an old per-output value without advertising a non-genuine
+    // public override.
+    for (const auto& [old_key, policy] : deprecated_compatibility_alias_map_)
+    {
+        if (!parameter_map_.count(old_key)) continue;
+        if (parameter_map_.count(policy.storage_key))
+        {
+            std::cerr << "WARNING: '" << old_key << "' is deprecated and its "
+                      << "compatibility value was already supplied. Using the "
+                      << "existing value; migrate to '" << policy.replacement_key
+                      << "'.\n";
+        }
+        else
+        {
+            parameter_map_[policy.storage_key] = parameter_map_[old_key];
+            std::cerr << "WARNING: '" << old_key << "' is deprecated; use '"
+                      << policy.replacement_key << "'. Its value is preserved "
+                      << "for this output in this run; review consolidated "
+                      << "format settings before removing the old key.\n";
+        }
+        parameter_map_.erase(old_key);
+    }
+
+    // --- 3. Deprecated aliases: carry the value across, name the replacement --
     for (const auto& [old_key, new_key] : deprecated_alias_map_)
     {
         if (!parameter_map_.count(old_key)) continue;
@@ -218,7 +360,7 @@ void lsdtt_param_parser::apply_key_policy(
         parameter_map_.erase(old_key);
     }
 
-    // --- 3. Ignored keys: named, explained, and survived ---------------------
+    // --- 4. Ignored keys: named, explained, and survived ---------------------
     // Erased after reporting so they do not also surface as unknown: the
     // specific message is strictly better than "not recognised", and printing
     // both for one key would read as two separate problems.
@@ -229,7 +371,7 @@ void lsdtt_param_parser::apply_key_policy(
         parameter_map_.erase(old_key);
     }
 
-    // --- 4. Unknown keys: a warning, never fatal -----------------------------
+    // --- 5. Unknown keys: a warning, never fatal -----------------------------
     if (!report_unknown_keys_) return;
 
     const std::set<std::string> declared(declared_keys.begin(),
@@ -403,7 +545,7 @@ void lsdtt_param_parser::force_parse()
         {
             if (key == io) { is_io = true; break; }
         }
-        if (!is_io)
+        if (!is_io && !compatibility_storage_keys_.count(key))
         {
             parameters_read_map_[key] = value;
         }
@@ -1343,12 +1485,14 @@ void lsdtt_param_parser::print_parameters(const std::string& fname_prefix) const
     out << "# Parameters read from file\n";
     for (const auto& [key, val] : parameters_read_map_)
     {
+        if (compatibility_storage_keys_.count(key)) continue;
         out << key << ": " << val << "\n";
     }
 
     out << "\n# Default parameters used\n";
     for (const auto& [key, val] : defaults_used_map_)
     {
+        if (compatibility_storage_keys_.count(key)) continue;
         out << key << ": " << val << "\n";
     }
 }
@@ -1360,10 +1504,34 @@ void lsdtt_param_parser::print_help(
     const std::string& citation
 ) const
 {
+    // Parser-owned I/O never enters the typed parameter maps. Include it here
+    // centrally, with this run's resolved values, so per-run README files do
+    // not depend on every CLI redeclaring the same four keys.
+    std::map<std::string, std::vector<std::string>> full_help = help_map;
+    full_help["read_path"] = {"string", read_path_,
+        "Resolved directory from which input files are read.",
+        "Defaults to the directory holding the parameter file.",
+        "File I/O", "io", ""};
+    full_help["read_fname"] = {"string", read_fname_ + read_ext_,
+        "Resolved input filename, including its extension.",
+        "Read from read_path; defaults to the parameter filename stem when omitted.",
+        "File I/O", "io", ""};
+    full_help["write_path"] = {"string", write_path_,
+        "Resolved directory to which output files are written.",
+        "Defaults to read_path when omitted.",
+        "File I/O", "io", ""};
+    full_help["write_fname"] = {"string", write_fname_,
+        "Resolved output filename prefix (no path or extension).",
+        "Defaults to the stem of read_fname when omitted.",
+        "File I/O", "io", ""};
+
     // Collect all keys from read and defaults maps
-    std::vector<std::string> all_keys;
-    for (const auto& [k, v] : parameters_read_map_) all_keys.push_back(k);
-    for (const auto& [k, v] : defaults_used_map_)   all_keys.push_back(k);
+    std::vector<std::string> all_keys = {
+        "read_path", "read_fname", "write_path", "write_fname"};
+    for (const auto& [k, v] : parameters_read_map_)
+        if (!compatibility_storage_keys_.count(k)) all_keys.push_back(k);
+    for (const auto& [k, v] : defaults_used_map_)
+        if (!compatibility_storage_keys_.count(k)) all_keys.push_back(k);
     std::sort(all_keys.begin(), all_keys.end());
     all_keys.erase(std::unique(all_keys.begin(), all_keys.end()), all_keys.end());
 
@@ -1387,8 +1555,8 @@ void lsdtt_param_parser::print_help(
 
         for (const auto& key : all_keys)
         {
-            auto it = help_map.find(key);
-            if (it == help_map.end() || it->second.size() < 4)
+            auto it = full_help.find(key);
+            if (it == full_help.end() || it->second.size() < 4)
             {
                 csv << csv_quote(key) << ",not available,not available,"
                     << "not available,not available,,,\n";
@@ -1442,8 +1610,8 @@ void lsdtt_param_parser::print_help(
 
         for (const auto& key : all_keys)
         {
-            auto it = help_map.find(key);
-            if (it == help_map.end() || it->second.size() < 4)
+            auto it = full_help.find(key);
+            if (it == full_help.end() || it->second.size() < 4)
             {
                 html << "<tr><td>" << key
                      << "</td><td colspan=\"7\">not available</td></tr>\n";

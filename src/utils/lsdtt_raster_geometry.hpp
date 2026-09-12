@@ -360,4 +360,35 @@ inline lsdtt_rowcol_window window_for_reference_in_source(
     );
 }
 
+// -----------------------------------------------------------------------------
+// distance_to_raster_boundary_metres
+//
+// Perpendicular distance from a cell to the NEAREST of the four raster edges,
+// in metres. Zero on the edge itself.
+//
+// Note this is distance to the RECTANGLE, not to the nearest nodata: a cell in
+// the middle of a raster whose active mask is a narrow strip is reported as far
+// from the boundary even though it sits beside masked-out ground. Callers that
+// care about the mask edge want a different measure.
+// -----------------------------------------------------------------------------
+inline double distance_to_raster_boundary_metres(
+    const lsdtt_raster_meta& meta,
+    const int                row,
+    const int                col)
+{
+    const int cells = std::min(std::min(col, meta.n_cols - 1 - col),
+                               std::min(row, meta.n_rows - 1 - row));
+    return static_cast<double>(cells) * meta.cell_size;
+}
+
+// Same, addressed by row-major flat index.
+inline double distance_to_raster_boundary_metres(
+    const lsdtt_raster_meta& meta,
+    const std::int64_t       flat)
+{
+    const int row = static_cast<int>(flat / meta.n_cols);
+    const int col = static_cast<int>(flat % meta.n_cols);
+    return distance_to_raster_boundary_metres(meta, row, col);
+}
+
 } // namespace lsdtt

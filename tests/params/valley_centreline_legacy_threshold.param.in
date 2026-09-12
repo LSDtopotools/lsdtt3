@@ -1,0 +1,16 @@
+# Compatibility coverage for the legacy valley-centreline threshold key.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: vc_legacy
+
+n_threads: 1
+write_output_format: gtiff
+source_points_path: __READ_PATH__/fluvsurf_sources.fgb
+source_points_input_format: ogr_vector_layer
+channel_threshold_contributing_pixels: 200
+
+write_valley_mask_raster: true
+write_valley_centreline: true
+write_valley_cross_sections: false
+valley_mask_fname: vcin_valley_mask.tif

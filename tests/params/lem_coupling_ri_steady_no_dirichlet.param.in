@@ -5,7 +5,7 @@ write_path: __WRITE_PATH__
 write_fname: tiny_coup_ri_nodir
 write_output_format: gtiff
 enable_hillslope_transport: true
-incision_threshold_area: 5
+incision_threshold_specific_area: 5
 hillslope_channel_coupling: coupled
 hillslope_model: roering_implicit
 # No channel set (coupled) AND no 'o' edge: the steady elliptic problem has no

@@ -22,7 +22,7 @@ polyfit_method: direct
 polyfit_lambda_metres: 2.0
 polyfit_metrics: slope,aspect_degrees,mean_curvature
 
-write_shape_classification: true
+write_shape_classification_raster: true
 shape_curvature_method: polyfit
 shape_curvature_threshold: 0.0
 write_shape_curvature_rasters: true

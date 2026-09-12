@@ -84,7 +84,7 @@ Points that are easy to get wrong, and are pinned in the config:
 - `step_change.route_on_generated_dem` is **false**. The generated step-change
   DEM has a ~56 m elevation cliff along drainage divides, so rebuilding D8 on
   it sends 5.4 % of tag-4 pixels draining into the unadjusted catchment.
-- `crn_nc_file` resolves against `read_path`, not the working directory, so the
+- `crn_nc_fname` resolves against `read_path`, not the working directory, so the
   CRN netCDF is staged next to every DEM a run reads. The same is true of the
   landslide `*_raster_prefix` parameters.
 - `crn.rock_density_kg_m3` (2650) and `landslides.scar_density_kg_m3` (1500)
@@ -117,6 +117,11 @@ Workflows use the dedicated Pixi environment defined in the repo root
 - run Snakemake: `pixi run -e workflows snakemake --help`
 - dry-run check: `pixi run -e workflows snakemake -n --snakefile workflows/Snakefile --directory workflows`
 - execute: `pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile --directory workflows`
+
+CLIs whose `n_threads` is `0` use all available hardware threads. On shared
+hosts, set an explicit `n_threads` no greater than the physical cores allocated
+to each job; Snakemake's `--cores` limit does not by itself rewrite CLI thread
+parameters.
 
 ## Layout
 

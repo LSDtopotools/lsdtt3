@@ -73,6 +73,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
@@ -160,15 +161,19 @@ int main(int argc, char* argv[])
     help_map["fallback_admission_algorithm_choice"] = {"string","relief",
         "Built-in admission when flat_mask_fname is empty: relief or slope.",
         "relief admits cells whose local relief over "
-        "fallback_relief_window_pixels is below "
+        "fallback_relief_window_radius_pixels is below "
         "fallback_relief_threshold_metres. slope admits cells whose gradient "
         "magnitude is below fallback_slope_threshold.",
         "Admission","param","flat_mask_fname"};
 
-    int_default_map["fallback_relief_window_pixels"] = 5;
-    help_map["fallback_relief_window_pixels"] = {"int","5",
-        "Moving-window radius in pixels for the fallback relief admission.",
-        "Only used when flat_mask_fname is empty and the fallback is relief.",
+    int_default_map["fallback_relief_window_radius_pixels"] = 5;
+    help_map["fallback_relief_window_radius_pixels"] = {"int","5",
+        "Moving-window RADIUS in pixels for the fallback relief admission.",
+        "This is a radius, not a window side: 5 means an 11x11 window.  Note "
+        "that lsdtt-flat-surface-finder and lsdtt-mountain-front spell their "
+        "equivalent relief_window_side_pixels, which is a full SIDE LENGTH and "
+        "so means something different for the same number.  Only used when "
+        "flat_mask_fname is empty and the fallback is relief.",
         "Admission","param","flat_mask_fname"};
 
     float_default_map["fallback_relief_threshold_metres"] = 1.0f;
@@ -437,9 +442,9 @@ int main(int argc, char* argv[])
         "way equally and the aspect is meaningless. Costs one polynomial fit.",
         "Outputs", "output", ""};
 
-    float_default_map["patch_aspect_window_metres"] = 0.0f;
-    help_map["patch_aspect_window_metres"] = {"float","0",
-        "Window diameter [m] of the polynomial fit the terrain aspect is "
+    float_default_map["patch_aspect_window_radius_metres"] = 0.0f;
+    help_map["patch_aspect_window_radius_metres"] = {"float","0",
+        "Window radius [m] of the polynomial fit the terrain aspect is "
         "measured over. 0 = five cells.",
         "Stated in cells by default because a length tuned on lidar is "
         "sub-pixel on 30 m COP30.",
@@ -482,9 +487,9 @@ int main(int argc, char* argv[])
         "accuracy specification splits.",
         "Ladder", "param", ""};
 
-    float_default_map["vertical_accuracy_slope_window_metres"] = 0.0f;
-    help_map["vertical_accuracy_slope_window_metres"] = {"float","0",
-        "Window diameter [m] of the polynomial fit the window gradient is "
+    float_default_map["vertical_accuracy_slope_window_radius_metres"] = 0.0f;
+    help_map["vertical_accuracy_slope_window_radius_metres"] = {"float","0",
+        "Window radius [m] of the polynomial fit the window gradient is "
         "measured over. 0 = five cells. slope_dependent only.",
         "Stated in cells by default because a length tuned on lidar is "
         "sub-pixel on 30 m COP30. This is the same measurement "
@@ -595,18 +600,13 @@ int main(int argc, char* argv[])
         "Classification","param",""};
 
     // --- Flow routing ---
-    bool_default_map["fill_dem_for_flow_routing"] = true;
-    help_map["fill_dem_for_flow_routing"] = {"bool","true",
-        "Fill pits before building flow routing.",
-        "The DEM used for the height reference is the ORIGINAL, unfilled one; "
-        "only the routing uses the filled surface.",
-        "Flow routing","switch",""};
+    lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope_for_routing"] = 0.0001f;
     help_map["fill_min_slope_for_routing"] = {"float","0.0001",
         "Minimum imposed slope when filling for routing [m/m].",
         "Barnes et al. 2014 Priority-Flood.",
-        "Flow routing","param","fill_dem_for_flow_routing"};
+        "Flow routing","param","fill_before_routing"};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
@@ -614,12 +614,7 @@ int main(int argc, char* argv[])
         "o = open, n = no-flux, p = periodic, b = forced outlet.",
         "Flow routing","param",""};
 
-    int_default_map["channel_threshold_contributing_pixels"] = 1000;
-    help_map["channel_threshold_contributing_pixels"] = {"int","1000",
-        "Contributing-pixel threshold defining a channel.",
-        "Used to find channel heads when no source points are supplied, and to "
-        "snap supplied sources onto the network.",
-        "Flow routing","param",""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Channel scope: source and outlet points ---
     bool_default_map["break_flats_with_channels"] = false;
@@ -727,8 +722,8 @@ int main(int argc, char* argv[])
         "A hand-digitised point rarely lands exactly on the routed channel.",
         "Channel scope","switch","source_points_fname"};
 
-    int_default_map["source_snap_max_radius_pixels"] = 20;
-    help_map["source_snap_max_radius_pixels"] = {"int","20",
+    int_default_map["source_snap_max_search_radius_pixels"] = 20;
+    help_map["source_snap_max_search_radius_pixels"] = {"int","20",
         "Search radius when snapping a source point [pixels].",
         "A point that finds no threshold channel within this radius is "
         "reported as unsnapped in the point snap diagnostics.",
@@ -1057,7 +1052,9 @@ int main(int argc, char* argv[])
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool","true",
         "Write channel links as lines.",
-        "Output file: <stem>_channel_network_lines.fgb.",
+        "Lines are the compact default representation of the network used to fit "
+        "the surfaces; per-node points remain opt-in. Output file: "
+        "<stem>_channel_network_lines.fgb.",
         "Outputs","switch","write_channel_network"};
 
     bool_default_map["write_channel_network_points"] = false;
@@ -1083,6 +1080,23 @@ int main(int argc, char* argv[])
     // Parse
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
+
+    // A pure rename: the value carries across unchanged. The new spelling says
+    // what the number is - a radius, so 5 is an 11x11 window - because the same
+    // idea is a full window SIDE in lsdtt-flat-surface-finder and
+    // lsdtt-mountain-front.
+    pp.set_deprecated_aliases({
+        {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"},
+        {"source_snap_max_radius_pixels", "source_snap_max_search_radius_pixels"},
+        {"fill_dem_for_flow_routing", "fill_before_routing"},
+        {"channel_threshold_contributing_pixels",
+         "threshold_contributing_pixels"} });
+    pp.set_deprecated_numeric_aliases({
+        {"patch_aspect_window_metres",
+         {"patch_aspect_window_radius_metres", 0.5, 0.0, true}},
+        {"vertical_accuracy_slope_window_metres",
+         {"vertical_accuracy_slope_window_radius_metres", 0.5, 0.0, true}} });
+
     try
     {
         pp.parse_all_parameters(float_default_map, int_default_map,
@@ -1320,7 +1334,7 @@ int main(int argc, char* argv[])
             if (how == "relief")
             {
                 const double radius =
-                    static_cast<double>(ip["fallback_relief_window_pixels"]) *
+                    static_cast<double>(ip["fallback_relief_window_radius_pixels"]) *
                     meta.cell_size;
                 const lsdtt::lsdtt_raster_cpu relief =
                     lsdtt::moving_window_local_relief(dem, radius);
@@ -1387,13 +1401,19 @@ int main(int argc, char* argv[])
     if (need_flow)
     {
         std::cout << "--- D8 flow routing ---\n";
+        std::cout << "Fill before routing  : "
+                  << (bf["fill_before_routing"] ? "yes" : "no") << "\n";
         try
         {
-            if (bf["fill_dem_for_flow_routing"])
+            if (bf["fill_before_routing"])
             {
                 std::cout << "Filling DEM for flow routing...\n";
                 routing_dem = lsdtt::fill_pits(
                     dem, ff["fill_min_slope_for_routing"], ip["n_threads"]);
+            }
+            else
+            {
+                std::cout << "Routing on the unfilled input DEM.\n";
             }
             lsdtt::lsdtt_flowinfo_options fo;
             fo.boundary_conditions       = sf["boundary_conditions"];
@@ -1415,28 +1435,32 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Channel scope resolution ---\n";
         try
         {
+            // The five-key convention lives in lsdtt_channel_scope_cpu; this CLI
+            // spells its paths as <role>_points_fname and resolves them against
+            // read_path, which the accessor below does.
             auto role_flats = [&](const std::string& role)
             {
-                lsdtt::point_role_input in;
-                in.role_name            = role;
-                in.path = sf[role + "_points_fname"].empty()
-                    ? std::string()
-                    : pp.add_read_path_if_needed(sf[role + "_points_fname"]);
-                in.input_format         = sf[role + "_points_input_format"];
-                in.layer_name           = sf[role + "_points_layer_name"];
-                in.latitude_field_name  = sf[role + "_points_latitude_field_name"];
-                in.longitude_field_name = sf[role + "_points_longitude_field_name"];
-                return lsdtt::load_role_point_flats(in, routing_dem.get_meta());
+                return lsdtt::load_role_point_flats_by_key(
+                    role, "_fname",
+                    [&](const std::string& key) {
+                        const std::string v = sf[key];
+                        return (key.size() >= 6 &&
+                                key.compare(key.size() - 6, 6, "_fname") == 0 &&
+                                !v.empty())
+                            ? pp.add_read_path_if_needed(v)
+                            : v;
+                    },
+                    routing_dem.get_meta());
             };
 
             lsdtt::channel_scope_request sreq;
             sreq.threshold_contributing_pixels =
-                ip["channel_threshold_contributing_pixels"];
+                ip["threshold_contributing_pixels"];
             sreq.source_flats = role_flats("source");
             sreq.outlet_flats = role_flats("outlet");
             sreq.snap_sources = bf["snap_sources_to_channel_threshold"];
             sreq.source_snap_max_radius_pixels =
-                ip["source_snap_max_radius_pixels"];
+                ip["source_snap_max_search_radius_pixels"];
             sreq.outlet_snap_max_distance_metres =
                 static_cast<double>(ff["outlet_snap_max_distance_metres"]);
             sreq.auto_detect_roles =
@@ -1737,8 +1761,9 @@ int main(int argc, char* argv[])
         if (ev_slope_dependent)
         {
             const double cell = dem.get_meta().cell_size;
-            double lambda = static_cast<double>(
-                ff["vertical_accuracy_slope_window_metres"]);
+            // direct_polyfit takes the full physical window diameter.
+            double lambda = 2.0 * static_cast<double>(
+                ff["vertical_accuracy_slope_window_radius_metres"]);
             if (!(lambda > 0.0)) lambda = 5.0 * cell;
             std::cout << "Window gradient for E_v: polyfit window " << lambda
                       << " m, break at "
@@ -1768,8 +1793,9 @@ int main(int argc, char* argv[])
         if (bf["write_patch_terrain_aspect"])
         {
             const double cell = dem.get_meta().cell_size;
-            double lambda =
-                static_cast<double>(ff["patch_aspect_window_metres"]);
+            // direct_polyfit takes the full physical window diameter.
+            double lambda = 2.0 *
+                static_cast<double>(ff["patch_aspect_window_radius_metres"]);
             if (!(lambda > 0.0)) lambda = 5.0 * cell;
             std::cout << "Terrain aspect for the patch table: polyfit window "
                       << lambda << " m\n";

@@ -11,7 +11,7 @@ write_output_format: gtiff
 
 source_points_path: __READ_PATH__/fluvsurf_sources.fgb
 source_points_input_format: ogr_vector_layer
-channel_threshold_contributing_pixels: 200
+threshold_contributing_pixels: 200
 
 # The DEM is a 2 km square, so the 5000 m default corridor would swallow it
 # whole and the HAND population would stop being a valley population.

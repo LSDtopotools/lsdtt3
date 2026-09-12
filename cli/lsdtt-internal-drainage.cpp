@@ -25,6 +25,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
@@ -36,6 +37,8 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
 
 static const std::string k_version = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -60,20 +63,7 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static std::string lower(std::string value)
-{
-    for (char& c : value)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return value;
-}
 
-static std::string number(double value)
-{
-    std::ostringstream out;
-    out.precision(17);
-    out << value;
-    return out.str();
-}
 
 static lsdtt::sink_io_format sink_format_from_vector(
     lsdtt::vector_output_format format)
@@ -89,28 +79,6 @@ static std::string candidate_input_path(
 {
     const std::filesystem::path path(name);
     return path.is_absolute() ? name : pp.get_read_path() + name;
-}
-
-static void write_polygon_records(
-    lsdtt::lsdtt_data_loader& loader,
-    const std::string& path,
-    const std::string& layer_name,
-    const lsdtt::depression_polygons_result& polygons,
-    const lsdtt::lsdtt_raster_meta& meta,
-    lsdtt::vector_output_format format,
-    bool spatial_index)
-{
-    loader.begin_vector_write(
-        path, layer_name, polygons.schema, meta.crs_wkt, format, spatial_index);
-    for (const lsdtt::lsdtt_vector_record& record : polygons.records)
-    {
-        if (!std::holds_alternative<lsdtt::lsdtt_polygon_geom>(record.geometry))
-            continue;
-        const lsdtt::lsdtt_polygon_geom& polygon =
-            std::get<lsdtt::lsdtt_polygon_geom>(record.geometry);
-        loader.write_polygon(polygon.exterior, polygon.holes, record.field_values);
-    }
-    loader.finish_vector_write();
 }
 
 static void write_depression_csv(
@@ -131,9 +99,9 @@ static void write_depression_csv(
         rows.push_back({
             std::to_string(sink.sink_id),
             std::to_string(sink.routing_sink_id),
-            number(sink.pit_elevation), number(sink.spill_elevation),
-            number(sink.depth_m), number(sink.area_m2), number(sink.volume_m3),
-            std::to_string(sink.n_pixels), number(sink.tagged_drainage_area_m2),
+            lsdtt::csv_number(sink.pit_elevation), lsdtt::csv_number(sink.spill_elevation),
+            lsdtt::csv_number(sink.depth_m), lsdtt::csv_number(sink.area_m2), lsdtt::csv_number(sink.volume_m3),
+            std::to_string(sink.n_pixels), lsdtt::csv_number(sink.tagged_drainage_area_m2),
             std::to_string(sink.tagged_n_pixels),
             std::to_string(sink.hierarchy_level),
             std::to_string(sink.parent_sink_id), sink.accepted ? "1" : "0"
@@ -279,32 +247,11 @@ static channel_output_result write_sink_channels(
     bool write_junctions,
     const lsdtt::lsdtt_raster_cpu* chi)
 {
-    const std::size_t n_cells = flow.full_grid_size();
-    std::vector<std::uint8_t> qualifies(n_cells, 0u);
-    std::vector<std::uint8_t> has_qualifying_donor(n_cells, 0u);
-    for (std::size_t index = 0; index < n_cells; ++index)
-    {
-        const std::int64_t flat = static_cast<std::int64_t>(index);
-        if (tagged.sink_id_raster.get_mask()[index] != 0u &&
-            flow.s_vector_size(flat) >= static_cast<std::uint64_t>(threshold))
-            qualifies[index] = 1u;
-    }
-    for (std::size_t index = 0; index < n_cells; ++index)
-    {
-        if (qualifies[index] == 0u) continue;
-        const std::int64_t receiver =
-            flow.receiver_of(static_cast<std::int64_t>(index));
-        if (receiver >= 0 && qualifies[static_cast<std::size_t>(receiver)] != 0u &&
-            tagged.sink_id_raster.get_data()[index] ==
-                tagged.sink_id_raster.get_data()[static_cast<std::size_t>(receiver)])
-            has_qualifying_donor[static_cast<std::size_t>(receiver)] = 1u;
-    }
-    std::vector<std::int64_t> sources;
-    for (std::size_t index = 0; index < n_cells; ++index)
-    {
-        if (qualifies[index] != 0u && has_qualifying_donor[index] == 0u)
-            sources.push_back(static_cast<std::int64_t>(index));
-    }
+    // The channel-head rule (including the same-sink donor condition) lives in
+    // lsdtt_internal_drainage_cpu. What stays here is the writing.
+    const std::vector<std::int64_t> sources =
+        lsdtt::sink_channel_sources(
+            flow, tagged, static_cast<std::uint64_t>(threshold));
 
     channel_output_result output;
     output.length_by_order.resize(sinks.size());
@@ -513,14 +460,14 @@ static channel_output_result write_sink_channels(
                 std::to_string(routing_id),
                 std::to_string(sinks[static_cast<std::size_t>(routing_id)].sink_id),
                 std::to_string(flat), std::to_string(row), std::to_string(col),
-                number(xy.x), number(xy.y), number(lonlat.latitude),
-                number(lonlat.longitude), std::to_string(junction),
+                lsdtt::csv_number(xy.x), lsdtt::csv_number(xy.y), lsdtt::csv_number(lonlat.latitude),
+                lsdtt::csv_number(lonlat.longitude), std::to_string(junction),
                 std::to_string(order),
-                number(static_cast<double>(flow.s_vector_size(flat)) *
+                lsdtt::csv_number(static_cast<double>(flow.s_vector_size(flat)) *
                        flow.meta().pixel_area()),
-                number(distance.data[index])
+                lsdtt::csv_number(distance.data[index])
             };
-            if (chi != nullptr) record.push_back(number(chi->get_data()[index]));
+            if (chi != nullptr) record.push_back(lsdtt::csv_number(chi->get_data()[index]));
             rows.push_back(std::move(record));
         }
         loader.write_csv(pp.make_output_path("_sink_channel_nodes.csv"),
@@ -611,16 +558,16 @@ static void write_sink_stats(
             s_it == slope_by_label.end() ? lsdtt::lsdtt_descriptive_stats{} : s_it->second;
         std::vector<std::string> row = {
             std::to_string(sink.routing_sink_id), std::to_string(sink.sink_id),
-            number(sink.pit_x), number(sink.pit_y), number(sink.latitude),
-            number(sink.longitude), std::to_string(sink.pit_row),
-            std::to_string(sink.pit_col), number(sink.pit_elevation),
-            number(sink.spill_elevation), number(sink.depth_m),
-            number(sink.area_m2), number(sink.volume_m3),
-            number(sink.tagged_drainage_area_m2),
+            lsdtt::csv_number(sink.pit_x), lsdtt::csv_number(sink.pit_y), lsdtt::csv_number(sink.latitude),
+            lsdtt::csv_number(sink.longitude), std::to_string(sink.pit_row),
+            std::to_string(sink.pit_col), lsdtt::csv_number(sink.pit_elevation),
+            lsdtt::csv_number(sink.spill_elevation), lsdtt::csv_number(sink.depth_m),
+            lsdtt::csv_number(sink.area_m2), lsdtt::csv_number(sink.volume_m3),
+            lsdtt::csv_number(sink.tagged_drainage_area_m2),
             std::to_string(sink.tagged_n_pixels),
-            number(e.min), number(e.q25), number(e.median), number(e.q75),
-            number(e.max), number(e.mean), number(s.min), number(s.q25),
-            number(s.median), number(s.q75), number(s.max), number(s.mean)
+            lsdtt::csv_number(e.min), lsdtt::csv_number(e.q25), lsdtt::csv_number(e.median), lsdtt::csv_number(e.q75),
+            lsdtt::csv_number(e.max), lsdtt::csv_number(e.mean), lsdtt::csv_number(s.min), lsdtt::csv_number(s.q25),
+            lsdtt::csv_number(s.median), lsdtt::csv_number(s.q75), lsdtt::csv_number(s.max), lsdtt::csv_number(s.mean)
         };
         for (int order = 1; order <= max_order; ++order)
         {
@@ -633,7 +580,7 @@ static void write_sink_stats(
                         static_cast<std::size_t>(sink.routing_sink_id)].end())
                     length = found->second;
             }
-            row.push_back(number(length));
+            row.push_back(lsdtt::csv_number(length));
         }
         rows.push_back(std::move(row));
     }
@@ -658,19 +605,19 @@ int main(int argc, char* argv[])
     string_default_map["sink_mode"] = "forced_outlet";
     string_default_map["boundary_conditions"] = "oooo";
     string_default_map["sink_candidate_fname"] = "";
-    string_default_map["sink_candidate_format"] = "same_as_extension";
+    string_default_map["sink_candidate_input_format"] = "same_as_extension";
     string_default_map["sink_candidate_layer_name"] = "";
     string_default_map["write_output_format"] = "cog";
-    string_default_map["sink_vector_format"] = "flatgeobuf";
+    string_default_map["write_vector_format"] = "flatgeobuf";
     string_default_map["priority_flood_queue"] = "binary";
 
-    int_default_map["minimum_pixels_in_patch"] = 1;
+    int_default_map["min_pixels_in_patch"] = 1;
     int_default_map["n_threads"] = 0;
-    int_default_map["threshold_contributing_pixels"] = 5000;
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
-    float_default_map["minimum_sink_depth"] = 0.0f;
-    float_default_map["minimum_sink_area"] = 0.0f;
-    float_default_map["minimum_sink_volume"] = 0.0f;
+    float_default_map["min_sink_depth"] = 0.0f;
+    float_default_map["min_sink_area"] = 0.0f;
+    float_default_map["min_sink_volume"] = 0.0f;
     float_default_map["upslope_tagging_distance"] = 1.0e12f;
     float_default_map["fill_min_slope"] = 0.0001f;
     float_default_map["m_over_n"] = 0.45f;
@@ -711,7 +658,7 @@ int main(int argc, char* argv[])
         "reports parent_sink_id, hierarchy_level and true depression volume. Use "
         "it for genuinely nested terrain such as playas, karst or quarry benches. "
         "RISK: on rough surfaces every innermost hollow is tiny, so combining it "
-        "with sink_leaves_only and a minimum_pixels_in_patch threshold can filter "
+        "with sink_leaves_only and a min_pixels_in_patch threshold can filter "
         "out EVERY sink and report nothing at all.",
         "Detection", "switch", ""};
     help_map["sink_mode"] = {"string", "forced_outlet", "Sink routing mode.",
@@ -723,30 +670,26 @@ int main(int argc, char* argv[])
     help_map["sink_candidate_fname"] = {"string", "", "Reviewed candidate file.",
         "Required for route; CSV, FlatGeobuf, or GeoPackage.",
         "Review", "input", "internal_drainage_stage"};
-    help_map["sink_candidate_format"] = {"string", "same_as_extension", "Candidate format.",
+    help_map["sink_candidate_input_format"] = {"string", "same_as_extension", "Candidate format.",
         "same_as_extension, csv, flatgeobuf, or gpkg.", "Review", "param", ""};
     help_map["sink_candidate_layer_name"] = {"string", "", "Candidate layer name.",
         "Optional layer name for multi-layer GeoPackages.", "Review", "param", ""};
     help_map["write_output_format"] = {"string", "cog", "Raster output format.",
         "cog, gtiff, or same_as_input. PNG is rejected because it rescales "
         "analytical labels and values.", "Output", "param", ""};
-    help_map["sink_vector_format"] = {"string", "flatgeobuf", "Vector output format.",
+    help_map["write_vector_format"] = {"string", "flatgeobuf", "Vector output format.",
         "flatgeobuf is recommended; gpkg is supported with a filesystem warning.",
         "Output", "param", ""};
 
-    help_map["minimum_pixels_in_patch"] = {"int", "1", "Minimum sink pixels.",
+    help_map["min_pixels_in_patch"] = {"int", "1", "Minimum sink pixels.",
         "Legacy-compatible minimum depression size.", "Detection", "param", ""};
     help_map["n_threads"] = {"int", "0", "Thread count.", "0 uses available threads.",
         "Run control", "io", ""};
-    help_map["threshold_contributing_pixels"] = {"int", "5000", "Channel threshold.",
-        "Minimum contributing pixels defining channel sources.",
-        "Channels", "param", "extract_sink_channel_networks"};
-
-    help_map["minimum_sink_depth"] = {"float", "0.0", "Minimum sink depth.",
+    help_map["min_sink_depth"] = {"float", "0.0", "Minimum sink depth.",
         "Reject shallower candidates.", "Detection", "param", ""};
-    help_map["minimum_sink_area"] = {"float", "0.0", "Minimum depression area.",
+    help_map["min_sink_area"] = {"float", "0.0", "Minimum depression area.",
         "Square metres.", "Detection", "param", ""};
-    help_map["minimum_sink_volume"] = {"float", "0.0", "Minimum depression volume.",
+    help_map["min_sink_volume"] = {"float", "0.0", "Minimum depression volume.",
         "Cubic metres.", "Detection", "param", ""};
     help_map["upslope_tagging_distance"] = {"float", "1e12", "Tagging distance.",
         "Maximum upstream flow distance from each sink in metres.",
@@ -816,7 +759,14 @@ int main(int argc, char* argv[])
         lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
         // Renamed 2026-09-08 for consistency: the chi reference area is
         // `chi_A0` in every CLI that has one. One-release compatibility window.
-        pp.set_deprecated_aliases({ {"A_0", "chi_A0"} });
+        pp.set_deprecated_aliases({
+            {"A_0", "chi_A0"},
+            {"sink_candidate_format", "sink_candidate_input_format"},
+            {"sink_vector_format", "write_vector_format"},
+            {"minimum_pixels_in_patch", "min_pixels_in_patch"},
+            {"minimum_sink_depth", "min_sink_depth"},
+            {"minimum_sink_area", "min_sink_area"},
+            {"minimum_sink_volume", "min_sink_volume"} });
 
         pp.parse_all_parameters(float_default_map, int_default_map,
                                 bool_default_map, string_default_map);
@@ -825,9 +775,9 @@ int main(int argc, char* argv[])
         const auto ip = pp.get_int_parameters();
         const auto sf = pp.get_string_parameters();
 
-        const std::string stage = lower(sf.at("internal_drainage_stage"));
-        const std::string algorithm = lower(sf.at("sink_detection_algorithm_choice"));
-        const std::string mode_name = lower(sf.at("sink_mode"));
+        const std::string stage = lsdtt::to_lower_ascii(sf.at("internal_drainage_stage"));
+        const std::string algorithm = lsdtt::to_lower_ascii(sf.at("sink_detection_algorithm_choice"));
+        const std::string mode_name = lsdtt::to_lower_ascii(sf.at("sink_mode"));
         if (stage != "detect" && stage != "route" && stage != "both")
             throw std::invalid_argument("internal_drainage_stage must be detect, route, or both");
         if (algorithm != "depression_hierarchy" && algorithm != "fill_difference")
@@ -861,9 +811,9 @@ int main(int argc, char* argv[])
                          "Each filled patch becomes one sink, with no nesting to "
                          "expose. Use sink_detection_algorithm_choice: "
                          "depression_hierarchy if you need nested sinks.\n";
-        if (ip.at("minimum_pixels_in_patch") < 1 || ff.at("minimum_sink_depth") < 0.0f ||
-            ff.at("minimum_sink_area") < 0.0f || ff.at("minimum_sink_volume") < 0.0f)
-            throw std::invalid_argument("sink detection thresholds must be non-negative and minimum_pixels_in_patch >= 1");
+        if (ip.at("min_pixels_in_patch") < 1 || ff.at("min_sink_depth") < 0.0f ||
+            ff.at("min_sink_area") < 0.0f || ff.at("min_sink_volume") < 0.0f)
+            throw std::invalid_argument("sink detection thresholds must be non-negative and min_pixels_in_patch >= 1");
         if (ff.at("fill_min_slope") <= 0.0f)
             throw std::invalid_argument("fill_min_slope must be > 0 for D8 routing");
         if (bf.at("extract_sink_channel_networks") &&
@@ -882,7 +832,7 @@ int main(int argc, char* argv[])
                 ? (pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext())
                 : ".tif";
         const lsdtt::vector_output_format vector_format =
-            lsdtt::resolve_vector_output_format(sf.at("sink_vector_format"));
+            lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
         if (vector_format == lsdtt::vector_output_format::gpkg)
         {
             std::cerr << "WARNING: you have chosen GeoPackage (gpkg) output.\n"
@@ -904,10 +854,10 @@ int main(int argc, char* argv[])
             ? lsdtt::sink_detection_method::fill_difference
             : lsdtt::sink_detection_method::depression_hierarchy;
         detection_options.boundary_conditions = "oooo";
-        detection_options.min_pixels_in_patch = ip.at("minimum_pixels_in_patch");
-        detection_options.min_depth_m = ff.at("minimum_sink_depth");
-        detection_options.min_area_m2 = ff.at("minimum_sink_area");
-        detection_options.min_volume_m3 = ff.at("minimum_sink_volume");
+        detection_options.min_pixels_in_patch = ip.at("min_pixels_in_patch");
+        detection_options.min_depth_m = ff.at("min_sink_depth");
+        detection_options.min_area_m2 = ff.at("min_sink_area");
+        detection_options.min_volume_m3 = ff.at("min_sink_volume");
         detection_options.leaves_only = bf.at("sink_leaves_only");
         detection_options.n_threads = ip.at("n_threads");
 
@@ -931,13 +881,17 @@ int main(int argc, char* argv[])
                     loader, pp.make_output_path("_sink_candidates.csv"), detected,
                     dem.get_meta(), lsdtt::sink_io_format::csv);
             if (bf.at("write_sink_depression_polygons"))
-                write_polygon_records(
-                    loader, pp.make_output_path("_sink_depressions", vector_ext),
-                    "sink_depressions",
+            {
+                const lsdtt::depression_polygons_result polys =
                     lsdtt::sink_depressions_to_polygons(
-                        dem, detected, detection_options),
-                    dem.get_meta(), vector_format,
+                        dem, detected, detection_options);
+                lsdtt::write_vector_records(
+                    loader,
+                    pp.make_output_path("_sink_depressions", vector_ext),
+                    "sink_depressions", polys.schema, polys.records,
+                    dem.get_meta().crs_wkt, vector_format,
                     bf.at("write_vector_spatial_index"));
+            }
             if (bf.at("write_sink_depression_csv"))
                 write_depression_csv(
                     loader, pp.make_output_path("_sink_depressions.csv"), detected);
@@ -971,7 +925,7 @@ int main(int argc, char* argv[])
             const std::string input =
                 candidate_input_path(pp, sf.at("sink_candidate_fname"));
             const lsdtt::sink_io_format input_format = lsdtt::resolve_sink_io_format(
-                input, sf.at("sink_candidate_format"));
+                input, sf.at("sink_candidate_input_format"));
             reviewed = lsdtt::read_sink_candidates(
                 input, dem.get_meta(), input_format,
                 sf.at("sink_candidate_layer_name"));
@@ -1050,13 +1004,17 @@ int main(int argc, char* argv[])
                 loader, pp.make_output_path("_accepted_sinks.csv"), sinks,
                 dem.get_meta(), lsdtt::sink_io_format::csv);
         if (bf.at("write_accepted_depression_polygons"))
-            write_polygon_records(
-                loader, pp.make_output_path("_accepted_depressions", vector_ext),
-                "accepted_depressions",
+        {
+            const lsdtt::depression_polygons_result polys =
                 lsdtt::sink_depressions_to_polygons(
-                    dem, sinks, detection_options),
-                dem.get_meta(), vector_format,
+                    dem, sinks, detection_options);
+            lsdtt::write_vector_records(
+                loader,
+                pp.make_output_path("_accepted_depressions", vector_ext),
+                "accepted_depressions", polys.schema, polys.records,
+                dem.get_meta().crs_wkt, vector_format,
                 bf.at("write_vector_spatial_index"));
+        }
         if (bf.at("write_sink_id_raster"))
             loader.write_full(
                 tagged.sink_id_raster.get_data(), tagged.sink_id_raster.get_meta(),

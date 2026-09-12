@@ -38,6 +38,7 @@
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_swath_cpu.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -59,17 +60,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// Format a floating-point value with high precision, writing "NaN" for
-// non-finite values (empty bins carry NaN quantiles/mean).
-static std::string fmt(double v)
-{
-    if (!std::isfinite(v))
-        return "NaN";
-    std::ostringstream ss;
-    ss.precision(9);
-    ss << v;
-    return ss.str();
-}
 
 int main(int argc, char* argv[])
 {
@@ -315,11 +305,11 @@ int main(int argc, char* argv[])
     {
         std::vector<std::string> row;
         row.reserve(headers.size());
-        row.push_back(fmt(b.along_axis_centre));
+        row.push_back(lsdtt::csv_number(b.along_axis_centre, 9));
         row.push_back(std::to_string(b.n_pixels));
-        row.push_back(fmt(b.mean));
+        row.push_back(lsdtt::csv_number(b.mean, 9));
         for (float q : b.quantiles)
-            row.push_back(fmt(q));
+            row.push_back(lsdtt::csv_number(q, 9));
         rows.push_back(std::move(row));
     }
 

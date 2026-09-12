@@ -6,6 +6,7 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
+#include "../utils/lsdtt_raster_geometry.hpp"
 #include "lsdtt_burn_vectormap_cpu.hpp"
 
 #include <algorithm>
@@ -833,6 +834,147 @@ lcp_burn_result burn_lcp_segment(
     }
 
     return result;
+}
+
+
+std::vector<edge_source_carve_record> carve_inward_draining_edge_sources(
+    lsdtt_raster_cpu&                       dem,
+    const lsdtt_vector_to_junction_network& vector_network,
+    const std::vector<std::int64_t>&        source_flats,
+    const std::vector<std::int64_t>&        source_is_dem_edge,
+    const std::vector<std::int32_t>&        source_junction_ids,
+    const edge_source_carve_options&        options
+)
+{
+    const lsdtt_raster_meta& meta  = dem.get_meta();
+    const lsdtt_array2d_u8&  cmask = dem.get_mask_array();
+
+    const int carve_px     = std::max(1, options.carve_pixels);
+    const int carve_max_px = std::max(carve_px, options.carve_max_pixels);
+
+    // Map a projected coordinate onto an in-DEM, in-mask cell; -1 if it is
+    // outside either.
+    const auto xy_to_flat = [&](const double x, const double y) -> std::int64_t
+    {
+        const int col = static_cast<int>(std::floor((x - meta.x_min) / meta.cell_size));
+        const int row = static_cast<int>(std::floor((meta.y_max() - y) / meta.cell_size));
+        if (row < 0 || row >= meta.n_rows ||
+            col < 0 || col >= meta.n_cols ||
+            cmask(row, col) == 0)
+        {
+            return -1;
+        }
+        return static_cast<std::int64_t>(row) * meta.n_cols + col;
+    };
+
+    const auto& vjns = vector_network.junctions();
+    const auto& veds = vector_network.edges();
+
+    std::vector<edge_source_carve_record> carved;
+
+    for (std::size_t i = 0; i < source_flats.size(); ++i)
+    {
+        if (i >= source_is_dem_edge.size() || source_is_dem_edge[i] == 0) continue;
+        if (i >= source_junction_ids.size()) continue;
+
+        const std::int32_t jid = source_junction_ids[i];
+        if (jid < 0 || jid >= vector_network.n_junctions()) continue;
+
+        const auto& J = vjns[static_cast<std::size_t>(jid)];
+
+        // "Drains inward" per the VECTOR network: it must have somewhere
+        // downstream to go, and that somewhere must be lower.
+        if (J.is_outlet || J.receiver_junction < 0 || J.downstream_edge_id < 0)
+            continue;
+
+        const double recv_elev =
+            vjns[static_cast<std::size_t>(J.receiver_junction)].elevation;
+        if (!(recv_elev < J.elevation - 1.0e-6)) continue;
+
+        std::vector<std::int64_t> path;
+        path.push_back(source_flats[i]);
+
+        // Half a cell, so no cell along the geometry is stepped over.
+        const double step = meta.cell_size * 0.5;
+
+        bool         reached_interior = false;
+        std::int32_t cur_j = jid;
+        std::unordered_set<std::int32_t> visited_j;
+
+        while (!reached_interior && static_cast<int>(path.size()) <= carve_max_px)
+        {
+            if (cur_j < 0 || cur_j >= vector_network.n_junctions()) break;
+            if (!visited_j.insert(cur_j).second) break;   // cycle guard
+
+            const auto& CJ = vjns[static_cast<std::size_t>(cur_j)];
+            if (CJ.downstream_edge_id < 0) break;         // outlet / no path
+
+            const auto& E = veds[static_cast<std::size_t>(CJ.downstream_edge_id)];
+            if (E.xy.size() < 2) break;
+
+            // Orient the stored geometry so it runs from cur_j downstream.
+            const bool forward = (E.upstream_junction == cur_j);
+            const auto vtx = [&](const std::size_t k) -> const lsdtt_xy&
+            {
+                return forward ? E.xy[k] : E.xy[E.xy.size() - 1 - k];
+            };
+
+            for (std::size_t k = 1;
+                 k < E.xy.size() && !reached_interior &&
+                 static_cast<int>(path.size()) <= carve_max_px;
+                 ++k)
+            {
+                const lsdtt_xy& a = vtx(k - 1);
+                const lsdtt_xy& b = vtx(k);
+
+                const double seglen = std::hypot(b.x - a.x, b.y - a.y);
+                const int    nsteps = std::max(1, static_cast<int>(seglen / step));
+
+                for (int s = 1;
+                     s <= nsteps && !reached_interior &&
+                     static_cast<int>(path.size()) <= carve_max_px;
+                     ++s)
+                {
+                    const double t = static_cast<double>(s) / nsteps;
+                    const std::int64_t f =
+                        xy_to_flat(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
+
+                    if (f < 0 || f == path.back()) continue;
+                    path.push_back(f);
+
+                    if (static_cast<int>(path.size()) > carve_px &&
+                        distance_to_raster_boundary_metres(meta, f) >=
+                            options.interior_margin_metres)
+                    {
+                        reached_interior = true;
+                    }
+                }
+            }
+
+            cur_j = CJ.receiver_junction;
+        }
+
+        if (path.size() < 2) continue;
+
+        burn_capturing_path(dem, path, options.carve_min_slope);
+
+        edge_source_carve_record rec;
+        rec.source_index  = i;
+        rec.junction_id   = jid;
+        rec.pixels_carved = path.size() - 1;
+        rec.terminus_distance_to_boundary_metres =
+            distance_to_raster_boundary_metres(meta, path.back());
+        rec.terminus =
+            reached_interior
+                ? edge_carve_terminus::reached_interior_margin
+                : (static_cast<int>(path.size()) > carve_max_px
+                       ? edge_carve_terminus::hit_pixel_cap
+                       : edge_carve_terminus::followed_channel_to_downstream_end);
+
+        carved.push_back(rec);
+    }
+
+    return carved;
 }
 
 } // namespace lsdtt

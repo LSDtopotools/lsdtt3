@@ -1,0 +1,34 @@
+# Full-output run for lsdtt-basin-surface-metrics, and the guard for C12.
+#
+# C12 is the ~160 lines of outline curvature sign-flip counting and slope-area
+# analysis that currently sit inline in main(). The helper audit calls them
+# "the tool's actual science". Both are exercised here, over TWO lambda scales,
+# so the per-lambda column expansion is covered as well as the metrics.
+#
+# Uses the FULL basin-stats outlet set, including the ones that cannot be
+# resolved. One of them fails to snap, so the run also covers the warn-and-skip
+# path -- which is the point: this CLI used to abort with an uncaught
+# std::runtime_error from junction_upstream_of_flat when an outlet did not land
+# on the channel network, taking the whole run down and losing all buffered
+# output. Outlet resolution now rejects per-outlet and reports why.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: bsm
+
+write_output_format: gtiff
+
+basin_outlet_fname: __READ_PATH__/basin_stats_outlets.csv
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 150
+threshold_contributing_pixels: 150
+
+lambda_scales: 60,120
+polyfit_metrics: slope,maximum_curvature
+polyfit_method: direct
+
+write_outline_curvature_flips: true
+write_basin_slope_area_csv: true
+write_basin_slope_area_stats: true
+write_outline_polygons_with_flipstats: true
+write_basin_outlines_csv: true

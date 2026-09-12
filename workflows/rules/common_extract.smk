@@ -12,7 +12,7 @@ rule select_stream_order_for_minimum_basins:
         exe=lambda wc: config["executables"]["basin_extraction"],
         min_basins=lambda wc: int(config["extract"]["minimum_basin_count"]),
         max_order=lambda wc: int(config["extract"]["max_search_stream_order"]),
-        source_threshold=lambda wc: int(config["extract"]["source_pixels_threshold"]),
+        threshold_contributing_pixels=lambda wc: int(config["extract"]["threshold_contributing_pixels"]),
         work_dir=f"{ROOT}/{RUN_ID}/extract/order_probe",
         script="scripts/select_stream_order.py"
     message:
@@ -23,7 +23,7 @@ rule select_stream_order_for_minimum_basins:
         "--exe {params.exe} "
         "--dem {input.dem_fill} "
         "--work-dir {params.work_dir} "
-        "--source-threshold {params.source_threshold} "
+        "--threshold-contributing-pixels {params.threshold_contributing_pixels} "
         "--min-basins {params.min_basins} "
         "--max-order {params.max_order} "
         "--selected-order-out {output.selected_order} "
@@ -54,18 +54,17 @@ rule write_basin_extraction_params:
             f"write_path: {write_dir}\n"
             "write_fname: dem\n\n"
             "raster_is_filled: true\n"
-            f"source_pixels_threshold: {config['extract']['source_pixels_threshold']}\n\n"
+            f"threshold_contributing_pixels: {config['extract']['threshold_contributing_pixels']}\n\n"
             "select_all_basins_of_stream_order: true\n"
             f"selected_stream_order: {selected_order}\n\n"
             "write_basin_outlines: true\n"
             "write_basin_outlines_as_polygon: false\n"
-            "basin_outlines_output_format: fgb\n\n"
+            "basin_outlines_write_vector_format: fgb\n\n"
             "write_basin_outlet_points: false\n"
             "write_channel_network_lines: true\n"
-            "channel_network_lines_output_format: fgb\n"
+            "write_vector_format: fgb\n"
             "write_channel_network_points: false\n"
             "write_channel_network_junctions: true\n"
-            "channel_network_junctions_output_format: fgb\n"
             "write_basins_raster: false\n"
             "calculate_spatial_index: false\n"
         )

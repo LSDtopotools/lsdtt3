@@ -1,0 +1,7 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: spectral_legacy
+write_output_format: gtiff
+n_background_iterations: 1
+valley_spacing_m: 0.37

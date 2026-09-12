@@ -4,7 +4,7 @@ write_fname: ocnbanana
 
 n_rows: 16
 n_cols: 16
-cell_size: 100.0
+cell_size_metres: 100.0
 
 domain_type: banana
 outlet_mode: single

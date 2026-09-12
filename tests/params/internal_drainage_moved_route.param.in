@@ -7,7 +7,7 @@ internal_drainage_stage: route
 sink_candidate_fname: phase4_moved_candidates.csv
 sink_candidate_format: csv
 sink_mode: forced_outlet
-minimum_pixels_in_patch: 999999
+min_pixels_in_patch: 999999
 write_accepted_sink_points: false
 write_accepted_sink_csv: true
 write_accepted_depression_polygons: false

@@ -40,12 +40,14 @@
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_sources_wiener_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version  = "0.2.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -69,14 +71,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static std::string to_lower_copy(std::string s)
-{
-    for (char& c : s)
-    {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return s;
-}
 
 static std::string raster_ext(lsdtt::raster_output_format fmt)
 {
@@ -85,7 +79,7 @@ static std::string raster_ext(lsdtt::raster_output_format fmt)
 
 static bool mentions_missing_fftw(const std::string& msg)
 {
-    const std::string lower = to_lower_copy(msg);
+    const std::string lower = lsdtt::to_lower_ascii(msg);
     return lower.find("without fftw") != std::string::npos ||
            lower.find("fftw") != std::string::npos;
 }
@@ -131,12 +125,7 @@ int main(int argc, char* argv[])
         "Flow routing", "param", ""};
 
     // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled and ready for routing.",
-        "If false (default), the CLI will call fill_pits() before building flow routing. "
-        "If true, the DEM is assumed to already be suitable for routing.",
-        "Pit filling", "switch", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -146,17 +135,12 @@ int main(int argc, char* argv[])
         "Pit filling", "param", ""};
 
     // --- Source extraction ---
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define source channel heads.",
-        "Channel heads are extracted from the flow-routing object using a "
-        "contributing-pixel threshold. Reduce this value to extract denser networks.",
-        "Channel sources", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     string_default_map["source_extraction_algorithm_choice"] = "threshold";
     help_map["source_extraction_algorithm_choice"] = {"string","threshold",
         "Source extraction algorithm.",
-        "Allowed values: threshold, wiener. Threshold uses source_pixels_threshold. "
+        "Allowed values: threshold, wiener. Threshold uses threshold_contributing_pixels. "
         "Wiener uses filtered-DEM curvature, QQ thresholding, and area pruning.",
         "Channel sources", "switch", ""};
 
@@ -167,8 +151,8 @@ int main(int argc, char* argv[])
         "physical-area threshold are removed before skeleton endpoint extraction.",
         "Channel sources", "param", "source_extraction_algorithm_choice"};
 
-    float_default_map["wiener_surface_fitting_radius_m"] = 6.0f;
-    help_map["wiener_surface_fitting_radius_m"] = {"float","6.0",
+    float_default_map["wiener_surface_fitting_radius_metres"] = 6.0f;
+    help_map["wiener_surface_fitting_radius_metres"] = {"float","6.0",
         "Surface-fitting radius for Wiener tangential curvature (m).",
         "Wiener-only parameter. Passed to local polynomial fitting used for "
         "tangential curvature computation.",
@@ -181,18 +165,18 @@ int main(int argc, char* argv[])
         "skeletonisation.",
         "Channel sources", "param", "source_extraction_algorithm_choice"};
 
-    bool_default_map["wiener_write_filtered_dem"] = false;
-    help_map["wiener_write_filtered_dem"] = {"bool","false",
+    bool_default_map["write_wiener_filtered_dem_raster"] = false;
+    help_map["write_wiener_filtered_dem_raster"] = {"bool","false",
         "Write Wiener-filtered DEM diagnostic raster.",
         "If true, writes <write_fname>_wiener_filtered_dem with the format set by "
-        "wiener_diagnostics_raster_format.",
+        "wiener_diagnostics_write_output_format.",
         "Channel sources", "param", "source_extraction_algorithm_choice"};
 
-    bool_default_map["wiener_write_tangential_curvature"] = false;
-    help_map["wiener_write_tangential_curvature"] = {"bool","false",
+    bool_default_map["write_wiener_tangential_curvature_raster"] = false;
+    help_map["write_wiener_tangential_curvature_raster"] = {"bool","false",
         "Write Wiener tangential-curvature diagnostic raster.",
         "If true, writes <write_fname>_wiener_tangential_curvature with the format "
-        "set by wiener_diagnostics_raster_format.",
+        "set by wiener_diagnostics_write_output_format.",
         "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     bool_default_map["wiener_write_qq_table"] = false;
@@ -202,8 +186,8 @@ int main(int argc, char* argv[])
         "<write_fname>_wiener_qq.csv when that parameter is empty.",
         "Channel sources", "param", "source_extraction_algorithm_choice"};
 
-    string_default_map["wiener_diagnostics_raster_format"] = "same_as_input";
-    help_map["wiener_diagnostics_raster_format"] = {"string","same_as_input",
+    string_default_map["wiener_diagnostics_write_output_format"] = "same_as_input";
+    help_map["wiener_diagnostics_write_output_format"] = {"string","same_as_input",
         "Raster format for Wiener diagnostic rasters.",
         "Allowed values: cog, gtiff, same_as_input, png.",
         "Channel sources", "param", "source_extraction_algorithm_choice"};
@@ -216,6 +200,8 @@ int main(int argc, char* argv[])
         "Channel sources", "param", "source_extraction_algorithm_choice"};
 
     // --- Output --- general
+    lsdtt::declare_raster_output_format_parameter(string_default_map, help_map);
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool", "true",
         "Whether or not to calculate a spatial index for vector data writes.",
@@ -239,8 +225,9 @@ int main(int argc, char* argv[])
         "Channel network output", "switch", ""
     };
 
-    string_default_map["channel_network_points_output_format"] = "flatgeobuf";
-    help_map["channel_network_points_output_format"] = {"string","gpkg",
+    string_default_map["channel_network_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["channel_network_points_write_vector_format"] = {"string","same_as_write_vector_format",
         "Output format for the exported channel network.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "
@@ -254,20 +241,15 @@ int main(int argc, char* argv[])
         "link (defined between source or upstream junction and outlet or "
         "downstream junction) is a feature.",
         "Does not support csv writes, only gpkg and flatgeobuf/fgb. "
+        "It is off by default because channel-extraction vector products are opt-in. "
         "Compared to write_channel_network as points, the lines filesize "
         "will be smaller (there are fewer features), at the cost of not "
         "recording drainage area at each channel pixel.",
         "Channel network output", "switch", ""
     };
 
-    string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
-    help_map["channel_network_lines_output_format"] = {"string", "flatgeobuf",
-        "Output format for D8 flow-line visualisation.",
-        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
-        "GeoPackage may have file I/O issues on some filesystems."
-        "CSV is not allowed for channel network lines.",
-        "Channel network output", "param", "write_channel_network_lines"
-    };
+    string_default_map["legacy_channel_network_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
         // --- Output --- junctions
     bool_default_map["write_channel_network_junctions"] = false;
@@ -278,8 +260,9 @@ int main(int argc, char* argv[])
         "Channel network output", "switch", ""
     };
 
-    string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
-    help_map["channel_network_junctions_output_format"] = {"string","gpkg",
+    string_default_map["channel_network_junctions_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["channel_network_junctions_write_vector_format"] = {"string","same_as_write_vector_format",
         "Output format for the exported channel network.",
         "csv: writes latitude/longitude point rows in EPSG:4326. "
         "gpkg: writes a GeoPackage in the raster CRS. "
@@ -295,8 +278,9 @@ int main(int argc, char* argv[])
         "pixel centre, following the D8 directions.",
         "Flow routing output", "switch", ""};
 
-    string_default_map["flow_lines_output_format"] = "flatgeobuf";
-    help_map["flow_lines_output_format"] = {"string","flatgeobuf",
+    string_default_map["flow_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["flow_lines_write_vector_format"] = {"string","same_as_write_vector_format",
         "Output format for D8 flow-line visualisation.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
         "GeoPackage may have file I/O issues on some filesystems.",
@@ -328,11 +312,8 @@ int main(int argc, char* argv[])
         "N=64, NE=128. Outlet pixels are written as 0.",
         "Flow routing output", "switch", ""};
 
-    string_default_map["flow_direction_output_format"] = "cog";
-    help_map["flow_direction_output_format"] = {"string","cog",
-        "Output format for the ArcMap D8 flow-direction raster.",
-        "Allowed values: cog, gtiff, same_as_input.",
-        "Flow routing output", "param", "write_arcmap_d8_flowdirection_raster"};
+    string_default_map["legacy_flow_direction_write_output_format"] =
+        lsdtt::inherit_write_output_format;
 
     // --- Output --- burned stream profiles from vector input
     bool_default_map["write_burned_stream_profiles"] = false;
@@ -367,8 +348,8 @@ int main(int argc, char* argv[])
         "Stream burning", "param", "write_burned_stream_profiles"
     };
 
-    string_default_map["burned_stream_profiles_output_format"] = "csv";
-    help_map["burned_stream_profiles_output_format"] = {"string", "csv",
+    string_default_map["burned_stream_profiles_write_vector_format"] = "csv";
+    help_map["burned_stream_profiles_write_vector_format"] = {"string", "csv",
         "Output format for the burned stream profile table.",
         "csv: writes a plain CSV table with one row per channel pixel. "
         "gpkg: writes a GeoPackage point layer in the raster CRS. "
@@ -403,6 +384,21 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
+    pp.set_deprecated_aliases({
+        {"wiener_write_filtered_dem", "write_wiener_filtered_dem_raster"},
+        {"wiener_write_tangential_curvature", "write_wiener_tangential_curvature_raster"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"wiener_surface_fitting_radius_m", "wiener_surface_fitting_radius_metres"},
+        {"wiener_diagnostics_raster_format", "wiener_diagnostics_write_output_format"},
+        {"channel_network_points_output_format", "channel_network_points_write_vector_format"},
+        {"channel_network_junctions_output_format", "channel_network_junctions_write_vector_format"},
+        {"flow_lines_output_format", "flow_lines_write_vector_format"},
+        {"burned_stream_profiles_output_format", "burned_stream_profiles_write_vector_format"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"channel_network_lines_output_format",
+         {"legacy_channel_network_lines_write_vector_format", "write_vector_format"}},
+        {"flow_direction_output_format",
+         {"legacy_flow_direction_write_output_format", "write_output_format"}} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -415,7 +411,7 @@ int main(int argc, char* argv[])
     // Cross-parameter logic
     // -------------------------------------------------------------------------
     const std::string source_algorithm_choice =
-        to_lower_copy(sf["source_extraction_algorithm_choice"]);
+        lsdtt::to_lower_ascii(sf["source_extraction_algorithm_choice"]);
 
     if (source_algorithm_choice != "threshold" &&
         source_algorithm_choice != "wiener")
@@ -426,9 +422,9 @@ int main(int argc, char* argv[])
     }
 
     if (source_algorithm_choice == "threshold" &&
-        ifs["source_pixels_threshold"] <= 0)
+        ifs["threshold_contributing_pixels"] <= 0)
     {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -439,9 +435,9 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: wiener_pruning_drainage_area_m2 must be > 0.\n";
             return 1;
         }
-        if (ff["wiener_surface_fitting_radius_m"] <= 0.0f)
+        if (ff["wiener_surface_fitting_radius_metres"] <= 0.0f)
         {
-            std::cerr << "FATAL: wiener_surface_fitting_radius_m must be > 0.\n";
+            std::cerr << "FATAL: wiener_surface_fitting_radius_metres must be > 0.\n";
             return 1;
         }
         if (ifs["wiener_connected_components_threshold_pixels"] < 1)
@@ -453,28 +449,34 @@ int main(int argc, char* argv[])
     }
 
     lsdtt::point_output_format cn_points_output_format =
-        lsdtt::resolve_point_output_format(sf["channel_network_points_output_format"]);
+        lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
+            sf["channel_network_points_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::vector_output_format cn_lines_output_format =
-        lsdtt::resolve_vector_output_format(sf["channel_network_lines_output_format"]);
+        lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_channel_network_lines_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::vector_output_format flow_lines_output_format =
-        lsdtt::resolve_vector_output_format(sf["flow_lines_output_format"]);
+        lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
+            sf["flow_lines_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::raster_output_format flow_direction_output_format =
-        lsdtt::resolve_raster_output_format(sf["flow_direction_output_format"]);
+        lsdtt::resolve_raster_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_flow_direction_write_output_format"], sf["write_output_format"]));
 
     lsdtt::raster_output_format wiener_diagnostics_output_format =
         lsdtt::raster_output_format::same_as_input;
     if (source_algorithm_choice == "wiener")
     {
         wiener_diagnostics_output_format =
-            lsdtt::resolve_raster_output_format(sf["wiener_diagnostics_raster_format"]);
+            lsdtt::resolve_raster_output_format(sf["wiener_diagnostics_write_output_format"]);
     }
 
     lsdtt::point_output_format cn_junctions_output_format =
         lsdtt::resolve_point_output_format(
-            sf["channel_network_junctions_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["channel_network_junctions_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::stream_burn_mode burn_mode =
@@ -482,19 +484,24 @@ int main(int argc, char* argv[])
 
     lsdtt::point_output_format burned_profiles_fmt =
         lsdtt::resolve_point_output_format(
-            sf["burned_stream_profiles_output_format"]
+            sf["burned_stream_profiles_write_vector_format"]
         );
 
     if (bf["write_flow_lines"])
     {
         std::cout << "Flow-line output format      : "
-                  << sf["flow_lines_output_format"] << "\n";
+                  << lsdtt::resolve_output_format_override(
+                         sf["flow_lines_write_vector_format"], sf["write_vector_format"])
+                  << "\n";
     }
 
     if (bf["write_arcmap_d8_flowdirection_raster"])
     {
         std::cout << "Flow-direction raster format : "
-                  << sf["flow_direction_output_format"] << "\n";
+                  << lsdtt::resolve_output_format_override(
+                         sf["legacy_flow_direction_write_output_format"],
+                         sf["write_output_format"])
+                  << "\n";
     }
 
 
@@ -723,7 +730,7 @@ int main(int argc, char* argv[])
     if (source_algorithm_choice == "threshold")
     {
         std::cout << "Contributing-pixel threshold: "
-                  << ifs["source_pixels_threshold"] << "\n";
+                  << ifs["threshold_contributing_pixels"] << "\n";
 
         const lsdtt::lsdtt_flowinfo* flow_cpu =
             dynamic_cast<const lsdtt::lsdtt_flowinfo*>(flow.get());
@@ -739,7 +746,7 @@ int main(int argc, char* argv[])
         {
             source_flats =
                 flow_cpu->get_sources_index_threshold(
-                    ifs["source_pixels_threshold"]
+                    ifs["threshold_contributing_pixels"]
                 );
         }
         catch (const std::exception& e)
@@ -753,17 +760,17 @@ int main(int argc, char* argv[])
         std::cout << "Wiener pruning drainage area (m^2): "
                   << ff["wiener_pruning_drainage_area_m2"] << "\n";
         std::cout << "Wiener surface fitting radius (m): "
-                  << ff["wiener_surface_fitting_radius_m"] << "\n";
+                  << ff["wiener_surface_fitting_radius_metres"] << "\n";
         std::cout << "Wiener component size threshold   : "
                   << ifs["wiener_connected_components_threshold_pixels"] << "\n";
 
         lsdtt::wiener_source_extraction_params wparams;
         wparams.pruning_drainage_area_m2 = ff["wiener_pruning_drainage_area_m2"];
-        wparams.surface_fitting_radius_m = ff["wiener_surface_fitting_radius_m"];
+        wparams.surface_fitting_radius_m = ff["wiener_surface_fitting_radius_metres"];
         wparams.connected_components_threshold_pixels =
             ifs["wiener_connected_components_threshold_pixels"];
-        wparams.write_filtered_dem         = bf["wiener_write_filtered_dem"];
-        wparams.write_tangential_curvature = bf["wiener_write_tangential_curvature"];
+        wparams.write_filtered_dem         = bf["write_wiener_filtered_dem_raster"];
+        wparams.write_tangential_curvature = bf["write_wiener_tangential_curvature_raster"];
         wparams.write_qq_table             = bf["wiener_write_qq_table"];
 
         lsdtt::wiener_source_extraction_result wresult;
@@ -795,7 +802,7 @@ int main(int argc, char* argv[])
 
         lsdtt::lsdtt_data_loader diagnostics_loader;
 
-        if (bf["wiener_write_filtered_dem"] &&
+        if (bf["write_wiener_filtered_dem_raster"] &&
             wresult.diagnostics.filtered_dem.has_value())
         {
             const std::string out_file =
@@ -813,7 +820,7 @@ int main(int argc, char* argv[])
                       << out_file << "\n";
         }
 
-        if (bf["wiener_write_tangential_curvature"] &&
+        if (bf["write_wiener_tangential_curvature_raster"] &&
             wresult.diagnostics.tangential_curvature.has_value())
         {
             const std::string out_file =
@@ -854,7 +861,7 @@ int main(int argc, char* argv[])
         if (source_algorithm_choice == "threshold")
         {
             std::cerr << "FATAL: source extraction returned no source pixels. "
-                      << "Try lowering source_pixels_threshold.\n";
+                      << "Try lowering threshold_contributing_pixels.\n";
         }
         else
         {
@@ -1003,7 +1010,7 @@ int main(int argc, char* argv[])
         std::cout << "Stream vector : " << sf["stream_vector_path"] << "\n";
         std::cout << "Burn mode     : " << sf["stream_burn_mode"] << "\n";
         std::cout << "Output format : "
-                  << sf["burned_stream_profiles_output_format"] << "\n";
+                  << sf["burned_stream_profiles_write_vector_format"] << "\n";
 
         std::vector<lsdtt::burned_stream_profile> profiles;
         try

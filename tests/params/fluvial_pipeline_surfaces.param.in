@@ -12,7 +12,7 @@ n_threads: 1
 write_output_format: gtiff
 
 fallback_admission_algorithm_choice: relief
-fallback_relief_window_pixels: 5
+fallback_relief_window_radius_pixels: 5
 fallback_relief_threshold_metres: 2.0
 min_component_pixels: 50
 
@@ -21,6 +21,6 @@ ladder_break_algorithm_choice: jenks
 ladder_level_count: 2
 vertical_accuracy_metres: 0.5
 
-channel_threshold_contributing_pixels: 500
+threshold_contributing_pixels: 500
 write_valley_mask_raster: true
 clean_valley_mask: true

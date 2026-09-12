@@ -55,7 +55,11 @@ class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
 
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_MOSAIC, "Mosaic raster"))
 
-        attach_backend_help(self, "lsdtt-raster-preprocessing")
+        attach_backend_help(
+            self,
+            "lsdtt-raster-preprocessing",
+            overrides={self.INPUT_RASTERS: "mosaic_file_list"},
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         raster_layers = self.parameterAsLayerList(parameters, self.INPUT_RASTERS, context)
@@ -83,7 +87,7 @@ class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
             ],
             "enforce_projection": self.parameterAsBool(parameters, self.ENFORCE_PROJECTION, context),
             # Disable the default sea-level masking: this algorithm only mosaics.
-            "minimum_elevation": -99999.0,
+            "min_elevation": -99999.0,
             "mosaic_file_list": list_path,
         }
 

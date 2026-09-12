@@ -591,7 +591,7 @@ def harvest(args) -> int:
                 "(default ERA40).",
             ],
             "threshold_contributing_pixels": args.threshold_px,
-            "snap_search_radius_pixels": args.snap_radius,
+            "sample_snap_max_search_radius_pixels": args.snap_radius,
         },
         "sample_table": samples_name,
         "summary": summary_name,

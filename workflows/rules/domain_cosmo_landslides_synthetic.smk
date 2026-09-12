@@ -21,7 +21,7 @@ rule write_synthetic_network_landslides_params:
             "write_fname: ls_synth\n\n"
             f"n_rows: {cfg['n_rows']}\n"
             f"n_cols: {cfg['n_cols']}\n"
-            f"cell_size: {cfg['cell_size']}\n"
+            f"cell_size_metres: {cfg['cell_size']}\n"
             f"domain_type: {cfg['domain_type']}\n"
             f"outlet_mode: {cfg['outlet_mode']}\n"
             f"island_fill_fraction: {cfg['island_fill_fraction']}\n"
@@ -142,7 +142,7 @@ rule write_landslide_single_event_params:
             "write_landslide_csv: true\n"
             "write_excavation_depth_raster: true\n"
             "write_time_of_failure_raster: true\n"
-            "write_post_landslide_dem: true\n"
+            "write_post_landslide_dem_raster: true\n"
         )
         out_path.write_text(text, encoding="utf-8")
 
@@ -250,17 +250,17 @@ rule write_landslide_series_params:
             f"total_shielding: {cfg['total_shielding']}\n"
             f"crn_report_time_yr: {cfg['crn_report_time_yr']}\n\n"
             "run_sample_point_ensemble: true\n"
-            "sample_points_csv: sample_points.csv\n"
+            "sample_points_fname: sample_points.csv\n"
             "sample_name_column: sample_name\n"
             "sample_latitude_column: latitude\n"
             "sample_longitude_column: longitude\n"
             f"n_realisations: {cfg['n_realisations']}\n"
             f"ensemble_seed_stride: {cfg['ensemble_seed_stride']}\n"
-            f"sample_snap_radius_pixels: {cfg['sample_snap_radius_pixels']}\n\n"
+            f"sample_snap_max_search_radius_pixels: {cfg['sample_snap_max_search_radius_pixels']}\n\n"
             "write_landslide_csv: true\n"
             "write_excavation_depth_raster: true\n"
             "write_time_of_failure_raster: true\n"
-            "write_post_landslide_dem: true\n"
+            "write_post_landslide_dem_raster: true\n"
         )
         out_path.write_text(text, encoding="utf-8")
 

@@ -1,3 +1,11 @@
+# Smoke test for lsdtt-graphflood.
+#
+# Rewritten 2026-09-10 for the 2026-09-04 CLI. The previous fixture predated
+# that rewrite: it set five parameters the CLI no longer has (hydraulic_run_mode,
+# mannings_n, uniform_rainfall_rate, raster_is_filled and four write_* switches)
+# and omitted hydraulic_node_state_fname, which is now required. Because
+# lsdtt-graphflood had never been built in the default build tree, the test had
+# been failing silently rather than being noticed.
 read_path: __READ_PATH__
 read_fname: tiny_dem.asc
 write_path: __WRITE_PATH__
@@ -6,19 +14,24 @@ write_fname: tiny_hydraulic
 write_output_format: gtiff
 n_threads: 1
 
-raster_is_filled: false
+# 0 = outside, 1 = active, 3 = outlet. The DEM falls to the south-east, so the
+# single outlet is the bottom-right cell.
+hydraulic_node_state_fname: tiny_hydraulic_node_state.asc
+
 fill_min_slope: 0.0001
 boundary_conditions: oooo
 flow_routing_method: mfd
 mfd_exponent: 1.0
 
-hydraulic_run_mode: transient
+# The CLI requires both of these alongside the node-state raster.
+# Rainfall in m/s; friction is Manning's n, replacing the old scalar mannings_n.
+rainfall_rate_fname: tiny_hydraulic_rainfall.asc
+friction_coefficient_fname: tiny_hydraulic_friction.asc
+
 run_until_converged: false
 n_steps: 5
 hydraulic_dt: 1e-3
-mannings_n: 0.033
 hydraulic_min_slope: 1e-8
-uniform_rainfall_rate: 1e-6
 
 write_water_depth_raster: true
 write_water_surface_raster: true
@@ -26,8 +39,3 @@ write_qin_raster: false
 write_qout_raster: false
 write_dhw_raster: false
 write_bed_raster: false
-write_hydraulic_slope_raster: false
-write_specific_discharge_raster: false
-write_total_discharge_raster: false
-write_specific_drainage_area_raster: false
-write_effective_width_raster: false

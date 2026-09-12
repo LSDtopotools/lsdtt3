@@ -49,6 +49,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_outlet_clusters.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
@@ -59,6 +60,8 @@
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -88,210 +91,40 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static std::string lowercase_copy(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
 
 static bool cluster_field_is_set(const std::string& field_name)
 {
     if (field_name.empty()) return false;
-    return lowercase_copy(field_name) != "null";
+    return lsdtt::to_lower_ascii(field_name) != "null";
 }
 
-// Split one CSV row into fields. Double-quoted fields may contain commas and
-// escaped quotes (""), so a label such as "Loch Etive, north" stays in a single
-// column instead of silently shifting every field after it.
-static std::vector<std::string> split_csv_row_simple(const std::string& row)
+
+
+static std::string cluster_attribute_to_string(
+    const lsdtt::lsdtt_point_attribute_value& value)
 {
-    std::vector<std::string> cols;
-    std::string token;
-    bool in_quotes = false;
-
-    for (std::size_t i = 0; i < row.size(); ++i)
+    if (value.has_source_text)
     {
-        const char c = row[i];
-        if (in_quotes)
-        {
-            if (c == '"')
-            {
-                if (i + 1 < row.size() && row[i + 1] == '"')
-                {
-                    token.push_back('"');
-                    ++i;
-                }
-                else
-                {
-                    in_quotes = false;
-                }
-            }
-            else
-            {
-                token.push_back(c);
-            }
-        }
-        else if (c == '"')
-        {
-            in_quotes = true;
-        }
-        else if (c == ',')
-        {
-            cols.push_back(token);
-            token.clear();
-        }
-        else if (c != '\r')
-        {
-            token.push_back(c);
-        }
+        return value.source_text;
     }
-    cols.push_back(token);
-    return cols;
-}
-
-static std::vector<std::string> load_cluster_values_from_csv(
-    const std::string& csv_path,
-    const std::string& cluster_field)
-{
-    std::ifstream in(csv_path);
-    if (!in)
+    if (value.type == lsdtt::lsdtt_point_attribute_value::kind::text)
     {
-        throw std::runtime_error("could not open CSV cluster file: " + csv_path);
+        return value.s;
     }
-
-    std::string header;
-    if (!std::getline(in, header))
+    if (value.type == lsdtt::lsdtt_point_attribute_value::kind::integer)
     {
-        throw std::runtime_error("CSV cluster file is empty: " + csv_path);
+        return std::to_string(value.i);
     }
-
-    const std::vector<std::string> headers = split_csv_row_simple(header);
-    int cluster_col = -1;
-    for (std::size_t i = 0; i < headers.size(); ++i)
-    {
-        if (headers[i] == cluster_field)
-        {
-            cluster_col = static_cast<int>(i);
-            break;
-        }
-    }
-    if (cluster_col < 0)
-    {
-        const std::string target_lc = lowercase_copy(cluster_field);
-        for (std::size_t i = 0; i < headers.size(); ++i)
-        {
-            if (lowercase_copy(headers[i]) == target_lc)
-            {
-                cluster_col = static_cast<int>(i);
-                break;
-            }
-        }
-    }
-    if (cluster_col < 0)
-    {
-        throw std::runtime_error(
-            "cluster field not found in CSV header: " + cluster_field);
-    }
-
-    std::vector<std::string> values;
-    std::string row;
-    while (std::getline(in, row))
-    {
-        if (row.empty()) continue;
-        const std::vector<std::string> cols = split_csv_row_simple(row);
-        if (cluster_col < static_cast<int>(cols.size()))
-        {
-            values.emplace_back(cols[static_cast<std::size_t>(cluster_col)]);
-        }
-        else
-        {
-            values.emplace_back("");
-        }
-    }
-    return values;
-}
-
-static std::string vector_field_value_to_string(
-    const lsdtt::lsdtt_vector_field_value& value)
-{
-    if (std::holds_alternative<std::string>(value))
-    {
-        return std::get<std::string>(value);
-    }
-    if (std::holds_alternative<std::int64_t>(value))
-    {
-        return std::to_string(std::get<std::int64_t>(value));
-    }
-    if (std::holds_alternative<double>(value))
+    if (value.type == lsdtt::lsdtt_point_attribute_value::kind::real)
     {
         std::ostringstream ss;
         ss.precision(16);
-        ss << std::get<double>(value);
+        ss << value.d;
         return ss.str();
     }
     return "";
 }
 
-static std::vector<std::string> load_cluster_values_from_vector(
-    const std::string& vector_path,
-    const std::string& cluster_field)
-{
-    lsdtt::lsdtt_data_loader loader;
-    loader.open_vector(vector_path);
-
-    // read_vector_layer resolves the name with GetLayerByName(), which never
-    // matches an empty string, so the layer must be named explicitly. Take the
-    // first layer, matching how every other vector reader in the codebase does
-    // it (see lsdtt_burn_streams_cpu.cpp and cli/lsdtt-basin-extraction.cpp).
-    const std::vector<std::string> layer_names = loader.get_layer_names();
-    if (layer_names.empty())
-    {
-        loader.close_vector();
-        throw std::runtime_error("no layers in outlet vector file: " + vector_path);
-    }
-
-    lsdtt::lsdtt_vector_layer layer = loader.read_vector_layer(layer_names[0]);
-    loader.close_vector();
-
-    const int idx = layer.schema.index_of(cluster_field);
-    if (idx < 0)
-    {
-        throw std::runtime_error(
-            "cluster field not found in vector layer: " + cluster_field);
-    }
-
-    std::vector<std::string> values;
-    values.reserve(layer.records.size());
-    for (const auto& rec : layer.records)
-    {
-        if (idx >= static_cast<int>(rec.field_values.size()))
-        {
-            values.emplace_back("");
-            continue;
-        }
-        values.emplace_back(vector_field_value_to_string(rec.field_values[static_cast<std::size_t>(idx)]));
-    }
-    return values;
-}
-
-static const char* snap_status_to_cstr(lsdtt::lsdtt_snap_status status)
-{
-    switch (status)
-    {
-    case lsdtt::lsdtt_snap_status::success:
-        return "success";
-    case lsdtt::lsdtt_snap_status::input_out_of_bounds:
-        return "input_out_of_bounds";
-    case lsdtt::lsdtt_snap_status::input_invalid_flow_cell:
-        return "input_invalid_flow_cell";
-    case lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window:
-        return "threshold_not_found_in_search_window";
-    case lsdtt::lsdtt_snap_status::outlet_reached_before_threshold:
-        return "outlet_reached_before_threshold";
-    }
-    return "unknown";
-}
 
 // =============================================================================
 // main
@@ -317,11 +150,7 @@ int main(int argc, char* argv[])
         "o = open, n = no-flux, p = periodic, b = forced outlet.",
         "Routing / DEM", "param", ""};
 
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled and ready for routing.",
-        "If false (default), pit filling is run before routing.",
-        "Routing / DEM", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -329,11 +158,7 @@ int main(int argc, char* argv[])
         "Only used when raster_is_filled is false.",
         "Routing / DEM", "param", "raster_is_filled"};
 
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold for extracting channel heads.",
-        "Must be > 0.",
-        "Routing / DEM", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     int_default_map["n_threads"] = 0;
     help_map["n_threads"] = {"int","0",
@@ -342,8 +167,8 @@ int main(int argc, char* argv[])
         "Routing / DEM", "param", ""};
 
     // --- Outlet and cluster controls ---
-    string_default_map["basin_outlet_file"] = "NULL";
-    help_map["basin_outlet_file"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "Point dataset of outlet locations.",
         "Required. Supports CSV latitude/longitude or point vectors (FGB/GPKG/etc.).",
         "Outlets / clusters", "param", ""};
@@ -374,14 +199,14 @@ int main(int argc, char* argv[])
         "Higher values snap outlets onto larger channels.",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snap radius (pixels).",
         "Used only for basin_outlet_snapping_method=expanding_square.",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snap radius (pixels).",
         "Used only for basin_outlet_snapping_method=expanding_square.",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
@@ -436,8 +261,8 @@ int main(int argc, char* argv[])
         "Output path: <write_fname>_divide_migration_metrics.csv.",
         "Output", "io", ""};
 
-    string_default_map["vector_output_format"] = "flatgeobuf";
-    help_map["vector_output_format"] = {"string","flatgeobuf",
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
         "Vector output format.",
         "Options: flatgeobuf/fgb or gpkg.",
         "Output", "io", ""};
@@ -490,6 +315,12 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"basin_outlet_file", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"vector_output_format", "write_vector_format"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -501,7 +332,7 @@ int main(int argc, char* argv[])
     auto valid_choice = [](const std::string& value,
                            const std::initializer_list<const char*> choices)
     {
-        const std::string v = lowercase_copy(value);
+        const std::string v = lsdtt::to_lower_ascii(value);
         for (const char* c : choices)
         {
             if (v == c) return true;
@@ -509,16 +340,16 @@ int main(int argc, char* argv[])
         return false;
     };
 
-    if (sf.at("basin_outlet_file").empty() ||
-        sf.at("basin_outlet_file") == "NULL")
+    if (sf.at("basin_outlet_fname").empty() ||
+        sf.at("basin_outlet_fname") == "NULL")
     {
-        std::cerr << "FATAL: basin_outlet_file must be set.\n";
+        std::cerr << "FATAL: basin_outlet_fname must be set.\n";
         return 1;
     }
 
-    if (ifs.at("source_pixels_threshold") <= 0)
+    if (ifs.at("threshold_contributing_pixels") <= 0)
     {
-        std::cerr << "FATAL: source_pixels_threshold must be > 0.\n";
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
         return 1;
     }
 
@@ -554,9 +385,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (!valid_choice(sf.at("vector_output_format"), {"flatgeobuf", "fgb", "gpkg"}))
+    if (!valid_choice(sf.at("write_vector_format"), {"flatgeobuf", "fgb", "gpkg"}))
     {
-        std::cerr << "FATAL: vector_output_format must be one of: flatgeobuf, fgb, gpkg.\n";
+        std::cerr << "FATAL: write_vector_format must be one of: flatgeobuf, fgb, gpkg.\n";
         return 1;
     }
 
@@ -579,10 +410,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs.at("basin_outlet_min_search_radius_pixels") < 0 ||
-        ifs.at("basin_outlet_max_search_radius_pixels") < 0 ||
-        ifs.at("basin_outlet_max_search_radius_pixels") <
-            ifs.at("basin_outlet_min_search_radius_pixels"))
+    if (ifs.at("basin_outlet_snap_min_search_radius_pixels") < 0 ||
+        ifs.at("basin_outlet_snap_max_search_radius_pixels") < 0 ||
+        ifs.at("basin_outlet_snap_max_search_radius_pixels") <
+            ifs.at("basin_outlet_snap_min_search_radius_pixels"))
     {
         std::cerr << "FATAL: basin_outlet search radii must satisfy 0 <= min <= max.\n";
         return 1;
@@ -605,17 +436,57 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    const std::string outlet_path = pp.add_read_path_if_needed(sf.at("basin_outlet_file"));
+    const std::string outlet_path = pp.add_read_path_if_needed(sf.at("basin_outlet_fname"));
 
     std::vector<lsdtt::lsdtt_input_point> requested_outlets;
+    std::vector<std::string> cluster_values;
+    bool cluster_values_are_numeric = false;
+    const bool use_clusters = cluster_field_is_set(sf.at("outlet_cluster_field"));
     try
     {
-        requested_outlets = lsdtt::load_points_in_raster_crs(outlet_path, dem.get_meta());
+        if (use_clusters)
+        {
+            lsdtt::lsdtt_point_input_options point_options;
+            point_options.vector_attribute_field_names_case_sensitive = true;
+            const auto loaded = lsdtt::load_point_layer_with_attributes(
+                outlet_path, dem.get_meta(), {sf.at("outlet_cluster_field")},
+                point_options);
+            if (!loaded.fields_missing.empty())
+            {
+                const bool csv_input = lsdtt::to_lower_ascii(
+                    std::filesystem::path(outlet_path).extension().string()) == ".csv";
+                throw std::runtime_error(
+                    std::string("cluster field not found in ") +
+                    (csv_input ? "CSV header: " : "vector layer: ") +
+                    sf.at("outlet_cluster_field"));
+            }
+            requested_outlets.reserve(loaded.records.size());
+            cluster_values.reserve(loaded.records.size());
+            for (const auto& record : loaded.records)
+            {
+                requested_outlets.push_back(record.point);
+                cluster_values.push_back(cluster_attribute_to_string(
+                    record.attributes.at(sf.at("outlet_cluster_field"))));
+            }
+        }
+        else
+        {
+            requested_outlets =
+                lsdtt::load_points_in_raster_crs(outlet_path, dem.get_meta());
+        }
     }
     catch (const std::exception& e)
     {
-        std::cerr << "FATAL: could not load basin_outlet_file: "
-                  << outlet_path << " (" << e.what() << ")\n";
+        if (use_clusters)
+        {
+            std::cerr << "FATAL: could not load outlet clusters from field '"
+                      << sf.at("outlet_cluster_field") << "': " << e.what() << "\n";
+        }
+        else
+        {
+            std::cerr << "FATAL: could not load basin_outlet_fname: "
+                      << outlet_path << " (" << e.what() << ")\n";
+        }
         return 1;
     }
 
@@ -623,46 +494,12 @@ int main(int argc, char* argv[])
         lsdtt::filter_successfully_mapped_input_points(requested_outlets);
     if (mapped_outlets.size() < 2)
     {
-        std::cerr << "FATAL: basin_outlet_file must provide at least two points that map into the DEM extent.\n";
+        std::cerr << "FATAL: basin_outlet_fname must provide at least two points that map into the DEM extent.\n";
         return 1;
     }
 
-    // Optional cluster labels in input order.
-    std::vector<std::string> cluster_values;
-    bool cluster_values_are_numeric = false;
-    const bool use_clusters = cluster_field_is_set(sf.at("outlet_cluster_field"));
     if (use_clusters)
     {
-        try
-        {
-            const std::string ext = lowercase_copy(
-                std::filesystem::path(outlet_path).extension().string());
-            if (ext == ".csv")
-            {
-                cluster_values = load_cluster_values_from_csv(
-                    outlet_path, sf.at("outlet_cluster_field"));
-            }
-            else
-            {
-                cluster_values = load_cluster_values_from_vector(
-                    outlet_path, sf.at("outlet_cluster_field"));
-            }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "FATAL: could not load outlet clusters from field '"
-                      << sf.at("outlet_cluster_field") << "': " << e.what() << "\n";
-            return 1;
-        }
-
-        if (cluster_values.size() < requested_outlets.size())
-        {
-            std::cerr << "FATAL: outlet cluster field rows (" << cluster_values.size()
-                      << ") are fewer than loaded outlet points ("
-                      << requested_outlets.size() << ").\n";
-            return 1;
-        }
-
         // Grouping semantics per mode:
         //   integer -> every label must be an integer; grouped by numeric value
         //   auto    -> grouped numerically if every label is an integer,
@@ -743,7 +580,7 @@ int main(int argc, char* argv[])
     int next_unit_id = 1;
 
     std::size_t n_snap_success = 0;
-    const std::string snap_method = lowercase_copy(sf.at("basin_outlet_snapping_method"));
+    const std::string snap_method = lsdtt::to_lower_ascii(sf.at("basin_outlet_snapping_method"));
 
     lsdtt::lsdtt_downstream_snap_options ds_opts;
     ds_opts.contributing_pixels_threshold =
@@ -752,8 +589,8 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_square_snap_options sq_opts;
     sq_opts.contributing_pixels_threshold =
         static_cast<std::uint64_t>(ifs.at("basin_outlet_contributing_pixels_threshold"));
-    sq_opts.min_search_radius_pixels = ifs.at("basin_outlet_min_search_radius_pixels");
-    sq_opts.max_search_radius_pixels = ifs.at("basin_outlet_max_search_radius_pixels");
+    sq_opts.min_search_radius_pixels = ifs.at("basin_outlet_snap_min_search_radius_pixels");
+    sq_opts.max_search_radius_pixels = ifs.at("basin_outlet_snap_max_search_radius_pixels");
 
     std::cout << "Outlet snapping method: " << snap_method << "\n";
     for (const auto& pt : mapped_outlets)
@@ -761,11 +598,11 @@ int main(int argc, char* argv[])
         std::int64_t snapped_flat = pt.flat;
         bool accepted = true;
 
-        if (snap_method == "downstream")
+        if (snap_method != "none")
         {
             const lsdtt::lsdtt_snap_result sr =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                    *flow, pt.row, pt.col, ds_opts);
+                lsdtt::snap_pixel_by_method(
+                    *flow, pt.row, pt.col, snap_method, sq_opts, ds_opts);
             if (sr.status == lsdtt::lsdtt_snap_status::success)
             {
                 snapped_flat = sr.snapped_flat;
@@ -775,25 +612,7 @@ int main(int argc, char* argv[])
             {
                 accepted = false;
                 std::cout << "  outlet point_id=" << pt.point_id
-                          << " snap failed (" << snap_status_to_cstr(sr.status)
-                          << "), dropping point\n";
-            }
-        }
-        else if (snap_method == "expanding_square")
-        {
-            const lsdtt::lsdtt_snap_result sr =
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                    *flow, pt.row, pt.col, sq_opts);
-            if (sr.status == lsdtt::lsdtt_snap_status::success)
-            {
-                snapped_flat = sr.snapped_flat;
-                ++n_snap_success;
-            }
-            else
-            {
-                accepted = false;
-                std::cout << "  outlet point_id=" << pt.point_id
-                          << " snap failed (" << snap_status_to_cstr(sr.status)
+                          << " snap failed (" << lsdtt::snap_status_to_string(sr.status)
                           << "), dropping point\n";
             }
         }
@@ -896,7 +715,7 @@ int main(int argc, char* argv[])
     //                       outlet elevation as a common chi base level
     //   complete_only     : drop basins whose upslope area touches nodata
     // -------------------------------------------------------------------------
-    const std::string outlet_control_mode = lowercase_copy(sf.at("outlet_control_mode"));
+    const std::string outlet_control_mode = lsdtt::to_lower_ascii(sf.at("outlet_control_mode"));
     std::cout << "Outlet control mode: " << outlet_control_mode << "\n";
 
     if (outlet_control_mode == "elevation")
@@ -947,7 +766,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_junction_network_cpu junction_network;
     try
     {
-        source_flats = flow->get_sources_index_threshold(ifs.at("source_pixels_threshold"));
+        source_flats = flow->get_sources_index_threshold(ifs.at("threshold_contributing_pixels"));
 
         lsdtt::lsdtt_junction_network_options jn_opts;
         jn_opts.build_topological_order = true;
@@ -1111,7 +930,7 @@ int main(int argc, char* argv[])
             lsdtt::get_chi_from_outlets_zero_base_threshold(
                 *flow,
                 selected_basin_outlet_flats,
-                ifs.at("source_pixels_threshold"),
+                ifs.at("threshold_contributing_pixels"),
                 chi_opts);
 
         // Common base level: chi is re-zeroed at the highest selected outlet
@@ -1248,7 +1067,7 @@ int main(int argc, char* argv[])
         try
         {
             const lsdtt::vector_output_format out_fmt =
-                lsdtt::resolve_vector_output_format(sf.at("vector_output_format"));
+                lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
             const std::string ext = lsdtt::output_extension(out_fmt);
             const std::string out_path = lsdtt::lsdtt_data_loader::resolve_writable_path(
                 pp.get_full_write_path() + "_divides", ext);
@@ -1304,7 +1123,7 @@ int main(int argc, char* argv[])
         try
         {
             const lsdtt::vector_output_format out_fmt =
-                lsdtt::resolve_vector_output_format(sf.at("vector_output_format"));
+                lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
             const std::string ext = lsdtt::output_extension(out_fmt);
             const std::string out_path = lsdtt::lsdtt_data_loader::resolve_writable_path(
                 pp.get_full_write_path() + "_channel_heads", ext);

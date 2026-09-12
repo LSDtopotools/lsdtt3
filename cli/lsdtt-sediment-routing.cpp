@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
@@ -114,12 +115,7 @@ int main(int argc, char* argv[])
         "o = open, n = no-flux, p = periodic, b = forced outlet.",
         "DEM and flow routing", "param", ""};
 
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool","false",
-        "Whether the input raster is already pit-filled and ready for routing.",
-        "If false (default), fill_pits() is called before building flow routing. "
-        "If true, the DEM is used as supplied.",
-        "DEM and flow routing", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
@@ -128,12 +124,7 @@ int main(int argc, char* argv[])
         "Passed to fill_pits() to gently enforce downstream descent.",
         "DEM and flow routing", "param", ""};
 
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int","1000",
-        "Contributing-pixel threshold used to define channel source heads.",
-        "Channel heads are extracted from the flow object by this threshold. "
-        "Reduce to extract a denser network; increase for sparser.",
-        "DEM and flow routing", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Transport formula ---
     string_default_map["transport_formula_choice"] = "wilcock_crowe";
@@ -177,8 +168,8 @@ int main(int argc, char* argv[])
         "transport capacity calculations.",
         "Sediment properties", "param", ""};
 
-    float_default_map["active_layer_depth_m"] = -1.0f;
-    help_map["active_layer_depth_m"] = {"float","-1",
+    float_default_map["active_layer_depth_metres"] = -1.0f;
+    help_map["active_layer_depth_metres"] = {"float","-1",
         "Fixed active-layer depth [m] applied to all reaches.",
         "The active layer is the mobile surface sediment that participates in "
         "exchange each timestep. "
@@ -203,24 +194,24 @@ int main(int argc, char* argv[])
         "Must have the same number of entries as psi_mm.",
         "Grain-size distribution", "param", ""};
 
-    float_default_map["D50_m"] = 0.016f;
-    help_map["D50_m"] = {"float","0.016",
+    float_default_map["d50_metres"] = 0.016f;
+    help_map["d50_metres"] = {"float","0.016",
         "Median grain diameter [m] used in transport and hydraulic calculations.",
         "Used directly by the Engelund-Hansen formula and as the reference "
         "grain size for hiding-function calculations in Wong-Parker.",
         "Grain-size distribution", "param", ""};
 
-    float_default_map["D84_m"] = 0.045f;
-    help_map["D84_m"] = {"float","0.045",
+    float_default_map["d84_metres"] = 0.045f;
+    help_map["d84_metres"] = {"float","0.045",
         "D84 grain diameter [m].",
         "84th percentile grain diameter. Used in Wilcock-Crowe hiding function.",
         "Grain-size distribution", "param", ""};
 
-    float_default_map["D90_m"] = 0.055f;
-    help_map["D90_m"] = {"float","0.055",
+    float_default_map["d90_metres"] = 0.055f;
+    help_map["d90_metres"] = {"float","0.055",
         "D90 grain diameter [m].",
         "90th percentile grain diameter. Sets the default active-layer depth "
-        "(2 x D90) when active_layer_depth_m <= 0.",
+        "(2 x D90) when active_layer_depth_metres <= 0.",
         "Grain-size distribution", "param", ""};
 
     float_default_map["mannings_n"] = 0.04f;
@@ -292,8 +283,8 @@ int main(int argc, char* argv[])
         "approximation. Typical range: 0.3-0.6.",
         "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
-    float_default_map["giuh_hillslope_length_m"] = -1.0f;
-    help_map["giuh_hillslope_length_m"] = {"float","-1",
+    float_default_map["giuh_hillslope_length_metres"] = -1.0f;
+    help_map["giuh_hillslope_length_metres"] = {"float","-1",
         "Mean hillslope length [m] added as overland-flow travel time per reach.",
         "When > 0, an overland-flow travel time = hillslope_length / v_hillslope "
         "is added to each reach, delaying the IUH peak. "
@@ -303,7 +294,7 @@ int main(int argc, char* argv[])
     float_default_map["giuh_v_hillslope_m_per_s"] = 0.005f;
     help_map["giuh_v_hillslope_m_per_s"] = {"float","0.005",
         "Overland-flow velocity [m/s] for hillslope travel time.",
-        "Only used when giuh_hillslope_length_m > 0. "
+        "Only used when giuh_hillslope_length_metres > 0. "
         "Typical sheet-flow velocities: 0.001-0.01 m/s.",
         "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
@@ -396,6 +387,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"active_layer_depth_m", "active_layer_depth_metres"},
+        {"D50_m", "d50_metres"},
+        {"D84_m", "d84_metres"},
+        {"D90_m", "d90_metres"},
+        {"giuh_hillslope_length_m", "giuh_hillslope_length_metres"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -417,10 +415,10 @@ int main(int argc, char* argv[])
     opts.timestep_s             = static_cast<double>(ff["timestep_s"]);
     opts.porosity               = static_cast<double>(ff["porosity"]);
     opts.sediment_density_kg_m3 = static_cast<double>(ff["sediment_density_kg_m3"]);
-    opts.active_layer_depth_m   = static_cast<double>(ff["active_layer_depth_m"]);
-    opts.D50_m                  = static_cast<double>(ff["D50_m"]);
-    opts.D84_m                  = static_cast<double>(ff["D84_m"]);
-    opts.D90_m                  = static_cast<double>(ff["D90_m"]);
+    opts.active_layer_depth_m = static_cast<double>(ff["active_layer_depth_metres"]);
+    opts.D50_m = static_cast<double>(ff["d50_metres"]);
+    opts.D84_m = static_cast<double>(ff["d84_metres"]);
+    opts.D90_m = static_cast<double>(ff["d90_metres"]);
     opts.mannings_n             = static_cast<double>(ff["mannings_n"]);
     opts.width_coefficient      = static_cast<double>(ff["width_coefficient"]);
     opts.width_exponent         = static_cast<double>(ff["width_exponent"]);
@@ -531,13 +529,13 @@ int main(int argc, char* argv[])
     // Source extraction
     // -------------------------------------------------------------------------
     std::cout << "Extracting channel sources (threshold = "
-              << ifs["source_pixels_threshold"] << " px)...\n";
+              << ifs["threshold_contributing_pixels"] << " px)...\n";
 
     std::vector<std::int64_t> source_flats;
     try
     {
         source_flats = flow.get_sources_index_threshold(
-            ifs["source_pixels_threshold"]);
+            ifs["threshold_contributing_pixels"]);
     }
     catch (const std::exception& e)
     {
@@ -548,7 +546,7 @@ int main(int argc, char* argv[])
     if (source_flats.empty())
     {
         std::cerr << "FATAL: no source pixels found. "
-                     "Try lowering source_pixels_threshold.\n";
+                     "Try lowering threshold_contributing_pixels.\n";
         return 1;
     }
     std::cout << "  Source pixels: " << source_flats.size() << "\n";
@@ -600,7 +598,7 @@ int main(int argc, char* argv[])
         giuh_opts.v_ref_m_per_s       = static_cast<double>(ff["giuh_v_ref_m_per_s"]);
         giuh_opts.slope_ref           = static_cast<double>(ff["giuh_slope_ref"]);
         giuh_opts.velocity_exponent   = static_cast<double>(ff["giuh_velocity_exponent"]);
-        giuh_opts.hillslope_length_m  = static_cast<double>(ff["giuh_hillslope_length_m"]);
+        giuh_opts.hillslope_length_m = static_cast<double>(ff["giuh_hillslope_length_metres"]);
         giuh_opts.v_hillslope_m_per_s = static_cast<double>(ff["giuh_v_hillslope_m_per_s"]);
         giuh_opts.n_bins              = ifs["giuh_n_bins"];
         giuh_opts.dt_bin_s            = static_cast<double>(ff["giuh_dt_bin_s"]);

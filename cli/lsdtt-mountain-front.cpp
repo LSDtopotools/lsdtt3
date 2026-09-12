@@ -12,7 +12,7 @@
 // Identifies mountain masses in a DEM via adaptive relief thresholding.
 //
 // Pipeline:
-//   Stage 1 - Local relief (square window, relief_window_pixels)
+//   Stage 1 - Local relief (square window, relief_window_side_pixels)
 //   Stage 2 - Flat mask: adaptive (CDF divergence threshold) or fixed value.
 //             Adaptive: 500-bin empirical CDF vs best-fit parametric distribution;
 //             threshold at x of maximum positive divergence.  Writes CDF CSV.
@@ -29,7 +29,7 @@
 //   Stage 8 - Remove small mountain components (< min_component_pixels).
 //   Stage 9 - Valley infilling: morphological closing (infill_valley_radius_metres).
 //             Disabled when infill_valley_radius_metres <= 0.
-//   Stage 10 - Outlets: mountain edge pixels with upstream area >= min_contributing_pixels.
+//   Stage 10 - Outlets: mountain edge pixels above a contributing-pixel threshold.
 //
 // Nodata semantics:
 //   Pixels that are nodata in the original DEM are nodata in all output rasters.
@@ -93,97 +93,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-static lsdtt::lsdtt_raster_cpu prune_upstream_outlets(
-    const lsdtt::lsdtt_raster_cpu& outlets,
-    const lsdtt::lsdtt_flow_base&  flow)
-{
-    const lsdtt::lsdtt_raster_meta& meta = outlets.get_meta();
-    const std::vector<float>&        odat = outlets.get_data();
-    const std::vector<uint8_t>&      omsk = outlets.get_mask();
-
-    const std::size_t npix =
-        static_cast<std::size_t>(meta.n_rows) *
-        static_cast<std::size_t>(meta.n_cols);
-
-    if (flow.full_grid_size() != npix)
-    {
-        throw std::runtime_error(
-            "prune_upstream_outlets: flow grid size does not match outlet raster size.");
-    }
-
-    const float nd = static_cast<float>(meta.no_data_value);
-
-    std::vector<uint8_t> is_candidate(npix, uint8_t{0});
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (omsk[i] == 0) continue;
-        if (std::isfinite(odat[i]) && !meta.is_nodata(odat[i]) && odat[i] > 0.5f)
-            is_candidate[i] = uint8_t{1};
-    }
-
-    std::vector<float>   out_data(npix, nd);
-    std::vector<uint8_t> out_mask = omsk;
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (omsk[i] != 0)
-            out_data[i] = 0.0f;
-    }
-
-    for (std::size_t i = 0; i < npix; ++i)
-    {
-        if (is_candidate[i] == 0) continue;
-
-        bool has_downstream_outlet = false;
-
-        std::int64_t j =
-            flow.receiver_of_unchecked(static_cast<std::int64_t>(i));
-
-        int guard = 0;
-        while (guard < static_cast<int>(npix))
-        {
-            if (j == lsdtt::lsdtt_flow_base::nodata_receiver ||
-                j == lsdtt::lsdtt_flow_base::outlet_receiver)
-            {
-                break;
-            }
-
-            if (j < 0 || j >= static_cast<std::int64_t>(npix))
-            {
-                break;
-            }
-
-            const std::size_t jj = static_cast<std::size_t>(j);
-
-            if (omsk[jj] == 0)
-                break;
-
-            if (is_candidate[jj] != 0)
-            {
-                has_downstream_outlet = true;
-                break;
-            }
-
-            const std::int64_t next = flow.receiver_of_unchecked(j);
-
-            if (next == j)   // self-loop safety
-                break;
-
-            j = next;
-            ++guard;
-        }
-
-        if (!has_downstream_outlet)
-            out_data[i] = 1.0f;
-    }
-
-    return lsdtt::lsdtt_raster_cpu(
-        std::move(out_data), std::move(out_mask), meta);
-}
-
-
-
-
 // =============================================================================
 // main
 // =============================================================================
@@ -213,10 +122,14 @@ int main(int argc, char* argv[])
         "-", "io", ""};
 
     // --- Stage 1: relief ---
-    int_default_map["relief_window_pixels"] = 5;
-    help_map["relief_window_pixels"] = {"int","5",
-        "Square window size (pixels) for local relief (max - min).",
-        "Must be odd and >= 3.",
+    int_default_map["relief_window_side_pixels"] = 5;
+    help_map["relief_window_side_pixels"] = {"int","5",
+        "Full window SIDE LENGTH (pixels) for local relief (max - min).",
+        "This is the side of the square window, not a radius: must be odd and "
+        ">= 3, and 5 means a 5x5 neighbourhood.  Note that "
+        "lsdtt-fluvial-surfaces spells its equivalent "
+        "fallback_relief_window_radius_pixels, which is a RADIUS and so means "
+        "something different for the same number.",
         "Stage 1: relief", "param", ""};
 
     // --- Stage 2: relief threshold ---
@@ -278,8 +191,8 @@ int main(int argc, char* argv[])
         "Leave empty to auto-compute via fill + D8 flow routing.",
         "Stage 10: outlets", "param", ""};
 
-    int_default_map["min_contributing_pixels"] = 1000;
-    help_map["min_contributing_pixels"] = {"int","1000",
+    int_default_map["basin_minimum_contributing_pixels"] = 1000;
+    help_map["basin_minimum_contributing_pixels"] = {"int","1000",
         "Minimum upstream contributing pixels for a mountain edge pixel to be an outlet.",
         "Only used when write_mountain_front_outlets is true.",
         "Stage 10: outlets", "param", ""};
@@ -309,9 +222,24 @@ int main(int argc, char* argv[])
 
     bool_default_map["write_mountain_front_outlets"] = false;
     help_map["write_mountain_front_outlets"] = {"bool","false",
-        "Write mountain front outlet points (FlatGeobuf + CSV).",
-        "Mountain mask edge pixels whose upstream area meets min_contributing_pixels.",
+        "Write mountain front outlet points.",
+        "Mountain mask edge pixels whose upstream area meets "
+        "basin_minimum_contributing_pixels. The container is set by "
+        "write_vector_format.",
         "Outputs", "switch", ""};
+
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
+        "Output VECTOR format: flatgeobuf, gpkg or csv.",
+        "Governs the outlet point layer. Distinct from write_output_format, "
+        "which is the RASTER format. csv writes latitude/longitude in WGS84 "
+        "instead of geometry in the raster CRS. FlatGeobuf is preferred: it is "
+        "compact, carries its own georeferencing, and does not have "
+        "GeoPackage's problems writing across drives (a common WSL2 "
+        "situation). GeoPackage is an SQLite database, and SQLite cannot take "
+        "the file locks it needs on a drive mounted into WSL2, so a gpkg write "
+        "there fails.",
+        "Outputs", "io", ""};
 
     // -------------------------------------------------------------------------
     // Parse
@@ -339,6 +267,13 @@ int main(int argc, char* argv[])
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
+
+    // A pure rename: the value carries across unchanged. The new spelling says
+    // what the number is - a full window side, not a radius - because the same
+    // idea is a RADIUS in lsdtt-fluvial-surfaces.
+    pp.set_deprecated_aliases({
+        {"relief_window_pixels", "relief_window_side_pixels"},
+        {"min_contributing_pixels", "basin_minimum_contributing_pixels"} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -383,9 +318,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Stage 1: local relief (square window)
     // -------------------------------------------------------------------------
-    const int wpix = ip["relief_window_pixels"];
+    const int wpix = ip["relief_window_side_pixels"];
     if (wpix < 3 || wpix % 2 == 0)
-    { std::cerr << "Error: relief_window_pixels must be odd and >= 3\n"; return 1; }
+    { std::cerr << "Error: relief_window_side_pixels must be odd and >= 3\n"; return 1; }
 
     std::cout << "Stage 1: computing local relief (square window, "
               << wpix << " pixels)...\n";
@@ -638,16 +573,14 @@ if (bf["write_mountain_front_outlets"])
         {
             const lsdtt::lsdtt_raster_cpu outlet_candidates =
                 lsdtt::find_mountain_front_outlets(
-                    mountain_mask, ca_raster, ip["min_contributing_pixels"]);
+                    mountain_mask, ca_raster,
+                    ip["basin_minimum_contributing_pixels"]);
 
             // -----------------------------------------------------------------
             // Prune outlet candidates that have another outlet downstream.
-            //
-            // Replace get_receiver_index_vector() with your actual accessor if
-            // the flow object uses a different method name.
             // -----------------------------------------------------------------
             const lsdtt::lsdtt_raster_cpu outlets =
-                prune_upstream_outlets(
+                lsdtt::retain_downstream_most_mountain_front_outlets(
                     outlet_candidates, *flow);
 
 
@@ -661,66 +594,46 @@ if (bf["write_mountain_front_outlets"])
                 const int onrows = mta.n_rows;
                 const int oncols = mta.n_cols;
 
-                // FlatGeobuf
+                // One layer, in whatever container the user asked for. csv
+                // gets latitude/longitude in WGS84; the vector formats carry
+                // the geometry in the raster CRS. Previously this wrote a
+                // FlatGeobuf AND a lat/lon CSV unconditionally, with the grid
+                // scan spelled out twice.
                 {
-                    const std::string fgb_path = stem + "_mountain_front_outlets.fgb";
-                    std::cout << "Writing mountain front outlets (FlatGeobuf): "
-                              << fgb_path << "\n";
+                    const lsdtt::point_output_format out_fmt =
+                        lsdtt::resolve_point_output_format(sf["write_vector_format"]);
+                    const std::string out_path =
+                        stem + "_mountain_front_outlets" +
+                        lsdtt::output_extension(out_fmt);
+
+                    std::cout << "Writing mountain front outlets: "
+                              << out_path << "\n";
+
                     lsdtt::lsdtt_vector_schema schema;
                     schema.field_names = {"row","col","contributing_pixels"};
                     schema.field_types  = {
                         lsdtt::lsdtt_vector_field_type::int64_type,
                         lsdtt::lsdtt_vector_field_type::int64_type,
                         lsdtt::lsdtt_vector_field_type::int64_type };
-                    loader.begin_vector_write(
-                        fgb_path, "mountain_front_outlets",
-                        schema, mta.crs_wkt,
-                        lsdtt::vector_output_format::flatgeobuf, false);
-                    for (int row = 0; row < onrows; ++row)
-                    {
-                        for (int col = 0; col < oncols; ++col)
-                        {
-                            const std::size_t idx =
-                                static_cast<std::size_t>(row) *
-                                static_cast<std::size_t>(oncols) + col;
-                            if (omsk[idx] == 0 || odat[idx] <= 0.5f) continue;
-                            const lsdtt::lsdtt_xy xy =
-                                lsdtt::cell_center_from_row_col(mta, row, col);
-                            const std::int64_t ca_px =
-                                (cmsk[idx] != 0 && std::isfinite(cdat[idx]))
-                                    ? static_cast<std::int64_t>(cdat[idx]) : 0LL;
-                            loader.write_point(xy.x, xy.y, {
-                                static_cast<std::int64_t>(row),
-                                static_cast<std::int64_t>(col), ca_px });
-                        }
-                    }
-                    loader.finish_vector_write();
-                }
 
-                // CSV (lat/lon)
-                {
-                    const std::string csv_path = stem + "_mountain_front_outlets.csv";
-                    std::cout << "Writing mountain front outlets (CSV): "
-                              << csv_path << "\n";
-                    lsdtt::lsdtt_coordinate_transform to_wgs84 =
-                        lsdtt::lsdtt_coordinate_transform::from_epsg(mta.crs_wkt, 4326);
-                    std::vector<std::vector<std::string>> rows;
-                    for (int row = 0; row < onrows; ++row)
-                    {
-                        for (int col = 0; col < oncols; ++col)
-                        {
-                            const std::size_t idx =
-                                static_cast<std::size_t>(row) *
-                                static_cast<std::size_t>(oncols) + col;
-                            if (omsk[idx] == 0 || odat[idx] <= 0.5f) continue;
-                            const lsdtt::lsdtt_lonlat ll =
-                                lsdtt::cell_center_to_lonlat(mta, row, col, to_wgs84);
-                            rows.push_back({
-                                std::to_string(ll.latitude),
-                                std::to_string(ll.longitude) });
-                        }
-                    }
-                    loader.write_csv(csv_path, {"latitude","longitude"}, rows);
+                    const std::size_t n_outlets =
+                        lsdtt::write_masked_pixels_as_points(
+                            loader, mta, onrows, oncols,
+                            out_path, "mountain_front_outlets", schema,
+                            out_fmt, false,
+                            [&](int, int, std::size_t idx) {
+                                return omsk[idx] != 0 && odat[idx] > 0.5f;
+                            },
+                            [&](int row, int col, std::size_t idx)
+                                -> std::vector<lsdtt::lsdtt_vector_field_value> {
+                                const std::int64_t ca_px =
+                                    (cmsk[idx] != 0 && std::isfinite(cdat[idx]))
+                                        ? static_cast<std::int64_t>(cdat[idx]) : 0LL;
+                                return { static_cast<std::int64_t>(row),
+                                         static_cast<std::int64_t>(col), ca_px };
+                            });
+
+                    std::cout << "  " << n_outlets << " outlet(s) written.\n";
                 }
             }
             catch (const std::exception& e)

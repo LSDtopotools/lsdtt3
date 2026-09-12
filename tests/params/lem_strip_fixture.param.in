@@ -17,7 +17,7 @@ write_output_format: gtiff
 
 n_rows: 11
 n_cols: 101
-cell_size: 1.0
+cell_size_metres: 1.0
 
 write_hillslope_strip_surface: true
 write_hillslope_strip_channel_mask: true
@@ -27,7 +27,7 @@ strip_init_profile: flat
 strip_cross_axis_is_x: true
 strip_nonlinear_profile: false
 strip_baselevel_elevation: 0.0
-strip_half_width: 0.0
+strip_half_width_metres: 0.0
 strip_uplift: 4e-3
 strip_diffusivity: 1.0
 strip_critical_slope: 0.8

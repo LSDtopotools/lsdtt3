@@ -233,6 +233,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_csv_table.cpp
     src/core/lsdtt_stat_csv.cpp
     src/core/lsdtt_outlet_clusters.cpp
+    src/core/lsdtt_common_parameters.cpp
 )
 
 add_library(lsdtt3_core STATIC ${LSDTT3_CORE_SOURCES})
@@ -326,6 +327,9 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_junction_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp
     src/cpu/lsdtt_basin_outline_cpu.cpp
+    src/cpu/lsdtt_basin_outline_metrics_cpu.cpp
+    src/cpu/lsdtt_basin_stats_cpu.cpp
+    src/cpu/lsdtt_outlet_resolution_cpu.cpp
     src/cpu/lsdtt_flat_surface_finder.cpp
     src/cpu/lsdtt_slope_break_finder_cpu.cpp
     src/cpu/lsdtt_flat_surface_plane_analysis.cpp

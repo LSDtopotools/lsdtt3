@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
@@ -87,24 +88,8 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     // --- Lattice geometry ---
-    int_default_map["n_rows"] = 128;
-    help_map["n_rows"] = {"int","128",
-        "Number of lattice rows.",
-        "Lattice has n_rows x n_cols pixels; every pixel is a node of the "
-        "spanning tree. Cost scales with n_iter ~ 40*n_rows*n_cols.",
-        "Lattice geometry", "param", ""};
-
-    int_default_map["n_cols"] = 128;
-    help_map["n_cols"] = {"int","128",
-        "Number of lattice columns.",
-        "See n_rows.",
-        "Lattice geometry", "param", ""};
-
-    float_default_map["cell_size"] = 1.0f;
-    help_map["cell_size"] = {"float","1.0",
-        "Pixel size in map units (metres).",
-        "Sets the grid spacing of the output rasters.",
-        "Lattice geometry", "param", ""};
+    lsdtt::declare_synthetic_dimensions_parameters(int_default_map, help_map);
+    lsdtt::declare_synthetic_cell_size_parameter(float_default_map, help_map);
 
     int_default_map["outlet_spacing"] = 1;
     help_map["outlet_spacing"] = {"int","1",
@@ -135,7 +120,7 @@ int main(int argc, char* argv[])
         "rectangle: the full n_rows x n_cols grid. efd_island: a smooth random "
         "island from an Elliptical Fourier descriptor. noise_island: a "
         "radially-tapered red-noise island (fractal coast). polygon: a user "
-        "polygon vector scaled to the grid (set polygon_file).",
+        "polygon vector scaled to the grid (set polygon_fname).",
         "Domain (rectangle vs irregular island)", "param", ""};
 
     string_default_map["outlet_mode"] = "auto";
@@ -169,14 +154,14 @@ int main(int argc, char* argv[])
         "Higher = smoother coast (high harmonics suppressed); lower = rougher.",
         "Domain (rectangle vs irregular island)", "param", ""};
 
-    int_default_map["noise_blur_passes"] = 6;
-    help_map["noise_blur_passes"] = {"int","6",
+    int_default_map["coastline_blur_passes"] = 6;
+    help_map["coastline_blur_passes"] = {"int","6",
         "Smoothing passes for the noise_island coastline.",
         "More passes = smoother, simpler coastline; fewer = rougher/fractal.",
         "Domain (rectangle vs irregular island)", "param", ""};
 
-    string_default_map["polygon_file"] = "NULL";
-    help_map["polygon_file"] = {"string","NULL",
+    string_default_map["polygon_fname"] = "NULL";
+    help_map["polygon_fname"] = {"string","NULL",
         "Vector polygon file defining the domain (domain_type = polygon).",
         "The first polygon's exterior ring is used as the island coastline.",
         "Domain (rectangle vs irregular island)", "param", ""};
@@ -186,7 +171,7 @@ int main(int argc, char* argv[])
         "How an imported polygon is fitted to a grid.",
         "scaled: scale the polygon to fill the n_rows x n_cols grid (shape "
         "preserved, size set by the grid). true_area: derive the grid from the "
-        "polygon's real extent and cell_size, preserving real area and the "
+        "polygon's real extent and cell_size_metres, preserving real area and the "
         "polygon's CRS (n_rows/n_cols are computed, not taken from parameters).",
         "Domain (rectangle vs irregular island)", "param", ""};
 
@@ -321,11 +306,7 @@ int main(int argc, char* argv[])
         "uses the supplied EPSG directly.",
         "Georeference", "param", ""};
 
-    int_default_map["random_seed"] = 1;
-    help_map["random_seed"] = {"int","1",
-        "Seed for the annealing RNG.",
-        "Fixing the seed makes a run reproducible.",
-        "Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)", "param", ""};
+    lsdtt::declare_synthetic_random_seed_parameter(int_default_map, help_map);
 
     // -------------------------------------------------------------------------
     // Equilibration (optional second stage)
@@ -367,11 +348,11 @@ int main(int argc, char* argv[])
     float_default_map["steady_state_tolerance_dz_over_relief"] = 1e-3f;
     help_map["steady_state_tolerance_dz_over_relief"] = {"float","1e-3",
         "Convergence tolerance on max|dz|/relief between cycles.",
-        "Used when steady_state_tolerance_dz_m is 0.",
+        "Used when steady_state_tolerance_dz_metres is 0.",
         k_eq_group, "param", "steady_state_check_convergence"};
 
-    float_default_map["steady_state_tolerance_dz_m"] = 0.0f;
-    help_map["steady_state_tolerance_dz_m"] = {"float","0",
+    float_default_map["steady_state_tolerance_dz_metres"] = 0.0f;
+    help_map["steady_state_tolerance_dz_metres"] = {"float","0",
         "Absolute convergence tolerance on max|dz| (m) between cycles.",
         "If > 0 this overrides steady_state_tolerance_dz_over_relief.",
         k_eq_group, "param", "steady_state_check_convergence"};
@@ -444,7 +425,7 @@ int main(int argc, char* argv[])
     bool_default_map["run_hillslope_steady_state"] = false;
     help_map["run_hillslope_steady_state"] = {"bool","false",
         "Solve hillslope steady state inside the equilibration cycle.",
-        "Requires run_equilibration: true and incision_threshold_area > 0; "
+        "Requires run_equilibration: true and incision_threshold_area_m2 > 0; "
         "channel pixels become the Dirichlet set that pins the solve.",
         k_hs_group, "param", "run_equilibration"};
 
@@ -458,8 +439,8 @@ int main(int argc, char* argv[])
         "critical-slope construction.",
         k_hs_group, "param", "run_hillslope_steady_state"};
 
-    float_default_map["incision_threshold_area"] = 0.0f;
-    help_map["incision_threshold_area"] = {"float","0",
+    float_default_map["incision_threshold_area_m2"] = 0.0f;
+    help_map["incision_threshold_area_m2"] = {"float","0",
         "Drainage area threshold (m^2) separating channels from hillslopes.",
         "Required (> 0) when run_hillslope_steady_state is true.",
         k_hs_group, "param", "run_hillslope_steady_state"};
@@ -512,7 +493,7 @@ int main(int argc, char* argv[])
     help_map["channel_hysteresis_factor"] = {"float","0.5",
         "Hysteresis on the channel (Dirichlet) set between cycles.",
         "A channel pixel stays a channel until its area falls below this "
-        "factor times incision_threshold_area. 1.0 disables the hysteresis.",
+        "factor times incision_threshold_area_m2. 1.0 disables the hysteresis.",
         k_hs_group, "param", "run_hillslope_steady_state"};
 
     // --- Outputs ---
@@ -525,7 +506,9 @@ int main(int argc, char* argv[])
     bool_default_map["write_drainage_area_raster"] = true;
     help_map["write_drainage_area_raster"] = {"bool","true",
         "Write the OCN drainage-area (pixel count) raster.",
-        "Output file: <write_fname>_ocn_drainage_cells.tif.",
+        "Enabled by default because drainage area is a primary OCN result used to "
+        "interpret the generated DEM, whereas analysis CLIs treat it as an optional "
+        "diagnostic. Output file: <write_fname>_ocn_drainage_cells.tif.",
         "Outputs", "switch", ""};
 
     bool_default_map["verify_routing"] = true;
@@ -581,6 +564,12 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"cell_size", "cell_size_metres"},
+        {"noise_blur_passes", "coastline_blur_passes"},
+        {"incision_threshold_area", "incision_threshold_area_m2"},
+        {"polygon_file", "polygon_fname"},
+        {"steady_state_tolerance_dz_m", "steady_state_tolerance_dz_metres"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -644,7 +633,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_ocn_options opts;
     opts.n_rows    = ifs["n_rows"];
     opts.n_cols    = ifs["n_cols"];
-    opts.cell_size = ff["cell_size"];
+    opts.cell_size = ff["cell_size_metres"];
     opts.energy_length_weighted = bf["energy_length_weighted"];
     opts.gamma     = ff["energy_exponent_gamma"];
     opts.n_iter    = (ifs["n_iter"] > 0)
@@ -690,18 +679,18 @@ int main(int argc, char* argv[])
         else if (domain_type == "noise_island")
         {
             mask = lsdtt::make_noise_island_mask(
-                opts.n_rows, opts.n_cols, ifs["noise_blur_passes"],
+                opts.n_rows, opts.n_cols, ifs["coastline_blur_passes"],
                 ff["island_fill_fraction"], dseed);
         }
         else if (domain_type == "polygon")
         {
-            if (sf["polygon_file"] == "NULL" || sf["polygon_file"].empty())
+            if (sf["polygon_fname"] == "NULL" || sf["polygon_fname"].empty())
             {
-                std::cerr << "FATAL: domain_type=polygon requires polygon_file.\n";
+                std::cerr << "FATAL: domain_type=polygon requires polygon_fname.\n";
                 return 1;
             }
             const std::string ppath =
-                pp.add_read_path_if_needed(sf["polygon_file"]);
+                pp.add_read_path_if_needed(sf["polygon_fname"]);
             lsdtt::lsdtt_data_loader vloader;
             vloader.open_vector(ppath);
             const std::vector<std::string> names = vloader.get_layer_names();
@@ -728,7 +717,7 @@ int main(int argc, char* argv[])
                     lsdtt::rasterise_polygon_true_area(ring, opts.cell_size);
                 if (ta.n_rows < 2 || ta.n_cols < 2)
                     throw std::runtime_error(
-                        "polygon true_area grid is too small; reduce cell_size");
+                        "polygon true_area grid is too small; reduce cell_size_metres");
 
                 // the polygon defines the grid and georeference
                 opts.n_rows = ta.n_rows;
@@ -933,7 +922,7 @@ int main(int argc, char* argv[])
         const int   n_cycles = ifs["steady_state_n_cycles"];
         const bool  check    = bf["steady_state_check_convergence"];
         const int   patience = ifs["steady_state_convergence_patience"];
-        const float tol_dz_m = ff["steady_state_tolerance_dz_m"];
+        const float tol_dz_m = ff["steady_state_tolerance_dz_metres"];
         const float tol_dz_rel = ff["steady_state_tolerance_dz_over_relief"];
         const float tol_recv = ff["steady_state_tolerance_receiver_fraction"];
         const float div_target = ff["divide_gradient_target"];
@@ -961,7 +950,7 @@ int main(int argc, char* argv[])
         }
         if (tol_dz_m < 0.0f)
         {
-            std::cerr << "FATAL: invalid steady_state_tolerance_dz_m=" << tol_dz_m
+            std::cerr << "FATAL: invalid steady_state_tolerance_dz_metres=" << tol_dz_m
                       << "; must be >= 0.\n";
             return 1;
         }
@@ -1018,7 +1007,7 @@ int main(int argc, char* argv[])
         eq_opts.run_hillslope          = bf["run_hillslope_steady_state"];
         eq_opts.hillslope_model        = sf["hillslope_ss_model"];
         eq_opts.hillslope_every_cycle  = bf["hillslope_every_cycle"];
-        eq_opts.channel_threshold_area = ff["incision_threshold_area"];
+        eq_opts.channel_threshold_area = ff["incision_threshold_area_m2"];
         eq_opts.channel_hysteresis_factor = ff["channel_hysteresis_factor"];
         eq_opts.hillslope.D              = ff["hillslope_diffusivity"];
         eq_opts.hillslope.U              = ff["uplift_rate"];
@@ -1032,7 +1021,7 @@ int main(int argc, char* argv[])
         {
             std::cerr
                 << "FATAL: run_hillslope_steady_state: true requires "
-                   "incision_threshold_area > 0; the channel pixels are the "
+                   "incision_threshold_area_m2 > 0; the channel pixels are the "
                    "Dirichlet set that pins the hillslope solve.\n";
             return 1;
         }

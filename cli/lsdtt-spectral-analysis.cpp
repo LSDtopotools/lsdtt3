@@ -60,28 +60,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-// -----------------------------------------------------------------------------
-// resolve_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::raster_output_format resolve_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "gtiff")
-    {
-        return lsdtt::raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return lsdtt::raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' - defaulting to cog.\n";
-    }
-    return lsdtt::raster_output_format::cog;
-}
-
 // =============================================================================
 // main
 // =============================================================================
@@ -106,19 +84,24 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
-    int_default_map["n_threads"] = 1;
-    help_map["n_threads"] = {"int","1",
+    int_default_map["n_threads"] = 0;
+    help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
-        "0 = use all hardware threads. 1 = serial (default).",
+        "0 = use all hardware threads (default). 1 = serial. In shared "
+        "environments, set an explicit limit no greater than the physical-core allocation.",
         "Threading", "io", ""};
 
     // --- Output format ---
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
+        "Allowed values: cog, gtiff, same_as_input, png. "
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format.",
+        "same_as_input: match the input raster format. "
+        "png: 8-bit scaled image with a worldfile and PAM sidecar for "
+        "georeferencing - for quick visualisation only, not for analysis "
+        "reuse. Output files take the extension of the chosen format.",
         "Output format", "io", ""};
 
     // --- Spectral options ---
@@ -147,10 +130,11 @@ int main(int argc, char* argv[])
         "Spectral options", "param", ""};
 
     // --- Output toggles ---
-    bool_default_map["write_2d_spectrum"] = true;
-    help_map["write_2d_spectrum"] = {"bool","true",
+    bool_default_map["write_2d_spectrum_rasters"] = true;
+    help_map["write_2d_spectrum_rasters"] = {"bool","true",
         "Write the 2D observed and background PSD rasters.",
-        "Writes _psd_2d.tif and _background_psd_2d.tif in frequency space.",
+        "Writes _psd_2d.<ext> and _background_psd_2d.<ext> in frequency space; "
+        "write_output_format selects the extension.",
         "Output toggles", "switch", ""};
 
     bool_default_map["write_radial_spectrum"] = false;
@@ -161,8 +145,8 @@ int main(int argc, char* argv[])
         "beta_by_bin, r_sq_by_bin.",
         "Output toggles", "switch", ""};
 
-    bool_default_map["compute_valley_spacing"] = false;
-    help_map["compute_valley_spacing"] = {"bool","false",
+    bool_default_map["run_valley_spacing"] = false;
+    help_map["run_valley_spacing"] = {"bool","false",
         "Measure characteristic valley spacing (Perron 2008 / Bonetti 2020).",
         "Reports three independent measures because each fails differently: the "
         "POWER-WEIGHTED mean of spectral peaks (Perron et al. 2008 -- weighted, "
@@ -206,8 +190,8 @@ int main(int argc, char* argv[])
         "Uplift rate U, for the channelization index (unused when n = 1).",
         "See valley_spacing_K.", "Valley spacing", "param", ""};
 
-    float_default_map["valley_spacing_m"] = 0.45f;
-    help_map["valley_spacing_m"] = {"float","0.45",
+    float_default_map["valley_spacing_area_exponent"] = 0.45f;
+    help_map["valley_spacing_area_exponent"] = {"float","0.45",
         "Drainage-area exponent m, for CI and for the alpha = 2m-3 prediction.",
         "See valley_spacing_K.", "Valley spacing", "param", ""};
 
@@ -251,6 +235,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"write_2d_spectrum", "write_2d_spectrum_rasters"},
+        {"compute_valley_spacing", "run_valley_spacing"},
+        {"valley_spacing_m", "valley_spacing_area_exponent"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -264,7 +252,19 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string> sf  = pp.get_string_parameters();
 
     const lsdtt::raster_output_format out_fmt =
-        resolve_output_format(sf["write_output_format"]);
+        lsdtt::resolve_raster_output_format(sf["write_output_format"]);
+
+    // The output extension follows the output format: png outputs get a .png
+    // extension, same_as_input inherits the extension of the input raster.
+    std::string output_ext = ".tif";
+    if (out_fmt == lsdtt::raster_output_format::png)
+    {
+        output_ext = ".png";
+    }
+    else if (out_fmt == lsdtt::raster_output_format::same_as_input)
+    {
+        output_ext = pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext();
+    }
 
     std::cout << "Output format       : " << sf["write_output_format"] << "\n";
     std::cout << "Log bin width       : " << ff["spectral_log_bin_width"] << "\n";
@@ -319,7 +319,7 @@ int main(int argc, char* argv[])
     // Valley spacing. Independent of the full spectral analysis below, and cheap,
     // so it runs first and reports even if that fails.
     // -------------------------------------------------------------------------
-    if (bf["compute_valley_spacing"])
+    if (bf["run_valley_spacing"])
     {
         lsdtt::lsdtt_valley_spacing_options vopts;
         vopts.axis = (sf["valley_spacing_axis"] == "columns")
@@ -329,7 +329,7 @@ int main(int argc, char* argv[])
         vopts.K = ff["valley_spacing_K"];
         vopts.D = ff["valley_spacing_D"];
         vopts.U = ff["valley_spacing_U"];
-        vopts.m = ff["valley_spacing_m"];
+        vopts.m = ff["valley_spacing_area_exponent"];
         vopts.n = ff["valley_spacing_n"];
         vopts.n_threads = ifs["n_threads"];
 
@@ -439,7 +439,7 @@ int main(int argc, char* argv[])
     // To confirm the origin is correct: the DC pixel should appear at
     // coordinate (0, 0) when opened in a GIS tool.
     // -------------------------------------------------------------------------
-    if (bf["write_2d_spectrum"])
+    if (bf["write_2d_spectrum_rasters"])
     {
         std::cout << "\n--- Writing 2D spectrum ---\n";
         std::cout << "  Units: cycles/m (both axes). DC centred at (0, 0).\n";
@@ -464,7 +464,7 @@ int main(int argc, char* argv[])
 
         try
         {
-            const std::string o = pp.make_output_path( "_psd_2d.tif");
+            const std::string o = pp.make_output_path( "_psd_2d" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 result.psd_2d.get_vector(),
@@ -475,12 +475,13 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: failed to write _psd_2d.tif: " << e.what() << "\n";
+            std::cerr << "Warning: failed to write _psd_2d" << output_ext
+                      << ": " << e.what() << "\n";
         }
 
         try
         {
-            const std::string o = pp.make_output_path( "_background_psd_2d.tif");
+            const std::string o = pp.make_output_path( "_background_psd_2d" + output_ext);
             std::cout << "Writing: " << o << "\n";
             loader.write_full(
                 result.background_psd_2d.get_vector(),
@@ -491,8 +492,8 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: failed to write _background_psd_2d.tif: "
-                      << e.what() << "\n";
+            std::cerr << "Warning: failed to write _background_psd_2d"
+                      << output_ext << ": " << e.what() << "\n";
         }
     }
 
@@ -597,5 +598,6 @@ int main(int argc, char* argv[])
     std::cout << "\nDone.\n";
     pp.print_help(help_map, pp.get_write_fname() + "_README",
                   k_version, k_citation);
+    pp.print_parameters();
     return 0;
 }

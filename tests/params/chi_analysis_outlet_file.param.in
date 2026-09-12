@@ -1,0 +1,24 @@
+# Guard for C5 in lsdtt-chi-analysis.
+#
+# The pre-existing chi tests reach resolve_outlet_flats() but only through its
+# AUTO-DETECT branch: none of them supplies basin_outlet_fname, so the
+# file-loading, point-status reporting and snapping half -- roughly half of the
+# ~200 lines C5 moves -- has never been exercised.
+#
+# This case supplies an outlet file and snaps downstream, which also covers the
+# per-outlet skip path: one point in this set cannot be snapped, and the run has
+# to carry on and report it rather than fail.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: chi
+
+write_output_format: gtiff
+
+basin_outlet_file: __READ_PATH__/basin_stats_outlets.csv
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 150
+threshold_contributing_pixels: 150
+m_over_n: 0.45,0.45
+
+write_chi_data_maps: true

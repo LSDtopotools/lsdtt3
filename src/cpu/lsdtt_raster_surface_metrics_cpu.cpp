@@ -6,6 +6,7 @@
 // Released under the GNU General Public Licence v3 (GPL-3.0)
 // See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
 
+#include "lsdtt_raster_resampling_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"    // need this for the polyfit struct
 #include "../cpu/lsdtt_raster_cpu.hpp"
@@ -3522,6 +3523,48 @@ principal_curvatures fundamental_form_principal_curvatures(
         lsdtt_raster_cpu(std::move(kmax_data), std::vector<uint8_t>(out_mask), meta),
         lsdtt_raster_cpu(std::move(kmin_data), std::move(out_mask),            meta)
     };
+}
+
+
+poly_fit_coeffs direct_polyfit_with_boundary_conditions(
+    const lsdtt_raster_cpu& raster,
+    const std::string&      boundary_conditions,
+    const int               n_threads
+)
+{
+    const lsdtt_raster_meta& meta = raster.get_meta();
+
+    const bool periodic_ns =
+        boundary_conditions.size() >= 4 &&
+        std::tolower(static_cast<unsigned char>(boundary_conditions[0])) == 'p' &&
+        std::tolower(static_cast<unsigned char>(boundary_conditions[2])) == 'p';
+    const bool periodic_ew =
+        boundary_conditions.size() >= 4 &&
+        std::tolower(static_cast<unsigned char>(boundary_conditions[1])) == 'p' &&
+        std::tolower(static_cast<unsigned char>(boundary_conditions[3])) == 'p';
+
+    // Nothing wraps: the plain fit is already correct.
+    if (!periodic_ns && !periodic_ew)
+    {
+        return direct_polyfit(raster, meta.cell_size, n_threads);
+    }
+
+    const lsdtt_raster_cpu padded =
+        pad_raster_by_boundary_conditions(raster, boundary_conditions, 1);
+
+    // lambda is clamped to cell_size: this is the 3x3 stencil, and the one-pixel
+    // border is sized for exactly that. A wider lambda would need a wider pad.
+    const poly_fit_coeffs padded_fit =
+        direct_polyfit(padded, meta.cell_size, n_threads);
+
+    poly_fit_coeffs out;
+    out.a = crop_raster_border(padded_fit.a, meta, 1);
+    out.b = crop_raster_border(padded_fit.b, meta, 1);
+    out.c = crop_raster_border(padded_fit.c, meta, 1);
+    out.d = crop_raster_border(padded_fit.d, meta, 1);
+    out.e = crop_raster_border(padded_fit.e, meta, 1);
+    out.f = crop_raster_border(padded_fit.f, meta, 1);
+    return out;
 }
 
 } // namespace lsdtt

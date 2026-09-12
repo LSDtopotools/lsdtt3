@@ -1,6 +1,6 @@
 # Landscape Evolution Modelling in lsdtt3
 
-This page explains the design choices available in lsdtt3's landscape evolution model (LEM): what incision and transport laws are implemented, what numerical schemes solve them, where the theory comes from, and what trade-offs guide you toward one choice or another. It is not a CLI reference — for parameter names and default values see [CLI reference: lsdtt-lem](cli_reference/cli_reference_lsdtt_lem.md). Instead, this page is for understanding the landscape processes and numerics that each parameter controls.
+This page explains the design choices available in lsdtt3's landscape evolution model (LEM): what incision and transport laws are implemented, what numerical schemes solve them, where the theory comes from, and what trade-offs guide you toward one choice or another. It is not a CLI reference — for parameter names and default values see [CLI reference: lsdtt-lem](../cli_reference/cli_reference_lsdtt_lem.md). Instead, this page is for understanding the landscape processes and numerics that each parameter controls.
 
 It should be noted: lsdtt3's lem functionality has come about because it has been aimed at answering specific research questions and testing different components of the topographic analysis packages. It is not a full landscape evolution model with all the bells and whistles of, say, landlab. But if you just want a simulation using basic stream power + hillslopes on a rectangular grid lsdtt-lem will do the job. 
 
@@ -266,7 +266,7 @@ D_eff,f = D / (1 - (S_n,f² + S_t,f²)/Sc²)
 
 where S_n is the slope component normal to the face, S_t is the slope component tangential to the face, and S_c is the critical slope. In the linear case (S_c → ∞), this reduces to the standard Laplacian with scalar diffusivity D.
 
-**Critical point: face symmetry.** The face diffusivity is a property of the *face itself*, not of the cell being updated. This means the tangential slope must be **averaged across the face** from the two cells sharing it. If instead you evaluate it at only the cell being updated — say, using the E–W cross-slope at cell P for both the N face of P and the S face of its northern neighbour — the operator becomes non-symmetric: flux leaving P through a face does not equal flux entering the neighbour through it. Non-symmetric operators admit complex eigenvalue pairs, leading to oscillating rather than decaying modes, and the scheme becomes non-conservative. Measurements (see [testing_and_benchmarking.md §10e](testing_and_benchmarking.md)) show this defect caused a **575% flux imbalance** in the old asymmetric code. The correct face-symmetric form is now shared by all solvers.
+**Critical point: face symmetry.** The face diffusivity is a property of the *face itself*, not of the cell being updated. This means the tangential slope must be **averaged across the face** from the two cells sharing it. If instead you evaluate it at only the cell being updated — say, using the E–W cross-slope at cell P for both the N face of P and the S face of its northern neighbour — the operator becomes non-symmetric: flux leaving P through a face does not equal flux entering the neighbour through it. Non-symmetric operators admit complex eigenvalue pairs, leading to oscillating rather than decaying modes, and the scheme becomes non-conservative. Measurements (see [testing_and_benchmarking.md §10e](../developer_notes/testing_and_benchmarking.md)) show this defect caused a **575% flux imbalance** in the old asymmetric code. The correct face-symmetric form is now shared by all solvers.
 
 ### Boundary conditions for hillslope solvers
 
@@ -282,7 +282,7 @@ The default is `"oooo"` (all edges fixed at base level), which is appropriate fo
 
 For the nonlinear Roering law with a finite critical slope, the nonlinear SOR solver (Picard iteration) has a fundamental limitation: **it has no damping on the coefficients**. Under-relaxing the update (reducing ω) damps the change in elevation `z`, but the diffusivity coefficient α is still recomputed at full strength from the current `z`. On steep faces where `dα/dS = α²` is large, this allows a feedback loop: elevation drops → face steepens → α rises → update pulls harder → overshoot. The result is a **limit cycle** confined to cells near the critical slope, and Picard cannot escape it at any fixed relaxation factor.
 
-A nonlinear steady-state solve using Picard at optimal SOR relaxation (`ω ≈ 1.95`) or higher diverges; at `ω = 0.3` it converges in ~5,100 sweeps but is a 500× penalty against the linear optimal-SOR performance. Measurements (see [testing_and_benchmarking.md §10f](testing_and_benchmarking.md)) on a 41×41 cross-slope landscape show SOR at `ω = 1.5` failing (residual plateaus at 26.6 m), whereas **Newton converges in 42 iterations to `||F||_∞ = 4e-17` m/yr** (an erosion-rate imbalance at machine precision).
+A nonlinear steady-state solve using Picard at optimal SOR relaxation (`ω ≈ 1.95`) or higher diverges; at `ω = 0.3` it converges in ~5,100 sweeps but is a 500× penalty against the linear optimal-SOR performance. Measurements (see [testing_and_benchmarking.md §10f](../developer_notes/testing_and_benchmarking.md)) on a 41×41 cross-slope landscape show SOR at `ω = 1.5` failing (residual plateaus at 26.6 m), whereas **Newton converges in 42 iterations to `||F||_∞ = 4e-17` m/yr** (an erosion-rate imbalance at machine precision).
 
 **The core insight:** the steady problem and the backward-Euler transient step are the same root-find problem with one term:
 
@@ -408,7 +408,7 @@ One special steady-state feature: `steady_state_mode: relief`. Instead of specif
 
 ## Erosivity conventions: Perron versus Bonetti
 
-A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_area` and the exponent in the landscape Péclet number.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
+A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_specific_area` and the exponent in the landscape Péclet number.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
 
 ### The two conventions
 
@@ -436,8 +436,8 @@ This was used in **Perron et al. (2008, JGR-ES 113:F04016)** and **Perron et al.
 
 **1. Units of the incision threshold**
 
-- **`divide_area_by_dx: true`** → `incision_threshold_area` is a **specific area in metres**. A value of 1,000,000 m means "cells with at least 1 million metres of upstream area per cell width". On a 10 m DEM this is 100,000 pixels; on a 1 m DEM this is 1,000,000 pixels.
-- **`divide_area_by_dx: false`** → `incision_threshold_area` is a **map area in m²**. A value of 1,000,000 m² means 1 km², regardless of cell size.
+- **`divide_area_by_dx: true`** → `incision_threshold_specific_area` is **A/dx in metres**. A value of 1,000,000 m means "cells with at least 1 million metres of upstream area per cell width". On a 10 m DEM this is 100,000 pixels; on a 1 m DEM this is 1,000,000 pixels.
+- **`divide_area_by_dx: false`** → `incision_threshold_specific_area` is a **map area in m²**. A value of 1,000,000 m² means 1 km², regardless of cell size.
 
 **2. The landscape Péclet number**
 
@@ -450,7 +450,7 @@ So a landscape designed with `m = 0.45, n = 1.0` under the Bonetti convention (`
 
 ### Choosing a convention
 
-If you are setting up a new model, **use the default (`divide_area_by_dx: true`, specific area)**, which matches recent literature and is the lsdtt3 convention. If you are reproducing a published study or comparing against code that uses raw area, flip `divide_area_by_dx: false` and adjust your `incision_threshold_area` and any calibrated constants accordingly.
+If you are setting up a new model, **use the default (`divide_area_by_dx: true`, specific area)**, which matches recent literature and is the lsdtt3 convention. If you are reproducing a published study or comparing against code that uses raw area, flip `divide_area_by_dx: false` and adjust your `incision_threshold_specific_area` and any calibrated constants accordingly.
 
 The CLI reference documents the resolved threshold value in the run header so you can double-check what was actually compared.
 
@@ -462,7 +462,7 @@ One of the most important design choices in landscape evolution modelling is whe
 
 **Say which one you mean.** `hillslope_channel_coupling` takes `auto`, `coupled` or
 `channels_as_boundaries`. Historically the choice was an unreported side effect of
-`incision_threshold_area`, and a run could not be interpreted afterwards without
+`incision_threshold_specific_area`, and a run could not be interpreted afterwards without
 re-reading its parameter file. `auto` is the default and reproduces that inference
 exactly — a positive threshold means channels are boundaries — but it now *reports*
 what it resolved to, and the explicit values override the threshold rather than
@@ -474,9 +474,9 @@ contradict themselves are refused rather than silently resolved: asking for
 or with `run_steady_state`; and asking for `channels_as_boundaries` with no channel
 set at all.
 
-### Imposed drainage density (`incision_threshold_area > 0`)
+### Imposed drainage density (`incision_threshold_specific_area > 0`)
 
-When you set `incision_threshold_area > 0`, the code identifies channels as any cell with drainage area exceeding this threshold. Channels become **Dirichlet boundary conditions** for the hillslope equation — they have fixed elevation during the hillslope solve and act as sediment sinks. The drainage density is an **input**, not an output: you choose the network spacing by picking the threshold.
+When you set `incision_threshold_specific_area > 0`, the code identifies channels as any cell meeting the resolved A/dx or map-area threshold. Channels become **Dirichlet boundary conditions** for the hillslope equation — they have fixed elevation during the hillslope solve and act as sediment sinks. The drainage density is an **input**, not an output: you choose the network spacing by picking the threshold.
 
 Mind the units when picking a value — they depend on `divide_area_by_dx` (see
 above). On a 10 m grid, a 10 km² network is `10 000 000` in map area, or
@@ -487,9 +487,9 @@ This is the approach of the **MUDDPILE model** (from which lsdtt3 was partly des
 
 The channel set is computed once per fluvial solve (D8 routing) and remains fixed during that timestep's hillslope transport. The network is fast and deterministic.
 
-### Emergent drainage density (`incision_threshold_area = 0`)
+### Emergent drainage density (`incision_threshold_specific_area = 0`)
 
-When `incision_threshold_area: 0`, there are no pre-defined channels: **both fluvial and hillslope processes act everywhere**, and the network must **emerge**. Sediment is partitioned between fluvial and diffusive transport based on local slope and area, and the landscape self-organizes into channels where flow concentrates.
+When `incision_threshold_specific_area: 0`, there are no pre-defined channels: **both fluvial and hillslope processes act everywhere**, and the network must **emerge**. Sediment is partitioned between fluvial and diffusive transport based on local slope and area, and the landscape self-organizes into channels where flow concentrates.
 
 This is the approach of the **DonkModel** and is physically more realistic — channel heads are not imposed but arise where hydrology and sediment dynamics favor their development. However, it is **more sensitive to numerics and requires care**:
 
@@ -521,9 +521,9 @@ Here is a decision tree:
    - **Nonlinear hillslopes:** Newton is the default and needs no relaxation factor. (If you force SOR with `hillslope_force_sor`, set `hillslope_sor_omega` to 0.3–0.5 — the auto value is the linear optimum and diverges for the nonlinear operator.)
    - Optional: add snapping (`steady_state_n_cycles > 1`) or the equilibration cycle (`use_landscape_equilibration_cycle: true`) to let drainage divides migrate.
 
-3. **Do you have a field-mapped channel network with imposed drainage?** → Set `incision_threshold_area > 0`. Use D8 routing, with `roering_implicit` for transient runs.
+3. **Do you have a field-mapped channel network with imposed drainage?** → Set `incision_threshold_specific_area > 0`. Use D8 routing, with `roering_implicit` for transient runs.
 
-4. **Do you want the drainage network to emerge from the landscape dynamics?** → Set `incision_threshold_area: 0`, use D-infinity and Cidre (coupled routing). This cannot be combined with `roering_implicit`, but works with `linear`, `roering` and `adi`.
+4. **Do you want the drainage network to emerge from the landscape dynamics?** → Set `incision_threshold_specific_area: 0`, use D-infinity and Cidre (coupled routing). This cannot be combined with `roering_implicit`, but works with `linear`, `roering` and `adi`.
 
 5. **How long is your run?**
    - Short transient (synthetic, < 1 My) with explicit scheme: any solver is fine.

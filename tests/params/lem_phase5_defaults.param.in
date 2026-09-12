@@ -1,0 +1,6 @@
+# LEM intentionally retains its historical 200x400, 30 m, seed 33 defaults.
+write_path: __WRITE_PATH__
+write_fname: lemdefaults5
+noise_type: red_noise
+number_of_iterations: 0
+write_output_format: gtiff

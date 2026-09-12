@@ -16,7 +16,7 @@ n_threads: 1
 write_output_format: gtiff
 
 fallback_admission_algorithm_choice: relief
-fallback_relief_window_pixels: 5
+fallback_relief_window_radius_pixels: 5
 fallback_relief_threshold_metres: 2.0
 min_component_pixels: 50
 
@@ -26,7 +26,7 @@ ladder_level_count: 4
 vertical_accuracy_metres: 0.5
 ladder_reach_window_metres: -1.0
 
-channel_threshold_contributing_pixels: 500
+threshold_contributing_pixels: 500
 floodplain_max_height_metres: 5.0
 terrace_min_height_metres: 5.0
 

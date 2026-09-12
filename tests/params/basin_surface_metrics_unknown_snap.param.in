@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+read_fname: unused.tif
+write_path: __WRITE_PATH__
+write_fname: unused
+
+basin_outlet_fname: unused.csv
+basin_outlet_snapping_method: sideways
+lambda_scales: 10

@@ -43,7 +43,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -92,23 +94,68 @@ int run_child(const std::string& path, const std::string& fname)
     pp.set_deprecated_aliases({
         {"terrace_max_distance_to_channel_metres",
          "valley_corridor_half_width_metres"},
-        {"band_reach_window_metres", "ladder_reach_window_metres"} });
+        {"band_reach_window_metres", "ladder_reach_window_metres"},
+        {"flow_dem_is_filled", "raster_is_filled"},
+        {"fill_dem_for_flow_routing", "fill_before_routing"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"channel_threshold_contributing_pixels",
+         "threshold_contributing_pixels"},
+        {"d8_channel_threshold_pixels", "threshold_contributing_pixels"},
+        {"flow_accumulation_threshold_pixels",
+         "threshold_contributing_pixels"},
+        {"flow_big_channel_threshold_pixels",
+         "big_channel_threshold_contributing_pixels"},
+        {"incision_threshold_area", "incision_threshold_specific_area"},
+        {"channel_mask_threshold_area", "channel_mask_threshold_specific_area"},
+        {"min_contributing_pixels", "basin_minimum_contributing_pixels"} });
+
+    pp.set_deprecated_numeric_aliases({
+        {"smoothing_window_diameter_metres",
+         {"smoothing_window_radius_metres", 0.5, 0.0, true}},
+        {"precision_diameter_metres",
+         {"precision_radius_metres", 0.5, 0.0, true}} });
+    pp.set_deprecated_compatibility_aliases({
+        {"old_points_format",
+         {"legacy_points_format", "write_vector_format"}},
+        {"old_lines_format",
+         {"legacy_lines_format", "write_vector_format"}} });
 
     std::map<std::string, float>       ff;
     std::map<std::string, int>         ii;
     std::map<std::string, bool>        bb;
     std::map<std::string, std::string> ss;
+    std::map<std::string, double>      dd;
 
     ff["valley_corridor_half_width_metres"] = -1.0f;
     ff["ladder_reach_window_metres"]        = -1.0f;
+    ff["smoothing_window_radius_metres"]    = -1.0f;
+    ff["incision_threshold_specific_area"] = 0.0f;
+    ff["channel_mask_threshold_specific_area"] = 0.0f;
     ii["ladder_level_count"]                = 0;
+    ii["threshold_contributing_pixels"]     = 1000;
+    ii["big_channel_threshold_contributing_pixels"] = 5000;
+    ii["basin_minimum_contributing_pixels"] = 1000;
     bb["write_band_index_raster"]           = false;
+    bb["raster_is_filled"]                  = false;
+    bb["fill_before_routing"]               = true;
     ss["reference_field_algorithm_choice"]  = "hand";
+    ss["write_vector_format"]               = "flatgeobuf";
+    ss["legacy_points_format"]              = "same_as_write_vector_format";
+    ss["legacy_lines_format"]               = "same_as_write_vector_format";
+    dd["precision_radius_metres"]            = -1.0;
 
-    pp.parse_all_parameters(ff, ii, bb, ss);
+    pp.parse_all_parameters(ff, ii, bb, ss, dd);
+
+    lsdtt::lsdtt_help_registry empty_help;
+    pp.print_help(empty_help, pp.get_write_fname() + "_parser_io",
+                  "test", "test");
+    pp.print_parameters("dep_parser_params.param");
 
     const auto f = pp.get_float_parameters();
     const auto i = pp.get_int_parameters();
+    const auto b = pp.get_bool_parameters();
+    const auto d = pp.get_double_parameters();
+    const auto s = pp.get_string_parameters();
 
     // Printed so the parent can check the value actually ARRIVED under the new
     // name. A warning that names the replacement but drops the value would be
@@ -120,6 +167,30 @@ int run_child(const std::string& path, const std::string& fname)
               << f.at("ladder_reach_window_metres") << "\n";
     std::cout << "CHILD ladder_level_count="
               << i.at("ladder_level_count") << "\n";
+    std::cout << "CHILD threshold_contributing_pixels="
+              << i.at("threshold_contributing_pixels") << "\n";
+    std::cout << "CHILD big_channel_threshold_contributing_pixels="
+              << i.at("big_channel_threshold_contributing_pixels") << "\n";
+    std::cout << "CHILD basin_minimum_contributing_pixels="
+              << i.at("basin_minimum_contributing_pixels") << "\n";
+    std::cout << "CHILD incision_threshold_specific_area="
+              << f.at("incision_threshold_specific_area") << "\n";
+    std::cout << "CHILD channel_mask_threshold_specific_area="
+              << f.at("channel_mask_threshold_specific_area") << "\n";
+    std::cout << "CHILD raster_is_filled="
+              << b.at("raster_is_filled") << "\n";
+    std::cout << "CHILD fill_before_routing="
+              << b.at("fill_before_routing") << "\n";
+    std::cout << std::setprecision(std::numeric_limits<double>::max_digits10)
+              << "CHILD smoothing_window_radius_metres="
+              << f.at("smoothing_window_radius_metres") << "\n"
+              << "CHILD precision_radius_metres="
+              << d.at("precision_radius_metres") << "\n";
+    std::cout << "CHILD write_vector_format=" << s.at("write_vector_format")
+              << "\nCHILD legacy_points_format="
+              << s.at("legacy_points_format")
+              << "\nCHILD legacy_lines_format="
+              << s.at("legacy_lines_format") << "\n";
     std::cout << "CHILD_COMPLETED\n";
     return 0;
 }
@@ -265,6 +336,246 @@ int run_parent(const std::string& self, const std::filesystem::path& dir)
               "  and the collision is reported rather than resolved silently");
     }
 
+    // ---- arm 2b: every Phase 4 alias has the same pinned contract -----------
+    const std::vector<std::string> threshold_aliases = {
+        "source_pixels_threshold",
+        "channel_threshold_contributing_pixels",
+        "d8_channel_threshold_pixels",
+        "flow_accumulation_threshold_pixels"};
+    for (const std::string& old_key : threshold_aliases)
+    {
+        std::cout << "\n-- Phase 4 threshold alias: " << old_key << " --\n";
+        const child_run r = run_case(
+            self, dir, old_key + ".param",
+            k_clean_params + old_key + ": 321\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD_COMPLETED"),
+              old_key + " completes through the alias");
+        check(contains(r.output, old_key) &&
+                  contains(r.output, "threshold_contributing_pixels") &&
+                  contains(r.output, "WARNING"),
+              "  warning names the old and canonical threshold keys");
+        check(contains(r.output, "CHILD threshold_contributing_pixels=321"),
+              "  old threshold value arrives under the canonical key");
+        check(!contains(r.output, "are not used by this tool"),
+              "  consumed threshold alias is not reported as unknown");
+    }
+
+    {
+        std::cout << "\n-- Phase 4 mandatory-fill alias --\n";
+        const child_run r = run_case(
+            self, dir, "flow_dem_is_filled.param",
+            k_clean_params + "flow_dem_is_filled: true\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD_COMPLETED"),
+              "flow_dem_is_filled completes through the alias");
+        check(contains(r.output, "flow_dem_is_filled") &&
+                  contains(r.output, "raster_is_filled") &&
+                  contains(r.output, "WARNING"),
+              "  mandatory-fill warning names both keys");
+        check(contains(r.output, "CHILD raster_is_filled=1"),
+              "  mandatory-fill value arrives under the canonical key");
+    }
+
+    {
+        std::cout << "\n-- Phase 4 optional-fill alias --\n";
+        const child_run r = run_case(
+            self, dir, "fill_dem_for_flow_routing.param",
+            k_clean_params + "fill_dem_for_flow_routing: false\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD_COMPLETED"),
+              "fill_dem_for_flow_routing completes through the alias");
+        check(contains(r.output, "fill_dem_for_flow_routing") &&
+                  contains(r.output, "fill_before_routing") &&
+                  contains(r.output, "WARNING"),
+              "  optional-fill warning names both keys");
+        check(contains(r.output, "CHILD fill_before_routing=0"),
+              "  optional-fill value arrives under the canonical key");
+    }
+
+    {
+        std::cout << "\n-- Phase 4 old and canonical threshold --\n";
+        const child_run r = run_case(
+            self, dir, "phase4_both.param",
+            k_clean_params +
+                "source_pixels_threshold: 321\n"
+                "threshold_contributing_pixels: 654\n");
+        check(r.exit_code == 0,
+              "old and canonical threshold keys parse together");
+        check(contains(r.output, "CHILD threshold_contributing_pixels=654"),
+              "  canonical threshold wins over its alias");
+        check(contains(r.output, "was also supplied"),
+              "  Phase 4 threshold collision is reported");
+    }
+
+    // ---- arm 2c: Phase 5 plain threshold aliases ---------------------------
+    const std::vector<std::pair<std::string, std::string>> phase5_aliases = {
+        {"flow_big_channel_threshold_pixels",
+         "big_channel_threshold_contributing_pixels"},
+        {"incision_threshold_area", "incision_threshold_specific_area"},
+        {"channel_mask_threshold_area", "channel_mask_threshold_specific_area"},
+        {"min_contributing_pixels", "basin_minimum_contributing_pixels"}};
+    for (const auto& [old_key, new_key] : phase5_aliases)
+    {
+        const child_run r = run_case(
+            self, dir, "phase5_" + old_key + ".param",
+            k_clean_params + old_key + ": 321\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD " + new_key + "=321"),
+              old_key + " carries its unchanged value to " + new_key);
+        check(contains(r.output, old_key) && contains(r.output, new_key) &&
+                  contains(r.output, "WARNING"),
+              "  Phase 5 plain-alias warning names both keys");
+    }
+
+    // ---- arm 2d: Phase 5 transformed numeric aliases -----------------------
+    {
+        std::cout << "\n-- transformed diameter-to-radius alias --\n";
+        const child_run r = run_case(
+            self, dir, "numeric_alias.param",
+            k_clean_params + "smoothing_window_diameter_metres: 20.25\n");
+        check(r.exit_code == 0 && contains(r.output, "CHILD_COMPLETED"),
+              "a transformed numeric alias completes");
+        check(contains(r.output,
+                       "CHILD smoothing_window_radius_metres=10.125"),
+              "  divide-by-two value arrives under the radius key");
+        check(contains(r.output, "smoothing_window_diameter_metres") &&
+                  contains(r.output, "smoothing_window_radius_metres") &&
+                  contains(r.output,
+                           "new = old * 0.5 + 0; zero remains zero") &&
+                  contains(r.output, "WARNING"),
+              "  warning names both keys and the exact transformation");
+        check(!contains(r.output, "are not used by this tool"),
+              "  transformed old key is consumed rather than unknown");
+    }
+
+    {
+        std::cout << "\n-- transformed zero sentinel --\n";
+        const child_run r = run_case(
+            self, dir, "numeric_zero.param",
+            k_clean_params + "smoothing_window_diameter_metres: 0\n");
+        check(r.exit_code == 0 &&
+                  contains(r.output,
+                           "CHILD smoothing_window_radius_metres=0"),
+              "zero sentinel remains zero");
+    }
+
+    {
+        std::cout << "\n-- transformed alias and canonical key --\n";
+        const child_run r = run_case(
+            self, dir, "numeric_both.param",
+            k_clean_params +
+                "smoothing_window_diameter_metres: 20\n"
+                "smoothing_window_radius_metres: 7.25\n");
+        check(r.exit_code == 0 &&
+                  contains(r.output,
+                           "CHILD smoothing_window_radius_metres=7.25"),
+              "canonical numeric key wins over transformed alias");
+        check(contains(r.output, "was also supplied") &&
+                  contains(r.output, "was not applied"),
+              "  canonical precedence and skipped transformation are reported");
+    }
+
+    for (const std::string bad_value : {"not-a-number", "inf", "nan"})
+    {
+        std::cout << "\n-- invalid transformed numeric value: "
+                  << bad_value << " --\n";
+        const child_run r = run_case(
+            self, dir, "numeric_bad_" + bad_value + ".param",
+            k_clean_params + "smoothing_window_diameter_metres: " +
+                bad_value + "\n");
+        check(r.exit_code == 1 && !contains(r.output, "CHILD_COMPLETED"),
+              bad_value + " fails before analysis");
+        check(contains(r.output,
+                       "FATAL: deprecated numeric parameter "
+                       "'smoothing_window_diameter_metres' must be a finite "
+                       "number for transformation to "
+                       "'smoothing_window_radius_metres'") &&
+                  contains(r.output, "got '" + bad_value + "'."),
+              "  failure clearly names the key, requirement, and bad value");
+    }
+
+    {
+        std::cout << "\n-- injective compatibility aliases --\n";
+        const child_run r = run_case(
+            self, dir, "compat_formats.param",
+            k_clean_params +
+                "write_vector_format: gpkg\n"
+                "old_points_format: csv\n"
+                "old_lines_format: flatgeobuf\n");
+        check(r.exit_code == 0 &&
+                  contains(r.output, "CHILD write_vector_format=gpkg") &&
+                  contains(r.output, "CHILD legacy_points_format=csv") &&
+                  contains(r.output, "CHILD legacy_lines_format=flatgeobuf"),
+              "simultaneous old selector values remain distinct from the base");
+        check(contains(r.output, "use 'write_vector_format'") &&
+                   contains(r.output, "preserved for this output in this run"),
+               "  compatibility warning names the public migration and preservation");
+
+        std::ifstream params(dir / "dep_parser_params.param");
+        std::ostringstream params_text;
+        params_text << params.rdbuf();
+        std::ifstream csv(dir / "dep_parser_io.csv");
+        std::ostringstream csv_text;
+        csv_text << csv.rdbuf();
+        std::ifstream html(dir / "dep_parser_io.html");
+        std::ostringstream html_text;
+        html_text << html.rdbuf();
+        check(!contains(params_text.str(), "legacy_points_format") &&
+                  !contains(params_text.str(), "legacy_lines_format"),
+              "  compatibility read values are absent from print_parameters");
+        check(!contains(csv_text.str(), "legacy_points_format") &&
+                  !contains(csv_text.str(), "legacy_lines_format") &&
+                  !contains(html_text.str(), "legacy_points_format") &&
+                  !contains(html_text.str(), "legacy_lines_format"),
+              "  compatibility read values are absent from CSV and HTML help");
+    }
+
+    {
+        std::cout << "\n-- compatibility storage defaults stay internal --\n";
+        const child_run r = run_case(
+            self, dir, "compat_default.param",
+            k_clean_params + "old_points_format: csv\n");
+        check(r.exit_code == 0 &&
+                  contains(r.output, "CHILD legacy_points_format=csv") &&
+                  contains(r.output,
+                           "CHILD legacy_lines_format=same_as_write_vector_format"),
+              "compatibility typed maps retain read and default storage values");
+
+        std::ifstream params(dir / "dep_parser_params.param");
+        std::ostringstream params_text;
+        params_text << params.rdbuf();
+        std::ifstream csv(dir / "dep_parser_io.csv");
+        std::ostringstream csv_text;
+        csv_text << csv.rdbuf();
+        std::ifstream html(dir / "dep_parser_io.html");
+        std::ostringstream html_text;
+        html_text << html.rdbuf();
+        check(!contains(params_text.str(), "legacy_points_format") &&
+                  !contains(params_text.str(), "legacy_lines_format"),
+              "  compatibility read/default storage is absent from print_parameters");
+        check(!contains(csv_text.str(), "legacy_points_format") &&
+                  !contains(csv_text.str(), "legacy_lines_format") &&
+                  !contains(html_text.str(), "legacy_points_format") &&
+                  !contains(html_text.str(), "legacy_lines_format"),
+              "  compatibility read/default storage is absent from CSV and HTML help");
+    }
+
+    {
+        std::cout << "\n-- transformed and ordinary aliases coexist --\n";
+        const child_run r = run_case(
+            self, dir, "alias_coexist.param",
+            k_clean_params +
+                "smoothing_window_diameter_metres: 8\n"
+                "terrace_max_distance_to_channel_metres: 1234\n"
+                "precision_diameter_metres: 0.24691357802469134\n");
+        check(r.exit_code == 0 &&
+                  contains(r.output,
+                           "CHILD smoothing_window_radius_metres=4") &&
+                  contains(r.output,
+                           "CHILD valley_corridor_half_width_metres=1234"),
+              "transformed and ordinary alias maps both apply");
+        check(contains(r.output,
+                       "CHILD precision_radius_metres=0.12345678901234566"),
+              "  transformed text preserves double parsing precision");
+    }
+
     // ---- arm 3: an unknown key is reported, not swallowed -------------------
     {
         std::cout << "\n-- an unknown key --\n";
@@ -293,6 +604,19 @@ int run_parent(const std::string& self, const std::filesystem::path& dir)
         check(r.exit_code == 0, "a file of reserved keys parses");
         check(!contains(r.output, "are not used by this tool"),
               "  and none of them is reported as unknown");
+
+        std::ifstream csv(dir / "dep_parser_io.csv");
+        std::ostringstream csv_text;
+        csv_text << csv.rdbuf();
+        const std::string resolved_dir = dir.string() + "/";
+        check(contains(csv_text.str(), "\"read_path\",\"string\",\"" +
+                                      resolved_dir + "\"") &&
+                  contains(csv_text.str(),
+                           "\"read_fname\",\"string\",\"nonexistent.tif\"") &&
+                  contains(csv_text.str(), "\"write_path\",\"string\",\"" +
+                                      resolved_dir + "\"") &&
+                  contains(csv_text.str(), "\"write_fname\",\"string\",\"dep\""),
+              "  per-run help includes resolved parser-owned I/O without CLI declarations");
     }
 
     std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks

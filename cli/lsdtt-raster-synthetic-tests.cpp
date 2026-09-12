@@ -35,8 +35,11 @@
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
+#include "../src/cpu/lsdtt_raster_algebra.hpp"
 
 static const std::string k_version  = "0.1.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -94,18 +97,6 @@ static const lsdtt::lsdtt_raster_cpu& coeff_raster(
 }
 
 // -----------------------------------------------------------------------------
-// format_double
-// -----------------------------------------------------------------------------
-static std::string format_double(double x)
-{
-    if (std::isnan(x))     return "nan";
-    if (!std::isfinite(x)) return (x > 0.0) ? "inf" : "-inf";
-
-    std::ostringstream oss;
-    oss << std::setprecision(17) << x;
-    return oss.str();
-}
-// -----------------------------------------------------------------------------
 // write_coeff_set
 // -----------------------------------------------------------------------------
 static void write_coeff_set(
@@ -143,8 +134,8 @@ static void write_periodic_components_csv(
         {
             std::to_string(c.mode_x),
             std::to_string(c.mode_y),
-            format_double(c.amplitude),
-            format_double(c.phase)
+            lsdtt::csv_number(c.amplitude),
+            lsdtt::csv_number(c.phase)
         });
     }
 
@@ -163,78 +154,21 @@ static void write_global_quadratic_coeffs_csv(
 
     std::vector<std::vector<std::string>> rows =
     {
-        {"a", format_double(coeffs.a)},
-        {"b", format_double(coeffs.b)},
-        {"c", format_double(coeffs.c)},
-        {"d", format_double(coeffs.d)},
-        {"e", format_double(coeffs.e)},
-        {"f", format_double(coeffs.f)}
+        {"a", lsdtt::csv_number(coeffs.a)},
+        {"b", lsdtt::csv_number(coeffs.b)},
+        {"c", lsdtt::csv_number(coeffs.c)},
+        {"d", lsdtt::csv_number(coeffs.d)},
+        {"e", lsdtt::csv_number(coeffs.e)},
+        {"f", lsdtt::csv_number(coeffs.f)}
     };
 
     loader.write_csv(out_csv, headers, rows);
 }
 
-// -----------------------------------------------------------------------------
-// raster_error_stats
-//
-// Per-coefficient statistics comparing fitted vs analytic coefficients.
-// All comparisons are over pixels where both fitted and analytic are valid.
-// -----------------------------------------------------------------------------
-struct raster_error_stats
-{
-    std::size_t count   = 0;          // number of valid comparison pixels
-    double      rmse    = std::numeric_limits<double>::quiet_NaN();
-    double      mae     = std::numeric_limits<double>::quiet_NaN();
-    double      max_abs = std::numeric_limits<double>::quiet_NaN();
-    double      bias    = std::numeric_limits<double>::quiet_NaN();
-};
-
-static raster_error_stats compute_error_stats(
-    const lsdtt::lsdtt_raster_cpu& fitted,
-    const lsdtt::lsdtt_raster_cpu& analytic)
-{
-    const lsdtt::lsdtt_raster_meta& meta = fitted.get_meta();
-    const std::size_t n = static_cast<std::size_t>(meta.n_rows)
-                        * static_cast<std::size_t>(meta.n_cols);
-
-    const std::vector<float>&   fit_data  = fitted.get_data();
-    const std::vector<uint8_t>& fit_mask  = fitted.get_mask();
-    const std::vector<float>&   ana_data  = analytic.get_data();
-    const std::vector<uint8_t>& ana_mask  = analytic.get_mask();
-
-    double sum_sq  = 0.0;
-    double sum_abs = 0.0;
-    double sum_err = 0.0;
-    double max_abs = 0.0;
-    std::size_t count = 0;
-
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        if (fit_mask[i] == 0 || ana_mask[i] == 0) continue;
-        if (meta.is_nodata(fit_data[i]) || meta.is_nodata(ana_data[i])) continue;
-
-        const double err = static_cast<double>(fit_data[i])
-                         - static_cast<double>(ana_data[i]);
-
-        sum_sq  += err * err;
-        sum_abs += std::abs(err);
-        sum_err += err;
-        max_abs  = std::max(max_abs, std::abs(err));
-        ++count;
-    }
-
-    if (count == 0) return raster_error_stats{};
-
-    const double n_d = static_cast<double>(count);
-    raster_error_stats s;
-    s.count   = count;
-    s.rmse    = std::sqrt(sum_sq  / n_d);
-    s.mae     = sum_abs / n_d;
-    s.max_abs = max_abs;
-    s.bias    = sum_err / n_d;
-    return s;
-}
-
+// Error statistics against the analytic reference come from the library:
+// lsdtt::algebra::raster_difference_stats (src/cpu/lsdtt_raster_algebra.hpp).
+// There was never anything synthetic-specific about masked-intersection
+// RMSE/MAE/bias, and the benchmarking work wants the same function.
 // -----------------------------------------------------------------------------
 // run_wavelet_test
 //
@@ -274,22 +208,22 @@ static void run_wavelet_test(
         const lsdtt::lsdtt_raster_cpu& fit_coeff = coeff_raster(fitted,   k);
         const lsdtt::lsdtt_raster_cpu& ana_coeff = coeff_raster(analytic, k);
 
-        raster_error_stats stats = compute_error_stats(fit_coeff, ana_coeff);
+        lsdtt::algebra::raster_difference_result stats = lsdtt::algebra::raster_difference_stats(fit_coeff, ana_coeff);
 
         const char* cn = coeff_name(k);
 
         std::cout << "  coeff " << cn
                   << "  n=" << stats.count
-                  << "  RMSE="    << format_double(stats.rmse)
-                  << "  MAE="     << format_double(stats.mae)
-                  << "  maxAbs="  << format_double(stats.max_abs)
-                  << "  bias="    << format_double(stats.bias)
+                  << "  RMSE="    << lsdtt::csv_number(stats.rmse)
+                  << "  MAE="     << lsdtt::csv_number(stats.mae)
+                  << "  maxAbs="  << lsdtt::csv_number(stats.max_abs)
+                  << "  bias="    << lsdtt::csv_number(stats.bias)
                   << "\n";
 
         if (is_exact_oracle && stats.count > 0 && stats.rmse > 1e-3)
         {
             std::cerr << "  WARNING: coeff " << cn
-                      << " RMSE=" << format_double(stats.rmse)
+                      << " RMSE=" << lsdtt::csv_number(stats.rmse)
                       << " exceeds 1e-3 on exact oracle surface.\n";
         }
 
@@ -297,13 +231,13 @@ static void run_wavelet_test(
         {
             surface_name,
             is_exact_oracle ? "true" : "false",
-            format_double(lambda),
+            lsdtt::csv_number(lambda),
             std::string(cn),
             std::to_string(stats.count),
-            format_double(stats.rmse),
-            format_double(stats.mae),
-            format_double(stats.max_abs),
-            format_double(stats.bias)
+            lsdtt::csv_number(stats.rmse),
+            lsdtt::csv_number(stats.mae),
+            lsdtt::csv_number(stats.max_abs),
+            lsdtt::csv_number(stats.bias)
         });
 
         if (write_fitted)
@@ -384,10 +318,10 @@ int main(int argc, char* argv[])
 
         // Terrace staircase and alluvial fan (fluvial-surface test domains)
         {"write_terrace_staircase_surface",         false},
-        {"write_terrace_staircase_tread_id",        true},
+        {"write_terrace_staircase_tread_id_raster",        true},
         {"write_terrace_staircase_channel_mask",    true},
         {"write_alluvial_fan_surface",              false},
-        {"write_alluvial_fan_lobe_id",              true},
+        {"write_alluvial_fan_lobe_id_raster",              true},
 
         // Hillslope strip (transient-solver test domain)
         {"write_hillslope_strip_surface",           false},
@@ -407,7 +341,7 @@ int main(int argc, char* argv[])
 
     std::map<std::string, float> float_defaults =
     {
-        {"cell_size",                   1.0f},
+        {"cell_size_metres",            1.0f},
 
         // Uniform noise
         {"uniform_min_value",          -1.0f},
@@ -439,16 +373,16 @@ int main(int argc, char* argv[])
         {"quadratic_constant_abs_max",100.0f},
 
         // Wavelet fit
-        {"wavelet_lambda",            100.0f},
+        {"polyfit_lambda_metres",     100.0f},
 
         // Terrace staircase
-        {"terrace_tread_width_m",             300.0f},
-        {"terrace_riser_height_m",              8.0f},
+        {"terrace_tread_width_metres",             300.0f},
+        {"terrace_riser_height_metres",              8.0f},
         {"terrace_valley_gradient",            0.002f},
         {"terrace_riser_height_downstream_taper", 0.0f},
         {"terrace_tread_cross_gradient",       0.002f},
-        {"terrace_riser_gap_width_m",         120.0f},
-        {"terrace_noise_amplitude_m",           0.0f},
+        {"terrace_riser_gap_width_metres",         120.0f},
+        {"terrace_noise_amplitude_metres",           0.0f},
         {"terrace_channel_elevation",         100.0f},
         {"terrace_valley_wall_gradient",        0.5f},
 
@@ -458,13 +392,13 @@ int main(int argc, char* argv[])
         {"fan_apex_elevation",                500.0f},
         {"fan_gradient",                       0.03f},
         {"fan_concavity",                       0.0f},
-        {"fan_lobe_inset_m",                    4.0f},
-        {"fan_lobe_half_angle_deg",            25.0f},
-        {"fan_noise_amplitude_m",               0.0f},
+        {"fan_lobe_inset_metres",                    4.0f},
+        {"fan_lobe_half_angle_degrees",            25.0f},
+        {"fan_noise_amplitude_metres",               0.0f},
 
         // Hillslope strip
         {"strip_baselevel_elevation",   0.0f},
-        {"strip_half_width",            0.0f},   // <=0 = auto from geometry
+        {"strip_half_width_metres",     0.0f},   // <=0 = auto from geometry
         {"strip_uplift",               1e-3f},
         {"strip_diffusivity",          1e-2f},
         {"strip_critical_slope",        0.8f},
@@ -473,9 +407,9 @@ int main(int argc, char* argv[])
 
     std::map<std::string, int> int_defaults =
     {
-        {"n_rows",                    256},
-        {"n_cols",                    256},
-        {"seed",                        1},
+        {"n_rows",                    128},
+        {"n_cols",                    128},
+        {"random_seed",                33},
         {"n_threads",                   0},
 
         // Red/blue noise
@@ -505,20 +439,20 @@ int main(int argc, char* argv[])
     };
 
     // -------------------------------------------------------------------------
-    // Help map
+    // Help registry
     // -------------------------------------------------------------------------
-    std::map<std::string, std::vector<std::string>> help_map =
+    const std::vector<std::pair<std::string, std::vector<std::string>>> help_entries =
     {
         {"n_rows",
-            {"int","256","Number of rows in the synthetic raster.",""}},
+            {"int","128","Number of rows in the synthetic raster.",""}},
         {"n_cols",
-            {"int","256","Number of columns in the synthetic raster.",""}},
-        {"cell_size",
+            {"int","128","Number of columns in the synthetic raster.",""}},
+        {"cell_size_metres",
             {"float","1.0","Cell size in metres.",
              "Note: synthetic rasters have no CRS. wavelet_quadratic_fit() "
-             "is called with the supplied cell_size."}},
-        {"seed",
-            {"int","1","Random seed for all stochastic generators.",""}},
+              "is called with the supplied cell_size_metres."}},
+        {"random_seed",
+            {"int","33","Random seed for all stochastic generators.",""}},
         {"n_threads",
             {"int","0","Number of CPU threads (0 = all available).",""}},
         {"write_output_format",
@@ -532,6 +466,22 @@ int main(int argc, char* argv[])
             {"bool","false","Write a blue (high-frequency) noise surface.",""}},
         {"write_diamond_square_surface",
             {"bool","false","Write a fractal diamond-square terrain surface.",""}},
+        {"uniform_min_value",
+            {"float","-1.0","Minimum value of the uniform random surface.",""}},
+        {"uniform_max_value",
+            {"float","1.0","Maximum value of the uniform random surface.",""}},
+        {"red_noise_mean",
+            {"float","0.0","Mean value of the red noise surface.",""}},
+        {"red_noise_stddev",
+            {"float","1.0","Standard deviation of the red noise surface.",""}},
+        {"red_noise_blur_passes",
+            {"int","6","Number of smoothing passes used to make red noise.",""}},
+        {"blue_noise_mean",
+            {"float","0.0","Mean value of the blue noise surface.",""}},
+        {"blue_noise_stddev",
+            {"float","1.0","Standard deviation of the blue noise surface.",""}},
+        {"blue_noise_blur_passes",
+            {"int","6","Number of smoothing passes used to make blue noise.",""}},
         {"write_periodic_wave_surface",
             {"bool","false","Write a periodic cosine-mode test surface.",""}},
         {"write_global_quadratic_surface",
@@ -551,9 +501,9 @@ int main(int argc, char* argv[])
         {"write_wavelet_residual_rasters",
             {"bool","false",
              "Write residual (fitted - analytic) rasters for each coefficient.",""}},
-        {"wavelet_lambda",
+        {"polyfit_lambda_metres",
             {"float","100","Wavelength lambda in metres for wavelet_quadratic_fit().",
-             "Should be >= cell_size. Larger values give smoother fits."}},
+              "Should be >= cell_size_metres. Larger values give smoother fits."}},
         {"periodic_n_components",
             {"int","8","Number of cosine modes in the periodic test surface.",""}},
         {"periodic_mode_min",
@@ -579,6 +529,10 @@ int main(int argc, char* argv[])
              "0.5 gives Brownian noise; lower = smoother; higher = rougher."}},
         {"diamond_square_initial_scale",
             {"float","1.0","Initial perturbation amplitude for diamond-square.",""}},
+        {"diamond_square_mean",
+            {"float","0.0","Target mean of the diamond-square surface.",""}},
+        {"diamond_square_stddev",
+            {"float","1.0","Target standard deviation of the diamond-square surface.",""}},
         {"diamond_square_parabola_relief",
             {"float","0.0",
              "Peak relief (m) of an N-S parabola superimposed on the "
@@ -623,7 +577,7 @@ int main(int argc, char* argv[])
              "Terrace j sits j riser heights above the local channel and "
              "occupies the band [(j-1)*tread_width, j*tread_width) from the "
              "channel on both flanks."}},
-        {"write_terrace_staircase_tread_id",
+        {"write_terrace_staircase_tread_id_raster",
             {"bool","true",
              "Write the ground-truth tread id raster (1..n_terraces on treads, "
              "0 on the channel, on risers, and inside a riser gap).",""}},
@@ -632,9 +586,9 @@ int main(int argc, char* argv[])
              "Write the trunk channel mask (1 = channel).",""}},
         {"terrace_n_terraces",
             {"int","4","Number of terrace treads on each flank.",""}},
-        {"terrace_tread_width_m",
+        {"terrace_tread_width_metres",
             {"float","300","Cross-valley width of each tread in metres.",""}},
-        {"terrace_riser_height_m",
+        {"terrace_riser_height_metres",
             {"float","8",
              "Height of each riser in metres.",
              "Set this BELOW the flat threshold to make every riser pass the "
@@ -661,7 +615,7 @@ int main(int argc, char* argv[])
              "At each gap the stepped cross-section is replaced by a "
              "continuous ramp, so the gap reads as flat and connects treads "
              "that are metres apart in height."}},
-        {"terrace_riser_gap_width_m",
+        {"terrace_riser_gap_width_metres",
             {"float","120",
              "Along-valley length of each riser gap in metres.",
              "Must comfortably exceed the roughness window of whatever "
@@ -669,7 +623,7 @@ int main(int argc, char* argv[])
              "reaches the stepped rows either side and never reads as flat. "
              "At a 40 m window a 30 m gap returns 4.5 m of local relief; a "
              "120 m gap returns about 1 m."}},
-        {"terrace_noise_amplitude_m",
+        {"terrace_noise_amplitude_metres",
             {"float","0","Symmetric per-pixel white noise amplitude, metres.",
              "0 gives an exact surface whose tread elevations can be asserted "
              "to the metre."}},
@@ -688,7 +642,7 @@ int main(int argc, char* argv[])
              "to apex, so a height-above-channel ladder cuts it into arcs; the "
              "lobes sit a constant depth below the older surface, so a "
              "residual to a fitted fan separates them cleanly."}},
-        {"write_alluvial_fan_lobe_id",
+        {"write_alluvial_fan_lobe_id_raster",
             {"bool","true",
              "Write the ground-truth lobe id raster (0 = older surface, "
              "1..n_inset_lobes = inset lobes).",""}},
@@ -713,11 +667,11 @@ int main(int argc, char* argv[])
              "fits and a plane does not."}},
         {"fan_n_inset_lobes",
             {"int","2","Number of inset lobes radiating from the apex.",""}},
-        {"fan_lobe_inset_m",
+        {"fan_lobe_inset_metres",
             {"float","4","Depth of each lobe below the older surface, metres.",""}},
-        {"fan_lobe_half_angle_deg",
+        {"fan_lobe_half_angle_degrees",
             {"float","25","Half-angle of each lobe wedge in degrees.",""}},
-        {"fan_noise_amplitude_m",
+        {"fan_noise_amplitude_metres",
             {"float","0","Symmetric per-pixel white noise amplitude, metres.",""}},
 
         // Hillslope strip (transient Roering hillslope solver test domain)
@@ -749,7 +703,7 @@ int main(int argc, char* argv[])
              "steady profile; false uses the linear parabola.",""}},
         {"strip_baselevel_elevation",
             {"float","0.0","Channel (Dirichlet) baselevel elevation in metres.",""}},
-        {"strip_half_width",
+        {"strip_half_width_metres",
             {"float","0.0",
              "Hillslope half-width L (divide-to-channel distance, m) for the "
              "analytic profile. <= 0 auto-derives L from the grid (recommended; "
@@ -767,16 +721,95 @@ int main(int argc, char* argv[])
     };
 
     // -------------------------------------------------------------------------
-    // Help - rendered from the declarations above; no parameter file needed
+    // Attach presentation metadata without duplicating parameter descriptions.
     // -------------------------------------------------------------------------
-    // This CLI declares its help map with brace initialisation, so copy it
-    // into a registry for the help renderer (alphabetical order; the
-    // entries carry no group metadata yet).
     lsdtt::lsdtt_help_registry help_registry;
-    for (const auto& [help_key, help_entry] : help_map)
+    for (const auto& [key, entry] : help_entries)
     {
-        help_registry[help_key] = help_entry;
+        help_registry[key] = entry;
     }
+
+    const auto starts_with = [](const std::string& value, const std::string& prefix)
+    {
+        return value.compare(0, prefix.size(), prefix) == 0;
+    };
+    for (const std::string& key : help_registry.key_order())
+    {
+        std::vector<std::string>& entry = help_registry[key];
+        entry.resize(7);
+        entry[4] = "Domain and output";
+        entry[5] = "param";
+
+        std::string parent;
+        if (starts_with(key, "uniform_") || key == "write_uniform_random_surface")
+        {
+            entry[4] = "Uniform random surface";
+            parent = "write_uniform_random_surface";
+        }
+        else if (starts_with(key, "red_noise_") || key == "write_red_noise_surface")
+        {
+            entry[4] = "Red noise surface";
+            parent = "write_red_noise_surface";
+        }
+        else if (starts_with(key, "blue_noise_") || key == "write_blue_noise_surface")
+        {
+            entry[4] = "Blue noise surface";
+            parent = "write_blue_noise_surface";
+        }
+        else if (starts_with(key, "diamond_square_") || key == "write_diamond_square_surface")
+        {
+            entry[4] = "Diamond-square surface";
+            parent = "write_diamond_square_surface";
+        }
+        else if (starts_with(key, "periodic_") || key == "write_periodic_wave_surface")
+        {
+            entry[4] = "Periodic wave surface";
+            parent = "write_periodic_wave_surface";
+        }
+        else if (starts_with(key, "quadratic_") || key == "write_global_quadratic_surface")
+        {
+            entry[4] = "Global quadratic surface";
+            parent = "write_global_quadratic_surface";
+        }
+        else if (starts_with(key, "terrace_") || starts_with(key, "write_terrace_"))
+        {
+            entry[4] = "Terrace staircase surface";
+            parent = "write_terrace_staircase_surface";
+        }
+        else if (starts_with(key, "fan_") || starts_with(key, "write_alluvial_"))
+        {
+            entry[4] = "Alluvial fan surface";
+            parent = "write_alluvial_fan_surface";
+        }
+        else if (starts_with(key, "strip_") || starts_with(key, "write_hillslope_"))
+        {
+            entry[4] = "Hillslope strip surface";
+            parent = "write_hillslope_strip_surface";
+        }
+        else if (starts_with(key, "test_wavelet_") ||
+                 starts_with(key, "write_true_coefficient_") ||
+                 starts_with(key, "write_wavelet_") || key == "polyfit_lambda_metres")
+        {
+            entry[4] = "Wavelet validation";
+        }
+
+        if (key == "n_threads" || key == "write_output_format")
+        {
+            entry[5] = "io";
+            parent.clear();
+        }
+        else if (starts_with(key, "write_") || starts_with(key, "test_"))
+        {
+            entry[5] = "switch";
+            if (parent == key)
+            {
+                parent.clear();
+            }
+        }
+        entry[6] = parent;
+    }
+
+    // Help is rendered from the declarations above; no parameter file needed.
 
     if (cli_args.help_requested)
     {
@@ -798,6 +831,25 @@ int main(int argc, char* argv[])
         std::cerr << "Error loading parameter file: " << e.what() << "\n";
         return 1;
     }
+
+    // Parameter renames onto the project conventions (docs/cli_parameter_conventions.md):
+    // units are spelled out, and a bool that writes a raster ends in _raster.
+    // The old keys keep working and print a warning naming the replacement.
+    pp.set_deprecated_aliases({
+        {"cell_size",                         "cell_size_metres"},
+        {"seed",                              "random_seed"},
+        {"strip_half_width",                  "strip_half_width_metres"},
+        {"fan_lobe_half_angle_deg",          "fan_lobe_half_angle_degrees"},
+        {"fan_lobe_inset_m",                 "fan_lobe_inset_metres"},
+        {"fan_noise_amplitude_m",            "fan_noise_amplitude_metres"},
+        {"terrace_noise_amplitude_m",        "terrace_noise_amplitude_metres"},
+        {"terrace_riser_gap_width_m",        "terrace_riser_gap_width_metres"},
+        {"terrace_riser_height_m",           "terrace_riser_height_metres"},
+        {"terrace_tread_width_m",            "terrace_tread_width_metres"},
+        {"wavelet_lambda",                   "polyfit_lambda_metres"},
+        {"write_alluvial_fan_lobe_id",       "write_alluvial_fan_lobe_id_raster"},
+        {"write_terrace_staircase_tread_id", "write_terrace_staircase_tread_id_raster"},
+    });
 
     pp.parse_all_parameters(float_defaults, int_defaults, bool_defaults, string_defaults);
 
@@ -830,9 +882,9 @@ int main(int argc, char* argv[])
 
     const int   n_rows    = ifs["n_rows"];
     const int   n_cols    = ifs["n_cols"];
-    const int   seed      = ifs["seed"];
+    const int   seed      = ifs["random_seed"];
     const int   n_threads = ifs["n_threads"];
-    const float cell_size = ff["cell_size"];
+    const float cell_size = ff["cell_size_metres"];
 
     lsdtt::lsdtt_data_loader loader;
 
@@ -1017,7 +1069,7 @@ int main(int argc, char* argv[])
                     false,  // not an exact oracle for finite lambda
                     periodic.dem,
                     periodic.analytic_taylor,
-                    ff["wavelet_lambda"],
+                    ff["polyfit_lambda_metres"],
                     n_threads,
                     bf["write_wavelet_fitted_coefficient_rasters"],
                     bf["write_wavelet_residual_rasters"],
@@ -1075,7 +1127,7 @@ int main(int argc, char* argv[])
                     true,   // exact oracle away from invalid support edges
                     quad.dem,
                     quad.analytic_taylor,
-                    ff["wavelet_lambda"],
+                    ff["polyfit_lambda_metres"],
                     n_threads,
                     bf["write_wavelet_fitted_coefficient_rasters"],
                     bf["write_wavelet_residual_rasters"],
@@ -1098,14 +1150,14 @@ int main(int argc, char* argv[])
                 lsdtt::generate_terrace_staircase_surface(
                     n_rows, n_cols, cell_size,
                     ifs["terrace_n_terraces"],
-                    ff["terrace_tread_width_m"],
-                    ff["terrace_riser_height_m"],
+                    ff["terrace_tread_width_metres"],
+                    ff["terrace_riser_height_metres"],
                     ff["terrace_valley_gradient"],
                     ff["terrace_riser_height_downstream_taper"],
                     ff["terrace_tread_cross_gradient"],
                     ifs["terrace_n_riser_gaps"],
-                    ff["terrace_riser_gap_width_m"],
-                    ff["terrace_noise_amplitude_m"],
+                    ff["terrace_riser_gap_width_metres"],
+                    ff["terrace_noise_amplitude_metres"],
                     ff["terrace_channel_elevation"],
                     ff["terrace_valley_wall_gradient"],
                     seed,
@@ -1115,7 +1167,7 @@ int main(int argc, char* argv[])
             loader.write_full(st.dem.get_data(), st.dem.get_meta(),
                 pp.make_output_path("_terrace_staircase.tif"), out_fmt);
 
-            if (bf["write_terrace_staircase_tread_id"])
+            if (bf["write_terrace_staircase_tread_id_raster"])
             {
                 loader.write_full(
                     st.tread_id.get_data(), st.tread_id.get_meta(),
@@ -1145,9 +1197,9 @@ int main(int argc, char* argv[])
                     ff["fan_gradient"],
                     ff["fan_concavity"],
                     ifs["fan_n_inset_lobes"],
-                    ff["fan_lobe_inset_m"],
-                    ff["fan_lobe_half_angle_deg"],
-                    ff["fan_noise_amplitude_m"],
+                    ff["fan_lobe_inset_metres"],
+                    ff["fan_lobe_half_angle_degrees"],
+                    ff["fan_noise_amplitude_metres"],
                     seed,
                     n_threads
                 );
@@ -1155,7 +1207,7 @@ int main(int argc, char* argv[])
             loader.write_full(fan.dem.get_data(), fan.dem.get_meta(),
                 pp.make_output_path("_alluvial_fan.tif"), out_fmt);
 
-            if (bf["write_alluvial_fan_lobe_id"])
+            if (bf["write_alluvial_fan_lobe_id_raster"])
             {
                 loader.write_full(
                     fan.lobe_id.get_data(), fan.lobe_id.get_meta(),
@@ -1205,7 +1257,7 @@ int main(int argc, char* argv[])
                     cfg, prof,
                     bf["strip_cross_axis_is_x"],
                     ff["strip_baselevel_elevation"],
-                    ff["strip_half_width"],
+                    ff["strip_half_width_metres"],
                     ff["strip_uplift"],
                     ff["strip_diffusivity"],
                     ff["strip_critical_slope"],
@@ -1252,7 +1304,7 @@ int main(int argc, char* argv[])
         // Help file + parameter echo
         // ---------------------------------------------------------------------
         pp.print_help(
-            help_map,
+            help_registry,
             pp.get_write_fname() + "_README",
             k_version,
             k_citation

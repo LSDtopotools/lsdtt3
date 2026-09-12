@@ -112,7 +112,10 @@ def count_set(path: Path) -> int:
     return sum(1 for v in vals if v > 0.5)
 
 
-def run_mode(exe: str, work: Path, dem: Path, mode: str, cap: float) -> int:
+def run_mode(exe: str, work: Path, dem: Path, mode: str, cap: float,
+             stem: str | None = None,
+             window_setting: str =
+             "admission_slope_window_radius_metres: 25.0") -> tuple[int, str, str, bytes]:
     """Run the finder in one admission mode and count the combined flat mask.
 
     Args:
@@ -123,9 +126,9 @@ def run_mode(exe: str, work: Path, dem: Path, mode: str, cap: float) -> int:
         cap: admission_slope_cap_degrees.
 
     Returns:
-        Set-cell count of the combined flat mask.
+        Set-cell count, stdout, stderr, and output bytes.
     """
-    stem = f"adm_{mode}"
+    stem = stem or f"adm_{mode}"
     param = work / f"{stem}.param"
     param.write_text(
         f"read_path: {work}/\n"
@@ -134,26 +137,27 @@ def run_mode(exe: str, work: Path, dem: Path, mode: str, cap: float) -> int:
         f"write_fname: {stem}\n"
         "n_threads: 1\n"
         "write_output_format: gtiff\n"
-        "relief_window_pixels: 5\n"
+        "relief_window_side_pixels: 5\n"
         "adaptive_relief_threshold: false\n"
         "relief_threshold_metres: 4.0\n"
         "min_component_pixels: 1\n"
         "flat_closing_radius_metres: 0\n"
         "write_combined_flat_mask_raster: true\n"
-        "write_slope_break_centreline: false\n"
-        "write_slope_break_centreline_connected: false\n"
-        "write_slope_break_bridge_mask: false\n"
+        "write_slope_break_centreline_raster: false\n"
+        "write_slope_break_centreline_connected_raster: false\n"
+        "write_slope_break_bridge_mask_raster: false\n"
         "write_healed_flat_mask: false\n"
         f"admission_mode: {mode}\n"
         f"admission_slope_cap_degrees: {cap}\n"
-        "admission_slope_window_metres: 50.0\n",
+        f"{window_setting}\n",
         encoding="utf-8")
     proc = subprocess.run([exe, param.name], capture_output=True,
                           text=True, cwd=str(work))
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout + proc.stderr)
         raise RuntimeError(f"admission_mode {mode} exited {proc.returncode}")
-    return count_set(work / f"{stem}_combined_flat_mask.tif")
+    output = work / f"{stem}_combined_flat_mask.tif"
+    return count_set(output), proc.stdout, proc.stderr, output.read_bytes()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -176,13 +180,20 @@ def main(argv: list[str] | None = None) -> int:
     dem = work / "admission_dem.tif"
     build_dem(dem)
 
-    n = {m: run_mode(args.exe, work, dem, m, args.cap)
-         for m in ("relief", "slope", "relief_and_slope", "relief_or_slope")}
+    n = {m: run_mode(args.exe, work, dem, m, args.cap)[0]
+          for m in ("relief", "slope", "relief_and_slope", "relief_or_slope")}
     for m, v in n.items():
         print(f"  {m:18s} {v:8d}")
 
     lo = min(n["relief"], n["slope"])
     hi = max(n["relief"], n["slope"])
+    canonical = run_mode(args.exe, work, dem, "slope", args.cap,
+                         stem="adm_window_equivalence")
+    legacy = run_mode(
+        args.exe, work, dem, "slope", args.cap,
+        stem="adm_window_equivalence",
+        window_setting="admission_slope_window_metres: 50.0")
+
     checks = [
         ("and <= min(relief, slope)",   n["relief_and_slope"] <= lo),
         ("max(relief, slope) <= or",    hi <= n["relief_or_slope"]),
@@ -191,6 +202,14 @@ def main(argv: list[str] | None = None) -> int:
         ("and < min (they disagree)",   n["relief_and_slope"] < lo),
         ("relief admits something",     n["relief"] > 0),
         ("slope admits something",      n["slope"] > 0),
+        ("diameter alias keeps 50 m compute window",
+         "polyfit window 50 m" in canonical[1] and
+         "polyfit window 50 m" in legacy[1]),
+        ("diameter alias output is byte-identical", canonical[3] == legacy[3]),
+        ("diameter alias warning pins transformation",
+         "'admission_slope_window_metres' is deprecated; use "
+         "'admission_slope_window_radius_metres'" in legacy[2] and
+         "new = old * 0.5 + 0; zero remains zero" in legacy[2]),
     ]
     bad = [name for name, ok in checks if not ok]
     for name, ok in checks:

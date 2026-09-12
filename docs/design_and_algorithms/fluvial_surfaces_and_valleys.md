@@ -5,8 +5,8 @@ This page explains the design choices behind lsdtt3's fluvial-surface tooling: w
 each do, why the work is split across three programs rather than one, which
 algorithms are used at each step, and where those algorithms come from. It is not a
 CLI reference — for parameter names, types and defaults see the reference pages for
-[lsdtt-fluvial-surfaces](cli_reference/cli_reference_lsdtt_fluvial_surfaces.md) and
-[lsdtt-valley-centreline](cli_reference/cli_reference_lsdtt_valley_centreline.md),
+[lsdtt-fluvial-surfaces](../cli_reference/cli_reference_lsdtt_fluvial_surfaces.md) and
+[lsdtt-valley-centreline](../cli_reference/cli_reference_lsdtt_valley_centreline.md),
 or run any of the three with `-h`.
 
 The methods here descend from two papers, **Clubb et al. (2017)** on geomorphometric
@@ -158,7 +158,7 @@ and their conjunction and disjunction, is the honest resolution. Use
 ladder in the next tool sort them out.
 
 The admission gradient is measured from a polynomial surface fitted over
-`admission_slope_window_metres` rather than from a 3×3 difference, following the
+`admission_slope_window_radius_metres` rather than from a 3×3 difference, following the
 same reasoning as the 2017 paper: a three-cell operator on a 30 m DEM measures pixel
 noise, and the cap has to be read at the scale of the surface being admitted. There
 is no default cap worth guessing — 5 degrees is a valley floor, 15 degrees admits
@@ -579,11 +579,11 @@ parameter has no successor, the reason is in the right-hand column.
 
 | `lsdtt-valley-metrics` | goes to | lsdtt3 |
 |---|---|---|
-| `surface_fitting_radius` | 1 | `admission_slope_window_metres` |
+| `surface_fitting_radius` | 1 | `admission_slope_window_radius_metres` |
 | `slope_threshold`, `use_absolute_thresholds` | 1 | `admission_slope_cap_degrees` with `admission_mode: slope` |
 | `QQ_threshold`, `*_lower_percentile`, `*_upper_percentile` | 1 | `adaptive_relief_threshold` + `relief_threshold_multiplier` — CDF divergence against fitted distributions, not a Gaussian QQ plot |
 | `minimum_patch_size` | 1, 2 | `min_component_pixels` (in tool 2 it is **per band**, not global) |
-| `threshold_SO` | 2 | replaced by the channel-scope model: `source_points_fname` / `outlet_points_fname`, or `channel_threshold_contributing_pixels` |
+| `threshold_SO` | 2 | replaced by the channel-scope model: `source_points_fname` / `outlet_points_fname`, or `threshold_contributing_pixels` |
 | `relief_threshold` | 2 | replaced by the ladder; `floodplain_max_height_metres` is the optional hard cap |
 | `minimum_terrace_height` | 2 | `terrace_min_height_metres`, demoted to an override |
 | `get_terraces` | 2 | no switch — `ladder_level_count` is the only control, and terraces are bands 1..n |
@@ -708,9 +708,9 @@ terrace level.
 
 **Related lsdtt3 pages**
 
-- [CLI reference: lsdtt-fluvial-surfaces](cli_reference/cli_reference_lsdtt_fluvial_surfaces.md)
-- [CLI reference: lsdtt-valley-centreline](cli_reference/cli_reference_lsdtt_valley_centreline.md)
-- [CLI reference: lsdtt-flat-surface-finder](cli_reference/cli_reference_lsdtt_flat_surface_finder.md)
-- [CLI reference: lsdtt-swath-profile](cli_reference/cli_reference_lsdtt_swath_profile.md)
-- [Flow routing in lsdtt3](flow_routing.md)
+- [CLI reference: lsdtt-fluvial-surfaces](../cli_reference/cli_reference_lsdtt_fluvial_surfaces.md)
+- [CLI reference: lsdtt-valley-centreline](../cli_reference/cli_reference_lsdtt_valley_centreline.md)
+- [CLI reference: lsdtt-flat-surface-finder](../cli_reference/cli_reference_lsdtt_flat_surface_finder.md)
+- [CLI reference: lsdtt-swath-profile](../cli_reference/cli_reference_lsdtt_swath_profile.md)
+- [Flow routing in lsdtt3](../what_is_lsdtt3/flow_routing.md)
 - [Surface metrics](surface_metrics.md)

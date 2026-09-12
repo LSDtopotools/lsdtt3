@@ -16,7 +16,8 @@
 // Workflow:
 //   1. Parse parameters & implement cross-parameter dependencies.
 //   2. Load DEM, verify projection, fill pits, and build D8 routing.
-//   3. Read basin outlets from CSV, snap downstream, and extract basins.
+//   3. Read basin outlets from CSV, apply the selected snapping method, and
+//      extract basins.
 //   4. Extract continuous 1D basin outlines into memory.
 //   5. (If requested) Build D-infinity flow routing on the FILLED DEM,
 //      compute accumulation, sample into memory, and free graph.
@@ -57,6 +58,7 @@
 
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
@@ -68,54 +70,24 @@
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
+#include "../src/cpu/lsdtt_basin_outline_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
-#include "../src/utils/lsdtt_histogram.hpp"
-#include "../src/utils/lsdtt_statistics.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 // =============================================================================
 // Helper Polyfit Registration
 // =============================================================================
 namespace {
-struct metric_entry {
-    std::string name;
-    lsdtt::polyfit_metric metric;
-};
-
-const std::vector<metric_entry>& get_metric_table() {
-    static const std::vector<metric_entry> table = {
-        {"fitted_surface", lsdtt::polyfit_metric::fitted_surface},
-        {"dzdx", lsdtt::polyfit_metric::dzdx},
-        {"dzdy", lsdtt::polyfit_metric::dzdy},
-        {"d2zdx2", lsdtt::polyfit_metric::d2zdx2},
-        {"d2zdxdy", lsdtt::polyfit_metric::d2zdxdy},
-        {"d2zdy2", lsdtt::polyfit_metric::d2zdy2},
-        {"slope", lsdtt::polyfit_metric::slope},
-        {"slope_degrees", lsdtt::polyfit_metric::slope_degrees},
-        {"aspect_radians", lsdtt::polyfit_metric::aspect_radians},
-        {"aspect_degrees", lsdtt::polyfit_metric::aspect_degrees},
-        {"laplacian", lsdtt::polyfit_metric::laplacian},
-        {"hessian_determinant", lsdtt::polyfit_metric::hessian_determinant},
-        {"mean_curvature", lsdtt::polyfit_metric::mean_curvature},
-        {"gaussian_curvature", lsdtt::polyfit_metric::gaussian_curvature},
-        {"maximum_curvature", lsdtt::polyfit_metric::maximum_curvature},
-        {"minimum_curvature", lsdtt::polyfit_metric::minimum_curvature},
-        {"curvedness", lsdtt::polyfit_metric::curvedness},
-        {"shape_index", lsdtt::polyfit_metric::shape_index},
-        {"profile_curvature", lsdtt::polyfit_metric::profile_curvature},
-        {"plan_curvature", lsdtt::polyfit_metric::plan_curvature},
-        {"tangential_curvature", lsdtt::polyfit_metric::tangential_curvature}
-    };
-    return table;
-}
-
-std::string metric_to_string(lsdtt::polyfit_metric metric) {
-    for (const auto& entry : get_metric_table()) {
-        if (entry.metric == metric) return entry.name;
-    }
-    return "unknown";
-}
+// Polyfit metric names come from the library:
+//   src/cpu/lsdtt_raster_surface_metrics_cpu.hpp
+// This CLI previously kept its own table which stopped at tangential_curvature
+// and so REJECTED six metrics that lsdtt-surface-metrics and
+// lsdtt-ridgeline-analysis accepted (difference_curvature,
+// horizontal_excess_curvature, vertical_excess_curvature,
+// accumulation_curvature, ring_curvature, rotor). One table now, with a unit
+// test that fails if it falls out of step with the enum.
 } // namespace
 
 // =============================================================================
@@ -136,9 +108,9 @@ struct BasinData {
     std::vector<float> interior_dinf_logA; 
     std::map<std::string, std::vector<float>> interior_metrics;
 
-    // Extracted Summary Statistics (Saved in Step 7/8, written in Step 9)
-    std::map<double, double> flip_dist_per_lambda;
-    std::map<double, double> a_max_slope_per_lambda;
+    // Analytical results are indexed in the same order as lambda_scales.
+    std::vector<lsdtt::outline_curvature_flip_result> curvature_flips;
+    lsdtt::basin_slope_area_result slope_area;
 };
 
 // =============================================================================
@@ -198,15 +170,10 @@ int main(int argc, char* argv[])
         "Threading & I/O", "io", ""};
 
     // --- Input & Routing ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool", "false", 
-        "Whether the input raster is already pit-filled and ready for routing.", 
-        "If false (default), the CLI will call fill_pits() before building flow routing. "
-        "If true, the DEM is assumed to already be suitable for routing.",
-        "Input & Routing", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
-    string_default_map["basin_outlet_csv"] = "NULL";
-    help_map["basin_outlet_csv"] = {"string", "NULL", 
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string", "NULL",
         "Required file of requested basin outlet points (CSV format).", 
         "Must contain columns exactly named 'latitude' and 'longitude'.",
         "Input & Routing", "param", ""};
@@ -224,12 +191,7 @@ int main(int argc, char* argv[])
         "Passed to fill_pits() gently enforcing downstream descent.",
         "Input & Routing", "param", ""};
 
-    int_default_map["source_pixels_threshold"] = 1000;
-    help_map["source_pixels_threshold"] = {"int", "1000", 
-        "Contributing area threshold in pixels.", 
-        "Used to generate the initial D8 channel junction network from "
-        "which topologies and nested relationships are derived.",
-        "Input & Routing", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Snapping options ---
     string_default_map["basin_outlet_snapping_method"] = "downstream";
@@ -244,6 +206,18 @@ int main(int argc, char* argv[])
         "Pixel threshold for confirming an outlet snap.", 
         "Defines the required D8 accumulation to arrest snapping.",
         "Snapping options", "param", ""};
+
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int", "0",
+        "Minimum expanding-square search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Snapping options", "param", "basin_outlet_snapping_method"};
+
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int", "25",
+        "Maximum expanding-square search radius in pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Snapping options", "param", "basin_outlet_snapping_method"};
 
     // --- Smoothing Scales & Polyfit ---
     string_default_map["lambda_scales"] = "10,50,100";
@@ -292,8 +266,8 @@ int main(int argc, char* argv[])
         "Dump spatial D-Infinity flow accumulation (in m2) as a GeoTIFF.", "",
         "Slope-Area Outputs", "switch", ""};
 
-    bool_default_map["write_dinf_area_raster_log10"] = false;
-    help_map["write_dinf_area_raster_log10"] = {"bool", "false", 
+    bool_default_map["write_dinf_area_log10_raster"] = false;
+    help_map["write_dinf_area_log10_raster"] = {"bool", "false",
         "Dump spatial log10(D-Inf Area) to disk as a GeoTIFF.", "",
         "Slope-Area Outputs", "switch", ""};
 
@@ -324,8 +298,8 @@ int main(int argc, char* argv[])
         "curvature_flips, appending results per lambda as attributes.",
         "Vector Polygon Outputs", "switch", ""};
 
-    string_default_map["polygon_output_format"] = "flatgeobuf";
-    help_map["polygon_output_format"] = {"string", "flatgeobuf", 
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string", "flatgeobuf",
         "Vector output format for basin polygons.", 
         "Valid formats: flatgeobuf (or fgb) and gpkg.",
         "Vector Polygon Outputs", "param", "write_outline_polygons_with_flipstats"};
@@ -355,6 +329,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"write_dinf_area_raster_log10", "write_dinf_area_log10_raster"},
+        {"basin_outlet_csv", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"polygon_output_format", "write_vector_format"} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, 
         bool_default_map, string_default_map);
@@ -364,8 +345,17 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    if (sf["basin_outlet_csv"] == "NULL" || sf["basin_outlet_csv"].empty()) {
-        std::cerr << "FATAL: basin_outlet_csv is required.\n"; return 1;
+    if (sf["basin_outlet_fname"] == "NULL" || sf["basin_outlet_fname"].empty()) {
+        std::cerr << "FATAL: basin_outlet_fname is required.\n"; return 1;
+    }
+
+    const std::string snap_method =
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
+    if (snap_method != "none" && snap_method != "downstream" &&
+        snap_method != "expanding_square") {
+        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
+                     "none, downstream, expanding_square.\n";
+        return 1;
     }
 
     std::vector<double> lambda_scales;
@@ -423,14 +413,11 @@ int main(int argc, char* argv[])
     // Convert string requests to Enums
     std::vector<lsdtt::polyfit_metric> polyfit_metrics;
     for (const auto& req : requested_metric_strings) {
-        bool found = false;
-        for (const auto& mapping : get_metric_table()) {
-            if (req == mapping.name) {
-                polyfit_metrics.push_back(mapping.metric);
-                found = true; break;
-            }
+        try {
+            polyfit_metrics.push_back(lsdtt::polyfit_metric_from_string(req));
         }
-        if (!found) {
+        catch (const std::exception&) {
+            // The library throws; this CLI reports and exits cleanly instead.
             std::cerr << "FATAL: Unknown metric requested: " << req << "\n";
             return 1;
         }
@@ -483,7 +470,7 @@ int main(int argc, char* argv[])
     }
 
     std::vector<std::int64_t> sources = flow->get_sources_index_threshold(
-        ifs["source_pixels_threshold"]);
+        ifs["threshold_contributing_pixels"]);
     lsdtt::lsdtt_junction_network_options jn_opts;
     jn_opts.build_topological_order = true;
     auto channel_network = lsdtt::make_junction_network_base(
@@ -492,7 +479,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 3 - Read basin outlets, snap, and select basins
     // -------------------------------------------------------------------------
-    std::string csv_path = pp.add_read_path_if_needed(sf["basin_outlet_csv"]);
+    std::string csv_path = pp.add_read_path_if_needed(sf["basin_outlet_fname"]);
     std::cout << "\nReading basin outlet CSV: " << csv_path << "\n";
     std::vector<lsdtt::lsdtt_input_point> requested_outlets;
     try {
@@ -503,26 +490,87 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: " << e.what() << "\n"; return 1;
     }
 
-    std::string snap_method = sf["basin_outlet_snapping_method"];
     std::vector<std::int64_t> valid_outlet_flats;
     lsdtt::lsdtt_downstream_snap_options ds_opts;
     ds_opts.contributing_pixels_threshold = 
         ifs["basin_outlet_contributing_pixels_threshold"];
+    lsdtt::lsdtt_square_snap_options square_opts;
+    square_opts.contributing_pixels_threshold =
+        ifs["basin_outlet_contributing_pixels_threshold"];
+    square_opts.min_search_radius_pixels =
+        ifs["basin_outlet_snap_min_search_radius_pixels"];
+    square_opts.max_search_radius_pixels =
+        ifs["basin_outlet_snap_max_search_radius_pixels"];
+
+    // An outlet must end up ON THE CHANNEL NETWORK, not merely on a valid cell.
+    // This tool builds lsdtt_junction_basin objects, and those resolve the
+    // outlet through junction_upstream_of_flat, which throws
+    // "flat index is not on the channel network" for anything else. Snapping
+    // guarantees a CONTRIBUTING-PIXEL COUNT, which is a different thing: a cell
+    // can carry plenty of upslope area and still not be a network cell.
+    //
+    // Previously a failed snap silently kept the unsnapped pixel, the only test
+    // was is_valid_cell, and a single bad outlet aborted the whole run with an
+    // uncaught exception -- losing all buffered output with it. Now every
+    // rejection is per-outlet, reported, and skipped, which is what
+    // lsdtt-basin-stats has always done with the same input.
+    std::size_t n_skipped = 0;
 
     for (const auto& out : requested_outlets) {
-        if (out.status != lsdtt::lsdtt_point_input_status::success) continue;
+        if (out.status != lsdtt::lsdtt_point_input_status::success) {
+            std::cerr << "Warning: outlet " << out.point_id
+                      << " did not map to an in-bounds raster pixel; skipping.\n";
+            ++n_skipped;
+            continue;
+        }
+
         int r = out.row, c = out.col;
         std::int64_t f = out.flat;
 
-        if (snap_method == "downstream") {
-            auto snapped = 
-                lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                    *flow, r, c, ds_opts);
-            if (snapped.status == lsdtt::lsdtt_snap_status::success) {
-                f = snapped.snapped_flat;
+        const lsdtt::lsdtt_snap_result snapped = lsdtt::snap_pixel_by_method(
+            *flow, r, c, snap_method, square_opts, ds_opts);
+        if (snapped.status != lsdtt::lsdtt_snap_status::success) {
+            if (snap_method == "none") {
+                std::cerr << "Warning: outlet " << out.point_id
+                          << " maps to an invalid or nodata flow pixel; skipping.\n";
+            } else {
+                std::cerr << "Warning: outlet " << out.point_id
+                          << " could not be snapped "
+                          << (snap_method == "downstream" ? "downstream" : "with expanding_square")
+                          << " ("
+                          << lsdtt::snap_status_to_string(snapped.status)
+                          << "); skipping.\n";
             }
-        } 
-        if (flow->is_valid_cell(f)) valid_outlet_flats.push_back(f);
+            ++n_skipped;
+            continue;
+        }
+        f = snapped.snapped_flat;
+
+        if (!flow->is_valid_cell(f)) {
+            std::cerr << "Warning: outlet " << out.point_id
+                      << " maps to an invalid or nodata flow pixel; skipping.\n";
+            ++n_skipped;
+            continue;
+        }
+
+        if (!channel_network->is_channel(f)) {
+            std::cerr << "Warning: outlet " << out.point_id
+                      << " does not lie on the channel network after snapping "
+                         "(threshold_contributing_pixels = "
+                      << ifs["threshold_contributing_pixels"]
+                      << "); skipping. Lower threshold_contributing_pixels to extend "
+                         "the network towards this outlet, or move the outlet "
+                         "onto a mapped channel.\n";
+            ++n_skipped;
+            continue;
+        }
+
+        valid_outlet_flats.push_back(f);
+    }
+
+    if (n_skipped > 0) {
+        std::cout << "Outlets skipped: " << n_skipped << " of "
+                  << requested_outlets.size() << "\n";
     }
 
     if (valid_outlet_flats.empty()) {
@@ -573,7 +621,7 @@ int main(int argc, char* argv[])
     // Step 5 - D-infinity flow accumulation (if slope-area requested)
     // -------------------------------------------------------------------------
     if (needs_slope_area || bf["write_dinf_area_raster"] || 
-        bf["write_dinf_area_raster_log10"]) 
+        bf["write_dinf_area_log10_raster"])
     {
         std::cout << "\n--- Computing D-Infinity Flow Routing ---\n";
         lsdtt::lsdtt_flowgraph_options fg_opts;
@@ -597,7 +645,7 @@ int main(int argc, char* argv[])
                 dinf_accum_cpu.get_data(), dinf_accum_cpu.get_meta(), 
                 o, out_fmt);
         }
-        if (bf["write_dinf_area_raster_log10"]) {
+        if (bf["write_dinf_area_log10_raster"]) {
             const std::string o = pp.make_output_path("_dinf_log10area.tif");
             std::cout << "Writing Log10 D-Inf Area: " << o << "\n";
             loader.write_full(
@@ -641,7 +689,7 @@ int main(int argc, char* argv[])
             lsdtt::compute_polyfit_metrics(fitted, req);
 
         for (auto metric : polyfit_metrics) {
-            std::string m_name = metric_to_string(metric);
+            std::string m_name = lsdtt::polyfit_metric_name(metric);
             std::string map_key = m_name + "_lambda" + 
                                   std::to_string(static_cast<int>(lambda));
             
@@ -682,6 +730,40 @@ int main(int argc, char* argv[])
                     }
                 }
             }
+        }
+    }
+
+    // Pure basin analyses. Raster/basin-object sampling stays above; output
+    // propagation and formatting stay below.
+    for (auto& bd : basin_data_store) {
+        if (bf["write_outline_curvature_flips"]) {
+            // Historical/questionable semantics: distance.back() is used as
+            // the perimeter and no missing last-to-first segment is added.
+            double total_length = bd.outline_distance.empty() ?
+                                  0 : bd.outline_distance.back();
+            bd.curvature_flips.reserve(lambda_scales.size());
+            for (double l : lambda_scales) {
+                std::string mk = "maximum_curvature_lambda" +
+                                 std::to_string(static_cast<int>(l));
+                bd.curvature_flips.push_back(
+                    lsdtt::compute_outline_curvature_flips(
+                        bd.outline_metrics.at(mk),
+                        dem.get_meta().no_data_value,
+                        total_length));
+            }
+        }
+
+        if (needs_slope_area) {
+            std::vector<std::vector<float>> slopes_by_scale;
+            slopes_by_scale.reserve(lambda_scales.size());
+            for (double l : lambda_scales) {
+                std::string mk = "slope_lambda" +
+                                 std::to_string(static_cast<int>(l));
+                slopes_by_scale.push_back(bd.interior_metrics.at(mk));
+            }
+            bd.slope_area = lsdtt::compute_basin_slope_area_metrics(
+                bd.interior_dinf_logA, slopes_by_scale,
+                static_cast<double>(ff["slope_area_log_bin_width"]));
         }
     }
 
@@ -739,27 +821,10 @@ int main(int argc, char* argv[])
                                     0 : bd.outline_distance.back();
             row.push_back(std::to_string(total_length));
 
-            for (double l : lambda_scales) {
-                std::string mk = "maximum_curvature_lambda" + 
-                                 std::to_string(static_cast<int>(l));
-                int flips = 0;
-                auto& curv = bd.outline_metrics.at(mk);
-                float ndv = dem.get_meta().no_data_value;
-
-                for (size_t i = 1; i < curv.size(); ++i) {
-                    if (curv[i] == ndv || curv[i-1] == ndv) continue;
-                    if ((curv[i] > 0 && curv[i-1] < 0) || 
-                        (curv[i] < 0 && curv[i-1] > 0)) {
-                        flips++;
-                    }
-                }
-                row.push_back(std::to_string(flips));
-                
-                double flip_d = flips > 0 ? (total_length / flips) : 
-                                std::numeric_limits<double>::quiet_NaN();
-                bd.flip_dist_per_lambda[l] = flip_d; // Save for Step 9
-                
-                row.push_back(flips > 0 ? std::to_string(flip_d) : "NaN");
+            for (const auto& flips : bd.curvature_flips) {
+                row.push_back(std::to_string(flips.n_flips));
+                row.push_back(flips.n_flips > 0 ?
+                              std::to_string(flips.mean_flip_distance) : "NaN");
             }
             rows.push_back(std::move(row));
         }
@@ -785,76 +850,25 @@ int main(int argc, char* argv[])
             headers.push_back("slope_lambda" + sl + "_p95");
         }
 
-        double bin_width = static_cast<double>(ff["slope_area_log_bin_width"]);
-
         for (const auto& bd : basin_data_store) {
-            std::vector<double> valid_area; 
-            for (float a : bd.interior_dinf_logA) {
-                if (std::isfinite(a) && a > -100) {
-                    valid_area.push_back(static_cast<double>(a));
-                }
-            }
-
-            std::vector<double> bin_edges;
-            if (!valid_area.empty() && bin_width > 0.0) {
-                auto mm = std::minmax_element(valid_area.begin(), 
-                                              valid_area.end());
-                double min_val = *mm.first;
-                double max_val = *mm.second;
-                
-                double edge_min = std::floor(min_val / bin_width) * bin_width;
-                double edge_max = std::ceil(max_val / bin_width) * bin_width;
-                
-                for (double edge = edge_min; edge <= edge_max + 1e-9; 
-                     edge += bin_width) {
-                    bin_edges.push_back(edge);
-                }
-            } else {
-                bin_edges = {0.0, bin_width};
-            }
-
             std::vector<std::vector<std::string>> rows;
-            for (size_t b = 0; b + 1 < bin_edges.size(); ++b) {
-                double e_lo  = bin_edges[b];
-                double e_hi  = bin_edges[b+1];
-                double e_cen = (e_lo + e_hi) / 2.0;
-
+            for (const auto& bin : bd.slope_area.bins) {
                 // De-log to represent Normal Area mathematically
                 std::vector<std::string> row = {
-                    std::to_string(std::pow(10.0, e_lo)),
-                    std::to_string(std::pow(10.0, e_hi)),
-                    std::to_string(std::pow(10.0, e_cen))
+                    std::to_string(std::pow(10.0, bin.log_area_lower)),
+                    std::to_string(std::pow(10.0, bin.log_area_upper)),
+                    std::to_string(std::pow(10.0, bin.log_area_center))
                 };
 
-                for (double l : lambda_scales) {
-                    std::string mk = "slope_lambda" + 
-                                     std::to_string(static_cast<int>(l));
-                    auto& raw_slopes = bd.interior_metrics.at(mk);
-                    
-                    std::vector<double> bin_slopes;
-                    for (size_t i = 0; i < raw_slopes.size(); ++i) {
-                        float logA = bd.interior_dinf_logA[i];
-                        if (std::isfinite(raw_slopes[i]) && logA > -100) {
-                            if (logA >= e_lo && logA < e_hi) {
-                                bin_slopes.push_back(
-                                    static_cast<double>(raw_slopes[i]));
-                            }
-                        }
-                    }
-
-                    if (bin_slopes.empty()) {
+                for (const auto& slopes : bin.slope_by_scale) {
+                    if (!std::isfinite(slopes.p50)) {
                         for (int k=0; k<5; ++k) row.push_back("NaN");
                     } else {
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 5.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 25.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 50.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 75.0)));
-                        row.push_back(std::to_string(
-                            lsdtt::compute_percentile(bin_slopes, 95.0)));
+                        row.push_back(std::to_string(slopes.p05));
+                        row.push_back(std::to_string(slopes.p25));
+                        row.push_back(std::to_string(slopes.p50));
+                        row.push_back(std::to_string(slopes.p75));
+                        row.push_back(std::to_string(slopes.p95));
                     }
                 }
                 rows.push_back(std::move(row));
@@ -875,8 +889,6 @@ int main(int argc, char* argv[])
                 "A_max_slope_lambda" + std::to_string(static_cast<int>(l)));
         }
 
-        double bin_width = static_cast<double>(ff["slope_area_log_bin_width"]);
-
         std::vector<std::vector<std::string>> rows;
         for (auto& bd : basin_data_store) {
             std::vector<std::string> row = {
@@ -884,80 +896,8 @@ int main(int argc, char* argv[])
                 std::to_string(bd.junction_number)
             };
 
-            std::vector<double> valid_area; 
-            for (float a : bd.interior_dinf_logA) {
-                if (std::isfinite(a) && a > -100) {
-                    valid_area.push_back(static_cast<double>(a));
-                }
-            }
-            
-            std::vector<double> bin_edges;
-            if (!valid_area.empty() && bin_width > 0.0) {
-                auto mm = std::minmax_element(valid_area.begin(), 
-                                              valid_area.end());
-                double min_val = *mm.first;
-                double max_val = *mm.second;
-                
-                double edge_min = std::floor(min_val / bin_width) * bin_width;
-                double edge_max = std::ceil(max_val / bin_width) * bin_width;
-                
-                for (double edge = edge_min; edge <= edge_max + 1e-9; 
-                     edge += bin_width) {
-                    bin_edges.push_back(edge);
-                }
-            } else {
-                for (double l : lambda_scales) { 
-                    row.push_back("NaN"); 
-                    bd.a_max_slope_per_lambda[l] = std::nan("");
-                }
-                rows.push_back(std::move(row));
-                continue;
-            }
-
-            for (double l : lambda_scales) {
-                std::string mk = "slope_lambda" + 
-                                 std::to_string(static_cast<int>(l));
-                auto& raw_slopes = bd.interior_metrics.at(mk);
-                
-                std::vector<double> paired_areas, paired_slopes;
-                for(size_t i = 0; i < raw_slopes.size(); ++i) {
-                    if (std::isfinite(raw_slopes[i]) && 
-                        bd.interior_dinf_logA[i] > -100) {
-                        paired_areas.push_back(
-                            static_cast<double>(bd.interior_dinf_logA[i]));
-                        paired_slopes.push_back(
-                            static_cast<double>(raw_slopes[i]));
-                    }
-                }
-
-                if (paired_areas.empty() || bin_edges.size() < 2) {
-                    row.push_back("NaN");
-                    bd.a_max_slope_per_lambda[l] = std::nan("");
-                    continue;
-                }
-
-                auto binned_stats = lsdtt::compute_binned_descriptive_stats(
-                        paired_areas, paired_slopes, bin_edges);
-                
-                double max_median = -9999.0;
-                double a_max_log = std::nan("");
-
-                for (size_t b = 0; b < binned_stats.stats_per_bin.size(); ++b) {
-                    if (!binned_stats.stats_per_bin[b].empty()) {
-                        double m = binned_stats.stats_per_bin[b].median;
-                        if (m > max_median) {
-                            max_median = m;
-                            a_max_log = binned_stats.bin_centres[b];
-                        }
-                    }
-                }
-                
-                double a_max_norm = std::isfinite(a_max_log) ? 
-                    std::pow(10.0, a_max_log) : 
-                    std::numeric_limits<double>::quiet_NaN();
-                
-                bd.a_max_slope_per_lambda[l] = a_max_norm; // Save for Step 9
-                
+            for (const auto& scale : bd.slope_area.scales) {
+                double a_max_norm = scale.area_at_maximum_median_slope;
                 row.push_back(
                     std::isfinite(a_max_norm) ? 
                     std::to_string(a_max_norm) : "NaN");
@@ -974,7 +914,7 @@ int main(int argc, char* argv[])
     if (bf["write_outline_polygons_with_flipstats"]) {
         std::cout << "\n--- Generating Polygon Vector Shapes ---\n";
         lsdtt::vector_output_format poly_fmt = 
-            lsdtt::resolve_vector_output_format(sf["polygon_output_format"]); 
+            lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
         std::string ext = lsdtt::output_extension(poly_fmt);
         std::string out_path = pp.make_output_path("_basin_polygons", ext);
 
@@ -1021,13 +961,13 @@ int main(int argc, char* argv[])
             vals.emplace_back(static_cast<std::int64_t>(bd.outlet_flat));
             vals.emplace_back(static_cast<std::int64_t>(bd.junction_number));
 
-            for (double l : lambda_scales) {
-                double fdist = bd.flip_dist_per_lambda.count(l) ? 
-                               bd.flip_dist_per_lambda.at(l) : 
-                               std::numeric_limits<double>::quiet_NaN();
-                double amax  = bd.a_max_slope_per_lambda.count(l) ? 
-                               bd.a_max_slope_per_lambda.at(l) : 
-                               std::numeric_limits<double>::quiet_NaN();
+            for (std::size_t scale = 0; scale < lambda_scales.size(); ++scale) {
+                double fdist = scale < bd.curvature_flips.size() ?
+                    bd.curvature_flips[scale].mean_flip_distance :
+                    std::numeric_limits<double>::quiet_NaN();
+                double amax = scale < bd.slope_area.scales.size() ?
+                    bd.slope_area.scales[scale].area_at_maximum_median_slope :
+                    std::numeric_limits<double>::quiet_NaN();
 
                 // FGB/GeoPackage handles NULL via std::monostate
                 if (std::isfinite(fdist)) vals.emplace_back(fdist);

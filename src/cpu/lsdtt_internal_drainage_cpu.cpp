@@ -1807,4 +1807,57 @@ tag_upslope_of_sinks(const lsdtt_flow_base&            flow,
     return result;
 }
 
+
+std::vector<std::int64_t> sink_channel_sources(
+    const lsdtt_flow_base&     flow,
+    const sink_tagging_result& tagged,
+    const std::uint64_t        threshold_contributing_pixels
+)
+{
+    const std::size_t n_cells = flow.full_grid_size();
+
+    const std::vector<std::uint8_t>& sink_mask = tagged.sink_id_raster.get_mask();
+    const std::vector<float>&        sink_id   = tagged.sink_id_raster.get_data();
+
+    std::vector<std::uint8_t> qualifies(n_cells, 0u);
+    std::vector<std::uint8_t> has_qualifying_donor(n_cells, 0u);
+
+    for (std::size_t index = 0; index < n_cells; ++index)
+    {
+        const std::int64_t flat = static_cast<std::int64_t>(index);
+        if (sink_mask[index] != 0u &&
+            flow.s_vector_size(flat) >= threshold_contributing_pixels)
+        {
+            qualifies[index] = 1u;
+        }
+    }
+
+    for (std::size_t index = 0; index < n_cells; ++index)
+    {
+        if (qualifies[index] == 0u) continue;
+
+        const std::int64_t receiver = flow.receiver_of(static_cast<std::int64_t>(index));
+        if (receiver < 0) continue;
+
+        const std::size_t r = static_cast<std::size_t>(receiver);
+
+        // Same sink only: see the header.
+        if (qualifies[r] != 0u && sink_id[index] == sink_id[r])
+        {
+            has_qualifying_donor[r] = 1u;
+        }
+    }
+
+    std::vector<std::int64_t> sources;
+    for (std::size_t index = 0; index < n_cells; ++index)
+    {
+        if (qualifies[index] != 0u && has_qualifying_donor[index] == 0u)
+        {
+            sources.push_back(static_cast<std::int64_t>(index));
+        }
+    }
+
+    return sources;
+}
+
 } // namespace lsdtt

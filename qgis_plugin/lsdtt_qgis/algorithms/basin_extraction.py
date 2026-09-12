@@ -1,10 +1,13 @@
+import glob
 import os
+import re
 
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingOutputFile,
+    QgsProcessingOutputMultipleLayers,
     QgsProcessingOutputRasterLayer,
     QgsProcessingOutputVectorLayer,
     QgsProcessingParameterBoolean,
@@ -28,13 +31,38 @@ from .support import (
 )
 
 
+def _grouped_outline_outputs(output_folder, output_prefix, suffix, output_format):
+    extension = extension_for_format(output_format)
+    if output_format == "gpkg":
+        return [require_output(
+            output_folder, output_prefix, "{}.{}".format(suffix, extension),
+            "grouped basin outlines",
+        )]
+
+    pattern = os.path.join(
+        output_folder, "{}{}_order_*.{}".format(output_prefix, suffix, extension)
+    )
+    matches = glob.glob(pattern)
+    if not matches:
+        raise QgsProcessingException(
+            "Expected grouped basin outlines output not found: {}. "
+            "Check the run log in the output folder for warnings.".format(pattern)
+        )
+
+    def order_number(path):
+        match = re.search(r"_order_(-?\d+)\.{}$".format(re.escape(extension)), path)
+        return int(match.group(1)) if match else 0
+
+    return sorted(matches, key=lambda path: (order_number(path), path))
+
+
 class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
     RASTER_IS_FILLED = "RASTER_IS_FILLED"
     FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
-    SOURCE_THRESHOLD = "SOURCE_THRESHOLD"
+    THRESHOLD_CONTRIBUTING_PIXELS = "THRESHOLD_CONTRIBUTING_PIXELS"
     SELECTION_MODE = "SELECTION_MODE"
     BASIN_OUTLET_FILE = "BASIN_OUTLET_FILE"
     CROSSING_LINE = "CROSSING_LINE"
@@ -127,8 +155,8 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterNumber(
-                self.SOURCE_THRESHOLD,
-                "Source threshold (pixels)",
+                self.THRESHOLD_CONTRIBUTING_PIXELS,
+                "Threshold contributing pixels",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
                 defaultValue=1000,
@@ -397,7 +425,9 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_BASIN_OUTLINES, "Basin outlines"))
+        self.addOutput(
+            QgsProcessingOutputMultipleLayers(self.OUTPUT_BASIN_OUTLINES, "Basin outlines")
+        )
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_BASIN_OUTLETS, "Requested outlet points"))
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_BASINS_RASTER, "Basins raster"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_BASINS_DATAMAP, "Basins datamap CSV"))
@@ -420,7 +450,7 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
                 self.MIN_AREA_PIXELS: "basins_min_area_pixels",
                 self.MIN_STREAM_ORDER: "basins_min_stream_order",
                 self.OUTLINES_AS_POLYGON: "write_basin_outlines_as_polygon",
-                self.SOURCE_THRESHOLD: "source_pixels_threshold",
+                self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
                 self.WRITE_BASIN_OUTLETS: "write_basin_outlet_points",
                 self.WRITE_CHANNEL_LINES: "write_channel_network_lines",
                 self.WRITE_CHANNEL_POINTS: "write_channel_network_points",
@@ -434,9 +464,9 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
                 self.FILTER_BY_STREAM_ORDER: "filter_basins_by_stream_order",
                 self.FILTER_NESTED_BY_ORDER: "filter_nested_by_stream_order",
                 self.OUTLINES_PER_ORDER: "write_basin_outlines_per_order",
-                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_snap_max_search_radius_pixels",
                 self.SNAPPING_METHOD: "basin_outlet_snapping_method",
-                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_snap_min_search_radius_pixels",
                 self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
             },
         )
@@ -483,7 +513,12 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
         write_channel_lines = self.parameterAsBool(parameters, self.WRITE_CHANNEL_LINES, context)
         write_channel_points = self.parameterAsBool(parameters, self.WRITE_CHANNEL_POINTS, context)
         write_junctions = self.parameterAsBool(parameters, self.WRITE_JUNCTIONS, context)
-        outlines_as_polygon = self.parameterAsBool(parameters, self.OUTLINES_AS_POLYGON, context)
+        outlines_as_polygon = write_outlines and self.parameterAsBool(
+            parameters, self.OUTLINES_AS_POLYGON, context
+        )
+        outlines_per_order = write_outlines and self.parameterAsBool(
+            parameters, self.OUTLINES_PER_ORDER, context
+        )
 
         if not any([
             write_outlines, write_basins_raster, write_datamap, write_outlines_csv,
@@ -508,7 +543,9 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
             "boundary_conditions": boundary_conditions,
             "raster_is_filled": self.parameterAsBool(parameters, self.RASTER_IS_FILLED, context),
             "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
-            "source_pixels_threshold": self.parameterAsInt(parameters, self.SOURCE_THRESHOLD, context),
+            "threshold_contributing_pixels": self.parameterAsInt(
+                parameters, self.THRESHOLD_CONTRIBUTING_PIXELS, context
+            ),
             # selection
             "select_all_basins": selection == 0,
             "select_basins_from_outlets": selection == 1,
@@ -536,36 +573,32 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
             # outputs
             "write_basin_outlines": write_outlines,
             "write_basin_outlines_as_polygon": outlines_as_polygon,
-            "write_basin_outlines_per_order": self.parameterAsBool(
-                parameters, self.OUTLINES_PER_ORDER, context
-            ),
-            "basin_outlines_output_format": outlines_format,
+            "write_basin_outlines_per_order": outlines_per_order,
+            "basin_outlines_write_vector_format": outlines_format,
             "write_basins_raster": write_basins_raster,
             "write_basins_datamap": write_datamap,
             "write_basin_outlines_to_csv": write_outlines_csv,
             "write_selected_basin_outlets_csv": write_selected_csv,
             "write_channel_network_lines": write_channel_lines,
-            "channel_network_lines_output_format": qa_format,
+            "write_vector_format": qa_format,
             "write_channel_network_points": write_channel_points,
-            "channel_network_points_output_format": qa_format,
             "write_channel_network_junctions": write_junctions,
-            "channel_network_junctions_output_format": qa_format,
             "calculate_spatial_index": self.parameterAsBool(parameters, self.CALCULATE_SPATIAL_INDEX, context),
         }
 
         if outlet_mode:
             param_values.update({
-                "basin_outlet_file": outlet_file,
+                "basin_outlet_fname": outlet_file,
                 "basin_outlet_snapping_method": self.SNAPPING_OPTIONS[
                     self.parameterAsEnum(parameters, self.SNAPPING_METHOD, context)
                 ],
                 "basin_outlet_contributing_pixels_threshold": self.parameterAsInt(
                     parameters, self.SNAPPING_THRESHOLD, context
                 ),
-                "basin_outlet_min_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_min_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MIN_RADIUS, context
                 ),
-                "basin_outlet_max_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_max_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MAX_RADIUS, context
                 ),
                 "write_basin_outlet_points": write_outlets,
@@ -591,11 +624,22 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
 
         outputs = {}
         if write_outlines:
-            outputs[self.OUTPUT_BASIN_OUTLINES] = require_output(
-                output_folder, output_prefix,
-                "{}.{}".format(outlines_suffix, extension_for_format(outlines_format)),
-                "basin outlines",
-            )
+            if outlines_per_order:
+                outline_outputs = _grouped_outline_outputs(
+                    output_folder, output_prefix, outlines_suffix, outlines_format
+                )
+                feedback.pushInfo(
+                    "Grouped basin outlines: {} output file(s): {}".format(
+                        len(outline_outputs), ", ".join(outline_outputs)
+                    )
+                )
+            else:
+                outline_outputs = [require_output(
+                    output_folder, output_prefix,
+                    "{}.{}".format(outlines_suffix, extension_for_format(outlines_format)),
+                    "basin outlines",
+                )]
+            outputs[self.OUTPUT_BASIN_OUTLINES] = outline_outputs
         if outlet_mode and write_outlets:
             outputs[self.OUTPUT_BASIN_OUTLETS] = require_output(
                 output_folder, output_prefix, "_basin_outlet_points.fgb",

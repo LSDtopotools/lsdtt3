@@ -13,7 +13,7 @@ long_term_erosion_rate_mm_kyr: 20
 random_seed: 7
 
 run_sample_point_ensemble: true
-sample_points_csv: cosmo_tiny_points.csv
+sample_points_csv: cosmo_landslide_sample_points.csv
 n_realisations: 3
 
 scaling_scheme: uniform

@@ -1,0 +1,29 @@
+# Generates the DEM for the lsdtt-stream-burning tests.
+#
+# lsdtt-stream-burning had NO tests until 2026-09-10 -- the largest CLI in the
+# repo at ~2981 lines, and the one the remediation plan rates as its highest-risk
+# extraction (C4, the inward-draining edge carve). The plan says to do C4 "with
+# the burn tests green"; there were none, so C4 was blocked until this existed.
+#
+# Same recipe as the basin-stats fixture: fixed seed, fixed synthetic
+# georeference, so the DEM is byte-reproducible and the smoke test can carry a
+# sha256 oracle. tests/data/dem_cache is gitignored, so nothing here may depend
+# on a fetched raster.
+#
+# The parameter names are this CLI's own (cell_size, seed, diamond_square_*).
+# The shared declaration layer spells them differently; adopting it is Phase 4/5
+# work and must update this template in the same commit.
+read_path: __READ_PATH__
+read_fname: unused
+write_path: __WRITE_PATH__
+write_fname: sb
+
+write_output_format: gtiff
+n_rows: 200
+n_cols: 200
+cell_size_metres: 30.0
+random_seed: 33
+
+write_diamond_square_surface: true
+diamond_square_roughness: 0.6
+diamond_square_stddev: 120.0

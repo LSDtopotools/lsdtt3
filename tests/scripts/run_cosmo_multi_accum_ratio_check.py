@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import os
 import pathlib
@@ -64,6 +65,32 @@ def close(a: float, b: float) -> bool:
     return math.isclose(a, b, rel_tol=REL_TOL, abs_tol=ABS_TOL)
 
 
+def check_quartz_weight_oracle(path: pathlib.Path) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"missing quartz-weight raster: {path}")
+    proc = subprocess.run(
+        ["gdalinfo", "-json", "-stats", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"gdalinfo failed for {path}: {proc.stderr}")
+    info = json.loads(proc.stdout)
+    band = info["bands"][0]
+    expected = "0.0070000002160668"  # float32(0.001 * 10 * 0.7)
+    if info["size"] != [5, 5]:
+        raise RuntimeError(f"quartz-weight raster size changed: {info['size']}")
+    if band.get("noDataValue") != -9999.0:
+        raise RuntimeError(f"quartz-weight nodata changed: {band.get('noDataValue')}")
+    stats = band.get("metadata", {}).get("", {})
+    for field in ("STATISTICS_MINIMUM", "STATISTICS_MAXIMUM", "STATISTICS_MEAN"):
+        if stats.get(field) != expected:
+            raise RuntimeError(
+                f"quartz-weight {field} changed: got {stats.get(field)!r}, "
+                f"expected frozen pre-C11 value {expected!r}"
+            )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pred-exe", default=os.environ.get("LSDTT_COSMO_PREDICTION"))
@@ -98,18 +125,21 @@ def main() -> int:
             "write_fname: sa2rig",
             "calculate_multi_isotope_step_change: true",
             "calculate_accumulated_crn_concentration: true",
-            "sample_points_filename: cosmo_tiny_points.csv",
+            "sample_points_fname: cosmo_tiny_points.csv",
             "threshold_contributing_pixels: 2",
-            "snap_search_radius_pixels: 3",
+            "sample_snap_max_search_radius_pixels: 3",
             "step_change_eff_erate_old_g_cm2_yr: 0.002",
             "step_change_eff_erate_new_g_cm2_yr: 0.02",
             "time_since_change_yr: 8000",
             "quartz_fertility: 0.7",
+            "write_quartz_weight_raster: true",
         ]
         param = workdir / "sa2rig.param"
         param.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         run_cli(pred_exe, workdir, param)
+
+        check_quartz_weight_oracle(workdir / "sa2rig_QUARTZ_WEIGHT.tif")
 
         sampled = workdir / "sa2rig_sampled_crn_conc.csv"
         if not sampled.is_file():

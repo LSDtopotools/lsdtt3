@@ -36,6 +36,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -70,28 +71,6 @@ static void print_banner()
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// resolve_output_format
-// -----------------------------------------------------------------------------
-static lsdtt::raster_output_format resolve_output_format(
-    const std::string& fmt_str)
-{
-    if (fmt_str == "gtiff")
-    {
-        return lsdtt::raster_output_format::gtiff;
-    }
-    if (fmt_str == "same_as_input")
-    {
-        return lsdtt::raster_output_format::same_as_input;
-    }
-    if (fmt_str != "cog")
-    {
-        std::cerr << "Warning: unknown write_output_format '"
-                  << fmt_str << "' - defaulting to cog.\n";
-    }
-    return lsdtt::raster_output_format::cog;
 }
 
 // -----------------------------------------------------------------------------
@@ -208,9 +187,13 @@ int main(int argc, char* argv[])
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format.",
+        "Allowed values: cog, gtiff, same_as_input, png. "
         "cog: Cloud Optimised GeoTIFF (default). "
         "gtiff: plain compressed GeoTIFF. "
-        "same_as_input: match the input raster format.",
+        "same_as_input: match the input raster format. "
+        "png: 8-bit scaled image with a worldfile and PAM sidecar for "
+        "georeferencing - for quick visualisation only, not for analysis "
+        "reuse. Output files take the extension of the chosen format.",
         "General", "io", ""};
 
     //  --channel candidates
@@ -318,14 +301,14 @@ int main(int argc, char* argv[])
         "Useful later for cross-road matching.",
         "General", "switch", ""};
 
-    bool_default_map["write_channel_candidate_diagnostics"] = true;
-    help_map["write_channel_candidate_diagnostics"] = {"bool","true",
+    bool_default_map["write_channel_candidate_diagnostic_rasters"] = true;
+    help_map["write_channel_candidate_diagnostic_rasters"] = {"bool","true",
         "Write intermediate diagnostic rasters for the channel-candidate detector.",
         "Includes persistent response, depth signal, slope signal, and Hessian elongation.",
         "General", "switch", ""};
 
-    bool_default_map["write_channel_scale_diagnostics"] = false;
-    help_map["write_channel_scale_diagnostics"] = {"bool","false",
+    bool_default_map["write_channel_scale_diagnostic_rasters"] = false;
+    help_map["write_channel_scale_diagnostic_rasters"] = {"bool","false",
         "Write per-scale diagnostic rasters (verbose).",
         "Includes raw curvature, normalised channelness signal, and pairwise "
         "persistence for every scale. Disabled by default to reduce output volume.",
@@ -355,22 +338,22 @@ int main(int argc, char* argv[])
         "using circular moving windows.",
         "Relief-ratio detector", "switch", ""};
 
-    float_default_map["relief_ratio_short_radius"] = 1.8f;
-    help_map["relief_ratio_short_radius"] = {"float","1.8",
+    float_default_map["relief_ratio_short_radius_metres"] = 1.8f;
+    help_map["relief_ratio_short_radius_metres"] = {"float","1.8",
         "Short moving-window radius for local relief, in metres.",
         "Use a radius matched to the narrow drain scale. This is a radius, "
         "not a diameter.",
         "Relief-ratio detector", "param", "write_relief_ratio_raster"};
 
-    float_default_map["relief_ratio_long_radius"] = 8.0f;
-    help_map["relief_ratio_long_radius"] = {"float","8.0",
+    float_default_map["relief_ratio_long_radius_metres"] = 8.0f;
+    help_map["relief_ratio_long_radius_metres"] = {"float","8.0",
         "Long moving-window radius for local relief, in metres.",
         "Use a broader radius that captures channel-scale topographic relief.",
         "Relief-ratio detector", "param", "write_relief_ratio_raster"};
 
     // --- Relative Path Impact Index (Tarolli-style, D8 adaptation) ---
-    float_default_map["rpii_smoothing_window_metres"] = 30.0f;
-    help_map["rpii_smoothing_window_metres"] = {"float","30.0",
+    float_default_map["rpii_polyfit_lambda_metres"] = 30.0f;
+    help_map["rpii_polyfit_lambda_metres"] = {"float","30.0",
         "Surface-fitting window (lambda, metres) for the smoothed reference DEM.",
         "Computed using direct polyfit fitted_surface.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "param", ""};
@@ -405,25 +388,25 @@ int main(int argc, char* argv[])
         "After Tarolli et al. (2013, https://doi.org/10.5721/EuJRS20134610): "
         "RPII = ln((A_r - A_sm) / A_sm), where A_r is drainage area on the "
         "filled original DEM and A_sm is drainage area on the filled smoothed DEM. "
-        "Output: <write_fname>_relative_path_impact_index.tif.",
+        "Output: <write_fname>_relative_path_impact_index.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_log10_area_raw_raster"] = true;
     help_map["write_rpii_log10_area_raw_raster"] = {"bool","true",
         "Write log10(A_r) where A_r is drainage area on the filled original DEM.",
-        "Output: <write_fname>_rpii_log10_area_raw.tif.",
+        "Output: <write_fname>_rpii_log10_area_raw.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_log10_area_smoothed_raster"] = true;
     help_map["write_rpii_log10_area_smoothed_raster"] = {"bool","true",
         "Write log10(A_sm) where A_sm is drainage area on the filled smoothed DEM.",
-        "Output: <write_fname>_rpii_log10_area_smoothed.tif.",
+        "Output: <write_fname>_rpii_log10_area_smoothed.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_smoothed_surface_raster"] = false;
     help_map["write_rpii_smoothed_surface_raster"] = {"bool","false",
         "Write the surface-fitted DEM used by RPI.",
-        "Output: <write_fname>_rpii_smoothed_surface.tif.",
+        "Output: <write_fname>_rpii_smoothed_surface.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     // --- Local median + relative elevation ---
@@ -436,7 +419,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_local_median_raster"] = true;
     help_map["write_local_median_raster"] = {"bool","true",
         "Write local median elevation raster.",
-        "Output: <write_fname>_local_median.tif.",
+        "Output: <write_fname>_local_median.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_relative_elevation_raster"] = true;
@@ -444,7 +427,7 @@ int main(int argc, char* argv[])
         "Write relative elevation with respect to local median.",
         "relative = dem - local_median. Negative = below local median; "
         "positive = above local median. Output: "
-        "<write_fname>_local_median_relative_elevation.tif.",
+        "<write_fname>_local_median_relative_elevation.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     float_default_map["local_median_drain_negative_threshold_metres"] = 0.15f;
@@ -481,37 +464,37 @@ int main(int argc, char* argv[])
     bool_default_map["write_local_median_gradient_raster"] = true;
     help_map["write_local_median_gradient_raster"] = {"bool","true",
         "Write gradient magnitude of local-median relative elevation.",
-        "Output: <write_fname>_local_median_relative_elevation_gradient.tif.",
+        "Output: <write_fname>_local_median_relative_elevation_gradient.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_drain_candidate_mask_raster"] = true;
     help_map["write_local_median_drain_candidate_mask_raster"] = {"bool","true",
         "Write binary drain-candidate mask from negative relative elevation.",
-        "Output: <write_fname>_local_median_drain_candidate_mask.tif.",
+        "Output: <write_fname>_local_median_drain_candidate_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_top_mask_raster"] = true;
     help_map["write_local_median_top_mask_raster"] = {"bool","true",
         "Write binary top-surface candidate mask.",
-        "Output: <write_fname>_local_median_top_mask.tif.",
+        "Output: <write_fname>_local_median_top_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_bottom_mask_raster"] = true;
     help_map["write_local_median_bottom_mask_raster"] = {"bool","true",
         "Write binary bottom-surface candidate mask.",
-        "Output: <write_fname>_local_median_bottom_mask.tif.",
+        "Output: <write_fname>_local_median_bottom_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_hag_intermix_mask_raster"] = true;
     help_map["write_local_median_hag_intermix_mask_raster"] = {"bool","true",
         "Write binary top/bottom intermix mask.",
-        "Output: <write_fname>_local_median_hag_intermix_mask.tif.",
+        "Output: <write_fname>_local_median_hag_intermix_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_hag_transition_mask_raster"] = true;
     help_map["write_local_median_hag_transition_mask_raster"] = {"bool","true",
         "Write binary hag-transition candidate mask (intermix + high gradient).",
-        "Output: <write_fname>_local_median_hag_transition_mask.tif.",
+        "Output: <write_fname>_local_median_hag_transition_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
 
@@ -595,8 +578,8 @@ int main(int argc, char* argv[])
         "Output pixels are 1.0 for retained drain detections and 0.0 otherwise.",
         "Drain finder", "switch", ""};
 
-    bool_default_map["write_drain_diagnostics"] = true;
-    help_map["write_drain_diagnostics"] = {"bool","true",
+    bool_default_map["write_drain_diagnostic_rasters"] = true;
+    help_map["write_drain_diagnostic_rasters"] = {"bool","true",
         "Write intermediate drain-finder diagnostic rasters.",
         "Includes Frangi response, Frangi best scale, and the thresholded "
         "candidate mask before shape filtering.",
@@ -630,8 +613,8 @@ int main(int argc, char* argv[])
 
 
     // --- Valley finder (SMAP shape classifier on a smoothed DEM) ---
-    float_default_map["valley_smoothing_window_metres"] = 50.0f;
-    help_map["valley_smoothing_window_metres"] = {"float","50.0",
+    float_default_map["valley_polyfit_lambda_metres"] = 50.0f;
+    help_map["valley_polyfit_lambda_metres"] = {"float","50.0",
         "Smoothing window (polyfit lengthscale) applied before shape classification, in metres.",
         "The quadratic-fit window IS the smoothing scale. Larger values (e.g. 50 m) "
         "suppress fine channels and retain broad valley forms; smaller values resolve "
@@ -676,8 +659,8 @@ int main(int argc, char* argv[])
         "Integer codes -4..3 stored as float32 (see surface_shape_class).",
         "Valley finder (SMAP shape classifier on a smoothed DEM)", "switch", ""};
 
-    bool_default_map["write_valley_diagnostics"] = false;
-    help_map["write_valley_diagnostics"] = {"bool","false",
+    bool_default_map["write_valley_diagnostic_rasters"] = false;
+    help_map["write_valley_diagnostic_rasters"] = {"bool","false",
         "Write valley-finder diagnostic rasters.",
         "Includes the smoothed fitted surface, the principal curvatures, and the "
         "post-threshold Gaussian and mean curvatures used by the classifier.",
@@ -685,8 +668,8 @@ int main(int argc, char* argv[])
 
 
     // --- Road finder (along-contour bench detector) ---
-    float_default_map["road_smoothing_window_metres"] = 8.0f;
-    help_map["road_smoothing_window_metres"] = {"float","8.0",
+    float_default_map["road_polyfit_lambda_metres"] = 8.0f;
+    help_map["road_polyfit_lambda_metres"] = {"float","8.0",
         "Smoothing window (polyfit lengthscale) for road detection, in metres.",
         "Roads are narrow, so use a small window matched to the bench width "
         "(cut-to-fill cross-section). Larger values blur the bench edges.",
@@ -783,8 +766,8 @@ int main(int argc, char* argv[])
         "1 indicates a plausible along-contour bench/road pixel.",
         "Road finder (along-contour bench detector)", "switch", ""};
 
-    bool_default_map["write_road_diagnostics"] = false;
-    help_map["write_road_diagnostics"] = {"bool","false",
+    bool_default_map["write_road_diagnostic_rasters"] = false;
+    help_map["write_road_diagnostic_rasters"] = {"bool","false",
         "Write road-finder diagnostic rasters.",
         "Includes contour alignment, Hessian elongation, cross-feature curvature, "
         "along-feature orientation (azimuth from north), and slope.",
@@ -792,18 +775,14 @@ int main(int argc, char* argv[])
 
 
     // --- Flow-pathway road/channel discrimination ---
-    float_default_map["flow_regional_smoothing_metres"] = 100.0f;
-    help_map["flow_regional_smoothing_metres"] = {"float","100.0",
+    float_default_map["flow_regional_polyfit_lambda_metres"] = 100.0f;
+    help_map["flow_regional_polyfit_lambda_metres"] = {"float","100.0",
         "Smoothing window (polyfit lengthscale) for the regional slope vector, in metres.",
         "A large window (e.g. 100 m) gives the regional fall-line bearing that flow "
         "paths are compared against.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    int_default_map["flow_accumulation_threshold_pixels"] = 1000;
-    help_map["flow_accumulation_threshold_pixels"] = {"int","1000",
-        "Contributing-pixel threshold that defines the D8 channel network.",
-        "Pixels with at least this many upslope pixels are treated as channels.",
-        "Flow-pathway road/channel discrimination", "param", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     int_default_map["flow_path_half_window"] = 5;
     help_map["flow_path_half_window"] = {"int","5",
@@ -816,16 +795,16 @@ int main(int argc, char* argv[])
     help_map["flow_short_curvature_radius_metres"] = {"float","0.0",
         "Radius for the short-wavelength tangential curvature, in metres.",
         "The short polyfit half-wavelength is 2 * this radius; 0 uses ~3 pixels. "
-        "Output: _flow_short_tangential_curvature.tif.",
+        "Output: _flow_short_tangential_curvature.<ext>.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    float_default_map["flow_intermediate_window_metres"] = 15.0f;
-    help_map["flow_intermediate_window_metres"] = {"float","15.0",
+    float_default_map["flow_intermediate_polyfit_lambda_metres"] = 15.0f;
+    help_map["flow_intermediate_polyfit_lambda_metres"] = {"float","15.0",
         "Polyfit window (lengthscale) for the intermediate curvature rasters, in metres.",
         "Produces tangential, minimum, and maximum curvature at this scale. "
-        "Outputs: _flow_intermediate_tangential_curvature.tif, "
-        "_flow_intermediate_minimum_curvature.tif, "
-        "_flow_intermediate_maximum_curvature.tif.",
+        "Outputs: _flow_intermediate_tangential_curvature.<ext>, "
+        "_flow_intermediate_minimum_curvature.<ext>, "
+        "_flow_intermediate_maximum_curvature.<ext>.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_roughness_radius_metres"] = 2.5f;
@@ -834,11 +813,7 @@ int main(int argc, char* argv[])
         "Roads are smoother than the surrounding landscape, so they show low roughness.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    bool_default_map["flow_dem_is_filled"] = false;
-    help_map["flow_dem_is_filled"] = {"bool","false",
-        "Treat the input DEM as already pit-filled (skip internal fill).",
-        "Set true when supplying a pre-filled DEM (e.g. sd_fill.tif) to save time.",
-        "Flow-pathway road/channel discrimination", "param", ""};
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
     bool_default_map["write_flow_discrimination_rasters"] = true;
     help_map["write_flow_discrimination_rasters"] = {"bool","true",
@@ -894,8 +869,8 @@ int main(int argc, char* argv[])
         "ambiguous (not road misdirection).",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    int_default_map["flow_big_channel_threshold_pixels"] = 5000;
-    help_map["flow_big_channel_threshold_pixels"] = {"int","5000",
+    int_default_map["big_channel_threshold_contributing_pixels"] = 5000;
+    help_map["big_channel_threshold_contributing_pixels"] = {"int","5000",
         "Contributing-pixel threshold for the valley-channel point export.",
         "Channel pixels with more than this many upslope pixels that fall inside the "
         "valley-axis buffer are exported to a FlatGeobuf point layer.",
@@ -919,7 +894,7 @@ int main(int argc, char* argv[])
     help_map["write_flow_valley_channel_points_fgb"] = {"bool","true",
         "Export large channel pixels inside the valley-axis buffer to a FlatGeobuf point layer.",
         "Output: <write_fname>_flow_valley_channel_points.fgb. Selects channel pixels "
-        "with contributing pixels > flow_big_channel_threshold_pixels that lie within "
+        "with contributing pixels > big_channel_threshold_contributing_pixels that lie within "
         "the bearing-contrast buffer. Attributes: row, col, contributing_px, "
         "flow_vs_slope_angle, bearing_contrast.",
         "Flow-pathway road/channel discrimination", "switch", ""};
@@ -963,18 +938,18 @@ int main(int argc, char* argv[])
     bool_default_map["write_path_opened_raster"] = true;
     help_map["write_path_opened_raster"] = {"bool","true",
         "Write the path-opened (or path-closed) response raster.",
-        "Output: <write_fname>_path_opened.tif.",
+        "Output: <write_fname>_path_opened.<ext>.",
         "Path opening (generic curvilinear-feature filter)", "switch", ""};
 
     bool_default_map["write_path_tophat_raster"] = true;
     help_map["write_path_tophat_raster"] = {"bool","true",
         "Write the white top-hat residual (input minus path opening).",
-        "The path OPENING (_path_opened.tif) is the detector: it retains the "
+        "The path OPENING (_path_opened.<ext>) is the detector: it retains the "
         "long, laterally continuous bright threads (roads/channels) and "
         "suppresses isolated speckle. The top-hat is the complement: high where "
         "bright detail was REMOVED, i.e. the short-scale speckle and blobs that "
         "do NOT lie on a length-L path. Useful as a rejected-noise map or to "
-        "flatten background before thresholding. Output: <write_fname>_path_tophat.tif. "
+        "flatten background before thresholding. Output: <write_fname>_path_tophat.<ext>. "
         "Only meaningful for a path opening (not a closing).",
         "Path opening (generic curvilinear-feature filter)", "switch", ""};
 
@@ -997,21 +972,21 @@ int main(int argc, char* argv[])
     bool_default_map["write_coherence_raster"] = true;
     help_map["write_coherence_raster"] = {"bool","true",
         "Write the structure-tensor coherence raster (line-likeness, [0,1]).",
-        "Output: <write_fname>_coherence.tif.",
+        "Output: <write_fname>_coherence.<ext>.",
         "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     bool_default_map["write_orientation_raster"] = true;
     help_map["write_orientation_raster"] = {"bool","true",
         "Write the structure-tensor orientation raster (feature azimuth, [0,180) deg).",
         "Azimuth clockwise from north along which the feature runs. Meaningful "
-        "only where coherence is high. Output: <write_fname>_orientation_deg.tif.",
+        "only where coherence is high. Output: <write_fname>_orientation_deg.<ext>.",
         "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     bool_default_map["write_energy_raster"] = false;
     help_map["write_energy_raster"] = {"bool","false",
         "Write the structure-tensor energy raster (gradient energy, lam1+lam2).",
         "Distinguishes strong from faint oriented structure. "
-        "Output: <write_fname>_energy.tif.",
+        "Output: <write_fname>_energy.<ext>.",
         "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     // --- Track spacing (local directional periodicity) ---
@@ -1050,20 +1025,20 @@ int main(int argc, char* argv[])
     help_map["write_spacing_strength_raster"] = {"bool","true",
         "Write the periodicity strength (peak prominence) raster.",
         "High where a sharp regular spacing dominates. "
-        "Output: <write_fname>_spacing_strength.tif.",
+        "Output: <write_fname>_spacing_strength.<ext>.",
         "Track spacing (local directional periodicity)", "switch", ""};
 
     bool_default_map["write_spacing_raster"] = true;
     help_map["write_spacing_raster"] = {"bool","true",
         "Write the dominant spacing raster, in metres.",
         "Use to classify feature families (ditches vs tracks vs wave dams). "
-        "Output: <write_fname>_spacing_metres.tif.",
+        "Output: <write_fname>_spacing_metres.<ext>.",
         "Track spacing (local directional periodicity)", "switch", ""};
 
     bool_default_map["write_spacing_orientation_raster"] = false;
     help_map["write_spacing_orientation_raster"] = {"bool","false",
         "Write the spacing orientation raster (line azimuth, [0,180) deg).",
-        "Output: <write_fname>_spacing_orientation_deg.tif.",
+        "Output: <write_fname>_spacing_orientation_deg.<ext>.",
         "Track spacing (local directional periodicity)", "switch", ""};
 
     // --- Ridge lines (oriented NMS + hysteresis) ---
@@ -1092,13 +1067,15 @@ int main(int argc, char* argv[])
     bool_default_map["write_ridge_thinned_raster"] = true;
     help_map["write_ridge_thinned_raster"] = {"bool","true",
         "Write the NMS-thinned ridge response (1-pixel centrelines, response-valued).",
-        "Output: <write_fname>_ridge_thinned.tif.",
+        "Output: <write_fname>_ridge_thinned.<ext>.",
         "Ridge lines (oriented NMS + hysteresis)", "switch", ""};
 
     bool_default_map["write_ridge_mask_raster"] = true;
     help_map["write_ridge_mask_raster"] = {"bool","true",
         "Write the binary hysteresis-linked ridge centreline mask.",
-        "Output: <write_fname>_ridge_mask.tif.",
+        "Enabled by default because this is a primary product of the ridge-finder "
+        "stage, not the optional hilltop diagnostic exposed by the coupling CLI. "
+        "Output: <write_fname>_ridge_mask.<ext>.",
         "Ridge lines (oriented NMS + hysteresis)", "switch", ""};
 
     // --- Thin-line extractor (separate lines from blobs/speckle) ---
@@ -1154,11 +1131,11 @@ int main(int argc, char* argv[])
     bool_default_map["write_thin_mask_raster"] = true;
     help_map["write_thin_mask_raster"] = {"bool","true",
         "Write the final thin-line mask.",
-        "Output: <write_fname>_thin_mask.tif.",
+        "Output: <write_fname>_thin_mask.<ext>.",
         "Thin-line extractor (separate lines from blobs/speckle)", "switch", ""};
 
-    bool_default_map["write_thin_diagnostics"] = false;
-    help_map["write_thin_diagnostics"] = {"bool","false",
+    bool_default_map["write_thin_diagnostic_rasters"] = false;
+    help_map["write_thin_diagnostic_rasters"] = {"bool","false",
         "Write the thresholded binary and the blob-removed intermediate.","",
         "Thin-line extractor (separate lines from blobs/speckle)", "switch", ""};
 
@@ -1181,14 +1158,14 @@ int main(int argc, char* argv[])
     bool_default_map["write_roughness_raster"] = true;
     help_map["write_roughness_raster"] = {"bool","true",
         "Write the roughness raster (stddev, or 1-R for circular input).",
-        "Output: <write_fname>_input_roughness.tif.",
+        "Output: <write_fname>_input_roughness.<ext>.",
         "Generic roughness / consistency of an input raster", "switch", ""};
 
     bool_default_map["write_consistency_raster"] = true;
     help_map["write_consistency_raster"] = {"bool","true",
         "Write the circular consistency raster R (only for roughness_circular=true).",
         "High where the angle is locally consistent. Output: "
-        "<write_fname>_input_consistency.tif.",
+        "<write_fname>_input_consistency.<ext>.",
         "Generic roughness / consistency of an input raster", "switch", ""};
 
     // --- Smoothness road extractor (roads = smooth ribbons) ---
@@ -1243,11 +1220,11 @@ int main(int argc, char* argv[])
     bool_default_map["write_smooth_road_mask_raster"] = true;
     help_map["write_smooth_road_mask_raster"] = {"bool","true",
         "Write the final smoothness-based road mask.",
-        "Output: <write_fname>_smooth_road_mask.tif.",
+        "Output: <write_fname>_smooth_road_mask.<ext>.",
         "Smoothness road extractor (roads = smooth ribbons)", "switch", ""};
 
-    bool_default_map["write_smooth_diagnostics"] = false;
-    help_map["write_smooth_diagnostics"] = {"bool","false",
+    bool_default_map["write_smooth_diagnostic_rasters"] = false;
+    help_map["write_smooth_diagnostic_rasters"] = {"bool","false",
         "Write roughness, smoothness, and path-opened smoothness diagnostics.","",
         "Smoothness road extractor (roads = smooth ribbons)", "switch", ""};
 
@@ -1276,7 +1253,7 @@ int main(int argc, char* argv[])
     string_default_map["road_valley_curvature_fname"] = "";
     help_map["road_valley_curvature_fname"] = {"string","",
         "Optional regional-curvature raster for the valley veto (relative to read path).",
-        "Typically <prefix>_flow_regional_valley_curvature.tif from "
+        "Typically <prefix>_flow_regional_valley_curvature.<ext> from "
         "flow_road_discrimination. Empty = no valley veto. Centreline pixels "
         "where this raster >= road_valley_curvature_veto_threshold are removed.",
         "Road extractor (composed pipeline)", "param", ""};
@@ -1294,7 +1271,7 @@ int main(int argc, char* argv[])
         "Runs the directional-periodicity detector on the response and labels a "
         "component a track when at least road_track_min_fraction of its pixels lie "
         "in a field with periodicity strength >= road_track_min_strength. Uses the "
-        "spacing_* parameters. Output: <write_fname>_road_extract_classified.tif.",
+        "spacing_* parameters. Output: <write_fname>_road_extract_classified.<ext>.",
         "Road extractor (composed pipeline)", "param", ""};
 
     float_default_map["road_track_min_strength"] = 6.0f;
@@ -1323,11 +1300,11 @@ int main(int argc, char* argv[])
     bool_default_map["write_road_extract_mask_raster"] = true;
     help_map["write_road_extract_mask_raster"] = {"bool","true",
         "Write the final extracted road mask.",
-        "Output: <write_fname>_road_extract_mask.tif.",
+        "Output: <write_fname>_road_extract_mask.<ext>.",
         "Road extractor (composed pipeline)", "switch", ""};
 
-    bool_default_map["write_road_extract_diagnostics"] = false;
-    help_map["write_road_extract_diagnostics"] = {"bool","false",
+    bool_default_map["write_road_extract_diagnostic_rasters"] = false;
+    help_map["write_road_extract_diagnostic_rasters"] = {"bool","false",
         "Write road-extractor intermediate rasters.",
         "Diffused response, coherence, NMS-thinned ridge, and the pre-cleanup "
         "ridge mask.",
@@ -1377,7 +1354,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_diffused_raster"] = true;
     help_map["write_diffused_raster"] = {"bool","true",
         "Write the coherence-enhanced (diffused) raster.",
-        "Output: <write_fname>_diffused.tif.",
+        "Output: <write_fname>_diffused.<ext>.",
         "Coherence-enhancing diffusion", "switch", ""};
 
     // -------------------------------------------------------------------------
@@ -1407,6 +1384,28 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"write_channel_candidate_diagnostics", "write_channel_candidate_diagnostic_rasters"},
+        {"write_channel_scale_diagnostics", "write_channel_scale_diagnostic_rasters"},
+        {"write_drain_diagnostics", "write_drain_diagnostic_rasters"},
+        {"write_valley_diagnostics", "write_valley_diagnostic_rasters"},
+        {"write_road_diagnostics", "write_road_diagnostic_rasters"},
+        {"write_road_extract_diagnostics", "write_road_extract_diagnostic_rasters"},
+        {"write_thin_diagnostics", "write_thin_diagnostic_rasters"},
+        {"write_smooth_diagnostics", "write_smooth_diagnostic_rasters"},
+        {"flow_dem_is_filled", "raster_is_filled"},
+        {"flow_accumulation_threshold_pixels",
+         "threshold_contributing_pixels"},
+        {"flow_big_channel_threshold_pixels",
+         "big_channel_threshold_contributing_pixels"},
+        {"relief_ratio_short_radius", "relief_ratio_short_radius_metres"},
+        {"relief_ratio_long_radius", "relief_ratio_long_radius_metres"},
+        {"rpii_smoothing_window_metres", "rpii_polyfit_lambda_metres"},
+        {"valley_smoothing_window_metres", "valley_polyfit_lambda_metres"},
+        {"road_smoothing_window_metres", "road_polyfit_lambda_metres"},
+        {"flow_regional_smoothing_metres", "flow_regional_polyfit_lambda_metres"},
+        {"flow_intermediate_window_metres", "flow_intermediate_polyfit_lambda_metres"} });
+
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -1423,35 +1422,49 @@ int main(int argc, char* argv[])
     const int         n_threads    = ifs.at("n_threads");
     
     const double relief_ratio_short_radius =
-        static_cast<double>(ff.at("relief_ratio_short_radius"));
+        static_cast<double>(ff.at("relief_ratio_short_radius_metres"));
     const double relief_ratio_long_radius =
-        static_cast<double>(ff.at("relief_ratio_long_radius"));
+        static_cast<double>(ff.at("relief_ratio_long_radius_metres"));
 
 
     lsdtt::raster_output_format out_fmt;
+    std::string output_ext = ".tif";
     lsdtt::channel_candidate_request cc_request;
     lsdtt::drain_request drain_request;
     lsdtt::valley_request valley_request;
     lsdtt::road_request road_request;
     lsdtt::road_flow_request road_flow_request;
+    int threshold_contributing_pixels = 1000;
 
     try
     {
-        out_fmt = resolve_output_format(sf.at("write_output_format"));
+        out_fmt = lsdtt::resolve_raster_output_format(sf.at("write_output_format"));
+
+        // The output extension follows the output format: png outputs get a
+        // .png extension, same_as_input inherits the input raster extension.
+        if (out_fmt == lsdtt::raster_output_format::png)
+        {
+            output_ext = ".png";
+        }
+        else if (out_fmt == lsdtt::raster_output_format::same_as_input)
+        {
+            output_ext = pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext();
+        }
 
         road_flow_request.regional_smoothing_metres =
-            static_cast<double>(ff.at("flow_regional_smoothing_metres"));
+            static_cast<double>(ff.at("flow_regional_polyfit_lambda_metres"));
+        threshold_contributing_pixels = ifs.at("threshold_contributing_pixels");
         road_flow_request.flow_accumulation_threshold_pixels =
-            ifs.at("flow_accumulation_threshold_pixels");
+            threshold_contributing_pixels;
         road_flow_request.flow_path_half_window =
             ifs.at("flow_path_half_window");
         road_flow_request.short_curvature_radius_metres =
             static_cast<double>(ff.at("flow_short_curvature_radius_metres"));
         road_flow_request.intermediate_window_metres =
-            static_cast<double>(ff.at("flow_intermediate_window_metres"));
+            static_cast<double>(ff.at("flow_intermediate_polyfit_lambda_metres"));
         road_flow_request.roughness_radius_metres =
             static_cast<double>(ff.at("flow_roughness_radius_metres"));
-        road_flow_request.dem_is_filled = bf.at("flow_dem_is_filled");
+        road_flow_request.dem_is_filled = bf.at("raster_is_filled");
         road_flow_request.n_threads = n_threads;
         road_flow_request.valley_curvature_metric =
             resolve_curvature_metric(sf.at("flow_valley_curvature_metric"));
@@ -1467,7 +1480,7 @@ int main(int argc, char* argv[])
             static_cast<double>(ff.at("flow_valley_buffer_radius_metres"));
 
         valley_request.smoothing_window_metres =
-            static_cast<double>(ff.at("valley_smoothing_window_metres"));
+            static_cast<double>(ff.at("valley_polyfit_lambda_metres"));
         valley_request.curvature_threshold =
             static_cast<double>(ff.at("valley_curvature_threshold"));
         valley_request.polyfit_z_factor =
@@ -1481,7 +1494,7 @@ int main(int argc, char* argv[])
         valley_request.include_synform          = bf.at("valley_include_synform");
 
         road_request.smoothing_window_metres =
-            static_cast<double>(ff.at("road_smoothing_window_metres"));
+            static_cast<double>(ff.at("road_polyfit_lambda_metres"));
         road_request.polyfit_z_factor =
             static_cast<double>(ff.at("polyfit_z_factor"));
         road_request.flat_slope_tolerance =
@@ -1691,20 +1704,20 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_drain_mask_raster"))
             {
-                const std::string o = pp.make_output_path( "_drain_mask.tif");
+                const std::string o = pp.make_output_path( "_drain_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.drain_mask.get_data(), result.drain_mask.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_drain_diagnostics"))
+            if (bf.at("write_drain_diagnostic_rasters"))
             {
-                const std::string o1 = pp.make_output_path( "_drain_frangi_response.tif");
-                const std::string o2 = pp.make_output_path( "_drain_frangi_scale.tif");
-                const std::string o3 = pp.make_output_path( "_drain_threshold_mask.tif");
-                const std::string o4 = pp.make_output_path( "_drain_accumulation_curvature.tif");
-                const std::string o5 = pp.make_output_path( "_drain_log10_abs_accumulation_curvature.tif");
-                const std::string o6 = pp.make_output_path( "_drain_blurred_log10_abs_accumulation_curvature.tif");
-                const std::string o7 = pp.make_output_path( "_drain_masked_frangi_scale.tif");
+                const std::string o1 = pp.make_output_path( "_drain_frangi_response" + output_ext);
+                const std::string o2 = pp.make_output_path( "_drain_frangi_scale" + output_ext);
+                const std::string o3 = pp.make_output_path( "_drain_threshold_mask" + output_ext);
+                const std::string o4 = pp.make_output_path( "_drain_accumulation_curvature" + output_ext);
+                const std::string o5 = pp.make_output_path( "_drain_log10_abs_accumulation_curvature" + output_ext);
+                const std::string o6 = pp.make_output_path( "_drain_blurred_log10_abs_accumulation_curvature" + output_ext);
+                const std::string o7 = pp.make_output_path( "_drain_masked_frangi_scale" + output_ext);
 
                 std::cout << "Writing: " << o1 << "\n";
                 loader.write_full(result.frangi_response.get_data(), result.frangi_response.get_meta(), o1, out_fmt);
@@ -1756,35 +1769,35 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_channel_candidate_score_raster"))
             {
-                const std::string o = pp.make_output_path( "_channel_candidate_score.tif");
+                const std::string o = pp.make_output_path( "_channel_candidate_score" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.score.get_data(), result.score.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_channel_candidate_mask_raster"))
             {
-                const std::string o = pp.make_output_path( "_channel_candidate_mask.tif");
+                const std::string o = pp.make_output_path( "_channel_candidate_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_channel_best_scale_raster"))
             {
-                const std::string o = pp.make_output_path( "_channel_best_scale.tif");
+                const std::string o = pp.make_output_path( "_channel_best_scale" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.best_scale_metres.get_data(), result.best_scale_metres.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_channel_candidate_diagnostics"))
+            if (bf.at("write_channel_candidate_diagnostic_rasters"))
             {
                 const std::string o_persistent =
-                    pp.make_output_path( "_channel_candidate_persistent.tif");
+                    pp.make_output_path( "_channel_candidate_persistent" + output_ext);
                 const std::string o_depth =
-                    pp.make_output_path( "_channel_candidate_depth_signal.tif");
+                    pp.make_output_path( "_channel_candidate_depth_signal" + output_ext);
                 const std::string o_slope =
-                    pp.make_output_path( "_channel_candidate_slope_signal.tif");
+                    pp.make_output_path( "_channel_candidate_slope_signal" + output_ext);
                 const std::string o_elong =
-                    pp.make_output_path( "_channel_candidate_hessian_elongation.tif");
+                    pp.make_output_path( "_channel_candidate_hessian_elongation" + output_ext);
 
                 std::cout << "Writing: " << o_persistent << "\n";
                 loader.write_full(result.persistent.get_data(), result.persistent.get_meta(), o_persistent, out_fmt);
@@ -1799,13 +1812,13 @@ int main(int argc, char* argv[])
                 loader.write_full(result.hessian_elongation.get_data(), result.hessian_elongation.get_meta(), o_elong, out_fmt);
             }
 
-            if (bf.at("write_channel_scale_diagnostics"))
+            if (bf.at("write_channel_scale_diagnostic_rasters"))
             {
                 for (std::size_t i = 0; i < result.curvature_raw_by_scale.size(); ++i)
                 {
                     const std::string suffix =
                         "_channel_candidate_curv_raw_s"
-                        + std::to_string(i) + ".tif";
+                        + std::to_string(i) + output_ext;
                     const std::string o = pp.make_output_path( suffix);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(result.curvature_raw_by_scale[i].get_data(), result.curvature_raw_by_scale[i].get_meta(), o, out_fmt);
@@ -1815,7 +1828,7 @@ int main(int argc, char* argv[])
                 {
                     const std::string suffix =
                         "_channel_candidate_curv_signal_s"
-                        + std::to_string(i) + ".tif";
+                        + std::to_string(i) + output_ext;
                     const std::string o = pp.make_output_path( suffix);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(result.curvature_signal_by_scale[i].get_data(), result.curvature_signal_by_scale[i].get_meta(), o, out_fmt);
@@ -1825,7 +1838,7 @@ int main(int argc, char* argv[])
                 {
                     const std::string suffix =
                         "_channel_candidate_persistence_pair"
-                        + std::to_string(i) + ".tif";
+                        + std::to_string(i) + output_ext;
                     const std::string o = pp.make_output_path( suffix);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(result.persistence_by_adjacent_scale_pair[i].get_data(), result.persistence_by_adjacent_scale_pair[i].get_meta(), o, out_fmt);
@@ -1849,7 +1862,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_relief_ratio_raster"))
             {
-                const std::string o = pp.make_output_path( "_relief_ratio.tif");
+                const std::string o = pp.make_output_path( "_relief_ratio" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(relief_ratio.get_data(), relief_ratio.get_meta(), o, out_fmt);
             }
@@ -1857,7 +1870,7 @@ int main(int argc, char* argv[])
         else if (feature_type == "relative_path_impact")
         {
             const double smooth_window =
-                static_cast<double>(ff.at("rpii_smoothing_window_metres"));
+                static_cast<double>(ff.at("rpii_polyfit_lambda_metres"));
             const double fill_min_slope =
                 static_cast<double>(ff.at("rpii_fill_min_slope"));
             const std::string bc = sf.at("rpii_boundary_conditions");
@@ -2019,7 +2032,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_rpii_smoothed_surface_raster"))
             {
-                const std::string o = pp.make_output_path("_rpii_smoothed_surface.tif");
+                const std::string o = pp.make_output_path("_rpii_smoothed_surface" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     smoothed.get_data(),
@@ -2031,7 +2044,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_rpii_raster"))
             {
-                const std::string o = pp.make_output_path("_relative_path_impact_index.tif");
+                const std::string o = pp.make_output_path("_relative_path_impact_index" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     rpi.get_data(),
@@ -2043,7 +2056,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_rpii_log10_area_raw_raster"))
             {
-                const std::string o = pp.make_output_path("_rpii_log10_area_raw.tif");
+                const std::string o = pp.make_output_path("_rpii_log10_area_raw" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     log10_area_raw.get_data(),
@@ -2055,7 +2068,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_rpii_log10_area_smoothed_raster"))
             {
-                const std::string o = pp.make_output_path("_rpii_log10_area_smoothed.tif");
+                const std::string o = pp.make_output_path("_rpii_log10_area_smoothed" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     log10_area_smoothed.get_data(),
@@ -2246,7 +2259,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_local_median_raster"))
             {
-                const std::string o = pp.make_output_path("_local_median.tif");
+                const std::string o = pp.make_output_path("_local_median" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     local_median.get_data(),
@@ -2259,7 +2272,7 @@ int main(int argc, char* argv[])
             if (bf.at("write_local_median_relative_elevation_raster"))
             {
                 const std::string o =
-                    pp.make_output_path("_local_median_relative_elevation.tif");
+                    pp.make_output_path("_local_median_relative_elevation" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     relative_elevation.get_data(),
@@ -2272,7 +2285,7 @@ int main(int argc, char* argv[])
             if (bf.at("write_local_median_gradient_raster"))
             {
                 const std::string o = pp.make_output_path(
-                    "_local_median_relative_elevation_gradient.tif");
+                    "_local_median_relative_elevation_gradient" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     rel_gradient.get_data(),
@@ -2285,7 +2298,7 @@ int main(int argc, char* argv[])
             if (bf.at("write_local_median_drain_candidate_mask_raster"))
             {
                 const std::string o =
-                    pp.make_output_path("_local_median_drain_candidate_mask.tif");
+                    pp.make_output_path("_local_median_drain_candidate_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     drain_candidate_mask.get_data(),
@@ -2297,7 +2310,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_local_median_top_mask_raster"))
             {
-                const std::string o = pp.make_output_path("_local_median_top_mask.tif");
+                const std::string o = pp.make_output_path("_local_median_top_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     top_mask.get_data(),
@@ -2310,7 +2323,7 @@ int main(int argc, char* argv[])
             if (bf.at("write_local_median_bottom_mask_raster"))
             {
                 const std::string o =
-                    pp.make_output_path("_local_median_bottom_mask.tif");
+                    pp.make_output_path("_local_median_bottom_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     bottom_mask.get_data(),
@@ -2323,7 +2336,7 @@ int main(int argc, char* argv[])
             if (bf.at("write_local_median_hag_intermix_mask_raster"))
             {
                 const std::string o =
-                    pp.make_output_path("_local_median_hag_intermix_mask.tif");
+                    pp.make_output_path("_local_median_hag_intermix_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     hag_intermix_mask.get_data(),
@@ -2336,7 +2349,7 @@ int main(int argc, char* argv[])
             if (bf.at("write_local_median_hag_transition_mask_raster"))
             {
                 const std::string o =
-                    pp.make_output_path("_local_median_hag_transition_mask.tif");
+                    pp.make_output_path("_local_median_hag_transition_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(
                     hag_transition_mask.get_data(),
@@ -2365,25 +2378,25 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_valley_mask_raster"))
             {
-                const std::string o = pp.make_output_path( "_valley_mask.tif");
+                const std::string o = pp.make_output_path( "_valley_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.valley_mask.get_data(), result.valley_mask.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_valley_shape_class_raster"))
             {
-                const std::string o = pp.make_output_path( "_valley_shape_class.tif");
+                const std::string o = pp.make_output_path( "_valley_shape_class" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.shape_class.get_data(), result.shape_class.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_valley_diagnostics"))
+            if (bf.at("write_valley_diagnostic_rasters"))
             {
-                const std::string o1 = pp.make_output_path( "_valley_fitted_surface.tif");
-                const std::string o2 = pp.make_output_path( "_valley_maximum_curvature.tif");
-                const std::string o3 = pp.make_output_path( "_valley_minimum_curvature.tif");
-                const std::string o4 = pp.make_output_path( "_valley_gaussian_curvature.tif");
-                const std::string o5 = pp.make_output_path( "_valley_mean_curvature.tif");
+                const std::string o1 = pp.make_output_path( "_valley_fitted_surface" + output_ext);
+                const std::string o2 = pp.make_output_path( "_valley_maximum_curvature" + output_ext);
+                const std::string o3 = pp.make_output_path( "_valley_minimum_curvature" + output_ext);
+                const std::string o4 = pp.make_output_path( "_valley_gaussian_curvature" + output_ext);
+                const std::string o5 = pp.make_output_path( "_valley_mean_curvature" + output_ext);
 
                 std::cout << "Writing: " << o1 << "\n";
                 loader.write_full(result.fitted_surface.get_data(), result.fitted_surface.get_meta(), o1, out_fmt);
@@ -2421,25 +2434,25 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_road_score_raster"))
             {
-                const std::string o = pp.make_output_path( "_road_score.tif");
+                const std::string o = pp.make_output_path( "_road_score" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.score.get_data(), result.score.get_meta(), o, out_fmt);
             }
 
             if (bf.at("write_road_mask_raster"))
             {
-                const std::string o = pp.make_output_path( "_road_mask.tif");
+                const std::string o = pp.make_output_path( "_road_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_road_diagnostics"))
+            if (bf.at("write_road_diagnostic_rasters"))
             {
-                const std::string o1 = pp.make_output_path( "_road_contour_alignment.tif");
-                const std::string o2 = pp.make_output_path( "_road_hessian_elongation.tif");
-                const std::string o3 = pp.make_output_path( "_road_cross_curvature.tif");
-                const std::string o4 = pp.make_output_path( "_road_orientation_deg.tif");
-                const std::string o5 = pp.make_output_path( "_road_slope.tif");
+                const std::string o1 = pp.make_output_path( "_road_contour_alignment" + output_ext);
+                const std::string o2 = pp.make_output_path( "_road_hessian_elongation" + output_ext);
+                const std::string o3 = pp.make_output_path( "_road_cross_curvature" + output_ext);
+                const std::string o4 = pp.make_output_path( "_road_orientation_deg" + output_ext);
+                const std::string o5 = pp.make_output_path( "_road_slope" + output_ext);
 
                 std::cout << "Writing: " << o1 << "\n";
                 loader.write_full(result.contour_alignment.get_data(), result.contour_alignment.get_meta(), o1, out_fmt);
@@ -2459,7 +2472,7 @@ int main(int argc, char* argv[])
             std::cout << "Regional smoothing   : "
                       << road_flow_request.regional_smoothing_metres << " m\n";
             std::cout << "Accum. threshold     : "
-                      << road_flow_request.flow_accumulation_threshold_pixels << " px\n";
+                      << threshold_contributing_pixels << " px\n";
             std::cout << "Flow-path half window: "
                       << road_flow_request.flow_path_half_window << " px\n";
             std::cout << "Roughness radius     : "
@@ -2479,26 +2492,27 @@ int main(int argc, char* argv[])
                 };
                 const out_entry entries[] =
                 {
-                    {result.regional_slope_bearing, "_flow_regional_slope_bearing.tif"},
-                    {result.regional_slope,         "_flow_regional_slope.tif"},
-                    {result.contributing_pixels,    "_flow_contributing_pixels.tif"},
-                    {result.channel_mask,           "_flow_channel_mask.tif"},
-                    {result.flow_path_bearing,      "_flow_path_bearing.tif"},
-                    {result.flow_vs_slope_angle,    "_flow_vs_slope_angle.tif"},
-                    {result.inflated_flow_path_divergence, "_inflated_flow_path_divergence.tif"},
-                    {result.short_gradient,             "_flow_short_gradient.tif"},
-                    {result.short_tangential_curvature, "_flow_short_tangential_curvature.tif"},
-                    {result.intermediate_tangential_curvature, "_flow_intermediate_tangential_curvature.tif"},
-                    {result.intermediate_minimum_curvature,    "_flow_intermediate_minimum_curvature.tif"},
-                    {result.intermediate_maximum_curvature,    "_flow_intermediate_maximum_curvature.tif"},
-                    {result.roughness,              "_flow_roughness.tif"},
-                    {result.regional_valley_curvature, "_flow_regional_valley_curvature.tif"},
-                    {result.regional_bearing_contrast, "_flow_bearing_contrast.tif"},
-                    {result.valley_axis_buffer_mask,   "_flow_valley_axis_buffer.tif"}
+                    {result.regional_slope_bearing, "_flow_regional_slope_bearing"},
+                    {result.regional_slope,         "_flow_regional_slope"},
+                    {result.contributing_pixels,    "_flow_contributing_pixels"},
+                    {result.channel_mask,           "_flow_channel_mask"},
+                    {result.flow_path_bearing,      "_flow_path_bearing"},
+                    {result.flow_vs_slope_angle,    "_flow_vs_slope_angle"},
+                    {result.inflated_flow_path_divergence, "_inflated_flow_path_divergence"},
+                    {result.short_gradient,             "_flow_short_gradient"},
+                    {result.short_tangential_curvature, "_flow_short_tangential_curvature"},
+                    {result.intermediate_tangential_curvature, "_flow_intermediate_tangential_curvature"},
+                    {result.intermediate_minimum_curvature,    "_flow_intermediate_minimum_curvature"},
+                    {result.intermediate_maximum_curvature,    "_flow_intermediate_maximum_curvature"},
+                    {result.roughness,              "_flow_roughness"},
+                    {result.regional_valley_curvature, "_flow_regional_valley_curvature"},
+                    {result.regional_bearing_contrast, "_flow_bearing_contrast"},
+                    {result.valley_axis_buffer_mask,   "_flow_valley_axis_buffer"}
                 };
                 for (const auto& e : entries)
                 {
-                    const std::string o = pp.make_output_path(e.suffix);
+                    const std::string o =
+                        pp.make_output_path(std::string(e.suffix) + output_ext);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(e.raster.get_data(), e.raster.get_meta(), o, out_fmt);
                 }
@@ -2534,34 +2548,23 @@ int main(int argc, char* argv[])
                 const std::string o = pp.make_output_path("_flow_divergent_points.fgb");
                 std::cout << "Writing: " << o << "\n";
                 lsdtt::lsdtt_data_loader vwriter;
-                vwriter.begin_vector_write(o, "flow_divergent_points", schema,
-                    fmeta.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
-
-                std::size_t n_pts = 0;
-                for (int r = 0; r < frows; ++r)
-                {
-                    for (int c = 0; c < fcols; ++c)
-                    {
-                        const std::size_t idx =
-                            static_cast<std::size_t>(r) * fcols + c;
-                        if (chm[idx] < 0.5f) continue;
-                        if (!angm[idx]) continue;
-                        if (static_cast<double>(ang[idx]) < min_ang) continue;
-
-                        const lsdtt::lsdtt_xy xy =
-                            lsdtt::cell_center_from_row_col(fmeta, r, c);
-                        vwriter.write_point(xy.x, xy.y, {
-                            static_cast<std::int64_t>(r),
-                            static_cast<std::int64_t>(c),
-                            static_cast<std::int64_t>(cp[idx]),
-                            static_cast<double>(ang[idx]),
-                            static_cast<double>(brg[idx]),
-                            static_cast<double>(rb[idx])
-                        });
-                        ++n_pts;
-                    }
-                }
-                vwriter.finish_vector_write();
+                const std::size_t n_pts = lsdtt::write_masked_pixels_as_points(
+                    vwriter, fmeta, frows, fcols,
+                    o, "flow_divergent_points", schema,
+                    lsdtt::point_output_format::flatgeobuf, false,
+                    [&](int, int, std::size_t idx) {
+                        return chm[idx] >= 0.5f && angm[idx] &&
+                               static_cast<double>(ang[idx]) >= min_ang;
+                    },
+                    [&](int r, int c, std::size_t idx)
+                        -> std::vector<lsdtt::lsdtt_vector_field_value> {
+                        return { static_cast<std::int64_t>(r),
+                                 static_cast<std::int64_t>(c),
+                                 static_cast<std::int64_t>(cp[idx]),
+                                 static_cast<double>(ang[idx]),
+                                 static_cast<double>(brg[idx]),
+                                 static_cast<double>(rb[idx]) };
+                    });
                 std::cout << "  " << n_pts << " divergent channel points written.\n";
             }
 
@@ -2576,7 +2579,8 @@ int main(int argc, char* argv[])
                 const auto& bufm = result.valley_axis_buffer_mask.get_mask();
                 const auto& con  = result.regional_bearing_contrast.get_data();
                 const std::int64_t big_thr =
-                    static_cast<std::int64_t>(ifs.at("flow_big_channel_threshold_pixels"));
+                    static_cast<std::int64_t>(
+                        ifs.at("big_channel_threshold_contributing_pixels"));
 
                 lsdtt::lsdtt_vector_schema schema;
                 schema.field_names = {"row","col","contributing_px",
@@ -2591,35 +2595,25 @@ int main(int argc, char* argv[])
                 const std::string o = pp.make_output_path("_flow_valley_channel_points.fgb");
                 std::cout << "Writing: " << o << "\n";
                 lsdtt::lsdtt_data_loader vwriter;
-                vwriter.begin_vector_write(o, "flow_valley_channel_points", schema,
-                    fmeta.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
-
-                std::size_t n_pts = 0;
-                for (int r = 0; r < frows; ++r)
-                {
-                    for (int c = 0; c < fcols; ++c)
-                    {
-                        const std::size_t idx =
-                            static_cast<std::size_t>(r) * fcols + c;
-                        if (chm[idx] < 0.5f) continue;
-                        if (static_cast<std::int64_t>(cp[idx]) <= big_thr) continue;
-                        if (!bufm[idx] || buf[idx] < 0.5f) continue;
-
-                        const lsdtt::lsdtt_xy xy =
-                            lsdtt::cell_center_from_row_col(fmeta, r, c);
+                const std::size_t n_pts = lsdtt::write_masked_pixels_as_points(
+                    vwriter, fmeta, frows, fcols,
+                    o, "flow_valley_channel_points", schema,
+                    lsdtt::point_output_format::flatgeobuf, false,
+                    [&](int, int, std::size_t idx) {
+                        return chm[idx] >= 0.5f &&
+                               static_cast<std::int64_t>(cp[idx]) > big_thr &&
+                               bufm[idx] && buf[idx] >= 0.5f;
+                    },
+                    [&](int r, int c, std::size_t idx)
+                        -> std::vector<lsdtt::lsdtt_vector_field_value> {
                         const double angle_val =
                             angm[idx] ? static_cast<double>(ang[idx]) : 0.0;
-                        vwriter.write_point(xy.x, xy.y, {
-                            static_cast<std::int64_t>(r),
-                            static_cast<std::int64_t>(c),
-                            static_cast<std::int64_t>(cp[idx]),
-                            angle_val,
-                            static_cast<double>(con[idx])
-                        });
-                        ++n_pts;
-                    }
-                }
-                vwriter.finish_vector_write();
+                        return { static_cast<std::int64_t>(r),
+                                 static_cast<std::int64_t>(c),
+                                 static_cast<std::int64_t>(cp[idx]),
+                                 angle_val,
+                                 static_cast<double>(con[idx]) };
+                    });
                 std::cout << "  " << n_pts << " valley-axis big-channel points written.\n";
             }
         }
@@ -2648,7 +2642,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_path_opened_raster"))
             {
-                const std::string o = pp.make_output_path("_path_opened.tif");
+                const std::string o = pp.make_output_path("_path_opened" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(opened.get_data(), opened.get_meta(), o, out_fmt);
             }
@@ -2676,7 +2670,7 @@ int main(int argc, char* argv[])
                 lsdtt::lsdtt_raster_cpu tophat(
                     std::move(th_data), std::move(th_mask), tmeta);
 
-                const std::string o = pp.make_output_path("_path_tophat.tif");
+                const std::string o = pp.make_output_path("_path_tophat" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(tophat.get_data(), tophat.get_meta(), o, out_fmt);
             }
@@ -2698,19 +2692,19 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_coherence_raster"))
             {
-                const std::string o = pp.make_output_path("_coherence.tif");
+                const std::string o = pp.make_output_path("_coherence" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(st.coherence.get_data(), st.coherence.get_meta(), o, out_fmt);
             }
             if (bf.at("write_orientation_raster"))
             {
-                const std::string o = pp.make_output_path("_orientation_deg.tif");
+                const std::string o = pp.make_output_path("_orientation_deg" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(st.orientation_deg.get_data(), st.orientation_deg.get_meta(), o, out_fmt);
             }
             if (bf.at("write_energy_raster"))
             {
-                const std::string o = pp.make_output_path("_energy.tif");
+                const std::string o = pp.make_output_path("_energy" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(st.energy.get_data(), st.energy.get_meta(), o, out_fmt);
             }
@@ -2737,7 +2731,7 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_diffused_raster"))
             {
-                const std::string o = pp.make_output_path("_diffused.tif");
+                const std::string o = pp.make_output_path("_diffused" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(diffused.get_data(), diffused.get_meta(), o, out_fmt);
             }
@@ -2786,13 +2780,13 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_ridge_thinned_raster"))
             {
-                const std::string o = pp.make_output_path("_ridge_thinned.tif");
+                const std::string o = pp.make_output_path("_ridge_thinned" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(rr.thinned.get_data(), rr.thinned.get_meta(), o, out_fmt);
             }
             if (bf.at("write_ridge_mask_raster"))
             {
-                const std::string o = pp.make_output_path("_ridge_mask.tif");
+                const std::string o = pp.make_output_path("_ridge_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(rr.mask.get_data(), rr.mask.get_meta(), o, out_fmt);
             }
@@ -2815,19 +2809,19 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_spacing_strength_raster"))
             {
-                const std::string o = pp.make_output_path("_spacing_strength.tif");
+                const std::string o = pp.make_output_path("_spacing_strength" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(sp.strength.get_data(), sp.strength.get_meta(), o, out_fmt);
             }
             if (bf.at("write_spacing_raster"))
             {
-                const std::string o = pp.make_output_path("_spacing_metres.tif");
+                const std::string o = pp.make_output_path("_spacing_metres" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(sp.spacing_metres.get_data(), sp.spacing_metres.get_meta(), o, out_fmt);
             }
             if (bf.at("write_spacing_orientation_raster"))
             {
-                const std::string o = pp.make_output_path("_spacing_orientation_deg.tif");
+                const std::string o = pp.make_output_path("_spacing_orientation_deg" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(sp.orientation_deg.get_data(), sp.orientation_deg.get_meta(), o, out_fmt);
             }
@@ -2894,22 +2888,22 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_road_extract_mask_raster"))
             {
-                const std::string o = pp.make_output_path("_road_extract_mask.tif");
+                const std::string o = pp.make_output_path("_road_extract_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.road_mask.get_data(), result.road_mask.get_meta(), o, out_fmt);
             }
             if (req.classify_spacing)
             {
-                const std::string o = pp.make_output_path("_road_extract_classified.tif");
+                const std::string o = pp.make_output_path("_road_extract_classified" + output_ext);
                 std::cout << "Writing: " << o << " (1=road, 2=track)\n";
                 loader.write_full(result.classified.get_data(), result.classified.get_meta(), o, out_fmt);
             }
-            if (bf.at("write_road_extract_diagnostics"))
+            if (bf.at("write_road_extract_diagnostic_rasters"))
             {
-                const std::string o1 = pp.make_output_path("_road_extract_diffused.tif");
-                const std::string o2 = pp.make_output_path("_road_extract_coherence.tif");
-                const std::string o3 = pp.make_output_path("_road_extract_ridge_thinned.tif");
-                const std::string o4 = pp.make_output_path("_road_extract_ridge_mask.tif");
+                const std::string o1 = pp.make_output_path("_road_extract_diffused" + output_ext);
+                const std::string o2 = pp.make_output_path("_road_extract_coherence" + output_ext);
+                const std::string o3 = pp.make_output_path("_road_extract_ridge_thinned" + output_ext);
+                const std::string o4 = pp.make_output_path("_road_extract_ridge_mask" + output_ext);
                 std::cout << "Writing: " << o1 << "\n";
                 loader.write_full(result.diffused.get_data(), result.diffused.get_meta(), o1, out_fmt);
                 std::cout << "Writing: " << o2 << "\n";
@@ -2948,15 +2942,15 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_smooth_road_mask_raster"))
             {
-                const std::string o = pp.make_output_path("_smooth_road_mask.tif");
+                const std::string o = pp.make_output_path("_smooth_road_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.road_mask.get_data(), result.road_mask.get_meta(), o, out_fmt);
             }
-            if (bf.at("write_smooth_diagnostics"))
+            if (bf.at("write_smooth_diagnostic_rasters"))
             {
-                const std::string o1 = pp.make_output_path("_smooth_roughness.tif");
-                const std::string o2 = pp.make_output_path("_smooth_smoothness.tif");
-                const std::string o3 = pp.make_output_path("_smooth_path_opened.tif");
+                const std::string o1 = pp.make_output_path("_smooth_roughness" + output_ext);
+                const std::string o2 = pp.make_output_path("_smooth_smoothness" + output_ext);
+                const std::string o3 = pp.make_output_path("_smooth_path_opened" + output_ext);
                 std::cout << "Writing: " << o1 << "\n";
                 loader.write_full(result.roughness.get_data(), result.roughness.get_meta(), o1, out_fmt);
                 std::cout << "Writing: " << o2 << "\n";
@@ -3014,14 +3008,14 @@ int main(int argc, char* argv[])
                 if (bf.at("write_consistency_raster"))
                 {
                     lsdtt::lsdtt_raster_cpu cons(std::move(rdat), std::vector<std::uint8_t>(rmk), m);
-                    const std::string o = pp.make_output_path("_input_consistency.tif");
+                    const std::string o = pp.make_output_path("_input_consistency" + output_ext);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(cons.get_data(), cons.get_meta(), o, out_fmt);
                 }
                 if (bf.at("write_roughness_raster"))
                 {
                     lsdtt::lsdtt_raster_cpu rough(std::move(roughd), std::move(rmk), m);
-                    const std::string o = pp.make_output_path("_input_roughness.tif");
+                    const std::string o = pp.make_output_path("_input_roughness" + output_ext);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(rough.get_data(), rough.get_meta(), o, out_fmt);
                 }
@@ -3032,7 +3026,7 @@ int main(int argc, char* argv[])
                     lsdtt::moving_window_stddev(dem, radius, lsdtt::window_shape::circular);
                 if (bf.at("write_roughness_raster"))
                 {
-                    const std::string o = pp.make_output_path("_input_roughness.tif");
+                    const std::string o = pp.make_output_path("_input_roughness" + output_ext);
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(rough.get_data(), rough.get_meta(), o, out_fmt);
                 }
@@ -3066,14 +3060,14 @@ int main(int argc, char* argv[])
 
             if (bf.at("write_thin_mask_raster"))
             {
-                const std::string o = pp.make_output_path("_thin_mask.tif");
+                const std::string o = pp.make_output_path("_thin_mask" + output_ext);
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
             }
-            if (bf.at("write_thin_diagnostics"))
+            if (bf.at("write_thin_diagnostic_rasters"))
             {
-                const std::string o1 = pp.make_output_path("_thin_binary.tif");
-                const std::string o2 = pp.make_output_path("_thin_blob_free.tif");
+                const std::string o1 = pp.make_output_path("_thin_binary" + output_ext);
+                const std::string o2 = pp.make_output_path("_thin_blob_free" + output_ext);
                 std::cout << "Writing: " << o1 << "\n";
                 loader.write_full(result.binary.get_data(), result.binary.get_meta(), o1, out_fmt);
                 std::cout << "Writing: " << o2 << "\n";

@@ -203,17 +203,17 @@ RoadResult find_roads(const Raster& dem, double smoothing_window_metres,
 
 RoadFlowResult find_road_flow_discrimination(
     const Raster& dem, double regional_smoothing_metres,
-    int flow_accumulation_threshold_pixels, int flow_path_half_window,
+    int threshold_contributing_pixels, int flow_path_half_window,
     double intermediate_window_metres, double roughness_radius_metres,
-    bool dem_is_filled, const std::string& boundary_conditions, int n_threads)
+    bool raster_is_filled, const std::string& boundary_conditions, int n_threads)
 {
     lsdtt::road_flow_request request;
     request.regional_smoothing_metres = regional_smoothing_metres;
-    request.flow_accumulation_threshold_pixels = flow_accumulation_threshold_pixels;
+    request.flow_accumulation_threshold_pixels = threshold_contributing_pixels;
     request.flow_path_half_window = flow_path_half_window;
     request.intermediate_window_metres = intermediate_window_metres;
     request.roughness_radius_metres = roughness_radius_metres;
-    request.dem_is_filled = dem_is_filled;
+    request.dem_is_filled = raster_is_filled;
     request.boundary_conditions = boundary_conditions;
     request.n_threads = n_threads;
     return RoadFlowResult(lsdtt::find_road_flow_discrimination(dem.native(), request));
@@ -331,7 +331,7 @@ void bind_raster_feature_finder(nb::module_& m)
         "Find multiscale channel-bottom candidates and return score and diagnostics.");
     m.def("frangi_filter", &frangi_filter, nb::arg("raster"),
         nb::arg("sigma_min_metres") = 1.0, nb::arg("sigma_max_metres") = 5.0,
-        nb::arg("n_scales") = 4, nb::arg("beta") = 0.5, nb::arg("c") = 15.0,
+        nb::arg("n_scales") = 4, nb::arg("beta") = 0.5, nb::arg("c") = 1.0,
         nb::arg("target") = "ridges", nb::arg("n_threads") = 0,
         "Run a multiscale Frangi ridge or valley filter.");
     m.def("find_drains", &find_drains, nb::arg("raster"),
@@ -357,11 +357,11 @@ void bind_raster_feature_finder(nb::module_& m)
         nb::arg("n_threads") = 0, "Detect narrow, along-contour road benches from a DEM.");
     m.def("find_road_flow_discrimination", &find_road_flow_discrimination,
         nb::arg("dem"), nb::arg("regional_smoothing_metres") = 100.0,
-        nb::arg("flow_accumulation_threshold_pixels") = 1000,
+        nb::arg("threshold_contributing_pixels") = 1000,
         nb::arg("flow_path_half_window") = 5,
         nb::arg("intermediate_window_metres") = 15.0,
         nb::arg("roughness_radius_metres") = 2.5,
-        nb::arg("dem_is_filled") = false, nb::arg("boundary_conditions") = "oooo",
+        nb::arg("raster_is_filled") = false, nb::arg("boundary_conditions") = "oooo",
         nb::arg("n_threads") = 0,
         "Build flow-direction and terrain diagnostics for road/channel discrimination.");
     m.def("extract_roads_smooth", &extract_roads_smooth, nb::arg("dem"),

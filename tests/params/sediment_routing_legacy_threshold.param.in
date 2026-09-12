@@ -1,0 +1,16 @@
+# Phase 4 compatibility characterization for the legacy source threshold key.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: sediment_legacy
+
+n_threads: 1
+raster_is_filled: false
+source_pixels_threshold: 3
+
+# Keep the routing run focused and deterministic.
+n_timesteps: 2
+timestep_s: 3600
+write_output_format: gtiff
+write_deposition_raster: true
+write_d50_raster: true

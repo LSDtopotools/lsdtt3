@@ -70,6 +70,7 @@
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version   = "0.2.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -408,14 +409,14 @@ int main(int argc, char* argv[])
         "Higher values snap outlets onto better-defined channels.",
         "Bounding box", "param", ""};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping radius in pixels.",
         "Used when basin_outlet_snapping_method=expanding_square.",
         "Bounding box", "param", ""};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping radius in pixels.",
         "Used when basin_outlet_snapping_method=expanding_square.",
         "Bounding box", "param", ""};
@@ -544,7 +545,9 @@ int main(int argc, char* argv[])
     string_default_map["resampling_method"] = "cubic";
     help_map["resampling_method"] = {"string","cubic",
         "GDAL resampling method used when reprojecting.",
-        "Allowed values follow GDAL warp methods: near, bilinear, cubic, "
+        "Cubic is the default because fetched DEM elevations are continuous; it "
+        "is not a categorical-raster default. Allowed values follow GDAL warp "
+        "methods: near, bilinear, cubic, "
         "cubicspline, lanczos, average, mode, max, min, med, q1, q3.",
         "Output grid", "param", ""};
 
@@ -625,6 +628,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"basin_outlet_min_search_radius_pixels",
+         "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels",
+         "basin_outlet_snap_max_search_radius_pixels"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -644,8 +652,7 @@ int main(int argc, char* argv[])
 
     auto to_lower_copy = [](std::string s) -> std::string
     {
-        std::transform(s.begin(), s.end(), s.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        s = lsdtt::to_lower_ascii(s);
         return s;
     };
 
@@ -761,16 +768,16 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: basin_outlet_contributing_pixels_threshold must be > 0.\n";
         return 1;
     }
-    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    if (ifs["basin_outlet_snap_min_search_radius_pixels"] < 0)
     {
-        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels must be >= 0.\n";
+        std::cerr << "FATAL: basin_outlet_snap_min_search_radius_pixels must be >= 0.\n";
         return 1;
     }
-    if (ifs["basin_outlet_max_search_radius_pixels"] <
-        ifs["basin_outlet_min_search_radius_pixels"])
+    if (ifs["basin_outlet_snap_max_search_radius_pixels"] <
+        ifs["basin_outlet_snap_min_search_radius_pixels"])
     {
-        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
-                  << "basin_outlet_min_search_radius_pixels.\n";
+        std::cerr << "FATAL: basin_outlet_snap_max_search_radius_pixels must be >= "
+                  << "basin_outlet_snap_min_search_radius_pixels.\n";
         return 1;
     }
     if (ifs["tight_basin_bbox_buffer_pixels"] < 0)
@@ -1421,9 +1428,9 @@ int main(int argc, char* argv[])
         square_snap_options.contributing_pixels_threshold =
             static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
         square_snap_options.min_search_radius_pixels =
-            ifs["basin_outlet_min_search_radius_pixels"];
+            ifs["basin_outlet_snap_min_search_radius_pixels"];
         square_snap_options.max_search_radius_pixels =
-            ifs["basin_outlet_max_search_radius_pixels"];
+            ifs["basin_outlet_snap_max_search_radius_pixels"];
 
         lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
         downstream_snap_options.contributing_pixels_threshold =
@@ -1470,43 +1477,18 @@ int main(int argc, char* argv[])
                 break;
             }
 
-            std::int64_t snapped_flat = -1;
-            if (snap_method == "none")
+            const lsdtt::lsdtt_snap_result snap = lsdtt::snap_pixel_by_method(
+                flow, row, col, snap_method, square_snap_options,
+                downstream_snap_options);
+            if (snap.status != lsdtt::lsdtt_snap_status::success)
             {
-                snapped_flat = flow.flat_index(row, col);
-                if (!flow.is_valid_cell(snapped_flat))
-                {
-                    all_ok = false;
-                    fail_message = "outlet pixel is invalid on final DEM";
-                    break;
-                }
+                all_ok = false;
+                fail_message = snap_method == "none"
+                    ? "outlet pixel is invalid on final DEM"
+                    : "could not snap outlet to channel cell (" + snap_method + ")";
+                break;
             }
-            else if (snap_method == "expanding_square")
-            {
-                const lsdtt::lsdtt_snap_result snap =
-                    lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                        flow, row, col, square_snap_options);
-                if (snap.status != lsdtt::lsdtt_snap_status::success)
-                {
-                    all_ok = false;
-                    fail_message = "could not snap outlet to channel cell (expanding_square)";
-                    break;
-                }
-                snapped_flat = snap.snapped_flat;
-            }
-            else
-            {
-                const lsdtt::lsdtt_snap_result snap =
-                    lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                        flow, row, col, downstream_snap_options);
-                if (snap.status != lsdtt::lsdtt_snap_status::success)
-                {
-                    all_ok = false;
-                    fail_message = "could not snap outlet to channel cell (downstream)";
-                    break;
-                }
-                snapped_flat = snap.snapped_flat;
-            }
+            const std::int64_t snapped_flat = snap.snapped_flat;
 
             const lsdtt::lsdtt_flat_index_slice basin_pixels =
                 flow.upslope_nodes(snapped_flat);
@@ -1737,36 +1719,19 @@ int main(int argc, char* argv[])
                 square_snap_options.contributing_pixels_threshold =
                     static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
                 square_snap_options.min_search_radius_pixels =
-                    ifs["basin_outlet_min_search_radius_pixels"];
+                    ifs["basin_outlet_snap_min_search_radius_pixels"];
                 square_snap_options.max_search_radius_pixels =
-                    ifs["basin_outlet_max_search_radius_pixels"];
+                    ifs["basin_outlet_snap_max_search_radius_pixels"];
 
                 lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
                 downstream_snap_options.contributing_pixels_threshold =
                     static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
 
-                std::int64_t snapped_flat = -1;
-                if (snap_method == "none")
-                {
-                    snapped_flat = flow.flat_index(row, col);
-                    if (!flow.is_valid_cell(snapped_flat)) continue;
-                }
-                else if (snap_method == "expanding_square")
-                {
-                    const lsdtt::lsdtt_snap_result snap =
-                        lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(
-                            flow, row, col, square_snap_options);
-                    if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
-                    snapped_flat = snap.snapped_flat;
-                }
-                else
-                {
-                    const lsdtt::lsdtt_snap_result snap =
-                        lsdtt::snap_pixel_to_contributing_pixels_threshold_downstream(
-                            flow, row, col, downstream_snap_options);
-                    if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
-                    snapped_flat = snap.snapped_flat;
-                }
+                const lsdtt::lsdtt_snap_result snap = lsdtt::snap_pixel_by_method(
+                    flow, row, col, snap_method, square_snap_options,
+                    downstream_snap_options);
+                if (snap.status != lsdtt::lsdtt_snap_status::success) continue;
+                const std::int64_t snapped_flat = snap.snapped_flat;
 
                 lsdtt::lsdtt_basin_cpu basin(snapped_flat, flow);
                 lsdtt::lsdtt_basin_outline_cpu outline = basin.get_basin_outline();

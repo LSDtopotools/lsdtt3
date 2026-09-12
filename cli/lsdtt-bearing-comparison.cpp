@@ -32,6 +32,7 @@
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/utils/lsdtt_statistical_tests.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 
 static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
@@ -55,25 +56,6 @@ static void print_banner()
 }
 
 
-// -----------------------------------------------------------------------------
-// Minimal CSV column reader: returns the values of `column` (as doubles),
-// optionally keeping only rows where `filter_column` == filter_value.
-// -----------------------------------------------------------------------------
-static std::vector<std::string> split_csv_line(const std::string& line)
-{
-    std::vector<std::string> fields;
-    std::string field;
-    std::stringstream ss(line);
-    while (std::getline(ss, field, ','))
-    {
-        if (!field.empty() && field.back() == '\r')   // strip Windows CR
-        {
-            field.pop_back();
-        }
-        fields.push_back(field);
-    }
-    return fields;
-}
 
 static int index_of(const std::vector<std::string>& v, const std::string& name)
 {
@@ -86,6 +68,7 @@ static int index_of(const std::vector<std::string>& v, const std::string& name)
     }
     return -1;
 }
+
 
 static std::vector<double> read_csv_column(
     const std::string& path,
@@ -104,7 +87,7 @@ static std::vector<double> read_csv_column(
     {
         throw std::runtime_error("CSV file is empty: " + path);
     }
-    const std::vector<std::string> headers = split_csv_line(header_line);
+    const std::vector<std::string> headers = lsdtt::csv_split_row_trimmed(header_line);
 
     const int col = index_of(headers, column);
     if (col < 0)
@@ -127,7 +110,7 @@ static std::vector<double> read_csv_column(
         {
             continue;
         }
-        const std::vector<std::string> fields = split_csv_line(line);
+        const std::vector<std::string> fields = lsdtt::csv_split_row_trimmed(line);
         if (static_cast<int>(fields.size()) <= col)
         {
             continue;
@@ -177,14 +160,14 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string>              string_default_map;
     lsdtt::lsdtt_help_registry help_map;
 
-    string_default_map["bearing_file_1"] = "NULL";
-    help_map["bearing_file_1"] = {"string","NULL",
+    string_default_map["bearing_fname_1"] = "NULL";
+    help_map["bearing_fname_1"] = {"string","NULL",
         "CSV file for the first bearing sample.",
         "Must contain the column named by bearing_column.",
         "-", "param", ""};
 
-    string_default_map["bearing_file_2"] = "NULL";
-    help_map["bearing_file_2"] = {"string","NULL",
+    string_default_map["bearing_fname_2"] = "NULL";
+    help_map["bearing_fname_2"] = {"string","NULL",
         "CSV file for the second bearing sample.",
         "Must contain the column named by bearing_column.",
         "-", "param", ""};
@@ -245,6 +228,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"bearing_file_1", "bearing_fname_1"},
+        {"bearing_file_2", "bearing_fname_2"} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
 
@@ -252,14 +238,14 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    if (sf["bearing_file_1"] == "NULL" || sf["bearing_file_2"] == "NULL")
+    if (sf["bearing_fname_1"] == "NULL" || sf["bearing_fname_2"] == "NULL")
     {
-        std::cerr << "FATAL: bearing_file_1 and bearing_file_2 are required.\n";
+        std::cerr << "FATAL: bearing_fname_1 and bearing_fname_2 are required.\n";
         return 1;
     }
 
-    const std::string file1 = pp.add_read_path_if_needed(sf["bearing_file_1"]);
-    const std::string file2 = pp.add_read_path_if_needed(sf["bearing_file_2"]);
+    const std::string file1 = pp.add_read_path_if_needed(sf["bearing_fname_1"]);
+    const std::string file2 = pp.add_read_path_if_needed(sf["bearing_fname_2"]);
     const std::string column = sf["bearing_column"];
     const bool   axial       = bf["data_is_axial"];
     const bool   rot_inv      = bf["rotation_invariant"];

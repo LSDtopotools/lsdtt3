@@ -4,4 +4,4 @@ write_path: __WRITE_PATH__
 write_fname: tiny_divide_migration_missing_outlets
 
 # Required outlet file intentionally omitted for failure test.
-source_pixels_threshold: 1000
+threshold_contributing_pixels: 1000

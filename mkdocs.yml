@@ -60,6 +60,11 @@ plugins:
             show_signature_annotations: false
             show_source: false
 
+markdown_extensions:
+  - pymdownx.snippets:
+      base_path: .
+      check_paths: true
+
 # Working documents that live under docs/ for convenience but are not part of
 # the published site. Without this they would build as orphan pages: internal
 # planning notes and LaTeX sources are not user documentation.
@@ -67,32 +72,47 @@ exclude_docs: |
   plan_docs/
   tex_technical/
   test_scripts/
+  cli_helper_function_audit.md
+  cli_parameter_consistency_audit.md
 
 nav:
   - Home: index.md
   - What is lsdtt3:
-    - Overview: overview.md
-    - Workflows: workflows.md
-    - Flow routing: flow_routing.md
-    - Surface metrics: surface_metrics.md
-  - Installation:
-    - Install lsdtt3: install_lsdtt3.md
-  - Benchmarking:
-    - Running benchmarks on your own system: running_benchmarks.md
+    - Overview: what_is_lsdtt3/overview.md
+    - Installation: what_is_lsdtt3/install_lsdtt3.md
+    - Data:
+      - Vector data: what_is_lsdtt3/vector_data.md
+      - Raster data: what_is_lsdtt3/raster_data.md
+    - Flow routing: what_is_lsdtt3/flow_routing.md
+    - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
+    - Workflows: what_is_lsdtt3/workflows.md
+  - Design and algorithms:
+    - Surface metrics: design_and_algorithms/surface_metrics.md
+    - Floodplains, terraces and valleys: design_and_algorithms/fluvial_surfaces_and_valleys.md
+    - Cosmogenic nuclides: design_and_algorithms/cosmogenic_nuclides.md
+    - Landscape evolution modelling: design_and_algorithms/landscape_evolution_modelling.md
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
       - Raster preprocessing: cli_reference/cli_reference_lsdtt_raster_preprocessing.md
     - Surface analysis:
       - Surface metrics: cli_reference/cli_reference_lsdtt_surface_metrics.md
+      - Feature finder: cli_reference/cli_reference_lsdtt_feature_finder.md
+      - Spectral analysis: cli_reference/cli_reference_lsdtt_spectral_analysis.md
+      - Raster calculator: cli_reference/cli_reference_lsdtt_raster_calculator.md
+      - Basin surface metrics: cli_reference/cli_reference_lsdtt_basin_surface_metrics.md
+      - Swath profile: cli_reference/cli_reference_lsdtt_swath_profile.md
+      - Linear statistics: cli_reference/cli_reference_lsdtt_linear_stats.md
       - Hillslope-channel coupling: cli_reference/cli_reference_lsdtt_hillslope_channel_coupling.md
       - Mountain front: cli_reference/cli_reference_lsdtt_mountain_front.md
     - Flow routing and drainage:
       - Drainage analysis: cli_reference/cli_reference_lsdtt_drainage_analysis.md
       - Channel extraction: cli_reference/cli_reference_lsdtt_channel_extraction.md
       - Water line repair: cli_reference/cli_reference_lsdtt_water_line_repair.md
+      - Water centreline: cli_reference/cli_reference_lsdtt_water_centreline.md
       - Stream burning: cli_reference/cli_reference_lsdtt_stream_burning.md
-      - Floodplains, terraces and valleys: fluvial_surfaces_and_valleys.md
+      - Sediment routing: cli_reference/cli_reference_lsdtt_sediment_routing.md
+      - GraphFlood: cli_reference/cli_reference_lsdtt_graphflood.md
       - Flat surface finder: cli_reference/cli_reference_lsdtt_flat_surface_finder.md
       - Fluvial surfaces: cli_reference/cli_reference_lsdtt_fluvial_surfaces.md
       - Valley centreline: cli_reference/cli_reference_lsdtt_valley_centreline.md
@@ -109,14 +129,16 @@ nav:
     - Tidal / marsh:
       - Marsh topography: cli_reference/cli_reference_lsdtt_marsh_topography.md
     - Cosmogenic nuclides:
-      - Cosmogenic nuclides in lsdtt3: cosmogenic_nuclides.md
       - Cosmo tool: cli_reference/cli_reference_lsdtt_cosmo_tool.md
       - Cosmo prediction: cli_reference/cli_reference_lsdtt_cosmo_prediction.md
       - Cosmo column tool: cli_reference/cli_reference_lsdtt_cosmo_column_tool.md
     - Landscape evolution:
-      - Modelling choices: landscape_evolution_modelling.md
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
+      - Synthetic surfaces and tests: cli_reference/cli_reference_lsdtt_raster_synthetic_tests.md
+      - Synthetic networks: cli_reference/cli_reference_lsdtt_synthetic_networks.md
       - Cosmo landslides: cli_reference/cli_reference_lsdtt_cosmo_landslides.md
+  - QGIS:
+    - QGIS plugin: qgis.md
   - Python:
     - Overview: python/index.md
     - Guides:
@@ -137,8 +159,10 @@ nav:
       - GraphFlood: python_api/graphflood.md
   - Developer notes:
     - Developer onboarding: developer_notes/developer_onboarding.md
+    - Parameter naming conventions: developer_notes/cli_parameter_conventions.md
     - Git from the command line: developer_notes/git_notes.md
     - Architecture: developer_notes/lsdtt3_architecture.md
+    - Basin object architecture: developer_notes/basin_object_architecture.md
     - Building from source: developer_notes/building_from_source.md
     - Building on Windows (WSL2): developer_notes/lsdtt3_in_windows.md
     - Building on macOS (Multipass): developer_notes/lsdtt3_in_macos.md
@@ -150,4 +174,4 @@ nav:
     - GPU compute: developer_notes/gpu_compute.md
     - Flow routing (D8): developer_notes/using_lsdtt_flowinfo.md
     - Utilities layer: developer_notes/lsdtt_utils_guide.md
-    - Testing and benchmarking: testing_and_benchmarking.md
+    - Testing and benchmarking: developer_notes/testing_and_benchmarking.md

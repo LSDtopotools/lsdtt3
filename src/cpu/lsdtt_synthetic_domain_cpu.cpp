@@ -8,6 +8,8 @@
 // See lsdtt_synthetic_domain_cpu.hpp for the description.
 // -----------------------------------------------------------------------------
 
+#include <cstdint>
+#include <stdexcept>
 #include "lsdtt_synthetic_domain_cpu.hpp"
 
 #include <algorithm>
@@ -304,6 +306,84 @@ lsdtt_polygon_true_area rasterise_polygon_true_area(
 
     keep_largest_land_component(out.mask, out.n_rows, out.n_cols);
     return out;
+}
+
+
+lsdtt_raster_cpu apply_sinuous_domain_mask(
+    const lsdtt_raster_cpu& dem,
+    bool  enable_north, float amp_north_fraction, int waves_north, float phase_north,
+    bool  enable_south, float amp_south_fraction, int waves_south, float phase_south,
+    float baselevel_elevation
+)
+{
+    if (amp_north_fraction < 0.0f || amp_north_fraction > 0.25f ||
+        amp_south_fraction < 0.0f || amp_south_fraction > 0.25f)
+    {
+        throw std::runtime_error(
+            "apply_sinuous_domain_mask: amplitude fractions must be in [0, 0.25]");
+    }
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const int    nr = meta.n_rows;
+    const int    nc = meta.n_cols;
+    const double dx = meta.cell_size;
+
+    const double Lx = static_cast<double>(nc) * dx;
+    const double Ly = static_cast<double>(nr) * dx;
+
+    const double A_n = Ly * static_cast<double>(amp_north_fraction);
+    const double A_s = Ly * static_cast<double>(amp_south_fraction);
+
+    std::vector<float>        data = dem.get_data();
+    std::vector<std::uint8_t> mask = dem.get_mask();
+
+    constexpr double k_pi = 3.14159265358979323846;
+
+    // A sub-cell tolerance, so a pixel sitting exactly on the analytic boundary
+    // is kept rather than being masked by floating-point noise.
+    const double edge_tol = 1e-4 * dx;
+
+    for (int r = 0; r < nr; ++r)
+    {
+        // Row 0 is the NORTH edge, so y counts up from the south.
+        const double y = static_cast<double>(nr - 1 - r) * dx;
+
+        for (int c = 0; c < nc; ++c)
+        {
+            const double x = static_cast<double>(c) * dx;
+            bool mask_out = false;
+
+            if (enable_south)
+            {
+                const double shift_s = A_s * std::sin(
+                    2.0 * k_pi * static_cast<double>(waves_south) * (x / Lx) +
+                    2.0 * k_pi * static_cast<double>(phase_south));
+                const double y_min = A_s + shift_s - edge_tol;
+                if (y < y_min) mask_out = true;
+            }
+
+            if (enable_north && !mask_out)
+            {
+                const double shift_n = A_n * std::sin(
+                    2.0 * k_pi * static_cast<double>(waves_north) * (x / Lx) +
+                    2.0 * k_pi * static_cast<double>(phase_north));
+                const double y_max = Ly - A_n + shift_n + edge_tol;
+                if (y > y_max) mask_out = true;
+            }
+
+            if (mask_out)
+            {
+                const std::size_t idx =
+                    static_cast<std::size_t>(r) * static_cast<std::size_t>(nc) +
+                    static_cast<std::size_t>(c);
+                // Flattened, not just masked: see the header.
+                data[idx] = baselevel_elevation;
+                mask[idx] = 0;
+            }
+        }
+    }
+
+    return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
 }
 
 } // namespace lsdtt
