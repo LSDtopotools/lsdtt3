@@ -113,7 +113,7 @@ class ClipRasterToPolygonAlgorithm(QgsProcessingAlgorithm):
             ],
             "enforce_projection": self.parameterAsBool(parameters, self.ENFORCE_PROJECTION, context),
             # Disable the default sea-level masking: this algorithm only clips.
-            "minimum_elevation": -99999.0,
+            "min_elevation": -99999.0,
             "clip_raster_to_polygon": True,
             "polygon_clip_fname": layer_file_path(polygon_layer.source()),
             "force_rectangular_raster": self.parameterAsBool(parameters, self.FORCE_RECTANGULAR, context),

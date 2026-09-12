@@ -263,10 +263,11 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading ---
-    int_default_map["n_threads"] = 1;
-    help_map["n_threads"] = {"int","1",
+    int_default_map["n_threads"] = 0;
+    help_map["n_threads"] = {"int","0",
         "Number of OpenMP threads.",
-        "0 = use all hardware threads. 1 = serial (default). "
+        "0 = use all hardware threads (default). 1 = serial. In shared "
+        "environments, set an explicit limit no greater than the physical-core allocation. "
         "Applies to the direct and wavelet quadratic fits, polyfit metric "
         "engine, and OpenCV normalisation passes.",
         "Threading", "io", ""};
@@ -433,8 +434,8 @@ int main(int argc, char* argv[])
     };
 
     // --- Surface shape classification (SMAP, TopoCurve-style) ---
-    bool_default_map["write_shape_classification"] = false;
-    help_map["write_shape_classification"] = {"bool","false",
+    bool_default_map["write_shape_classification_raster"] = false;
+    help_map["write_shape_classification_raster"] = {"bool","false",
         "Write the morphological surface-shape classification raster (SMAP).",
         "Reproduces the differential-geometry shape classification of the "
         "TopoCurve approach. Each pixel is labelled by the signs of Gaussian "
@@ -480,7 +481,7 @@ int main(int argc, char* argv[])
         "metrics because they reflect shape_curvature_threshold (kt). "
         "Outputs: _<method>_shape_gaussian_curvature.tif, "
         "_<method>_shape_mean_curvature.tif. "
-        "Only active when write_shape_classification = true.",
+        "Only active when write_shape_classification_raster = true.",
         "Surface shape classification (SMAP, TopoCurve-style)", "switch", ""};
 
     // --- MADk2 roughness ---
@@ -530,8 +531,8 @@ int main(int argc, char* argv[])
     float_default_map["frangi_sigma_max_metres"] = 5.0f;
     help_map["frangi_sigma_max_metres"] = {"float","5.0",
         "Maximum Frangi scale in metres.",
-        "This is the largest Gaussian smoothing scale tested by the Frangi "
-        "filter.",
+        "This general terrain-metrics workflow searches broader lineaments up to "
+        "5 m; the drain-specific feature finder deliberately stops at 2.5 m.",
         "Frangi filter", "param", ""};
 
     int_default_map["frangi_n_scales"] = 4;
@@ -545,13 +546,16 @@ int main(int argc, char* argv[])
     help_map["frangi_beta"] = {"float","0.5",
         "Frangi beta parameter.",
         "Controls suppression of blob-like structure relative to line-like "
-        "structure.",
+        "structure. The neutral 0.5 default supports general ridge/valley "
+        "exploration; the drain finder uses 0.4 to prefer narrow lines more strongly.",
         "Frangi filter", "param", ""};
 
-    float_default_map["frangi_c"] = 15.0f;
-    help_map["frangi_c"] = {"float","15.0",
+    float_default_map["frangi_c"] = 1.0f;
+    help_map["frangi_c"] = {"float","1.0",
         "Frangi c parameter.",
-        "Controls suppression of low-structureness responses.",
+        "Controls suppression of low-structureness responses. Phase 5 decision D7 "
+        "intentionally changed the scientific default from 15 to 1, matching "
+        "lsdtt-feature-finder; set 15 explicitly to reproduce the former response.",
         "Frangi filter", "param", ""};
 
     string_default_map["frangi_target"] = "ridges";
@@ -588,8 +592,8 @@ int main(int argc, char* argv[])
         "and compute cost.",
         "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
 
-    float_default_map["hough_theta_deg"] = 1.0f;
-    help_map["hough_theta_deg"] = {"float","1.0",
+    float_default_map["hough_theta_degrees"] = 1.0f;
+    help_map["hough_theta_degrees"] = {"float","1.0",
         "Angle resolution of the Hough accumulator in degrees.",
         "Converted to radians internally. Typical range: 0.5-2.0 degrees.",
         "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
@@ -635,8 +639,8 @@ int main(int argc, char* argv[])
         "Shared Canny parameters (used by Hough; also available standalone)", "param", ""};
 
     // --- Curvature skeleton (VEC + plan curvature relief) ---
-    bool_default_map["write_curvature_skeletons"] = false;
-    help_map["write_curvature_skeletons"] = {"bool","false",
+    bool_default_map["write_curvature_skeleton_rasters"] = false;
+    help_map["write_curvature_skeleton_rasters"] = {"bool","false",
         "Extract slope-break skeletons directly from curvature rasters.",
         "Computes vertical_excess_curvature and plan_curvature via direct polyfit "
         "(curvature_skeleton_lambda_metres), then: "
@@ -654,57 +658,57 @@ int main(int argc, char* argv[])
         "Polyfit half-wavelength (m) for the direct fit used by curvature skeleton.",
         "Controls the smoothing scale of the fitted surface. "
         "Larger values suppress noise; smaller values resolve finer features.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     float_default_map["vec_skeleton_threshold"] = 0.0f;
     help_map["vec_skeleton_threshold"] = {"float","0.0",
         "VEC threshold for binarising vertical_excess_curvature.",
         "Pixels with VEC >= this value are classified as slope-break candidates. "
-        "Run once with write_curvature_skeletons=true and read the printed CDF "
+        "Run once with write_curvature_skeleton_rasters=true and read the printed CDF "
         "divergence threshold to choose an appropriate value. "
         "Ignored when vec_skeleton_use_cdf_threshold=true.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     bool_default_map["vec_skeleton_use_cdf_threshold"] = false;
     help_map["vec_skeleton_use_cdf_threshold"] = {"bool","false",
         "Auto-select the VEC threshold using CDF divergence.",
         "Overrides vec_skeleton_threshold when true.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     bool_default_map["vec_skeleton_write_cdf"] = false;
     help_map["vec_skeleton_write_cdf"] = {"bool","false",
         "Write the VEC CDF to a CSV file alongside the skeleton outputs.",
         "Output suffix: _vec_skeleton_cdf.csv.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     float_default_map["profile_relief_window_metres"] = 50.0f;
     help_map["profile_relief_window_metres"] = {"float","50.0",
         "Circular moving-window radius (m) for the profile curvature local relief.",
         "Larger windows smooth sign-change boundaries but blur fine features.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     float_default_map["profile_relief_threshold"] = 0.1f;
     help_map["profile_relief_threshold"] = {"float","0.1",
         "Threshold on profile curvature local relief for binarisation.",
         "Pixels whose within-window profile curvature range >= this value are "
         "classified as slope-break candidates.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     int_default_map["curvature_skeleton_spur_max_pixels"] = 10;
     help_map["curvature_skeleton_spur_max_pixels"] = {"int","10",
         "Maximum endpoint-rooted spur length (pixels) pruned from curvature skeletons.",
         "0 = skip spur pruning.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     int_default_map["curvature_skeleton_min_component_pixels"] = 1;
     help_map["curvature_skeleton_min_component_pixels"] = {"int","1",
         "Minimum component size (pixels) retained in curvature skeletons.",
         "Applied after thinning and spur pruning.",
-        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeletons"};
+        "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
     // --- VEC adaptive thresholding (requires OpenCV) ---
-    bool_default_map["write_vec_adaptive_threshold"] = false;
-    help_map["write_vec_adaptive_threshold"] = {"bool","false",
+    bool_default_map["write_vec_adaptive_threshold_rasters"] = false;
+    help_map["write_vec_adaptive_threshold_rasters"] = {"bool","false",
         "Apply adaptive mean and Gaussian thresholding to vertical_excess_curvature.",
         "Requires OpenCV (LSDTT_HAS_OPENCV). Uses curvature_skeleton_lambda_metres "
         "for the polyfit scale. Each pixel is compared to the mean (or Gaussian-weighted "
@@ -740,13 +744,13 @@ int main(int argc, char* argv[])
         "before the local threshold is applied.",
         "VEC adaptive thresholding (requires OpenCV)", "param", ""};
 
-    bool_default_map["write_vec_adaptive_skeletons"] = false;
-    help_map["write_vec_adaptive_skeletons"] = {"bool","false",
+    bool_default_map["write_vec_adaptive_skeleton_rasters"] = false;
+    help_map["write_vec_adaptive_skeleton_rasters"] = {"bool","false",
         "Thin the adaptive-threshold VEC binary masks to 1-pixel skeletons.",
         "Applies Zhang-Suen thinning (and curvature_skeleton_spur_max_pixels pruning) "
         "to both the mean and Gaussian adaptive outputs. "
         "Outputs: _vec_adaptive_mean_skeleton.tif, _vec_adaptive_gaussian_skeleton.tif."
-        "Only active when write_vec_adaptive_threshold = true.",
+        "Only active when write_vec_adaptive_threshold_rasters = true.",
         "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
 
     // --- Cloth drape ---
@@ -807,12 +811,12 @@ int main(int argc, char* argv[])
     int_default_map["cloth_max_iterations"] = 500;
     help_map["cloth_max_iterations"] = {"int","500",
         "Maximum number of Verlet integration steps.",
-        "The simulation stops early when max_displacement < cloth_convergence_tol. "
+        "The simulation stops early when max_displacement < cloth_convergence_tolerance_metres. "
         "Increase for large or complex DEMs where convergence is slow.",
         "Cloth drape", "param", ""};
 
-    float_default_map["cloth_convergence_tol"] = 0.005f;
-    help_map["cloth_convergence_tol"] = {"float","0.005",
+    float_default_map["cloth_convergence_tolerance_metres"] = 0.005f;
+    help_map["cloth_convergence_tolerance_metres"] = {"float","0.005",
         "Convergence tolerance: maximum cloth displacement (m) per step to declare settled.",
         "Tighten to 0.001 m for precise incision mapping on smooth terrain. "
         "Loosen to 0.01 m for faster runs on coarse DEMs where sub-centimetre "
@@ -846,6 +850,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"write_shape_classification", "write_shape_classification_raster"},
+        {"write_curvature_skeletons", "write_curvature_skeleton_rasters"},
+        {"write_vec_adaptive_threshold", "write_vec_adaptive_threshold_rasters"},
+        {"write_vec_adaptive_skeletons", "write_vec_adaptive_skeleton_rasters"},
+        {"hough_theta_deg", "hough_theta_degrees"},
+        {"cloth_convergence_tol", "cloth_convergence_tolerance_metres"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -901,15 +912,15 @@ int main(int argc, char* argv[])
     {
         static const char* const k_output_switches[] = {
             "write_hillshade_raster", "write_local_relief_raster",
-            "write_polyfit_rasters",  "write_shape_classification",
+            "write_polyfit_rasters",  "write_shape_classification_raster",
             "write_shape_curvature_rasters", "write_madk2_rasters",
             "write_slope_threshold_layers",
             "write_cloth_envelope_raster", "write_cloth_incision_raster",
             "write_cloth_crest_mask_raster",
             "write_frangi_raster", "write_frangi_scale_raster",
             "write_otsu_raster", "write_hough_lines_raster",
-            "write_curvature_skeletons",
-            "write_vec_adaptive_threshold", "write_vec_adaptive_skeletons"
+            "write_curvature_skeleton_rasters",
+            "write_vec_adaptive_threshold_rasters", "write_vec_adaptive_skeleton_rasters"
         };
 
         bool any_output = !requested_polyfit_metrics.empty();
@@ -1017,7 +1028,7 @@ int main(int argc, char* argv[])
     // The classifier needs the two principal curvatures. With the polyfit
     // method they come straight from the polyfit metrics; with the
     // fundamental_form method they are computed from the polyfit fitted_surface.
-    if (bf["write_shape_classification"])
+    if (bf["write_shape_classification_raster"])
     {
         auto ensure_metric = [&](lsdtt::polyfit_metric m)
         {
@@ -1035,7 +1046,7 @@ int main(int argc, char* argv[])
         {
             ensure_metric(lsdtt::polyfit_metric::fitted_surface);
             std::cout << "I am adding fitted_surface to the requested polyfit "
-                         "metrics because write_shape_classification uses the "
+                         "metrics because write_shape_classification_raster uses the "
                          "fundamental_form curvature method (smoothed surface "
                          "input).\n";
         }
@@ -1045,7 +1056,7 @@ int main(int argc, char* argv[])
             ensure_metric(lsdtt::polyfit_metric::minimum_curvature);
             std::cout << "I am adding maximum_curvature and minimum_curvature to "
                          "the requested polyfit metrics because you want me to "
-                         "write_shape_classification \n";
+                         "write_shape_classification_raster \n";
         }
     }
 
@@ -1277,7 +1288,7 @@ int main(int argc, char* argv[])
                 // metrics, or (fundamental_form method) from the CurveCalc port
                 // applied to the polyfit fitted_surface. The cross-parameter
                 // logic above guarantees the needed metrics were requested.
-                if (bf["write_shape_classification"])
+                if (bf["write_shape_classification_raster"])
                 {
                     lsdtt::polyfit_metric_request shape_request;
                     shape_request.metrics = {
@@ -1705,7 +1716,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\n--- Hough line extraction ---\n";
         std::cout << "rho          : " << ff["hough_rho"]            << " px\n";
-        std::cout << "theta        : " << ff["hough_theta_deg"]      << " deg\n";
+        std::cout << "theta        : " << ff["hough_theta_degrees"] << " deg\n";
         std::cout << "threshold    : " << ifs["hough_threshold"]     << " votes\n";
         std::cout << "min length   : " << ff["hough_min_line_length"] << " px\n";
         std::cout << "max gap      : " << ff["hough_max_line_gap"]   << " px\n";
@@ -1719,7 +1730,7 @@ int main(int argc, char* argv[])
                 lsdtt::opencv_cpu::extract_lines_hough(
                     dem,
                     ff["hough_rho"],
-                    ff["hough_theta_deg"],
+                    ff["hough_theta_degrees"],
                     ifs["hough_threshold"],
                     ff["hough_min_line_length"],
                     ff["hough_max_line_gap"],
@@ -1750,7 +1761,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 8 - Curvature skeleton (VEC threshold + plan curvature relief)
     // -------------------------------------------------------------------------
-    if (bf["write_curvature_skeletons"])
+    if (bf["write_curvature_skeleton_rasters"])
     {
         std::cout << "\n--- Curvature skeletons ---\n";
         std::cout << "Lambda             : " << ff["curvature_skeleton_lambda_metres"] << " m\n";
@@ -1837,7 +1848,7 @@ int main(int argc, char* argv[])
     // Step 9 - VEC adaptive thresholding (requires OpenCV)
     // -------------------------------------------------------------------------
 #ifdef LSDTT_HAS_OPENCV
-    if (bf["write_vec_adaptive_threshold"])
+    if (bf["write_vec_adaptive_threshold_rasters"])
     {
         std::cout << "\n--- VEC adaptive thresholding ---\n";
         std::cout << "Lambda     : " << ff["curvature_skeleton_lambda_metres"] << " m\n";
@@ -1898,7 +1909,7 @@ int main(int argc, char* argv[])
             }
 
             // Optional skeleton extraction
-            if (bf["write_vec_adaptive_skeletons"])
+            if (bf["write_vec_adaptive_skeleton_rasters"])
             {
                 const int spur_px  = ifs["curvature_skeleton_spur_max_pixels"];
                 const int min_comp = ifs["curvature_skeleton_min_component_pixels"];
@@ -1927,9 +1938,9 @@ int main(int argc, char* argv[])
         }
     }
 #else
-    if (bf["write_vec_adaptive_threshold"])
+    if (bf["write_vec_adaptive_threshold_rasters"])
     {
-        std::cerr << "Warning: write_vec_adaptive_threshold requested but this "
+        std::cerr << "Warning: write_vec_adaptive_threshold_rasters requested but this "
                      "build does not include OpenCV. Skipping.\n";
     }
 #endif
@@ -1946,7 +1957,7 @@ int main(int argc, char* argv[])
         std::cout << "Gravity           : " << ff["cloth_gravity"]          << " m/step^2\n";
         std::cout << "Class threshold   : " << ff["cloth_class_threshold"]  << " m\n";
         std::cout << "Max iterations    : " << ifs["cloth_max_iterations"]  << "\n";
-        std::cout << "Convergence tol   : " << ff["cloth_convergence_tol"]  << " m\n";
+        std::cout << "Convergence tol   : " << ff["cloth_convergence_tolerance_metres"] << " m\n";
 
         try
         {
@@ -1955,7 +1966,7 @@ int main(int argc, char* argv[])
             drape_opts.gravity          = ff["cloth_gravity"];
             drape_opts.class_threshold  = ff["cloth_class_threshold"];
             drape_opts.max_iterations   = ifs["cloth_max_iterations"];
-            drape_opts.convergence_tol  = ff["cloth_convergence_tol"];
+            drape_opts.convergence_tol = ff["cloth_convergence_tolerance_metres"];
             drape_opts.n_threads        = n_threads;
 
             lsdtt::lsdtt_cloth_drape_result drape =

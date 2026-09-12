@@ -58,7 +58,7 @@ Steps run in this order:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `reproject_second_raster_to_first` | bool | `true` | Automatically reproject second raster to first raster grid if CRS differs. |
-| `resampling_method` | string | `bilinear` | Resampling method for warping: `nearest`, `bilinear`, `cubic`, `cubicspline`. |
+| `resampling_method` | string | `bilinear` | GDAL method for warping the second raster. Bilinear avoids cubic overshoot before raster algebra; use `near` for categorical values. |
 
 ---
 

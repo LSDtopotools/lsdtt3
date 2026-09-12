@@ -1,7 +1,7 @@
 # Guard for C5 in lsdtt-chi-analysis.
 #
 # The pre-existing chi tests reach resolve_outlet_flats() but only through its
-# AUTO-DETECT branch: none of them supplies basin_outlet_file, so the
+# AUTO-DETECT branch: none of them supplies basin_outlet_fname, so the
 # file-loading, point-status reporting and snapping half -- roughly half of the
 # ~200 lines C5 moves -- has never been exercised.
 #
@@ -21,4 +21,4 @@ basin_outlet_contributing_pixels_threshold: 150
 threshold_contributing_pixels: 150
 m_over_n: 0.45,0.45
 
-print_chi_data_maps: true
+write_chi_data_maps: true

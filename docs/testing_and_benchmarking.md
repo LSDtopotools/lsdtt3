@@ -2153,7 +2153,7 @@ lessons are built into the emulator.
 
 ### 7.5 Geomagnetic correction — no published benchmark
 
-The Muscheler-VDM + ERA40 machinery (`crn_nc_file` + `sample_age_yr`) is
+The Muscheler-VDM + ERA40 machinery (`crn_nc_fname` + `sample_age_yr`) is
 post-CAIRN and appears in neither paper, so it is tested through invariants
 rather than against an external answer.
 
@@ -5353,7 +5353,7 @@ failure sharpens with the channelization index: oblique tributaries inflate ever
 `1/cos(theta)`; a single row mixes short first-order hillslopes with long inter-basin divides so the
 mean describes neither; and both grow with `CI`.
 
-`compute_valley_spacing` (`src/cpu/lsdtt_valley_spacing_cpu`) measures hillslope length by a
+`run_valley_spacing` (`src/cpu/lsdtt_valley_spacing_cpu`) measures hillslope length by a
 two-pass chamfer **distance transform** from every convex cell to the nearest concave cell. It is
 orientation-free and indifferent to branching order. On a five-point diffusivity sweep it beat the
 row measure on both criteria:
@@ -5370,7 +5370,7 @@ warning was recalibrated from c = 4.0 to 0.86 and now predicts within 7% of meas
 
 ### Valley spacing is computed in C++ and only DRAWN in Python
 
-`lsdtt-spectral-analysis` gains `compute_valley_spacing: true`, reporting three measures side by
+`lsdtt-spectral-analysis` gains `run_valley_spacing: true`, reporting three measures side by
 side because they fail differently and their disagreement is the diagnostic:
 
 1. **Perron et al. (2008)** power-weighted mean of the spectral peaks -- weighted, not the argmax,

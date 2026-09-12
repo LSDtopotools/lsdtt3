@@ -1,0 +1,9 @@
+# Negative control: the former defaults remain reproducible when explicit.
+write_path: __WRITE_PATH__
+write_fname: rasterolddefaults5
+n_rows: 256
+n_cols: 256
+cell_size_metres: 1
+random_seed: 1
+write_uniform_random_surface: true
+write_output_format: gtiff

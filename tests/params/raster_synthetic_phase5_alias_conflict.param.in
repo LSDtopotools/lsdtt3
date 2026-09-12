@@ -1,0 +1,9 @@
+# Canonical-precedence coverage is separate from pure old-key transfer.
+write_path: __WRITE_PATH__
+write_fname: rasterconflict5
+n_rows: 7
+n_cols: 9
+seed: 19
+random_seed: 33
+write_uniform_random_surface: true
+write_output_format: gtiff

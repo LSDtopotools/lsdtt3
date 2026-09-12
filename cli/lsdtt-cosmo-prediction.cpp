@@ -118,23 +118,6 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     // --- File I/O ---
-    string_default_map["read_fname"] = "";
-    help_map["read_fname"] = {"string","","Input DEM filename (including extension).","",
-        "File I/O", "param", ""};
-
-    string_default_map["write_fname"] = "";
-    help_map["write_fname"] = {"string","",
-        "Output filename stem (no extension).  Defaults to read_fname stem.","",
-        "File I/O", "param", ""};
-
-    string_default_map["read_path"] = "./";
-    help_map["read_path"] = {"string","./","Directory containing input files.","",
-        "File I/O", "param", ""};
-
-    string_default_map["write_path"] = "./";
-    help_map["write_path"] = {"string","./","Directory for output files.","",
-        "File I/O", "param", ""};
-
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
         "Output raster format: cog, gtiff, or same_as_input.","",
@@ -160,6 +143,8 @@ int main(int argc, char* argv[])
     help_map["scaling_scheme"] = {"string","stone",
         "Production-rate scaling scheme.",
         "stone = Stone (2000)/Lal, the lsdtt3 default and the CAIRN/OCTOPUS scheme. "
+        "This raster prediction workflow is site-based by default; the landslide "
+        "generator instead defaults to uniform to preserve its legacy scalar path. "
         "lsdn = Lifton, Sato & Dunai (2014) nuclide-specific scaling, interpolated from "
         "the LSDn2015 scaling grids; requires the LSDn grids in crn_parameters.nc and "
         "supports Be10, Al26 and C14 only. Both schemes are evaluated per pixel, "
@@ -203,7 +188,7 @@ int main(int argc, char* argv[])
         "Carry Be-10, Al-26 and C-14 through an ARBITRARY erosion history at every "
         "pixel, and write the two isotope-ratio rasters.",
         "The general case of calculate_multi_isotope_step_change: instead of one step, "
-        "the pixels follow a user-supplied history from transient_history_file. A "
+        "the pixels follow a user-supplied history from transient_history_fname. A "
         "two-row history reproduces the step-change mode exactly (bitwise), so this is "
         "a strict generalisation. COST: every pixel walks the whole history, so this is "
         "O(pixels x history rows) and is much slower than the step-change mode -- "
@@ -220,10 +205,12 @@ int main(int argc, char* argv[])
         "conversion.",
         "Prediction modes", "param", "calculate_multi_isotope_transient"};
 
-    string_default_map["transient_history_file"] = "NULL";
-    help_map["transient_history_file"] = {"string","NULL",
+    string_default_map["transient_history_fname"] = "NULL";
+    help_map["transient_history_fname"] = {"string","NULL",
         "CSV erosion history for calculate_multi_isotope_transient.",
-        "Three columns: time,rate,removal -- time in yr BP, rate in m/yr, removal in m. "
+        "NULL is deliberate because transient prediction is an optional mode and the "
+        "file becomes required only when that mode is enabled. Three columns: "
+        "time,rate,removal -- time in yr BP, rate in m/yr, removal in m. "
         "Rows run from the MOST RECENT (index 0) to the oldest, and the LAST row must "
         "have time = -9999 carrying the long-term background rate. A row with rate = 0 "
         "and a non-zero removal is an instantaneous stripping event and must share the "
@@ -256,8 +243,8 @@ int main(int argc, char* argv[])
         "Output: write_path + write_fname + _crn_prod.tif",
         "Production raster", "switch", ""};
 
-    string_default_map["crn_nc_file"] = "";
-    help_map["crn_nc_file"] = {"string","",
+    string_default_map["crn_nc_fname"] = "";
+    help_map["crn_nc_fname"] = {"string","",
         "Path to crn_parameters.nc for ERA40 atmospheric scaling and palaeomagnetic correction.",
         "Leave empty to use the crn_parameters.nc bundled with lsdtt3 (found "
         "automatically); if absent, standard-atmosphere Stone 2000 (no palaeomagnetic correction).",
@@ -267,7 +254,7 @@ int main(int argc, char* argv[])
     help_map["sample_age_yr"] = {"float","0",
         "Sample exposure age (yr BP) driving the time-integrated production correction; "
         "what it selects depends on scaling_scheme.",
-        "Only used when crn_nc_file is set and > 0. Under scaling_scheme=stone this is "
+        "Only used when crn_nc_fname is set and > 0. Under scaling_scheme=stone this is "
         "the Muscheler VDM palaeomagnetic correction to Stone 2000 scaling. Under "
         "scaling_scheme=lsdn it drives the duration-weighted average of LSDn production "
         "over the Pavon-Carrasco geomagnetic record (Holocene moving paleopole, then a "
@@ -363,7 +350,7 @@ int main(int argc, char* argv[])
         "solution in chi (Royden & Perron 2013; Mitchell & Yanites 2019). The "
         "generated rasters feed the step-change concentration modes IN MEMORY, "
         "so no round trip through disk is needed. K is back-calculated from "
-        "step_change_target_relief_m and is echoed at run time -- read it. The "
+        "step_change_target_relief_metres and is echoed at run time -- read it. The "
         "generated fields cover ONE basin, so the concentration output is "
         "restricted to that basin.",
         "Generate the step change", "switch", ""};
@@ -382,8 +369,8 @@ int main(int argc, char* argv[])
         "Overrides step_change_eff_erate_new_g_cm2_yr as above.",
         "Generate the step change", "param", "make_step_change_rasters"};
 
-    float_default_map["step_change_target_relief_m"] = 1000.0f;
-    help_map["step_change_target_relief_m"] = {"float","1000",
+    float_default_map["step_change_target_relief_metres"] = 1000.0f;
+    help_map["step_change_target_relief_metres"] = {"float","1000",
         "Relief the OLD steady-state landscape should have (m). K is "
         "back-calculated from it.",
         "This is how a user without a calibrated K gets a landscape of the "
@@ -437,12 +424,12 @@ int main(int argc, char* argv[])
         "Critical hillslope gradient in the adjusted part of the landscape.","",
         "Generate the step change", "param", "make_step_change_rasters"};
 
-    string_default_map["step_change_basin_outlet_csv"] = "NULL";
-    help_map["step_change_basin_outlet_csv"] = {"string","NULL",
+    string_default_map["step_change_basin_outlet_fname"] = "NULL";
+    help_map["step_change_basin_outlet_fname"] = {"string","NULL",
         "CSV of latitude,longitude giving the basin outlet to model.",
         "The first point is used and any others ignored. It is snapped to the "
         "channel network using threshold_contributing_pixels and "
-        "snap_search_radius_pixels. If NULL the largest basin in the DEM is "
+        "sample_snap_max_search_radius_pixels. If NULL the largest basin in the DEM is "
         "used.",
         "Generate the step change", "param", "make_step_change_rasters"};
 
@@ -577,7 +564,7 @@ int main(int argc, char* argv[])
         "Chemical weathering removes soluble minerals and leaves quartz behind, "
         "so regolith is enriched relative to the fresh bedrock a deep landslide "
         "scar exposes. Set this, quartz_fertility_bedrock and "
-        "quartz_fertility_regolith_depth_m together to test whether that makes "
+        "quartz_fertility_regolith_depth_metres together to test whether that makes "
         "landslide debris under-represented in the quartz separate, and so "
         "weakens the dilution a landslide causes.",
         "Quartz fertility and ice", "param", ""};
@@ -587,8 +574,8 @@ int main(int argc, char* argv[])
         "Quartz fraction of fresh bedrock, for the two-layer model. Negative = off.","",
         "Quartz fertility and ice", "param", ""};
 
-    float_default_map["quartz_fertility_regolith_depth_m"] = 0.0f;
-    help_map["quartz_fertility_regolith_depth_m"] = {"float","0",
+    float_default_map["quartz_fertility_regolith_depth_metres"] = 0.0f;
+    help_map["quartz_fertility_regolith_depth_metres"] = {"float","0",
         "Regolith thickness (m) separating the two fertility layers. 0 = off.","",
         "Quartz fertility and ice", "param", ""};
 
@@ -605,8 +592,8 @@ int main(int argc, char* argv[])
         "under formerly glaciated ground are overestimated.",
         "Quartz fertility and ice", "param", ""};
 
-    float_default_map["ice_thickness_m"] = 50.0f;
-    help_map["ice_thickness_m"] = {"float","50",
+    float_default_map["ice_thickness_metres"] = 50.0f;
+    help_map["ice_thickness_metres"] = {"float","50",
         "Uniform ice thickness (m) used where the mask marks ice.",
         "Converted to a snow-shielding mass depth at ice_density_kg_m3. Ten "
         "metres of ice is already essentially total shielding (0.3 % of "
@@ -708,8 +695,8 @@ int main(int argc, char* argv[])
         "Flow routing (for accumulation)", "param", ""};
 
     // --- Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool) ---
-    string_default_map["sample_points_filename"] = "NULL";
-    help_map["sample_points_filename"] = {"string","NULL",
+    string_default_map["sample_points_fname"] = "NULL";
+    help_map["sample_points_fname"] = {"string","NULL",
         "CSV of latitude,longitude points at which to sample the accumulated CRN raster.",
         "When set (not NULL), each point is snapped to the channel network and the "
         "accumulated (basin-averaged) result at the snapped node is written to "
@@ -724,7 +711,7 @@ int main(int argc, char* argv[])
 
     int_default_map["sample_points_stride"] = 1;
     help_map["sample_points_stride"] = {"int","1",
-        "Keep every Nth point from sample_points_filename (1 = keep all).",
+        "Keep every Nth point from sample_points_fname (1 = keep all).",
         "For thinning a dense channel-node CSV to a manageable sample set. Points are "
         "thinned BEFORE snapping, in input order. Values < 1 are treated as 1.",
         "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)",
@@ -738,10 +725,10 @@ int main(int argc, char* argv[])
 
     lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
-    int_default_map["snap_search_radius_pixels"] = 8;
-    help_map["snap_search_radius_pixels"] = {"int","8",
+    int_default_map["sample_snap_max_search_radius_pixels"] = 8;
+    help_map["sample_snap_max_search_radius_pixels"] = {"int","8",
         "Maximum search radius (pixels) when snapping sample points to the channel network.",
-        "Matches lsdtt-cosmo-tool. Used only when sample_points_filename is set.",
+        "Matches lsdtt-cosmo-tool. Used only when sample_points_fname is set.",
         "Sample accumulated concentration at points (bridge to lsdtt-cosmo-tool)", "param", ""};
 
     // --- Output write toggles ---
@@ -808,6 +795,15 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"crn_nc_file", "crn_nc_fname"},
+        {"sample_points_filename", "sample_points_fname"},
+        {"snap_search_radius_pixels", "sample_snap_max_search_radius_pixels"},
+        {"step_change_target_relief_m", "step_change_target_relief_metres"},
+        {"quartz_fertility_regolith_depth_m", "quartz_fertility_regolith_depth_metres"},
+        {"ice_thickness_m", "ice_thickness_metres"},
+        {"step_change_basin_outlet_csv", "step_change_basin_outlet_fname"},
+        {"transient_history_file", "transient_history_fname"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -837,7 +833,7 @@ int main(int argc, char* argv[])
     site_cfg.muon_scheme    = muon_scheme;
     site_cfg.scaling_scheme = sf["scaling_scheme"];
     site_cfg.atmosphere     = sf["atmosphere"];
-    site_cfg.crn_nc_file    = sf["crn_nc_file"];
+    site_cfg.crn_nc_file    = sf["crn_nc_fname"];
     site_cfg.sample_age_yr  = static_cast<double>(ff["sample_age_yr"]);
     site_cfg.load_production_raster   = bf["load_production_raster"];
     site_cfg.production_raster_prefix = sf["production_raster_prefix"];
@@ -879,7 +875,7 @@ int main(int argc, char* argv[])
     const bool do_accum     = bf["calculate_accumulated_crn_concentration"];
     const bool do_multi     = bf["calculate_multi_isotope_step_change"];
     const bool do_multi_tr  = bf["calculate_multi_isotope_transient"];
-    const bool do_sample    = (sf["sample_points_filename"] != "NULL");
+    const bool do_sample    = (sf["sample_points_fname"] != "NULL");
     const bool do_make_step = bf["make_step_change_rasters"];
 
     const std::string ls_coupling = sf["landslide_coupling"];
@@ -978,7 +974,7 @@ int main(int argc, char* argv[])
 
     if (do_sample && !do_accum)
     {
-        std::cout << "Warning: sample_points_filename is set but "
+        std::cout << "Warning: sample_points_fname is set but "
                      "calculate_accumulated_crn_concentration is false.\n"
                      "Point sampling needs the accumulated (basin-averaged) raster "
                      "and will be skipped.\n";
@@ -1042,10 +1038,10 @@ int main(int argc, char* argv[])
         // Outlet: a supplied point snapped to the channel network, or the
         // largest basin in the DEM.
         std::int64_t outlet_flat = -1;
-        if (sf["step_change_basin_outlet_csv"] != "NULL")
+        if (sf["step_change_basin_outlet_fname"] != "NULL")
         {
             const std::string outlet_path =
-                pp.add_read_path_if_needed(sf["step_change_basin_outlet_csv"]);
+                pp.add_read_path_if_needed(sf["step_change_basin_outlet_fname"]);
             std::cout << "  Basin outlet from: " << outlet_path << "\n";
 
             std::vector<lsdtt::lsdtt_input_point> pts;
@@ -1063,7 +1059,7 @@ int main(int argc, char* argv[])
             if (pts.empty() ||
                 pts.front().status != lsdtt::lsdtt_point_input_status::success)
             {
-                std::cerr << "FATAL: step_change_basin_outlet_csv has no point "
+                std::cerr << "FATAL: step_change_basin_outlet_fname has no point "
                              "inside the DEM.\n";
                 return 1;
             }
@@ -1075,7 +1071,7 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_square_snap_options snap_opts;
             snap_opts.contributing_pixels_threshold =
                 static_cast<std::uint64_t>(ifs["threshold_contributing_pixels"]);
-            snap_opts.max_search_radius_pixels = ifs["snap_search_radius_pixels"];
+            snap_opts.max_search_radius_pixels = ifs["sample_snap_max_search_radius_pixels"];
             snap_opts.min_search_radius_pixels = 1;
 
             const lsdtt::lsdtt_snap_result snapped =
@@ -1110,7 +1106,7 @@ int main(int argc, char* argv[])
         lsdtt::StepChangeConfig sc_cfg;
         sc_cfg.uplift_old_m_yr     = static_cast<double>(ff["step_change_uplift_old_m_yr"]);
         sc_cfg.uplift_new_m_yr     = static_cast<double>(ff["step_change_uplift_new_m_yr"]);
-        sc_cfg.target_relief_old_m = static_cast<double>(ff["step_change_target_relief_m"]);
+        sc_cfg.target_relief_old_m = static_cast<double>(ff["step_change_target_relief_metres"]);
         sc_cfg.step_age_yr         = static_cast<double>(ff["step_change_age_yr"]);
         sc_cfg.n                   = static_cast<double>(ff["step_change_n"]);
         sc_cfg.m_over_n            = static_cast<double>(ff["step_change_m_over_n"]);
@@ -1254,7 +1250,7 @@ int main(int argc, char* argv[])
     qcfg.regolith_fertility  = static_cast<double>(ff["quartz_fertility_regolith"]);
     qcfg.bedrock_fertility   = static_cast<double>(ff["quartz_fertility_bedrock"]);
     qcfg.regolith_depth_m    =
-        static_cast<double>(ff["quartz_fertility_regolith_depth_m"]);
+        static_cast<double>(ff["quartz_fertility_regolith_depth_metres"]);
 
     const bool do_quartz = have_litho || have_ice
                         || qcfg.uniform_fertility != 1.0
@@ -1318,7 +1314,7 @@ int main(int argc, char* argv[])
         }
 
         lsdtt::IceMaskConfig icfg;
-        icfg.ice_thickness_m            = static_cast<double>(ff["ice_thickness_m"]);
+        icfg.ice_thickness_m = static_cast<double>(ff["ice_thickness_metres"]);
         icfg.ice_density_kg_m3          = static_cast<double>(ff["ice_density_kg_m3"]);
         icfg.erate_under_ice_g_cm2_yr   =
             static_cast<double>(ff["erate_under_ice_g_cm2_yr"]);
@@ -1471,11 +1467,11 @@ int main(int argc, char* argv[])
 
     if (do_multi_tr)
     {
-        const std::string hist = pp.add_read_path_if_needed(sf["transient_history_file"]);
-        if (sf["transient_history_file"] == "NULL" || hist.empty())
+        const std::string hist = pp.add_read_path_if_needed(sf["transient_history_fname"]);
+        if (sf["transient_history_fname"] == "NULL" || hist.empty())
         {
             std::cerr << "FATAL: calculate_multi_isotope_transient needs "
-                         "transient_history_file (time,rate,removal CSV).\n";
+                         "transient_history_fname (time,rate,removal CSV).\n";
             return 1;
         }
         std::cout << "Computing multi-isotope TRANSIENT rasters (Be10, Al26, C14)\n"
@@ -2022,7 +2018,7 @@ int main(int argc, char* argv[])
         if (do_sample)
         {
             const std::string points_path =
-                pp.add_read_path_if_needed(sf["sample_points_filename"]);
+                pp.add_read_path_if_needed(sf["sample_points_fname"]);
             std::cout << "\nSampling accumulated concentration at points: "
                       << points_path << "\n";
 
@@ -2108,7 +2104,7 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_square_snap_options snap_opts;
             snap_opts.contributing_pixels_threshold =
                 static_cast<std::uint64_t>(ifs["threshold_contributing_pixels"]);
-            snap_opts.max_search_radius_pixels = ifs["snap_search_radius_pixels"];
+            snap_opts.max_search_radius_pixels = ifs["sample_snap_max_search_radius_pixels"];
             snap_opts.min_search_radius_pixels = 1;
 
             std::vector<std::string> headers;

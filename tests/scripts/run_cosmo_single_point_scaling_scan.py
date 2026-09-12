@@ -357,9 +357,9 @@ def lsdtt_forward_concentration(
         f"muon_scheme: {lsdtt_muon_name(muon_scheme, scaling)}",
         f"sample_age_yr: {sample_age_yr}",
         f"atmosphere: {atmosphere_source}",
-        f"sample_points_filename: {pts.name}",
+        f"sample_points_fname: {pts.name}",
         "threshold_contributing_pixels: 1",
-        "snap_search_radius_pixels: 2",
+        "sample_snap_max_search_radius_pixels: 2",
         "fill_before_routing: true",
     ]
     param.write_text("\n".join(lines) + "\n")
@@ -440,14 +440,14 @@ def lsdtt_inverse_erate(
         f"read_fname: {dem.name}",
         f"write_path: {workdir}",
         f"write_fname: {stem}",
-        f"points_filename: {points.name}",
+        f"sample_points_fname: {points.name}",
         f"nuclide: {nuclide}",
         f"scaling_scheme: {scaling}",
         f"muon_scheme: {lsdtt_muon_name(muon_scheme, scaling)}",
         f"sample_age_yr: {sample_age_yr}",
         f"atmosphere: {atmosphere_source}",
         "threshold_contributing_pixels: 1",
-        "snap_search_radius_pixels: 2",
+        "sample_snap_max_search_radius_pixels: 2",
     ]
     param.write_text("\n".join(lines) + "\n")
     run_cli(tool_exe, workdir, param, f"inverse[{stem}]")

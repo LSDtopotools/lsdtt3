@@ -10,7 +10,7 @@ select_all_basins: true
 
 write_basin_outlines: true
 write_basin_outlines_as_polygon: false
-basin_outlines_output_format: flatgeobuf
+basin_outlines_write_vector_format: flatgeobuf
 
 write_basin_outlet_points: false
 write_channel_network_lines: false

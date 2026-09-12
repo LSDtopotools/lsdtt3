@@ -337,7 +337,7 @@ def run_cosmo_tool(exe: Path, dem_path: Path, samples: list,
         f"write_path: {workdir}",
         f"write_fname: {write_base}",
         "nuclide: Be10",
-        f"points_filename: {points_csv.name}",
+        f"sample_points_fname: {points_csv.name}",
     ]
     # Optional per-dataset run knobs (e.g. a channel-snap threshold suited to the
     # basin sizes -- the 1000-pixel default is wrong for sub-km2 catchments).

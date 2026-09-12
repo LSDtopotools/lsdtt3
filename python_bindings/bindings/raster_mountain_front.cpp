@@ -84,7 +84,8 @@ Raster mountain_front_outlets(const Raster& mountain_mask,
                               int min_contributing_pixels)
 {
     return Raster(lsdtt::find_mountain_front_outlets(
-        mountain_mask.native(), contributing_pixels.native(), min_contributing_pixels
+        mountain_mask.native(), contributing_pixels.native(),
+        min_contributing_pixels
     ));
 }
 
@@ -148,8 +149,13 @@ MountainFrontResult
 )doc");
     m.def("mountain_front_outlets", &mountain_front_outlets,
         nb::arg("mountain_mask"), nb::arg("contributing_pixels"),
-        nb::arg("min_contributing_pixels"),
-        "Return high-contributing-area pixels on a mountain-mask boundary.");
+        nb::arg("min_contributing_pixels"), R"doc(
+Return high-contributing-area pixels on a mountain-mask boundary.
+
+``min_contributing_pixels`` is the minimum upstream pixel count required for
+an edge pixel. This established Python keyword is independent of the CLI's
+``basin_minimum_contributing_pixels`` parameter name.
+)doc");
 }
 
 } // namespace lsdtt3_python

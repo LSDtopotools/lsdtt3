@@ -442,7 +442,7 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
                 self.WRITE_MD_HILLSHADE: "write_multidirectional_hillshade_raster",
                 self.WRITE_NODATA_FILLED: "write_filled_nodata_raster",
                 self.BINARY_MASK: "binary_mask_fname",
-                self.DEPRESSION_FORMAT: "depression_polygons_output_format",
+                self.DEPRESSION_FORMAT: "write_vector_format",
                 self.MD_N_DIRECTIONS: "multidirectional_hillshade_n_directions",
                 self.MD_START_AZIMUTH: "multidirectional_hillshade_start_azimuth",
             },
@@ -496,6 +496,7 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             "write_path": output_folder,
             "write_fname": output_prefix,
             "write_output_format": output_format,
+            "write_vector_format": depression_format,
             "n_threads": self.parameterAsInt(parameters, self.THREADS, context),
             # projection
             "enforce_projection": self.parameterAsBool(parameters, self.ENFORCE_PROJECTION, context),
@@ -509,7 +510,7 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             "allow_lambert_projection": self.parameterAsBool(parameters, self.ALLOW_LAMBERT, context),
             "warp_mem_mb": self.parameterAsInt(parameters, self.WARP_MEM_MB, context),
             # masking
-            "minimum_elevation": self.parameterAsDouble(parameters, self.MINIMUM_ELEVATION, context),
+            "min_elevation": self.parameterAsDouble(parameters, self.MINIMUM_ELEVATION, context),
             "maximum_elevation": self.parameterAsDouble(parameters, self.MAXIMUM_ELEVATION, context),
             # nodata repair
             "write_filled_nodata_raster": write_nodata_filled,
@@ -543,7 +544,6 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             "write_depression_polygons": write_depressions,
             "depression_min_pixels": self.parameterAsInt(parameters, self.DEPRESSION_MIN_PIXELS, context),
             "depression_min_depth": self.parameterAsDouble(parameters, self.DEPRESSION_MIN_DEPTH, context),
-            "depression_polygons_output_format": depression_format,
             # hillshade
             "write_hillshade_raster": write_hillshade,
             "hillshade_azimuth": self.parameterAsDouble(parameters, self.HILLSHADE_AZIMUTH, context),
@@ -565,7 +565,7 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             param_values["breach_lc_max_cost"] = breach_lc_max_cost
 
         if mask_layer is not None:
-            param_values["apply_binary_mask"] = True
+            param_values["run_binary_mask"] = True
             param_values["binary_mask_fname"] = mask_layer.source().split("|")[0]
 
         run_lsdtt_tool(

@@ -25,7 +25,7 @@ key: value
 
 | Step | Description |
 |---|---|
-| 1. Sea masking | Pixels at or below `minimum_elevation` are set to nodata |
+| 1. Sea masking | Pixels at or below `min_elevation` are set to nodata |
 | 2. Pit filling | Optional (`fill_before_routing`) |
 | 3. D8 flow routing | Build the D8 flow-info object |
 | 4. Outlet snapping | Optional (`basin_outlet_snapping_method`) |
@@ -62,7 +62,7 @@ key: value
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `minimum_elevation` | float | `0.0` | Pixels at or below this elevation (m) are masked to nodata. The default removes sea and ocean pixels. |
+| `min_elevation` | float | `0.0` | Pixels at or below this elevation (m) are masked to nodata. The default removes sea and ocean pixels. |
 | `fill_before_routing` | bool | `true` | Fill DEM pits before building flow routing. Recommended. |
 | `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. |
 
@@ -74,7 +74,7 @@ The outlet CSV **must** contain columns named `latitude` and `longitude` (decima
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `basin_outlet_csv` | string | `NULL` | **Required.** Path to the outlet CSV file. |
+| `basin_outlet_fname` | string | `NULL` | **Required.** Path to the outlet CSV file. |
 
 ---
 
@@ -82,10 +82,10 @@ The outlet CSV **must** contain columns named `latitude` and `longitude` (decima
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `basin_outlet_snapping_method` | string | `none` | Snap outlets to pixels exceeding a contributing-pixel threshold. `none`: use the mapped raster pixel directly. `expanding_square`: search ring-by-ring from the input pixel. `downstream`: follow the D8 receiver chain until a qualifying pixel is found. |
+| `basin_outlet_snapping_method` | string | `none` | Snap outlets to pixels exceeding a contributing-pixel threshold. Unlike extraction workflows, basin statistics defaults to `none` so an authoritative gauge/outlet pixel is not moved implicitly. `expanding_square` searches ring-by-ring; `downstream` follows the D8 receiver chain. |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Minimum contributing-pixel count for snapping. |
-| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` (pixels). `0` tests the input pixel first. |
-| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` (pixels). |
+| `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` (pixels). `0` tests the input pixel first. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` (pixels). |
 
 ---
 
@@ -229,7 +229,7 @@ The shape-metric columns appear before the channel-length columns and are presen
 read_path:         /data/dems/
 read_fname:        catchment_dem.tif
 
-basin_outlet_csv:                       /data/outlets.csv
+basin_outlet_fname:                     /data/outlets.csv
 basin_outlet_snapping_method:           downstream
 basin_outlet_contributing_pixels_threshold: 2000
 

@@ -87,17 +87,17 @@ Exactly one selection mode must be active. If none is specified, `analyse_all_ju
 |---|---|---|---|
 | `analyse_all_junctions` | bool | `false` | Analyse every junction in the extracted network. This is the default when no selection mode is explicitly set. |
 | `analyse_upstream_of_all_outlets` | bool | `false` | Analyse all junctions upstream of every outlet junction in the network. |
-| `analyse_upstream_of_outlet_csv` | bool | `false` | Analyse all junctions upstream of outlet points supplied in a file. Requires `basin_outlet_file`. |
+| `analyse_upstream_of_outlet_csv` | bool | `false` | Analyse all junctions upstream of outlet points supplied in a file. Requires `basin_outlet_fname`. |
 
 ### Outlet file and snapping (used with `analyse_upstream_of_outlet_csv`)
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `basin_outlet_file` | string | `NULL` | Path to the outlet point file. Format is auto-detected: `.csv` files must have columns named `latitude` and `longitude` (EPSG:4326). `.fgb` and `.gpkg` files are read as point vector layers. Required when `analyse_upstream_of_outlet_csv` is true. |
+| `basin_outlet_fname` | string | `NULL` | Path to the outlet point file. Format is auto-detected: `.csv` files must have columns named `latitude` and `longitude` (EPSG:4326). `.fgb` and `.gpkg` files are read as point vector layers. Required when `analyse_upstream_of_outlet_csv` is true. |
 | `basin_outlet_snapping_method` | string | `downstream` | How supplied outlet points are snapped to the channel network before junction lookup. `none` = use the pixel as-is. `expanding_square` = search outward in a square until a pixel meets `basin_outlet_contributing_pixels_threshold`. `downstream` = walk downstream until a pixel meets the threshold. |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing-pixel threshold used when snapping outlets to the channel network. Must be > 0. |
-| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum search radius in pixels for expanding-square snapping. Used only with `expanding_square`. |
-| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum search radius in pixels for expanding-square snapping. Must be ≥ `basin_outlet_min_search_radius_pixels`. |
+| `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius in pixels for expanding-square snapping. Used only with `expanding_square`. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius in pixels for expanding-square snapping. Must be ≥ `basin_outlet_snap_min_search_radius_pixels`. |
 
 ---
 
@@ -114,7 +114,7 @@ selection and affects the `_channel_link_bearings`, `_junction_angles`, and
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `only_complete_basins` | bool | `true` | Keep only junctions whose upslope basin is complete (no upslope pixel is influenced by nodata or the DEM edge). **Note:** the default is `true`, so output now excludes edge-truncated basins (a change from older versions). Set `false` to analyse every selected junction regardless of completeness. |
-| `minimum_basin_pixels` | int | `0` | Drop junctions whose upslope basin has fewer than this many pixels. `0` (default) disables the size filter. Applied alongside `only_complete_basins`. |
+| `min_basin_pixels` | int | `0` | Drop junctions whose upslope basin has fewer than this many pixels. `0` (default) disables the size filter. Applied alongside `only_complete_basins`. |
 
 ---
 
@@ -139,9 +139,9 @@ One record is written per analysed compact downstream link. Attributes include: 
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
 | `write_channel_link_bearings` | bool | `false` | `<write_fname>_channel_link_bearings.<ext>` |
-| `channel_link_bearings_output_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb`, `gpkg`, or `csv`. |
+| `write_vector_format` | string | `flatgeobuf` | Record-output format: `flatgeobuf` / `fgb`, `gpkg`, or `csv`. |
 | `write_channel_link_bearing_vectors` | bool | `false` | `<write_fname>_channel_link_bearing_vectors.<ext>` — short line features for visual QA in a GIS. CSV is not supported for vector outputs. |
-| `channel_link_bearing_vectors_output_format` | string | `flatgeobuf` | Output format for bearing vector QA layer: `flatgeobuf` / `fgb` or `gpkg`. |
+| `qa_write_vector_format` | string | `same_as_write_vector_format` | Override for line-based QA layers: `flatgeobuf` / `fgb` or `gpkg`. |
 
 ---
 
@@ -152,9 +152,7 @@ One record is written per valid two-donor junction. Attributes include: junction
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
 | `write_junction_angles` | bool | `false` | `<write_fname>_junction_angles.<ext>` |
-| `junction_angles_output_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb`, `gpkg`, or `csv`. |
 | `write_junction_angle_bearing_vectors` | bool | `false` | `<write_fname>_junction_angle_bearing_vectors.<ext>` — three short line features per junction (donor 1, donor 2, receiver) for visual QA. CSV is not supported. |
-| `junction_angle_bearing_vectors_output_format` | string | `flatgeobuf` | Output format for junction-angle QA vectors: `flatgeobuf` / `fgb` or `gpkg`. |
 
 ---
 
@@ -199,14 +197,12 @@ These analyses operate on the **full extracted network**, not the outlet-selecte
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
 | `write_strahler_channels` | bool | `false` | `<write_fname>_strahler_channels.<ext>` — one polyline per Strahler channel with order, length, and elevation attributes. |
-| `strahler_channels_output_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb`, `gpkg`, or `csv`. |
 
 ### Tokunaga channels
 
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
 | `write_tokunaga_channels` | bool | `false` | `<write_fname>_tokunaga_channels.<ext>` — same geometry as Strahler channels with additional Tokunaga attributes: donor order, receiver order, Tokunaga offset. |
-| `tokunaga_channels_output_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb`, `gpkg`, or `csv`. |
 | `write_tokunaga_channel_data` | bool | `false` | `<write_fname>_tokunaga_channel_data.csv` — table-only export of Tokunaga channel attributes with no geometry. |
 | `write_tokunaga_summary_data` | bool | `false` | Tokunaga pair counts, offset statistics, and self-similarity fits (see below). |
 
@@ -257,7 +253,7 @@ boundary_conditions:      oooo
 
 # Select junctions upstream of supplied basin outlets
 analyse_upstream_of_outlet_csv:  true
-basin_outlet_file:               /data/outlets/my_outlets.csv
+basin_outlet_fname:              /data/outlets/my_outlets.csv
 basin_outlet_snapping_method:    downstream
 basin_outlet_contributing_pixels_threshold: 1000
 
@@ -267,9 +263,8 @@ link_sampling_min_nodes: 2
 
 # Outputs
 write_channel_link_bearings:          true
-channel_link_bearings_output_format:  flatgeobuf
+write_vector_format:                  flatgeobuf
 write_junction_angles:                true
-junction_angles_output_format:        flatgeobuf
 ```
 
 ## Example parameter file: Strahler and Tokunaga
@@ -286,7 +281,6 @@ threshold_contributing_pixels: 500
 
 # These analyses use the full network; no junction selection needed.
 write_strahler_channels:        true
-strahler_channels_output_format: flatgeobuf
 write_tokunaga_channels:         true
 write_tokunaga_summary_data:     true     # writes the ols + poisson _fit.csv
 ```

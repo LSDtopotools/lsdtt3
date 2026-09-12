@@ -116,6 +116,51 @@ void test_prefixes()
           "prefix appears in the help group label");
 }
 
+void test_output_format_declarations()
+{
+    std::map<std::string, bool> bools;
+    std::map<std::string, std::string> strings;
+    lsdtt::lsdtt_help_registry help;
+
+    lsdtt::declare_vector_output_format_parameter(strings, help);
+    check(strings.size() == 1 &&
+              strings.at("write_vector_format") == "flatgeobuf",
+          "vector declaration adds only the canonical vector selector");
+    check(bools.empty() && help.entries().count("write_output_format") == 0,
+          "vector declaration does not advertise raster or index parameters");
+
+    lsdtt::declare_raster_output_format_parameter(strings, help, "stage");
+    check(strings.at("stage_write_output_format") == "cog",
+          "raster declaration supports a normalized prefix");
+    lsdtt::declare_spatial_index_parameter(bools, help);
+    check(bools.size() == 1 && bools.at("calculate_spatial_index"),
+          "spatial-index declaration is independently selectable");
+
+    check(lsdtt::resolve_output_format_override(
+              lsdtt::inherit_write_vector_format, "gpkg") == "gpkg",
+          "vector override inheritance resolves to its canonical selector");
+    check(lsdtt::resolve_output_format_override("csv", "flatgeobuf") == "csv",
+          "an explicit output override is retained");
+}
+
+void test_basin_outlet_declaration()
+{
+    std::map<std::string, bool> bools;
+    std::map<std::string, int> ints;
+    std::map<std::string, float> floats;
+    std::map<std::string, std::string> strings;
+    lsdtt::lsdtt_help_registry help;
+
+    lsdtt::declare_basin_outlet_parameters(
+        bools, ints, floats, strings, help);
+    check(ints.at("basin_outlet_snap_min_search_radius_pixels") == 0 &&
+              ints.at("basin_outlet_snap_max_search_radius_pixels") == 25,
+          "basin outlet declaration uses canonical snap radius names");
+    check(ints.count("basin_outlet_min_search_radius_pixels") == 0 &&
+              ints.count("basin_outlet_max_search_radius_pixels") == 0,
+          "basin outlet declaration does not expose deprecated radius names");
+}
+
 void test_overwrite_policy()
 {
     std::map<std::string, int> ints{{"threshold_contributing_pixels", 42}};
@@ -138,6 +183,33 @@ void test_overwrite_policy()
           "caller can deliberately override typed and documented defaults after declaration");
 }
 
+void test_selective_synthetic_declarations()
+{
+    std::map<std::string, int> ints;
+    std::map<std::string, float> floats;
+    std::map<std::string, std::string> strings;
+    lsdtt::lsdtt_help_registry help;
+
+    lsdtt::declare_synthetic_dimensions_parameters(ints, help);
+    lsdtt::declare_synthetic_cell_size_parameter(floats, help);
+    lsdtt::declare_synthetic_random_seed_parameter(ints, help);
+    check(ints.at("n_rows") == 128 && ints.at("n_cols") == 128 &&
+              ints.at("random_seed") == 33 &&
+              floats.at("cell_size_metres") == 1.0f,
+          "selective synthetic domain declarations use canonical defaults");
+    check(strings.empty() && help.entries().count("synthetic_crs_wkt") == 0,
+          "selective domain declarations do not advertise an unsupported CRS model");
+
+    lsdtt::declare_synthetic_noise_type_parameter(strings, help);
+    lsdtt::declare_synthetic_noise_target_stddev_parameter(floats, help);
+    check(strings.at("noise_type") == "flat" &&
+              floats.at("noise_target_stddev_metres") == 1.0f,
+          "selective noise declarations add requested concepts");
+    check(floats.count("noise_relief_metres") == 0 &&
+              floats.count("diamond_square_initial_scale") == 0,
+          "selective noise declarations omit unrequested concepts");
+}
+
 } // namespace
 
 int main()
@@ -145,7 +217,10 @@ int main()
     test_independent_selection();
     test_defaults_and_composition();
     test_prefixes();
+    test_output_format_declarations();
+    test_basin_outlet_declaration();
     test_overwrite_policy();
+    test_selective_synthetic_declarations();
 
     if (n_failed != 0)
     {

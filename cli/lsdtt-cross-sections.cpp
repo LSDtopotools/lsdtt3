@@ -121,6 +121,7 @@ int main(int argc, char* argv[])
         "Allowed values: cog, gtiff, same_as_input.",
         "Raster output", "io", ""
     };
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
 
     // --- DEM preparation ---
     lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
@@ -261,8 +262,8 @@ int main(int argc, char* argv[])
         "Cross-section geometry", "param", ""
     };
 
-    int_default_map["minimum_bearing_window_pixels"] = 3;
-    help_map["minimum_bearing_window_pixels"] = {"int", "3",
+    int_default_map["min_bearing_window_pixels"] = 3;
+    help_map["min_bearing_window_pixels"] = {"int", "3",
         "Minimum number of channel pixels required to fit a local bearing.",
         "Cross sections are skipped where the bearing window contains too few channel pixels.",
         "Cross-section geometry", "param", ""
@@ -280,16 +281,14 @@ int main(int argc, char* argv[])
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool", "true",
         "Write the extracted channel network as vector lines.",
+        "Enabled by default because the network locates the cross sections and is "
+        "part of this workflow's interpretation, not an optional extraction product. "
         "Each compact channel link between junctions is written as a line feature.",
         "Output control", "switch", ""
     };
 
-    string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
-    help_map["channel_network_lines_output_format"] = {"string", "flatgeobuf",
-        "Output format for channel-network lines.",
-        "Allowed values: flatgeobuf, fgb, gpkg.",
-        "Output control", "param", ""
-    };
+    string_default_map["legacy_channel_network_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     bool_default_map["write_cross_section_lines"] = true;
     help_map["write_cross_section_lines"] = {"bool", "true",
@@ -299,12 +298,8 @@ int main(int argc, char* argv[])
         "Output control", "switch", ""
     };
 
-    string_default_map["cross_section_lines_output_format"] = "flatgeobuf";
-    help_map["cross_section_lines_output_format"] = {"string", "flatgeobuf",
-        "Output format for cross-section line geometry.",
-        "Allowed values: flatgeobuf, fgb, gpkg.",
-        "Output control", "param", ""
-    };
+    string_default_map["legacy_cross_section_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     bool_default_map["write_cross_section_sample_points"] = true;
     help_map["write_cross_section_sample_points"] = {"bool", "true",
@@ -314,10 +309,10 @@ int main(int argc, char* argv[])
         "Output control", "switch", ""
     };
 
-    string_default_map["cross_section_sample_points_output_format"] =
-        "flatgeobuf";
-    help_map["cross_section_sample_points_output_format"] = {"string",
-        "flatgeobuf",
+    string_default_map["cross_section_sample_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["cross_section_sample_points_write_vector_format"] = {"string",
+        "same_as_write_vector_format",
         "Output format for sampled cross-section points.",
         "Allowed values: csv, flatgeobuf, fgb, gpkg.",
         "Output control", "param", ""
@@ -350,6 +345,15 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"cross_section_sample_points_output_format",
+          "cross_section_sample_points_write_vector_format"},
+        {"minimum_bearing_window_pixels", "min_bearing_window_pixels"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"channel_network_lines_output_format",
+         {"legacy_channel_network_lines_write_vector_format", "write_vector_format"}},
+        {"cross_section_lines_output_format",
+         {"legacy_cross_section_lines_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -421,9 +425,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs["minimum_bearing_window_pixels"] < 2)
+    if (ifs["min_bearing_window_pixels"] < 2)
     {
-        std::cerr << "FATAL: minimum_bearing_window_pixels must be >= 2.\n";
+        std::cerr << "FATAL: min_bearing_window_pixels must be >= 2.\n";
         return 1;
     }
 
@@ -446,17 +450,23 @@ int main(int argc, char* argv[])
 
     lsdtt::vector_output_format channel_network_lines_output_format =
         lsdtt::resolve_vector_output_format(
-            sf["channel_network_lines_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_network_lines_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format cross_section_lines_output_format =
         lsdtt::resolve_vector_output_format(
-            sf["cross_section_lines_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_cross_section_lines_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format cross_section_sample_points_output_format =
         lsdtt::resolve_point_output_format(
-            sf["cross_section_sample_points_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["cross_section_sample_points_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     // -------------------------------------------------------------------------
@@ -768,7 +778,7 @@ int main(int argc, char* argv[])
     xs_opts.skip_junction_pixels =
         bf["skip_junction_pixels"];
     xs_opts.minimum_bearing_window_pixels =
-        ifs["minimum_bearing_window_pixels"];
+        ifs["min_bearing_window_pixels"];
 
     const lsdtt::lsdtt_raster_cpu& cross_section_dem =
         bf["sample_filled_dem"] ? routed_dem : dem;

@@ -16,7 +16,7 @@ read_fname: divmig_ridge.tif
 write_path: __WRITE_PATH__
 write_fname: divmig_merge
 
-basin_outlet_file: divmig_ridge_outlets.fgb
+basin_outlet_fname: divmig_ridge_outlets.fgb
 outlet_cluster_field: cluster_id
 outlet_cluster_mode: auto
 basin_outlet_snapping_method: none

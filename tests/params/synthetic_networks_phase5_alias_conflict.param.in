@@ -1,0 +1,9 @@
+# Canonical-precedence coverage is separate from pure old-key transfer.
+write_path: __WRITE_PATH__
+write_fname: ocnconflict5
+n_rows: 8
+n_cols: 8
+cell_size: 99
+cell_size_metres: 10
+n_iter: 1
+write_output_format: gtiff

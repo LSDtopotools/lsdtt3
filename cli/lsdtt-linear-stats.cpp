@@ -111,10 +111,10 @@ int main(int argc, char* argv[])
     };
 
     // --- Output ---
-    string_default_map["output_format"] = "flatgeobuf";
-    help_map["output_format"] = {"string","flatgeobuf",
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
         "Format for the output file.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
+        "Allowed values: gpkg, flatgeobuf/fgb.",
         "Output", "param", ""};
 
     // -------------------------------------------------------------------------
@@ -144,6 +144,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({ {"output_format", "write_vector_format"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -196,7 +197,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::vector_output_format output_format =
         lsdtt::resolve_vector_output_format(
-            sf["output_format"]
+            sf["write_vector_format"]
         );
 
     const std::string output_extension =

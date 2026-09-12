@@ -183,6 +183,57 @@ def test_phase4_emitted_key_construction_is_canonical():
         assert "source_pixels_threshold" not in constants
 
 
+def test_phase5_window_and_outlet_snap_mappings_are_canonical(monkeypatch):
+    outlet_algorithms = [
+        ("basin_extraction", "BasinExtractionAlgorithm"),
+        ("basin_stats", "BasinStatsAlgorithm"),
+        ("channel_network_analysis", "ChannelNetworkAnalysisAlgorithm"),
+        ("chi_analysis", "ChiAnalysisAlgorithm"),
+    ]
+    for module_name, class_name in outlet_algorithms:
+        module, algorithm_class = _load(module_name, class_name)
+        captured = {}
+        monkeypatch.setattr(
+            module,
+            "attach_backend_help",
+            lambda algorithm, tool_name, overrides=None: captured.update(overrides or {}),
+        )
+        algorithm = algorithm_class()
+        algorithm.initAlgorithm()
+        assert captured[algorithm.SNAPPING_MIN_RADIUS] == (
+            "basin_outlet_snap_min_search_radius_pixels"
+        )
+        assert captured[algorithm.SNAPPING_MAX_RADIUS] == (
+            "basin_outlet_snap_max_search_radius_pixels"
+        )
+
+    module, algorithm_class = _load(
+        "channel_network_analysis", "ChannelNetworkAnalysisAlgorithm"
+    )
+    captured = {}
+    monkeypatch.setattr(
+        module,
+        "attach_backend_help",
+        lambda algorithm, tool_name, overrides=None: captured.update(overrides or {}),
+    )
+    algorithm = algorithm_class()
+    algorithm.initAlgorithm()
+    assert captured[algorithm.VECTOR_FORMAT] == "write_vector_format"
+
+    module, algorithm_class = _load("channel_extraction", "ChannelExtractionAlgorithm")
+    captured = {}
+    monkeypatch.setattr(
+        module,
+        "attach_backend_help",
+        lambda algorithm, tool_name, overrides=None: captured.update(overrides or {}),
+    )
+    algorithm = algorithm_class()
+    algorithm.initAlgorithm()
+    assert captured[algorithm.WIENER_FITTING_RADIUS] == (
+        "wiener_surface_fitting_radius_metres"
+    )
+
+
 def test_phase4_backend_version_gate_runs_before_execution(monkeypatch):
     support = importlib.import_module("lsdtt_qgis.algorithms.support")
 
@@ -316,7 +367,7 @@ def test_basin_stats_area_ratios_do_not_require_channel_stats(monkeypatch, tmp_p
             "sample_rasters_to_points",
             "SampleRastersToPointsAlgorithm",
             "RASTER_ATTRIBUTE_CSV",
-            "raster_attribute_csv",
+            "raster_attribute_fname",
         ),
         (
             "sample_rasters_to_points",

@@ -172,8 +172,8 @@ int main(int argc, char* argv[])
     // --- Input & Routing ---
     lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
 
-    string_default_map["basin_outlet_csv"] = "NULL";
-    help_map["basin_outlet_csv"] = {"string", "NULL", 
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string", "NULL",
         "Required file of requested basin outlet points (CSV format).", 
         "Must contain columns exactly named 'latitude' and 'longitude'.",
         "Input & Routing", "param", ""};
@@ -207,14 +207,14 @@ int main(int argc, char* argv[])
         "Defines the required D8 accumulation to arrest snapping.",
         "Snapping options", "param", ""};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int", "0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int", "0",
         "Minimum expanding-square search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square.",
         "Snapping options", "param", "basin_outlet_snapping_method"};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int", "25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int", "25",
         "Maximum expanding-square search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square.",
         "Snapping options", "param", "basin_outlet_snapping_method"};
@@ -266,8 +266,8 @@ int main(int argc, char* argv[])
         "Dump spatial D-Infinity flow accumulation (in m2) as a GeoTIFF.", "",
         "Slope-Area Outputs", "switch", ""};
 
-    bool_default_map["write_dinf_area_raster_log10"] = false;
-    help_map["write_dinf_area_raster_log10"] = {"bool", "false", 
+    bool_default_map["write_dinf_area_log10_raster"] = false;
+    help_map["write_dinf_area_log10_raster"] = {"bool", "false",
         "Dump spatial log10(D-Inf Area) to disk as a GeoTIFF.", "",
         "Slope-Area Outputs", "switch", ""};
 
@@ -298,8 +298,8 @@ int main(int argc, char* argv[])
         "curvature_flips, appending results per lambda as attributes.",
         "Vector Polygon Outputs", "switch", ""};
 
-    string_default_map["polygon_output_format"] = "flatgeobuf";
-    help_map["polygon_output_format"] = {"string", "flatgeobuf", 
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string", "flatgeobuf",
         "Vector output format for basin polygons.", 
         "Valid formats: flatgeobuf (or fgb) and gpkg.",
         "Vector Polygon Outputs", "param", "write_outline_polygons_with_flipstats"};
@@ -330,7 +330,12 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"source_pixels_threshold", "threshold_contributing_pixels"} });
+        {"write_dinf_area_raster_log10", "write_dinf_area_log10_raster"},
+        {"basin_outlet_csv", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"polygon_output_format", "write_vector_format"} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, 
         bool_default_map, string_default_map);
@@ -340,8 +345,8 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    if (sf["basin_outlet_csv"] == "NULL" || sf["basin_outlet_csv"].empty()) {
-        std::cerr << "FATAL: basin_outlet_csv is required.\n"; return 1;
+    if (sf["basin_outlet_fname"] == "NULL" || sf["basin_outlet_fname"].empty()) {
+        std::cerr << "FATAL: basin_outlet_fname is required.\n"; return 1;
     }
 
     const std::string snap_method =
@@ -474,7 +479,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 3 - Read basin outlets, snap, and select basins
     // -------------------------------------------------------------------------
-    std::string csv_path = pp.add_read_path_if_needed(sf["basin_outlet_csv"]);
+    std::string csv_path = pp.add_read_path_if_needed(sf["basin_outlet_fname"]);
     std::cout << "\nReading basin outlet CSV: " << csv_path << "\n";
     std::vector<lsdtt::lsdtt_input_point> requested_outlets;
     try {
@@ -493,9 +498,9 @@ int main(int argc, char* argv[])
     square_opts.contributing_pixels_threshold =
         ifs["basin_outlet_contributing_pixels_threshold"];
     square_opts.min_search_radius_pixels =
-        ifs["basin_outlet_min_search_radius_pixels"];
+        ifs["basin_outlet_snap_min_search_radius_pixels"];
     square_opts.max_search_radius_pixels =
-        ifs["basin_outlet_max_search_radius_pixels"];
+        ifs["basin_outlet_snap_max_search_radius_pixels"];
 
     // An outlet must end up ON THE CHANNEL NETWORK, not merely on a valid cell.
     // This tool builds lsdtt_junction_basin objects, and those resolve the
@@ -616,7 +621,7 @@ int main(int argc, char* argv[])
     // Step 5 - D-infinity flow accumulation (if slope-area requested)
     // -------------------------------------------------------------------------
     if (needs_slope_area || bf["write_dinf_area_raster"] || 
-        bf["write_dinf_area_raster_log10"]) 
+        bf["write_dinf_area_log10_raster"])
     {
         std::cout << "\n--- Computing D-Infinity Flow Routing ---\n";
         lsdtt::lsdtt_flowgraph_options fg_opts;
@@ -640,7 +645,7 @@ int main(int argc, char* argv[])
                 dinf_accum_cpu.get_data(), dinf_accum_cpu.get_meta(), 
                 o, out_fmt);
         }
-        if (bf["write_dinf_area_raster_log10"]) {
+        if (bf["write_dinf_area_log10_raster"]) {
             const std::string o = pp.make_output_path("_dinf_log10area.tif");
             std::cout << "Writing Log10 D-Inf Area: " << o << "\n";
             loader.write_full(
@@ -909,7 +914,7 @@ int main(int argc, char* argv[])
     if (bf["write_outline_polygons_with_flipstats"]) {
         std::cout << "\n--- Generating Polygon Vector Shapes ---\n";
         lsdtt::vector_output_format poly_fmt = 
-            lsdtt::resolve_vector_output_format(sf["polygon_output_format"]); 
+            lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
         std::string ext = lsdtt::output_extension(poly_fmt);
         std::string out_path = pp.make_output_path("_basin_polygons", ext);
 

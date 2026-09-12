@@ -16,7 +16,7 @@ write_fname: burn
 
 stream_vector_path: __READ_PATH__/stream_burning_network.fgb
 stream_burn_mode: snap_to_network
-do_stream_burn: true
+run_stream_burn: true
 
 carve_inward_edge_sources: true
 threshold_contributing_pixels: 1000

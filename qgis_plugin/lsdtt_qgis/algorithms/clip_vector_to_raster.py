@@ -103,10 +103,10 @@ class ClipVectorToRasterAlgorithm(QgsProcessingAlgorithm):
             "write_fname": output_prefix,
             "enforce_projection": self.parameterAsBool(parameters, self.ENFORCE_PROJECTION, context),
             # Disable the default sea-level masking: this algorithm only clips.
-            "minimum_elevation": -99999.0,
+            "min_elevation": -99999.0,
             "clip_vector_data_to_raster": True,
             "vector_data_fname": layer_file_path(vector_layer.source()),
-            "vector_clip_output_format": vector_format,
+            "write_vector_format": vector_format,
         }
 
         run_lsdtt_tool(

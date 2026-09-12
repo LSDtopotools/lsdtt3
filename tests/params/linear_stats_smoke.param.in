@@ -17,4 +17,4 @@ write_fname: ls
 
 vector_fname: __READ_PATH__/linear_stats_lines.fgb
 interpolating_step_length: 60.0
-output_format: flatgeobuf
+write_vector_format: flatgeobuf

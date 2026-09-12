@@ -83,13 +83,13 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `select_all_basins` | bool | `false` | Select one basin for every junction in the network. Use this to analyse all ridges. |
-| `select_basins_from_outlets` | bool | `false` | Select basins from the outlet points in `basin_outlet_file`. |
+| `select_basins_from_outlets` | bool | `false` | Select basins from the outlet points in `basin_outlet_fname`. |
 | `select_basins_from_outlets_nested` | bool | `false` | As above, plus all nested upstream basins. |
-| `basin_outlet_file` | string | `NULL` | Outlet points (CSV with `latitude`/`longitude` in EPSG:4326, or `.fgb`/`.gpkg` point layer). Required when selecting from outlets. |
+| `basin_outlet_fname` | string | `NULL` | Outlet points (CSV with `latitude`/`longitude` in EPSG:4326, or `.fgb`/`.gpkg` point layer). Required when selecting from outlets. |
 | `basin_outlet_snapping_method` | string | `downstream` | Snap outlet points to a qualifying channel pixel: `none`, `expanding_square`, or `downstream`. |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing‑pixel threshold used for outlet snapping. |
-| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum search radius (pixels) for `expanding_square` snapping. |
-| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum search radius (pixels) for `expanding_square` snapping. |
+| `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius (pixels) for `expanding_square` snapping. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius (pixels) for `expanding_square` snapping. |
 
 ### Basin filtering
 
@@ -113,7 +113,7 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 |---|---|---|---|
 | `write_basin_outlines` | bool | `false` | `<write_fname>_junction_basin_outlines.<ext>` — basin outlines as polylines. |
 | `write_basin_outlines_as_polygon` | bool | `false` | `<write_fname>_junction_basin_polygons.<ext>` — basin outlines as polygons. |
-| `basin_outlines_output_format` | string | `flatgeobuf` | Format for basin outlines: `flatgeobuf`, `fgb`, or `gpkg`. |
+| `write_vector_format` | string | `flatgeobuf` | Format for basin outlines: `flatgeobuf`, `fgb`, or `gpkg`. |
 | `write_basin_outlines_to_csv` | bool | `false` | `<write_fname>_basin_outlines.csv` — outline points with distance and elevation. |
 | `write_basins_raster` | bool | `false` | `<write_fname>_junction_basins.tif` — basins labelled by junction number. |
 
@@ -136,9 +136,9 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
-| `print_ridgelines` | bool | `false` | `<write_fname><mode_prefix>.csv` — per‑point ridgeline data: lat/long, distance, elevation, fitted/detrended/smoothed elevation, smoothed detrended slope. |
-| `print_ridgeline_stats` | bool | `false` | `<write_fname><mode_prefix>_stats.csv` — per‑ridgeline statistics: fitted slope, linear‑fit R², normalised steepness, polynomial R² and coefficients. |
-| `print_ridgeline_extrema` | bool | `false` | `<write_fname><mode_prefix>_extrema.csv` — ridgeline extrema with distance/relief to the next extremum and distance to the triple divide. |
+| `write_ridgelines` | bool | `false` | `<write_fname><mode_prefix>.csv` — per‑point ridgeline data: lat/long, distance, elevation, fitted/detrended/smoothed elevation, smoothed detrended slope. |
+| `write_ridgeline_stats` | bool | `false` | `<write_fname><mode_prefix>_stats.csv` — per‑ridgeline statistics: fitted slope, linear‑fit R², normalised steepness, polynomial R² and coefficients. |
+| `write_ridgeline_extrema` | bool | `false` | `<write_fname><mode_prefix>_extrema.csv` — ridgeline extrema with distance/relief to the next extremum and distance to the triple divide. |
 
 `<mode_prefix>` is `_basin_outline_ridgelines`, `_interfluvial_ridgelines`, or `_range_defined_ridgelines`.
 
@@ -161,7 +161,7 @@ for tortuous networks.
 
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
-| `print_paired_flowpath_statistics` | bool | `false` | Write `<write_fname>_paired_flowpaths.csv` (one row per pair) and `<write_fname>_paired_flowpaths_summary.csv` (medians plus the rejection counts). |
+| `write_paired_flowpath_statistics` | bool | `false` | Write `<write_fname>_paired_flowpaths.csv` (one row per pair) and `<write_fname>_paired_flowpaths_summary.csv` (medians plus the rejection counts). |
 | `paired_flowpath_threshold_divide_distance` | float | `1000.0` | Reject divide edges within this distance, **along the divide**, of either end. See the warning below. |
 | `paired_flowpath_unique_pairs` | bool | `false` | Keep one record per distinct channel pair. The default reproduces Goren & Shelef, who iterate every divide edge and so can count a pair twice. |
 | `paired_flowpath_only_channel_heads` | bool | `false` | Keep only pairs whose nearest downstream channels are both channel heads. Goren & Shelef do **not** restrict to heads, so the default reproduces them. |
@@ -185,7 +185,7 @@ select_all_basins: true
 filter_basins_by_stream_order: true
 basins_min_stream_order: 2
 basins_max_stream_order: 3
-print_paired_flowpath_statistics: true
+write_paired_flowpath_statistics: true
 ```
 
 A large "paths never rejoin" count is normal even so — sibling sub‑basins in
@@ -240,7 +240,7 @@ filter_nested_basins:true
 threshold_contributing_pixels: 1000
 
 # Write the ridgeline CSVs
-print_ridgelines:        true
-print_ridgeline_stats:   true
-print_ridgeline_extrema: true
+write_ridgelines:        true
+write_ridgeline_stats:   true
+write_ridgeline_extrema: true
 ```

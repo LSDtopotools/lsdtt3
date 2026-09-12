@@ -8,7 +8,7 @@ write_fname: bothmulti
 # first, so before 2026-08-05 the step-change results silently overwrote it --
 # a run that looked successful produced half of what it was asked for.
 calculate_multi_isotope_transient: true
-transient_history_file: __READ_PATH__/cosmo_erosion_history.csv
+transient_history_fname: __READ_PATH__/cosmo_erosion_history.csv
 calculate_multi_isotope_step_change: true
 step_change_eff_erate_old_g_cm2_yr: 0.002
 step_change_eff_erate_new_g_cm2_yr: 0.02

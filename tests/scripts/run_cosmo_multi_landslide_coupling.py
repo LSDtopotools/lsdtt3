@@ -42,9 +42,9 @@ write_fname: mls
 
 calculate_multi_isotope_step_change: true
 calculate_accumulated_crn_concentration: true
-sample_points_filename: cosmo_tiny_points.csv
+sample_points_fname: cosmo_tiny_points.csv
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
+sample_snap_max_search_radius_pixels: 3
 step_change_eff_erate_old_g_cm2_yr: 0.001
 step_change_eff_erate_new_g_cm2_yr: 0.005
 time_since_change_yr: 20000

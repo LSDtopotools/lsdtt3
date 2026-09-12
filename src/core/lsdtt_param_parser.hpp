@@ -59,6 +59,7 @@
 #include <fstream>
 #include <iosfwd>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -161,6 +162,26 @@ private:
     std::vector<std::string> key_order_;
 };
 
+// A deprecated numeric key whose value changes meaning with its name. Values
+// are rewritten as `new = old * scale + offset`; preserve_zero keeps sentinel
+// zero unchanged even when an offset is configured.
+struct lsdtt_deprecated_numeric_alias
+{
+    std::string new_key;
+    double scale = 1.0;
+    double offset = 0.0;
+    bool preserve_zero = false;
+};
+
+// Compatibility aliases can store an old value in a hidden, injective key while
+// directing users to a canonical public parameter. This is used when formerly
+// independent selectors are consolidated but old files may set them differently.
+struct lsdtt_deprecated_compatibility_alias
+{
+    std::string storage_key;
+    std::string replacement_key;
+};
+
 class lsdtt_param_parser
 {
 public:
@@ -233,6 +254,21 @@ public:
     // If both names appear, the NEW one wins and the conflict is reported.
     void set_deprecated_aliases(std::map<std::string, std::string> aliases)
     { deprecated_alias_map_ = std::move(aliases); }
+
+    void set_deprecated_compatibility_aliases(
+        std::map<std::string, lsdtt_deprecated_compatibility_alias> aliases);
+
+    // Old name -> typed affine rewrite policy. The old value must be a complete,
+    // finite number. Its transformed value is stored under policy.new_key before
+    // typed parsing; if the canonical key is present it wins, but the old value
+    // is still validated. The old key is always consumed and warned about.
+    //
+    // This replaces the complete transformed-alias map independently of
+    // set_deprecated_aliases(), so the two kinds coexist. An old key must not be
+    // registered in both maps; that is a fatal parser-policy configuration error.
+    void set_deprecated_numeric_aliases(
+        std::map<std::string, lsdtt_deprecated_numeric_alias> aliases)
+    { deprecated_numeric_alias_map_ = std::move(aliases); }
 
     // Old name -> the exact message to print. A key here appearing in the file
     // is fatal: see the note on parse_all_parameters about how it stops.
@@ -569,8 +605,15 @@ private:
     // Raw string map of all key:value pairs read from file
     std::map<std::string, std::string> parameter_map_;
 
-    // Key-policy maps; see set_deprecated_aliases / set_removed_keys.
+    // Key-policy maps; see the set_* key-policy methods above.
     std::map<std::string, std::string> deprecated_alias_map_;
+    std::map<std::string, lsdtt_deprecated_compatibility_alias>
+        deprecated_compatibility_alias_map_;
+    // Internal keys required to resolve compatibility aliases. They remain in
+    // typed maps for CLI use but are never exported as reusable parameters.
+    std::set<std::string> compatibility_storage_keys_;
+    std::map<std::string, lsdtt_deprecated_numeric_alias>
+        deprecated_numeric_alias_map_;
     std::map<std::string, std::string> removed_key_message_map_;
     std::map<std::string, std::string> ignored_key_message_map_;
     bool report_unknown_keys_ = true;

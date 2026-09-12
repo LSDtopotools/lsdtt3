@@ -7,7 +7,7 @@ read_fname: divmig_valleys.tif
 write_path: __WRITE_PATH__
 write_fname: divmig_single_unit
 
-basin_outlet_file: divmig_outlets.csv
+basin_outlet_fname: divmig_outlets.csv
 outlet_cluster_field: cluster_all
 outlet_cluster_mode: auto
 basin_outlet_snapping_method: none

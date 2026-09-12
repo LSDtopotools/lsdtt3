@@ -61,7 +61,8 @@ class FeatureFinderTest(unittest.TestCase):
             np.ones(raster.shape, dtype=bool), raster.metadata,
         )
         outlets = lsdtt3.mountain_front_outlets(
-            result.mountain_mask, contributing, min_contributing_pixels=100
+            result.mountain_mask, contributing,
+            min_contributing_pixels=100
         )
         self.assertEqual(outlets.shape, raster.shape)
 

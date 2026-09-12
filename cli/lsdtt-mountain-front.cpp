@@ -29,7 +29,7 @@
 //   Stage 8 - Remove small mountain components (< min_component_pixels).
 //   Stage 9 - Valley infilling: morphological closing (infill_valley_radius_metres).
 //             Disabled when infill_valley_radius_metres <= 0.
-//   Stage 10 - Outlets: mountain edge pixels with upstream area >= min_contributing_pixels.
+//   Stage 10 - Outlets: mountain edge pixels above a contributing-pixel threshold.
 //
 // Nodata semantics:
 //   Pixels that are nodata in the original DEM are nodata in all output rasters.
@@ -191,8 +191,8 @@ int main(int argc, char* argv[])
         "Leave empty to auto-compute via fill + D8 flow routing.",
         "Stage 10: outlets", "param", ""};
 
-    int_default_map["min_contributing_pixels"] = 1000;
-    help_map["min_contributing_pixels"] = {"int","1000",
+    int_default_map["basin_minimum_contributing_pixels"] = 1000;
+    help_map["basin_minimum_contributing_pixels"] = {"int","1000",
         "Minimum upstream contributing pixels for a mountain edge pixel to be an outlet.",
         "Only used when write_mountain_front_outlets is true.",
         "Stage 10: outlets", "param", ""};
@@ -272,7 +272,8 @@ int main(int argc, char* argv[])
     // what the number is - a full window side, not a radius - because the same
     // idea is a RADIUS in lsdtt-fluvial-surfaces.
     pp.set_deprecated_aliases({
-        {"relief_window_pixels", "relief_window_side_pixels"} });
+        {"relief_window_pixels", "relief_window_side_pixels"},
+        {"min_contributing_pixels", "basin_minimum_contributing_pixels"} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -572,7 +573,8 @@ if (bf["write_mountain_front_outlets"])
         {
             const lsdtt::lsdtt_raster_cpu outlet_candidates =
                 lsdtt::find_mountain_front_outlets(
-                    mountain_mask, ca_raster, ip["min_contributing_pixels"]);
+                    mountain_mask, ca_raster,
+                    ip["basin_minimum_contributing_pixels"]);
 
             // -----------------------------------------------------------------
             // Prune outlet candidates that have another outlet downstream.

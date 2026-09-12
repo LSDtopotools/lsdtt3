@@ -13,7 +13,7 @@ steady_state_n_cycles: 2
 run_hillslope_steady_state: true
 hillslope_ss_model: linear
 hillslope_every_cycle: true
-incision_threshold_area: 2.0
+incision_threshold_specific_area: 2.0
 hillslope_diffusivity: 0.01
 hillslope_ss_tolerance: 1e-3
 hillslope_ss_max_iterations: 5000

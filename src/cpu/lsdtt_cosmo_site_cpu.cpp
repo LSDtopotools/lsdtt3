@@ -144,7 +144,7 @@ CosmoSite build_cosmo_site(const lsdtt_raster_cpu& dem,
                 (site.crn_nc_path_.empty()
                      ? std::string("<no crn_parameters.nc located>")
                      : site.crn_nc_path_) +
-                "\".\nSet crn_nc_file to an nc that carries the LSDn grids, or "
+                "\".\nSet crn_nc_fname to an nc that carries the LSDn grids, or "
                 "use scaling_scheme: stone.");
         }
 

@@ -95,13 +95,13 @@ A channel head is only ever matched to a divide that bounds **its own unit**. A 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `basin_outlet_file` | string | `NULL` | **Required.** Point dataset of outlet locations: CSV with latitude/longitude columns, or a point vector (FGB, GPKG, shapefile). Points are reprojected into the raster CRS on load. At least two must land inside the DEM. |
+| `basin_outlet_fname` | string | `NULL` | **Required.** Point dataset of outlet locations: CSV with latitude/longitude columns, or a point vector (FGB, GPKG, shapefile). Points are reprojected into the raster CRS on load. At least two must land inside the DEM. |
 | `outlet_cluster_field` | string | `NULL` | Attribute field holding cluster labels. `NULL` or empty means one unit per outlet. |
 | `outlet_cluster_mode` | string | `auto` | How labels are interpreted: `auto` groups numerically when *every* label parses as an integer and as text otherwise; `integer` requires integer labels and rejects the run if any is not; `string` always groups on the raw text. `auto` and `string` differ only when labels look numeric — e.g. `01` and `1` are one group under `auto`, two under `string`. |
 | `basin_outlet_snapping_method` | string | `downstream` | `none` (use the point as given), `downstream` (walk downstream to the first cell above the threshold), or `expanding_square` (search outward for the nearest such cell). |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing‑pixel threshold used when snapping. Higher values snap outlets onto larger channels. Must be > 0. |
-| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum expanding‑square search radius. `expanding_square` only. |
-| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum expanding‑square search radius. Must be ≥ the minimum. `expanding_square` only. |
+| `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum expanding‑square search radius. `expanding_square` only. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum expanding‑square search radius. Must be ≥ the minimum. `expanding_square` only. |
 
 Outlets that fail to snap are dropped with a message naming the point and the reason; the run continues on the remainder.
 
@@ -154,7 +154,7 @@ Edge cases are reported rather than hidden:
 | `write_channel_heads` | bool | `true` | `<write_fname>_channel_heads.fgb` \| `.gpkg` — channel heads as points, with the full metric set. |
 | `write_metrics_csv` | bool | `true` | `<write_fname>_divide_migration_metrics.csv` — the same metrics as a flat table. |
 | `write_pair_summary_csv` | bool | `false` | `<write_fname>_divide_pair_summary.csv` — one side‑vs‑side row per divide pair. See *Pair‑summary statistics* below. |
-| `vector_output_format` | string | `flatgeobuf` | `flatgeobuf` (or `fgb`) or `gpkg`. Applies to both vector outputs. |
+| `write_vector_format` | string | `flatgeobuf` | `flatgeobuf` (or `fgb`) or `gpkg`. Applies to both vector outputs. |
 
 Three provenance files are always written regardless of the switches above: `<write_fname>_README.html` and `<write_fname>_README.csv` (the parameter reference for this run) and `<write_fname>_ingested_params.param` (every parameter as actually parsed, including defaults you did not set — useful for reproducing a run exactly).
 
@@ -299,7 +299,7 @@ write_path:  /data/santa_cruz/divides/
 write_fname: sc
 
 # Required: the outlet points
-basin_outlet_file: outlets.csv
+basin_outlet_fname: outlets.csv
 
 # Channel network density: lower for more heads
 threshold_contributing_pixels: 500
@@ -322,7 +322,7 @@ read_fname:  santa_cruz.tif
 write_path:  /data/santa_cruz/divides/
 write_fname: sc_sides
 
-basin_outlet_file:    outlets.gpkg
+basin_outlet_fname:   outlets.gpkg
 outlet_cluster_field: range_side
 outlet_cluster_mode:  string
 
@@ -338,7 +338,7 @@ outlet_control_mode: max_out_elevation
 
 write_metrics_csv:    true
 write_channel_heads:  true
-vector_output_format: gpkg
+write_vector_format: gpkg
 
 # The side-vs-side table, with a bootstrap uncertainty on each delta
 write_pair_summary_csv:  true
@@ -355,7 +355,7 @@ If you would rather do the statistics yourself, the per‑head CSV has everythin
 
 ## Troubleshooting
 
-### "basin_outlet_file must provide at least two points that map into the DEM extent"
+### "basin_outlet_fname must provide at least two points that map into the DEM extent"
 
 Almost always a **CRS or extent mismatch**. Outlet points are reprojected into the raster CRS on load, so this means the reprojected points fall outside the DEM, not that the file is unreadable. Check:
 

@@ -10,9 +10,9 @@ write_output_format: gtiff
 raster_is_filled: true
 threshold_contributing_pixels: 3
 
-flow_regional_smoothing_metres: 3
+flow_regional_polyfit_lambda_metres: 3
 flow_path_half_window: 1
-flow_intermediate_window_metres: 3
+flow_intermediate_polyfit_lambda_metres: 3
 flow_roughness_radius_metres: 1
 
 write_flow_discrimination_rasters: true

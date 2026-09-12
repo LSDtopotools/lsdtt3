@@ -112,4 +112,4 @@ Output file: `<write_fname>_rose_diagram.tif`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format (for rose diagram): `cog`, `gtiff`, `same_as_input`. |
+| `write_vector_format` | string | `flatgeobuf` | Linear-statistics vector format: `flatgeobuf` / `fgb` or `gpkg`. CSV is not supported. |

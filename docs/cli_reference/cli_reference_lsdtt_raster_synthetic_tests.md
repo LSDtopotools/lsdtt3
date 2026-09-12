@@ -50,9 +50,10 @@ Steps run in this order:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `n_rows` | int | `512` | Number of rows in output raster. |
-| `n_cols` | int | `512` | Number of columns in output raster. |
-| `cell_size_metres` | float | `10.0` | Pixel size (metres). |
+| `n_rows` | int | `128` | Number of rows in output raster. |
+| `n_cols` | int | `128` | Number of columns in output raster. |
+| `cell_size_metres` | float | `1.0` | Pixel size in metres. Former `cell_size` is an unchanged-value alias. |
+| `random_seed` | int | `33` | Seed for all stochastic generators. Former `seed` is an unchanged-value alias. |
 | `set_default_synthetic_georeference` | bool | `true` | Use default georeference (Teanu Island, UTM 58S). If `false`, raster has no CRS. |
 
 ---
@@ -157,6 +158,11 @@ Procedural noise-based surface.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_output_format` | string | `cog` | Raster output format: `cog` (preferred), `gtiff`, `png`. |
+
+The hillslope-strip parameter is `strip_half_width_metres`; the former
+`strip_half_width` spelling is an unchanged-value alias. Surface generators are
+selected by independent `write_*_surface` switches, which may be enabled
+simultaneously. There is deliberately no `noise_type` selector in this harness.
 
 ---
 

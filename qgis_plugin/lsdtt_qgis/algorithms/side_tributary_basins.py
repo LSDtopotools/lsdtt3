@@ -178,7 +178,7 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
                 self.REJECT_INCOMPLETE: "reject_incomplete_side_tributary_basins",
                 self.STOPPING_WINDOW: "side_tributary_stopping_point_window_pixels",
                 self.USE_STOPPING_POINT: "include_side_tributary_stopping_point",
-                self.VECTOR_FORMAT: "side_tributary_vector_output_format",
+                self.VECTOR_FORMAT: "side_tributary_write_vector_format",
             },
         )
 
@@ -232,7 +232,7 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
             "write_side_tributary_main_channel": write_main_channel,
             "write_side_tributary_outlets": write_outlets,
             "write_side_tributary_basin_outlines": write_outlines,
-            "side_tributary_vector_output_format": vector_format,
+            "side_tributary_write_vector_format": vector_format,
             "calculate_spatial_index": self.parameterAsBool(
                 parameters, self.CALCULATE_SPATIAL_INDEX, context
             ),

@@ -7,5 +7,5 @@ raster_is_filled: false
 source_pixels_threshold: 1
 source_extraction_algorithm_choice: threshold
 write_channel_network_lines: true
-channel_network_lines_output_format: flatgeobuf
+write_vector_format: flatgeobuf
 calculate_spatial_index: false

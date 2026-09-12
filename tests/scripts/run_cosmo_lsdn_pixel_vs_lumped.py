@@ -135,7 +135,7 @@ def run_tool(exe: Path, dem_path: Path, points_csv: Path, workdir: Path,
         f"write_path: {workdir}",
         f"write_fname: {write_base}",
         f"nuclide: {nuclide}",
-        f"points_filename: {points_for_run.name}",
+        f"sample_points_fname: {points_for_run.name}",
         # --- matched to OCTOPUS, identical to the §6e isolation run ---
         "muon_scheme: Braucher",
         "atmosphere: NCEP",
@@ -343,7 +343,7 @@ def freeze(rows: list, out_csv: Path) -> int:
                 "three sample ages; the C++ driver evaluates the LUMPED LSDn at the SAME\n"
                 "# age, so the per-pixel-vs-lumped ratio is always taken with t matched.\n")
         f.write("# Config: muon_scheme=Braucher atmosphere=NCEP standardisation=07KNSTD, "
-                "per-manifest\n# threshold_contributing_pixels/snap_search_radius_pixels "
+                "per-manifest\n# threshold_contributing_pixels/sample_snap_max_search_radius_pixels "
                 "(matched to OCTOPUS, as 6e).\n")
         f.write("# THIS FILE IS FROZEN AND TRACKED.  The default mode of the generator is "
                 "--check; regenerate\n# only with --freeze, and review the diff: a numeric "

@@ -117,7 +117,9 @@ lsdtt::declare_channel_initiation_parameters(int_map, help_map);
     // Each declaration is independent; use only the concepts the CLI supports.
     // Every function accepts an optional prefix for multi-stage CLIs.
 
-lsdtt::declare_output_format_parameters(...);
+lsdtt::declare_raster_output_format_parameter(string_defaults, help);
+lsdtt::declare_vector_output_format_parameter(string_defaults, help);
+lsdtt::declare_spatial_index_parameter(bool_defaults, help);
     // Declares: write_output_format, write_vector_format,
     //           calculate_spatial_index
 
@@ -136,16 +138,28 @@ lsdtt::declare_synthetic_domain_parameters(...);
 lsdtt::declare_synthetic_noise_parameters(...);
     // Declares: noise_type, noise_target_stddev_metres, noise_relief_metres,
     //           diamond_square_roughness, diamond_square_initial_scale
+
+// Synthetic concepts are also independently selectable:
+lsdtt::declare_synthetic_dimensions_parameters(int_map, help_map);
+lsdtt::declare_synthetic_cell_size_parameter(float_map, help_map);
+lsdtt::declare_synthetic_random_seed_parameter(int_map, help_map);
+lsdtt::declare_synthetic_crs_wkt_parameter(string_map, help_map);
+lsdtt::declare_synthetic_noise_type_parameter(string_map, help_map);
+lsdtt::declare_synthetic_noise_target_stddev_parameter(float_map, help_map);
+lsdtt::declare_synthetic_noise_relief_parameter(float_map, help_map);
+lsdtt::declare_diamond_square_parameters(float_map, help_map);
 ```
 
 As each CLI adopts these shared declarations during migration, it stops declaring
 these parameters itself.
 
-The flow declarations are intentionally granular. `raster_is_filled` and
+The flow and synthetic declarations are intentionally granular. `raster_is_filled` and
 `fill_before_routing` are different questions, and many CLIs support only one.
 Similarly, a CLI may consume a pre-filled surface without owning a fill-slope
 parameter, or may define channels without exposing routing controls. Do not add
-unsupported keys merely to use a larger declaration group.
+unsupported keys merely to use a larger declaration group. In particular, do
+not add `synthetic_crs_wkt` to a CLI with an EPSG/centre-coordinate CRS model or
+`noise_type` to a harness whose independent write switches can run together.
 
 ---
 
@@ -153,7 +167,7 @@ unsupported keys merely to use a larger declaration group.
 
 When a parameter is renamed or retired, the old name must be handled gracefully
 so existing `.param` files do not silently break. The `lsdtt_param_parser` provides
-three mechanisms, and the choice depends on what the parameter did.
+five mechanisms, and the choice depends on what the parameter did.
 
 **Most important rule:** The old key keeps working with a warning naming the new one.
 Every rename is non-breaking for users. The cost of a rename is one line in an
@@ -163,7 +177,7 @@ However, the alias map only rescues a key that is *read by the CLI*. A key strin
 hard-coded in a script, notebook, or the QGIS plugin is not covered. A rename still
 needs a tree sweep for those cases.
 
-### Three maps: the decision rule
+### Five maps: the decision rule
 
 #### `set_deprecated_aliases()` — the parameter still exists under a new name
 
@@ -203,6 +217,51 @@ key migration to presentation.
 `set_deprecated_aliases()` replaces the parser's complete alias map. A CLI with
 more than one migration must therefore pass all mappings in one call. Do not
 call it repeatedly: a later call would discard the earlier aliases.
+
+#### `set_deprecated_numeric_aliases()` — the name and numeric meaning changed
+
+Use this narrow typed facility when a rename also requires an affine numeric
+conversion. It is intended for unit or geometric convention migrations, such as
+an old window diameter becoming a canonical radius. It is not a general callback
+mechanism.
+
+```cpp
+pp.set_deprecated_numeric_aliases({
+    {"slope_window_diameter_metres",
+     {"slope_window_radius_metres", 0.5, 0.0, true}},
+});
+```
+
+The policy fields are `new_key`, `scale`, `offset`, and `preserve_zero`; the
+rewrite is `new = old * scale + offset`, except that an old zero remains exactly
+zero when `preserve_zero` is true. The old value must be a complete finite number.
+Malformed values, `nan`, `inf`, a non-finite result, and invalid policies stop
+with a fatal diagnostic before typed parsing and analysis.
+
+The canonical key wins when both are supplied, as for an ordinary alias. The old
+value is still validated, then erased so it is not reported as unknown. Warnings
+name both keys and print the transformation. Rewritten values use classic-locale
+`double` `max_digits10` formatting, preserving sufficient text precision for
+subsequent float or double parsing.
+
+`set_deprecated_numeric_aliases()` replaces the complete transformed-alias map,
+independently of `set_deprecated_aliases()`: multiple transformed entries and the
+ordinary alias map coexist. Transformed aliases are applied before ordinary
+aliases. Registering the same old key in both maps is a fatal configuration
+error; do not rely on ordering to choose a policy.
+
+#### `set_deprecated_compatibility_aliases()` — consolidated selectors
+
+Use this only when several old per-output selectors are consolidated into one
+canonical selector and old files may set those selectors differently. Each old
+key maps to a distinct hidden storage key plus the public replacement named in
+the warning. The old value remains attached to its original output for that run
+without exposing fake public overrides.
+
+Compatibility storage keys default to `same_as_write_vector_format` or
+`same_as_write_output_format` and are resolved after parsing with
+`resolve_output_format_override()`. They are implementation details and must not
+be added to help or user documentation.
 
 #### `set_removed_keys()` — the parameter is gone; fatal
 

@@ -193,19 +193,32 @@ void declare_channel_initiation_parameters(
     const std::string&          prefix = "");
 
 // -----------------------------------------------------------------------------
-// Output formats.
-//
-//   write_output_format      string  "cog"          (one per CLI, plan §3)
-//   write_vector_format      string  "flatgeobuf"   (one per CLI, plan §3)
-//   calculate_spatial_index  bool    true
+// Output formats. Declare only the capabilities a CLI actually exposes.
 // -----------------------------------------------------------------------------
-void declare_output_format_parameters(
-    std::map<std::string, bool>&        bool_default_map,
-    std::map<std::string, int>&         int_default_map,
-    std::map<std::string, float>&       float_default_map,
+void declare_raster_output_format_parameter(
     std::map<std::string, std::string>& string_default_map,
     lsdtt_help_registry&                help_map,
     const std::string&                  prefix = "");
+
+void declare_vector_output_format_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+void declare_spatial_index_parameter(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map,
+    const std::string&           prefix = "");
+
+// Genuine per-output overrides inherit the canonical selector by default.
+inline constexpr const char* inherit_write_vector_format =
+    "same_as_write_vector_format";
+inline constexpr const char* inherit_write_output_format =
+    "same_as_write_output_format";
+
+[[nodiscard]] std::string resolve_output_format_override(
+    const std::string& override_value,
+    const std::string& canonical_value);
 
 // -----------------------------------------------------------------------------
 // Basin outlet input and outlet snapping.
@@ -213,8 +226,8 @@ void declare_output_format_parameters(
 //   basin_outlet_fname                          string  "NULL"
 //   basin_outlet_snapping_method                string  "downstream"
 //   basin_outlet_contributing_pixels_threshold  int     1000
-//   basin_outlet_min_search_radius_pixels       int     0
-//   basin_outlet_max_search_radius_pixels       int     25
+//   basin_outlet_snap_min_search_radius_pixels  int     0
+//   basin_outlet_snap_max_search_radius_pixels  int     25
 // -----------------------------------------------------------------------------
 void declare_basin_outlet_parameters(
     std::map<std::string, bool>&        bool_default_map,
@@ -240,8 +253,8 @@ void declare_surface_fitting_parameters(
     const std::string&                  prefix = "");
 
 // -----------------------------------------------------------------------------
-// Synthetic model domain (plan §9.4). Shared by the three CLIs that make
-// landscapes which did not come from a DEM.
+// Synthetic model domain (plan §9.4). Each concept is independently selectable
+// because the synthetic CLIs do not share one CRS model or every domain knob.
 //
 //   n_rows            int     128
 //   n_cols            int     128
@@ -249,6 +262,27 @@ void declare_surface_fitting_parameters(
 //   random_seed       int     33
 //   synthetic_crs_wkt string  ""
 // -----------------------------------------------------------------------------
+void declare_synthetic_dimensions_parameters(
+    std::map<std::string, int>&         int_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+void declare_synthetic_cell_size_parameter(
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+void declare_synthetic_random_seed_parameter(
+    std::map<std::string, int>&         int_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+void declare_synthetic_crs_wkt_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+// Convenience composition for callers that genuinely expose every concept.
 void declare_synthetic_domain_parameters(
     std::map<std::string, bool>&        bool_default_map,
     std::map<std::string, int>&         int_default_map,
@@ -266,6 +300,27 @@ void declare_synthetic_domain_parameters(
 //   diamond_square_roughness      float   0.55
 //   diamond_square_initial_scale  float   1.0
 // -----------------------------------------------------------------------------
+void declare_synthetic_noise_type_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+void declare_synthetic_noise_target_stddev_parameter(
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+void declare_synthetic_noise_relief_parameter(
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+void declare_diamond_square_parameters(
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
+// Convenience composition for callers that genuinely expose every concept.
 void declare_synthetic_noise_parameters(
     std::map<std::string, bool>&        bool_default_map,
     std::map<std::string, int>&         int_default_map,

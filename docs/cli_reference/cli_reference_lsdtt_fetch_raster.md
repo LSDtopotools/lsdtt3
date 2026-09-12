@@ -183,8 +183,8 @@ Silently preferring one would leave you unsure which area you actually got.
 | `prefetch_edge_buffer_pixels` | int | `3` | Coarse-stage edge buffer target. |
 | `basin_outlet_snapping_method` | string | `downstream` | Outlet snapping for basin delineation: `none`, `expanding_square`, or `downstream`. |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Minimum contributing-pixel threshold used during outlet snapping. |
-| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` snapping. |
-| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` snapping. |
+| `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` snapping. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` snapping. |
 | `tight_basin_bbox_refetch` | bool | `true` | After basin delineation, refetch final group DEMs using tight basin bounds. |
 | `tight_basin_bbox_buffer_pixels` | int | `3` | Pixel buffer around basin envelope when forming tight refetch bounds. |
 | `basin_nested_enable` | bool | `true` | Enable staged outlet-mode nested fetching pipeline. |
@@ -545,7 +545,7 @@ not the download.
 |---|---|---|---|
 | `target_epsg` | int | `0` | Output EPSG. `0` derives the UTM zone from the area centre |
 | `grid_spacing` | float | `30.0` | Grid spacing in projection units (metres for UTM) |
-| `resampling_method` | string | `cubic` | GDAL warp method: `near`, `bilinear`, `cubic`, `cubicspline`, `lanczos`, `average`, `mode`, `max`, `min`, `med`, `q1`, `q3` |
+| `resampling_method` | string | `cubic` | GDAL warp method. Cubic is the default for continuous fetched DEM elevations, not categorical rasters. Options: `near`, `bilinear`, `cubic`, `cubicspline`, `lanczos`, `average`, `mode`, `max`, `min`, `med`, `q1`, `q3`. |
 | `size_pixels` | int | `0` | Crop an exact square of this many pixels from the centre. `0` keeps the full extent |
 | `no_data_value` | float | `-9999.0` | NoData value written into the output |
 

@@ -60,9 +60,8 @@ key: value
 |---|---|---|---|
 | `n_threads` | int | `0` | Number of OpenMP threads. `0` uses all available hardware threads. |
 | `write_output_format` | string | `cog` | Raster output format for all raster outputs. Options: `cog`, `gtiff`, `same_as_input`. |
-| `polygon_vector_output_format` | string | `flatgeobuf` | Output format for polygon vector outputs. Options: `flatgeobuf` / `fgb`, `gpkg`. |
-| `line_vector_output_format` | string | `flatgeobuf` | Output format for line vector outputs. Options: `flatgeobuf` / `fgb`, `gpkg`. |
-| `point_vector_output_format` | string | `gpkg` | Output format for point vector outputs. Options: `csv`, `flatgeobuf` / `fgb`, `gpkg`. |
+| `write_vector_format` | string | `flatgeobuf` | Output format for polygon and line vector outputs. Options: `flatgeobuf` / `fgb`, `gpkg`. |
+| `marsh_points_write_vector_format` | string | `gpkg` | Point-output override. Options: `csv`, `flatgeobuf` / `fgb`, `gpkg`. |
 
 ---
 
@@ -105,15 +104,15 @@ These allow stages to be skipped or to use pre-computed inputs.
 
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
-| `write_marsh_search_space` | bool | `true` | `<write_fname>_marsh_search_space.tif` |
-| `write_marsh_search_crossover` | bool | `false` | `<write_fname>_marsh_search_crossover.tif` |
-| `write_marsh_scarp_seed_mask` | bool | `false` | `<write_fname>_marsh_scarp_seed_mask.tif` |
+| `write_marsh_search_space_raster` | bool | `true` | `<write_fname>_marsh_search_space.tif` |
+| `write_marsh_search_crossover_raster` | bool | `false` | `<write_fname>_marsh_search_crossover.tif` |
+| `write_marsh_scarp_seed_mask_raster` | bool | `false` | `<write_fname>_marsh_scarp_seed_mask.tif` |
 | `write_marsh_scarp_order_raster` | bool | `false` | `<write_fname>_marsh_scarp_order.tif` |
-| `write_marsh_scarp_mask` | bool | `true` | `<write_fname>_marsh_scarp_mask.tif` |
-| `write_marsh_platform_seed_mask` | bool | `false` | `<write_fname>_marsh_platform_seed_mask.tif` |
+| `write_marsh_scarp_mask_raster` | bool | `true` | `<write_fname>_marsh_scarp_mask.tif` |
+| `write_marsh_platform_seed_mask_raster` | bool | `false` | `<write_fname>_marsh_platform_seed_mask.tif` |
 | `write_marsh_platform_provisional` | bool | `false` | `<write_fname>_marsh_platform_provisional.tif` |
-| `write_marsh_platform_mask` | bool | `true` | `<write_fname>_marsh_platform_mask.tif` |
-| `write_marsh_platform_labels` | bool | `true` | `<write_fname>_marsh_platform_labels.tif` |
+| `write_marsh_platform_mask_raster` | bool | `true` | `<write_fname>_marsh_platform_mask.tif` |
+| `write_marsh_platform_labels_raster` | bool | `true` | `<write_fname>_marsh_platform_labels.tif` |
 | `write_marsh_polygons` | bool | `false` | `<write_fname>_marsh_platforms.<ext>` — vectorised platform components. |
 
 ---
@@ -174,8 +173,8 @@ These allow stages to be skipped or to use pre-computed inputs.
 | `write_tidal_median_rasters` | bool | `false` | `<write_fname>_tidal_median_<i>.tif` for each scale. |
 | `write_tidal_residual_rasters` | bool | `false` | `<write_fname>_tidal_residual_<i>.tif` for each scale. |
 | `write_tidal_threshold_masks` | bool | `false` | `<write_fname>_tidal_threshold_mask_<i>.tif` for each scale. |
-| `write_tidal_channel_mask` | bool | `true` | `<write_fname>_tidal_channel_mask.tif` |
-| `write_tidal_upl` | bool | `true` | `<write_fname>_tidal_upl.tif` |
+| `write_tidal_channel_mask_raster` | bool | `true` | `<write_fname>_tidal_channel_mask.tif` |
+| `write_tidal_upl_raster` | bool | `true` | `<write_fname>_tidal_upl.tif` |
 | `write_tidal_channel_skeleton` | bool | `true` | `<write_fname>_tidal_channel_skeleton.tif` |
 | `write_tidal_connected_skeleton` | bool | `true` | `<write_fname>_tidal_connected_skeleton.tif` |
 | `write_tidal_channel_polygons` | bool | `false` | `<write_fname>_tidal_channel_polygons.<ext>` — vectorised channel components. |
@@ -238,10 +237,10 @@ marsh_scarp_clean_relief_fraction:               0.85
 marsh_scarp_clean_min_neighbour_pixels:          8
 marsh_max_platform_growth_iterations:            100
 
-write_marsh_search_space:  true
-write_marsh_scarp_mask:    true
-write_marsh_platform_mask: true
-write_marsh_platform_labels: true
+write_marsh_search_space_raster:  true
+write_marsh_scarp_mask_raster:    true
+write_marsh_platform_mask_raster: true
+write_marsh_platform_labels_raster: true
 
 # --- Tidal channels ---
 tidal_median_window_radii_metres:   5,10,20
@@ -250,8 +249,8 @@ tidal_scale_mode:                   any_scale_pass
 tidal_extract_skeleton:             true
 tidal_compute_upl:                  true
 
-write_tidal_channel_mask:       true
-write_tidal_upl:                true
+write_tidal_channel_mask_raster: true
+write_tidal_upl_raster:          true
 write_tidal_channel_skeleton:   true
 write_tidal_connected_skeleton: true
 

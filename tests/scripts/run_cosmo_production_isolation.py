@@ -13,7 +13,7 @@ Procedure (plan §6e):
      the manifest target_epsg -- deleted on exit (cleanup trap).
   2. Run lsdtt-cosmo-tool MATCHED to OCTOPUS: muon_scheme Braucher, atmosphere NCEP,
      sample_age_yr 0 (paleomag off), threshold_contributing_pixels 250,
-     snap_search_radius_pixels 20, write_production_raster + write_basin_production_csv.
+     sample_snap_max_search_radius_pixels 20, write_production_raster + write_basin_production_csv.
   3. The tool's _BASIN_PROD.csv reports, per snapped sample, the mean Stone-2000
      production SCALING and mean elevation over the EXACT upslope pixel set the
      inversion averages. P_lsdtt = P0_ref x mean_scaling, P0_ref = Braucher total
@@ -144,13 +144,13 @@ def run_tool(exe: Path, dem_path: Path, samples: list, workdir: Path) -> Path:
         f"write_path: {workdir}",
         f"write_fname: {write_base}",
         "nuclide: Be10",
-        f"points_filename: {points_csv.name}",
+        f"sample_points_fname: {points_csv.name}",
         # --- matched to OCTOPUS (plan §6e) ---
         "muon_scheme: Braucher",
         "atmosphere: NCEP",
         "sample_age_yr: 0",
         "threshold_contributing_pixels: 250",
-        "snap_search_radius_pixels: 20",
+        "sample_snap_max_search_radius_pixels: 20",
         "write_production_raster: true",
         "write_basin_production_csv: true",
     ]

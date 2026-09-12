@@ -300,7 +300,7 @@ exactly what it was given.
 | `vertical_accuracy_gentle_metres` | float | `0.0` | `E_v` [m] for windows at or below the break gradient. `slope_dependent` only. |
 | `vertical_accuracy_steep_metres` | float | `0.0` | `E_v` [m] for windows above the break gradient. `slope_dependent` only. |
 | `vertical_accuracy_break_degrees` | float | `11.31` | Gradient [degrees] separating gentle from steep `E_v`. |
-| `vertical_accuracy_slope_window_metres` | float | `0` | Window diameter [m] of the polynomial fit the window gradient is measured over. `0` = five cells. |
+| `vertical_accuracy_slope_window_radius_metres` | float | `0` | Window radius [m] of the polynomial fit the window gradient is measured over. `0` = five cells. |
 | `ladder_reach_window_metres` | float | `0.0` | Along-channel window length for reach-relative breaks [m]. `0` = auto, negative = one global ladder. Ignored for `fitted_surface`. |
 | `ladder_min_window_pixels` | int | `1000` | Minimum admitted pixels for a window to find its own breaks. |
 
@@ -327,7 +327,7 @@ exactly what it was given.
 | `connect_surfaces_to_channels` | bool | `false` | Record which in-scope channel each surface is linked to. |
 | `auto_detect_outlet_points` | bool | `true` | Infer source and outlet roles from a single combined point file. |
 | `snap_sources_to_channel_threshold` | bool | `true` | Snap supplied source points onto the threshold channel network. |
-| `source_snap_max_radius_pixels` | int | `20` | Search radius when snapping a source point [pixels]. |
+| `source_snap_max_search_radius_pixels` | int | `20` | Search radius when snapping a source point [pixels]. |
 | `outlet_snap_max_distance_metres` | float | `500.0` | Maximum distance an outlet may be moved onto a traced channel [m]. |
 
 ### Valley floor
@@ -376,12 +376,12 @@ the patch table keep their holes and their speckle.
 | `write_reference_field_profile_csv` | bool | `false` | Per-pixel table of the reference field along the channel. |
 | `write_nearest_source_id_raster` | bool | `false` | Which channel each pixel's height is measured to. |
 | `write_patch_terrain_aspect` | bool | `false` | Add terrain aspect and its resultant length to the patch table. |
-| `patch_aspect_window_metres` | float | `0` | Window diameter [m] of the polynomial fit the aspect is measured over. `0` = five cells. |
+| `patch_aspect_window_radius_metres` | float | `0` | Window radius [m] of the polynomial fit the aspect is measured over. `0` = five cells. |
 | `write_channel_scope_raster` | bool | `false` | The in-scope channel network as a raster. |
 | `write_channel_scope_nodes_csv` | bool | `false` | The in-scope channel nodes as a table. |
 | `write_point_snap_csv` | bool | `false` | Where each supplied point snapped to. |
 | `write_channel_network` | bool | `false` | Write the channel network as vector layers. |
-| `write_channel_network_lines` | bool | `true` | Channel links as lines. |
+| `write_channel_network_lines` | bool | `true` | Compact default representation of the channel network used to fit the surfaces; per-node points remain opt-in. |
 | `write_channel_network_points` | bool | `false` | Channel nodes as points. |
 | `write_junction_network_points` | bool | `false` | Junctions as points. |
 

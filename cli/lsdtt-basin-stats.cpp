@@ -13,7 +13,7 @@
 // a suite of hydromorphic statistics for each basin.
 //
 // Basin outlet CSV requirements:
-//   - parameter: basin_outlet_csv
+//   - parameter: basin_outlet_fname
 //   - must contain columns named: latitude, longitude
 //   - optional columns: gauge_id, gauge_name
 //   - coordinates are interpreted as WGS84 / EPSG:4326 decimal degrees
@@ -21,7 +21,7 @@
 // Workflow:
 //   1.  Load raster
 //   2.  Check raster is projected in metres
-//   3.  Remove seas by masking pixels at or below minimum_elevation to nodata
+//   3.  Remove seas by masking pixels at or below min_elevation to nodata
 //   4.  Optionally write a hillshade of the sea-masked DEM
 //   5.  Fill pits before routing (default: true)
 //   6.  Build D8 flow routing
@@ -536,8 +536,8 @@ int main(int argc, char* argv[])
         "Output format", "io", ""};
 
     // --- Basin outlets ---
-    string_default_map["basin_outlet_csv"] = "NULL";
-    help_map["basin_outlet_csv"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "CSV file of requested basin outlet points.",
         "Required. CSV must contain columns named latitude and longitude. "
         "Optional columns: gauge_id, gauge_name. "
@@ -549,7 +549,9 @@ int main(int argc, char* argv[])
     help_map["basin_outlet_snapping_method"] = {"string","none",
         "Optional snapping of basin outlet CSV points to pixels that exceed "
         "a contributing-pixel threshold.",
-        "Allowed values: none, expanding_square, downstream. "
+        "Unlike extraction workflows, basin statistics defaults to none so an "
+        "authoritative gauge/outlet pixel is not moved implicitly. Allowed values: "
+        "none, expanding_square, downstream. "
         "none: use the mapped raster pixel directly. "
         "expanding_square: search outward ring-by-ring until a qualifying pixel "
         "is found. downstream: follow the D8 receiver chain until a qualifying "
@@ -565,16 +567,16 @@ int main(int argc, char* argv[])
         "Basin outlet snapping", "param", ""
     };
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "0 means the mapped input pixel is tested first.",
         "Basin outlet snapping", "param", ""
     };
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "The search stops at the first radius containing one or more qualifying pixels.",
@@ -582,8 +584,8 @@ int main(int argc, char* argv[])
     };
 
     // --- Sea removal ---
-    float_default_map["minimum_elevation"] = 0.0f;
-    help_map["minimum_elevation"] = {"float","0.0",
+    float_default_map["min_elevation"] = 0.0f;
+    help_map["min_elevation"] = {"float","0.0",
         "Pixels at or below this elevation are set to nodata.",
         "Default of 0.0 removes sea and ocean pixels from many DEM products.",
         "Sea removal", "param", ""};
@@ -663,11 +665,11 @@ int main(int argc, char* argv[])
         "Attaches the hydromorphic stats (and shape metrics / centre-of-mass "
         "bearing when those are enabled) to each basin's outline polygon as a "
         "vector layer. Output: <write_fname>_basin_polygons.<ext>. "
-        "Format set by basin_polygon_format.",
+        "Format set by write_vector_format.",
         "Channel statistics", "switch", ""};
 
-    string_default_map["basin_polygon_format"] = "flatgeobuf";
-    help_map["basin_polygon_format"] = {"string","flatgeobuf",
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
         "Vector format for the basin-polygon output.",
         "flatgeobuf (default) or gpkg.",
         "Channel statistics", "param", ""};
@@ -759,6 +761,12 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"basin_outlet_csv", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"basin_polygon_format", "write_vector_format"},
+        {"minimum_elevation", "min_elevation"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -786,18 +794,18 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    if (ifs["basin_outlet_snap_min_search_radius_pixels"] < 0)
     {
-        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels "
+        std::cerr << "FATAL: basin_outlet_snap_min_search_radius_pixels "
                   << "must be >= 0.\n";
         return 1;
     }
 
-    if (ifs["basin_outlet_max_search_radius_pixels"] <
-        ifs["basin_outlet_min_search_radius_pixels"])
+    if (ifs["basin_outlet_snap_max_search_radius_pixels"] <
+        ifs["basin_outlet_snap_min_search_radius_pixels"])
     {
-        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
-                  << "basin_outlet_min_search_radius_pixels.\n";
+        std::cerr << "FATAL: basin_outlet_snap_max_search_radius_pixels must be >= "
+                  << "basin_outlet_snap_min_search_radius_pixels.\n";
         return 1;
     }
 
@@ -830,15 +838,15 @@ int main(int argc, char* argv[])
         if (basin_outlet_snapping_method == "expanding_square")
         {
             std::cout << "Outlet snapping min search radius      : "
-                      << ifs["basin_outlet_min_search_radius_pixels"] << "\n";
+                      << ifs["basin_outlet_snap_min_search_radius_pixels"] << "\n";
             std::cout << "Outlet snapping max search radius      : "
-                      << ifs["basin_outlet_max_search_radius_pixels"] << "\n";
+                      << ifs["basin_outlet_snap_max_search_radius_pixels"] << "\n";
         }
     }
 
-    if (sf["basin_outlet_csv"] == "NULL" || sf["basin_outlet_csv"].empty())
+    if (sf["basin_outlet_fname"] == "NULL" || sf["basin_outlet_fname"].empty())
     {
-        std::cerr << "FATAL: basin_outlet_csv is required.\n";
+        std::cerr << "FATAL: basin_outlet_fname is required.\n";
         return 1;
     }
 
@@ -906,14 +914,14 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Remove seas
     // -------------------------------------------------------------------------
-    if (ff["minimum_elevation"] >= 0.0f)
+    if (ff["min_elevation"] >= 0.0f)
     {
         std::cout << "\nMasking pixels at or below "
-                  << ff["minimum_elevation"] << " m\n";
+                  << ff["min_elevation"] << " m\n";
 
         dem = lsdtt::mask_to_nodata_using_threshold(
             dem,
-            ff["minimum_elevation"],
+            ff["min_elevation"],
             true
         );
     }
@@ -1189,7 +1197,7 @@ int main(int argc, char* argv[])
     // Read basin outlet CSV
     // -------------------------------------------------------------------------
     const std::string basin_csv_path =
-        pp.add_read_path_if_needed(sf["basin_outlet_csv"]);
+        pp.add_read_path_if_needed(sf["basin_outlet_fname"]);
 
     std::cout << "\nReading basin outlet CSV: " << basin_csv_path << "\n";
 
@@ -1311,9 +1319,9 @@ int main(int argc, char* argv[])
             ifs["basin_outlet_contributing_pixels_threshold"]
         );
     square_snap_options.min_search_radius_pixels =
-        ifs["basin_outlet_min_search_radius_pixels"];
+        ifs["basin_outlet_snap_min_search_radius_pixels"];
     square_snap_options.max_search_radius_pixels =
-        ifs["basin_outlet_max_search_radius_pixels"];
+        ifs["basin_outlet_snap_max_search_radius_pixels"];
 
     lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
     downstream_snap_options.contributing_pixels_threshold =
@@ -1494,7 +1502,7 @@ int main(int argc, char* argv[])
         try
         {
             const lsdtt::vector_output_format poly_fmt =
-                lsdtt::resolve_vector_output_format(sf["basin_polygon_format"]);
+                lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
             const std::string ext = lsdtt::output_extension(poly_fmt);
             const std::string poly_out =
                 pp.make_output_path("_basin_polygons" + ext);

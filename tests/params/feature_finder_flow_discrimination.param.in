@@ -13,9 +13,9 @@ flow_dem_is_filled: true
 flow_accumulation_threshold_pixels: 3
 
 # Small deterministic windows for the 5x5 fixture.
-flow_regional_smoothing_metres: 3
+flow_regional_polyfit_lambda_metres: 3
 flow_path_half_window: 1
-flow_intermediate_window_metres: 3
+flow_intermediate_polyfit_lambda_metres: 3
 flow_roughness_radius_metres: 1
 
 write_flow_discrimination_rasters: true

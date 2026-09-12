@@ -468,22 +468,22 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             overrides={
                 self.BOOTSTRAP_SEED: "bootstrap_random_seed",
                 self.FIT_NETWORKS: "fit_chi_networks",
-                self.PRINT_DATA_MAPS: "print_chi_data_maps",
+                self.PRINT_DATA_MAPS: "write_chi_data_maps",
                 self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
                 self.WRITE_DATA_MAP_LINES: "write_chi_data_map_lines",
                 self.WRITE_KSN_SUMMARY: "write_ksn_basin_summary",
                 self.WRITE_SEGMENT_LINES: "write_chi_fit_segment_lines",
                 self.BOOTSTRAP_FULL_TRIBUTARY_COUNT: "bootstrap_sample_full_tributary_count",
                 self.BOOTSTRAP_N_SIDE_BRANCHES: "bootstrap_n_side_branches_per_replicate",
-                self.DATA_MAPS_FORMAT: "chi_data_maps_output_format",
-                self.DATA_MAP_LINES_FORMAT: "chi_data_map_lines_output_format",
-                self.FIT_CRITICAL_DIVERGENCE: "fit_critical_divergence_m",
+                self.DATA_MAPS_FORMAT: "chi_data_maps_write_vector_format",
+                self.DATA_MAP_LINES_FORMAT: "write_vector_format",
+                self.FIT_CRITICAL_DIVERGENCE: "fit_critical_divergence_metres",
                 self.INVERSION_USE_MAE: "inversion_use_mae_for_model_selection",
                 self.MOVE_OUTLET_UPSTREAM: "n_pixels_move_outlet_upstream",
-                self.SEGMENT_LINES_FORMAT: "chi_fit_segment_lines_output_format",
-                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SEGMENT_LINES_FORMAT: "write_vector_format",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_snap_max_search_radius_pixels",
                 self.SNAPPING_METHOD: "basin_outlet_snapping_method",
-                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_snap_min_search_radius_pixels",
                 self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
                 self.SUBSET_N_SIDE_BRANCHES: "subset_n_side_branches_per_sample",
             },
@@ -541,6 +541,11 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         data_map_lines_format = self.VECTOR_FORMAT_OPTIONS[
             self.parameterAsEnum(parameters, self.DATA_MAP_LINES_FORMAT, context)
         ]
+        if write_segment_lines and write_data_map_lines and segment_format != data_map_lines_format:
+            raise QgsProcessingException(
+                "Chi segment and data-map lines share write_vector_format; choose the same format."
+            )
+        line_format = segment_format if write_segment_lines else data_map_lines_format
 
         param_values = {
             "read_path": read_path,
@@ -552,6 +557,7 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             "write_output_format": self.OUTPUT_FORMAT_OPTIONS[
                 self.parameterAsEnum(parameters, self.OUTPUT_FORMAT, context)
             ],
+            "write_vector_format": line_format,
             "calculate_spatial_index": self.parameterAsBool(
                 parameters, self.CALCULATE_SPATIAL_INDEX, context
             ),
@@ -561,7 +567,7 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             "threshold_contributing_pixels": self.parameterAsInt(
                 parameters, self.THRESHOLD_CONTRIBUTING_PIXELS, context
             ),
-            "minimum_channel_pixels": self.parameterAsInt(parameters, self.MINIMUM_CHANNEL_PIXELS, context),
+            "min_channel_pixels": self.parameterAsInt(parameters, self.MINIMUM_CHANNEL_PIXELS, context),
             "n_largest_basins": self.parameterAsInt(parameters, self.N_LARGEST_BASINS, context),
             "n_pixels_move_outlet_upstream": self.parameterAsInt(
                 parameters, self.MOVE_OUTLET_UPSTREAM, context
@@ -572,18 +578,16 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             "mn_max": self.parameterAsDouble(parameters, self.MN_MAX, context),
             "mn_step": self.parameterAsDouble(parameters, self.MN_STEP, context),
             "fit_chi_networks": fit_networks,
-            "fit_critical_divergence_m": self.parameterAsDouble(
+            "fit_critical_divergence_metres": self.parameterAsDouble(
                 parameters, self.FIT_CRITICAL_DIVERGENCE, context
             ),
             "write_fit_tables": self.parameterAsBool(parameters, self.WRITE_FIT_TABLES, context),
             "write_ksn_basin_summary": self.parameterAsBool(parameters, self.WRITE_KSN_SUMMARY, context),
             "write_chi_fit_segment_lines": write_segment_lines,
-            "chi_fit_segment_lines_output_format": segment_format,
             # diagnostic data maps
-            "print_chi_data_maps": print_data_maps,
-            "chi_data_maps_output_format": data_maps_format,
+            "write_chi_data_maps": print_data_maps,
+            "chi_data_maps_write_vector_format": data_maps_format,
             "write_chi_data_map_lines": write_data_map_lines,
-            "chi_data_map_lines_output_format": data_map_lines_format,
             # disorder uncertainty
             "run_subset_sensitivity": self.parameterAsBool(
                 parameters, self.RUN_SUBSET_SENSITIVITY, context
@@ -629,17 +633,17 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         outlet_file = self.parameterAsFile(parameters, self.BASIN_OUTLET_FILE, context)
         if outlet_file:
             param_values.update({
-                "basin_outlet_file": outlet_file,
+                "basin_outlet_fname": outlet_file,
                 "basin_outlet_snapping_method": self.SNAPPING_OPTIONS[
                     self.parameterAsEnum(parameters, self.SNAPPING_METHOD, context)
                 ],
                 "basin_outlet_contributing_pixels_threshold": self.parameterAsInt(
                     parameters, self.SNAPPING_THRESHOLD, context
                 ),
-                "basin_outlet_min_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_min_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MIN_RADIUS, context
                 ),
-                "basin_outlet_max_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_max_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MAX_RADIUS, context
                 ),
             })

@@ -13,4 +13,4 @@ write_output_format: gtiff
 write_channel_candidate_score_raster: true
 write_channel_candidate_mask_raster: false
 write_channel_best_scale_raster: false
-write_channel_candidate_diagnostics: false
+write_channel_candidate_diagnostic_rasters: false

@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 
 #include "../src/cpu/lsdtt_marsh_platform_cpu.hpp"
@@ -495,20 +496,15 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Output formats
     // -------------------------------------------------------------------------
-    string_default_map["polygon_vector_output_format"] = "flatgeobuf";
-    help_map["polygon_vector_output_format"] = {"string","flatgeobuf",
-        "Output format for polygon vector outputs.",
-        "Allowed values: flatgeobuf, fgb, gpkg.",
-        "-", "param", ""};
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
+    string_default_map["legacy_polygon_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
-    string_default_map["line_vector_output_format"] = "flatgeobuf";
-    help_map["line_vector_output_format"] = {"string","flatgeobuf",
-        "Output format for line vector outputs.",
-        "Allowed values: flatgeobuf, fgb, gpkg.",
-        "-", "param", ""};
+    string_default_map["legacy_line_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
-    string_default_map["point_vector_output_format"] = "gpkg";
-    help_map["point_vector_output_format"] = {"string","gpkg",
+    string_default_map["marsh_points_write_vector_format"] = "gpkg";
+    help_map["marsh_points_write_vector_format"] = {"string","gpkg",
         "Output format for point vector outputs.",
         "Allowed values: csv, flatgeobuf, fgb, gpkg.",
         "-", "param", ""};
@@ -516,20 +512,20 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Marsh outputs
     // -------------------------------------------------------------------------
-    bool_default_map["write_marsh_search_space"] = true;
-    help_map["write_marsh_search_space"] = {"bool","true",
+    bool_default_map["write_marsh_search_space_raster"] = true;
+    help_map["write_marsh_search_space_raster"] = {"bool","true",
         "Write marsh search-space raster.",
         "Binary raster defining the candidate marsh search domain.",
         "-", "switch", ""};
 
-    bool_default_map["write_marsh_search_crossover"] = false;
-    help_map["write_marsh_search_crossover"] = {"bool","false",
+    bool_default_map["write_marsh_search_crossover_raster"] = false;
+    help_map["write_marsh_search_crossover_raster"] = {"bool","false",
         "Write marsh search crossover raster.",
         "Continuous DEM-relative-relief times slope-relative-relief raster.",
         "-", "switch", ""};
 
-    bool_default_map["write_marsh_scarp_seed_mask"] = false;
-    help_map["write_marsh_scarp_seed_mask"] = {"bool","false",
+    bool_default_map["write_marsh_scarp_seed_mask_raster"] = false;
+    help_map["write_marsh_scarp_seed_mask_raster"] = {"bool","false",
         "Write marsh scarp seed mask.",
         "Binary raster of initial slope maxima used to seed scarps.",
         "-", "switch", ""};
@@ -540,14 +536,14 @@ int main(int argc, char* argv[])
         "Stores iterative scarp-growth order values.",
         "-", "switch", ""};
 
-    bool_default_map["write_marsh_scarp_mask"] = true;
-    help_map["write_marsh_scarp_mask"] = {"bool","true",
+    bool_default_map["write_marsh_scarp_mask_raster"] = true;
+    help_map["write_marsh_scarp_mask_raster"] = {"bool","true",
         "Write cleaned marsh scarp mask.",
         "Binary raster of retained marsh scarps.",
         "-", "switch", ""};
 
-    bool_default_map["write_marsh_platform_seed_mask"] = false;
-    help_map["write_marsh_platform_seed_mask"] = {"bool","false",
+    bool_default_map["write_marsh_platform_seed_mask_raster"] = false;
+    help_map["write_marsh_platform_seed_mask_raster"] = {"bool","false",
         "Write marsh platform seed mask.",
         "Binary raster of scarp-seeded initial platform pixels.",
         "-", "switch", ""};
@@ -558,14 +554,14 @@ int main(int argc, char* argv[])
         "Useful for diagnosing the cutoff-elevation stage.",
         "-", "switch", ""};
 
-    bool_default_map["write_marsh_platform_mask"] = true;
-    help_map["write_marsh_platform_mask"] = {"bool","true",
+    bool_default_map["write_marsh_platform_mask_raster"] = true;
+    help_map["write_marsh_platform_mask_raster"] = {"bool","true",
         "Write final marsh-platform mask.",
         "Binary raster of the extracted marsh platform.",
         "-", "switch", ""};
 
-    bool_default_map["write_marsh_platform_labels"] = true;
-    help_map["write_marsh_platform_labels"] = {"bool","true",
+    bool_default_map["write_marsh_platform_labels_raster"] = true;
+    help_map["write_marsh_platform_labels_raster"] = {"bool","true",
         "Write labelled marsh-platform raster.",
         "Connected marsh-platform components are labelled 1,2,3,....",
         "-", "switch", ""};
@@ -597,14 +593,14 @@ int main(int argc, char* argv[])
         "These are the binary residual-threshold masks prior to multi-scale combination.",
         "-", "switch", ""};
 
-    bool_default_map["write_tidal_channel_mask"] = true;
-    help_map["write_tidal_channel_mask"] = {"bool","true",
+    bool_default_map["write_tidal_channel_mask_raster"] = true;
+    help_map["write_tidal_channel_mask_raster"] = {"bool","true",
         "Write final tidal-channel mask.",
         "Binary raster of detected tidal channels.",
         "-", "switch", ""};
 
-    bool_default_map["write_tidal_upl"] = true;
-    help_map["write_tidal_upl"] = {"bool","true",
+    bool_default_map["write_tidal_upl_raster"] = true;
+    help_map["write_tidal_upl_raster"] = {"bool","true",
         "Write UPL raster.",
         "UPL is the Euclidean distance to the nearest channel pixel.",
         "-", "switch", ""};
@@ -717,6 +713,22 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"write_marsh_search_space", "write_marsh_search_space_raster"},
+        {"write_marsh_search_crossover", "write_marsh_search_crossover_raster"},
+        {"write_marsh_scarp_seed_mask", "write_marsh_scarp_seed_mask_raster"},
+        {"write_marsh_scarp_mask", "write_marsh_scarp_mask_raster"},
+        {"write_marsh_platform_seed_mask", "write_marsh_platform_seed_mask_raster"},
+        {"write_marsh_platform_mask", "write_marsh_platform_mask_raster"},
+        {"write_marsh_platform_labels", "write_marsh_platform_labels_raster"},
+        {"write_tidal_channel_mask", "write_tidal_channel_mask_raster"},
+        {"write_tidal_upl", "write_tidal_upl_raster"},
+        {"point_vector_output_format", "marsh_points_write_vector_format"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"polygon_vector_output_format",
+         {"legacy_polygon_write_vector_format", "write_vector_format"}},
+        {"line_vector_output_format",
+         {"legacy_line_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -849,13 +861,15 @@ int main(int argc, char* argv[])
         : ".tif";
 
     lsdtt::vector_output_format polygon_vector_output_format =
-        lsdtt::resolve_vector_output_format(sf["polygon_vector_output_format"]);
+        lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_polygon_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::vector_output_format line_vector_output_format =
-        lsdtt::resolve_vector_output_format(sf["line_vector_output_format"]);
+        lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_line_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::point_output_format point_vector_output_format =
-        lsdtt::resolve_point_output_format(sf["point_vector_output_format"]);
+        lsdtt::resolve_point_output_format(sf["marsh_points_write_vector_format"]);
 
     // -------------------------------------------------------------------------
     // Load DEM
@@ -1041,7 +1055,7 @@ int main(int argc, char* argv[])
 
         lsdtt::lsdtt_data_loader out_loader;
 
-        if (bf["write_marsh_search_space"])
+        if (bf["write_marsh_search_space_raster"])
         {
             out_loader.write_full(
                 marsh_result.search_space.get_data(),
@@ -1051,7 +1065,7 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (bf["write_marsh_search_crossover"])
+        if (bf["write_marsh_search_crossover_raster"])
         {
             out_loader.write_full(
                 marsh_result.search_crossover.get_data(),
@@ -1061,7 +1075,7 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (bf["write_marsh_scarp_seed_mask"])
+        if (bf["write_marsh_scarp_seed_mask_raster"])
         {
             out_loader.write_full(
                 marsh_result.scarp_seed_mask.get_data(),
@@ -1081,7 +1095,7 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (bf["write_marsh_scarp_mask"])
+        if (bf["write_marsh_scarp_mask_raster"])
         {
             out_loader.write_full(
                 marsh_result.scarp_mask.get_data(),
@@ -1091,7 +1105,7 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (bf["write_marsh_platform_seed_mask"])
+        if (bf["write_marsh_platform_seed_mask_raster"])
         {
             out_loader.write_full(
                 marsh_result.platform_seed_mask.get_data(),
@@ -1111,7 +1125,7 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (bf["write_marsh_platform_mask"])
+        if (bf["write_marsh_platform_mask_raster"])
         {
             out_loader.write_full(
                 marsh_result.platform_mask.get_data(),
@@ -1121,7 +1135,7 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (bf["write_marsh_platform_labels"])
+        if (bf["write_marsh_platform_labels_raster"])
         {
             out_loader.write_full(
                 marsh_result.platform_label_raster.get_data(),
@@ -1253,7 +1267,7 @@ int main(int argc, char* argv[])
             }
         }
 
-        if (bf["write_tidal_channel_mask"])
+        if (bf["write_tidal_channel_mask_raster"])
         {
             out_loader.write_full(
                 tidal_result.channel_mask.get_data(),
@@ -1263,7 +1277,7 @@ int main(int argc, char* argv[])
             );
         }
 
-        if (bf["write_tidal_upl"] && !tidal_result.upl.empty())
+        if (bf["write_tidal_upl_raster"] && !tidal_result.upl.empty())
         {
             out_loader.write_full(
                 tidal_result.upl.get_data(),

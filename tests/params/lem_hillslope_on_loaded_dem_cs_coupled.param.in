@@ -13,7 +13,7 @@ run_hillslope_steady_state: true
 hillslope_ss_model: critical_slope
 critical_slope_clamp_only: true
 critical_slope_clamp_fraction: 0.85
-incision_threshold_area: 0
+incision_threshold_specific_area: 0
 hillslope_channel_coupling: coupled
 critical_hillslope_slope: 0.8
 boundary_conditions: oooo

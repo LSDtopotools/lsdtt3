@@ -61,7 +61,7 @@ mode; `source_points_path` is required.
 | `write_fname` | string | stem of `read_fname` | Output prefix for all products. |
 | `valley_mask_fname` | string | | **Required.** Valley mask raster, in `read_path`. Cells > 0.5 are valley. Normally `<stem>_valley_mask.tif` from `lsdtt-fluvial-surfaces`. |
 | `n_threads` | int | `0` | OpenMP threads. `0` = all available. |
-| `write_output_format` | string | `gtiff` | Raster format: `cog`, `gtiff`, `same_as_input`. |
+| `write_output_format` | string | `cog` | Raster format: `cog`, `gtiff`, `same_as_input`. Existing parameter files that explicitly select `gtiff` continue to write plain GeoTIFFs. |
 
 ---
 
@@ -97,7 +97,7 @@ which classifies the downstream points as outlets. Point files may be CSV
 | `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel cells for source snapping. |
 | `auto_detect_outlet_points` | bool | `true` | Classify points in `source_points_path` into sources and outlets. Disabled when an explicit outlet file is given. |
 | `snap_sources_to_channel_threshold` | bool | `true` | Snap source points to the nearest cell meeting the threshold. |
-| `source_snap_max_radius_pixels` | int | `25` | Maximum expanding-square search radius for snapping. |
+| `source_snap_max_search_radius_pixels` | int | `25` | Maximum expanding-square search radius for snapping. |
 | `outlet_snap_max_distance_metres` | float | `0` | Maximum distance between a raw outlet point and its traced-path node. `0` = unlimited. |
 | `boundary_conditions` | string | `oooo` | Flow boundary conditions (N, E, S, W). |
 | `fill_min_slope_for_routing` | float | `0.0001` | Minimum slope imposed when pit-filling for routing. |
@@ -176,10 +176,10 @@ through bends like the grid lines of a boundary-fitted mesh.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_cross_section_features` | bool | `true` | Detect and write, along each section: D8 channel crossings, left/right valley walls, hydraulic-step boundaries, maximum-curvature peaks and multidirectional-hillshade peaks. |
-| `cross_section_curvature_window_metres` | float | `60` | Polynomial-fit window diameter (m) for the maximum-curvature raster used to find slope-break peaks. |
+| `cross_section_curvature_radius_metres` | float | `30` | Polynomial-fit window radius (m) for the maximum-curvature raster used to find slope-break peaks. |
 | `cross_section_feature_prominence_fraction` | float | `0.15` | Minimum peak prominence, as a fraction of that profile's range over the transect. |
 | `write_cross_section_hydraulics` | bool | `false` | Flood each profile stage by stage and record flow width, wetted area, wetted perimeter and hydraulic depth (A/W). Breakpoints in hydraulic depth against elevation above thalweg mark bankfull and inset flat-surface levels (Delchiaro et al. 2025, *Computers & Geosciences*, doi:10.1016/j.cageo.2025.106001). |
-| `write_cross_section_informed_valley_mask` | bool | `false` | Build a valley-floor mask from the sections' hydraulic breaks: each corridor pixel's height above the nearest node's thalweg baseline is compared with the channel's **median** lowest hydraulic break, so one anomalous section cannot streak onto the plateau. Requires `write_cross_section_features`. |
+| `write_cross_section_informed_valley_mask_raster` | bool | `false` | Build a valley-floor mask from the sections' hydraulic breaks: each corridor pixel's height above the nearest node's thalweg baseline is compared with the channel's **median** lowest hydraulic break, so one anomalous section cannot streak onto the plateau. Requires `write_cross_section_features`. |
 
 ---
 

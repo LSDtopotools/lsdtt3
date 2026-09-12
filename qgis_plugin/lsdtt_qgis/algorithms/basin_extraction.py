@@ -464,9 +464,9 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
                 self.FILTER_BY_STREAM_ORDER: "filter_basins_by_stream_order",
                 self.FILTER_NESTED_BY_ORDER: "filter_nested_by_stream_order",
                 self.OUTLINES_PER_ORDER: "write_basin_outlines_per_order",
-                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_snap_max_search_radius_pixels",
                 self.SNAPPING_METHOD: "basin_outlet_snapping_method",
-                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_snap_min_search_radius_pixels",
                 self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
             },
         )
@@ -574,33 +574,31 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
             "write_basin_outlines": write_outlines,
             "write_basin_outlines_as_polygon": outlines_as_polygon,
             "write_basin_outlines_per_order": outlines_per_order,
-            "basin_outlines_output_format": outlines_format,
+            "basin_outlines_write_vector_format": outlines_format,
             "write_basins_raster": write_basins_raster,
             "write_basins_datamap": write_datamap,
             "write_basin_outlines_to_csv": write_outlines_csv,
             "write_selected_basin_outlets_csv": write_selected_csv,
             "write_channel_network_lines": write_channel_lines,
-            "channel_network_lines_output_format": qa_format,
+            "write_vector_format": qa_format,
             "write_channel_network_points": write_channel_points,
-            "channel_network_points_output_format": qa_format,
             "write_channel_network_junctions": write_junctions,
-            "channel_network_junctions_output_format": qa_format,
             "calculate_spatial_index": self.parameterAsBool(parameters, self.CALCULATE_SPATIAL_INDEX, context),
         }
 
         if outlet_mode:
             param_values.update({
-                "basin_outlet_file": outlet_file,
+                "basin_outlet_fname": outlet_file,
                 "basin_outlet_snapping_method": self.SNAPPING_OPTIONS[
                     self.parameterAsEnum(parameters, self.SNAPPING_METHOD, context)
                 ],
                 "basin_outlet_contributing_pixels_threshold": self.parameterAsInt(
                     parameters, self.SNAPPING_THRESHOLD, context
                 ),
-                "basin_outlet_min_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_min_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MIN_RADIUS, context
                 ),
-                "basin_outlet_max_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_max_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MAX_RADIUS, context
                 ),
                 "write_basin_outlet_points": write_outlets,

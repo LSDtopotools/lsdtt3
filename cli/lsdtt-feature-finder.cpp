@@ -301,14 +301,14 @@ int main(int argc, char* argv[])
         "Useful later for cross-road matching.",
         "General", "switch", ""};
 
-    bool_default_map["write_channel_candidate_diagnostics"] = true;
-    help_map["write_channel_candidate_diagnostics"] = {"bool","true",
+    bool_default_map["write_channel_candidate_diagnostic_rasters"] = true;
+    help_map["write_channel_candidate_diagnostic_rasters"] = {"bool","true",
         "Write intermediate diagnostic rasters for the channel-candidate detector.",
         "Includes persistent response, depth signal, slope signal, and Hessian elongation.",
         "General", "switch", ""};
 
-    bool_default_map["write_channel_scale_diagnostics"] = false;
-    help_map["write_channel_scale_diagnostics"] = {"bool","false",
+    bool_default_map["write_channel_scale_diagnostic_rasters"] = false;
+    help_map["write_channel_scale_diagnostic_rasters"] = {"bool","false",
         "Write per-scale diagnostic rasters (verbose).",
         "Includes raw curvature, normalised channelness signal, and pairwise "
         "persistence for every scale. Disabled by default to reduce output volume.",
@@ -338,22 +338,22 @@ int main(int argc, char* argv[])
         "using circular moving windows.",
         "Relief-ratio detector", "switch", ""};
 
-    float_default_map["relief_ratio_short_radius"] = 1.8f;
-    help_map["relief_ratio_short_radius"] = {"float","1.8",
+    float_default_map["relief_ratio_short_radius_metres"] = 1.8f;
+    help_map["relief_ratio_short_radius_metres"] = {"float","1.8",
         "Short moving-window radius for local relief, in metres.",
         "Use a radius matched to the narrow drain scale. This is a radius, "
         "not a diameter.",
         "Relief-ratio detector", "param", "write_relief_ratio_raster"};
 
-    float_default_map["relief_ratio_long_radius"] = 8.0f;
-    help_map["relief_ratio_long_radius"] = {"float","8.0",
+    float_default_map["relief_ratio_long_radius_metres"] = 8.0f;
+    help_map["relief_ratio_long_radius_metres"] = {"float","8.0",
         "Long moving-window radius for local relief, in metres.",
         "Use a broader radius that captures channel-scale topographic relief.",
         "Relief-ratio detector", "param", "write_relief_ratio_raster"};
 
     // --- Relative Path Impact Index (Tarolli-style, D8 adaptation) ---
-    float_default_map["rpii_smoothing_window_metres"] = 30.0f;
-    help_map["rpii_smoothing_window_metres"] = {"float","30.0",
+    float_default_map["rpii_polyfit_lambda_metres"] = 30.0f;
+    help_map["rpii_polyfit_lambda_metres"] = {"float","30.0",
         "Surface-fitting window (lambda, metres) for the smoothed reference DEM.",
         "Computed using direct polyfit fitted_surface.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "param", ""};
@@ -578,8 +578,8 @@ int main(int argc, char* argv[])
         "Output pixels are 1.0 for retained drain detections and 0.0 otherwise.",
         "Drain finder", "switch", ""};
 
-    bool_default_map["write_drain_diagnostics"] = true;
-    help_map["write_drain_diagnostics"] = {"bool","true",
+    bool_default_map["write_drain_diagnostic_rasters"] = true;
+    help_map["write_drain_diagnostic_rasters"] = {"bool","true",
         "Write intermediate drain-finder diagnostic rasters.",
         "Includes Frangi response, Frangi best scale, and the thresholded "
         "candidate mask before shape filtering.",
@@ -613,8 +613,8 @@ int main(int argc, char* argv[])
 
 
     // --- Valley finder (SMAP shape classifier on a smoothed DEM) ---
-    float_default_map["valley_smoothing_window_metres"] = 50.0f;
-    help_map["valley_smoothing_window_metres"] = {"float","50.0",
+    float_default_map["valley_polyfit_lambda_metres"] = 50.0f;
+    help_map["valley_polyfit_lambda_metres"] = {"float","50.0",
         "Smoothing window (polyfit lengthscale) applied before shape classification, in metres.",
         "The quadratic-fit window IS the smoothing scale. Larger values (e.g. 50 m) "
         "suppress fine channels and retain broad valley forms; smaller values resolve "
@@ -659,8 +659,8 @@ int main(int argc, char* argv[])
         "Integer codes -4..3 stored as float32 (see surface_shape_class).",
         "Valley finder (SMAP shape classifier on a smoothed DEM)", "switch", ""};
 
-    bool_default_map["write_valley_diagnostics"] = false;
-    help_map["write_valley_diagnostics"] = {"bool","false",
+    bool_default_map["write_valley_diagnostic_rasters"] = false;
+    help_map["write_valley_diagnostic_rasters"] = {"bool","false",
         "Write valley-finder diagnostic rasters.",
         "Includes the smoothed fitted surface, the principal curvatures, and the "
         "post-threshold Gaussian and mean curvatures used by the classifier.",
@@ -668,8 +668,8 @@ int main(int argc, char* argv[])
 
 
     // --- Road finder (along-contour bench detector) ---
-    float_default_map["road_smoothing_window_metres"] = 8.0f;
-    help_map["road_smoothing_window_metres"] = {"float","8.0",
+    float_default_map["road_polyfit_lambda_metres"] = 8.0f;
+    help_map["road_polyfit_lambda_metres"] = {"float","8.0",
         "Smoothing window (polyfit lengthscale) for road detection, in metres.",
         "Roads are narrow, so use a small window matched to the bench width "
         "(cut-to-fill cross-section). Larger values blur the bench edges.",
@@ -766,8 +766,8 @@ int main(int argc, char* argv[])
         "1 indicates a plausible along-contour bench/road pixel.",
         "Road finder (along-contour bench detector)", "switch", ""};
 
-    bool_default_map["write_road_diagnostics"] = false;
-    help_map["write_road_diagnostics"] = {"bool","false",
+    bool_default_map["write_road_diagnostic_rasters"] = false;
+    help_map["write_road_diagnostic_rasters"] = {"bool","false",
         "Write road-finder diagnostic rasters.",
         "Includes contour alignment, Hessian elongation, cross-feature curvature, "
         "along-feature orientation (azimuth from north), and slope.",
@@ -775,8 +775,8 @@ int main(int argc, char* argv[])
 
 
     // --- Flow-pathway road/channel discrimination ---
-    float_default_map["flow_regional_smoothing_metres"] = 100.0f;
-    help_map["flow_regional_smoothing_metres"] = {"float","100.0",
+    float_default_map["flow_regional_polyfit_lambda_metres"] = 100.0f;
+    help_map["flow_regional_polyfit_lambda_metres"] = {"float","100.0",
         "Smoothing window (polyfit lengthscale) for the regional slope vector, in metres.",
         "A large window (e.g. 100 m) gives the regional fall-line bearing that flow "
         "paths are compared against.",
@@ -798,8 +798,8 @@ int main(int argc, char* argv[])
         "Output: _flow_short_tangential_curvature.tif.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    float_default_map["flow_intermediate_window_metres"] = 15.0f;
-    help_map["flow_intermediate_window_metres"] = {"float","15.0",
+    float_default_map["flow_intermediate_polyfit_lambda_metres"] = 15.0f;
+    help_map["flow_intermediate_polyfit_lambda_metres"] = {"float","15.0",
         "Polyfit window (lengthscale) for the intermediate curvature rasters, in metres.",
         "Produces tangential, minimum, and maximum curvature at this scale. "
         "Outputs: _flow_intermediate_tangential_curvature.tif, "
@@ -869,8 +869,8 @@ int main(int argc, char* argv[])
         "ambiguous (not road misdirection).",
         "Flow-pathway road/channel discrimination", "param", ""};
 
-    int_default_map["flow_big_channel_threshold_pixels"] = 5000;
-    help_map["flow_big_channel_threshold_pixels"] = {"int","5000",
+    int_default_map["big_channel_threshold_contributing_pixels"] = 5000;
+    help_map["big_channel_threshold_contributing_pixels"] = {"int","5000",
         "Contributing-pixel threshold for the valley-channel point export.",
         "Channel pixels with more than this many upslope pixels that fall inside the "
         "valley-axis buffer are exported to a FlatGeobuf point layer.",
@@ -894,7 +894,7 @@ int main(int argc, char* argv[])
     help_map["write_flow_valley_channel_points_fgb"] = {"bool","true",
         "Export large channel pixels inside the valley-axis buffer to a FlatGeobuf point layer.",
         "Output: <write_fname>_flow_valley_channel_points.fgb. Selects channel pixels "
-        "with contributing pixels > flow_big_channel_threshold_pixels that lie within "
+        "with contributing pixels > big_channel_threshold_contributing_pixels that lie within "
         "the bearing-contrast buffer. Attributes: row, col, contributing_px, "
         "flow_vs_slope_angle, bearing_contrast.",
         "Flow-pathway road/channel discrimination", "switch", ""};
@@ -1073,6 +1073,8 @@ int main(int argc, char* argv[])
     bool_default_map["write_ridge_mask_raster"] = true;
     help_map["write_ridge_mask_raster"] = {"bool","true",
         "Write the binary hysteresis-linked ridge centreline mask.",
+        "Enabled by default because this is a primary product of the ridge-finder "
+        "stage, not the optional hilltop diagnostic exposed by the coupling CLI. "
         "Output: <write_fname>_ridge_mask.tif.",
         "Ridge lines (oriented NMS + hysteresis)", "switch", ""};
 
@@ -1132,8 +1134,8 @@ int main(int argc, char* argv[])
         "Output: <write_fname>_thin_mask.tif.",
         "Thin-line extractor (separate lines from blobs/speckle)", "switch", ""};
 
-    bool_default_map["write_thin_diagnostics"] = false;
-    help_map["write_thin_diagnostics"] = {"bool","false",
+    bool_default_map["write_thin_diagnostic_rasters"] = false;
+    help_map["write_thin_diagnostic_rasters"] = {"bool","false",
         "Write the thresholded binary and the blob-removed intermediate.","",
         "Thin-line extractor (separate lines from blobs/speckle)", "switch", ""};
 
@@ -1221,8 +1223,8 @@ int main(int argc, char* argv[])
         "Output: <write_fname>_smooth_road_mask.tif.",
         "Smoothness road extractor (roads = smooth ribbons)", "switch", ""};
 
-    bool_default_map["write_smooth_diagnostics"] = false;
-    help_map["write_smooth_diagnostics"] = {"bool","false",
+    bool_default_map["write_smooth_diagnostic_rasters"] = false;
+    help_map["write_smooth_diagnostic_rasters"] = {"bool","false",
         "Write roughness, smoothness, and path-opened smoothness diagnostics.","",
         "Smoothness road extractor (roads = smooth ribbons)", "switch", ""};
 
@@ -1301,8 +1303,8 @@ int main(int argc, char* argv[])
         "Output: <write_fname>_road_extract_mask.tif.",
         "Road extractor (composed pipeline)", "switch", ""};
 
-    bool_default_map["write_road_extract_diagnostics"] = false;
-    help_map["write_road_extract_diagnostics"] = {"bool","false",
+    bool_default_map["write_road_extract_diagnostic_rasters"] = false;
+    help_map["write_road_extract_diagnostic_rasters"] = {"bool","false",
         "Write road-extractor intermediate rasters.",
         "Diffused response, coherence, NMS-thinned ridge, and the pre-cleanup "
         "ridge mask.",
@@ -1383,9 +1385,26 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
+        {"write_channel_candidate_diagnostics", "write_channel_candidate_diagnostic_rasters"},
+        {"write_channel_scale_diagnostics", "write_channel_scale_diagnostic_rasters"},
+        {"write_drain_diagnostics", "write_drain_diagnostic_rasters"},
+        {"write_valley_diagnostics", "write_valley_diagnostic_rasters"},
+        {"write_road_diagnostics", "write_road_diagnostic_rasters"},
+        {"write_road_extract_diagnostics", "write_road_extract_diagnostic_rasters"},
+        {"write_thin_diagnostics", "write_thin_diagnostic_rasters"},
+        {"write_smooth_diagnostics", "write_smooth_diagnostic_rasters"},
         {"flow_dem_is_filled", "raster_is_filled"},
         {"flow_accumulation_threshold_pixels",
-         "threshold_contributing_pixels"} });
+         "threshold_contributing_pixels"},
+        {"flow_big_channel_threshold_pixels",
+         "big_channel_threshold_contributing_pixels"},
+        {"relief_ratio_short_radius", "relief_ratio_short_radius_metres"},
+        {"relief_ratio_long_radius", "relief_ratio_long_radius_metres"},
+        {"rpii_smoothing_window_metres", "rpii_polyfit_lambda_metres"},
+        {"valley_smoothing_window_metres", "valley_polyfit_lambda_metres"},
+        {"road_smoothing_window_metres", "road_polyfit_lambda_metres"},
+        {"flow_regional_smoothing_metres", "flow_regional_polyfit_lambda_metres"},
+        {"flow_intermediate_window_metres", "flow_intermediate_polyfit_lambda_metres"} });
 
     pp.parse_all_parameters(
         float_default_map,
@@ -1403,9 +1422,9 @@ int main(int argc, char* argv[])
     const int         n_threads    = ifs.at("n_threads");
     
     const double relief_ratio_short_radius =
-        static_cast<double>(ff.at("relief_ratio_short_radius"));
+        static_cast<double>(ff.at("relief_ratio_short_radius_metres"));
     const double relief_ratio_long_radius =
-        static_cast<double>(ff.at("relief_ratio_long_radius"));
+        static_cast<double>(ff.at("relief_ratio_long_radius_metres"));
 
 
     lsdtt::raster_output_format out_fmt;
@@ -1433,7 +1452,7 @@ int main(int argc, char* argv[])
         }
 
         road_flow_request.regional_smoothing_metres =
-            static_cast<double>(ff.at("flow_regional_smoothing_metres"));
+            static_cast<double>(ff.at("flow_regional_polyfit_lambda_metres"));
         threshold_contributing_pixels = ifs.at("threshold_contributing_pixels");
         road_flow_request.flow_accumulation_threshold_pixels =
             threshold_contributing_pixels;
@@ -1442,7 +1461,7 @@ int main(int argc, char* argv[])
         road_flow_request.short_curvature_radius_metres =
             static_cast<double>(ff.at("flow_short_curvature_radius_metres"));
         road_flow_request.intermediate_window_metres =
-            static_cast<double>(ff.at("flow_intermediate_window_metres"));
+            static_cast<double>(ff.at("flow_intermediate_polyfit_lambda_metres"));
         road_flow_request.roughness_radius_metres =
             static_cast<double>(ff.at("flow_roughness_radius_metres"));
         road_flow_request.dem_is_filled = bf.at("raster_is_filled");
@@ -1461,7 +1480,7 @@ int main(int argc, char* argv[])
             static_cast<double>(ff.at("flow_valley_buffer_radius_metres"));
 
         valley_request.smoothing_window_metres =
-            static_cast<double>(ff.at("valley_smoothing_window_metres"));
+            static_cast<double>(ff.at("valley_polyfit_lambda_metres"));
         valley_request.curvature_threshold =
             static_cast<double>(ff.at("valley_curvature_threshold"));
         valley_request.polyfit_z_factor =
@@ -1475,7 +1494,7 @@ int main(int argc, char* argv[])
         valley_request.include_synform          = bf.at("valley_include_synform");
 
         road_request.smoothing_window_metres =
-            static_cast<double>(ff.at("road_smoothing_window_metres"));
+            static_cast<double>(ff.at("road_polyfit_lambda_metres"));
         road_request.polyfit_z_factor =
             static_cast<double>(ff.at("polyfit_z_factor"));
         road_request.flat_slope_tolerance =
@@ -1690,7 +1709,7 @@ int main(int argc, char* argv[])
                 loader.write_full(result.drain_mask.get_data(), result.drain_mask.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_drain_diagnostics"))
+            if (bf.at("write_drain_diagnostic_rasters"))
             {
                 const std::string o1 = pp.make_output_path( "_drain_frangi_response" + output_ext);
                 const std::string o2 = pp.make_output_path( "_drain_frangi_scale" + output_ext);
@@ -1769,7 +1788,7 @@ int main(int argc, char* argv[])
                 loader.write_full(result.best_scale_metres.get_data(), result.best_scale_metres.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_channel_candidate_diagnostics"))
+            if (bf.at("write_channel_candidate_diagnostic_rasters"))
             {
                 const std::string o_persistent =
                     pp.make_output_path( "_channel_candidate_persistent" + output_ext);
@@ -1793,7 +1812,7 @@ int main(int argc, char* argv[])
                 loader.write_full(result.hessian_elongation.get_data(), result.hessian_elongation.get_meta(), o_elong, out_fmt);
             }
 
-            if (bf.at("write_channel_scale_diagnostics"))
+            if (bf.at("write_channel_scale_diagnostic_rasters"))
             {
                 for (std::size_t i = 0; i < result.curvature_raw_by_scale.size(); ++i)
                 {
@@ -1851,7 +1870,7 @@ int main(int argc, char* argv[])
         else if (feature_type == "relative_path_impact")
         {
             const double smooth_window =
-                static_cast<double>(ff.at("rpii_smoothing_window_metres"));
+                static_cast<double>(ff.at("rpii_polyfit_lambda_metres"));
             const double fill_min_slope =
                 static_cast<double>(ff.at("rpii_fill_min_slope"));
             const std::string bc = sf.at("rpii_boundary_conditions");
@@ -2371,7 +2390,7 @@ int main(int argc, char* argv[])
                 loader.write_full(result.shape_class.get_data(), result.shape_class.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_valley_diagnostics"))
+            if (bf.at("write_valley_diagnostic_rasters"))
             {
                 const std::string o1 = pp.make_output_path( "_valley_fitted_surface" + output_ext);
                 const std::string o2 = pp.make_output_path( "_valley_maximum_curvature" + output_ext);
@@ -2427,7 +2446,7 @@ int main(int argc, char* argv[])
                 loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
             }
 
-            if (bf.at("write_road_diagnostics"))
+            if (bf.at("write_road_diagnostic_rasters"))
             {
                 const std::string o1 = pp.make_output_path( "_road_contour_alignment" + output_ext);
                 const std::string o2 = pp.make_output_path( "_road_hessian_elongation" + output_ext);
@@ -2560,7 +2579,8 @@ int main(int argc, char* argv[])
                 const auto& bufm = result.valley_axis_buffer_mask.get_mask();
                 const auto& con  = result.regional_bearing_contrast.get_data();
                 const std::int64_t big_thr =
-                    static_cast<std::int64_t>(ifs.at("flow_big_channel_threshold_pixels"));
+                    static_cast<std::int64_t>(
+                        ifs.at("big_channel_threshold_contributing_pixels"));
 
                 lsdtt::lsdtt_vector_schema schema;
                 schema.field_names = {"row","col","contributing_px",
@@ -2878,7 +2898,7 @@ int main(int argc, char* argv[])
                 std::cout << "Writing: " << o << " (1=road, 2=track)\n";
                 loader.write_full(result.classified.get_data(), result.classified.get_meta(), o, out_fmt);
             }
-            if (bf.at("write_road_extract_diagnostics"))
+            if (bf.at("write_road_extract_diagnostic_rasters"))
             {
                 const std::string o1 = pp.make_output_path("_road_extract_diffused" + output_ext);
                 const std::string o2 = pp.make_output_path("_road_extract_coherence" + output_ext);
@@ -2926,7 +2946,7 @@ int main(int argc, char* argv[])
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.road_mask.get_data(), result.road_mask.get_meta(), o, out_fmt);
             }
-            if (bf.at("write_smooth_diagnostics"))
+            if (bf.at("write_smooth_diagnostic_rasters"))
             {
                 const std::string o1 = pp.make_output_path("_smooth_roughness" + output_ext);
                 const std::string o2 = pp.make_output_path("_smooth_smoothness" + output_ext);
@@ -3044,7 +3064,7 @@ int main(int argc, char* argv[])
                 std::cout << "Writing: " << o << "\n";
                 loader.write_full(result.mask.get_data(), result.mask.get_meta(), o, out_fmt);
             }
-            if (bf.at("write_thin_diagnostics"))
+            if (bf.at("write_thin_diagnostic_rasters"))
             {
                 const std::string o1 = pp.make_output_path("_thin_binary" + output_ext);
                 const std::string o2 = pp.make_output_path("_thin_blob_free" + output_ext);

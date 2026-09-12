@@ -6,5 +6,5 @@ write_fname: tiny_coup_auto
 write_output_format: gtiff
 n_timesteps: 1
 enable_hillslope_transport: true
-incision_threshold_area: 5
+incision_threshold_specific_area: 5
 hillslope_model: cidre

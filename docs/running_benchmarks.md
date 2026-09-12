@@ -744,7 +744,7 @@ results, so you can check the ratio for yourself rather than guessing.
     **overrides the environment**. Only `n_threads: 0` falls through to
     `omp_get_max_threads()`, which is what actually reads `OMP_NUM_THREADS`.
 
-    `lsdtt-surface-metrics` defaults to `n_threads: 1`. Since the harness never
+    `lsdtt-surface-metrics` defaulted to `n_threads: 1` at the time. Since the harness never
     wrote `n_threads` into the generated `.param` file, every surface-metrics
     measurement ran **single-threaded at every thread count**, and the resulting
     scaling curves are flat by construction rather than by measurement.
@@ -757,6 +757,10 @@ results, so you can check the ratio for yourself rather than guessing.
     you have a campaign from before the fix, you do **not** need to repeat it:
     re-run `--suites surface` as above and substitute the new scaling table. The
     non-surface numbers in your existing `SUMMARY.md` are unaffected.
+
+Current `lsdtt-surface-metrics` and `lsdtt-spectral-analysis` defaults use
+`n_threads: 0` (all hardware threads). Benchmark and shared-host runs should
+still state an explicit physical-core limit rather than relying on that default.
 
 ---
 

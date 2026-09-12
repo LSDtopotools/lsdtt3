@@ -163,19 +163,12 @@ void declare_channel_initiation_parameters(
 // -----------------------------------------------------------------------------
 // Output formats
 // -----------------------------------------------------------------------------
-void declare_output_format_parameters(
-    std::map<std::string, bool>&        bool_default_map,
-    std::map<std::string, int>&         int_default_map,
-    std::map<std::string, float>&       float_default_map,
+void declare_raster_output_format_parameter(
     std::map<std::string, std::string>& string_default_map,
     lsdtt_help_registry&                help_map,
     const std::string&                  prefix)
 {
-    (void)int_default_map;
-    (void)float_default_map;
-
     const std::string group = prefixed_group_label(prefix, "Output");
-
     const std::string k_write_output_format =
         prefixed_parameter_key(prefix, "write_output_format");
     string_default_map[k_write_output_format] = "cog";
@@ -187,20 +180,35 @@ void declare_output_format_parameters(
         "every raster the tool writes. Vector outputs are governed separately "
         "by write_vector_format.",
         group, "io", ""};
+}
 
+void declare_vector_output_format_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Output");
     const std::string k_write_vector_format =
         prefixed_parameter_key(prefix, "write_vector_format");
     string_default_map[k_write_vector_format] = "flatgeobuf";
     help_map[k_write_vector_format] = {"string", "flatgeobuf",
-        "Vector output format: flatgeobuf, gpkg or csv.",
+        "Vector output format: flatgeobuf or gpkg.",
         "Governs every vector layer this tool writes. FlatGeobuf is preferred: "
         "it is compact, carries its own georeferencing, and does not have "
         "GeoPackage's problems writing across drives (a common WSL2 "
-        "situation). Per-output overrides exist only where a container "
+        "situation). CSV is available only through selectors for point/table "
+        "outputs. Per-output overrides exist only where a container "
         "genuinely differs. Raster outputs are governed separately by "
         "write_output_format.",
         group, "io", ""};
+}
 
+void declare_spatial_index_parameter(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map,
+    const std::string&           prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Output");
     const std::string k_calculate_spatial_index =
         prefixed_parameter_key(prefix, "calculate_spatial_index");
     bool_default_map[k_calculate_spatial_index] = true;
@@ -213,6 +221,16 @@ void declare_output_format_parameters(
         "preferable to write without an index; one can always be built later "
         "with e.g. gdal.",
         group, "io", ""};
+}
+
+std::string resolve_output_format_override(
+    const std::string& override_value,
+    const std::string& canonical_value)
+{
+    if (override_value == inherit_write_vector_format ||
+        override_value == inherit_write_output_format)
+        return canonical_value;
+    return override_value;
 }
 
 // -----------------------------------------------------------------------------
@@ -270,19 +288,19 @@ void declare_basin_outlet_parameters(
         "channel network begins.",
         group, "param", ""};
 
-    const std::string k_basin_outlet_min_search_radius_pixels =
-        prefixed_parameter_key(prefix, "basin_outlet_min_search_radius_pixels");
-    int_default_map[k_basin_outlet_min_search_radius_pixels] = 0;
-    help_map[k_basin_outlet_min_search_radius_pixels] = {"int", "0",
+    const std::string k_basin_outlet_snap_min_search_radius_pixels =
+        prefixed_parameter_key(prefix, "basin_outlet_snap_min_search_radius_pixels");
+    int_default_map[k_basin_outlet_snap_min_search_radius_pixels] = 0;
+    help_map[k_basin_outlet_snap_min_search_radius_pixels] = {"int", "0",
         "Minimum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "0 means the mapped input pixel is tested first.",
         group, "param", ""};
 
-    const std::string k_basin_outlet_max_search_radius_pixels =
-        prefixed_parameter_key(prefix, "basin_outlet_max_search_radius_pixels");
-    int_default_map[k_basin_outlet_max_search_radius_pixels] = 25;
-    help_map[k_basin_outlet_max_search_radius_pixels] = {"int", "25",
+    const std::string k_basin_outlet_snap_max_search_radius_pixels =
+        prefixed_parameter_key(prefix, "basin_outlet_snap_max_search_radius_pixels");
+    int_default_map[k_basin_outlet_snap_max_search_radius_pixels] = 25;
+    help_map[k_basin_outlet_snap_max_search_radius_pixels] = {"int", "25",
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "The search stops at the first radius containing one or more "
@@ -353,16 +371,11 @@ void declare_surface_fitting_parameters(
 // -----------------------------------------------------------------------------
 // Synthetic model domain
 // -----------------------------------------------------------------------------
-void declare_synthetic_domain_parameters(
-    std::map<std::string, bool>&        bool_default_map,
+void declare_synthetic_dimensions_parameters(
     std::map<std::string, int>&         int_default_map,
-    std::map<std::string, float>&       float_default_map,
-    std::map<std::string, std::string>& string_default_map,
     lsdtt_help_registry&                help_map,
     const std::string&                  prefix)
 {
-    (void)bool_default_map;
-
     const std::string group = prefixed_group_label(prefix, "Synthetic domain");
 
     const std::string k_n_rows = prefixed_parameter_key(prefix, "n_rows");
@@ -378,7 +391,14 @@ void declare_synthetic_domain_parameters(
         "Number of columns in the synthetic model domain.",
         "Used only when the domain is generated rather than read from a DEM.",
         group, "param", ""};
+}
 
+void declare_synthetic_cell_size_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Synthetic domain");
     const std::string k_cell_size_metres =
         prefixed_parameter_key(prefix, "cell_size_metres");
     float_default_map[k_cell_size_metres] = 1.0f;
@@ -388,7 +408,14 @@ void declare_synthetic_domain_parameters(
         "pixel count (for example threshold_contributing_pixels) corresponds to "
         "a different ground area as this changes.",
         group, "param", ""};
+}
 
+void declare_synthetic_random_seed_parameter(
+    std::map<std::string, int>& int_default_map,
+    lsdtt_help_registry&        help_map,
+    const std::string&          prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Synthetic domain");
     const std::string k_random_seed =
         prefixed_parameter_key(prefix, "random_seed");
     int_default_map[k_random_seed] = 33;
@@ -397,7 +424,14 @@ void declare_synthetic_domain_parameters(
         "A fixed seed makes a run reproducible. Change it to draw a different "
         "realisation of the same statistical surface.",
         group, "param", ""};
+}
 
+void declare_synthetic_crs_wkt_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Synthetic domain");
     const std::string k_synthetic_crs_wkt =
         prefixed_parameter_key(prefix, "synthetic_crs_wkt");
     string_default_map[k_synthetic_crs_wkt] = "";
@@ -410,10 +444,7 @@ void declare_synthetic_domain_parameters(
         group, "param", ""};
 }
 
-// -----------------------------------------------------------------------------
-// Synthetic noise surfaces
-// -----------------------------------------------------------------------------
-void declare_synthetic_noise_parameters(
+void declare_synthetic_domain_parameters(
     std::map<std::string, bool>&        bool_default_map,
     std::map<std::string, int>&         int_default_map,
     std::map<std::string, float>&       float_default_map,
@@ -422,8 +453,20 @@ void declare_synthetic_noise_parameters(
     const std::string&                  prefix)
 {
     (void)bool_default_map;
-    (void)int_default_map;
+    declare_synthetic_dimensions_parameters(int_default_map, help_map, prefix);
+    declare_synthetic_cell_size_parameter(float_default_map, help_map, prefix);
+    declare_synthetic_random_seed_parameter(int_default_map, help_map, prefix);
+    declare_synthetic_crs_wkt_parameter(string_default_map, help_map, prefix);
+}
 
+// -----------------------------------------------------------------------------
+// Synthetic noise surfaces
+// -----------------------------------------------------------------------------
+void declare_synthetic_noise_type_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix)
+{
     const std::string group = prefixed_group_label(prefix, "Synthetic noise");
 
     const std::string k_noise_type =
@@ -437,7 +480,14 @@ void declare_synthetic_noise_parameters(
         "diamond_square = fractal terrain whose roughness is set by "
         "diamond_square_roughness.",
         group, "param", ""};
+}
 
+void declare_synthetic_noise_target_stddev_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Synthetic noise");
     const std::string k_noise_target_stddev_metres =
         prefixed_parameter_key(prefix, "noise_target_stddev_metres");
     float_default_map[k_noise_target_stddev_metres] = 1.0f;
@@ -446,7 +496,14 @@ void declare_synthetic_noise_parameters(
         "The raw surface is rescaled to this standard deviation. Used when "
         "noise_type is red_noise or diamond_square.",
         group, "param", ""};
+}
 
+void declare_synthetic_noise_relief_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Synthetic noise");
     const std::string k_noise_relief_metres =
         prefixed_parameter_key(prefix, "noise_relief_metres");
     float_default_map[k_noise_relief_metres] = 0.0f;
@@ -458,7 +515,14 @@ void declare_synthetic_noise_parameters(
         "flat. Applied everywhere, not only inside depressions. Size it "
         "against the mean fill depth rather than against the total relief.",
         group, "param", ""};
+}
 
+void declare_diamond_square_parameters(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Synthetic noise");
     const std::string k_diamond_square_roughness =
         prefixed_parameter_key(prefix, "diamond_square_roughness");
     float_default_map[k_diamond_square_roughness] = 0.55f;
@@ -477,6 +541,22 @@ void declare_synthetic_noise_parameters(
         "subsequent level by diamond_square_roughness. Used only when "
         "noise_type is diamond_square.",
         group, "param", ""};
+}
+
+void declare_synthetic_noise_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix)
+{
+    (void)bool_default_map;
+    (void)int_default_map;
+    declare_synthetic_noise_type_parameter(string_default_map, help_map, prefix);
+    declare_synthetic_noise_target_stddev_parameter(float_default_map, help_map, prefix);
+    declare_synthetic_noise_relief_parameter(float_default_map, help_map, prefix);
+    declare_diamond_square_parameters(float_default_map, help_map, prefix);
 }
 
 } // namespace lsdtt

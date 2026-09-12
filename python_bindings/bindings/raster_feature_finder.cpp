@@ -331,7 +331,7 @@ void bind_raster_feature_finder(nb::module_& m)
         "Find multiscale channel-bottom candidates and return score and diagnostics.");
     m.def("frangi_filter", &frangi_filter, nb::arg("raster"),
         nb::arg("sigma_min_metres") = 1.0, nb::arg("sigma_max_metres") = 5.0,
-        nb::arg("n_scales") = 4, nb::arg("beta") = 0.5, nb::arg("c") = 15.0,
+        nb::arg("n_scales") = 4, nb::arg("beta") = 0.5, nb::arg("c") = 1.0,
         nb::arg("target") = "ridges", nb::arg("n_threads") = 0,
         "Run a multiscale Frangi ridge or valley filter.");
     m.def("find_drains", &find_drains, nb::arg("raster"),

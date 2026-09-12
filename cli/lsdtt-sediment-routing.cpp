@@ -168,8 +168,8 @@ int main(int argc, char* argv[])
         "transport capacity calculations.",
         "Sediment properties", "param", ""};
 
-    float_default_map["active_layer_depth_m"] = -1.0f;
-    help_map["active_layer_depth_m"] = {"float","-1",
+    float_default_map["active_layer_depth_metres"] = -1.0f;
+    help_map["active_layer_depth_metres"] = {"float","-1",
         "Fixed active-layer depth [m] applied to all reaches.",
         "The active layer is the mobile surface sediment that participates in "
         "exchange each timestep. "
@@ -194,24 +194,24 @@ int main(int argc, char* argv[])
         "Must have the same number of entries as psi_mm.",
         "Grain-size distribution", "param", ""};
 
-    float_default_map["D50_m"] = 0.016f;
-    help_map["D50_m"] = {"float","0.016",
+    float_default_map["d50_metres"] = 0.016f;
+    help_map["d50_metres"] = {"float","0.016",
         "Median grain diameter [m] used in transport and hydraulic calculations.",
         "Used directly by the Engelund-Hansen formula and as the reference "
         "grain size for hiding-function calculations in Wong-Parker.",
         "Grain-size distribution", "param", ""};
 
-    float_default_map["D84_m"] = 0.045f;
-    help_map["D84_m"] = {"float","0.045",
+    float_default_map["d84_metres"] = 0.045f;
+    help_map["d84_metres"] = {"float","0.045",
         "D84 grain diameter [m].",
         "84th percentile grain diameter. Used in Wilcock-Crowe hiding function.",
         "Grain-size distribution", "param", ""};
 
-    float_default_map["D90_m"] = 0.055f;
-    help_map["D90_m"] = {"float","0.055",
+    float_default_map["d90_metres"] = 0.055f;
+    help_map["d90_metres"] = {"float","0.055",
         "D90 grain diameter [m].",
         "90th percentile grain diameter. Sets the default active-layer depth "
-        "(2 x D90) when active_layer_depth_m <= 0.",
+        "(2 x D90) when active_layer_depth_metres <= 0.",
         "Grain-size distribution", "param", ""};
 
     float_default_map["mannings_n"] = 0.04f;
@@ -283,8 +283,8 @@ int main(int argc, char* argv[])
         "approximation. Typical range: 0.3-0.6.",
         "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
-    float_default_map["giuh_hillslope_length_m"] = -1.0f;
-    help_map["giuh_hillslope_length_m"] = {"float","-1",
+    float_default_map["giuh_hillslope_length_metres"] = -1.0f;
+    help_map["giuh_hillslope_length_metres"] = {"float","-1",
         "Mean hillslope length [m] added as overland-flow travel time per reach.",
         "When > 0, an overland-flow travel time = hillslope_length / v_hillslope "
         "is added to each reach, delaying the IUH peak. "
@@ -294,7 +294,7 @@ int main(int argc, char* argv[])
     float_default_map["giuh_v_hillslope_m_per_s"] = 0.005f;
     help_map["giuh_v_hillslope_m_per_s"] = {"float","0.005",
         "Overland-flow velocity [m/s] for hillslope travel time.",
-        "Only used when giuh_hillslope_length_m > 0. "
+        "Only used when giuh_hillslope_length_metres > 0. "
         "Typical sheet-flow velocities: 0.001-0.01 m/s.",
         "GIUH discharge estimation", "param", "use_giuh_discharge"};
 
@@ -388,7 +388,12 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"source_pixels_threshold", "threshold_contributing_pixels"} });
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"active_layer_depth_m", "active_layer_depth_metres"},
+        {"D50_m", "d50_metres"},
+        {"D84_m", "d84_metres"},
+        {"D90_m", "d90_metres"},
+        {"giuh_hillslope_length_m", "giuh_hillslope_length_metres"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -410,10 +415,10 @@ int main(int argc, char* argv[])
     opts.timestep_s             = static_cast<double>(ff["timestep_s"]);
     opts.porosity               = static_cast<double>(ff["porosity"]);
     opts.sediment_density_kg_m3 = static_cast<double>(ff["sediment_density_kg_m3"]);
-    opts.active_layer_depth_m   = static_cast<double>(ff["active_layer_depth_m"]);
-    opts.D50_m                  = static_cast<double>(ff["D50_m"]);
-    opts.D84_m                  = static_cast<double>(ff["D84_m"]);
-    opts.D90_m                  = static_cast<double>(ff["D90_m"]);
+    opts.active_layer_depth_m = static_cast<double>(ff["active_layer_depth_metres"]);
+    opts.D50_m = static_cast<double>(ff["d50_metres"]);
+    opts.D84_m = static_cast<double>(ff["d84_metres"]);
+    opts.D90_m = static_cast<double>(ff["d90_metres"]);
     opts.mannings_n             = static_cast<double>(ff["mannings_n"]);
     opts.width_coefficient      = static_cast<double>(ff["width_coefficient"]);
     opts.width_exponent         = static_cast<double>(ff["width_exponent"]);
@@ -593,7 +598,7 @@ int main(int argc, char* argv[])
         giuh_opts.v_ref_m_per_s       = static_cast<double>(ff["giuh_v_ref_m_per_s"]);
         giuh_opts.slope_ref           = static_cast<double>(ff["giuh_slope_ref"]);
         giuh_opts.velocity_exponent   = static_cast<double>(ff["giuh_velocity_exponent"]);
-        giuh_opts.hillslope_length_m  = static_cast<double>(ff["giuh_hillslope_length_m"]);
+        giuh_opts.hillslope_length_m = static_cast<double>(ff["giuh_hillslope_length_metres"]);
         giuh_opts.v_hillslope_m_per_s = static_cast<double>(ff["giuh_v_hillslope_m_per_s"]);
         giuh_opts.n_bins              = ifs["giuh_n_bins"];
         giuh_opts.dt_bin_s            = static_cast<double>(ff["giuh_dt_bin_s"]);

@@ -74,7 +74,7 @@ TWI = ln( (A / pixel_area) / slope ), where A is upstream drainage area (m²), p
 |---|---|---|---|
 | `write_twi_raster` | bool | `false` | `<write_fname>_twi.tif` |
 | `twi_drainage_area_method` | string | `Dinf` | Flow routing method for TWI drainage area. Options: `Dinf`, `MFD`. |
-| `twi_window_radius` | float | `100.0` | Polyfit window radius (m) for slope computation used in TWI. |
+| `twi_window_radius_metres` | float | `100.0` | Polyfit window radius (m) for slope computation used in TWI. |
 
 ---
 
@@ -165,7 +165,7 @@ These outputs match the default STI paths and layer names in this CLI.
 | `sti_landuse_vector_path` | string | `data/scotland_soils/sg_land_use_min.fgb` | Land-use polygon vector path. |
 | `sti_landuse_layer_name` | string | `sg_land_use_min` | Land-use layer name. |
 | `sti_drainage_area_method` | string | `Dinf` | Drainage area method used by STI TWI stage. Options: `Dinf`, `MFD`. |
-| `sti_window_radius` | float | `100.0` | Polyfit window radius (m) for STI slope computation. |
+| `sti_window_radius_metres` | float | `100.0` | Polyfit window radius (m) for STI slope computation. |
 
 ### Parameters for `ksd` mode (`sti_term_mode: ksd`)
 
@@ -196,8 +196,8 @@ Sediment connectivity index IC = log₁₀(D_up / D_down) following Cavalli et a
 |---|---|---|---|
 | `write_connectivity_raster` | bool | `false` | `<write_fname>_connectivity_index.tif` |
 | `connectivity_drainage_area_method` | string | `d8` | Flow routing method for drainage area in D_up. Options: `d8`, `dinf`, `mfd`. |
-| `connectivity_area_threshold_m2` | float | `1e6` | Drainage area threshold (m²) defining channel / sink pixels. D_down accumulation stops when the flow path reaches a channel. |
-| `connectivity_window_radius` | float | `100.0` | Moving-window radius (m) for slope and roughness computation. Square window always used. |
+| `connectivity_area_threshold_m2` | float | `1e6` | Total map drainage area threshold (m²) defining channel / sink pixels. It is not a contributing-pixel or specific-area threshold. D_down accumulation stops when the flow path reaches a channel. |
+| `connectivity_window_radius_metres` | float | `100.0` | Moving-window radius (m) for slope and roughness computation. Square window always used. |
 | `connectivity_slope_method` | string | `polyfit_direct` | Method for computing slope in IC. Options: `polyfit_direct` (fast, square window), `wavelet` (FFT-based, requires FFTW). |
 | `connectivity_roughness_method` | string | `madk2` | Roughness metric for the W weighting factor. Options: `madk2` (Median Absolute Deviation of k2 differences, Trevisani & Guth 2025), `iqr_residual` (IQR of polyfit residuals). W = max(1 − R/R_max, 0.001). |
 
@@ -231,7 +231,7 @@ write_dinf_drainage_area_raster: true
 
 write_twi_raster:               true
 twi_drainage_area_method:       Dinf
-twi_window_radius:              100.0
+twi_window_radius_metres:       100.0
 ```
 
 ## Example parameter file: connectivity index
@@ -247,7 +247,7 @@ raster_is_filled:    true
 write_connectivity_raster:             true
 connectivity_drainage_area_method:     dinf
 connectivity_area_threshold_m2:        500000.0
-connectivity_window_radius:            50.0
+connectivity_window_radius_metres:     50.0
 connectivity_slope_method:             polyfit_direct
 connectivity_roughness_method:         madk2
 ```
@@ -274,7 +274,7 @@ write_sti_lookup_csv: true
 
 sti_term_mode: ksd
 sti_drainage_area_method: Dinf
-sti_window_radius: 100.0
+sti_window_radius_metres: 100.0
 
 sti_soil_vector_path: /mnt/c/LSDTopoTools/data/scotland_soils/hutton_series_code_min.fgb
 sti_soil_layer_name: hutton_series_code_min

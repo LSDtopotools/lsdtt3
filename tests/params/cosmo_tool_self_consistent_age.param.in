@@ -7,5 +7,5 @@ points_filename: cosmo_tiny_points.csv
 nuclide: Be10
 scaling_scheme: lsdn
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
+sample_snap_max_search_radius_pixels: 3
 self_consistent_age: true

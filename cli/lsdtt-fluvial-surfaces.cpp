@@ -442,9 +442,9 @@ int main(int argc, char* argv[])
         "way equally and the aspect is meaningless. Costs one polynomial fit.",
         "Outputs", "output", ""};
 
-    float_default_map["patch_aspect_window_metres"] = 0.0f;
-    help_map["patch_aspect_window_metres"] = {"float","0",
-        "Window diameter [m] of the polynomial fit the terrain aspect is "
+    float_default_map["patch_aspect_window_radius_metres"] = 0.0f;
+    help_map["patch_aspect_window_radius_metres"] = {"float","0",
+        "Window radius [m] of the polynomial fit the terrain aspect is "
         "measured over. 0 = five cells.",
         "Stated in cells by default because a length tuned on lidar is "
         "sub-pixel on 30 m COP30.",
@@ -487,9 +487,9 @@ int main(int argc, char* argv[])
         "accuracy specification splits.",
         "Ladder", "param", ""};
 
-    float_default_map["vertical_accuracy_slope_window_metres"] = 0.0f;
-    help_map["vertical_accuracy_slope_window_metres"] = {"float","0",
-        "Window diameter [m] of the polynomial fit the window gradient is "
+    float_default_map["vertical_accuracy_slope_window_radius_metres"] = 0.0f;
+    help_map["vertical_accuracy_slope_window_radius_metres"] = {"float","0",
+        "Window radius [m] of the polynomial fit the window gradient is "
         "measured over. 0 = five cells. slope_dependent only.",
         "Stated in cells by default because a length tuned on lidar is "
         "sub-pixel on 30 m COP30. This is the same measurement "
@@ -722,8 +722,8 @@ int main(int argc, char* argv[])
         "A hand-digitised point rarely lands exactly on the routed channel.",
         "Channel scope","switch","source_points_fname"};
 
-    int_default_map["source_snap_max_radius_pixels"] = 20;
-    help_map["source_snap_max_radius_pixels"] = {"int","20",
+    int_default_map["source_snap_max_search_radius_pixels"] = 20;
+    help_map["source_snap_max_search_radius_pixels"] = {"int","20",
         "Search radius when snapping a source point [pixels].",
         "A point that finds no threshold channel within this radius is "
         "reported as unsnapped in the point snap diagnostics.",
@@ -1052,7 +1052,9 @@ int main(int argc, char* argv[])
     bool_default_map["write_channel_network_lines"] = true;
     help_map["write_channel_network_lines"] = {"bool","true",
         "Write channel links as lines.",
-        "Output file: <stem>_channel_network_lines.fgb.",
+        "Lines are the compact default representation of the network used to fit "
+        "the surfaces; per-node points remain opt-in. Output file: "
+        "<stem>_channel_network_lines.fgb.",
         "Outputs","switch","write_channel_network"};
 
     bool_default_map["write_channel_network_points"] = false;
@@ -1085,9 +1087,15 @@ int main(int argc, char* argv[])
     // lsdtt-mountain-front.
     pp.set_deprecated_aliases({
         {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"},
+        {"source_snap_max_radius_pixels", "source_snap_max_search_radius_pixels"},
         {"fill_dem_for_flow_routing", "fill_before_routing"},
         {"channel_threshold_contributing_pixels",
          "threshold_contributing_pixels"} });
+    pp.set_deprecated_numeric_aliases({
+        {"patch_aspect_window_metres",
+         {"patch_aspect_window_radius_metres", 0.5, 0.0, true}},
+        {"vertical_accuracy_slope_window_metres",
+         {"vertical_accuracy_slope_window_radius_metres", 0.5, 0.0, true}} });
 
     try
     {
@@ -1452,7 +1460,7 @@ int main(int argc, char* argv[])
             sreq.outlet_flats = role_flats("outlet");
             sreq.snap_sources = bf["snap_sources_to_channel_threshold"];
             sreq.source_snap_max_radius_pixels =
-                ip["source_snap_max_radius_pixels"];
+                ip["source_snap_max_search_radius_pixels"];
             sreq.outlet_snap_max_distance_metres =
                 static_cast<double>(ff["outlet_snap_max_distance_metres"]);
             sreq.auto_detect_roles =
@@ -1753,8 +1761,9 @@ int main(int argc, char* argv[])
         if (ev_slope_dependent)
         {
             const double cell = dem.get_meta().cell_size;
-            double lambda = static_cast<double>(
-                ff["vertical_accuracy_slope_window_metres"]);
+            // direct_polyfit takes the full physical window diameter.
+            double lambda = 2.0 * static_cast<double>(
+                ff["vertical_accuracy_slope_window_radius_metres"]);
             if (!(lambda > 0.0)) lambda = 5.0 * cell;
             std::cout << "Window gradient for E_v: polyfit window " << lambda
                       << " m, break at "
@@ -1784,8 +1793,9 @@ int main(int argc, char* argv[])
         if (bf["write_patch_terrain_aspect"])
         {
             const double cell = dem.get_meta().cell_size;
-            double lambda =
-                static_cast<double>(ff["patch_aspect_window_metres"]);
+            // direct_polyfit takes the full physical window diameter.
+            double lambda = 2.0 *
+                static_cast<double>(ff["patch_aspect_window_radius_metres"]);
             if (!(lambda > 0.0)) lambda = 5.0 * cell;
             std::cout << "Terrain aspect for the patch table: polyfit window "
                       << lambda << " m\n";

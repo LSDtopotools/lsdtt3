@@ -149,7 +149,7 @@ int main(int argc, char* argv[])
     help_map["breach_algorithm_choice"] = {"string","lindsay2016",
         "Breaching algorithm used when carve_before_fill is true.",
         "Allowed values: lindsay2016 (unbounded), least_cost (supports bounded "
-        "breaching via breach_max_cost / breach_max_dist_px).",
+        "breaching via breach_max_cost / breach_max_dist_pixels).",
         "DEM preparation", "param", ""};
 
     // --- Bounded least-cost breaching (breach_algorithm_choice = least_cost) ---
@@ -160,13 +160,13 @@ int main(int argc, char* argv[])
         "Discriminates obstruction type by carve depth: shallow carves (lake "
         "spillways, small pits) stay below the cap and breach; deep carves "
         "through road/rail embankments exceed it and are left filled, so those "
-        "crossings remain as gaps for the LCP burn (do_lcp_burn) to bridge under "
+        "crossings remain as gaps for the LCP burn (run_lcp_burn) to bridge under "
         "the vector line. Start ~2-5 (m). Only used when breach_algorithm_choice "
         "is least_cost.",
         "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
-    int_default_map["breach_max_dist_px"] = 1000;
-    help_map["breach_max_dist_px"] = {"int","1000",
+    int_default_map["breach_max_dist_pixels"] = 1000;
+    help_map["breach_max_dist_pixels"] = {"int","1000",
         "Maximum breach-path length in pixels for least-cost breaching.",
         "Must be large enough to span the widest water body you want breached. "
         "Only used when breach_algorithm_choice is least_cost.",
@@ -219,13 +219,13 @@ int main(int argc, char* argv[])
         "Local). Trace D8 along the vector (segmented_trace_test), accept the "
         "reaches that follow the LiDAR thalweg, and bridge the remaining "
         "obstruction gaps (roads/embankments) with least-cost-path carving "
-        "(do_lcp_burn) to recover one continuous network. Preserves the LiDAR "
+        "(run_lcp_burn) to recover one continuous network. Preserves the LiDAR "
         "thalweg and writes the burned DEM plus the network extracted from it.",
         "Burn mode", "param", ""};
 
     // --- snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) ---
-    float_default_map["trace_max_divergence_m"] = 10.0f;
-    help_map["trace_max_divergence_m"] = {"float","10",
+    float_default_map["trace_max_divergence_metres"] = 10.0f;
+    help_map["trace_max_divergence_metres"] = {"float","10",
         "Max distance (m) the D8 flow trace may stray from the vector before the "
         "segment is burned.",
         "Set above the typical offset between the vector lines and the LiDAR "
@@ -233,8 +233,8 @@ int main(int argc, char* argv[])
         "burned; only genuine divergences (roads, captures) are.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
-    bool_default_map["do_stream_burn"] = true;
-    help_map["do_stream_burn"] = {"bool","true",
+    bool_default_map["run_stream_burn"] = true;
+    help_map["run_stream_burn"] = {"bool","true",
         "Run the stream-burning stage. Set false to stop after the INITIAL stage: "
         "fill/flow, the clipped+repaired vector network, the merged vector lines "
         "(<write_fname>_merged_lines.fgb) and the source-seeded D8 network "
@@ -242,8 +242,8 @@ int main(int argc, char* argv[])
         "Useful for inspecting the starting point before any burn.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "switch", ""};
 
-    bool_default_map["do_lcp_burn"] = false;
-    help_map["do_lcp_burn"] = {"bool","false",
+    bool_default_map["run_lcp_burn"] = false;
+    help_map["run_lcp_burn"] = {"bool","false",
         "After segmented_trace_test, connect the cleaned accepted reaches into a "
         "continuous network by least-cost-path burning the gaps (source / "
         "intermediate / outlet). Requires segmented_trace_test=true. Writes "
@@ -252,16 +252,16 @@ int main(int argc, char* argv[])
         "diversions), the burned DEM, and re-extracts the connected network.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "switch", ""};
 
-    float_default_map["connect_tol_m"] = 0.0f;
-    help_map["connect_tol_m"] = {"float","0",
-        "Gap tolerance (m) for do_lcp_burn: reaches whose ends are farther apart "
+    float_default_map["connect_tolerance_metres"] = 0.0f;
+    help_map["connect_tolerance_metres"] = {"float","0",
+        "Gap tolerance (m) for run_lcp_burn: reaches whose ends are farther apart "
         "than this get a burn segment. Default 0 = EVERY gap between consecutive "
         "accepted reaches is burned (no short gap is ever dropped).",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
     float_default_map["lcp_channel_alpha"] = 4.0f;
     help_map["lcp_channel_alpha"] = {"float","4",
-        "Drainage-area weighting for the do_lcp_burn least-cost path: higher = the "
+        "Drainage-area weighting for the run_lcp_burn least-cost path: higher = the "
         "path prefers existing channels (high drainage area) more strongly over a "
         "shorter straight route.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
@@ -269,16 +269,16 @@ int main(int argc, char* argv[])
     bool_default_map["segmented_trace_test"] = false;
     help_map["segmented_trace_test"] = {"bool","false",
         "Diagnostic (no burning): trace D8 from points every "
-        "segmented_trace_spacing_m along each merged+repaired vector line, stopping "
-        "each trace where the flow strays > trace_max_divergence_m from the line "
+        "segmented_trace_spacing_metres along each merged+repaired vector line, stopping "
+        "each trace where the flow strays > trace_max_divergence_metres from the line "
         "(or reaches the line end / outlet / sink). Writes "
         "<write_fname>_segmented_traces.fgb (fields line_id, seg_id, start_s_m, "
         "max_divergence_m, stop_reason). Runs in the initial stage; pair with "
-        "do_stream_burn=false to stop after it.",
+        "run_stream_burn=false to stop after it.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
 
-    float_default_map["segmented_trace_spacing_m"] = 20.0f;
-    help_map["segmented_trace_spacing_m"] = {"float","20",
+    float_default_map["segmented_trace_spacing_metres"] = 20.0f;
+    help_map["segmented_trace_spacing_metres"] = {"float","20",
         "Spacing (m) of trace start points along each line for "
         "segmented_trace_test.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
@@ -286,7 +286,7 @@ int main(int argc, char* argv[])
     int_default_map["segmented_trace_min_pixels"] = 20;
     help_map["segmented_trace_min_pixels"] = {"int","20",
         "For segmented_trace_test: a trace is ACCEPTED if it reaches the line end "
-        "OR stays within trace_max_divergence_m of the line for more than this many "
+        "OR stays within trace_max_divergence_metres of the line for more than this many "
         "cells. The accepted D8 traces (overlaps merged) are written to "
         "<write_fname>_accepted_segments.fgb.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
@@ -303,7 +303,7 @@ int main(int argc, char* argv[])
     help_map["segmented_trace_endpoint_fraction"] = {"float","0.5",
         "For segmented_trace_test: an accepted trace is trimmed back from its "
         "downstream end until its last cell is within this FRACTION of "
-        "trace_max_divergence_m of the line. So a trace may wander up to the full "
+        "trace_max_divergence_metres of the line. So a trace may wander up to the full "
         "divergence tolerance mid-way, but its endpoint sits close to the channel "
         "(default 0.5 = half the stop threshold).",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "param", ""};
@@ -311,12 +311,12 @@ int main(int argc, char* argv[])
     bool_default_map["write_merged_lines"] = true;
     help_map["write_merged_lines"] = {"bool","true",
         "Write <write_fname>_merged_lines.fgb: the repaired vector fragments merged "
-        "across degree-2 junctions into continuous lines (see merge_snap_tol_m). "
+        "across degree-2 junctions into continuous lines (see merge_snap_tolerance_metres). "
         "Written in the initial stage, independent of the burn.",
         "snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)", "switch", ""};
 
-    float_default_map["merge_snap_tol_m"] = 2.0f;
-    help_map["merge_snap_tol_m"] = {"float","2",
+    float_default_map["merge_snap_tolerance_metres"] = 2.0f;
+    help_map["merge_snap_tolerance_metres"] = {"float","2",
         "Endpoint snap tolerance (m) for merging degree-2 vector fragments.",
         "Used by stream_burn_mode=snap_to_accumulation to write "
         "<write_fname>_merged_lines.fgb: fragmented vector lines whose endpoints "
@@ -343,11 +343,12 @@ int main(int argc, char* argv[])
         "Only used when stream_burn_mode is burn_in_place.",
         "burn_in_place outputs", "switch", ""};
 
-    string_default_map["burned_profiles_output_format"] = "flatgeobuf";
-    help_map["burned_profiles_output_format"] = {"string","flatgeobuf",
+    string_default_map["burned_profiles_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["burned_profiles_write_vector_format"] = {"string","same_as_write_vector_format",
         "Output format for burned profile point output.",
         "Only used when write_burned_profiles_points is true. "
-        "Allowed values: flatgeobuf, fgb, gpkg.",
+        "Allowed values: csv, flatgeobuf, fgb, gpkg.",
         "burn_in_place outputs", "param", ""};
 
     // --- snap_to_network outputs ---
@@ -361,8 +362,9 @@ int main(int argc, char* argv[])
         "Attribute distance_m gives the Euclidean distance between them.",
         "snap_to_network outputs", "switch", ""};
 
-    string_default_map["junction_comparison_output_format"] = "flatgeobuf";
-    help_map["junction_comparison_output_format"] = {"string","flatgeobuf",
+    string_default_map["junction_comparison_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["junction_comparison_write_vector_format"] = {"string","same_as_write_vector_format",
         "Output format for the junction comparison point file.",
         "Allowed values: flatgeobuf, fgb, gpkg, csv.",
         "snap_to_network outputs", "param", ""};
@@ -381,8 +383,8 @@ int main(int argc, char* argv[])
         "channel). Only used when stream_burn_mode is snap_to_network.",
         "snap_to_network outputs", "switch", ""};
 
-    float_default_map["reach_divergence_separation_m"] = 25.0f;
-    help_map["reach_divergence_separation_m"] = {"float","25.0",
+    float_default_map["reach_divergence_separation_metres"] = 25.0f;
+    help_map["reach_divergence_separation_metres"] = {"float","25.0",
         "Lateral separation [m] above which a DEM channel pixel counts as off "
         "the vector edge.",
         "Set above typical digitising offset so a vector that merely fails to "
@@ -390,8 +392,8 @@ int main(int argc, char* argv[])
         "the severity score. Only used when write_reach_divergence is true.",
         "snap_to_network outputs", "param", ""};
 
-    float_default_map["reach_divergence_min_length_m"] = 100.0f;
-    help_map["reach_divergence_min_length_m"] = {"float","100.0",
+    float_default_map["reach_divergence_min_length_metres"] = 100.0f;
+    help_map["reach_divergence_min_length_metres"] = {"float","100.0",
         "Sustained off-vector length [m] that flags a reach as diverged.",
         "A reach is 'diverged' if its divergence_length_m exceeds this OR its "
         "detour ratio exceeds reach_divergence_detour_ratio. Only used when "
@@ -402,18 +404,18 @@ int main(int argc, char* argv[])
     help_map["reach_divergence_detour_ratio"] = {"float","1.5",
         "Detour ratio (DEM path length / vector length) that flags a reach as "
         "diverged.",
-        "Secondary trigger alongside reach_divergence_min_length_m. Only used "
+        "Secondary trigger alongside reach_divergence_min_length_metres. Only used "
         "when write_reach_divergence is true.",
         "snap_to_network outputs", "param", ""};
 
-    float_default_map["reach_divergence_match_radius_m"] = 50.0f;
-    help_map["reach_divergence_match_radius_m"] = {"float","50.0",
+    float_default_map["reach_divergence_match_radius_metres"] = 50.0f;
+    help_map["reach_divergence_match_radius_metres"] = {"float","50.0",
         "Max distance [m] for matching a vector junction to a DEM junction in "
         "the reach diagnostic.",
         "A vector edge endpoint with no DEM junction within this radius makes "
         "the reach status 'unmatched_endpoint'. DEM confluences are offset from "
         "vector vertices, so this is generous by default (cf. "
-        "junction_tolerance_m in the repair). Only used when "
+        "junction_tolerance_metres in the repair). Only used when "
         "write_reach_divergence is true.",
         "snap_to_network outputs", "param", ""};
 
@@ -421,7 +423,7 @@ int main(int argc, char* argv[])
     bool_default_map["repair_junction_gaps"] = false;
     help_map["repair_junction_gaps"] = {"bool","false",
         "Attempt to repair DEM obstructions at mismatched first-layer junctions.",
-        "For each junction pair whose distance exceeds junction_tolerance_m, runs a "
+        "For each junction pair whose distance exceeds junction_tolerance_metres, runs a "
         "least-cost terrain path from the DEM junction to the vector junction "
         "and carves the DEM to allow correct D8 routing.  Falls back to burning "
         "under the input vector where no terrain path can be found (tunnels). "
@@ -440,14 +442,14 @@ int main(int argc, char* argv[])
         "repair_junction_gaps is true and stream_burn_mode is snap_to_network.",
         "snap_to_network: junction gap repair", "param", ""};
 
-    float_default_map["junction_tolerance_m"] = 50.0f;
-    help_map["junction_tolerance_m"] = {"float","50",
+    float_default_map["junction_tolerance_metres"] = 50.0f;
+    help_map["junction_tolerance_metres"] = {"float","50",
         "Minimum junction-pair distance (m) to trigger gap repair.",
         "Pairs closer than this are considered correctly matched and skipped.",
         "snap_to_network: junction gap repair", "param", ""};
 
-    float_default_map["max_repair_gap_m"] = 100.0f;
-    help_map["max_repair_gap_m"] = {"float","100",
+    float_default_map["max_repair_gap_metres"] = 100.0f;
+    help_map["max_repair_gap_metres"] = {"float","100",
         "Maximum gap (m) the repair will attempt to carve.",
         "A real road/embankment/culvert gap in a LiDAR DEM spans tens of metres. "
         "A much larger vector-to-DEM junction gap means the DEM flow is already "
@@ -457,8 +459,8 @@ int main(int argc, char* argv[])
         "rather than carving a long spurious channel. Set 0 to disable the cap.",
         "snap_to_network: junction gap repair", "param", ""};
 
-    int_default_map["max_gap_search_px"] = 60;
-    help_map["max_gap_search_px"] = {"int","60",
+    int_default_map["max_gap_search_pixels"] = 60;
+    help_map["max_gap_search_pixels"] = {"int","60",
         "Search-window half-width in pixels for gap repair.",
         "The Dijkstra search is bounded to a rectangle that spans the vector "
         "and DEM junction locations expanded by this many pixels on each side.",
@@ -471,15 +473,15 @@ int main(int argc, char* argv[])
         "lowest point; lower values allow more relaxed routing.",
         "snap_to_network: junction gap repair", "param", ""};
 
-    float_default_map["max_gap_climb_m"] = 10.0f;
-    help_map["max_gap_climb_m"] = {"float","10",
+    float_default_map["max_gap_climb_metres"] = 10.0f;
+    help_map["max_gap_climb_metres"] = {"float","10",
         "Maximum elevation the repair path may climb above the DEM junction (m).",
         "Paths exceeding this limit are rejected as likely tunnels or deep cuts "
         "and fall back to the vector-burn strategy.",
         "snap_to_network: junction gap repair", "param", ""};
 
-    bool_default_map["write_repaired_dem"] = false;
-    help_map["write_repaired_dem"] = {"bool","false",
+    bool_default_map["write_repaired_dem_raster"] = false;
+    help_map["write_repaired_dem_raster"] = {"bool","false",
         "Write the modified (gap-repaired) DEM as a raster.",
         "Only used when repair_junction_gaps is true.",
         "snap_to_network: junction gap repair", "switch", ""};
@@ -583,15 +585,15 @@ int main(int argc, char* argv[])
         "Only used when repair_junction_gaps is true.",
         "Channel-score guidance for gap repair", "param", ""};
 
-    float_default_map["channel_lambda_min_m"] = -1.0f;
-    help_map["channel_lambda_min_m"] = {"float","-1",
+    float_default_map["channel_lambda_min_metres"] = -1.0f;
+    help_map["channel_lambda_min_metres"] = {"float","-1",
         "Minimum wavelength (m) for multiscale channel candidate detection.",
         "Values <= 0 default to 3 x DEM cell size.  "
         "Only used when repair_junction_gaps is true.",
         "Channel-score guidance for gap repair", "param", ""};
 
-    float_default_map["channel_lambda_max_m"] = -1.0f;
-    help_map["channel_lambda_max_m"] = {"float","-1",
+    float_default_map["channel_lambda_max_metres"] = -1.0f;
+    help_map["channel_lambda_max_metres"] = {"float","-1",
         "Maximum wavelength (m) for multiscale channel candidate detection.",
         "Values <= 0 default to 10 x DEM cell size.  "
         "Only used when repair_junction_gaps is true.",
@@ -620,8 +622,9 @@ int main(int argc, char* argv[])
         "labelled with is_outlet = 1.",
         "Output - QC/diagnostic", "switch", ""};
 
-    string_default_map["vector_sources_output_format"] = "flatgeobuf";
-    help_map["vector_sources_output_format"] = {"string","flatgeobuf",
+    string_default_map["vector_sources_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["vector_sources_write_vector_format"] = {"string","same_as_write_vector_format",
         "Output format for the vector source tip points.",
         "Allowed values: flatgeobuf, fgb, gpkg, csv.",
         "Output - QC/diagnostic", "param", ""};
@@ -647,12 +650,9 @@ int main(int argc, char* argv[])
         "Includes junction_number, receiver_junction, and stream_order.",
         "Output - DEM network (seeded from vector sources)", "switch", ""};
 
-    string_default_map["dem_network_output_format"] = "flatgeobuf";
-    help_map["dem_network_output_format"] = {"string","flatgeobuf",
-        "Output format for DEM network points, lines, and junctions.",
-        "Allowed values: flatgeobuf, fgb, gpkg. "
-        "Points also accept csv (lat/lon in EPSG:4326).",
-        "Output - DEM network (seeded from vector sources)", "param", ""};
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
+    string_default_map["legacy_dem_network_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool","true",
@@ -709,7 +709,30 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"d8_channel_threshold_pixels", "threshold_contributing_pixels"} });
+        {"do_stream_burn", "run_stream_burn"},
+        {"do_lcp_burn", "run_lcp_burn"},
+        {"write_repaired_dem", "write_repaired_dem_raster"},
+        {"d8_channel_threshold_pixels", "threshold_contributing_pixels"},
+        {"connect_tol_m", "connect_tolerance_metres"},
+        {"merge_snap_tol_m", "merge_snap_tolerance_metres"},
+        {"junction_tolerance_m", "junction_tolerance_metres"},
+        {"breach_max_dist_px", "breach_max_dist_pixels"},
+        {"trace_max_divergence_m", "trace_max_divergence_metres"},
+        {"segmented_trace_spacing_m", "segmented_trace_spacing_metres"},
+        {"reach_divergence_separation_m", "reach_divergence_separation_metres"},
+        {"reach_divergence_min_length_m", "reach_divergence_min_length_metres"},
+        {"reach_divergence_match_radius_m", "reach_divergence_match_radius_metres"},
+        {"max_repair_gap_m", "max_repair_gap_metres"},
+        {"max_gap_search_px", "max_gap_search_pixels"},
+        {"max_gap_climb_m", "max_gap_climb_metres"},
+        {"channel_lambda_min_m", "channel_lambda_min_metres"},
+        {"channel_lambda_max_m", "channel_lambda_max_metres"},
+        {"burned_profiles_output_format", "burned_profiles_write_vector_format"},
+        {"junction_comparison_output_format", "junction_comparison_write_vector_format"},
+        {"vector_sources_output_format", "vector_sources_write_vector_format"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"dem_network_output_format",
+         {"legacy_dem_network_write_vector_format", "write_vector_format"}} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -735,19 +758,24 @@ int main(int argc, char* argv[])
         lsdtt::resolve_stream_burn_mode(sf["stream_burn_mode"]);
 
     lsdtt::point_output_format  vec_src_fmt =
-        lsdtt::resolve_point_output_format(sf["vector_sources_output_format"]);
+        lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
+            sf["vector_sources_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::point_output_format  junc_cmp_fmt =
-        lsdtt::resolve_point_output_format(sf["junction_comparison_output_format"]);     
+        lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
+            sf["junction_comparison_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::vector_output_format dem_net_line_fmt =
-        lsdtt::resolve_vector_output_format(sf["dem_network_output_format"]);
+        lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_dem_network_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::point_output_format  dem_net_point_fmt =
-        lsdtt::resolve_point_output_format(sf["dem_network_output_format"]);
+        lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
+            sf["legacy_dem_network_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::point_output_format  burned_prof_fmt =
-        lsdtt::resolve_point_output_format(sf["burned_profiles_output_format"]);
+        lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
+            sf["burned_profiles_write_vector_format"], sf["write_vector_format"]));
 
     // -------------------------------------------------------------------------
     // Open DEM
@@ -800,13 +828,13 @@ int main(int argc, char* argv[])
                     // elevation carved along a breach path: shallow carves
                     // (lake spillways, small pits) pass, but deep carves through
                     // road embankments exceed the cap and are left filled - so
-                    // roads stay as gaps for the LCP burn (do_lcp_burn) to bridge
+                    // roads stay as gaps for the LCP burn (run_lcp_burn) to bridge
                     // under the vector line. <= 0 means unbounded cost (carve
                     // through everything, the classic behaviour).
                     const float bmc = ff["breach_max_cost"];
                     routed_dem = lsdtt::breach_depressions_least_cost(
                         dem,
-                        ifs["breach_max_dist_px"],
+                        ifs["breach_max_dist_pixels"],
                         bmc > 0.0f ? bmc
                                    : std::numeric_limits<float>::max(),
                         /*min_dist=*/true,
@@ -1577,7 +1605,7 @@ int main(int argc, char* argv[])
                                                 routed_dem, vjn_opts);
             std::vector<std::vector<lsdtt::lsdtt_xy>> merged =
                 lsdtt::merge_degree2_polylines(
-                    frags, static_cast<double>(ff["merge_snap_tol_m"]));
+                    frags, static_cast<double>(ff["merge_snap_tolerance_metres"]));
             std::cout << "Merged " << frags.size() << " fragments -> "
                       << merged.size() << " lines\n";
 
@@ -1629,12 +1657,12 @@ int main(int argc, char* argv[])
                 std::vector<int> accepted_seg_line, accepted_clean_line;
                 const double seg_endpoint_tol =
                     static_cast<double>(ff["segmented_trace_endpoint_fraction"]) *
-                    static_cast<double>(ff["trace_max_divergence_m"]);
+                    static_cast<double>(ff["trace_max_divergence_metres"]);
                 std::vector<lsdtt::vectormap_segmented_trace> traces =
                     lsdtt::segmented_trace_test(
                         routed_dem, *flow, edge_lines,
-                        static_cast<double>(ff["segmented_trace_spacing_m"]),
-                        static_cast<double>(ff["trace_max_divergence_m"]),
+                        static_cast<double>(ff["segmented_trace_spacing_metres"]),
+                        static_cast<double>(ff["trace_max_divergence_metres"]),
                         ifs["segmented_trace_min_pixels"],
                         seg_endpoint_tol,
                         ifs["segmented_trace_spur_pixels"],
@@ -1646,7 +1674,7 @@ int main(int argc, char* argv[])
                         pp.get_full_write_path() + "_segmented_traces", ".fgb");
                 std::cout << "Segmented traces: " << traces.size()
                           << " D8 traces (every "
-                          << static_cast<double>(ff["segmented_trace_spacing_m"])
+                          << static_cast<double>(ff["segmented_trace_spacing_metres"])
                           << " m): " << tpath << "\n";
                 lsdtt::lsdtt_vector_schema schema;
                 schema.field_names = {"line_id", "seg_id", "start_s_m",
@@ -1743,8 +1771,8 @@ int main(int argc, char* argv[])
                 }
                 cw.finish_vector_write();
 
-                // ---- do_lcp_burn: connect the cleaned reaches by LCP burning ----
-                if (bf["do_lcp_burn"])
+                // ---- run_lcp_burn: connect the cleaned reaches by LCP burning ----
+                if (bf["run_lcp_burn"])
                 {
                     const auto& bmeta = routed_dem.get_meta();
                     const int bnc = bmeta.n_cols;
@@ -1762,7 +1790,7 @@ int main(int argc, char* argv[])
                         lsdtt::identify_burn_segments(
                             routed_dem, vector_network, accepted_clean,
                             accepted_edge_id,
-                            static_cast<double>(ff["connect_tol_m"]), 8.0, 0.05);
+                            static_cast<double>(ff["connect_tolerance_metres"]), 8.0, 0.05);
 
                     // log-normalised drainage area as the LCP channel score
                     lsdtt::lsdtt_raster_result ncp =
@@ -1916,15 +1944,15 @@ int main(int argc, char* argv[])
     // =========================================================================
     // Mode-specific processing (stream burning)
     // =========================================================================
-    if (!bf["do_stream_burn"])
+    if (!bf["run_stream_burn"])
     {
-        std::cout << "\ndo_stream_burn=false: initial stage only, no burning.\n";
+        std::cout << "\nrun_stream_burn=false: initial stage only, no burning.\n";
     }
 
     // -------------------------------------------------------------------------
     // burn_in_place - lower DEM pixels directly under the vector polylines
     // -------------------------------------------------------------------------
-    if (bf["do_stream_burn"] &&
+    if (bf["run_stream_burn"] &&
         burn_mode == lsdtt::stream_burn_mode::burn_in_place)
     {
         std::cout << "\n--- Burning streams in place ---\n";
@@ -2016,7 +2044,7 @@ int main(int argc, char* argv[])
     // Gap repair (optional - repair_junction_gaps = true)
     //   See the detailed comment in the gap repair block below.
     // -------------------------------------------------------------------------
-    else if (bf["do_stream_burn"] &&
+    else if (bf["run_stream_burn"] &&
              burn_mode == lsdtt::stream_burn_mode::snap_to_network)
     {
         // ---------------------------------------------------------------------
@@ -2058,11 +2086,11 @@ int main(int argc, char* argv[])
 
             lsdtt::reach_divergence_params rd_params;
             rd_params.separation_threshold_m =
-                static_cast<double>(ff["reach_divergence_separation_m"]);
+                static_cast<double>(ff["reach_divergence_separation_metres"]);
             rd_params.match_radius_m =
-                static_cast<double>(ff["reach_divergence_match_radius_m"]);
+                static_cast<double>(ff["reach_divergence_match_radius_metres"]);
             rd_params.diverged_min_divergence_m =
-                static_cast<double>(ff["reach_divergence_min_length_m"]);
+                static_cast<double>(ff["reach_divergence_min_length_metres"]);
             rd_params.diverged_detour_ratio =
                 static_cast<double>(ff["reach_divergence_detour_ratio"]);
 
@@ -2091,8 +2119,7 @@ int main(int argc, char* argv[])
             const std::string rd_prefix =
                 pp.get_full_write_path() + "_reach_divergence";
             lsdtt::point_output_format rd_fmt =
-                lsdtt::resolve_point_output_format(
-                    sf["junction_comparison_output_format"]);
+                junc_cmp_fmt;
             try
             {
                 lsdtt::write_reach_divergence(
@@ -2112,9 +2139,9 @@ int main(int argc, char* argv[])
         lsdtt::candidate_junction_search_params cj_params;
         cj_params.minimum_vector_donor_junctions = 2;
         cj_params.require_matching_donor_count   = true;
-        cj_params.match_radius_m                 = static_cast<double>(ff["junction_tolerance_m"]);
+        cj_params.match_radius_m                 = static_cast<double>(ff["junction_tolerance_metres"]);
 
-        std::cout << "Candidate junction tolerance (junction_tolerance_m): "
+        std::cout << "Candidate junction tolerance (junction_tolerance_metres): "
                   << cj_params.match_radius_m << " m\n";
 
 
@@ -2261,7 +2288,7 @@ int main(int argc, char* argv[])
         //     preference for concave terrain (channel_lambda_min/max_m control
         //     the curvature detection scale).
         //
-        //   Phase 2 - scan pixels within junction_tolerance_m of the vector
+        //   Phase 2 - scan pixels within junction_tolerance_metres of the vector
         //     junction.  Those with channel_score >= landing threshold are
         //     collected as landing-zone targets.  The repair does NOT need to
         //     hit the exact vector junction pixel - any channelised pixel nearby
@@ -2279,12 +2306,12 @@ int main(int argc, char* argv[])
         // Two-attempt strategy
         //   Attempt 1: channel-guided (phases 1-3).  After burning the DEM
         //     network is re-extracted.  If the nearest DEM junction to the
-        //     vector junction is now within junction_tolerance_m, success.
+        //     vector junction is now within junction_tolerance_metres, success.
         //
         //   Attempt 2: terrain-only Dijkstra fallback.  Used when channel-guided
         //     fails or channel scores could not be computed.  Routes directly
         //     from the DEM junction to the vector junction using only elevation
-        //     cost, with max_gap_climb_m as a guard against unrealistic tunnels.
+        //     cost, with max_gap_climb_metres as a guard against unrealistic tunnels.
         //
         // Repairs proceed in upstream-first topological order (one junction per
         // phase per basin) so that each burn propagates correctly before the
@@ -2295,14 +2322,14 @@ int main(int argc, char* argv[])
             std::cout << "\n--- Repairing junction gaps ---\n";
 
             lsdtt::junction_repair_params repair_params;
-            repair_params.min_gap_m           = static_cast<double>(ff["junction_tolerance_m"]);
-            repair_params.max_repair_gap_m    = static_cast<double>(ff["max_repair_gap_m"]);
-            repair_params.max_search_px       = ifs["max_gap_search_px"];
+            repair_params.min_gap_m           = static_cast<double>(ff["junction_tolerance_metres"]);
+            repair_params.max_repair_gap_m = static_cast<double>(ff["max_repair_gap_metres"]);
+            repair_params.max_search_px = ifs["max_gap_search_pixels"];
             repair_params.uphill_mult         = static_cast<double>(ff["gap_uphill_penalty"]);
-            repair_params.max_climb_m         = static_cast<double>(ff["max_gap_climb_m"]);
+            repair_params.max_climb_m = static_cast<double>(ff["max_gap_climb_metres"]);
             repair_params.channel_score_alpha = static_cast<double>(ff["channel_score_alpha"]);
-            repair_params.channel_lambda_min_m = static_cast<double>(ff["channel_lambda_min_m"]);
-            repair_params.channel_lambda_max_m = static_cast<double>(ff["channel_lambda_max_m"]);
+            repair_params.channel_lambda_min_m = static_cast<double>(ff["channel_lambda_min_metres"]);
+            repair_params.channel_lambda_max_m = static_cast<double>(ff["channel_lambda_max_metres"]);
             repair_params.channel_n_scales    = ifs["channel_n_scales"];
             repair_params.repair_min_slope    =
                 (ff["repair_min_slope"] > 0.0f)
@@ -2634,11 +2661,11 @@ int main(int argc, char* argv[])
 
                 lsdtt::reach_divergence_params rd_rep_params;
                 rd_rep_params.separation_threshold_m =
-                    static_cast<double>(ff["reach_divergence_separation_m"]);
+                    static_cast<double>(ff["reach_divergence_separation_metres"]);
                 rd_rep_params.match_radius_m =
-                    static_cast<double>(ff["reach_divergence_match_radius_m"]);
+                    static_cast<double>(ff["reach_divergence_match_radius_metres"]);
                 rd_rep_params.diverged_min_divergence_m =
-                    static_cast<double>(ff["reach_divergence_min_length_m"]);
+                    static_cast<double>(ff["reach_divergence_min_length_metres"]);
                 rd_rep_params.diverged_detour_ratio =
                     static_cast<double>(ff["reach_divergence_detour_ratio"]);
 
@@ -2748,7 +2775,7 @@ int main(int argc, char* argv[])
                 { std::cerr << "Warning: could not write repair log: " << e.what() << "\n"; }
             }
 
-            if (bf["write_repaired_dem"])
+            if (bf["write_repaired_dem_raster"])
             {
                 const std::string dem_file = pp.make_output_path("_repaired", ".tif");
                 std::cout << "Writing repaired DEM: " << dem_file << "\n";

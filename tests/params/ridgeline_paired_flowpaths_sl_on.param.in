@@ -15,6 +15,6 @@ ridgeline_analysis_mode: interfluvial_divide_ridgelines
 select_sibling_basins: true
 sibling_max_groups: 25
 
-print_paired_flowpath_statistics: true
+write_paired_flowpath_statistics: true
 paired_flowpath_threshold_divide_distance: 0
 paired_flowpath_straight_link: true

@@ -11,7 +11,7 @@ write_fname: bsmp
 
 write_output_format: gtiff
 
-basin_outlet_csv: __READ_PATH__/basin_stats_outlets.csv
+basin_outlet_fname: __READ_PATH__/basin_stats_outlets.csv
 basin_outlet_snapping_method: downstream
 basin_outlet_contributing_pixels_threshold: 150
 threshold_contributing_pixels: 150

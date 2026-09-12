@@ -147,8 +147,8 @@ effective_erosion_rate: 0.002
 nuclide: Be10
 scaling_scheme: stone
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
-sample_points_filename: cosmo_tiny_points.csv
+sample_snap_max_search_radius_pixels: 3
+sample_points_fname: cosmo_tiny_points.csv
 write_crn_concentration_raster: true
 write_accumulated_crn_raster: true
 """),
@@ -186,33 +186,33 @@ write_production_raster: true
 
     # --- lsdtt-cosmo-tool -------------------------------------------------
     ("T1", TOOL, "cheap", """
-points_filename: cosmo_tiny_points.csv
+sample_points_fname: cosmo_tiny_points.csv
 nuclide: Be10
 muon_scheme: BraucherBorchers
 scaling_scheme: stone
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
+sample_snap_max_search_radius_pixels: 3
 write_production_raster: true
 """),
 
     # Non-unit shielding through the INVERSION, which reaches the scalar
     # shielding path this CLI has instead of shielding rasters.
     ("T2", TOOL, "cheap", """
-points_filename: cosmo_tiny_points.csv
+sample_points_fname: cosmo_tiny_points.csv
 nuclide: Be10
 scaling_scheme: stone
 topo_shield_value: 0.85
 snow_shield_eff_thickness: 12.0
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
+sample_snap_max_search_radius_pixels: 3
 """),
 
     ("T3", TOOL, "heavy", """
-points_filename: cosmo_tiny_points.csv
+sample_points_fname: cosmo_tiny_points.csv
 nuclide: Be10
 scaling_scheme: lsdn
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
+sample_snap_max_search_radius_pixels: 3
 write_production_raster: true
 """),
 
@@ -222,11 +222,11 @@ write_production_raster: true
     # only the cost changes -- so this case pins correctness, and the separate
     # performance guard pins the cost. Both are needed.
     ("T4", TOOL, "heavy", """
-points_filename: cosmo_tiny_points.csv
+sample_points_fname: cosmo_tiny_points.csv
 nuclide: Be10
 scaling_scheme: lsdn
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
+sample_snap_max_search_radius_pixels: 3
 self_consistent_age: true
 """),
 

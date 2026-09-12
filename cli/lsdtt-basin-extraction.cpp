@@ -186,6 +186,7 @@ int main(int argc, char* argv[])
     lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
     // --- Output --- general
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool", "true",
         "Whether or not to calculate a spatial index for vector data writes.",
@@ -207,13 +208,8 @@ int main(int argc, char* argv[])
         "area at each channel pixel.",
         "Output", "switch", ""};
 
-    string_default_map["channel_network_points_output_format"] = "flatgeobuf";
-    help_map["channel_network_points_output_format"] = {"string","flatgeobuf",
-        "Output format for the exported channel network points.",
-        "csv: writes latitude/longitude point rows in EPSG:4326. "
-        "gpkg: writes a GeoPackage in the raster CRS. "
-        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
-        "Output", "param", ""};
+    string_default_map["legacy_channel_network_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Output --- channel network lines
     bool_default_map["write_channel_network_lines"] = false;
@@ -222,18 +218,14 @@ int main(int argc, char* argv[])
         "link (defined between source or upstream junction and outlet or "
         "downstream junction) is a feature.",
         "Does not support csv writes, only gpkg and flatgeobuf/fgb. "
+        "It is off by default because basin extraction does not require a channel-line deliverable. "
         "Compared to write_channel_network as points, the lines filesize "
         "will be smaller (there are fewer features), at the cost of not "
         "recording drainage area at each channel pixel.",
         "Output", "switch", ""};
 
-    string_default_map["channel_network_lines_output_format"] = "flatgeobuf";
-    help_map["channel_network_lines_output_format"] = {"string", "flatgeobuf",
-        "Output format for channel network lines.",
-        "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
-        "GeoPackage may have file I/O issues on some filesystems. "
-        "CSV is not allowed for channel network lines.",
-        "Output", "param", ""};
+    string_default_map["legacy_channel_network_lines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Output --- junctions
     bool_default_map["write_channel_network_junctions"] = false;
@@ -243,13 +235,8 @@ int main(int argc, char* argv[])
         "and stream_order.",
         "Output", "switch", ""};
 
-    string_default_map["channel_network_junctions_output_format"] = "flatgeobuf";
-    help_map["channel_network_junctions_output_format"] = {"string","flatgeobuf",
-        "Output format for the exported channel network junctions.",
-        "csv: writes latitude/longitude point rows in EPSG:4326. "
-        "gpkg: writes a GeoPackage in the raster CRS. "
-        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
-        "Output", "param", ""};
+    string_default_map["legacy_channel_network_junctions_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Single-channel side-basin extraction ---
     bool_default_map["extract_basins_from_single_channel"] = false;
@@ -338,7 +325,7 @@ int main(int argc, char* argv[])
         "The main channel is the set of D8 flow paths from the source points "
         "down to the outlet or stopping point, from which side tributaries are "
         "extracted. Output file: <write_fname>_side_tributary_main_channel.fgb "
-        "or .gpkg. Uses side_tributary_vector_output_format.",
+        "or .gpkg. Uses side_tributary_write_vector_format.",
         "Side-tributary basin extraction from seed points", "switch", ""};
 
     bool_default_map["write_side_tributary_outlets"] = true;
@@ -355,8 +342,9 @@ int main(int argc, char* argv[])
         "Output file: <write_fname>_side_tributary_basin_outlines.fgb or .gpkg.",
         "Side-tributary basin extraction from seed points", "switch", ""};
 
-    string_default_map["side_tributary_vector_output_format"] = "flatgeobuf";
-    help_map["side_tributary_vector_output_format"] = {"string","flatgeobuf",
+    string_default_map["side_tributary_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["side_tributary_write_vector_format"] = {"string","same_as_write_vector_format",
         "Vector output format for side-tributary outputs.",
         "Valid options: flatgeobuf, fgb, gpkg. FlatGeobuf is recommended because "
         "it is a single-file binary GIS format and is more robust than GeoPackage "
@@ -364,8 +352,8 @@ int main(int argc, char* argv[])
         "Side-tributary basin extraction from seed points", "param", ""};
 
     // --- Basin outlet input ---
-    string_default_map["basin_outlet_file"] = "NULL";
-    help_map["basin_outlet_file"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "File of requested basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "Required when select_basins_from_outlets or "
         "select_basins_from_outlets_nested is true. "
@@ -398,15 +386,15 @@ int main(int argc, char* argv[])
         "flow-routing object, not the number of direct donors to a pixel.",
         "Basin outlet snapping", "param", "write_basin_outlet_points"};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "0 means the mapped input pixel is tested first.",
         "Basin outlet snapping", "param", "write_basin_outlet_points"};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "The search stops at the first radius containing one or more qualifying pixels.",
@@ -425,14 +413,14 @@ int main(int argc, char* argv[])
     bool_default_map["select_basins_from_outlets"] = false;
     help_map["select_basins_from_outlets"] = {"bool","false",
         "Select basins from supplied basin outlet points.",
-        "Reads basin_outlet_file, optionally snaps the mapped pixels, and then "
+        "Reads basin_outlet_fname, optionally snaps the mapped pixels, and then "
         "constructs one lsdtt_junction_basin per supplied basin outlet.",
         "Basin selection", "switch", ""};
 
     bool_default_map["select_basins_from_outlets_nested"] = false;
     help_map["select_basins_from_outlets_nested"] = {"bool","false",
         "Select supplied basin outlets and all nested upstream basins.",
-        "Reads basin_outlet_file, optionally snaps the mapped pixels, constructs "
+        "Reads basin_outlet_fname, optionally snaps the mapped pixels, constructs "
         "one lsdtt_junction_basin per supplied basin outlet, and then expands "
         "selection to include all upstream nested basins from the junction-network "
         "s_vector.",
@@ -554,7 +542,7 @@ int main(int argc, char* argv[])
     help_map["write_basin_outlines"] = {"bool","false",
         "Write selected basin outlines as vector features.",
         "Features are labelled by their junction number. Use "
-        "basin_outlines_output_format to specify output format. To get basin "
+        "basin_outlines_write_vector_format to specify an override. To get basin "
         "outlines as polygons rather than polylines, use "
         "write_basin_outlines_as_polygon. To write basin outlines per stream "
         "order, use write_basin_outlines_per_order.",
@@ -573,8 +561,9 @@ int main(int argc, char* argv[])
         "For FlatGeobuf output, this writes multiple files, one per stream order.",
         "Basin printing to vector", "switch", ""};
 
-    string_default_map["basin_outlines_output_format"] = "flatgeobuf";
-    help_map["basin_outlines_output_format"] = {"string", "flatgeobuf",
+    string_default_map["basin_outlines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["basin_outlines_write_vector_format"] = {"string", "same_as_write_vector_format",
         "Output format for basin outline visualisation.",
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. "
         "GeoPackage may have file I/O issues on some filesystems. "
@@ -595,7 +584,7 @@ int main(int argc, char* argv[])
         "Outputs a _selected_basin_outlets.csv file with longitude, latitude, "
         "basin_junction_number, basin_outlet_flat_index, and the basin size as "
         "basin_n_pixels, basin_area_km2 and basin_fraction_of_domain. "
-        "This file can be directly read back into lsdtt as a basin_outlet_file."
+        "This file can be directly read back into lsdtt as basin_outlet_fname. "
         "Note: write_basin_outlet_points writes the requested outlets, but "
         "this option writes the outlets of the selected basins.",
         "Basin outlet writing", "switch", ""};
@@ -643,7 +632,19 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"source_pixels_threshold", "threshold_contributing_pixels"} });
+        {"basin_outlet_file", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"side_tributary_vector_output_format", "side_tributary_write_vector_format"},
+        {"basin_outlines_output_format", "basin_outlines_write_vector_format"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"channel_network_points_output_format",
+         {"legacy_channel_network_points_write_vector_format", "write_vector_format"}},
+        {"channel_network_lines_output_format",
+         {"legacy_channel_network_lines_write_vector_format", "write_vector_format"}},
+        {"channel_network_junctions_output_format",
+         {"legacy_channel_network_junctions_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -681,32 +682,44 @@ int main(int argc, char* argv[])
 
     lsdtt::point_output_format cn_points_output_format =
         lsdtt::resolve_point_output_format(
-            sf["channel_network_points_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_network_points_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format cn_lines_output_format =
         lsdtt::resolve_vector_output_format(
-            sf["channel_network_lines_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_network_lines_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format cn_junctions_output_format =
         lsdtt::resolve_point_output_format(
-            sf["channel_network_junctions_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_network_junctions_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format basin_outline_lines_format =
         lsdtt::resolve_vector_output_format(
-            sf["basin_outlines_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["basin_outlines_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format side_tributary_vector_format =
         lsdtt::resolve_vector_output_format(
-            sf["side_tributary_vector_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["side_tributary_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format side_tributary_point_format =
         lsdtt::resolve_point_output_format(
-            sf["side_tributary_vector_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["side_tributary_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     const bool select_basins_from_outlets =
@@ -782,25 +795,25 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    if (ifs["basin_outlet_snap_min_search_radius_pixels"] < 0)
     {
-        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels "
+        std::cerr << "FATAL: basin_outlet_snap_min_search_radius_pixels "
                   << "must be >= 0.\n";
         return 1;
     }
 
-    if (ifs["basin_outlet_max_search_radius_pixels"] <
-        ifs["basin_outlet_min_search_radius_pixels"])
+    if (ifs["basin_outlet_snap_max_search_radius_pixels"] <
+        ifs["basin_outlet_snap_min_search_radius_pixels"])
     {
-        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
-                  << "basin_outlet_min_search_radius_pixels.\n";
+        std::cerr << "FATAL: basin_outlet_snap_max_search_radius_pixels must be >= "
+                  << "basin_outlet_snap_min_search_radius_pixels.\n";
         return 1;
     }
 
     if ((select_basins_from_outlets || select_basins_from_outlets_nested) &&
-        (sf["basin_outlet_file"] == "NULL" || sf["basin_outlet_file"].empty()))
+        (sf["basin_outlet_fname"] == "NULL" || sf["basin_outlet_fname"].empty()))
     {
-        std::cerr << "FATAL: basin_outlet_file is required when selecting "
+        std::cerr << "FATAL: basin_outlet_fname is required when selecting "
                   << "basins from supplied outlet points.\n";
         return 1;
     }
@@ -844,7 +857,7 @@ int main(int argc, char* argv[])
     if (select_basins_from_outlets || select_basins_from_outlets_nested)
     {
         std::cout << "Basin outlet file            : "
-                  << sf["basin_outlet_file"] << "\n";
+                  << sf["basin_outlet_fname"] << "\n";
         std::cout << "Basin outlet snapping method : "
                   << basin_outlet_snapping_method << "\n";
 
@@ -856,9 +869,9 @@ int main(int argc, char* argv[])
             if (basin_outlet_snapping_method == "expanding_square")
             {
                 std::cout << "Snapping min search radius   : "
-                          << ifs["basin_outlet_min_search_radius_pixels"] << "\n";
+                          << ifs["basin_outlet_snap_min_search_radius_pixels"] << "\n";
                 std::cout << "Snapping max search radius   : "
-                          << ifs["basin_outlet_max_search_radius_pixels"] << "\n";
+                          << ifs["basin_outlet_snap_max_search_radius_pixels"] << "\n";
             }
         }
     }
@@ -1501,7 +1514,7 @@ int main(int argc, char* argv[])
         else
         {
             const std::string basin_outlet_file_path =
-                pp.add_read_path_if_needed(sf["basin_outlet_file"]);
+                pp.add_read_path_if_needed(sf["basin_outlet_fname"]);
 
             // The selection proper ends here. Everything below is reading
             // the outlet file and printing coordinate diagnostics, which is
@@ -1753,9 +1766,9 @@ int main(int argc, char* argv[])
                     ifs["basin_outlet_contributing_pixels_threshold"]
                 );
             square_snap_options.min_search_radius_pixels =
-                ifs["basin_outlet_min_search_radius_pixels"];
+                ifs["basin_outlet_snap_min_search_radius_pixels"];
             square_snap_options.max_search_radius_pixels =
-                ifs["basin_outlet_max_search_radius_pixels"];
+                ifs["basin_outlet_snap_max_search_radius_pixels"];
 
             lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
             downstream_snap_options.contributing_pixels_threshold =

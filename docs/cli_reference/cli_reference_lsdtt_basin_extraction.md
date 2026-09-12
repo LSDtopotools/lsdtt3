@@ -248,7 +248,7 @@ its basin is complete (`reject_incomplete_side_tributary_basins`) and at least
 | `reject_incomplete_side_tributary_basins` | bool | `true` | Drop basins touching nodata / the DEM edge. |
 
 Outputs (shared with the side-tributary writers, selected by the
-`write_side_tributary_*` flags and `side_tributary_vector_output_format`):
+`write_side_tributary_*` flags and `side_tributary_write_vector_format`):
 `<write_fname>_side_tributary_main_channel`, `..._side_tributary_outlets`,
 `..._side_tributary_basin_outlines`.
 
@@ -272,5 +272,5 @@ reject_incomplete_side_tributary_basins: true
 write_side_tributary_main_channel: true
 write_side_tributary_outlets: true
 write_side_tributary_basin_outlines: true
-side_tributary_vector_output_format: gpkg
+side_tributary_write_vector_format: gpkg
 ```

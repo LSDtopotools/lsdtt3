@@ -280,21 +280,21 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
             self,
             "lsdtt-channel-extraction",
             overrides={
-                self.JUNCTIONS_FORMAT: "channel_network_junctions_output_format",
-                self.LINES_FORMAT: "channel_network_lines_output_format",
-                self.POINTS_FORMAT: "channel_network_points_output_format",
+                self.JUNCTIONS_FORMAT: "channel_network_junctions_write_vector_format",
+                self.LINES_FORMAT: "write_vector_format",
+                self.POINTS_FORMAT: "channel_network_points_write_vector_format",
                 self.THRESHOLD_CONTRIBUTING_PIXELS: "threshold_contributing_pixels",
-                self.WIENER_WRITE_CURVATURE: "wiener_write_tangential_curvature",
+                self.WIENER_WRITE_CURVATURE: "write_wiener_tangential_curvature_raster",
                 self.WIENER_WRITE_QQ: "wiener_write_qq_table",
                 self.WRITE_CHANNEL_LINES: "write_channel_network_lines",
                 self.WRITE_CHANNEL_POINTS: "write_channel_network_points",
                 self.WRITE_D8_FLOWDIR: "write_arcmap_d8_flowdirection_raster",
                 self.WRITE_JUNCTIONS: "write_channel_network_junctions",
-                self.BURNED_PROFILES_FORMAT: "burned_stream_profiles_output_format",
+                self.BURNED_PROFILES_FORMAT: "burned_stream_profiles_write_vector_format",
                 self.SOURCE_ALGORITHM: "source_extraction_algorithm_choice",
                 self.STREAM_VECTOR: "stream_vector_path",
                 self.WIENER_CC_THRESHOLD: "wiener_connected_components_threshold_pixels",
-                self.WIENER_FITTING_RADIUS: "wiener_surface_fitting_radius_m",
+                self.WIENER_FITTING_RADIUS: "wiener_surface_fitting_radius_metres",
                 self.WIENER_PRUNING_AREA: "wiener_pruning_drainage_area_m2",
                 self.WRITE_BURNED_PROFILES: "write_burned_stream_profiles",
             },
@@ -385,13 +385,13 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
             ),
             "source_extraction_algorithm_choice": source_algorithm,
             "write_channel_network_lines": write_lines,
-            "channel_network_lines_output_format": lines_format,
+            "write_vector_format": lines_format,
             "write_channel_network_points": write_points,
-            "channel_network_points_output_format": points_format,
+            "channel_network_points_write_vector_format": points_format,
             "write_channel_network_junctions": write_junctions,
-            "channel_network_junctions_output_format": junctions_format,
+            "channel_network_junctions_write_vector_format": junctions_format,
             "write_flow_lines": write_flow_lines,
-            "flow_lines_output_format": flow_lines_format,
+            "flow_lines_write_vector_format": flow_lines_format,
             "write_arcmap_d8_flowdirection_raster": write_d8_flowdir,
             "calculate_spatial_index": self.parameterAsBool(parameters, self.CALCULATE_SPATIAL_INDEX, context),
         }
@@ -401,17 +401,17 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
                 "wiener_pruning_drainage_area_m2": self.parameterAsDouble(
                     parameters, self.WIENER_PRUNING_AREA, context
                 ),
-                "wiener_surface_fitting_radius_m": self.parameterAsDouble(
+                "wiener_surface_fitting_radius_metres": self.parameterAsDouble(
                     parameters, self.WIENER_FITTING_RADIUS, context
                 ),
                 "wiener_connected_components_threshold_pixels": self.parameterAsInt(
                     parameters, self.WIENER_CC_THRESHOLD, context
                 ),
-                "wiener_write_filtered_dem": wiener_write_filtered,
-                "wiener_write_tangential_curvature": wiener_write_curvature,
+                "write_wiener_filtered_dem_raster": wiener_write_filtered,
+                "write_wiener_tangential_curvature_raster": wiener_write_curvature,
                 "wiener_write_qq_table": wiener_write_qq,
                 # cog guarantees .tif diagnostics regardless of the input format
-                "wiener_diagnostics_raster_format": "cog",
+                "wiener_diagnostics_write_output_format": "cog",
             })
 
         if write_burned_profiles:
@@ -419,7 +419,7 @@ class ChannelExtractionAlgorithm(QgsProcessingAlgorithm):
                 "write_burned_stream_profiles": True,
                 "stream_vector_path": layer_file_path(stream_layer.source()),
                 "stream_burn_mode": "burn_in_place",
-                "burned_stream_profiles_output_format": burned_profiles_format,
+                "burned_stream_profiles_write_vector_format": burned_profiles_format,
             })
 
         run_lsdtt_tool(

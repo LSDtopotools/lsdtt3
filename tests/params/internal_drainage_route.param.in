@@ -5,14 +5,14 @@ write_fname: phase4_route
 
 internal_drainage_stage: route
 sink_candidate_fname: phase4_candidates.csv
-sink_candidate_format: csv
+sink_candidate_input_format: csv
 sink_mode: nodata_hole
-minimum_pixels_in_patch: 999999
+min_pixels_in_patch: 999999
 fill_min_slope: 0.0001
 write_sink_punched_raster: true
 write_sink_basin_polygons: true
 extract_sink_channel_networks: true
 threshold_contributing_pixels: 50
 calculate_sink_chi: true
-sink_vector_format: flatgeobuf
+write_vector_format: flatgeobuf
 write_output_format: gtiff

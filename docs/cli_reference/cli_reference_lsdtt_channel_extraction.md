@@ -85,7 +85,7 @@ Used only when `source_extraction_algorithm_choice: wiener`.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `wiener_pruning_drainage_area_m2` | float | `1000.0` | Minimum drainage area for Wiener channel-mask pruning, in physical square metres (m^2). |
-| `wiener_surface_fitting_radius_m` | float | `6.0` | Radius (metres) used when fitting surfaces for tangential-curvature estimation. |
+| `wiener_surface_fitting_radius_metres` | float | `6.0` | Radius (metres) used when fitting surfaces for tangential-curvature estimation. |
 | `wiener_connected_components_threshold_pixels` | int | `100` | Minimum connected-component size (pixels) retained in the Wiener channel mask before skeletonisation. |
 
 ### Wiener diagnostics (optional)
@@ -94,10 +94,10 @@ All diagnostics are opt-in and do not alter source extraction output.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `wiener_write_filtered_dem` | bool | `false` | Write Wiener-filtered DEM raster as `<write_fname>_wiener_filtered_dem.*`. |
-| `wiener_write_tangential_curvature` | bool | `false` | Write tangential-curvature raster as `<write_fname>_wiener_tangential_curvature.*`. |
+| `write_wiener_filtered_dem_raster` | bool | `false` | Write Wiener-filtered DEM raster as `<write_fname>_wiener_filtered_dem.*`. |
+| `write_wiener_tangential_curvature_raster` | bool | `false` | Write tangential-curvature raster as `<write_fname>_wiener_tangential_curvature.*`. |
 | `wiener_write_qq_table` | bool | `false` | Write QQ diagnostics table CSV. |
-| `wiener_diagnostics_raster_format` | string | `same_as_input` | Raster format for Wiener diagnostics (`cog`, `gtiff`, `same_as_input`, `png`). |
+| `wiener_diagnostics_write_output_format` | string | `same_as_input` | Raster-format override for Wiener diagnostics (`cog`, `gtiff`, `same_as_input`, `png`). |
 | `wiener_qq_output_csv` | string | _(empty)_ | Explicit QQ CSV path. If empty and `wiener_write_qq_table` is true, output defaults to `<write_fname>_wiener_qq.csv`. |
 
 ---
@@ -117,7 +117,7 @@ One point per channel pixel, with drainage area as an attribute.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_channel_network_points` | bool | `false` | Write the channel network as a point layer (one feature per channel pixel). |
-| `channel_network_points_output_format` | string | `flatgeobuf` | Output format. `csv`: latitude/longitude in EPSG:4326. `gpkg`: GeoPackage. `flatgeobuf` / `fgb`: FlatGeobuf (preferred on WSL2). |
+| `channel_network_points_write_vector_format` | string | `same_as_write_vector_format` | Point-output override. `csv`: latitude/longitude in EPSG:4326. `gpkg`: GeoPackage. `flatgeobuf` / `fgb`: FlatGeobuf. |
 
 !!! tip "Longitudinal profiles come from the POINTS, not the lines"
     Each channel point carries `flow_distance` (distance to the outlet along the
@@ -140,8 +140,8 @@ One polyline per channel link (source-to-junction or junction-to-junction). Smal
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_channel_network_lines` | bool | `false` | Write the channel network as a polyline layer. |
-| `channel_network_lines_output_format` | string | `flatgeobuf` | Output format. `flatgeobuf` / `fgb`: FlatGeobuf. `gpkg`: GeoPackage. CSV is not supported for lines. |
+| `write_channel_network_lines` | bool | `false` | Optional channel-network polyline export; off because channel-extraction vector products are opt-in. |
+| `write_vector_format` | string | `flatgeobuf` | Baseline channel-line format. `flatgeobuf` / `fgb` or `gpkg`; CSV is not supported for lines. |
 
 Output file: `<write_fname>_channel_network_lines.<ext>`
 
@@ -160,7 +160,7 @@ Output file: `<write_fname>_channel_network_lines.<ext>`
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_channel_network_junctions` | bool | `false` | Write junction points with attributes `junction_number`, `receiver_junction`, and `stream_order`. |
-| `channel_network_junctions_output_format` | string | `flatgeobuf` | Output format. `csv`, `gpkg`, `flatgeobuf` / `fgb`. |
+| `channel_network_junctions_write_vector_format` | string | `same_as_write_vector_format` | Junction-point override: `csv`, `gpkg`, `flatgeobuf` / `fgb`. |
 
 Output file: `<write_fname>_junctions.<ext>`
 
@@ -171,7 +171,7 @@ Output file: `<write_fname>_junctions.<ext>`
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_flow_lines` | bool | `false` | Write one line from each valid pixel centre to its D8 receiver. |
-| `flow_lines_output_format` | string | `flatgeobuf` | Output format. `flatgeobuf` / `fgb`, `gpkg`. CSV is not supported. |
+| `flow_lines_write_vector_format` | string | `same_as_write_vector_format` | Flow-line override. `flatgeobuf` / `fgb`, `gpkg`. CSV is not supported. |
 
 Output file: `<write_fname>_flow_lines.<ext>`
 
@@ -182,7 +182,7 @@ Output file: `<write_fname>_flow_lines.<ext>`
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_arcmap_d8_flowdirection_raster` | bool | `false` | Write a D8 flow-direction raster using ArcMap encoding: E=1, SE=2, S=4, SW=8, W=16, NW=32, N=64, NE=128. Outlet pixels are written as 0. |
-| `flow_direction_output_format` | string | `cog` | Raster format. `cog`, `gtiff`, or `same_as_input`. |
+| `write_output_format` | string | `cog` | Baseline raster format. `cog`, `gtiff`, or `same_as_input`. |
 
 Output file: `<write_fname>_d8_flow_direction.<ext>`
 
@@ -197,7 +197,7 @@ Burns a user-supplied vector polyline network into the DEM and writes an elevati
 | `write_burned_stream_profiles` | bool | `false` | Burn vector channels into DEM and write elevation profiles. Requires `stream_vector_path`. |
 | `stream_vector_path` | string | _(empty)_ | Path to the vector file containing polyline channel features. Must be in the same CRS as the DEM. Supported: GeoPackage, FlatGeobuf, Shapefile, and any GDAL/OGR format. |
 | `stream_burn_mode` | string | `burn_in_place` | Burn algorithm. `burn_in_place`: samples DEM pixels beneath the input polyline and enforces monotone-decreasing elevation downstream. `snap_to_network`: not yet implemented. |
-| `burned_stream_profiles_output_format` | string | `csv` | Output format for the profile table. `csv`: plain table with one row per channel pixel. `gpkg`: GeoPackage point layer. `flatgeobuf` / `fgb`: FlatGeobuf point layer. |
+| `burned_stream_profiles_write_vector_format` | string | `csv` | Output format for the profile table. `csv`: plain table with one row per channel pixel. `gpkg`: GeoPackage point layer. `flatgeobuf` / `fgb`: FlatGeobuf point layer. |
 
 Output file: `<write_fname>_burned_stream_profiles.<ext>`
 
@@ -237,13 +237,13 @@ read_fname: my_dem.tif
 
 source_extraction_algorithm_choice: wiener
 wiener_pruning_drainage_area_m2: 2500.0
-wiener_surface_fitting_radius_m: 8.0
+wiener_surface_fitting_radius_metres: 8.0
 wiener_connected_components_threshold_pixels: 80
 
-wiener_write_filtered_dem: true
-wiener_write_tangential_curvature: true
+write_wiener_filtered_dem_raster: true
+write_wiener_tangential_curvature_raster: true
 wiener_write_qq_table: true
-wiener_diagnostics_raster_format: gtiff
+wiener_diagnostics_write_output_format: gtiff
 
 write_channel_network_points: true
 ```

@@ -158,7 +158,7 @@ and their conjunction and disjunction, is the honest resolution. Use
 ladder in the next tool sort them out.
 
 The admission gradient is measured from a polynomial surface fitted over
-`admission_slope_window_metres` rather than from a 3×3 difference, following the
+`admission_slope_window_radius_metres` rather than from a 3×3 difference, following the
 same reasoning as the 2017 paper: a three-cell operator on a 30 m DEM measures pixel
 noise, and the cap has to be read at the scale of the surface being admitted. There
 is no default cap worth guessing — 5 degrees is a valley floor, 15 degrees admits
@@ -579,7 +579,7 @@ parameter has no successor, the reason is in the right-hand column.
 
 | `lsdtt-valley-metrics` | goes to | lsdtt3 |
 |---|---|---|
-| `surface_fitting_radius` | 1 | `admission_slope_window_metres` |
+| `surface_fitting_radius` | 1 | `admission_slope_window_radius_metres` |
 | `slope_threshold`, `use_absolute_thresholds` | 1 | `admission_slope_cap_degrees` with `admission_mode: slope` |
 | `QQ_threshold`, `*_lower_percentile`, `*_upper_percentile` | 1 | `adaptive_relief_threshold` + `relief_threshold_multiplier` — CDF divergence against fitted distributions, not a Gaussian QQ plot |
 | `minimum_patch_size` | 1, 2 | `min_component_pixels` (in tool 2 it is **per band**, not global) |

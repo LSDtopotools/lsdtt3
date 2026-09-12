@@ -11,7 +11,8 @@ write_fname: bs
 
 write_output_format: gtiff
 
-basin_outlet_csv: __READ_PATH__/basin_stats_outlets.csv
+basin_outlet_csv: deprecated_value_must_be_ignored.csv
+basin_outlet_fname: __READ_PATH__/basin_stats_outlets.csv
 basin_outlet_snapping_method: downstream
 basin_outlet_contributing_pixels_threshold: 100
 reject_nodata_edge_basins: false

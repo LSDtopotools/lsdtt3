@@ -237,15 +237,15 @@ int main(int argc, char* argv[])
         "Workflow mode", "switch", ""};
 
     // --- Range-defined boundaries ---
-    string_default_map["corner_coordinates_csv"] = "NULL";
-    help_map["corner_coordinates_csv"] = {"string", "NULL",
+    string_default_map["corner_coordinates_fname"] = "NULL";
+    help_map["corner_coordinates_fname"] = {"string", "NULL",
         "CSV of DEM corner coordinates for boundary segmentation.",
         "Required for range_defined_ridgelines if the DEM is not rectangular.",
         "Range-defined boundaries", "param", ""};
 
     // --- Basin Selection ---
-    string_default_map["basin_outlet_file"] = "NULL";
-    help_map["basin_outlet_file"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "File of requested basin outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "Required when select_basins_from_outlets or "
         "select_basins_from_outlets_nested is true. "
@@ -262,14 +262,14 @@ int main(int argc, char* argv[])
     bool_default_map["select_basins_from_outlets"] = false;
     help_map["select_basins_from_outlets"] = {"bool","false",
         "Select basins from supplied basin outlet points.",
-        "Reads basin_outlet_file, optionally snaps the mapped pixels, and then "
+        "Reads basin_outlet_fname, optionally snaps the mapped pixels, and then "
         "constructs one lsdtt_junction_basin per supplied basin outlet.",
         "Basin Selection", "switch", ""};
 
     bool_default_map["select_basins_from_outlets_nested"] = false;
     help_map["select_basins_from_outlets_nested"] = {"bool","false",
         "Select supplied basin outlets and all nested upstream basins.",
-        "Reads basin_outlet_file, optionally snaps the mapped pixels, constructs "
+        "Reads basin_outlet_fname, optionally snaps the mapped pixels, constructs "
         "one lsdtt_junction_basin per supplied basin outlet, and then expands "
         "selection to include all upstream nested basins from the junction-network "
         "s_vector.",
@@ -286,7 +286,7 @@ int main(int argc, char* argv[])
     help_map["select_sibling_basins"] = {"bool","false",
         "Select basins as SIBLING sets: every junction with two or more direct "
         "donors becomes a parent, and its donor sub-basins are the selection.",
-        "This is the pair source for print_paired_flowpath_statistics. delta_L "
+        "This is the pair source for write_paired_flowpath_statistics. delta_L "
         "only exists for a divide whose two flanking basins share a parent, "
         "because otherwise the two flow paths never rejoin and the pair is "
         "discarded. Selecting by an area or stream-order window over all "
@@ -367,15 +367,15 @@ int main(int argc, char* argv[])
         "flow-routing object, not the number of direct donors to a pixel.",
         "Basin Outline Snapping / Filtering", "param", ""};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int", "0", 
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int", "0",
         "Minimum expanding-square snapping search radius in pixels.", 
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "0 means the mapped input pixel is tested first.",
         "Basin Outline Snapping / Filtering", "param", ""};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int", "25", 
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int", "25",
         "Maximum expanding-square snapping search radius in pixels.", 
         "Used only when basin_outlet_snapping_method is expanding_square. "
         "The search stops at the first radius containing one or more qualifying pixels.",
@@ -456,8 +456,8 @@ int main(int argc, char* argv[])
         "Set to true when you want basins printed as areas.",
         "Basin Output Prints", "switch", ""};
 
-    string_default_map["basin_outlines_output_format"] = "flatgeobuf";
-    help_map["basin_outlines_output_format"] = {"string", "flatgeobuf", 
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string", "flatgeobuf",
         "Output format for basin outline visualisation.", 
         "Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default.",
         "Basin Output Prints", "param", ""};
@@ -514,33 +514,33 @@ int main(int argc, char* argv[])
     
 
     // --- Ridgeline CSV Outputs ---
-    bool_default_map["print_ridgelines"] = false;
-    help_map["print_ridgelines"] = {"bool", "false", 
+    bool_default_map["write_ridgelines"] = false;
+    help_map["write_ridgelines"] = {"bool", "false",
         "This triggers ridgeline printing to csv.", 
         "NOTE for any ridgeline to print, you must select an analysis mode.",
         "Ridgeline CSV Outputs", "switch", ""};
 
-    bool_default_map["print_ridgeline_stats"] = false;
-    help_map["print_ridgeline_stats"] = {"bool", "false", 
+    bool_default_map["write_ridgeline_stats"] = false;
+    help_map["write_ridgeline_stats"] = {"bool", "false",
         "This triggers printing of ridgeline statistics (including ridgeline steepness) to csv.", 
         "Includes slope, R2, normalized steepness, and polynomial coeffs.",
         "Ridgeline CSV Outputs", "switch", ""};
 
-    bool_default_map["print_ridgeline_extrema"] = false;
-    help_map["print_ridgeline_extrema"] = {"bool", "false", 
+    bool_default_map["write_ridgeline_extrema"] = false;
+    help_map["write_ridgeline_extrema"] = {"bool", "false",
         "This triggers printing of ridgeline extrema to csv.", 
         "Includes distance to next extremum, relief, and distance to TDJ.",
         "Ridgeline CSV Outputs", "switch", ""};
 
-    bool_default_map["print_ridgeline_flow_topological_distance"] = false;
-    help_map["print_ridgeline_flow_topological_distance"] = {"bool", "false", 
+    bool_default_map["write_ridgeline_flow_topological_distance"] = false;
+    help_map["write_ridgeline_flow_topological_distance"] = {"bool", "false",
         "Write the left and right flow topological distances for internal ridgeline nodes.", 
         "Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node.",
         "Ridgeline CSV Outputs", "switch", ""};
 
     // --- Paired flow paths (lengthwise asymmetry, Goren & Shelef 2024) ---
-    bool_default_map["print_paired_flowpath_statistics"] = false;
-    help_map["print_paired_flowpath_statistics"] = {"bool", "false",
+    bool_default_map["write_paired_flowpath_statistics"] = false;
+    help_map["write_paired_flowpath_statistics"] = {"bool", "false",
         "Write the lengthwise asymmetry (delta_L) of paired flow paths across each divide.",
         "For the two flow paths that diverge across a divide and rejoin at a common "
         "junction, delta_L = 2|L_i - L_j|/(L_i + L_j) measures planform complexity "
@@ -681,7 +681,17 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"source_pixels_threshold", "threshold_contributing_pixels"} });
+        {"print_ridgelines", "write_ridgelines"},
+        {"print_ridgeline_stats", "write_ridgeline_stats"},
+        {"print_ridgeline_extrema", "write_ridgeline_extrema"},
+        {"print_ridgeline_flow_topological_distance", "write_ridgeline_flow_topological_distance"},
+        {"print_paired_flowpath_statistics", "write_paired_flowpath_statistics"},
+        {"basin_outlet_file", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"corner_coordinates_csv", "corner_coordinates_fname"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"basin_outlines_output_format", "write_vector_format"} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map
     );
@@ -731,7 +741,7 @@ int main(int argc, char* argv[])
     }
 
     lsdtt::vector_output_format basin_outline_format = 
-        lsdtt::resolve_vector_output_format(sf["basin_outlines_output_format"]);
+        lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
 
     std::vector<lsdtt::polyfit_metric> requested_polyfit_metrics;
     try {
@@ -846,16 +856,16 @@ int main(int argc, char* argv[])
             std::vector<lsdtt::lsdtt_input_point> corner_pts;
             std::array<std::int64_t, 4>           corner_flats{};
             
-            if (sf["corner_coordinates_csv"] != "NULL" && 
-                !sf["corner_coordinates_csv"].empty()) 
+            if (sf["corner_coordinates_fname"] != "NULL" &&
+                !sf["corner_coordinates_fname"].empty())
             {
                 corner_pts = parse_corner_coordinates_csv(
-                    pp.add_read_path_if_needed(sf["corner_coordinates_csv"]), 
+                    pp.add_read_path_if_needed(sf["corner_coordinates_fname"]),
                     dem.get_meta()
                 );
                 for (int i = 0; i < 4; ++i) corner_flats[i] = corner_pts[i].flat;
             } else {
-                std::cout << "No corner_coordinates_csv supplied. "
+                std::cout << "No corner_coordinates_fname supplied. "
                           << "Using the four DEM pixel corners.\n";
                 // Corner detection and boundary segmentation are geometry, and
                 // live in lsdtt_binary_array2d_tracing. They do not print; the
@@ -964,7 +974,7 @@ int main(int argc, char* argv[])
                 std::cout << "I am going to get basins from lat-long coordinates.\n";
                 std::vector<lsdtt::lsdtt_input_point> req_outlets = 
                     lsdtt::load_points_in_raster_crs(
-                        pp.add_read_path_if_needed(sf["basin_outlet_file"]), 
+                        pp.add_read_path_if_needed(sf["basin_outlet_fname"]),
                         dem.get_meta()
                     );
                 
@@ -977,9 +987,9 @@ int main(int argc, char* argv[])
                 square_opts.contributing_pixels_threshold =
                     ifs["basin_outlet_contributing_pixels_threshold"];
                 square_opts.min_search_radius_pixels =
-                    ifs["basin_outlet_min_search_radius_pixels"];
+                    ifs["basin_outlet_snap_min_search_radius_pixels"];
                 square_opts.max_search_radius_pixels =
-                    ifs["basin_outlet_max_search_radius_pixels"];
+                    ifs["basin_outlet_snap_max_search_radius_pixels"];
 
                 std::vector<std::int64_t> out_flats;
                 for (const auto& pt : req_outlets) {
@@ -1427,11 +1437,11 @@ int main(int argc, char* argv[])
     // smooths: the pairing needs the divide edges as extracted, and smoothing
     // moves the nodes.
     // =========================================================================
-    if (bf["print_paired_flowpath_statistics"])
+    if (bf["write_paired_flowpath_statistics"])
     {
         if (analysis_mode != "interfluvial_divide_ridgelines")
         {
-            std::cerr << "FATAL: print_paired_flowpath_statistics requires "
+            std::cerr << "FATAL: write_paired_flowpath_statistics requires "
                       << "ridgeline_analysis_mode = interfluvial_divide_ridgelines.\n"
                       << "The two flow paths in a pair must REJOIN at a common "
                       << "junction. A basin outline separates a basin from its "
@@ -1632,14 +1642,14 @@ int main(int argc, char* argv[])
     bool headers_are_dual = (analysis_mode != "basin_outline_ridgelines");
 
     if (all_ridgelines.empty() && 
-       (bf["print_ridgelines"] || bf["print_ridgeline_stats"] || 
-        bf["print_ridgeline_extrema"] || bf["print_ridgeline_flow_topological_distance"]))
+       (bf["write_ridgelines"] || bf["write_ridgeline_stats"] ||
+        bf["write_ridgeline_extrema"] || bf["write_ridgeline_flow_topological_distance"]))
     {
         std::cout << "\nNote: No extracted ridgelines exist right now, "
                   << "skipping CSV prints.\n";
     }
-    else if (bf["print_ridgelines"] || bf["print_ridgeline_stats"] || 
-             bf["print_ridgeline_extrema"] || bf["print_ridgeline_flow_topological_distance"])
+    else if (bf["write_ridgelines"] || bf["write_ridgeline_stats"] ||
+             bf["write_ridgeline_extrema"] || bf["write_ridgeline_flow_topological_distance"])
     {
 
         std::cout << "\n--- Writing CSV Outputs ---\n";
@@ -1687,17 +1697,17 @@ int main(int argc, char* argv[])
         };
 
 
-        if (bf["print_ridgelines"]) {
+        if (bf["write_ridgelines"]) {
             std::cout << "\nPrinting " << analysis_mode << " ridgelines to file: \n";
         }
-        if (bf["print_ridgeline_stats"]) {
+        if (bf["write_ridgeline_stats"]) {
             std::cout << "\nPrinting " << analysis_mode << " ridgeline stats to file:\n";
             std::cout << "I am going to use a concavity of " << ff["m_over_n"] << " to calculate ridgeline steepness. You can constrain concavity using lsdtt-chi-mapping and supply the constrained concavity to this program by setting the parameter m_over_n.\n";
         }
-        if (bf["print_ridgeline_extrema"]) {
+        if (bf["write_ridgeline_extrema"]) {
             std::cout << "\nPrinting " << analysis_mode << " ridgeline extrema to file:\n";
         }
-        if (bf["print_ridgeline_flow_topological_distance"]) {
+        if (bf["write_ridgeline_flow_topological_distance"]) {
             std::cout << "\nPrinting " << analysis_mode << " ridgeline flow topological distances to file:\n";
         }
 
@@ -1708,14 +1718,14 @@ int main(int argc, char* argv[])
             std::string id_str = rec.is_dual_basin ? std::to_string(rec.ridgeline_number) 
                                                    : std::to_string(rec.primary_id);
 
-            if (bf["print_ridgelines"]) {
+            if (bf["write_ridgelines"]) {
                 auto rows = rl.get_ridgeline_csv_rows(id_str, rec.feature_type, transform);
                 pt_map[rec.file_prefix].insert(
                     pt_map[rec.file_prefix].end(), rows.begin(), rows.end()
                 );
             }
 
-            if (bf["print_ridgeline_stats"]) {
+            if (bf["write_ridgeline_stats"]) {
                 std::vector<std::string> stats_row;
                 if (!rec.is_dual_basin) {
                     stats_row = rl.get_stats_csv_row_single_basin(
@@ -1730,7 +1740,7 @@ int main(int argc, char* argv[])
                 stats_map[rec.file_prefix].push_back(std::move(stats_row));
             }
 
-            if (bf["print_ridgeline_extrema"]) {
+            if (bf["write_ridgeline_extrema"]) {
                 auto ext = rl.get_ridgeline_extrema(*flow, junction_network);
                 auto rows = rl.get_extrema_csv_rows(id_str, rec.feature_type, ext, transform);
                 ext_map[rec.file_prefix].insert(
@@ -1738,7 +1748,7 @@ int main(int argc, char* argv[])
                 );
             }
 
-            if (bf["print_ridgeline_flow_topological_distance"]) {
+            if (bf["write_ridgeline_flow_topological_distance"]) {
                 auto fd_rows = rl.get_flow_topological_distance_csv_rows(id_str, rec.feature_type, *flow, dem, transform);
                 flow_dist_map[rec.file_prefix].insert(
                     flow_dist_map[rec.file_prefix].end(), fd_rows.begin(), fd_rows.end()

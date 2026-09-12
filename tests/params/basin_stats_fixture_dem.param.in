@@ -19,8 +19,8 @@ write_fname: basin_stats
 write_output_format: gtiff
 n_rows: 200
 n_cols: 200
-cell_size: 30.0
-seed: 33
+cell_size_metres: 30.0
+random_seed: 33
 
 write_diamond_square_surface: true
 diamond_square_roughness: 0.6

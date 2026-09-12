@@ -7,7 +7,7 @@ Assemble `crn_parameters.nc` for LSDTopoTools3's cosmogenic-nuclide tools
 grids, the Lifton lapse-rate polynomial, and the geomagnetic virtual dipole moment
 (VDM) record needed for the ERA40-style atmosphere and the time-integrated
 palaeomagnetic (time-varying production) correction. Any user who wants the
-`crn_nc_file` + `sample_age_yr` options needs this file; it is not test-only.
+`crn_nc_fname` + `sample_age_yr` options needs this file; it is not test-only.
 
 It writes to the EXACT schema read by
 `lsdtt::lsdtt_crn_parameters::load_nc_data` (src/cpu/lsdtt_crn_parameters.cpp).

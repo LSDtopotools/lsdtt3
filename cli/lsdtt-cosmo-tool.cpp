@@ -154,8 +154,8 @@ int main(int argc, char* argv[])
         "CRN physics", "param", ""};
 
     // --- Atmosphere and palaeomagnetic correction ---
-    string_default_map["crn_nc_file"] = "";
-    help_map["crn_nc_file"] = {"string","",
+    string_default_map["crn_nc_fname"] = "";
+    help_map["crn_nc_fname"] = {"string","",
         "Path to crn_parameters.nc (ERA40 grids + Muscheler VDM record).",
         "For the ERA40 atmosphere and paleomagnetic correction. Leave empty to use the "
         "crn_parameters.nc bundled with lsdtt3 (found automatically); if that is not "
@@ -166,7 +166,7 @@ int main(int argc, char* argv[])
     help_map["sample_age_yr"] = {"float","0",
         "Sample exposure age in years (yr BP). Drives the time-integrated production "
         "correction; what it selects depends on scaling_scheme.",
-        "Set > 0 to apply a time-integrated correction; requires crn_nc_file. Default 0 "
+        "Set > 0 to apply a time-integrated correction; requires crn_nc_fname. Default 0 "
         "= no correction (modern field). Under scaling_scheme=stone this is the "
         "Muscheler VDM Stone/Lal paleomagnetic correction. Under scaling_scheme=lsdn it "
         "instead drives the duration-weighted average of LSDn production over the "
@@ -199,8 +199,8 @@ int main(int argc, char* argv[])
         "sample_age_yr is then only the starting guess (0 = start from the modern field).",
         "Atmosphere and palaeomagnetic correction", "param", ""};
 
-    float_default_map["self_consistent_age_tol"] = 1.0e-3f;
-    help_map["self_consistent_age_tol"] = {"float","0.001",
+    float_default_map["self_consistent_age_tolerance"] = 1.0e-3f;
+    help_map["self_consistent_age_tolerance"] = {"float","0.001",
         "Relative convergence tolerance on the erosion rate for self_consistent_age.",
         "Iteration stops when |eps_new - eps_old|/eps_new falls below this. The default "
         "1e-3 is well inside the inversion solver's own convergence tolerance (~1e-3 "
@@ -228,8 +228,8 @@ int main(int argc, char* argv[])
 
 
     // --- Sample points ---
-    string_default_map["points_filename"] = "CRN_points.csv";
-    help_map["points_filename"] = {"string","CRN_points.csv",
+    string_default_map["sample_points_fname"] = "CRN_points.csv";
+    help_map["sample_points_fname"] = {"string","CRN_points.csv",
         "CSV file containing sample point locations and concentrations.",
         "Must have latitude and longitude columns.",
         "Sample points", "param", ""};
@@ -319,8 +319,8 @@ int main(int argc, char* argv[])
     // --- Channel snapping ---
     lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
-    int_default_map["snap_search_radius_pixels"] = 8;
-    help_map["snap_search_radius_pixels"] = {"int","8",
+    int_default_map["sample_snap_max_search_radius_pixels"] = 8;
+    help_map["sample_snap_max_search_radius_pixels"] = {"int","8",
         "Maximum search radius (pixels) when snapping points to channel.",
         "Expanding square search up to this radius.",
         "Channel snapping", "param", ""};
@@ -383,6 +383,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"crn_nc_file", "crn_nc_fname"},
+        {"snap_search_radius_pixels", "sample_snap_max_search_radius_pixels"},
+        {"points_filename", "sample_points_fname"},
+        {"self_consistent_age_tol", "self_consistent_age_tolerance"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -418,12 +423,12 @@ int main(int argc, char* argv[])
     const double snow_shield = static_cast<double>(ff["snow_shield_eff_thickness"]);
     const double topo_shield_val = static_cast<double>(ff["topo_shield_value"]);
     const int    threshold_pixels = ifs["threshold_contributing_pixels"];
-    const int    snap_radius      = ifs["snap_search_radius_pixels"];
+    const int    snap_radius      = ifs["sample_snap_max_search_radius_pixels"];
 
     const bool   self_consistent_age = bf["self_consistent_age"];
     const bool   propagate_prod_unc  = bf["propagate_production_uncertainty"];
     const bool   propagate_decay_unc = bf["propagate_decay_uncertainty"];
-    const double sc_age_tol      = static_cast<double>(ff["self_consistent_age_tol"]);
+    const double sc_age_tol = static_cast<double>(ff["self_consistent_age_tolerance"]);
     const int    sc_age_max_iter = ifs["self_consistent_age_max_iter"];
     const double production_rel_sigma = static_cast<double>(ff["production_rel_sigma"]);
     const double decay_rel_sigma      = static_cast<double>(ff["decay_rel_sigma"]);
@@ -444,7 +449,7 @@ int main(int argc, char* argv[])
     {
         if (!(sc_age_tol > 0.0))
         {
-            std::cerr << "FATAL: self_consistent_age_tol must be > 0 (got "
+            std::cerr << "FATAL: self_consistent_age_tolerance must be > 0 (got "
                       << sc_age_tol << ").\n";
             return 1;
         }
@@ -479,13 +484,8 @@ int main(int argc, char* argv[])
                "the goal.\n\n";
     }
 
-    const std::string points_path = pp.add_read_path_if_needed(sf["points_filename"]);
+    const std::string points_path = pp.add_read_path_if_needed(sf["sample_points_fname"]);
     const std::string write_base  = pp.get_full_write_path();
-    // If the user does not give a path, fall back to the crn_parameters.nc bundled
-    // with lsdtt3 (located relative to this executable). Empty => standard atmosphere.
-    const std::string crn_nc_file = sf["crn_nc_file"].empty()
-        ? lsdtt::default_crn_nc_path()
-        : pp.add_read_path_if_needed(sf["crn_nc_file"]);
     const double sample_age_yr    = static_cast<double>(ff["sample_age_yr"]);
 
     // -------------------------------------------------------------------------
@@ -510,7 +510,7 @@ int main(int argc, char* argv[])
     site_cfg.muon_scheme    = muon_scheme;
     site_cfg.scaling_scheme = sf["scaling_scheme"];
     site_cfg.atmosphere     = sf["atmosphere"];
-    site_cfg.crn_nc_file    = sf["crn_nc_file"];
+    site_cfg.crn_nc_file    = sf["crn_nc_fname"];
     site_cfg.sample_age_yr  = sample_age_yr;
     site_cfg.topo_shield_value         = topo_shield_val;
     site_cfg.snow_shield_eff_thickness = snow_shield;
@@ -623,7 +623,7 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: self_consistent_age: true requires the geomagnetic "
                      "record in crn_parameters.nc, which did not load. Without it "
                      "the sample age has no effect, so the iteration would report "
-                     "a converged age that changed nothing. Set crn_nc_file, or "
+                     "a converged age that changed nothing. Set crn_nc_fname, or "
                      "set self_consistent_age: false.\n";
         return 1;
     }

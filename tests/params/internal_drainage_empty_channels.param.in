@@ -4,7 +4,7 @@ write_path: __WRITE_PATH__
 write_fname: phase4_empty_channels
 
 internal_drainage_stage: both
-minimum_pixels_in_patch: 100
+min_pixels_in_patch: 100
 extract_sink_channel_networks: true
 threshold_contributing_pixels: 999999
 write_sink_channel_lines: true

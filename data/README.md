@@ -6,7 +6,7 @@ any downloads. Committed to the repository and installed alongside the binaries.
 ## `crn_parameters.nc`
 
 Parameter file for the cosmogenic-nuclide tools (`lsdtt-cosmo-tool`,
-`lsdtt-cosmo-prediction`, `lsdtt-cosmo-column-tool`), read via the `crn_nc_file`
+`lsdtt-cosmo-prediction`, `lsdtt-cosmo-column-tool`), read via the `crn_nc_fname`
 option. It supplies the ERA40-style atmosphere and the time-integrated
 palaeomagnetic (time-varying production) correction (`sample_age_yr > 0`). Without
 it the tools fall back to the standard (SLHL) atmosphere with no palaeomagnetic

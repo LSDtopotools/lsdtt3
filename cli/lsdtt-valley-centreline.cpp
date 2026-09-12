@@ -149,8 +149,8 @@ int main(int argc, char* argv[])
         "threshold.","",
         "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
-    int_default_map["source_snap_max_radius_pixels"] = 25;
-    help_map["source_snap_max_radius_pixels"] = {"int","25",
+    int_default_map["source_snap_max_search_radius_pixels"] = 25;
+    help_map["source_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square search radius for source snapping.","",
         "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
 
@@ -464,8 +464,8 @@ int main(int argc, char* argv[])
         "wetted_perimeter_m, hydraulic_depth_m).",
         "Outputs", "switch", ""};
 
-    bool_default_map["write_cross_section_informed_valley_mask"] = false;
-    help_map["write_cross_section_informed_valley_mask"] = {"bool","false",
+    bool_default_map["write_cross_section_informed_valley_mask_raster"] = false;
+    help_map["write_cross_section_informed_valley_mask_raster"] = {"bool","false",
         "Build a valley-floor mask from the cross sections' HYDRAULIC BREAKS "
         "instead of the corridor HAND histogram: each corridor pixel's height "
         "above the nearest centreline node's thalweg baseline is compared with "
@@ -477,9 +477,9 @@ int main(int argc, char* argv[])
         "per-channel _cross_section_informed_valley_mask_ch<sid>.tif.",
         "Outputs", "switch", ""};
 
-    float_default_map["cross_section_curvature_window_metres"] = 60.0f;
-    help_map["cross_section_curvature_window_metres"] = {"float","60",
-        "Polynomial-fit window diameter (m) for the maximum-curvature raster "
+    float_default_map["cross_section_curvature_radius_metres"] = 30.0f;
+    help_map["cross_section_curvature_radius_metres"] = {"float","30",
+        "Polynomial-fit window radius (m) for the maximum-curvature raster "
         "used to find slope-break peaks along the cross sections.",
         "Larger smooths over fine breaks (fewer, coarser peaks); smaller "
         "resolves finer risers but is noisier.",
@@ -492,9 +492,11 @@ int main(int argc, char* argv[])
         "Raise to keep only the strongest breaks; lower to catch subtler ones.",
         "Outputs", "param", ""};
 
-    string_default_map["write_output_format"] = "gtiff";
-    help_map["write_output_format"] = {"string","gtiff",
-        "Raster output format.","Allowed values: cog, gtiff, same_as_input.",
+    string_default_map["write_output_format"] = "cog";
+    help_map["write_output_format"] = {"string","cog",
+        "Raster output format.",
+        "Allowed values: cog (default), gtiff, same_as_input. Set gtiff "
+        "explicitly to retain plain GeoTIFF output.",
         "Outputs", "io", ""};
 
     // -------------------------------------------------------------------------
@@ -537,9 +539,14 @@ int main(int argc, char* argv[])
     // went. A second hard error would say the same thing twice.
     // -------------------------------------------------------------------------
     pp.set_deprecated_aliases({
+        {"write_cross_section_informed_valley_mask", "write_cross_section_informed_valley_mask_raster"},
         {"valley_corridor_width_metres", "valley_corridor_half_width_metres"},
+        {"source_snap_max_radius_pixels", "source_snap_max_search_radius_pixels"},
         {"channel_threshold_contributing_pixels",
          "threshold_contributing_pixels"} });
+    pp.set_deprecated_numeric_aliases({
+        {"cross_section_curvature_window_metres",
+         {"cross_section_curvature_radius_metres", 0.5, 0.0, true}} });
 
     {
         std::map<std::string, std::string> ignored;
@@ -661,7 +668,7 @@ int main(int argc, char* argv[])
         scope_req.outlet_flats = load_role_flats("outlet");
         scope_req.snap_sources = bf["snap_sources_to_channel_threshold"];
         scope_req.source_snap_max_radius_pixels =
-            ifs["source_snap_max_radius_pixels"];
+            ifs["source_snap_max_search_radius_pixels"];
         scope_req.outlet_snap_max_distance_metres =
             static_cast<double>(ff["outlet_snap_max_distance_metres"]);
         scope_req.auto_detect_roles =
@@ -1209,8 +1216,9 @@ int main(int argc, char* argv[])
         {
             try
             {
-                const double lambda = static_cast<double>(
-                    ff["cross_section_curvature_window_metres"]);
+                // direct_polyfit takes the full physical window diameter.
+                const double lambda = 2.0 * static_cast<double>(
+                    ff["cross_section_curvature_radius_metres"]);
                 lsdtt::poly_fit_coeffs fit =
                     lsdtt::direct_polyfit(dem, lambda, ifs["n_threads"]);
                 lsdtt::polyfit_metric_request mreq;
@@ -1545,7 +1553,7 @@ int main(int argc, char* argv[])
         }
 
         // (f) Cross-section-informed valley mask from the hydraulic breaks.
-        if (bf["write_cross_section_informed_valley_mask"] && do_features)
+        if (bf["write_cross_section_informed_valley_mask_raster"] && do_features)
         {
             lsdtt::cross_section_informed_valley_result cim =
                 lsdtt::cross_section_informed_valley_mask(dem, vres, xres);

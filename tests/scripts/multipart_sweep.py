@@ -124,7 +124,7 @@ def case_stream_burning(build, work):
             f"read_path: ./\nread_fname: dem.tif\nwrite_path: ./\n"
             f"write_fname: sb_{k}\nwrite_output_format: gtiff\n"
             f"stream_vector_path: line_{k}.fgb\nstream_burn_mode: burn_in_place\n"
-            f"do_stream_burn: true\n", f"sb_{k}")
+            f"run_stream_burn: true\n", f"sb_{k}")
         # `_vector_edges.fgb` is the WRONG probe: it is produced by
         # lsdtt_vector_to_junction_network, which has handled MultiLineString
         # since before this work (plan section 2.2), so it passes either way and
@@ -148,7 +148,7 @@ def case_channel_extraction(build, work):
             f"source_extraction_algorithm_choice: threshold\n"
             f"threshold_contributing_pixels: 60\n"
             f"write_channel_network_points: true\n"
-            f"channel_network_points_output_format: flatgeobuf\n"
+            f"channel_network_points_write_vector_format: flatgeobuf\n"
             f"stream_vector_path: line_{k}.fgb\ncalculate_spatial_index: false\n"
             f"write_burned_stream_profiles: true\n",
             f"ce_{k}")
@@ -173,7 +173,7 @@ def case_raster_preprocessing_points(build, work):
         run(build, work, "lsdtt-raster-preprocessing",
             f"read_path: ./\nread_fname: dem.tif\nwrite_path: ./\n"
             f"write_fname: rp_{k}\npoint_data_fname: pt_{k}.fgb\n"
-            f"sample_rasters_to_points: true\nraster_attribute_csv: rasters.csv\n",
+            f"sample_rasters_to_points: true\nraster_attribute_fname: rasters.csv\n",
             f"rp_{k}")
         got[k] = n_features(work / f"rp_{k}_sampled_points.fgb")
     record("lsdtt-raster-preprocessing (point_data_fname)",

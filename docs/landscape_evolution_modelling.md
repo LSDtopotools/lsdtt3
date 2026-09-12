@@ -408,7 +408,7 @@ One special steady-state feature: `steady_state_mode: relief`. Instead of specif
 
 ## Erosivity conventions: Perron versus Bonetti
 
-A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_area` and the exponent in the landscape Péclet number.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
+A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_specific_area` and the exponent in the landscape Péclet number.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
 
 ### The two conventions
 
@@ -436,8 +436,8 @@ This was used in **Perron et al. (2008, JGR-ES 113:F04016)** and **Perron et al.
 
 **1. Units of the incision threshold**
 
-- **`divide_area_by_dx: true`** → `incision_threshold_area` is a **specific area in metres**. A value of 1,000,000 m means "cells with at least 1 million metres of upstream area per cell width". On a 10 m DEM this is 100,000 pixels; on a 1 m DEM this is 1,000,000 pixels.
-- **`divide_area_by_dx: false`** → `incision_threshold_area` is a **map area in m²**. A value of 1,000,000 m² means 1 km², regardless of cell size.
+- **`divide_area_by_dx: true`** → `incision_threshold_specific_area` is **A/dx in metres**. A value of 1,000,000 m means "cells with at least 1 million metres of upstream area per cell width". On a 10 m DEM this is 100,000 pixels; on a 1 m DEM this is 1,000,000 pixels.
+- **`divide_area_by_dx: false`** → `incision_threshold_specific_area` is a **map area in m²**. A value of 1,000,000 m² means 1 km², regardless of cell size.
 
 **2. The landscape Péclet number**
 
@@ -450,7 +450,7 @@ So a landscape designed with `m = 0.45, n = 1.0` under the Bonetti convention (`
 
 ### Choosing a convention
 
-If you are setting up a new model, **use the default (`divide_area_by_dx: true`, specific area)**, which matches recent literature and is the lsdtt3 convention. If you are reproducing a published study or comparing against code that uses raw area, flip `divide_area_by_dx: false` and adjust your `incision_threshold_area` and any calibrated constants accordingly.
+If you are setting up a new model, **use the default (`divide_area_by_dx: true`, specific area)**, which matches recent literature and is the lsdtt3 convention. If you are reproducing a published study or comparing against code that uses raw area, flip `divide_area_by_dx: false` and adjust your `incision_threshold_specific_area` and any calibrated constants accordingly.
 
 The CLI reference documents the resolved threshold value in the run header so you can double-check what was actually compared.
 
@@ -462,7 +462,7 @@ One of the most important design choices in landscape evolution modelling is whe
 
 **Say which one you mean.** `hillslope_channel_coupling` takes `auto`, `coupled` or
 `channels_as_boundaries`. Historically the choice was an unreported side effect of
-`incision_threshold_area`, and a run could not be interpreted afterwards without
+`incision_threshold_specific_area`, and a run could not be interpreted afterwards without
 re-reading its parameter file. `auto` is the default and reproduces that inference
 exactly — a positive threshold means channels are boundaries — but it now *reports*
 what it resolved to, and the explicit values override the threshold rather than
@@ -474,9 +474,9 @@ contradict themselves are refused rather than silently resolved: asking for
 or with `run_steady_state`; and asking for `channels_as_boundaries` with no channel
 set at all.
 
-### Imposed drainage density (`incision_threshold_area > 0`)
+### Imposed drainage density (`incision_threshold_specific_area > 0`)
 
-When you set `incision_threshold_area > 0`, the code identifies channels as any cell with drainage area exceeding this threshold. Channels become **Dirichlet boundary conditions** for the hillslope equation — they have fixed elevation during the hillslope solve and act as sediment sinks. The drainage density is an **input**, not an output: you choose the network spacing by picking the threshold.
+When you set `incision_threshold_specific_area > 0`, the code identifies channels as any cell meeting the resolved A/dx or map-area threshold. Channels become **Dirichlet boundary conditions** for the hillslope equation — they have fixed elevation during the hillslope solve and act as sediment sinks. The drainage density is an **input**, not an output: you choose the network spacing by picking the threshold.
 
 Mind the units when picking a value — they depend on `divide_area_by_dx` (see
 above). On a 10 m grid, a 10 km² network is `10 000 000` in map area, or
@@ -487,9 +487,9 @@ This is the approach of the **MUDDPILE model** (from which lsdtt3 was partly des
 
 The channel set is computed once per fluvial solve (D8 routing) and remains fixed during that timestep's hillslope transport. The network is fast and deterministic.
 
-### Emergent drainage density (`incision_threshold_area = 0`)
+### Emergent drainage density (`incision_threshold_specific_area = 0`)
 
-When `incision_threshold_area: 0`, there are no pre-defined channels: **both fluvial and hillslope processes act everywhere**, and the network must **emerge**. Sediment is partitioned between fluvial and diffusive transport based on local slope and area, and the landscape self-organizes into channels where flow concentrates.
+When `incision_threshold_specific_area: 0`, there are no pre-defined channels: **both fluvial and hillslope processes act everywhere**, and the network must **emerge**. Sediment is partitioned between fluvial and diffusive transport based on local slope and area, and the landscape self-organizes into channels where flow concentrates.
 
 This is the approach of the **DonkModel** and is physically more realistic — channel heads are not imposed but arise where hydrology and sediment dynamics favor their development. However, it is **more sensitive to numerics and requires care**:
 
@@ -521,9 +521,9 @@ Here is a decision tree:
    - **Nonlinear hillslopes:** Newton is the default and needs no relaxation factor. (If you force SOR with `hillslope_force_sor`, set `hillslope_sor_omega` to 0.3–0.5 — the auto value is the linear optimum and diverges for the nonlinear operator.)
    - Optional: add snapping (`steady_state_n_cycles > 1`) or the equilibration cycle (`use_landscape_equilibration_cycle: true`) to let drainage divides migrate.
 
-3. **Do you have a field-mapped channel network with imposed drainage?** → Set `incision_threshold_area > 0`. Use D8 routing, with `roering_implicit` for transient runs.
+3. **Do you have a field-mapped channel network with imposed drainage?** → Set `incision_threshold_specific_area > 0`. Use D8 routing, with `roering_implicit` for transient runs.
 
-4. **Do you want the drainage network to emerge from the landscape dynamics?** → Set `incision_threshold_area: 0`, use D-infinity and Cidre (coupled routing). This cannot be combined with `roering_implicit`, but works with `linear`, `roering` and `adi`.
+4. **Do you want the drainage network to emerge from the landscape dynamics?** → Set `incision_threshold_specific_area: 0`, use D-infinity and Cidre (coupled routing). This cannot be combined with `roering_implicit`, but works with `linear`, `roering` and `adi`.
 
 5. **How long is your run?**
    - Short transient (synthetic, < 1 My) with explicit scheme: any solver is fine.

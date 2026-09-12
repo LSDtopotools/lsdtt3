@@ -36,7 +36,7 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 | 1 | Load DEM, check it is projected in metres | — |
 | 2 | Local relief (max − min) in a square window | `relief_window_side_pixels` |
 | 3 | Threshold relief, fixed or adaptive | `relief_threshold_metres`, `adaptive_relief_threshold` |
-| 4 | Optional gradient cap from a fitted polynomial surface | `admission_slope_cap_degrees`, `admission_slope_window_metres` |
+| 4 | Optional gradient cap from a fitted polynomial surface | `admission_slope_cap_degrees`, `admission_slope_window_radius_metres` |
 | 5 | Combine the two tests | `admission_mode` |
 | 6 | Morphological opening / closing | `flat_opening_radius_metres`, `flat_closing_radius_metres`, `open_then_close` |
 | 7 | Optional directional closing of the non-flat mask | `directional_close_line_length_pixels` |
@@ -81,7 +81,7 @@ number it picked.
 |---|---|---|---|
 | `admission_mode` | string | `relief` | Which test admits a pixel: `relief`, `slope`, `relief_and_slope`, `relief_or_slope`. |
 | `admission_slope_cap_degrees` | float | `0` | Gradient (degrees) below which a pixel is admitted. **Required** by every mode that names slope. |
-| `admission_slope_window_metres` | float | `0` | Window diameter (m) of the polynomial fit the gradient is measured over. `0` = match the relief window. |
+| `admission_slope_window_radius_metres` | float | `0` | Window radius (m) of the polynomial fit the gradient is measured over. `0` = match the relief window. |
 | `write_admission_slope_raster` | bool | `false` | Write the gradient raster the cap was applied to. |
 
 **Relief and slope are different tests and reject different ground.** Relief
@@ -92,7 +92,7 @@ point is to find every candidate surface and let `lsdtt-fluvial-surfaces` sort
 them.
 
 The gradient comes from a polynomial surface fitted over
-`admission_slope_window_metres`, not a 3×3 difference: a three-cell operator on a
+`admission_slope_window_radius_metres`, not a 3×3 difference: a three-cell operator on a
 30 m DEM measures pixel noise. There is no default cap worth guessing — about
 5 degrees is a valley floor, 15 degrees admits fan and pediment — so run the
 census at more than one cap and report the sensitivity.
@@ -147,7 +147,7 @@ ask it to.
 | `slope_break_centreline_max_spur_pixels` | int | `10` | Maximum endpoint-rooted spur length pruned from the skeleton. |
 | `slope_break_centreline_max_terminal_loop_pixels` | int | `10` | Maximum endpoint-rooted terminal loop length pruned. |
 | `slope_break_centreline_min_component_pixels` | int | `1` | Minimum component size retained in the skeleton. |
-| `write_slope_break_centreline` | bool | `true` | Write the 1-pixel skeleton. |
+| `write_slope_break_centreline_raster` | bool | `true` | Write the 1-pixel skeleton. |
 
 ### Endpoint bridging — deprecated
 
@@ -166,8 +166,8 @@ deletion one release after the release that first ships them as deprecated.**
 | `slope_break_connect_corridor_half_width_pixels` | float | `12` | Half-width (pixels) of the A\* corridor for contour-routed bridges. |
 | `slope_break_connect_same_component` | bool | `false` | Allow bridging between endpoints on the same skeleton component. |
 | `write_slope_break_endpoints` | bool | `false` | Write skeleton endpoints and their elevations to FlatGeobuf. |
-| `write_slope_break_bridge_mask` | bool | `true` | Write the raster of newly inserted bridge pixels. |
-| `write_slope_break_centreline_connected` | bool | `true` | Write the connected skeleton after accepted bridge routing. |
+| `write_slope_break_bridge_mask_raster` | bool | `true` | Write the raster of newly inserted bridge pixels. |
+| `write_slope_break_centreline_connected_raster` | bool | `true` | Write the connected skeleton after accepted bridge routing. |
 
 ---
 

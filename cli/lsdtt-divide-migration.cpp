@@ -167,8 +167,8 @@ int main(int argc, char* argv[])
         "Routing / DEM", "param", ""};
 
     // --- Outlet and cluster controls ---
-    string_default_map["basin_outlet_file"] = "NULL";
-    help_map["basin_outlet_file"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "Point dataset of outlet locations.",
         "Required. Supports CSV latitude/longitude or point vectors (FGB/GPKG/etc.).",
         "Outlets / clusters", "param", ""};
@@ -199,14 +199,14 @@ int main(int argc, char* argv[])
         "Higher values snap outlets onto larger channels.",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snap radius (pixels).",
         "Used only for basin_outlet_snapping_method=expanding_square.",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snap radius (pixels).",
         "Used only for basin_outlet_snapping_method=expanding_square.",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
@@ -261,8 +261,8 @@ int main(int argc, char* argv[])
         "Output path: <write_fname>_divide_migration_metrics.csv.",
         "Output", "io", ""};
 
-    string_default_map["vector_output_format"] = "flatgeobuf";
-    help_map["vector_output_format"] = {"string","flatgeobuf",
+    string_default_map["write_vector_format"] = "flatgeobuf";
+    help_map["write_vector_format"] = {"string","flatgeobuf",
         "Vector output format.",
         "Options: flatgeobuf/fgb or gpkg.",
         "Output", "io", ""};
@@ -316,7 +316,11 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"source_pixels_threshold", "threshold_contributing_pixels"} });
+        {"basin_outlet_file", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"vector_output_format", "write_vector_format"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -336,10 +340,10 @@ int main(int argc, char* argv[])
         return false;
     };
 
-    if (sf.at("basin_outlet_file").empty() ||
-        sf.at("basin_outlet_file") == "NULL")
+    if (sf.at("basin_outlet_fname").empty() ||
+        sf.at("basin_outlet_fname") == "NULL")
     {
-        std::cerr << "FATAL: basin_outlet_file must be set.\n";
+        std::cerr << "FATAL: basin_outlet_fname must be set.\n";
         return 1;
     }
 
@@ -381,9 +385,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (!valid_choice(sf.at("vector_output_format"), {"flatgeobuf", "fgb", "gpkg"}))
+    if (!valid_choice(sf.at("write_vector_format"), {"flatgeobuf", "fgb", "gpkg"}))
     {
-        std::cerr << "FATAL: vector_output_format must be one of: flatgeobuf, fgb, gpkg.\n";
+        std::cerr << "FATAL: write_vector_format must be one of: flatgeobuf, fgb, gpkg.\n";
         return 1;
     }
 
@@ -406,10 +410,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs.at("basin_outlet_min_search_radius_pixels") < 0 ||
-        ifs.at("basin_outlet_max_search_radius_pixels") < 0 ||
-        ifs.at("basin_outlet_max_search_radius_pixels") <
-            ifs.at("basin_outlet_min_search_radius_pixels"))
+    if (ifs.at("basin_outlet_snap_min_search_radius_pixels") < 0 ||
+        ifs.at("basin_outlet_snap_max_search_radius_pixels") < 0 ||
+        ifs.at("basin_outlet_snap_max_search_radius_pixels") <
+            ifs.at("basin_outlet_snap_min_search_radius_pixels"))
     {
         std::cerr << "FATAL: basin_outlet search radii must satisfy 0 <= min <= max.\n";
         return 1;
@@ -432,7 +436,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    const std::string outlet_path = pp.add_read_path_if_needed(sf.at("basin_outlet_file"));
+    const std::string outlet_path = pp.add_read_path_if_needed(sf.at("basin_outlet_fname"));
 
     std::vector<lsdtt::lsdtt_input_point> requested_outlets;
     std::vector<std::string> cluster_values;
@@ -480,7 +484,7 @@ int main(int argc, char* argv[])
         }
         else
         {
-            std::cerr << "FATAL: could not load basin_outlet_file: "
+            std::cerr << "FATAL: could not load basin_outlet_fname: "
                       << outlet_path << " (" << e.what() << ")\n";
         }
         return 1;
@@ -490,7 +494,7 @@ int main(int argc, char* argv[])
         lsdtt::filter_successfully_mapped_input_points(requested_outlets);
     if (mapped_outlets.size() < 2)
     {
-        std::cerr << "FATAL: basin_outlet_file must provide at least two points that map into the DEM extent.\n";
+        std::cerr << "FATAL: basin_outlet_fname must provide at least two points that map into the DEM extent.\n";
         return 1;
     }
 
@@ -585,8 +589,8 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_square_snap_options sq_opts;
     sq_opts.contributing_pixels_threshold =
         static_cast<std::uint64_t>(ifs.at("basin_outlet_contributing_pixels_threshold"));
-    sq_opts.min_search_radius_pixels = ifs.at("basin_outlet_min_search_radius_pixels");
-    sq_opts.max_search_radius_pixels = ifs.at("basin_outlet_max_search_radius_pixels");
+    sq_opts.min_search_radius_pixels = ifs.at("basin_outlet_snap_min_search_radius_pixels");
+    sq_opts.max_search_radius_pixels = ifs.at("basin_outlet_snap_max_search_radius_pixels");
 
     std::cout << "Outlet snapping method: " << snap_method << "\n";
     for (const auto& pt : mapped_outlets)
@@ -1063,7 +1067,7 @@ int main(int argc, char* argv[])
         try
         {
             const lsdtt::vector_output_format out_fmt =
-                lsdtt::resolve_vector_output_format(sf.at("vector_output_format"));
+                lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
             const std::string ext = lsdtt::output_extension(out_fmt);
             const std::string out_path = lsdtt::lsdtt_data_loader::resolve_writable_path(
                 pp.get_full_write_path() + "_divides", ext);
@@ -1119,7 +1123,7 @@ int main(int argc, char* argv[])
         try
         {
             const lsdtt::vector_output_format out_fmt =
-                lsdtt::resolve_vector_output_format(sf.at("vector_output_format"));
+                lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
             const std::string ext = lsdtt::output_extension(out_fmt);
             const std::string out_path = lsdtt::lsdtt_data_loader::resolve_writable_path(
                 pp.get_full_write_path() + "_channel_heads", ext);

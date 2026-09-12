@@ -3,7 +3,7 @@ read_fname: tiny_dem.asc
 write_path: __WRITE_PATH__
 write_fname: cosmo_bad_scheme
 
-points_filename: cosmo_tiny_points.csv
+sample_points_fname: cosmo_tiny_points.csv
 scaling_scheme: lsd_typo
 threshold_contributing_pixels: 2
-snap_search_radius_pixels: 3
+sample_snap_max_search_radius_pixels: 3

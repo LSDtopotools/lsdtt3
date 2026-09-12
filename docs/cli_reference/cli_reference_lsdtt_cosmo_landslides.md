@@ -199,7 +199,7 @@ WARNING: cell size cannot resolve the small-area rollover.
 | `landslide_mode` | string | `single_event` | `single_event` or `series`. |
 | `event_time_yr` | float | `0` | Trigger time for `single_event`. |
 | `event_volume_m3` | float | `0` | Total volume to remove per event. |
-| `event_volume_per_area_m` | float | `0` | Event volume per unit **active** area (m³/m² = metres of lowering). Used when `event_volume_m3` is 0. |
+| `event_volume_per_area_metres` | float | `0` | Event volume per unit **active** area (m³/m² = metres of lowering). Used when `event_volume_m3` is 0. |
 | `series_start_yr` | float | `0` | Series start. |
 | `series_end_yr` | float | `100000` | Series end. |
 | `mean_recurrence_yr` | float | `1000` | Mean interval between events. |
@@ -273,18 +273,18 @@ is not offered.
 |---|---|---|---|
 | `calculate_crn_concentration` | bool | `false` | Compute the post-landslide surface concentration raster. |
 | `run_sample_point_ensemble` | bool | `false` | Run a multi-realisation sample-point ensemble and write `<write_fname>_LS_SAMPLE_EFFECT.csv`. |
-| `sample_points_csv` | string | `NULL` | Input sample-point CSV for ensemble mode. |
-| `sample_name_column` | string | `sample_name` | Name column in `sample_points_csv`. |
-| `sample_latitude_column` | string | `latitude` | Latitude column in `sample_points_csv` (EPSG:4326 degrees). |
-| `sample_longitude_column` | string | `longitude` | Longitude column in `sample_points_csv` (EPSG:4326 degrees). |
+| `sample_points_fname` | string | `NULL` | Input sample-point CSV for ensemble mode. |
+| `sample_name_column` | string | `sample_name` | Name column in `sample_points_fname`. |
+| `sample_latitude_column` | string | `latitude` | Latitude column in `sample_points_fname` (EPSG:4326 degrees). |
+| `sample_longitude_column` | string | `longitude` | Longitude column in `sample_points_fname` (EPSG:4326 degrees). |
 | `n_realisations` | int | `50` | Number of realisations for ensemble mode. |
 | `ensemble_seed_stride` | int | `7919` | Seed increment between realisations (`random_seed + i*stride`). |
-| `sample_snap_radius_pixels` | int | `25` | Maximum snap radius when mapping sample points to threshold channels. |
+| `sample_snap_max_search_radius_pixels` | int | `25` | Maximum snap radius when mapping sample points to threshold channels. |
 | `nuclide` | string | `Be10` | `Be10`, `Al26` or `C14`. |
 | `muon_scheme` | string | `BraucherBorchers` | Muon production scheme. |
 | `scaling_scheme` | string | `uniform` | Production scaling path for CRN coupling: `uniform`, `stone`, or `lsdn`. `uniform` keeps the legacy scalar path (`production_scaling` and `total_shielding`). `stone`/`lsdn` build a per-pixel `CosmoSite` from the DEM. |
 | `atmosphere` | string | `ERA40` | Atmosphere model for site-based scaling (`stone`/`lsdn`): `ERA40`, `NCEP`, `standard`. |
-| `crn_nc_file` | string | `""` | Path to `crn_parameters.nc` for site-based scaling and atmosphere handling. Empty uses bundled lookup/fallback logic. |
+| `crn_nc_fname` | string | `""` | Path to `crn_parameters.nc` for site-based scaling and atmosphere handling. Empty uses bundled lookup/fallback logic. |
 | `sample_age_yr` | float | `0` | Sample exposure age (yr BP) for time-integrated production correction in site-based scaling. |
 | `background_eff_erate_g_cm2_yr` | float | `0.001` | Background effective erosion rate before and after failure. |
 | `production_scaling` | float | `1.0` | Uniform production scaling factor. Used directly when `scaling_scheme: uniform`. |
@@ -293,7 +293,7 @@ is not offered.
 | `snow_shield_eff_thickness` | float | `0` | Uniform snow shielding as effective depth (g/cm2) for site-based scaling. |
 | `self_shield_eff_thickness` | float | `0` | Uniform self/sample shielding as effective depth (g/cm2) for site-based scaling. |
 | `rock_density_kg_m3` | float | `2650` | Density of the **eroding bedrock column**. |
-| `scar_density_kg_m3` | float | `-1` | Density of the material a landslide **excavates**. Negative takes it from `area_volume_preset`. |
+| `scar_density_kg_m3` | float | `-1` | Density of the material a landslide **excavates**. The negative sentinel deliberately inherits the active `area_volume_preset`; prediction from an already-generated excavation raster instead defaults explicitly to 1500 kg/m3. |
 | `crn_report_time_yr` | float | `0` | Time at which concentrations are reported, on the same clock as event times. |
 
 `cronusEmulatorSt` and `cronusEmulatorLSDn` are intentionally rejected in this
@@ -365,7 +365,7 @@ Two conventions to match across the two tools:
 |---|---|---|---|
 | `write_excavation_depth_raster` | bool | `true` | `<write_fname>_LS_EXCAVATION.tif` — cumulative depth removed (m). |
 | `write_time_of_failure_raster` | bool | `true` | `<write_fname>_LS_TFAIL.tif` — time each pixel last failed. |
-| `write_post_landslide_dem` | bool | `false` | `<write_fname>_LS_DEM.tif` — the DEM after excavation. |
+| `write_post_landslide_dem_raster` | bool | `false` | `<write_fname>_LS_DEM.tif` — the DEM after excavation. |
 | `write_landslide_csv` | bool | `true` | `<write_fname>_LS_INVENTORY.csv` — one row per landslide. |
 | `run_sample_point_ensemble` | bool | `false` | `<write_fname>_LS_SAMPLE_EFFECT.csv` — per-sample control vs landslide apparent-rate ensemble statistics. |
 

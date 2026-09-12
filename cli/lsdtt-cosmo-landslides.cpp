@@ -286,8 +286,8 @@ int main(int argc, char* argv[])
         "Total volume to remove in one event (m3).","",
         "Triggering","param",""};
 
-    float_default_map["event_volume_per_area_m"] = 0.0f;
-    help_map["event_volume_per_area_m"] = {"float","0",
+    float_default_map["event_volume_per_area_metres"] = 0.0f;
+    help_map["event_volume_per_area_metres"] = {"float","0",
         "Event volume per unit ACTIVE area (m3/m2, i.e. metres of lowering).",
         "Used when event_volume_m3 is 0. Active area is the ground that can host "
         "a landslide, not the whole raster.",
@@ -360,8 +360,8 @@ int main(int argc, char* argv[])
         "Filename: <write_fname>_LS_TFAIL.tif",
         "Output","switch",""};
 
-    bool_default_map["write_post_landslide_dem"] = false;
-    help_map["write_post_landslide_dem"] = {"bool","false",
+    bool_default_map["write_post_landslide_dem_raster"] = false;
+    help_map["write_post_landslide_dem_raster"] = {"bool","false",
         "Write the DEM after excavation.",
         "Filename: <write_fname>_LS_DEM.tif",
         "Output","switch",""};
@@ -384,26 +384,26 @@ int main(int argc, char* argv[])
         "<write_fname>_LS_SAMPLE_EFFECT.csv",
         "Cosmogenics","switch",""};
 
-    string_default_map["sample_points_csv"] = "NULL";
-    help_map["sample_points_csv"] = {"string","NULL",
+    string_default_map["sample_points_fname"] = "NULL";
+    help_map["sample_points_fname"] = {"string","NULL",
         "CSV of sample points used by run_sample_point_ensemble.",
         "Must contain latitude/longitude columns (defaults: latitude, longitude).",
         "Cosmogenics","io",""};
 
     string_default_map["sample_name_column"] = "sample_name";
     help_map["sample_name_column"] = {"string","sample_name",
-        "Sample-name column in sample_points_csv.",
+        "Sample-name column in sample_points_fname.",
         "If missing or empty, names default to sample_1, sample_2, ...",
         "Cosmogenics","param",""};
 
     string_default_map["sample_latitude_column"] = "latitude";
     help_map["sample_latitude_column"] = {"string","latitude",
-        "Latitude column name in sample_points_csv (EPSG:4326 degrees).","",
+        "Latitude column name in sample_points_fname (EPSG:4326 degrees).","",
         "Cosmogenics","param",""};
 
     string_default_map["sample_longitude_column"] = "longitude";
     help_map["sample_longitude_column"] = {"string","longitude",
-        "Longitude column name in sample_points_csv (EPSG:4326 degrees).","",
+        "Longitude column name in sample_points_fname (EPSG:4326 degrees).","",
         "Cosmogenics","param",""};
 
     int_default_map["n_realisations"] = 50;
@@ -417,8 +417,8 @@ int main(int argc, char* argv[])
         "Realisation i uses random_seed + i*ensemble_seed_stride.",
         "Cosmogenics","param",""};
 
-    int_default_map["sample_snap_radius_pixels"] = 25;
-    help_map["sample_snap_radius_pixels"] = {"int","25",
+    int_default_map["sample_snap_max_search_radius_pixels"] = 25;
+    help_map["sample_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum snap radius (pixels) for sample points to threshold channel.",
         "Used by expanding-square snapping in run_sample_point_ensemble.",
         "Cosmogenics","param",""};
@@ -455,8 +455,8 @@ int main(int argc, char* argv[])
         "Used only when scaling_scheme is stone or lsdn.",
         "Cosmogenics","param",""};
 
-    string_default_map["crn_nc_file"] = "";
-    help_map["crn_nc_file"] = {"string","",
+    string_default_map["crn_nc_fname"] = "";
+    help_map["crn_nc_fname"] = {"string","",
         "Path to crn_parameters.nc for site-based production and atmosphere.",
         "Used only when scaling_scheme is stone or lsdn. Empty = bundled nc beside "
         "the executable if found, otherwise standard atmosphere fallback.",
@@ -559,6 +559,12 @@ int main(int argc, char* argv[])
     catch (const std::exception& e)
     { std::cerr << "Error loading parameter file: " << e.what() << "\n"; return 1; }
 
+    pp.set_deprecated_aliases({
+        {"write_post_landslide_dem", "write_post_landslide_dem_raster"},
+        {"crn_nc_file", "crn_nc_fname"},
+        {"sample_snap_radius_pixels", "sample_snap_max_search_radius_pixels"},
+        {"sample_points_csv", "sample_points_fname"},
+        {"event_volume_per_area_m", "event_volume_per_area_metres"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
     auto bf  = pp.get_bool_parameters();
@@ -583,9 +589,9 @@ int main(int argc, char* argv[])
 
     if (bf["run_sample_point_ensemble"])
     {
-        if (sf["sample_points_csv"] == "NULL")
+        if (sf["sample_points_fname"] == "NULL")
         {
-            std::cerr << "FATAL: run_sample_point_ensemble requires sample_points_csv.\n";
+            std::cerr << "FATAL: run_sample_point_ensemble requires sample_points_fname.\n";
             return 1;
         }
         if (sf["landslide_mode"] != "series")
@@ -854,7 +860,7 @@ int main(int argc, char* argv[])
         lsdtt::LandslideEventConfig ecfg;
         ecfg.event_time_yr            = ff["event_time_yr"];
         ecfg.target_volume_m3         = ff["event_volume_m3"];
-        ecfg.volume_per_area_m3_per_m2 = ff["event_volume_per_area_m"];
+        ecfg.volume_per_area_m3_per_m2 = ff["event_volume_per_area_metres"];
         ecfg.anneal_time_yr           = ff["anneal_time_yr"];
         ecfg.budget_tol               = ff["budget_tolerance"];
         ecfg.budget_max_iter          = ifs["budget_max_iterations"];
@@ -864,7 +870,7 @@ int main(int argc, char* argv[])
             !(ecfg.volume_per_area_m3_per_m2 > 0.0))
         {
             std::cerr << "FATAL: single_event mode needs event_volume_m3 or "
-                         "event_volume_per_area_m.\n";
+                         "event_volume_per_area_metres.\n";
             return 1;
         }
 
@@ -915,7 +921,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "\nRunning sample-point ensemble...\n";
 
-        const std::string pts_path = pp.add_read_path_if_needed(sf["sample_points_csv"]);
+        const std::string pts_path = pp.add_read_path_if_needed(sf["sample_points_fname"]);
         std::vector<sample_point_row> sample_rows;
         lsdtt::lsdtt_point_input_options popts;
         popts.csv_latitude_field_name = sf["sample_latitude_column"];
@@ -935,7 +941,7 @@ int main(int argc, char* argv[])
                     lsdtt::lsdtt_point_input_status::coordinate_transform_failed)
                 {
                     throw std::runtime_error(
-                        "sample_points_csv has unusable lat/lon at row " +
+                        "sample_points_fname has unusable lat/lon at row " +
                         std::to_string(point.point_id + 1));
                 }
 
@@ -962,7 +968,7 @@ int main(int argc, char* argv[])
         }
         lsdtt::lsdtt_square_snap_options snap_opts;
         snap_opts.contributing_pixels_threshold = static_cast<std::uint64_t>(chan_thresh);
-        snap_opts.max_search_radius_pixels = ifs["sample_snap_radius_pixels"];
+        snap_opts.max_search_radius_pixels = ifs["sample_snap_max_search_radius_pixels"];
         snap_opts.min_search_radius_pixels = 0;
 
         std::vector<std::string> snap_status(sample_rows.size(), "failed_no_channel");
@@ -1046,7 +1052,7 @@ int main(int argc, char* argv[])
             site_cfg.muon_scheme    = sf["muon_scheme"];
             site_cfg.scaling_scheme = scaling_scheme;
             site_cfg.atmosphere     = sf["atmosphere"];
-            site_cfg.crn_nc_file    = sf["crn_nc_file"];
+            site_cfg.crn_nc_file    = sf["crn_nc_fname"];
             site_cfg.sample_age_yr  = static_cast<double>(ff["sample_age_yr"]);
             site_cfg.topo_shield_value         = static_cast<double>(ff["topo_shield_value"]);
             site_cfg.snow_shield_eff_thickness = static_cast<double>(ff["snow_shield_eff_thickness"]);
@@ -1337,7 +1343,7 @@ int main(int argc, char* argv[])
         loader.write_full(tfail.get_data(), tfail.get_meta(), path, out_fmt);
         std::cout << "Wrote " << path << "\n";
     }
-    if (bf["write_post_landslide_dem"])
+    if (bf["write_post_landslide_dem_raster"])
     {
         const std::string path = base + "_LS_DEM.tif";
         loader.write_full(work.get_data(), work.get_meta(), path, out_fmt);
@@ -1451,7 +1457,7 @@ int main(int argc, char* argv[])
             site_cfg.muon_scheme    = sf["muon_scheme"];
             site_cfg.scaling_scheme = scaling_scheme;
             site_cfg.atmosphere     = sf["atmosphere"];
-            site_cfg.crn_nc_file    = sf["crn_nc_file"];
+            site_cfg.crn_nc_file    = sf["crn_nc_fname"];
             site_cfg.sample_age_yr  = static_cast<double>(ff["sample_age_yr"]);
 
             double topo_shield = static_cast<double>(ff["topo_shield_value"]);

@@ -32,7 +32,7 @@ Steps are gated by booleans and run in this order:
 | 1. Pit filling | `raster_is_filled: false` |
 | 2. D8 flow routing | always |
 | 3. Source extraction | `threshold_contributing_pixels` |
-| 4. Chi extraction + data map | `print_chi_data_maps: true` |
+| 4. Chi extraction + data map | `write_chi_data_maps: true` |
 | 5. Chi coordinate raster | `write_chi_coordinate_raster: true` |
 | 6. Chi network fitting + disorder sweep | `fit_chi_networks: true` |
 | 7. Disorder uncertainty | `run_subset_sensitivity`, `run_jackknife`, `run_bootstrap` |
@@ -72,15 +72,15 @@ Steps are gated by booleans and run in this order:
 
 ## Basin outlet input
 
-If `basin_outlet_file` is `NULL` the largest basin in the DEM is used automatically.
+If `basin_outlet_fname` is `NULL` the largest basin in the DEM is used automatically.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `basin_outlet_file` | string | `NULL` | CSV, FlatGeobuf, or GeoPackage of outlet points. CSV must have `latitude` and `longitude` columns (EPSG:4326). |
+| `basin_outlet_fname` | string | `NULL` | CSV, FlatGeobuf, or GeoPackage of outlet points. CSV must have `latitude` and `longitude` columns (EPSG:4326). |
 | `basin_outlet_snapping_method` | string | `downstream` | `none`, `expanding_square`, or `downstream`. |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing-pixel count required at the snapped outlet. |
-| `basin_outlet_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` (pixels). |
-| `basin_outlet_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` (pixels). |
+| `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` (pixels). |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` (pixels). |
 
 ---
 
@@ -89,7 +89,7 @@ If `basin_outlet_file` is `NULL` the largest basin in the DEM is used automatica
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `threshold_contributing_pixels` | int | `1000` | Contributing-pixel count used to define channel heads. Chi is computed only on pixels upstream of channel heads. |
-| `minimum_channel_pixels` | int | `20` | Reject basins whose extracted channel has fewer than this many nodes. `0` or `1` keeps all basins. |
+| `min_channel_pixels` | int | `20` | Reject basins whose extracted channel has fewer than this many nodes. `0` or `1` keeps all basins. |
 | `n_pixels_move_outlet_upstream` | int | `10` | Move interior (non-edge) auto-detected outlets this many pixels upstream so the basin clears a coastal nodata fringe. `0` disables. |
 | `n_largest_basins` | int | `5` | Keep only the N largest complete basins, ranked by basin pixels. `0` = no size cap. |
 
@@ -101,10 +101,10 @@ Runs before `fit_chi_networks`. Use to verify basin and network geometry before 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `print_chi_data_maps` | bool | `false` | Extract chi networks and write per-node data maps. Outputs: nodes (chi, drainage_area, flow_distance, elevation, source_key, basin_key), valid basin outlets, source heads, and basin polygons. |
-| `chi_data_maps_output_format` | string | `csv` | Output format for chi data map **point** files. `csv`: latitude/longitude in EPSG:4326. `gpkg`: GeoPackage. `flatgeobuf` / `fgb`: FlatGeobuf. Basin polygons are always vector (FlatGeobuf fallback when `csv` is requested). |
+| `write_chi_data_maps` | bool | `false` | Extract chi networks and write per-node data maps. Outputs: nodes (chi, drainage_area, flow_distance, elevation, source_key, basin_key), valid basin outlets, source heads, and basin polygons. |
+| `chi_data_maps_write_vector_format` | string | `csv` | Override for chi data map **point** files. `csv`: latitude/longitude in EPSG:4326. `gpkg`: GeoPackage. `flatgeobuf` / `fgb`: FlatGeobuf. Basin polygons are always vector (FlatGeobuf fallback when `csv` is requested). |
 | `write_chi_data_map_lines` | bool | `false` | Write chi channels as polylines (one feature per `source_key`). Attributes: `source_key`, `basin_key`. |
-| `chi_data_map_lines_output_format` | string | `flatgeobuf` | Output format for chi channel polylines. `flatgeobuf` / `fgb` or `gpkg`. CSV not supported for lines. |
+| `write_vector_format` | string | `flatgeobuf` | Output format for chi channel and fitted-segment polylines. `flatgeobuf` / `fgb` or `gpkg`. CSV not supported for lines. |
 
 ---
 
@@ -122,7 +122,7 @@ Behaviour:
 
 - Chi is integrated upstream from each retained basin outlet with chi = 0 at the outlet.
 - Basins are selected exactly as for the other chi outputs: `threshold_contributing_pixels`,
-  then `minimum_channel_pixels`, then `n_largest_basins`. The completeness filter
+  then `min_channel_pixels`, then `n_largest_basins`. The completeness filter
   **always** runs here, so a basin whose upslope area touches nodata or the DEM edge
   is never written even when `n_largest_basins: 0`.
 - Every pixel outside the retained basins is nodata.
@@ -143,7 +143,7 @@ Behaviour:
 | `mn_min` | float | `0.3` | Minimum m/n ratio for the disorder sweep. |
 | `mn_max` | float | `0.6` | Maximum m/n ratio for the disorder sweep. |
 | `mn_step` | float | `0.02` | Step size for the m/n disorder sweep. Must be > 0. |
-| `fit_critical_divergence_m` | float | `5.0` | Critical elevation divergence (m) used to split chi-elevation branches. |
+| `fit_critical_divergence_metres` | float | `5.0` | Critical elevation divergence (m) used to split chi-elevation branches. |
 
 ---
 
@@ -186,9 +186,8 @@ Requires Eigen3. Performs Tikhonov-regularised spatial inversion of channel stee
 |---|---|---|---|
 | `write_fit_tables` | bool | `true` | Write chi network fit node and segment tables to CSV. |
 | `write_chi_fit_segment_lines` | bool | `false` | Write fitted chi segments as polylines. One feature per piecewise-linear segment. Attributes: `basin_index`, `outlet_flat`, `segment_id`, `branch_id`, `k_sn`, `downstream_chi`, `upstream_chi`, `downstream_elevation`, `upstream_elevation`, `n_nodes`. Written once per m/n value. |
-| `chi_fit_segment_lines_output_format` | string | `flatgeobuf` | Output format for fitted chi segment polylines. `flatgeobuf` / `fgb` or `gpkg`. CSV not supported. |
 | `write_disorder_sample_tables` | bool | `false` | Write detailed disorder sample tables for each m/n value. |
-| `calculate_spatial_index` | bool | `false` | Calculate a spatial index for vector outputs. Requires buffering all features in memory; disable for large datasets. |
+| `calculate_spatial_index` | bool | `false` | Calculate a spatial index for vector outputs. Unlike smaller vector-export CLIs, chi analysis leaves this off because its per-m/n layers can be large; enabling it speeds GIS queries but buffers each layer in memory. |
 
 ---
 
@@ -202,8 +201,8 @@ read_fname: catchment.tif
 raster_is_filled:           false
 threshold_contributing_pixels: 1000
 
-print_chi_data_maps:        true
-chi_data_maps_output_format: flatgeobuf
+write_chi_data_maps:        true
+chi_data_maps_write_vector_format: flatgeobuf
 write_chi_data_map_lines:   true
 m_over_n:                   0.45
 ```
@@ -214,7 +213,7 @@ read_path:  /data/dems/
 read_fname: catchment.tif
 
 threshold_contributing_pixels: 1000
-basin_outlet_file:          outlets.csv
+basin_outlet_fname:         outlets.csv
 
 fit_chi_networks:   true
 chi_A0:             1.0

@@ -46,7 +46,7 @@ Steps run in this order:
 | `read_fname` | string | parameter file stem | Input DEM filename (with or without extension). Any GDAL-supported format. |
 | `write_path` | string | same as `read_path` | Directory for output files. |
 | `write_fname` | string | same as `read_fname` | Output filename stem. |
-| `basin_outlet_csv` | string | _(empty)_ | Path to CSV file with basin outlets. Required columns: `latitude`, `longitude`. Optional: `gauge_id`, `gauge_name`. |
+| `basin_outlet_fname` | string | _(empty)_ | Path to CSV file with basin outlets. Required columns: `latitude`, `longitude`. Optional: `gauge_id`, `gauge_name`. |
 
 ---
 
@@ -107,7 +107,7 @@ Output file: `<write_fname>_basin_stats.csv`
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_basin_polygons` | bool | `false` | Write basin outlines as polygon features. |
-| `basin_polygon_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb` (preferred), `gpkg`. |
+| `write_vector_format` | string | `flatgeobuf` | Basin polygon format: `flatgeobuf` / `fgb` (preferred), `gpkg`. |
 
 Output file: `<write_fname>_basin_polygons.<ext>`
 

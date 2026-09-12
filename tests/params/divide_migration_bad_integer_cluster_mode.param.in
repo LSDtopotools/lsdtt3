@@ -3,7 +3,7 @@ read_fname: tiny30_dem.tif
 write_path: __WRITE_PATH__
 write_fname: tiny_divide_bad_cluster_mode
 
-basin_outlet_file: divide_migration_outlets_clusters.csv
+basin_outlet_fname: divide_migration_outlets_clusters.csv
 outlet_cluster_field: cluster_id
 outlet_cluster_mode: integer
 

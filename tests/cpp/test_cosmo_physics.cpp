@@ -3813,7 +3813,7 @@ void phase1_sentinel(const single_basin_fixture& fx,
 // executable (src/core/lsdtt_exe_path.hpp -> default_crn_nc_path()).  The test
 // binary lives in build/tests/, so the build-tree layout <exe>/../share/lsdtt3
 // resolves to build/share/lsdtt3/crn_parameters.nc.  This guards the discovery
-// path the CLIs rely on when the user gives no crn_nc_file.
+// path the CLIs rely on when the user gives no crn_nc_fname.
 lsdtt::CrnNcData phase4_auto_discovery()
 {
     const std::string nc_path = lsdtt::default_crn_nc_path();

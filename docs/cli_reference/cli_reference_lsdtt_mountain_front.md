@@ -102,8 +102,8 @@ The `_relief_cdf.csv` file is always written when `adaptive_relief_threshold` is
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_mountain_front_outlets` | bool | `false` | Compute and write mountain front outlet points. Mountain mask edge pixels whose upstream contributing area meets `min_contributing_pixels` are identified as outlets. Upstream duplicates (outlets that have another outlet downstream on the same flow path) are pruned. |
-| `min_contributing_pixels` | int | `1000` | Minimum upstream contributing pixels for a mountain edge pixel to qualify as an outlet. |
+| `write_mountain_front_outlets` | bool | `false` | Compute and write mountain front outlet points. Mountain mask edge pixels whose upstream contributing area meets `basin_minimum_contributing_pixels` are identified as outlets. Upstream duplicates (outlets that have another outlet downstream on the same flow path) are pruned. |
+| `basin_minimum_contributing_pixels` | int | `1000` | Minimum upstream contributing pixels for a mountain edge pixel to qualify as an outlet. The former `min_contributing_pixels` spelling is an unchanged-value alias. |
 | `contributing_pixels_fname` | string | _(empty)_ | Filename of a pre-computed `n_contributing_pixels` raster. If empty, the CLI fills pits and builds D8 flow routing from the DEM automatically. Providing a pre-computed raster skips the fill and routing steps. |
 
 ---
@@ -151,5 +151,5 @@ infill_valley_radius_metres:  250
 write_mountain_mask_raster:       true
 write_relief_raster:              true
 write_mountain_front_outlets:     true
-min_contributing_pixels:          1000
+basin_minimum_contributing_pixels: 1000
 ```

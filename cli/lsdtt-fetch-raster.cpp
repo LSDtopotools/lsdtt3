@@ -409,14 +409,14 @@ int main(int argc, char* argv[])
         "Higher values snap outlets onto better-defined channels.",
         "Bounding box", "param", ""};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping radius in pixels.",
         "Used when basin_outlet_snapping_method=expanding_square.",
         "Bounding box", "param", ""};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping radius in pixels.",
         "Used when basin_outlet_snapping_method=expanding_square.",
         "Bounding box", "param", ""};
@@ -545,7 +545,9 @@ int main(int argc, char* argv[])
     string_default_map["resampling_method"] = "cubic";
     help_map["resampling_method"] = {"string","cubic",
         "GDAL resampling method used when reprojecting.",
-        "Allowed values follow GDAL warp methods: near, bilinear, cubic, "
+        "Cubic is the default because fetched DEM elevations are continuous; it "
+        "is not a categorical-raster default. Allowed values follow GDAL warp "
+        "methods: near, bilinear, cubic, "
         "cubicspline, lanczos, average, mode, max, min, med, q1, q3.",
         "Output grid", "param", ""};
 
@@ -626,6 +628,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"basin_outlet_min_search_radius_pixels",
+         "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels",
+         "basin_outlet_snap_max_search_radius_pixels"} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -761,16 +768,16 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: basin_outlet_contributing_pixels_threshold must be > 0.\n";
         return 1;
     }
-    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    if (ifs["basin_outlet_snap_min_search_radius_pixels"] < 0)
     {
-        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels must be >= 0.\n";
+        std::cerr << "FATAL: basin_outlet_snap_min_search_radius_pixels must be >= 0.\n";
         return 1;
     }
-    if (ifs["basin_outlet_max_search_radius_pixels"] <
-        ifs["basin_outlet_min_search_radius_pixels"])
+    if (ifs["basin_outlet_snap_max_search_radius_pixels"] <
+        ifs["basin_outlet_snap_min_search_radius_pixels"])
     {
-        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
-                  << "basin_outlet_min_search_radius_pixels.\n";
+        std::cerr << "FATAL: basin_outlet_snap_max_search_radius_pixels must be >= "
+                  << "basin_outlet_snap_min_search_radius_pixels.\n";
         return 1;
     }
     if (ifs["tight_basin_bbox_buffer_pixels"] < 0)
@@ -1421,9 +1428,9 @@ int main(int argc, char* argv[])
         square_snap_options.contributing_pixels_threshold =
             static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
         square_snap_options.min_search_radius_pixels =
-            ifs["basin_outlet_min_search_radius_pixels"];
+            ifs["basin_outlet_snap_min_search_radius_pixels"];
         square_snap_options.max_search_radius_pixels =
-            ifs["basin_outlet_max_search_radius_pixels"];
+            ifs["basin_outlet_snap_max_search_radius_pixels"];
 
         lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
         downstream_snap_options.contributing_pixels_threshold =
@@ -1712,9 +1719,9 @@ int main(int argc, char* argv[])
                 square_snap_options.contributing_pixels_threshold =
                     static_cast<std::uint64_t>(ifs["basin_outlet_contributing_pixels_threshold"]);
                 square_snap_options.min_search_radius_pixels =
-                    ifs["basin_outlet_min_search_radius_pixels"];
+                    ifs["basin_outlet_snap_min_search_radius_pixels"];
                 square_snap_options.max_search_radius_pixels =
-                    ifs["basin_outlet_max_search_radius_pixels"];
+                    ifs["basin_outlet_snap_max_search_radius_pixels"];
 
                 lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
                 downstream_snap_options.contributing_pixels_threshold =

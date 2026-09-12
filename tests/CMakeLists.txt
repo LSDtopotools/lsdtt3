@@ -108,6 +108,43 @@ set_tests_properties(smoke_synthetic_networks_help PROPERTIES
     LABELS "smoke;cli;synthetic_networks"
     PASS_REGULAR_EXPRESSION "energy_exponent_gamma")
 
+add_lsdtt_cli_smoke_test(
+    smoke_synthetic_networks_phase5_defaults
+    lsdtt-synthetic-networks
+    synthetic_networks_phase5_defaults.param.in
+    ocndefaults5_ocn_dem.tif
+    --expect ocndefaults5_ocn_summary.csv
+    --expect-raster-size ocndefaults5_ocn_dem.tif:128x128
+    --expect-file-contains "ocndefaults5_ocn_summary.csv:128,128,1,0.5,1,1,1,0,33,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_synthetic_networks_phase5_legacy
+    lsdtt-synthetic-networks
+    synthetic_networks_phase5_legacy.param.in
+    ocnlegacy5_ocn_dem.tif
+    --expect ocnlegacy5_ocn_summary.csv
+    --expect-raster-size ocnlegacy5_ocn_dem.tif:8x8
+    --expect-file-contains "ocnlegacy5_ocn_summary.csv:8,8,99,"
+    --expect-file-contains "ocnlegacy5_ingested_params.param:cell_size_metres: 99"
+    --expect-file-contains "ocnlegacy5_ingested_params.param:coastline_blur_passes: 2"
+    --expect-file-contains "ocnlegacy5_ingested_params.param:incision_threshold_area_m2: 20"
+    --expect-file-contains "ocnlegacy5_ingested_params.param:polygon_fname: unused_legacy_polygon.geojson"
+    --expect-file-contains "ocnlegacy5_ingested_params.param:steady_state_tolerance_dz_metres: 0.02"
+    --stderr-contains "'cell_size' is deprecated"
+    --stderr-contains "'noise_blur_passes' is deprecated"
+    --stderr-contains "'incision_threshold_area' is deprecated"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_synthetic_networks_phase5_alias_conflict
+    lsdtt-synthetic-networks
+    synthetic_networks_phase5_alias_conflict.param.in
+    ocnconflict5_ocn_dem.tif
+    --expect-file-contains "ocnconflict5_ocn_summary.csv:8,8,10,"
+    --stderr-contains "'cell_size_metres' was also supplied"
+)
+
 # noise_island + outlet_mode auto. The valid percent is the assertion that the
 # MASK actually reached the raster: 890 land pixels of 1600 = 55.62 %. A run
 # that silently ignored domain_type would come back 100 % valid.
@@ -138,9 +175,10 @@ add_test(
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_synthetic_networks_polygon_area"
         --expect ocnpoly_ocn_dem.tif
         --expect ocnpoly_ocn_drainage_cells.tif
-        --expect-raster-size ocnpoly_ocn_dem.tif:14x14
-        --stdout-contains "Polygon true-area grid: 14 x 14 @ 250 m"
-        --stdout-contains "Domain: polygon - 144 land pixels of 196"
+    --expect-raster-size ocnpoly_ocn_dem.tif:14x14
+    --stdout-contains "Polygon true-area grid: 14 x 14 @ 250 m"
+    --stdout-contains "Domain: polygon - 144 land pixels of 196"
+    --stderr-contains "'polygon_file' is deprecated"
 )
 set_tests_properties(smoke_synthetic_networks_polygon_area PROPERTIES
     LABELS "smoke;cli;synthetic_networks"
@@ -304,7 +342,7 @@ add_lsdtt_cli_smoke_test(
     synthetic_networks_polygon_no_file.param.in
     ocnpolynofile_ocn_dem.tif
     --expect-failure
-    --stderr-contains "FATAL: domain_type=polygon requires polygon_file."
+    --stderr-contains "FATAL: domain_type=polygon requires polygon_fname."
 )
 
 add_lsdtt_cli_smoke_test(
@@ -341,7 +379,7 @@ add_lsdtt_cli_smoke_test(
     tiny_fill.tif
 )
 
-# replace_pixels_from_csv: sets listed cells to new values, and a value equal to
+# The legacy replace_pixels_from_csv fixture sets listed cells to new values, and a value equal to
 # the raster nodata must also clear the validity mask rather than merely writing
 # the number. The fixture covers all three outcomes -- a real replacement, a
 # blank-to-nodata, and a point off the grid, which must warn and be skipped
@@ -353,6 +391,7 @@ add_lsdtt_cli_smoke_test(
     tiny_replaced_pixels_replaced.tif
     --stdout-contains "Replaced 1 pixel(s)\; blanked 1 to nodata."
     --stderr-contains "1 listed pixel(s) fall outside the raster"
+    --stderr-contains "'replace_pixels_from_csv' is deprecated"
 )
 
 add_lsdtt_cli_smoke_test(
@@ -576,7 +615,9 @@ add_test(NAME rigorous_basin_surface_metrics_legacy_threshold
         --expect bsm_legacy_outline_curvature_flips.csv
         --expect-sha256 bsm_legacy_outline_curvature_flips.csv:f2f2537d2cb61a60da2fc2d4a1c862645424298d475ffcd1d4abf74010894181
         --stderr-contains "'source_pixels_threshold' is deprecated"
-        --stderr-contains "use 'threshold_contributing_pixels'")
+        --stderr-contains "use 'threshold_contributing_pixels'"
+        --stderr-contains "'basin_outlet_csv' is deprecated"
+        --stderr-contains "use 'basin_outlet_fname'")
 set_tests_properties(rigorous_basin_surface_metrics_legacy_threshold PROPERTIES
     LABELS "rigorous;cli;basin_surface_metrics;compatibility"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -655,6 +696,8 @@ add_test(NAME smoke_chi_analysis_outlet_file
         --expect-file-contains "../stdout.log:Using explicit m_over_n list with 1 value(s): 0.45"
         # ... and the per-outlet skip path within it.
         --expect-file-contains "../stderr.log:could not be snapped downstream"
+        --stderr-contains "'basin_outlet_file' is deprecated"
+        --stderr-contains "use 'basin_outlet_fname'"
         # ORACLE for C5: the resolved outlet set, which is what
         # resolve_outlet_flats exists to produce. Checked deterministic before
         # freezing.
@@ -759,7 +802,10 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "D8 channel cells (>= 3 px):"
     --stderr-contains "'d8_channel_threshold_pixels' is deprecated"
     --stderr-contains "use 'threshold_contributing_pixels'"
+    --stderr-contains "'do_stream_burn' is deprecated"
+    --stderr-contains "use 'run_stream_burn'"
     --expect-file-contains "burn_legacy_ingested_params.param:threshold_contributing_pixels: 3"
+    --expect-file-contains "burn_legacy_ingested_params.param:run_stream_burn: true"
 )
 set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
     FIXTURES_REQUIRED stream_burning_fixture)
@@ -821,7 +867,8 @@ add_test(NAME smoke_basin_stats
         --expect-sha256 bs_basin_stats.csv:6b8129739e73739716eb565ba822a85c4952efd55eb8ff0e3f41a1e10efa75a5
         # Canonical-default regression: the parameter is deliberately absent
         # from the fixture, so this pins the shared default and its behaviour.
-        --stdout-contains "threshold = 1000 px")
+        --stdout-contains "threshold = 1000 px"
+        --stderr-contains "'basin_outlet_csv' is deprecated and 'basin_outlet_fname' was also supplied")
 set_tests_properties(smoke_basin_stats PROPERTIES
     LABELS "smoke;cli;basin_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -981,7 +1028,7 @@ add_lsdtt_cli_smoke_test(
     divide_migration_missing_outlets.param.in
     unused_expected_output
     --expect-failure
-    --stderr-contains "FATAL: basin_outlet_file must be set."
+    --stderr-contains "FATAL: basin_outlet_fname must be set."
 )
 
 add_lsdtt_cli_smoke_test(
@@ -1037,6 +1084,8 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "channel heads    : 69"
     --stderr-contains "'source_pixels_threshold' is deprecated"
     --stderr-contains "use 'threshold_contributing_pixels'"
+    --stderr-contains "'basin_outlet_file' is deprecated"
+    --stderr-contains "use 'basin_outlet_fname'"
 )
 set_tests_properties(rigorous_divide_migration_legacy_threshold PROPERTIES
     FIXTURES_REQUIRED divide_migration_fixture)
@@ -1231,6 +1280,102 @@ add_lsdtt_cli_smoke_test(
 set_tests_properties(smoke_lem_strip_fixture PROPERTIES
     LABELS "smoke;cli;hillslope"
     FIXTURES_SETUP lem_strip_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_synthetic_phase5_defaults
+    lsdtt-raster-synthetic-tests
+    raster_synthetic_phase5_defaults.param.in
+    rasterdefaults5_uniform_random.tif
+    --expect-raster-size rasterdefaults5_uniform_random.tif:128x128
+    # Before migration: 256x256, seed 1, checksum 65320. The new oracle is
+    # deliberately different in both shape and stochastic realisation.
+    --expect-raster-checksum rasterdefaults5_uniform_random.tif:65532
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_synthetic_phase5_old_defaults_negative_control
+    lsdtt-raster-synthetic-tests
+    raster_synthetic_phase5_old_defaults.param.in
+    rasterolddefaults5_uniform_random.tif
+    --expect-raster-size rasterolddefaults5_uniform_random.tif:256x256
+    --expect-raster-checksum rasterolddefaults5_uniform_random.tif:65320
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_synthetic_phase5_legacy
+    lsdtt-raster-synthetic-tests
+    raster_synthetic_phase5_legacy.param.in
+    rasterlegacy5_hillslope_strip.tif
+    --expect rasterlegacy5_hillslope_strip_channel_mask.tif
+    --expect-raster-size rasterlegacy5_hillslope_strip.tif:9x7
+    --expect-file-contains "rasterlegacy5_ingested_params.param:cell_size_metres: 2"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:random_seed: 19"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:strip_half_width_metres: 4"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:fan_lobe_half_angle_degrees: 21"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:fan_lobe_inset_metres: 3"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:fan_noise_amplitude_metres: 0.2"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:terrace_noise_amplitude_metres: 0.3"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:terrace_riser_gap_width_metres: 22"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:terrace_riser_height_metres: 7"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:terrace_tread_width_metres: 44"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:polyfit_lambda_metres: 77"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:write_alluvial_fan_lobe_id_raster: false"
+    --expect-file-contains "rasterlegacy5_ingested_params.param:write_terrace_staircase_tread_id_raster: false"
+    --stderr-contains "'cell_size' is deprecated"
+    --stderr-contains "'seed' is deprecated"
+    --stderr-contains "'strip_half_width' is deprecated"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_synthetic_phase5_alias_conflict
+    lsdtt-raster-synthetic-tests
+    raster_synthetic_phase5_alias_conflict.param.in
+    rasterconflict5_uniform_random.tif
+    --expect-raster-size rasterconflict5_uniform_random.tif:9x7
+    --expect-file-contains "rasterconflict5_ingested_params.param:random_seed: 33"
+    --stderr-contains "'random_seed' was also supplied"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_phase5_legacy
+    lsdtt-lem
+    lem_phase5_legacy.param.in
+    lemlegacy5_initial_topography.tif
+    --expect-raster-size lemlegacy5_initial_topography.tif:6x9
+    --expect-file-contains "lemlegacy5_ingested_params.param:n_rows: 9"
+    --expect-file-contains "lemlegacy5_ingested_params.param:n_cols: 6"
+    --expect-file-contains "lemlegacy5_ingested_params.param:cell_size_metres: 5"
+    --expect-file-contains "lemlegacy5_ingested_params.param:noise_type: red_noise"
+    --expect-file-contains "lemlegacy5_ingested_params.param:noise_target_stddev_metres: 0.25"
+    --expect-file-contains "lemlegacy5_ingested_params.param:hillslope_implicit_picard_tolerance_metres: 0.0002"
+    --expect-file-contains "lemlegacy5_ingested_params.param:hillslope_implicit_error_tolerance_metres: 0.0003"
+    --expect-file-contains "lemlegacy5_ingested_params.param:steady_state_tolerance_dz_metres: 0.004"
+    --expect-file-contains "lemlegacy5_ingested_params.param:incision_threshold_specific_area: 12.5"
+    --expect-file-contains "lemlegacy5_ingested_params.param:channel_mask_threshold_specific_area: 8.5"
+    --stderr-contains "'nrows' is deprecated"
+    --stderr-contains "'ncols' is deprecated"
+    --stderr-contains "'grid_resolution' is deprecated"
+    --stderr-contains "'initial_surface_type' is deprecated"
+    --stderr-contains "'noise_target_stddev' is deprecated"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_phase5_alias_conflict
+    lsdtt-lem
+    lem_phase5_alias_conflict.param.in
+    lemconflict5_initial_topography.tif
+    --expect-raster-size lemconflict5_initial_topography.tif:6x4
+    --stderr-contains "'n_rows' was also supplied"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_lem_phase5_defaults
+    lsdtt-lem
+    lem_phase5_defaults.param.in
+    lemdefaults5_initial_topography.tif
+    --expect-raster-size lemdefaults5_initial_topography.tif:400x200
+    --expect-raster-checksum lemdefaults5_initial_topography.tif:10290
+)
 
 add_lsdtt_cli_smoke_test(
     smoke_lem_roering_implicit_strip
@@ -2147,7 +2292,8 @@ add_internal_drainage_cli_test(
     --expect phase4_moved_route_sink_stats.csv
     --expect-file-contains "phase4_moved_route_accepted_sinks.csv:1033.9000244140625"
     --expect-file-contains "phase4_moved_route_accepted_sinks.csv:nan"
-    --stdout-contains "Stage: route")
+    --stdout-contains "Stage: route"
+    --stderr-contains "'sink_candidate_format' is deprecated")
 
 add_internal_drainage_cli_test(
     failure_internal_drainage_breach
@@ -2369,6 +2515,9 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "straight-link pairs = 870"
     --stderr-contains "'source_pixels_threshold' is deprecated"
     --stderr-contains "use 'threshold_contributing_pixels'"
+    --stderr-contains "'print_paired_flowpath_statistics' is deprecated"
+    --stderr-contains "use 'write_paired_flowpath_statistics'"
+    --expect-file-contains "ridge_legacy_ingested_params.param:write_paired_flowpath_statistics: true"
 )
 set_tests_properties(rigorous_ridgeline_legacy_threshold PROPERTIES
     FIXTURES_REQUIRED paired_flowpaths_fixture)
@@ -2996,6 +3145,60 @@ add_lsdtt_cli_smoke_test(
     --expect tiny_direct_shape_mean_curvature.tif
 )
 
+# Both settled defaults are deliberately omitted: stdout pins the Frangi value
+# propagated into the request, while help-topic tests below pin declarations.
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_frangi_default
+    lsdtt-surface-metrics
+    surface_metrics_frangi_default.param.in
+    frangi_default_frangi.tif
+    --stdout-contains "c         : 1"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_frangi_c15_negative_control
+    lsdtt-surface-metrics
+    surface_metrics_frangi_c15.param.in
+    frangi_c15_frangi.tif
+    --stdout-contains "c         : 15"
+)
+
+add_lsdtt_cli_smoke_test(
+    regression_spectral_analysis_valley_spacing_legacy_alias
+    lsdtt-spectral-analysis
+    spectral_valley_spacing_legacy.param.in
+    spectral_legacy_psd_2d.tif
+    --expect-file-contains "spectral_legacy_ingested_params.param:valley_spacing_area_exponent: 0.37"
+    --stderr-contains "'valley_spacing_m' is deprecated"
+)
+
+foreach(default_help_spec IN ITEMS
+        "lsdtt-surface-metrics|n_threads|default : 0"
+        "lsdtt-surface-metrics|frangi_c|default : 1.0"
+        "lsdtt-raster-synthetic-tests|n_rows|default : 128"
+        "lsdtt-raster-synthetic-tests|n_cols|default : 128"
+        "lsdtt-spectral-analysis|n_threads|default : 0"
+        "lsdtt-spectral-analysis|valley_spacing_area_exponent|default : 0.45"
+        "lsdtt-valley-centreline|write_output_format|default : cog"
+        "lsdtt-feature-finder|big_channel_threshold_contributing_pixels|default : 5000"
+        "lsdtt-mountain-front|basin_minimum_contributing_pixels|default : 1000"
+        "lsdtt-lem|incision_threshold_specific_area|A/dx channel threshold in metres"
+        "lsdtt-lem|channel_mask_threshold_specific_area|A/dx threshold in metres"
+        "lsdtt-drainage-analysis|connectivity_area_threshold_m2|total map area in m\\^2")
+    string(REPLACE "|" ";" default_help_fields "${default_help_spec}")
+    list(GET default_help_fields 0 default_help_exe)
+    list(GET default_help_fields 1 default_help_topic)
+    list(GET default_help_fields 2 default_help_regex)
+    string(REPLACE "lsdtt-" "" default_help_name "${default_help_exe}")
+    string(REPLACE "-" "_" default_help_name "${default_help_name}")
+    add_test(NAME regression_${default_help_name}_${default_help_topic}_help
+             COMMAND ${default_help_exe} -h ${default_help_topic})
+    set_tests_properties(
+        regression_${default_help_name}_${default_help_topic}_help PROPERTIES
+        LABELS "regression;cli;parameters"
+        PASS_REGULAR_EXPRESSION "${default_help_regex}")
+endforeach()
+
 add_lsdtt_cli_smoke_test(
     smoke_surface_metrics_madk2
     lsdtt-surface-metrics
@@ -3375,6 +3578,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "cosmo_sca_CN_ERATE.csv:self_consistent_t_yr"
     --expect-file-contains "cosmo_sca_CN_ERATE.csv:self_consistent_n_iter"
     --expect-file-contains "cosmo_sca_CN_ERATE.csv:self_consistent_converged"
+    --stderr-contains "'points_filename' is deprecated"
 )
 set_tests_properties(smoke_cosmo_tool_self_consistent_age
     PROPERTIES LABELS "smoke;cli;cosmo")
@@ -3403,7 +3607,7 @@ add_lsdtt_cli_smoke_test(
     cosmo_tool_bad_self_consistent_tol.param.in
     unused_expected_output
     --expect-failure
-    --stderr-contains "self_consistent_age_tol must be > 0"
+    --stderr-contains "self_consistent_age_tolerance must be > 0"
 )
 set_tests_properties(failure_cosmo_tool_bad_self_consistent_tol
     PROPERTIES LABELS "failure;cli;cosmo")
@@ -3535,6 +3739,7 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-min tr_R2610_step.tif:1.0
     --stdout-contains "multi-isotope TRANSIENT rasters (Be10, Al26, C14)"
     --stdout-contains "every pixel walks the whole history"
+    --stderr-contains "'transient_history_file' is deprecated"
 )
 set_tests_properties(smoke_cosmo_prediction_multi_transient
     PROPERTIES LABELS "smoke;cli;cosmo")
@@ -3644,6 +3849,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:ORDER_FIRST,"
     --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:ORDER_SECOND,-7.4887036,4.5097e-06,duplicate_of:ORDER_FIRST"
     --expect-file-contains "lsens_LS_SAMPLE_EFFECT.csv:OUTSIDE,10,10,failed_no_channel"
+    --stderr-contains "'sample_points_csv' is deprecated"
 )
 
 # A geographic-CRS DEM must exit cleanly with a diagnosis, NOT abort on an
@@ -3718,7 +3924,7 @@ set_tests_properties(smoke_cosmo_tool_help PROPERTIES
 add_test(NAME smoke_divide_migration_help COMMAND lsdtt-divide-migration -h)
 set_tests_properties(smoke_divide_migration_help PROPERTIES
     LABELS "smoke;cli"
-    PASS_REGULAR_EXPRESSION "basin_outlet_file")
+    PASS_REGULAR_EXPRESSION "basin_outlet_fname")
 
 # Generate the step change from the analytical fluvial solution and feed the
 # generated time-since-change field straight into the concentration kernel.
@@ -3845,6 +4051,12 @@ add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
 set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
     LABELS "smoke;cli;cosmo"
     PASS_REGULAR_EXPRESSION "sample_age_yr")
+
+add_test(NAME regression_cosmo_prediction_builtin_io_help
+         COMMAND lsdtt-cosmo-prediction -h read_path)
+set_tests_properties(regression_cosmo_prediction_builtin_io_help PROPERTIES
+    LABELS "regression;cli;cosmo;parameters"
+    PASS_REGULAR_EXPRESSION "Defaults to the directory holding the parameter file")
 
 # Functional coverage for lsdtt-cosmo-column-tool, which until 2026-07-27 had
 # only the -h test below. It is the natural place to compare lsdtt3 against
@@ -4665,6 +4877,7 @@ set(LSDTT_DOMAIN_RULES
     "fetch"                  "fetch"
     "hydraulic"              "hydraulic"
     "surface_metrics"        "surface_metrics"
+    "spectral_analysis"      "surface_metrics"
     "hillslope"              "hillslope"
     "lem"                    "lem"
     # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface

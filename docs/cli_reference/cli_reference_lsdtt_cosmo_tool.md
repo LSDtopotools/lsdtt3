@@ -64,11 +64,11 @@ The output CSV is always written as `<write_fname>_CN_ERATE.csv`.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `crn_nc_file` | string | `` | Path to `crn_parameters.nc` (ERA40 grids + Muscheler VDM record), for the ERA40 atmosphere and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically relative to the executable); if that is missing too, the standard (SLHL) atmosphere is used with no correction. |
+| `crn_nc_fname` | string | `` | Path to `crn_parameters.nc` (ERA40 grids + Muscheler VDM record), for the ERA40 atmosphere and palaeomagnetic correction. Leave empty to use the `crn_parameters.nc` bundled with lsdtt3 (found automatically relative to the executable); if that is missing too, the standard (SLHL) atmosphere is used with no correction. |
 | `sample_age_yr` | float | `0` | Sample exposure age (yr BP). Drives the time-integrated production correction; what it selects depends on `scaling_scheme`. Under `stone` it is the Muscheler VDM palaeomagnetic correction; under `lsdn` it is the duration-weighted average of LSDn production over the Pavón-Carrasco record, so it is longitude-dependent as well as latitude-dependent. `0` = modern field, no correction — the default, so **no time-series correction is applied unless you ask for it**; see below. Requires the record in `crn_parameters.nc`. "Now" is taken as 2010, the reference year of the packed record. |
 | `atmosphere` | string | `ERA40` | `ERA40` (Balco/Lifton climatology + latitude-dependent lapse, the lsdtt3 default), `NCEP` (the atmosphere CAIRN/OCTOPUS use; needs the NCEP grids), or `standard` (SLHL barometric formula). `ERA40`/`NCEP` fall back to `standard` if their grids are absent. |
 | `self_consistent_age` | bool | `false` | Solve the sample age and the erosion rate **together**, iterating to the erosional integration timescale `t = Γ_sp/ε` rather than holding the age at `sample_age_yr`. This is the CRONUScalc / Balco v3 convention, and it is how most published LSDn rates were computed — see below. Leaving it `false` while `muon_scheme: cronusEmulatorLSDn` raises an advisory warning, because that combination cannot reproduce CRONUS v3: measured bias at Sulawasi is +10.9 % at `sample_age_yr: 0` against +0.5 % with the iteration on. The warning is advisory — a fixed-age LSDn run is perfectly legitimate, it is just not the route to v3 agreement. |
-| `self_consistent_age_tol` | float | `0.001` | Relative convergence tolerance on ε for the iteration. The default sits just inside the inversion solver's own round-trip tolerance, so tightening it buys precision the forward model cannot deliver. |
+| `self_consistent_age_tolerance` | float | `0.001` | Relative convergence tolerance on ε for the iteration. The default sits just inside the inversion solver's own round-trip tolerance, so tightening it buys precision the forward model cannot deliver. |
 | `self_consistent_age_max_iter` | int | `10` | Iteration cap. A sample that has not converged is reported with a warning and flagged `self_consistent_converged = 0` in the output CSV; its last iterate is written, never silently accepted. |
 
 ### No time-series correction is applied by default
@@ -170,7 +170,7 @@ concentration uncertainty with scaling held fixed.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `points_filename` | string | `CRN_points.csv` | CSV file containing sample locations and concentrations. Must have `latitude` and `longitude` columns (EPSG:4326). |
+| `sample_points_fname` | string | `CRN_points.csv` | CSV file containing sample locations and concentrations. Must have `latitude` and `longitude` columns (EPSG:4326). |
 | `sample_column_name` | string | `sample_name` | Column name for sample identifiers. Optional; omitted from output if not present. |
 | `concentration_column_name` | string | `` | Column name for measured nuclide concentration (atoms/g). Defaults to `<nuclide>_CONC` if not set. |
 | `uncertainty_column_name` | string | `` | Column name for 1-sigma concentration uncertainty (atoms/g). Defaults to `<nuclide>_uncertainty`. If absent, uncertainty bounds are skipped. |
@@ -322,7 +322,7 @@ Sample points are snapped to the nearest channel pixel meeting the contributing-
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `threshold_contributing_pixels` | int | `1000` | Minimum contributing pixels for a node to be considered a channel. |
-| `snap_search_radius_pixels` | int | `8` | Maximum search radius (pixels) when snapping points to a channel. |
+| `sample_snap_max_search_radius_pixels` | int | `8` | Maximum search radius (pixels) when snapping points to a channel. |
 
 ---
 
@@ -511,9 +511,9 @@ fill_before_routing:             true
 min_slope_for_fill:              0.0001
 boundary_conditions:             oooo
 threshold_contributing_pixels:   1000
-snap_search_radius_pixels:       8
+sample_snap_max_search_radius_pixels: 8
 
-points_filename:                 CRN_points.csv
+sample_points_fname:             CRN_points.csv
 concentration_column_name:       Be10_CONC
 uncertainty_column_name:         Be10_uncertainty
 standardisation_column_name:     standardisation
@@ -540,7 +540,7 @@ scaling_scheme: stone
 atmosphere:     ERA40
 sample_age_yr:  0
 
-points_filename:             CRN_points.csv
+sample_points_fname:         CRN_points.csv
 uncertainty_column_name:     Be10_uncertainty
 standardisation_column_name: standardisation
 

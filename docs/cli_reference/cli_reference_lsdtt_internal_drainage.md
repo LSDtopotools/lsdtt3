@@ -68,14 +68,14 @@ it where that structure is the point — playas, karst, quarry benches.
 
 **The risk, stated plainly:** on a rough surface every innermost hollow is tiny.
 Combining `depression_hierarchy` with `sink_leaves_only: true` and a
-`minimum_pixels_in_patch` threshold can filter out *every* sink and report
+`min_pixels_in_patch` threshold can filter out *every* sink and report
 nothing at all, with no error. On an 18 m Greenland ice-surface DEM at
-`minimum_pixels_in_patch: 1000`, `fill_difference` finds 143 sinks and
+`min_pixels_in_patch: 1000`, `fill_difference` finds 143 sinks and
 `depression_hierarchy` finds **zero** — not because it failed, but because all
 468,878 leaf hollows it found are smaller than the threshold.
 
 If a run reports no sinks, check this first. Remedies: smooth the DEM, filter on
-`minimum_sink_depth` or `minimum_sink_volume` rather than pixel count, or set
+`min_sink_depth` or `min_sink_volume` rather than pixel count, or set
 `sink_leaves_only: false`.
 
 ### What `sink_leaves_only` means
@@ -183,7 +183,7 @@ implemented, and asking for it raises an error rather than silently filling.
 | `_punched.tif` | `nodata_hole` mode, with `write_sink_punched_raster` |
 
 A sink whose footprint is split into several pieces — which happens when
-`minimum_pixels_in_patch` merges a small hollow into a larger ancestor — is
+`min_pixels_in_patch` merges a small hollow into a larger ancestor — is
 written as one polygon record **per piece**, all carrying the same sink
 attributes. No terrain is lost.
 
@@ -210,11 +210,11 @@ prints the same information.
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `minimum_pixels_in_patch` | int | `1` | Minimum sink pixels. Legacy-compatible minimum depression size. |
-| `minimum_sink_area` | float | `0.0` | Minimum depression area. Square metres. |
-| `minimum_sink_depth` | float | `0.0` | Minimum sink depth. Reject shallower candidates. |
-| `minimum_sink_volume` | float | `0.0` | Minimum depression volume. Cubic metres. |
-| `sink_detection_algorithm_choice` | string | `fill_difference` | Sink detector. fill_difference (default) takes each connected patch that filling would raise as one sink: robust, fast, and what the published Greenland work used. depression_hierarchy additionally resolves NESTING, so a lake containing several hollows becomes a tree rather than one patch, and it reports parent_sink_id, hierarchy_level and true depression volume. Use it for genuinely nested terrain such as playas, karst or quarry benches. RISK: on rough surfaces every innermost hollow is tiny, so combining it with sink_leaves_only and a minimum_pixels_in_patch threshold can filter out EVERY sink and report nothing at all. |
+| `min_pixels_in_patch` | int | `1` | Minimum sink pixels. Legacy-compatible minimum depression size. |
+| `min_sink_area` | float | `0.0` | Minimum depression area. Square metres. |
+| `min_sink_depth` | float | `0.0` | Minimum sink depth. Reject shallower candidates. |
+| `min_sink_volume` | float | `0.0` | Minimum depression volume. Cubic metres. |
+| `sink_detection_algorithm_choice` | string | `fill_difference` | Sink detector. fill_difference (default) takes each connected patch that filling would raise as one sink: robust, fast, and what the published Greenland work used. depression_hierarchy additionally resolves NESTING, so a lake containing several hollows becomes a tree rather than one patch, and it reports parent_sink_id, hierarchy_level and true depression volume. Use it for genuinely nested terrain such as playas, karst or quarry benches. RISK: on rough surfaces every innermost hollow is tiny, so combining it with sink_leaves_only and a min_pixels_in_patch threshold can filter out EVERY sink and report nothing at all. |
 | `sink_leaves_only` | bool | `true` | Emit one sink per innermost closed hollow. A large lake can contain several smaller closed hollows. true returns each innermost hollow, meaning one with nothing nested inside it; false also returns enclosing depressions, which may share pit cells and must be reviewed before routing. |
 
 ### Review
@@ -222,7 +222,7 @@ prints the same information.
 | parameter | type | default | what it does |
 |---|---|---|---|
 | `sink_candidate_fname` | string | `(none)` | Reviewed candidate file. Required for route; CSV, FlatGeobuf, or GeoPackage. |
-| `sink_candidate_format` | string | `same_as_extension` | Candidate format. same_as_extension, csv, flatgeobuf, or gpkg. |
+| `sink_candidate_input_format` | string | `same_as_extension` | Candidate format. same_as_extension, csv, flatgeobuf, or gpkg. |
 | `sink_candidate_layer_name` | string | `(none)` | Candidate layer name. Optional layer name for multi-layer GeoPackages. |
 
 ### Routing
@@ -258,7 +258,7 @@ prints the same information.
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `sink_vector_format` | string | `flatgeobuf` | Vector output format. flatgeobuf is recommended; gpkg is supported with a filesystem warning. |
+| `write_vector_format` | string | `flatgeobuf` | Vector output format. flatgeobuf is recommended; gpkg is supported with a filesystem warning. |
 | `write_accepted_depression_polygons` | bool | `true` | Write accepted depression polygons. |
 | `write_accepted_sink_csv` | bool | `true` | Write accepted CSV. |
 | `write_accepted_sink_points` | bool | `true` | Write accepted point vector. |

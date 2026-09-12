@@ -171,7 +171,7 @@ advice for each.
 
 ## Ingesting a channel network
 
-`channel_network_file` takes the output of `lsdtt-channel-extraction` directly
+`channel_network_fname` takes the output of `lsdtt-channel-extraction` directly
 (FlatGeobuf, GeoPackage or CSV), so both tools share exactly one definition of
 where the channels are. Channel heads are derived as channel cells with no
 channel donor.
@@ -188,8 +188,9 @@ nodata are dropped with a count; if all of them do, the run stops and says so.
 
 ## Outputs
 
-Vector outputs default to FlatGeobuf (`*_output_format` accepts `csv` and
-`gpkg`); rasters follow `write_output_format`.
+Line outputs follow `write_vector_format`; hilltop points may override it with
+`hilltop_points_write_vector_format`, which also accepts `csv`. Rasters follow
+`write_output_format`.
 
 | file | contents |
 |---|---|
@@ -246,23 +247,23 @@ write_fname: IndianCreek_hcc
 boundary_conditions: oooo
 fill_before_routing: true
 
-channel_network_file: ./IndianCreek_channel_network_points.fgb
+channel_network_fname: ./IndianCreek_channel_network_points.fgb
 
 basin_selection_choice: sibling
-minimum_basin_pixels: 500
+min_basin_pixels: 500
 
 ridge_extraction_algorithm_choice: ridgeline
 stream_network_padding_pixels: 3
 threshold_hilltop_gradient: 0.8
 remove_positive_curvature_hilltops: true
 
-surface_fitting_window_radius: 6.0
+surface_fitting_window_radius_metres: 6.0
 critical_hillslope_slope: 0.8
 
 run_chi_analysis: true
 m_over_n: 0.45
 
-hilltop_points_output_format: flatgeobuf
+hilltop_points_write_vector_format: flatgeobuf
 write_ridgelines: true
 write_hillslope_traces: true
 trace_thinning: 50
@@ -302,7 +303,7 @@ prints the same information.
 |---|---|---|---|
 | `boundary_conditions` | string | `nnnn` | Four-character N,E,S,W boundary code for the flow router. |
 | `fill_before_routing` | bool | `true` | Pit-fill the DEM before building the flow network. |
-| `minimum_elevation` | float | `-9999` | Pixels at or below this elevation become nodata. -9999 disables. |
+| `min_elevation` | float | `-9999` | Pixels at or below this elevation become nodata. The disabled sentinel preserves below-sea-level study areas; set 0 explicitly to remove sea or nodata-as-zero pixels. |
 | `vertical_units` | string | `metres` | Vertical unit of the input elevations: metres, feet or us_survey_feet. |
 
 ### Basin selection
@@ -310,7 +311,7 @@ prints the same information.
 | parameter | type | default | what it does |
 |---|---|---|---|
 | `basin_selection_choice` | string | `sibling` | How basins are chosen; ridgelines come from their outlines. |
-| `minimum_basin_pixels` | int | `100` | Skip basins smaller than this. |
+| `min_basin_pixels` | int | `100` | Skip basins smaller than this. |
 
 ### Ridge extraction
 
@@ -327,7 +328,7 @@ prints the same information.
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `channel_network_file` | string | `` | Optional channel network to ingest instead of extracting one. |
+| `channel_network_fname` | string | `` | Optional channel network to ingest instead of extracting one. |
 | `threshold_contributing_pixels` | int | `1000` | Contributing pixels defining a channel head. |
 
 ### Floodplain
@@ -337,13 +338,13 @@ prints the same information.
 | `find_floodplain` | bool | `false` | Detect a floodplain with a simple gradient + HAND rule. |
 | `floodplain_gradient_threshold` | float | `0.1` | Gradient below which a pixel may be floodplain. |
 | `floodplain_hand_threshold` | float | `5.0` | HAND (m) below which a pixel may be floodplain. |
-| `floodplain_mask_file` | string | `` | Optional binary floodplain raster to ingest. |
+| `floodplain_mask_fname` | string | `` | Optional binary floodplain raster to ingest. |
 
 ### Surface metrics
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `surface_fitting_window_radius` | float | `0` | Polynomial surface-fitting window radius in metres. 0 = 3 * cell size. |
+| `surface_fitting_window_radius_metres` | float | `0` | Polynomial surface-fitting window radius in metres. 0 = 3 * cell size. |
 
 ### Tracing
 
@@ -361,7 +362,7 @@ prints the same information.
 | parameter | type | default | what it does |
 |---|---|---|---|
 | `chi_A0` | float | `1.0` | Reference drainage area A0 for the chi integration (m²). **Leave at 1.0** unless you know why: a chi-elevation gradient equals `k_sn` only when `A0 = 1 m²`; any other value silently rescales it by `A0^(m/n)`. *(Renamed from `chi_A_0`; the old key still works for one release, with a warning.)* |
-| `chi_critical_divergence_m` | float | `5.0` | Segment-fitting tolerance: max divergence (m) before a new segment. |
+| `chi_critical_divergence_metres` | float | `5.0` | Segment-fitting tolerance: max divergence (m) before a new segment. |
 | `m_over_n` | float | `0.45` | Concavity index m/n used for the chi integration. |
 | `run_chi_analysis` | bool | `false` | Fit the chi network and attach channel steepness to every hilltop row. |
 
@@ -375,9 +376,8 @@ prints the same information.
 
 | parameter | type | default | what it does |
 |---|---|---|---|
-| `hillslope_traces_output_format` | string | `flatgeobuf` | Format for the traced flow paths. |
-| `hilltop_points_output_format` | string | `flatgeobuf` | Format for the hilltop point output. |
-| `ridgelines_output_format` | string | `flatgeobuf` | Format for the ridgeline polylines. |
+| `write_vector_format` | string | `flatgeobuf` | Format for traced flow paths and ridgeline polylines. |
+| `hilltop_points_write_vector_format` | string | `same_as_write_vector_format` | Optional hilltop point-output override; also accepts `csv`. |
 | `write_channel_mask_raster` | bool | `false` | Write the channel mask actually used as sinks. |
 | `write_floodplain_mask_raster` | bool | `false` | Write the floodplain mask actually used. |
 | `write_hand_raster` | bool | `false` | Write the HAND raster used by the floodplain detector. |
@@ -387,7 +387,7 @@ prints the same information.
 | `write_hilltop_points` | bool | `true` | Write the hilltop table (one row per hilltop pixel). |
 | `write_output_format` | string | `cog` | Raster output format: cog, gtiff or png. |
 | `write_relief_raster` | bool | `false` | Write hillslope relief at the hilltop pixels. |
-| `write_ridge_mask_raster` | bool | `false` | Write a raster of the hilltop pixels, coded by side. |
+| `write_ridge_mask_raster` | bool | `false` | Optional coupling diagnostic: hilltop pixels coded by side. Unlike feature-finder's primary mask output, it is off by default. |
 | `write_ridgelines` | bool | `false` | Write the ordered ridgelines as lines. |
 
 ### Performance

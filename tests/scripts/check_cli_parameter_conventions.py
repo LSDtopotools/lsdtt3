@@ -89,6 +89,37 @@ BAD_UNIT_SUFFIX = re.compile(r"_(m|px|deg)$")
 CANONICAL_RASTER_FORMAT = "write_output_format"
 CANONICAL_VECTOR_FORMAT = "write_vector_format"
 
+# Reviewed Phase 5 exceptions: these selectors govern a genuinely different
+# output domain or stage and inherit the canonical selector unless documented
+# otherwise. Any new override must be reviewed and added explicitly.
+REVIEWED_FORMAT_OVERRIDES = {
+    "lsdtt-basin-extraction": {
+        "basin_outlines_write_vector_format",
+        "side_tributary_write_vector_format",
+    },
+    "lsdtt-channel-extraction": {
+        "burned_stream_profiles_write_vector_format",
+        "channel_network_junctions_write_vector_format",
+        "channel_network_points_write_vector_format",
+        "flow_lines_write_vector_format",
+        "wiener_diagnostics_write_output_format",
+    },
+    "lsdtt-channel-network-analysis": {"qa_write_vector_format"},
+    "lsdtt-chi-analysis": {"chi_data_maps_write_vector_format"},
+    "lsdtt-cross-sections": {"cross_section_sample_points_write_vector_format"},
+    "lsdtt-hillslope-channel-coupling": {"hilltop_points_write_vector_format"},
+    "lsdtt-marsh-topography": {"marsh_points_write_vector_format"},
+    "lsdtt-stream-burning": {
+        "burned_profiles_write_vector_format",
+        "junction_comparison_write_vector_format",
+        "vector_sources_write_vector_format",
+    },
+}
+
+# Legacy input selectors whose names predate the `_input_format` suffix. They
+# are not output-selector duplicates and are outside the Phase 5 migration.
+REVIEWED_INPUT_FORMATS = {"sink_candidate_input_format"}
+
 # Heuristic vocabularies.  Deliberately narrow: a false positive here is a
 # test that fails on correct code, which is worse than a missed violation that
 # the later phases will catch by hand anyway.
@@ -260,7 +291,7 @@ def classify_format_parameter(param: dict) -> str | None:
     name = param.get("name", "")
     if not name.endswith("_format"):
         return None
-    if name.endswith("_input_format"):
+    if name.endswith("_input_format") or name in REVIEWED_INPUT_FORMATS:
         return None
     text = helptext(param)
     if "vector" in name:
@@ -346,7 +377,8 @@ def check_cli(cli_name: str, params: list[dict]) -> list[dict]:
 
         # R4 (collected, judged below)
         kind = classify_format_parameter(param)
-        if kind is not None:
+        if (kind is not None and
+                name not in REVIEWED_FORMAT_OVERRIDES.get(cli_name, set())):
             formats[kind].append(name)
 
     # R4: at most one of each kind.  The canonical name keeps its place when

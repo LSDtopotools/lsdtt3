@@ -2,7 +2,7 @@ read_path: __READ_PATH__
 write_path: __WRITE_PATH__
 write_fname: ocnpoly
 
-cell_size: 250.0
+cell_size_metres: 250.0
 
 domain_type: polygon
 polygon_sizing: true_area

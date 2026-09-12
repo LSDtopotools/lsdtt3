@@ -13,7 +13,7 @@ write_output_format: gtiff
 run_hillslope_on_loaded_dem: true
 run_hillslope_steady_state: false
 hillslope_ss_model: roering
-incision_threshold_area: 3
+incision_threshold_specific_area: 3
 hillslope_diffusivity: 1.0
 critical_hillslope_slope: 0.8
 uplift_rate: 0.0001

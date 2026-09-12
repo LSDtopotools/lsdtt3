@@ -5,4 +5,4 @@ write_fname: tiny_missing_second
 
 second_raster_read_fname:
 write_output_format: gtiff
-write_difference: true
+write_difference_raster: true

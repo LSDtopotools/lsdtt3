@@ -44,7 +44,7 @@ key: value
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory searched for `polygon_file`. No input raster is read. |
+| `read_path` | string | directory of parameter file | Directory searched for `polygon_fname`. No input raster is read. |
 | `write_path` | string | same as `read_path` | Directory for output files. |
 | `write_fname` | string | parameter file stem | Output filename stem. |
 | `write_output_format` | string | `cog` | Output raster format: `cog`, `gtiff`, or `same_as_input`. |
@@ -57,10 +57,10 @@ key: value
 |---|---|---|---|
 | `n_rows` | int | `128` | Number of lattice rows. Every pixel is a node of the spanning tree. |
 | `n_cols` | int | `128` | Number of lattice columns. |
-| `cell_size` | float | `1.0` | Pixel size in map units (metres). |
+| `cell_size_metres` | float | `1.0` | Pixel size in metres. Former `cell_size` is an unchanged-value alias. |
 | `outlet_col` | int | `-1` | Column of the single outlet on the south (bottom) edge. `-1` places it at the centre column. Only used when the resolved outlet mode is `single`. |
 
-Note that with `domain_type: polygon` and `polygon_sizing: true_area`, `n_rows` and `n_cols` are **computed from the polygon extent and `cell_size`**, not taken from the parameter file.
+Note that with `domain_type: polygon` and `polygon_sizing: true_area`, `n_rows` and `n_cols` are **computed from the polygon extent and `cell_size_metres`**, not taken from the parameter file.
 
 ---
 
@@ -68,14 +68,14 @@ Note that with `domain_type: polygon` and `polygon_sizing: true_area`, `n_rows` 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `domain_type` | string | `rectangle` | `rectangle`: the full `n_rows` × `n_cols` grid. `efd_island`: a smooth random island from an Elliptical Fourier descriptor. `noise_island`: a radially-tapered red-noise island (fractal coast). `polygon`: a user polygon vector scaled to the grid (requires `polygon_file`). An unrecognised value warns and falls back to `rectangle`. |
+| `domain_type` | string | `rectangle` | `rectangle`: the full `n_rows` × `n_cols` grid. `efd_island`: a smooth random island from an Elliptical Fourier descriptor. `noise_island`: a radially-tapered red-noise island (fractal coast). `polygon`: a user polygon vector scaled to the grid (requires `polygon_fname`). An unrecognised value warns and falls back to `rectangle`. |
 | `outlet_mode` | string | `auto` | Where drainage leaves the domain. `auto`: islands use `all_coast`, the rectangle uses `single`. `single`: one outlet, so the whole domain drains through one network (most sensitive to boundary shape). `all_coast`: every coastal land pixel is a base level. |
 | `island_fill_fraction` | float | `0.7` | Approximate fraction of the grid occupied by land. Span (`efd_island`) or area fraction (`noise_island`). |
 | `efd_n_harmonics` | int | `6` | Number of Elliptical Fourier harmonics for `efd_island`. 1 = ellipse; more harmonics add lobes and bays. Try 4–12. |
 | `efd_roughness` | float | `1.5` | Harmonic amplitude decay exponent for `efd_island`. Higher = smoother coast; lower = rougher. |
-| `noise_blur_passes` | int | `6` | Smoothing passes for the `noise_island` coastline. More passes = smoother; fewer = rougher / fractal. |
-| `polygon_file` | string | `NULL` | Vector polygon file defining the domain when `domain_type: polygon`. The first polygon's exterior ring is used as the coastline. Resolved against `read_path` if not an absolute path. |
-| `polygon_sizing` | string | `scaled` | How an imported polygon is fitted to a grid. `scaled`: scale the polygon to fill the `n_rows` × `n_cols` grid (shape preserved, size set by the grid). `true_area`: derive the grid from the polygon's real extent and `cell_size`, preserving real area and the polygon's CRS. |
+| `coastline_blur_passes` | int | `6` | Smoothing passes for the `noise_island` coastline. Former `noise_blur_passes` is an unchanged-value alias. |
+| `polygon_fname` | string | `NULL` | Vector polygon file defining the domain when `domain_type: polygon`. The first polygon's exterior ring is used as the coastline. Resolved against `read_path` if not an absolute path. |
+| `polygon_sizing` | string | `scaled` | How an imported polygon is fitted to a grid. `scaled`: scale the polygon to fill the `n_rows` × `n_cols` grid (shape preserved, size set by the grid). `true_area`: derive the grid from the polygon's real extent and `cell_size_metres`, preserving real area and the polygon's CRS. |
 
 ---
 
@@ -83,7 +83,7 @@ Note that with `domain_type: polygon` and `polygon_sizing: true_area`, `n_rows` 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `energy_length_weighted` | bool | `true` | Minimise `E = sum(A^gamma * L)` rather than `sum(A^gamma)`, where `L` is the link length (`cell_size`, or `cell_size*sqrt(2)` for a diagonal). **This is the default and you should normally leave it on.** Link energy expenditure is `E_i ~ L_i Q_i S_i` (Strong & Mudd 2022 PNAS eq. 4; Goren & Shelef 2024 *Earth Surf. Dynam.* 12:1347–1369 eq. 5). On a 4-connected lattice `L` factors out, which is why the literature writes `sum(A^gamma)` — but on this 8-connected lattice a diagonal link is 1.414x longer for the same cost, so lateral movement is free and the trunk channels run diagonally regardless of where base level is. Setting this also selects a length-aware (Dijkstra) seed tree in place of the Chebyshev breadth-first one. Set `false` to reproduce OCNet (Carraro et al. 2020) bit-for-bit — defensible if you want the flow *graph* rather than a geometric network. |
+| `energy_length_weighted` | bool | `true` | Minimise `E = sum(A^gamma * L)` rather than `sum(A^gamma)`, where `L` is the link length (`cell_size_metres`, or `cell_size_metres*sqrt(2)` for a diagonal). **This is the default and you should normally leave it on.** Link energy expenditure is `E_i ~ L_i Q_i S_i` (Strong & Mudd 2022 PNAS eq. 4; Goren & Shelef 2024 *Earth Surf. Dynam.* 12:1347–1369 eq. 5). On a 4-connected lattice `L` factors out, which is why the literature writes `sum(A^gamma)` — but on this 8-connected lattice a diagonal link is 1.414x longer for the same cost, so lateral movement is free and the trunk channels run diagonally regardless of where base level is. Setting this also selects a length-aware (Dijkstra) seed tree in place of the Chebyshev breadth-first one. Set `false` to reproduce OCNet (Carraro et al. 2020) bit-for-bit — defensible if you want the flow *graph* rather than a geometric network. |
 | `energy_exponent_gamma` | float | `0.5` | Energy exponent γ in `E = sum(A^gamma)` (OCNet `expEnergy`). **Must be in the open interval (0,1)**; a value outside it is a fatal error from the generator. Classical value 0.5. Smaller (more concave) γ rewards aggregation more strongly — larger Tokunaga *a*, *c* and Horton ratios; γ → 1 removes the aggregation incentive. |
 
 ---
@@ -97,7 +97,7 @@ Note that with `domain_type: polygon` and `polygon_sizing: true_area`, `n_rows` 
 | `initial_no_cooling_fraction` | float | `0.0` | Fraction of iterations held at the initial temperature before cooling begins. |
 | `initial_temperature` | float | `0.0` | Manual initial temperature. `<= 0` means auto, in which case `T0 = temperature_scale * E0` with `E0` the initial-tree energy. |
 | `temperature_scale` | float | `1.0` | Multiplier on the auto initial temperature. Continuous knob for sweeping branching statistics: raise toward random, lower toward 0 for the optimised low-temperature limit (greedy descent at 0). `temperature_scale = 1` reproduces OCNet's native `T0 = E0`. |
-| `random_seed` | int | `1` | Seed for the annealing RNG **and** for the random island generators. Fixing it makes a run reproducible. |
+| `random_seed` | int | `33` | Seed for the annealing RNG **and** for the random island generators. Fixing it makes a run reproducible. |
 
 > **`n_iter` matters more than `temperature_scale` for routing fidelity.** Truncating the anneal costs more graph fidelity than the whole temperature range does at fixed `n_iter`, and a short, hot run may never cool at all. If you are sweeping `temperature_scale`, hold `n_iter` at the default or scale it with the grid. See `verify_routing` below and the measured table in `docs/testing_and_benchmarking.md` §8b.1.
 
@@ -159,7 +159,7 @@ The `true_area` case is a genuine conflict rather than an oversight: `true_area`
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_dem_raster` | bool | `true` | Write the synthetic elevation raster, `<write_fname>_ocn_dem.tif`. |
-| `write_drainage_area_raster` | bool | `true` | Write the OCN drainage-area raster, `<write_fname>_ocn_drainage_cells.tif`. Units are **pixel counts**, not m². |
+| `write_drainage_area_raster` | bool | `true` | Write the OCN drainage-area raster. Enabled because area is a primary OCN result; analysis CLIs treat the same output as an optional diagnostic. Units are **pixel counts**, not m². |
 | `verify_routing` | bool | `true` | Route the synthetic DEM through D8 and report the round-trip graph fidelity. |
 
 ### Output files
@@ -193,7 +193,7 @@ write_fname: ocn_cold
 
 n_rows:            128
 n_cols:            128
-cell_size:         50
+cell_size_metres:  50
 
 domain_type:       rectangle
 outlet_mode:       single
@@ -220,12 +220,12 @@ write_fname: ocn_island
 
 n_rows:               256
 n_cols:               256
-cell_size:            30
+cell_size_metres:     30
 
 domain_type:          noise_island
 outlet_mode:          all_coast
 island_fill_fraction: 0.6
-noise_blur_passes:    6
+coastline_blur_passes: 6
 
 energy_exponent_gamma: 0.5
 temperature_scale:     0.1
@@ -252,9 +252,9 @@ write_path:  /data/output/
 write_fname: ocn_catchment
 
 domain_type:    polygon
-polygon_file:   catchment_outline.gpkg
+polygon_fname:  catchment_outline.gpkg
 polygon_sizing: true_area
-cell_size:      30
+cell_size_metres: 30
 
 energy_exponent_gamma: 0.5
 temperature_scale:     0.0
@@ -285,10 +285,10 @@ this page lists what is available.
 |---|---|
 | switch | `run_equilibration` |
 | cycles | `steady_state_n_cycles` (a **maximum** when convergence checking is on) |
-| convergence | `steady_state_check_convergence`, `steady_state_tolerance_dz_over_relief`, `steady_state_tolerance_dz_m`, `steady_state_tolerance_receiver_fraction`, `steady_state_convergence_patience` |
+| convergence | `steady_state_check_convergence`, `steady_state_tolerance_dz_over_relief`, `steady_state_tolerance_dz_metres`, `steady_state_tolerance_receiver_fraction`, `steady_state_convergence_patience` |
 | divide diagnostics | `divide_merge_search_steps`, `divide_use_d8_diagonals`, `divide_gradient_target` |
 | routing | `boundary_conditions`, `fill_min_slope`, `divide_area_by_dx`, `n_threads` |
-| hillslopes | `run_hillslope_steady_state`, `hillslope_ss_model`, `incision_threshold_area`, `hillslope_diffusivity`, `critical_hillslope_slope`, `enable_nonlinear_hillslopes`, `hillslope_ss_tolerance`, `hillslope_ss_max_iterations`, `hillslope_sor_omega`, `hillslope_every_cycle`, `channel_hysteresis_factor` |
+| hillslopes | `run_hillslope_steady_state`, `hillslope_ss_model`, `incision_threshold_area_m2`, `hillslope_diffusivity`, `critical_hillslope_slope`, `enable_nonlinear_hillslopes`, `hillslope_ss_tolerance`, `hillslope_ss_max_iterations`, `hillslope_sor_omega`, `hillslope_every_cycle`, `channel_hysteresis_factor` |
 | outputs | `write_equilibrated_dem_raster`, `write_snap_convergence_csv` |
 
 The fluvial parameters the cycle snaps with (`uplift_rate`, `erodibility`,
@@ -335,7 +335,7 @@ predicted hillslope length, relief and maximum gradient. If it warns that
 `predicted_hillslope_relief/computed_relief > 0.5`, the hillslope solve is being
 asked for more relief than the landscape has, and it will usually diverge and
 leave sinks that break the next cycle's routing. Lower `hillslope_diffusivity`
-or raise `incision_threshold_area` rather than pushing on.
+or raise `incision_threshold_area_m2` rather than pushing on.
 
 ### Example: generate and equilibrate
 
@@ -346,7 +346,7 @@ write_fname: ocn01
 
 n_rows: 48
 n_cols: 48
-cell_size: 100
+cell_size_metres: 100
 energy_exponent_gamma: 0.5
 random_seed: 42
 temperature_scale: 0.0
@@ -362,7 +362,7 @@ steady_state_convergence_patience:  2
 
 run_hillslope_steady_state:  true
 hillslope_ss_model:          roering
-incision_threshold_area:     20000
+incision_threshold_area_m2:  20000
 hillslope_diffusivity:       2.0
 critical_hillslope_slope:    0.8
 hillslope_sor_omega:         1.3

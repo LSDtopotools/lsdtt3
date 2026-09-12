@@ -154,12 +154,12 @@ int main(int argc, char* argv[])
         "The file (CSV, FlatGeobuf, or GeoPackage) is loaded, optionally snapped "
         "to the channel network, converted to junctions, and expanded to their "
         "full upstream junction subnetworks. "
-        "Set basin_outlet_file to the path of the file.",
+        "Set basin_outlet_fname to the path of the file.",
         "Selection mode for bearing / junction-angle analyses", "param", ""};
 
     // --- Basin outlet input / snapping ---
-    string_default_map["basin_outlet_file"] = "NULL";
-    help_map["basin_outlet_file"] = {"string","NULL",
+    string_default_map["basin_outlet_fname"] = "NULL";
+    help_map["basin_outlet_fname"] = {"string","NULL",
         "File of requested outlet points (CSV, FlatGeobuf, or GeoPackage).",
         "Required when analyse_upstream_of_outlet_csv is true. "
         "Format is auto-detected from the file extension: "
@@ -181,14 +181,14 @@ int main(int argc, char* argv[])
         "This is total upslope contributing pixels from the flow-routing object.",
         "Basin outlet input / snapping", "param", ""};
 
-    int_default_map["basin_outlet_min_search_radius_pixels"] = 0;
-    help_map["basin_outlet_min_search_radius_pixels"] = {"int","0",
+    int_default_map["basin_outlet_snap_min_search_radius_pixels"] = 0;
+    help_map["basin_outlet_snap_min_search_radius_pixels"] = {"int","0",
         "Minimum expanding-square snapping radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square.",
         "Basin outlet input / snapping", "param", ""};
 
-    int_default_map["basin_outlet_max_search_radius_pixels"] = 25;
-    help_map["basin_outlet_max_search_radius_pixels"] = {"int","25",
+    int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
+    help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping radius in pixels.",
         "Used only when basin_outlet_snapping_method is expanding_square.",
         "Basin outlet input / snapping", "param", ""};
@@ -240,11 +240,14 @@ int main(int argc, char* argv[])
         "Writes one record per analysed compact downstream link.",
         "Bearing outputs", "switch", ""};
 
-    string_default_map["channel_link_bearings_output_format"] = "flatgeobuf";
-    help_map["channel_link_bearings_output_format"] = {"string","flatgeobuf",
-        "Output format for channel-link bearing output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
-        "Bearing outputs", "param", "write_channel_link_bearings"};
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
+    help_map["write_vector_format"] = {"string", "flatgeobuf",
+        "Format for record-oriented network outputs.",
+        "Allowed values: csv, gpkg, flatgeobuf or fgb. Line-based QA layers "
+        "use qa_write_vector_format.",
+        "Output", "io", ""};
+    string_default_map["legacy_channel_link_bearings_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Junction-angle outputs ---
     bool_default_map["write_junction_angles"] = false;
@@ -253,11 +256,8 @@ int main(int argc, char* argv[])
         "Writes one record per valid two-donor junction.",
         "Junction-angle outputs", "switch", ""};
 
-    string_default_map["junction_angles_output_format"] = "flatgeobuf";
-    help_map["junction_angles_output_format"] = {"string","flatgeobuf",
-        "Output format for junction-angle output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
-        "Junction-angle outputs", "param", ""};
+    string_default_map["legacy_junction_angles_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // little vectors for seeing angle and bearing results
     bool_default_map["write_channel_link_bearing_vectors"] = false;
@@ -274,17 +274,17 @@ int main(int argc, char* argv[])
         "donor_1, donor_2, and receiver. It is intended as a visual QA layer.",
         "Junction-angle outputs", "switch", ""};
 
-    string_default_map["channel_link_bearing_vectors_output_format"] = "flatgeobuf";
-    help_map["channel_link_bearing_vectors_output_format"] = {"string","flatgeobuf",
-        "Output format for channel-link bearing vector QA output.",
+    string_default_map["qa_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["qa_write_vector_format"] = {"string","same_as_write_vector_format",
+        "Output format override for line-based QA layers.",
         "Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported.",
         "Junction-angle outputs", "param", ""};
+    string_default_map["legacy_channel_link_bearing_vectors_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
-    string_default_map["junction_angle_bearing_vectors_output_format"] = "flatgeobuf";
-    help_map["junction_angle_bearing_vectors_output_format"] = {"string","flatgeobuf",
-        "Output format for junction-angle bearing vector QA output.",
-        "Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported.",
-        "Junction-angle outputs", "param", ""};
+    string_default_map["legacy_junction_angle_bearing_vectors_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Strahler outputs ---
     bool_default_map["write_strahler_channels"] = false;
@@ -293,11 +293,8 @@ int main(int argc, char* argv[])
         "Writes one record per derived Strahler channel.",
         "Strahler outputs", "switch", ""};
 
-    string_default_map["strahler_channels_output_format"] = "flatgeobuf";
-    help_map["strahler_channels_output_format"] = {"string","flatgeobuf",
-        "Output format for Strahler-channel output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
-        "Strahler outputs", "param", "write_strahler_channels"};
+    string_default_map["legacy_strahler_channels_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Tokunaga outputs ---
     bool_default_map["write_tokunaga_channels"] = false;
@@ -307,11 +304,8 @@ int main(int argc, char* argv[])
         "attributes such as donor order, receiver order, and Tokunaga offset.",
         "Tokunaga outputs", "switch", ""};
 
-    string_default_map["tokunaga_channels_output_format"] = "flatgeobuf";
-    help_map["tokunaga_channels_output_format"] = {"string","flatgeobuf",
-        "Output format for Tokunaga-channel output.",
-        "Allowed values: csv, gpkg, flatgeobuf/fgb.",
-        "Tokunaga outputs", "param", ""};
+    string_default_map["legacy_tokunaga_channels_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     bool_default_map["write_tokunaga_channel_data"] = false;
     help_map["write_tokunaga_channel_data"] = {"bool","false",
@@ -415,8 +409,8 @@ int main(int argc, char* argv[])
         "centre-of-mass bearings. Needed for stream-order-based statistics.",
         "Complete-basin filtering", "param", ""};
 
-    int_default_map["minimum_basin_pixels"] = 0;
-    help_map["minimum_basin_pixels"] = {"int","0",
+    int_default_map["min_basin_pixels"] = 0;
+    help_map["min_basin_pixels"] = {"int","0",
         "Drop junctions whose upslope basin has fewer than this many pixels.",
         "0 disables the size filter. Applied alongside only_complete_basins.",
         "Complete-basin filtering", "param", ""};
@@ -451,7 +445,24 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"source_pixels_threshold", "threshold_contributing_pixels"} });
+        {"basin_outlet_file", "basin_outlet_fname"},
+        {"basin_outlet_min_search_radius_pixels", "basin_outlet_snap_min_search_radius_pixels"},
+        {"basin_outlet_max_search_radius_pixels", "basin_outlet_snap_max_search_radius_pixels"},
+        {"source_pixels_threshold", "threshold_contributing_pixels"},
+        {"minimum_basin_pixels", "min_basin_pixels"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"channel_link_bearings_output_format",
+         {"legacy_channel_link_bearings_write_vector_format", "write_vector_format"}},
+        {"junction_angles_output_format",
+         {"legacy_junction_angles_write_vector_format", "write_vector_format"}},
+        {"strahler_channels_output_format",
+         {"legacy_strahler_channels_write_vector_format", "write_vector_format"}},
+        {"tokunaga_channels_output_format",
+         {"legacy_tokunaga_channels_write_vector_format", "write_vector_format"}},
+        {"channel_link_bearing_vectors_output_format",
+         {"legacy_channel_link_bearing_vectors_write_vector_format", "qa_write_vector_format"}},
+        {"junction_angle_bearing_vectors_output_format",
+         {"legacy_junction_angle_bearing_vectors_write_vector_format", "qa_write_vector_format"}} });
     pp.parse_all_parameters(
         float_default_map,
         int_default_map,
@@ -489,8 +500,8 @@ int main(int argc, char* argv[])
 
     const bool only_complete_basins = bf["only_complete_basins"];
     const std::size_t minimum_basin_pixels =
-        ifs["minimum_basin_pixels"] > 0
-        ? static_cast<std::size_t>(ifs["minimum_basin_pixels"]) : 0;
+        ifs["min_basin_pixels"] > 0
+        ? static_cast<std::size_t>(ifs["min_basin_pixels"]) : 0;
 
 
     const bool do_any_output =
@@ -529,32 +540,46 @@ int main(int argc, char* argv[])
 
     lsdtt::point_output_format channel_link_bearings_format =
         lsdtt::resolve_point_output_format(
-            sf["channel_link_bearings_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_link_bearings_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format junction_angles_format =
         lsdtt::resolve_point_output_format(
-            sf["junction_angles_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_junction_angles_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format strahler_channels_format =
         lsdtt::resolve_point_output_format(
-            sf["strahler_channels_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_strahler_channels_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::point_output_format tokunaga_channels_format =
         lsdtt::resolve_point_output_format(
-            sf["tokunaga_channels_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_tokunaga_channels_write_vector_format"],
+                sf["write_vector_format"])
         );
 
     lsdtt::vector_output_format channel_link_bearing_vectors_format =
         lsdtt::resolve_vector_output_format(
-            sf["channel_link_bearing_vectors_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_channel_link_bearing_vectors_write_vector_format"],
+                lsdtt::resolve_output_format_override(
+                    sf["qa_write_vector_format"], sf["write_vector_format"]))
         );
 
     lsdtt::vector_output_format junction_angle_bearing_vectors_format =
         lsdtt::resolve_vector_output_format(
-            sf["junction_angle_bearing_vectors_output_format"]
+            lsdtt::resolve_output_format_override(
+                sf["legacy_junction_angle_bearing_vectors_write_vector_format"],
+                lsdtt::resolve_output_format_override(
+                    sf["qa_write_vector_format"], sf["write_vector_format"]))
         );
 
 
@@ -659,25 +684,25 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (ifs["basin_outlet_min_search_radius_pixels"] < 0)
+    if (ifs["basin_outlet_snap_min_search_radius_pixels"] < 0)
     {
-        std::cerr << "FATAL: basin_outlet_min_search_radius_pixels "
+        std::cerr << "FATAL: basin_outlet_snap_min_search_radius_pixels "
                   << "must be >= 0.\n";
         return 1;
     }
 
-    if (ifs["basin_outlet_max_search_radius_pixels"] <
-        ifs["basin_outlet_min_search_radius_pixels"])
+    if (ifs["basin_outlet_snap_max_search_radius_pixels"] <
+        ifs["basin_outlet_snap_min_search_radius_pixels"])
     {
-        std::cerr << "FATAL: basin_outlet_max_search_radius_pixels must be >= "
-                  << "basin_outlet_min_search_radius_pixels.\n";
+        std::cerr << "FATAL: basin_outlet_snap_max_search_radius_pixels must be >= "
+                  << "basin_outlet_snap_min_search_radius_pixels.\n";
         return 1;
     }
 
     if (bf["analyse_upstream_of_outlet_csv"] &&
-        (sf["basin_outlet_file"] == "NULL" || sf["basin_outlet_file"].empty()))
+        (sf["basin_outlet_fname"] == "NULL" || sf["basin_outlet_fname"].empty()))
     {
-        std::cerr << "FATAL: basin_outlet_file is required when "
+        std::cerr << "FATAL: basin_outlet_fname is required when "
                   << "analyse_upstream_of_outlet_csv is true.\n";
         return 1;
     }
@@ -974,7 +999,7 @@ int main(int argc, char* argv[])
         else
         {
             const std::string basin_outlet_file_path =
-                pp.add_read_path_if_needed(sf["basin_outlet_file"]);
+                pp.add_read_path_if_needed(sf["basin_outlet_fname"]);
 
             std::cout << "Reading outlet file: " << basin_outlet_file_path << "\n";
 
@@ -1067,9 +1092,9 @@ int main(int argc, char* argv[])
                     ifs["basin_outlet_contributing_pixels_threshold"]
                 );
             square_snap_options.min_search_radius_pixels =
-                ifs["basin_outlet_min_search_radius_pixels"];
+                ifs["basin_outlet_snap_min_search_radius_pixels"];
             square_snap_options.max_search_radius_pixels =
-                ifs["basin_outlet_max_search_radius_pixels"];
+                ifs["basin_outlet_snap_max_search_radius_pixels"];
 
             lsdtt::lsdtt_downstream_snap_options downstream_snap_options;
             downstream_snap_options.contributing_pixels_threshold =

@@ -392,11 +392,11 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
                 self.WRITE_COM_BEARINGS: "write_junction_centre_of_mass_bearings",
                 self.WRITE_LINK_BEARING_VECTORS: "write_channel_link_bearing_vectors",
                 self.WRITE_JUNCTION_ANGLE_VECTORS: "write_junction_angle_bearing_vectors",
-                self.VECTOR_FORMAT: "channel_link_bearings_output_format",
+                self.VECTOR_FORMAT: "write_vector_format",
                 self.SNAPPING_METHOD: "basin_outlet_snapping_method",
                 self.SNAPPING_THRESHOLD: "basin_outlet_contributing_pixels_threshold",
-                self.SNAPPING_MIN_RADIUS: "basin_outlet_min_search_radius_pixels",
-                self.SNAPPING_MAX_RADIUS: "basin_outlet_max_search_radius_pixels",
+                self.SNAPPING_MIN_RADIUS: "basin_outlet_snap_min_search_radius_pixels",
+                self.SNAPPING_MAX_RADIUS: "basin_outlet_snap_max_search_radius_pixels",
                 self.LINK_SAMPLING_MODE: "link_sampling_mode",
                 self.LINK_SAMPLING_FIXED_LENGTH: "link_sampling_fixed_length_metres",
                 self.LINK_SAMPLING_FIXED_N_PIXELS: "link_sampling_fixed_n_pixels",
@@ -475,6 +475,8 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             "calculate_spatial_index": self.parameterAsBool(
                 parameters, self.CALCULATE_SPATIAL_INDEX, context
             ),
+            "write_vector_format": vector_format,
+            "qa_write_vector_format": qa_format,
             "raster_is_filled": self.parameterAsBool(parameters, self.RASTER_IS_FILLED, context),
             "fill_min_slope": self.parameterAsDouble(parameters, self.FILL_MIN_SLOPE, context),
             "threshold_contributing_pixels": self.parameterAsInt(
@@ -484,7 +486,7 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             "only_complete_basins": self.parameterAsBool(
                 parameters, self.ONLY_COMPLETE_BASINS, context
             ),
-            "minimum_basin_pixels": self.parameterAsInt(
+            "min_basin_pixels": self.parameterAsInt(
                 parameters, self.MINIMUM_BASIN_PIXELS, context
             ),
             # link sampling for bearings / junction angles
@@ -505,13 +507,9 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             ],
             # analysis outputs
             "write_channel_link_bearings": write_link_bearings,
-            "channel_link_bearings_output_format": vector_format,
             "write_junction_angles": write_junction_angles,
-            "junction_angles_output_format": vector_format,
             "write_strahler_channels": write_strahler,
-            "strahler_channels_output_format": vector_format,
             "write_tokunaga_channels": write_tokunaga,
-            "tokunaga_channels_output_format": vector_format,
             "write_tokunaga_channel_data": write_tokunaga_data,
             "write_tokunaga_summary_data": write_tokunaga_summary,
             "write_junction_area_ratio_data": write_area_ratio_data,
@@ -525,24 +523,22 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             "write_junction_centre_of_mass_bearings": write_com_bearings,
             # QA bearing vectors
             "write_channel_link_bearing_vectors": write_link_bearing_vectors,
-            "channel_link_bearing_vectors_output_format": qa_format,
             "write_junction_angle_bearing_vectors": write_junction_angle_vectors,
-            "junction_angle_bearing_vectors_output_format": qa_format,
         }
 
         if outlet_file:
             param_values.update({
-                "basin_outlet_file": outlet_file,
+                "basin_outlet_fname": outlet_file,
                 "basin_outlet_snapping_method": self.SNAPPING_OPTIONS[
                     self.parameterAsEnum(parameters, self.SNAPPING_METHOD, context)
                 ],
                 "basin_outlet_contributing_pixels_threshold": self.parameterAsInt(
                     parameters, self.SNAPPING_THRESHOLD, context
                 ),
-                "basin_outlet_min_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_min_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MIN_RADIUS, context
                 ),
-                "basin_outlet_max_search_radius_pixels": self.parameterAsInt(
+                "basin_outlet_snap_max_search_radius_pixels": self.parameterAsInt(
                     parameters, self.SNAPPING_MAX_RADIUS, context
                 ),
             })

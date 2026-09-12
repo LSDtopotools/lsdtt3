@@ -312,8 +312,8 @@ int main(int argc, char* argv[])
         "D-infinity (default) is generally preferred for hillslope TWI.",
         "Topographic Wetness Index", "param", "write_twi_raster"};
 
-    float_default_map["twi_window_radius"] = 100.0f;
-    help_map["twi_window_radius"] = {"float","100.0",
+    float_default_map["twi_window_radius_metres"] = 100.0f;
+    help_map["twi_window_radius_metres"] = {"float","100.0",
         "Polyfit window radius (metres) for slope computation in TWI.",
         "Passed to direct_polyfit(). Larger values smooth out local "
         "roughness; smaller values capture fine-scale slope variation.",
@@ -402,7 +402,7 @@ int main(int argc, char* argv[])
     string_default_map["sti_term_mode"] = "ksd";
     string_default_map["sti_spr_transform"] = "ln_1_minus_spr";
 
-    float_default_map["sti_window_radius"] = 100.0f;
+    float_default_map["sti_window_radius_metres"] = 100.0f;
     float_default_map["sti_depth_cap_cm"] = 100.0f;
     float_default_map["sti_min_valid_depth_cm"] = 30.0f;
     float_default_map["sti_ks_unit_scale_to_m_per_day"] = 1.0f;
@@ -426,13 +426,14 @@ int main(int argc, char* argv[])
 
     float_default_map["connectivity_area_threshold_m2"] = 1.0e6f;
     help_map["connectivity_area_threshold_m2"] = {"float","1e6",
-        "Drainage area threshold (m^2) defining channel / sink pixels.",
-        "Pixels at or above this threshold are treated as channels. "
+        "Map drainage-area threshold in square metres defining channel / sink pixels.",
+        "This remains total map area in m^2 and is not a contributing-pixel or "
+        "specific-area threshold. Pixels at or above it are treated as channels. "
         "D_down accumulation stops when the flow path reaches a channel.",
         "Connectivity index (Cavalli et al. 2013)", "param", ""};
 
-    float_default_map["connectivity_window_radius"] = 100.0f;
-    help_map["connectivity_window_radius"] = {"float","100.0",
+    float_default_map["connectivity_window_radius_metres"] = 100.0f;
+    help_map["connectivity_window_radius_metres"] = {"float","100.0",
         "Moving-window radius (metres) for slope and roughness computation.",
         "Used for the polyfit slope and for the roughness metric (MADk2 or "
         "IQR of residuals). Square window always used.",
@@ -500,7 +501,10 @@ int main(int argc, char* argv[])
 
     pp.set_deprecated_aliases({
         {"channel_threshold_contributing_pixels",
-         "threshold_contributing_pixels"} });
+         "threshold_contributing_pixels"},
+        {"twi_window_radius", "twi_window_radius_metres"},
+        {"sti_window_radius", "sti_window_radius_metres"},
+        {"connectivity_window_radius", "connectivity_window_radius_metres"} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -660,10 +664,10 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        if (ff["sti_window_radius"] <= 0.0f)
+        if (ff["sti_window_radius_metres"] <= 0.0f)
         {
-            std::cerr << "FATAL: sti_window_radius must be > 0. "
-                      << "Got: " << ff["sti_window_radius"] << "\n";
+            std::cerr << "FATAL: sti_window_radius_metres must be > 0. "
+                      << "Got: " << ff["sti_window_radius_metres"] << "\n";
             return 1;
         }
 
@@ -1232,7 +1236,7 @@ int main(int argc, char* argv[])
         {
             twi_raster = compute_twi_raster(
                 sf["twi_drainage_area_method"],
-                ff["twi_window_radius"],
+                ff["twi_window_radius_metres"],
                 "TWI"
             );
         }
@@ -1275,7 +1279,7 @@ int main(int argc, char* argv[])
                   << (write_sti_p95_jenks ? " (+ Jenks class rasters)" : "")
                   << "\n";
         std::cout << "STI drainage method     : " << sf["sti_drainage_area_method"] << "\n";
-        std::cout << "STI slope window radius : " << ff["sti_window_radius"] << " m\n";
+        std::cout << "STI slope window radius : " << ff["sti_window_radius_metres"] << " m\n";
         std::cout << "STI term mode           : " << sf["sti_term_mode"] << "\n";
         std::cout << "STI SPR transform       : " << sf["sti_spr_transform"] << "\n";
         std::cout << "\nWARNING: STI unit assumptions are not yet validated automatically.\n";
@@ -1458,7 +1462,7 @@ int main(int argc, char* argv[])
         {
             sti_twi = compute_twi_raster(
                 sf["sti_drainage_area_method"],
-                ff["sti_window_radius"],
+                ff["sti_window_radius_metres"],
                 "STI"
             );
         }
@@ -1831,10 +1835,10 @@ int main(int argc, char* argv[])
         std::cout << "Area method      : " << sf["connectivity_drainage_area_method"] << "\n";
         std::cout << "Slope method     : " << sf["connectivity_slope_method"] << "\n";
         std::cout << "Roughness method : " << sf["connectivity_roughness_method"] << "\n";
-        std::cout << "Window radius    : " << ff["connectivity_window_radius"] << " m\n";
+        std::cout << "Window radius    : " << ff["connectivity_window_radius_metres"] << " m\n";
         std::cout << "Area threshold   : " << ff["connectivity_area_threshold_m2"] << " m^2\n";
 
-        const double   conn_radius = static_cast<double>(ff["connectivity_window_radius"]);
+        const double   conn_radius = static_cast<double>(ff["connectivity_window_radius_metres"]);
         const float    conn_thresh = ff["connectivity_area_threshold_m2"];
 
         try

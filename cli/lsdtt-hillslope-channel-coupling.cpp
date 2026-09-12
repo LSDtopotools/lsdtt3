@@ -207,8 +207,8 @@ int main(int argc, char* argv[])
         "datum from the data provider before setting this.",
         "Input", "param", ""};   // no parent; allowed values are in the description
 
-    float_default_map["minimum_elevation"] = -9999.0f;
-    help_map["minimum_elevation"] = {"float","-9999",
+    float_default_map["min_elevation"] = -9999.0f;
+    help_map["min_elevation"] = {"float","-9999",
         "Pixels at or below this elevation become nodata. -9999 disables.",
         "MANY DEMs CARRY NODATA AS ZERO regardless of what their header "
         "declares, and a block of zeros beside real terrain is a cliff hundreds "
@@ -223,8 +223,8 @@ int main(int argc, char* argv[])
     // ---- channels ------------------------------------------------------------
     lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
-    string_default_map["channel_network_file"] = "";
-    help_map["channel_network_file"] = {"string", "",
+    string_default_map["channel_network_fname"] = "";
+    help_map["channel_network_fname"] = {"string", "",
         "Optional channel network to ingest instead of extracting one.",
         "A point file written by lsdtt-channel-extraction "
         "(write_channel_network_points), carrying row, col, flat and "
@@ -244,8 +244,8 @@ int main(int argc, char* argv[])
         "so divides are traced many times and must be deduplicated.",
         "Basin selection", "param", ""};
 
-    int_default_map["minimum_basin_pixels"] = 100;
-    help_map["minimum_basin_pixels"] = {"int", "100",
+    int_default_map["min_basin_pixels"] = 100;
+    help_map["min_basin_pixels"] = {"int", "100",
         "Skip basins smaller than this.",
         "Tiny basins produce degenerate outlines and no usable hillslopes.",
         "Basin selection", "param", ""};
@@ -303,8 +303,8 @@ int main(int argc, char* argv[])
         "Ridge extraction", "param", ""};
 
     // ---- surface metrics -----------------------------------------------------
-    float_default_map["surface_fitting_window_radius"] = 0.0f;
-    help_map["surface_fitting_window_radius"] = {"float", "0",
+    float_default_map["surface_fitting_window_radius_metres"] = 0.0f;
+    help_map["surface_fitting_window_radius_metres"] = {"float", "0",
         "Polynomial surface-fitting window radius in metres. 0 = 3 * cell size.",
         "Cht is SCALE DEPENDENT, so this is a scientific parameter, not a "
         "smoothing detail. It is written into the output summary because an E* "
@@ -312,8 +312,8 @@ int main(int argc, char* argv[])
         "Surface metrics", "param", ""};
 
     // ---- floodplain ----------------------------------------------------------
-    string_default_map["floodplain_mask_file"] = "";
-    help_map["floodplain_mask_file"] = {"string", "",
+    string_default_map["floodplain_mask_fname"] = "";
+    help_map["floodplain_mask_fname"] = {"string", "",
         "Optional binary floodplain raster to ingest.",
         "It does TWO things, and both matter: floodplain pixels are added to the "
         "SINK set, so a trace entering the valley floor terminates there, AND "
@@ -354,7 +354,7 @@ int main(int argc, char* argv[])
         "micro-topography makes the Tarboton edge-routing branch cycle, and a "
         "trace that cycles yields no hillslope length at all -- measured at 48 "
         "percent of traces on a 1 m dataset. "
-        "fitted: the polynomial fitted surface at surface_fitting_window_radius, "
+        "fitted: the polynomial fitted surface at surface_fitting_window_radius_metres, "
         "which is the SAME surface the curvature is measured on, so aspect and "
         "Cht become mutually consistent. It CHANGES WHAT Lh MEANS -- shorter, "
         "smoother paths -- so it is a declared choice and is reported in the "
@@ -440,8 +440,8 @@ int main(int argc, char* argv[])
         "explicitly whenever a value is compared across tools.",
         "Chi", "param", "run_chi_analysis"};
 
-    float_default_map["chi_critical_divergence_m"] = 5.0f;
-    help_map["chi_critical_divergence_m"] = {"float", "5.0",
+    float_default_map["chi_critical_divergence_metres"] = 5.0f;
+    help_map["chi_critical_divergence_metres"] = {"float", "5.0",
         "Segment-fitting tolerance: max divergence (m) before a new segment.",
         "Larger values give fewer, longer segments and therefore smoother k_sn.",
         "Chi", "param", "run_chi_analysis"};
@@ -457,25 +457,21 @@ int main(int argc, char* argv[])
         "Non-dimensional", "param", ""};
 
     // ---- output --------------------------------------------------------------
-    string_default_map["hilltop_points_output_format"] = "flatgeobuf";
-    help_map["hilltop_points_output_format"] = {"string", "flatgeobuf",
+    string_default_map["hilltop_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["hilltop_points_write_vector_format"] = {"string", "same_as_write_vector_format",
         "Format for the hilltop point output.",
         "flatgeobuf (or fgb), gpkg, or csv. FlatGeobuf is the default and is "
         "recommended: GeoPackage is unreliable on mounted filesystems such as "
         "WSL2's /mnt/c.",
         "Output", "io", ""};
 
-    string_default_map["hillslope_traces_output_format"] = "flatgeobuf";
-    help_map["hillslope_traces_output_format"] = {"string", "flatgeobuf",
-        "Format for the traced flow paths.",
-        "flatgeobuf (or fgb) or gpkg.",
-        "Output", "io", "write_hillslope_traces"};
+    string_default_map["legacy_hillslope_traces_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
-    string_default_map["ridgelines_output_format"] = "flatgeobuf";
-    help_map["ridgelines_output_format"] = {"string", "flatgeobuf",
-        "Format for the ridgeline polylines.",
-        "flatgeobuf (or fgb) or gpkg.",
-        "Output", "io", "write_ridgelines"};
+    string_default_map["legacy_ridgelines_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string", "cog",
@@ -507,6 +503,8 @@ int main(int argc, char* argv[])
     bool_default_map["write_ridge_mask_raster"] = false;
     help_map["write_ridge_mask_raster"] = {"bool", "false",
         "Write a raster of the hilltop pixels, coded by side.",
+        "This is an optional diagnostic in the coupling workflow, so it is off by "
+        "default; the feature-finder mask with the same key is a primary output. "
         "0 not a hilltop, 1 left of travel, 2 right of travel.",
         "Output", "switch", ""};
 
@@ -562,8 +560,20 @@ int main(int argc, char* argv[])
         // Renamed 2026-09-08 for consistency: the chi reference area is
         // `chi_A0` in every CLI that has one. One-release compatibility window.
         pp.set_deprecated_aliases({
+            {"channel_network_file", "channel_network_fname"},
+            {"floodplain_mask_file", "floodplain_mask_fname"},
             {"chi_A_0", "chi_A0"},
-            {"source_pixels_threshold", "threshold_contributing_pixels"} });
+            {"source_pixels_threshold", "threshold_contributing_pixels"},
+            {"minimum_elevation", "min_elevation"},
+            {"minimum_basin_pixels", "min_basin_pixels"},
+            {"chi_critical_divergence_m", "chi_critical_divergence_metres"},
+            {"surface_fitting_window_radius", "surface_fitting_window_radius_metres"},
+            {"hilltop_points_output_format", "hilltop_points_write_vector_format"} });
+        pp.set_deprecated_compatibility_aliases({
+            {"hillslope_traces_output_format",
+             {"legacy_hillslope_traces_write_vector_format", "write_vector_format"}},
+            {"ridgelines_output_format",
+             {"legacy_ridgelines_write_vector_format", "write_vector_format"}} });
 
         pp.parse_all_parameters(float_default_map, int_default_map,
                                 bool_default_map, string_default_map);
@@ -602,20 +612,27 @@ int main(int argc, char* argv[])
             parse_raster_format(sf.at("write_output_format"));
         const std::string raster_ext = raster_ext_of(raster_format);
 
-        const std::string points_fmt_raw = lower(sf.at("hilltop_points_output_format"));
+        const std::string points_fmt_raw = lower(
+            lsdtt::resolve_output_format_override(
+                sf.at("hilltop_points_write_vector_format"),
+                sf.at("write_vector_format")));
         const bool points_as_csv = (points_fmt_raw == "csv");
         lsdtt::vector_output_format points_format =
             lsdtt::vector_output_format::flatgeobuf;
         if (!points_as_csv)
             points_format = parse_vector_format(points_fmt_raw,
-                                                "hilltop_points_output_format");
+                                                "hilltop_points_write_vector_format");
 
         const lsdtt::vector_output_format traces_format =
-            parse_vector_format(sf.at("hillslope_traces_output_format"),
-                                "hillslope_traces_output_format");
+            parse_vector_format(lsdtt::resolve_output_format_override(
+                                    sf.at("legacy_hillslope_traces_write_vector_format"),
+                                    sf.at("write_vector_format")),
+                                "write_vector_format");
         const lsdtt::vector_output_format ridge_format =
-            parse_vector_format(sf.at("ridgelines_output_format"),
-                                "ridgelines_output_format");
+            parse_vector_format(lsdtt::resolve_output_format_override(
+                                    sf.at("legacy_ridgelines_write_vector_format"),
+                                    sf.at("write_vector_format")),
+                                "write_vector_format");
 
         const int n_threads = ip.at("n_threads");
 
@@ -647,12 +664,12 @@ int main(int argc, char* argv[])
         // which is where a DEM gets inspected and corrected, and where the 3DEP
         // check can be answered by rerunning one cheap tool rather than this one.
 
-        if (ff.at("minimum_elevation") > -9998.0f)
+        if (ff.at("min_elevation") > -9998.0f)
         {
             std::cout << "Masking pixels at or below "
-                      << ff.at("minimum_elevation") << " m to nodata\n";
+                      << ff.at("min_elevation") << " m to nodata\n";
             dem_raw = lsdtt::mask_to_nodata_using_threshold(
-                dem_raw, ff.at("minimum_elevation"), true);
+                dem_raw, ff.at("min_elevation"), true);
         }
         const lsdtt::lsdtt_raster_meta meta = dem_raw.get_meta();
         const int nr = meta.n_rows, nc = meta.n_cols;
@@ -694,7 +711,7 @@ int main(int argc, char* argv[])
         std::int64_t n_channel = 0;
         std::vector<std::int64_t> sources;
 
-        const std::string chan_file = sf.at("channel_network_file");
+        const std::string chan_file = sf.at("channel_network_fname");
         if (!chan_file.empty())
         {
             // INGEST. A channel network extracted elsewhere -- typically by
@@ -715,7 +732,7 @@ int main(int argc, char* argv[])
                 const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(chan_file);
                 if (!lsdtt::csv_has_column(t, "row") || !lsdtt::csv_has_column(t, "col"))
                     throw std::invalid_argument(
-                        "channel_network_file " + chan_file + " has no 'row'/'col' "
+                        "channel_network_fname " + chan_file + " has no 'row'/'col' "
                         "columns. Write it with lsdtt-channel-extraction's "
                         "write_channel_network_points.");
                 int line = 1;
@@ -734,13 +751,13 @@ int main(int argc, char* argv[])
                 const auto names = vl.get_layer_names();
                 if (names.empty())
                     throw std::invalid_argument(
-                        "channel_network_file " + chan_file + " has no layers");
+                        "channel_network_fname " + chan_file + " has no layers");
                 const lsdtt::lsdtt_vector_layer layer = vl.read_vector_layer(names.front());
                 const int i_row = layer.schema.index_of("row");
                 const int i_col = layer.schema.index_of("col");
                 if (i_row < 0 || i_col < 0)
                     throw std::invalid_argument(
-                        "channel_network_file " + chan_file + " has no 'row'/'col' "
+                        "channel_network_fname " + chan_file + " has no 'row'/'col' "
                         "fields. Write it with lsdtt-channel-extraction's "
                         "write_channel_network_points.");
                 for (const auto& rec : layer.records)
@@ -751,7 +768,7 @@ int main(int argc, char* argv[])
 
             if (pts.empty())
                 throw std::runtime_error(
-                    "channel_network_file " + chan_file + " contained no points");
+                    "channel_network_fname " + chan_file + " contained no points");
 
             // The row/col indices are row-major on the grid the network was
             // extracted from. Reject an out-of-range index rather than wrapping
@@ -770,7 +787,7 @@ int main(int argc, char* argv[])
             }
             if (n_bad > 0)
                 throw std::runtime_error(
-                    "channel_network_file has " + std::to_string(n_bad) +
+                    "channel_network_fname has " + std::to_string(n_bad) +
                     " points outside this DEM (" + std::to_string(nr) + "x" +
                     std::to_string(nc) + "). It was extracted on a different "
                     "grid; row/col are row-major on that grid and cannot be "
@@ -789,7 +806,7 @@ int main(int argc, char* argv[])
                 // were read but all landed on nodata, the DEM is.
                 if (pts.empty())
                     throw std::runtime_error(
-                        "channel_network_file: no usable POINT geometry was read "
+                        "channel_network_fname: no usable POINT geometry was read "
                         "from '" + chan_file + "'. Multipart points are supported "
                         "and split automatically, so this is either an empty "
                         "layer or a geometry type that is not points - check that "
@@ -797,7 +814,7 @@ int main(int argc, char* argv[])
                         "the *_channel_network_lines one.");
 
                 throw std::runtime_error(
-                    "channel_network_file: all " + std::to_string(pts.size()) +
+                    "channel_network_fname: all " + std::to_string(pts.size()) +
                     " ingested channel points fell on nodata in this DEM. The "
                     "network was extracted on a different (or unmasked) DEM - "
                     "re-extract it on the same one.");
@@ -859,8 +876,8 @@ int main(int argc, char* argv[])
 
         // ---- surface metrics ---------------------------------------------------
         std::cout << "\n--- Surface metrics ---\n";
-        const double window = ff.at("surface_fitting_window_radius") > 0.0f
-            ? static_cast<double>(ff.at("surface_fitting_window_radius"))
+        const double window = ff.at("surface_fitting_window_radius_metres") > 0.0f
+            ? static_cast<double>(ff.at("surface_fitting_window_radius_metres"))
             : 3.0 * cell;
         std::cout << "Polynomial window radius: " << window << " m\n";
 
@@ -948,21 +965,21 @@ int main(int argc, char* argv[])
         std::vector<float> floodplain(ncell, 0.0f);
         bool have_floodplain = false;
 
-        if (!sf.at("floodplain_mask_file").empty())
+        if (!sf.at("floodplain_mask_fname").empty())
         {
             lsdtt::lsdtt_data_loader fp_loader;
-            fp_loader.open_raster(sf.at("floodplain_mask_file"));
+            fp_loader.open_raster(sf.at("floodplain_mask_fname"));
             const lsdtt::lsdtt_raster_cpu fp(fp_loader);
             if (fp.get_meta().n_rows != nr || fp.get_meta().n_cols != nc)
                 throw std::invalid_argument(
-                    "floodplain_mask_file does not match the DEM grid");
+                    "floodplain_mask_fname does not match the DEM grid");
             for (int r = 0; r < nr; ++r)
                 for (int c = 0; c < nc; ++c)
                     if (fp.get_mask_array().at(r, c) &&
                         fp.get_data_array().at(r, c) > 0.5f)
                         floodplain[static_cast<std::size_t>(r) * nc + c] = 1.0f;
             have_floodplain = true;
-            std::cout << "\n--- Floodplain ---\nIngested " << sf.at("floodplain_mask_file") << "\n";
+            std::cout << "\n--- Floodplain ---\nIngested " << sf.at("floodplain_mask_fname") << "\n";
         }
         else if (bf.at("find_floodplain"))
         {
@@ -1070,7 +1087,7 @@ int main(int argc, char* argv[])
                 try
                 {
                     lsdtt::lsdtt_basin_cpu basin(outlet, flow);
-                    if (basin.get_number_of_basin_pixels() < ip.at("minimum_basin_pixels"))
+                    if (basin.get_number_of_basin_pixels() < ip.at("min_basin_pixels"))
                         continue;
                     lsdtt::lsdtt_basin_outline_cpu outline(basin);
                     if (outline.outline_divide_rc().size() < 4) continue;
@@ -1088,7 +1105,7 @@ int main(int argc, char* argv[])
             if (ridgelines.empty())
                 throw std::runtime_error(
                     "no ridgelines extracted - try basin_selection_choice: "
-                    "all_junctions, or lower minimum_basin_pixels");
+                    "all_junctions, or lower min_basin_pixels");
 
             lsdtt::lsdtt_ridge_extraction_options ropts;
             ropts.diagonal_policy =
@@ -1277,7 +1294,7 @@ int main(int argc, char* argv[])
                     flow, outlet_flats, chan_threshold, chi_opts);
 
             lsdtt::lsdtt_chi_network_fit_options fit_opts;
-            fit_opts.critical_divergence_m = ff.at("chi_critical_divergence_m");
+            fit_opts.critical_divergence_m = ff.at("chi_critical_divergence_metres");
 
             const auto fits = lsdtt::fit_chi_networks(chi_networks, dem_routed, fit_opts);
             const auto chi_nodes    = lsdtt::export_chi_network_fit_nodes(fits);

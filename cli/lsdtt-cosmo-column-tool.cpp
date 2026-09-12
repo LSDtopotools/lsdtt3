@@ -42,7 +42,7 @@
 //     history CSV (time,rate,removal; rates in m/yr, depths in m).
 //     The production scaling can come from lat/lon/elevation (Stone 2000) or
 //     be specified directly.
-//     Parameters: transient_history_file, n_samples, sample_spacing_m,
+//     Parameters: transient_history_fname, n_samples, sample_spacing_metres,
 //                 latitude/longitude/elevation  OR  production_scaling_direct,
 //                 rock_density_kg_m3,
 //                 [use_initial_concentration, initial_*_conc_atoms_g]
@@ -63,7 +63,7 @@
 //
 //   burial_pair_batch
 //     Batch burial/inheritance diagnostics from CSV rows.
-//     Parameters: burial_pairs_csv_file
+//     Parameters: burial_pairs_fname
 //     Required CSV columns: conc_fast_atoms_g, conc_slow_atoms_g
 //       (legacy accepted: conc_26Al_atoms_g, conc_10Be_atoms_g)
 //     Optional per-row overrides: sample_name, nuclide_fast, nuclide_slow,
@@ -71,7 +71,7 @@
 //
 //   step_pair_batch
 //     Batch step-pair inversion from CSV rows.
-//     Parameters: step_pairs_csv_file
+//     Parameters: step_pairs_fname
 //     Required CSV columns: conc_fast_atoms_g, conc_slow_atoms_g
 //     Optional per-row overrides: sample_name, nuclide_fast, nuclide_slow,
 //                                 effective_erosion_rate_old_g_cm2_yr,
@@ -531,8 +531,8 @@ int main(int argc, char* argv[])
         "Used only when propagate_decay_uncertainty is true.",
         "-", "param", "use_initial_concentration"};
 
-    string_default_map["burial_pairs_csv_file"] = "burial_pairs.csv";
-    help_map["burial_pairs_csv_file"] = {"string","burial_pairs.csv",
+    string_default_map["burial_pairs_fname"] = "burial_pairs.csv";
+    help_map["burial_pairs_fname"] = {"string","burial_pairs.csv",
         "CSV input for burial_pair_batch mode.",
         "Required columns: conc_fast_atoms_g, conc_slow_atoms_g. Legacy columns "
         "conc_26Al_atoms_g and conc_10Be_atoms_g are accepted as fallback. Optional "
@@ -540,8 +540,8 @@ int main(int argc, char* argv[])
         "conc_fast_sigma_atoms_g, conc_slow_sigma_atoms_g.",
         "-", "param", "use_initial_concentration"};
 
-    string_default_map["step_pairs_csv_file"] = "step_pairs.csv";
-    help_map["step_pairs_csv_file"] = {"string","step_pairs.csv",
+    string_default_map["step_pairs_fname"] = "step_pairs.csv";
+    help_map["step_pairs_fname"] = {"string","step_pairs.csv",
         "CSV input for step_pair_batch mode.",
         "Required columns: conc_fast_atoms_g, conc_slow_atoms_g. Optional columns: "
         "sample_name, nuclide_fast, nuclide_slow, effective_erosion_rate_old_g_cm2_yr, "
@@ -549,10 +549,13 @@ int main(int argc, char* argv[])
         "-", "param", "use_initial_concentration"};
 
     //  Full-transient parameters 
-    string_default_map["transient_history_file"] = "erosion_history.csv";
-    help_map["transient_history_file"] = {"string","erosion_history.csv",
+    string_default_map["transient_history_fname"] = "erosion_history.csv";
+    help_map["transient_history_fname"] = {"string","erosion_history.csv",
         "CSV file with erosion history (columns: time,rate,removal).",
-        "time in yr BP (ascending); rate in m/yr; removal in m (when rate=0). "
+        "The column tool's full_transient mode is history-first, so it defaults "
+        "to erosion_history.csv; the raster prediction CLI instead uses NULL "
+        "because transient mode is optional. time in yr BP (ascending); rate in "
+        "m/yr; removal in m (when rate=0). "
         "Last row: time=-9999, rate=background rate.",
         "-", "param", "use_initial_concentration"};
 
@@ -561,8 +564,8 @@ int main(int argc, char* argv[])
         "Number of evenly-spaced depth samples in the column.","Used in full_transient.",
         "-", "param", "use_initial_concentration"};
 
-    float_default_map["sample_spacing_m"] = 0.05f;
-    help_map["sample_spacing_m"] = {"float","0.05",
+    float_default_map["sample_spacing_metres"] = 0.05f;
+    help_map["sample_spacing_metres"] = {"float","0.05",
         "Spacing between depth samples (m).","First sample is at the surface (0 m).",
         "-", "param", "use_initial_concentration"};
 
@@ -639,6 +642,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"burial_pairs_csv_file", "burial_pairs_fname"},
+        {"step_pairs_csv_file", "step_pairs_fname"},
+        {"transient_history_file", "transient_history_fname"},
+        {"sample_spacing_m", "sample_spacing_metres"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
     auto bf  = pp.get_bool_parameters();
@@ -1030,7 +1038,7 @@ int main(int argc, char* argv[])
     // ===========================================================================
     else if (mode == "full_transient")
     {
-        std::string hist_file = pp.add_read_path_if_needed(sf["transient_history_file"]);
+        std::string hist_file = pp.add_read_path_if_needed(sf["transient_history_fname"]);
         std::cout << "Reading erosion history: " << hist_file << "\n";
         try { col.read_erosion_time_series(hist_file); }
         catch (const std::exception& e)
@@ -1040,7 +1048,7 @@ int main(int argc, char* argv[])
         }
 
         int    n_s  = ifs["n_samples"];
-        double dz   = static_cast<double>(ff["sample_spacing_m"]);
+        double dz   = static_cast<double>(ff["sample_spacing_metres"]);
         std::vector<double> depths;
         depths.reserve(static_cast<std::size_t>(n_s));
         for (int i = 0; i < n_s; ++i)
@@ -1274,7 +1282,7 @@ int main(int argc, char* argv[])
     // ===========================================================================
     else if (mode == "burial_pair_batch")
     {
-        const std::string in_csv = pp.add_read_path_if_needed(sf["burial_pairs_csv_file"]);
+        const std::string in_csv = pp.add_read_path_if_needed(sf["burial_pairs_fname"]);
         const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(in_csv);
         const bool has_new = lsdtt::csv_has_column(t, "conc_fast_atoms_g") && lsdtt::csv_has_column(t, "conc_slow_atoms_g");
         const bool has_legacy = lsdtt::csv_has_column(t, "conc_10Be_atoms_g") && lsdtt::csv_has_column(t, "conc_26Al_atoms_g");
@@ -1413,7 +1421,7 @@ int main(int argc, char* argv[])
     // ===========================================================================
     else if (mode == "step_pair_batch")
     {
-        const std::string in_csv = pp.add_read_path_if_needed(sf["step_pairs_csv_file"]);
+        const std::string in_csv = pp.add_read_path_if_needed(sf["step_pairs_fname"]);
         const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(in_csv);
         if (!lsdtt::csv_has_column(t, "conc_fast_atoms_g") || !lsdtt::csv_has_column(t, "conc_slow_atoms_g"))
         {

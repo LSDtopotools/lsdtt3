@@ -15,7 +15,7 @@ read_fname: divmig_valleys.tif
 write_path: __WRITE_PATH__
 write_fname: divmig_cluster_vec
 
-basin_outlet_file: divmig_outlets.fgb
+basin_outlet_fname: divmig_outlets.fgb
 outlet_cluster_field: cluster_id
 outlet_cluster_mode: auto
 basin_outlet_snapping_method: none

@@ -77,7 +77,10 @@ Steps run in this order:
 
 For `feature_type: flow_road_discrimination`, `threshold_contributing_pixels`
 (int, default `1000`) defines the D8 channel network used to distinguish flow
-pathways from roads.
+pathways from roads. `big_channel_threshold_contributing_pixels` (int, default
+`5000`) is the larger contributing-pixel threshold used by the valley-channel
+point export. The former `flow_big_channel_threshold_pixels` spelling remains
+an unchanged-value alias.
 
 ---
 

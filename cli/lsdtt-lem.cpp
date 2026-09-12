@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/cpu/lsdtt_lem_cpu.hpp"
@@ -150,23 +151,14 @@ int main(int argc, char* argv[])
         "DEM loading vs synthetic surface", "param", ""};
 
     // --- Grid (when not loading a DEM) ---
-    int_default_map["nrows"] = 200;
-    help_map["nrows"] = {"int","200",
-        "Number of rows in the model domain.",
-        "Used when read_initial_dem is false.",
-        "Grid (when not loading a DEM)", "param", ""};
-
-    int_default_map["ncols"] = 400;
-    help_map["ncols"] = {"int","400",
-        "Number of columns in the model domain.",
-        "Used when read_initial_dem is false.",
-        "Grid (when not loading a DEM)", "param", ""};
-
-    float_default_map["grid_resolution"] = 30.0f;
-    help_map["grid_resolution"] = {"float","30",
-        "Cell size in metres.",
-        "Used when read_initial_dem is false.",
-        "Grid (when not loading a DEM)", "param", ""};
+    lsdtt::declare_synthetic_dimensions_parameters(int_default_map, help_map);
+    lsdtt::declare_synthetic_cell_size_parameter(float_default_map, help_map);
+    int_default_map["n_rows"] = 200;
+    help_map["n_rows"][1] = "200";
+    int_default_map["n_cols"] = 400;
+    help_map["n_cols"][1] = "400";
+    float_default_map["cell_size_metres"] = 30.0f;
+    help_map["cell_size_metres"][1] = "30";
     
     string_default_map["synthetic_crs_wkt"] = "";
     help_map["synthetic_crs_wkt"] = {"string","",
@@ -176,24 +168,16 @@ int main(int argc, char* argv[])
         "Grid (when not loading a DEM)", "param", ""};
 
     // --- Initial conditions ---
-    string_default_map["initial_surface_type"] = "flat";
-    help_map["initial_surface_type"] = {"string","flat",
-        "Initial surface type: flat, white_noise, red_noise, diamond_square.",
-        "flat = all zeros; white_noise = uniform random; "
-        "red_noise = low-frequency dominated; diamond_square = fractal terrain.",
-        "Initial conditions", "param", ""};
+    lsdtt::declare_synthetic_noise_type_parameter(string_default_map, help_map);
 
     float_default_map["max_initial_elevation"] = 1.0f;
     help_map["max_initial_elevation"] = {"float","1.0",
         "Max elevation of white-noise surface (m). Min is 0.",
-        "Used when initial_surface_type is white_noise.",
+        "Used when noise_type is white_noise.",
         "Initial conditions", "param", ""};
 
-    float_default_map["noise_target_stddev"] = 1.0f;
-    help_map["noise_target_stddev"] = {"float","1.0",
-        "Target standard deviation of the noise surface (m).",
-        "Used when initial_surface_type is red_noise or diamond_square.",
-        "Initial conditions", "param", ""};
+    lsdtt::declare_synthetic_noise_target_stddev_parameter(
+        float_default_map, help_map);
 
     int_default_map["noise_blur_passes"] = 6;
     help_map["noise_blur_passes"] = {"int","6",
@@ -207,11 +191,7 @@ int main(int argc, char* argv[])
         "",
         "Initial conditions", "param", ""};
 
-    int_default_map["random_seed"] = 33;
-    help_map["random_seed"] = {"int","33",
-        "Random seed for the initial noise surface.",
-        "",
-        "Initial conditions", "param", ""};
+    lsdtt::declare_synthetic_random_seed_parameter(int_default_map, help_map);
 
     float_default_map["parabola_relief"] = 0.0f;
     help_map["parabola_relief"] = {"float","0",
@@ -475,7 +455,7 @@ int main(int argc, char* argv[])
         "Set enable_nonlinear_hillslopes false for linear diffusion. "
         "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
         "unconditionally stable near Sc via slope-restoration. The ONLY model that works "
-        "with an emergent channel network (incision_threshold_area = 0). "
+        "with an emergent channel network (incision_threshold_specific_area = 0). "
         "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps "
         "(transient only; steady-state runs use Newton regardless). "
         "NOTE: 'linear' and 'roering' select EXPLICIT solvers. They are CFL-limited and "
@@ -551,8 +531,8 @@ int main(int argc, char* argv[])
         "auto-tunes it down further on divergence. Ignored by other hillslope models.",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
-    float_default_map["hillslope_implicit_picard_tol"] = 1e-4f;
-    help_map["hillslope_implicit_picard_tol"] = {"float","1e-4",
+    float_default_map["hillslope_implicit_picard_tolerance_metres"] = 1e-4f;
+    help_map["hillslope_implicit_picard_tolerance_metres"] = {"float","1e-4",
         "Convergence tolerance max|delta_z| for the Picard iteration (roering_implicit).",
         "",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
@@ -582,8 +562,8 @@ int main(int argc, char* argv[])
         "time-accurate transients rather than just the approach to steady state.",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
-    float_default_map["hillslope_implicit_error_tol"] = 0.0f;
-    help_map["hillslope_implicit_error_tol"] = {"float","0",
+    float_default_map["hillslope_implicit_error_tolerance_metres"] = 0.0f;
+    help_map["hillslope_implicit_error_tolerance_metres"] = {"float","0",
         "TR-BDF2 embedded-error tolerance (elevation units) for the PI step controller "
         "(0 = auto = a small fraction of the relief). Only used when time_integrator = 1.",
         "",
@@ -612,7 +592,7 @@ int main(int argc, char* argv[])
         "Optional raster (in read_path) whose cells > 0.5 are fixed-elevation channel "
         "pixels for the hillslope Dirichlet set, overriding the drainage-area threshold.",
         "Must match the DEM grid. Empty (default) = derive channels from "
-        "incision_threshold_area. Useful for prescribed-channel / hillslope-strip runs.",
+        "incision_threshold_specific_area. Useful for prescribed-channel / hillslope-strip runs.",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     bool_default_map["hold_channel_mask_fixed"] = false;
@@ -632,7 +612,7 @@ int main(int argc, char* argv[])
         "frequency_of_output_writing > 0 (the migrating network of an animation). The mask "
         "is the one the hillslope step would use: the channel_mask_fname raster when "
         "supplied, else the pixels whose D-infinity drainage area reaches "
-        "incision_threshold_area (or channel_mask_threshold_area). Feed it back in as "
+        "incision_threshold_specific_area (or channel_mask_threshold_specific_area). Feed it back in as "
         "channel_mask_fname to freeze a fluvially-evolved network for a hillslopes-only run.",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "switch", ""};
 
@@ -646,13 +626,15 @@ int main(int argc, char* argv[])
         "channel network. Deposition appears as negative values.",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "switch", ""};
 
-    float_default_map["channel_mask_threshold_area"] = 0.0f;
-    help_map["channel_mask_threshold_area"] = {"float","0",
-        "Drainage-area threshold defining the written channel mask (0 = use incision_threshold_area).",
+    float_default_map["channel_mask_threshold_specific_area"] = 0.0f;
+    help_map["channel_mask_threshold_specific_area"] = {"float","0",
+        "A/dx threshold in metres when divide_area_by_dx=true; map area A in m^2 "
+        "when false. Defines the written channel mask (0 = use "
+        "incision_threshold_specific_area).",
         "Only affects write_channel_mask_raster; the model itself is unchanged. Lets a run "
-        "erode fluvially everywhere (incision_threshold_area: 0) while still writing a "
-        "channel network defined at a positive area threshold. Same units as "
-        "incision_threshold_area (see divide_area_by_dx).",
+        "erode fluvially everywhere (incision_threshold_specific_area: 0) while still writing a "
+        "channel network defined at a positive threshold. The run header resolves the "
+        "threshold into specific area, map area, and contributing pixels.",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     bool_default_map["enable_uplift"] = true;
@@ -722,14 +704,13 @@ int main(int argc, char* argv[])
         "",
         "Process parameters", "param", ""};
 
-    float_default_map["incision_threshold_area"] = 0.0f;
-    help_map["incision_threshold_area"] = {"float","0",
-        "Channel threshold for fluvial incision. 0 = no threshold. UNITS DEPEND "
-        "ON divide_area_by_dx - see below.",
-        "THIS IS NOT ALWAYS AN AREA, despite the name. With divide_area_by_dx "
-        "true (the DEFAULT) the threshold is compared against SPECIFIC "
-        "catchment area a = A/dx, which is a LENGTH IN METRES; with it false, "
-        "against map area A in m^2. Two consequences worth knowing before "
+    float_default_map["incision_threshold_specific_area"] = 0.0f;
+    help_map["incision_threshold_specific_area"] = {"float","0",
+        "A/dx channel threshold in metres when divide_area_by_dx=true; map area "
+        "A in m^2 when false. 0 = no threshold.",
+        "With divide_area_by_dx true (the DEFAULT) the threshold is compared "
+        "against specific catchment area a = A/dx, a length in metres; with it "
+        "false, against map area A in m^2. Two consequences worth knowing before "
         "choosing a value: (1) under the default, threshold T selects cells "
         "with at least T/dx upstream pixels, so the same .param file carried "
         "from a 10 m DEM to a 1 m DEM asks for a ten times larger network in "
@@ -747,7 +728,7 @@ int main(int argc, char* argv[])
         "Which channel/hillslope coupling to run: auto, coupled, or "
         "channels_as_boundaries.",
         "lsdtt3 contains BOTH standard couplings, and which one you get has "
-        "until now been an unreported side effect of incision_threshold_area. "
+        "until now been an unreported side effect of incision_threshold_specific_area. "
         "channels_as_boundaries makes channels FIXED (Dirichlet) nodes for the "
         "hillslope solve, so drainage density is an INPUT - the MuddPILE "
         "configuration, D8 routing. coupled gives no Dirichlet set: both "
@@ -769,7 +750,8 @@ int main(int argc, char* argv[])
     help_map["divide_area_by_dx"] = {"bool","true",
         "Divide drainage area by cell size to get specific area a = A/dx.",
         "Applies to both fluvial incision and the hillslope coupling threshold, "
-        "and CHANGES THE UNITS of incision_threshold_area from m^2 to metres. "
+        "and changes the interpretation of incision_threshold_specific_area "
+        "from map area in m^2 to specific area in metres. "
         "True is the Bonetti et al. (2020) / Litwin et al. (2022) convention "
         "(specific area, grid-independent); false is the Perron et al. (2008) "
         "total-area convention. The choice also changes the exponent in the "
@@ -847,11 +829,11 @@ int main(int argc, char* argv[])
     float_default_map["steady_state_tolerance_dz_over_relief"] = 1e-3f;
     help_map["steady_state_tolerance_dz_over_relief"] = {"float","1e-3",
         "Convergence tolerance for max|dz|/relief between equilibration cycles.",
-        "Used when steady_state_check_convergence is true and tolerance_dz_m is 0.",
+        "Used when steady_state_check_convergence is true and steady_state_tolerance_dz_metres is 0.",
         "Analytical steady-state", "param", "steady_state_check_convergence"};
 
-    float_default_map["steady_state_tolerance_dz_m"] = 0.0f;
-    help_map["steady_state_tolerance_dz_m"] = {"float","0",
+    float_default_map["steady_state_tolerance_dz_metres"] = 0.0f;
+    help_map["steady_state_tolerance_dz_metres"] = {"float","0",
         "Absolute convergence tolerance for max|dz| (m) between equilibration cycles.",
         "If > 0 this overrides steady_state_tolerance_dz_over_relief.",
         "Analytical steady-state", "param", "steady_state_check_convergence"};
@@ -880,7 +862,7 @@ int main(int argc, char* argv[])
     help_map["run_hillslope_on_loaded_dem"] = {"bool","false",
         "Solve hillslopes on the loaded DEM without re-snapping the fluvial field.",
         "Requires read_initial_dem: true, run_hillslope_steady_state: true and "
-        "incision_threshold_area > 0. Channels (A >= threshold) keep the "
+        "incision_threshold_specific_area > 0. Channels at or above the resolved threshold keep the "
         "elevations they arrived with and act as Dirichlet boundaries; only "
         "hillslope pixels are solved. Use this when the fluvial field is a "
         "TRANSIENT that must be preserved -- a step-change landscape carries a "
@@ -893,8 +875,8 @@ int main(int argc, char* argv[])
     help_map["run_hillslope_steady_state"] = {"bool","false",
         "Solve for hillslope steady-state elevations after fluvial steady-state.",
         "Solver is selected by hillslope_ss_model: linear, roering, or cidre. "
-        "Requires run_steady_state: true and incision_threshold_area > 0. "
-        "Channel pixels (area >= incision_threshold_area) become Dirichlet BCs.",
+        "Requires run_steady_state: true and incision_threshold_specific_area > 0. "
+        "Channel pixels at or above the resolved threshold become Dirichlet BCs.",
         "Hillslope steady-state", "switch", ""};
 
     float_default_map["hillslope_ss_tolerance"] = 1e-4f;
@@ -938,7 +920,7 @@ int main(int argc, char* argv[])
     help_map["channel_hysteresis_factor"] = {"float","0.5",
         "Hysteresis on the channel (Dirichlet) set between equilibration cycles.",
         "A pixel already flagged as channel stays channel until its drainage area "
-        "falls below channel_hysteresis_factor * incision_threshold_area. Stops the "
+        "falls below channel_hysteresis_factor * incision_threshold_specific_area. Stops the "
         "Dirichlet set flickering from cycle to cycle. 1.0 disables the hysteresis.",
         "Hillslope steady-state", "param", "run_hillslope_steady_state"};
 
@@ -1071,6 +1053,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"nrows", "n_rows"},
+        {"ncols", "n_cols"},
+        {"grid_resolution", "cell_size_metres"},
+        {"initial_surface_type", "noise_type"},
+        {"noise_target_stddev", "noise_target_stddev_metres"},
+        {"hillslope_implicit_picard_tol", "hillslope_implicit_picard_tolerance_metres"},
+        {"hillslope_implicit_error_tol", "hillslope_implicit_error_tolerance_metres"},
+        {"steady_state_tolerance_dz_m", "steady_state_tolerance_dz_metres"},
+        {"incision_threshold_area", "incision_threshold_specific_area"},
+        {"channel_mask_threshold_area", "channel_mask_threshold_specific_area"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
 
@@ -1090,7 +1083,7 @@ int main(int argc, char* argv[])
     opts.erodibility                     = ff["erodibility"];
     opts.m_exponent                      = ff["m_exponent"];
     opts.n_exponent                      = ff["n_exponent"];
-    opts.incision_threshold_area         = ff["incision_threshold_area"];
+    opts.incision_threshold_area         = ff["incision_threshold_specific_area"];
     opts.divide_area_by_dx               = bf["divide_area_by_dx"];
     opts.coupling_regime =
         lsdtt::parse_hillslope_coupling_regime(sf["hillslope_channel_coupling"]);
@@ -1170,12 +1163,12 @@ int main(int argc, char* argv[])
     // step from the options above; these fill the rest of the implicit options).
     opts.hillslope_force_picard = bf["hillslope_force_sor"];
     opts.roering_implicit_opts.relaxation_omega = ff["hillslope_implicit_relaxation_omega"];
-    opts.roering_implicit_opts.picard_tol       = ff["hillslope_implicit_picard_tol"];
+    opts.roering_implicit_opts.picard_tol = ff["hillslope_implicit_picard_tolerance_metres"];
     opts.roering_implicit_opts.picard_max_iter  = ifs["hillslope_implicit_picard_max_iter"];
     opts.roering_implicit_opts.slope_ratio_cap  = ff["hillslope_implicit_slope_ratio_cap"];
     opts.roering_implicit_opts.solver_choice    = ifs["hillslope_implicit_solver_choice"];
     opts.roering_implicit_opts.time_integrator  = ifs["hillslope_implicit_time_integrator"];
-    opts.roering_implicit_opts.error_tol        = ff["hillslope_implicit_error_tol"];
+    opts.roering_implicit_opts.error_tol = ff["hillslope_implicit_error_tolerance_metres"];
     opts.roering_implicit_opts.dt_init          = ff["hillslope_implicit_dt_init"];
     opts.roering_implicit_opts.dt_min           = ff["hillslope_implicit_dt_min"];
     opts.roering_implicit_opts.dt_max           = ff["hillslope_implicit_dt_max"];
@@ -1303,9 +1296,9 @@ int main(int argc, char* argv[])
         opts.explicit_channel_mask.empty())
     {
         std::cerr << "\nFATAL: hillslope_channel_coupling: channels_as_boundaries "
-                     "needs a channel set,\n  but incision_threshold_area is 0 "
+                      "needs a channel set,\n  but incision_threshold_specific_area is 0 "
                      "and no channel_mask_fname was given. There are\n  no "
-                     "Dirichlet nodes to impose. Set incision_threshold_area > 0, "
+                      "Dirichlet nodes to impose. Set incision_threshold_specific_area > 0, "
                      "supply a mask,\n  or ask for coupled.\n";
         return 1;
     }
@@ -1331,7 +1324,7 @@ int main(int argc, char* argv[])
     std::cout << "  Timestep          : " << opts.timestep << " yr\n";
     std::cout << "  Coupling regime   : " << lsdtt::name_of(resolved_regime)
               << (regime_requested ? " (requested)" : " (inferred from "
-                                                      "incision_threshold_area)")
+                                                       "incision_threshold_specific_area)")
               << "\n"
               << "                      "
               << (resolved_regime == lsdtt::hillslope_coupling_regime::coupled
@@ -1407,9 +1400,9 @@ int main(int argc, char* argv[])
     else
     {
         // Synthetic flat or noise surface
-        const int   nr   = ifs["nrows"];
-        const int   nc   = ifs["ncols"];
-        const float dx   = ff["grid_resolution"];
+        const int   nr   = ifs["n_rows"];
+        const int   nc   = ifs["n_cols"];
+        const float dx   = ff["cell_size_metres"];
 
         // Check if user provided WKT, otherwise fallback to EPSG:32601
         std::string crs_wkt = sf["synthetic_crs_wkt"];
@@ -1442,7 +1435,7 @@ int main(int argc, char* argv[])
             syn_meta.set_default_synthetic_georeference();
         }
 
-        const std::string surf_type = sf["initial_surface_type"];
+        const std::string surf_type = sf["noise_type"];
         std::cout << "\nBuilding synthetic " << surf_type << " surface: "
                   << nr << " x " << nc << " @ " << dx << " m\n";
 
@@ -1470,7 +1463,7 @@ int main(int argc, char* argv[])
                 syn_meta,
                 ifs["random_seed"],
                 0.0,
-                static_cast<double>(ff["noise_target_stddev"]),
+                static_cast<double>(ff["noise_target_stddev_metres"]),
                 ifs["noise_blur_passes"],
                 ifs["n_threads"]
             );
@@ -1484,7 +1477,7 @@ int main(int argc, char* argv[])
                 static_cast<double>(ff["diamond_square_roughness"]),
                 1.0,
                 0.0,
-                static_cast<double>(ff["noise_target_stddev"]),
+                static_cast<double>(ff["noise_target_stddev_metres"]),
                 ifs["n_threads"]
             );
         }
@@ -1618,8 +1611,9 @@ int main(int argc, char* argv[])
             // The mask may be defined at its own area threshold, so that a run
             // eroding fluvially everywhere can still emit a channel network.
             lsdtt::lsdtt_lem_options mask_opts = opts;
-            if (ff["channel_mask_threshold_area"] > 0.0f)
-                mask_opts.incision_threshold_area = ff["channel_mask_threshold_area"];
+            if (ff["channel_mask_threshold_specific_area"] > 0.0f)
+                mask_opts.incision_threshold_area =
+                    ff["channel_mask_threshold_specific_area"];
 
             const std::vector<std::uint8_t> is_channel =
                 lsdtt::compute_lem_channel_mask(final_dem, mask_opts);
@@ -1685,14 +1679,14 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     const bool do_parabola = !bf["read_initial_dem"]
                              && ff["parabola_relief"] > 0.0f
-                             && sf["initial_surface_type"] != "flat";
+                             && sf["noise_type"] != "flat";
     const bool do_breach   = !bf["read_initial_dem"]
-                             && sf["initial_surface_type"] != "flat"
+                             && sf["noise_type"] != "flat"
                              && (ff["parabola_relief"] > 0.0f
                                  || ff["post_breach_noise_relief"] > 0.0f);
     const bool do_noise    = !bf["read_initial_dem"]
                              && ff["post_breach_noise_relief"] > 0.0f
-                             && sf["initial_surface_type"] != "flat";
+                             && sf["noise_type"] != "flat";
 
     if (do_parabola)
     {
@@ -1824,11 +1818,11 @@ int main(int argc, char* argv[])
         const std::string hs_solver = sf["hillslope_ss_model"];
         const bool is_critical_slope =
             hs_solver == "critical_slope" || hs_solver == "critical-slope";
-        const float thresh = ff["incision_threshold_area"];
+        const float thresh = ff["incision_threshold_specific_area"];
         if (thresh <= 0.0f && opts.explicit_channel_mask.empty() && !is_critical_slope)
         {
             std::cerr << "FATAL: run_hillslope_on_loaded_dem requires "
-                         "incision_threshold_area > 0 or channel_mask_fname; "
+                         "incision_threshold_specific_area > 0 or channel_mask_fname; "
                          "the channel pixels are the Dirichlet set that pins "
                          "the solve.\n";
             return 1;
@@ -1920,7 +1914,7 @@ int main(int argc, char* argv[])
 
         if (n_chan == 0)
         {
-            std::cerr << "FATAL: no channel pixels at incision_threshold_area="
+            std::cerr << "FATAL: no channel pixels at incision_threshold_specific_area="
                       << thresh << "; the hillslope solve would have no "
                          "Dirichlet set. Lower the threshold.\n";
             return 1;
@@ -2151,7 +2145,7 @@ int main(int argc, char* argv[])
             const int steady_state_convergence_patience =
                 ifs["steady_state_convergence_patience"];
             const float steady_state_tolerance_dz_m =
-                ff["steady_state_tolerance_dz_m"];
+                ff["steady_state_tolerance_dz_metres"];
             const float steady_state_tolerance_dz_over_relief =
                 ff["steady_state_tolerance_dz_over_relief"];
             const float steady_state_tolerance_receiver_fraction =
@@ -2170,7 +2164,7 @@ int main(int argc, char* argv[])
 
             if (steady_state_tolerance_dz_m < 0.0f)
             {
-                std::cerr << "FATAL: invalid steady_state_tolerance_dz_m="
+                std::cerr << "FATAL: invalid steady_state_tolerance_dz_metres="
                           << steady_state_tolerance_dz_m
                           << "; must be >= 0.\n";
                 return 1;
@@ -2229,7 +2223,7 @@ int main(int argc, char* argv[])
             eq_opts.run_hillslope          = bf["run_hillslope_steady_state"];
             eq_opts.hillslope_model        = sf["hillslope_ss_model"];
             eq_opts.hillslope_every_cycle  = bf["hillslope_every_cycle"];
-            eq_opts.channel_threshold_area = ff["incision_threshold_area"];
+            eq_opts.channel_threshold_area = ff["incision_threshold_specific_area"];
             eq_opts.channel_hysteresis_factor =
                 ff["channel_hysteresis_factor"];
             eq_opts.hillslope.D              = ff["hillslope_diffusivity"];
@@ -2244,7 +2238,7 @@ int main(int argc, char* argv[])
             {
                 std::cerr
                     << "FATAL: run_hillslope_steady_state: true requires "
-                       "incision_threshold_area > 0; the channel pixels are the "
+                       "incision_threshold_specific_area > 0; the channel pixels are the "
                        "Dirichlet set that pins the hillslope solve.\n";
                 return 1;
             }
@@ -2507,11 +2501,11 @@ int main(int argc, char* argv[])
         }
         else if (bf["run_hillslope_steady_state"])
         {
-            const float thresh = ff["incision_threshold_area"];
+            const float thresh = ff["incision_threshold_specific_area"];
             if (thresh <= 0.0f)
             {
                 std::cerr << "Warning: run_hillslope_steady_state requires "
-                             "incision_threshold_area > 0. Skipping hillslope solve.\n";
+                             "incision_threshold_specific_area > 0. Skipping hillslope solve.\n";
             }
             else
             {
@@ -2631,7 +2625,7 @@ int main(int argc, char* argv[])
                     std::cout << "Writing hillslope stats: " << hs_csv << "\n";
                     const std::vector<std::string> hs_headers = {
                         "transport_mode", "D", "U", "Sc",
-                        "incision_threshold_area", "n_channel_pixels",
+                        "incision_threshold_specific_area", "n_channel_pixels",
                         "n_iterations", "final_residual", "converged"
                     };
                     const std::vector<std::vector<std::string>> hs_rows = {{
@@ -3113,5 +3107,6 @@ int main(int argc, char* argv[])
 
     pp.print_help(help_map, pp.get_write_fname() + "_README",
                   k_version, k_citation);
+    pp.print_parameters();
     return 0;
 }

@@ -10,6 +10,6 @@ run_steady_state: true
 use_landscape_equilibration_cycle: true
 steady_state_n_cycles: 5
 steady_state_check_convergence: true
-steady_state_tolerance_dz_m: 1e9
+steady_state_tolerance_dz_metres: 1e9
 steady_state_tolerance_receiver_fraction: 1.0
 steady_state_convergence_patience: 1

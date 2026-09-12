@@ -107,7 +107,7 @@ Computed using direct polyfit. Required for the optional VEC raster output and f
 | `bearing_window_length_metres` | float | `50.0` | Along-channel window length (m) used to estimate local channel bearing via orthogonal linear regression. Must be > 0. |
 | `cross_section_thinning` | int | `1` | Keep every Nth channel pixel as a cross-section centre. `1` = every pixel. Must be > 0. |
 | `skip_junction_pixels` | bool | `false` | Skip cross sections at source, confluence, or outlet junction pixels. |
-| `minimum_bearing_window_pixels` | int | `3` | Minimum number of channel pixels required to fit a bearing. Cross sections with fewer pixels in the window are skipped. Must be ≥ 2. |
+| `min_bearing_window_pixels` | int | `3` | Minimum number of channel pixels required to fit a bearing. Cross sections with fewer pixels in the window are skipped. Must be ≥ 2. |
 
 ---
 
@@ -116,12 +116,11 @@ Computed using direct polyfit. Required for the optional VEC raster output and f
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
 | `calculate_spatial_index` | bool | `true` | Build a spatial index when writing vector files. Speeds up GIS use but requires buffering the layer in memory. |
-| `write_channel_network_lines` | bool | `true` | `<write_fname>_channel_network_lines.<ext>` — one polyline per compact channel link. |
-| `channel_network_lines_output_format` | string | `flatgeobuf` | Format for channel network lines. Options: `flatgeobuf` / `fgb`, `gpkg`. |
+| `write_channel_network_lines` | bool | `true` | One polyline per compact channel link. Enabled because the network locates and contextualises this workflow's cross sections. |
+| `write_vector_format` | string | `flatgeobuf` | Format for channel-network and cross-section lines. Options: `flatgeobuf` / `fgb`, `gpkg`. |
+| `cross_section_sample_points_write_vector_format` | string | `same_as_write_vector_format` | Optional point-output override; also accepts `csv`. |
 | `write_cross_section_lines` | bool | `true` | `<write_fname>_cross_sections.<ext>` — one line per cross section. |
-| `cross_section_lines_output_format` | string | `flatgeobuf` | Format for cross-section lines. Options: `flatgeobuf` / `fgb`, `gpkg`. |
 | `write_cross_section_sample_points` | bool | `true` | `<write_fname>_cross_section_sample_points.<ext>` — sampled elevation points with section id and optional VEC. |
-| `cross_section_sample_points_output_format` | string | `flatgeobuf` | Format for sampled cross-section points. Options: `csv`, `flatgeobuf` / `fgb`, `gpkg`. |
 
 ---
 
@@ -147,9 +146,8 @@ cross_section_thinning:              5
 skip_junction_pixels:                true
 
 write_channel_network_lines:        true
-channel_network_lines_output_format: flatgeobuf
+write_vector_format: flatgeobuf
 write_cross_section_lines:          true
-cross_section_lines_output_format:   flatgeobuf
 write_cross_section_sample_points:  true
-cross_section_sample_points_output_format: gpkg
+cross_section_sample_points_write_vector_format: gpkg
 ```

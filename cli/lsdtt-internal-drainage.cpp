@@ -605,19 +605,19 @@ int main(int argc, char* argv[])
     string_default_map["sink_mode"] = "forced_outlet";
     string_default_map["boundary_conditions"] = "oooo";
     string_default_map["sink_candidate_fname"] = "";
-    string_default_map["sink_candidate_format"] = "same_as_extension";
+    string_default_map["sink_candidate_input_format"] = "same_as_extension";
     string_default_map["sink_candidate_layer_name"] = "";
     string_default_map["write_output_format"] = "cog";
-    string_default_map["sink_vector_format"] = "flatgeobuf";
+    string_default_map["write_vector_format"] = "flatgeobuf";
     string_default_map["priority_flood_queue"] = "binary";
 
-    int_default_map["minimum_pixels_in_patch"] = 1;
+    int_default_map["min_pixels_in_patch"] = 1;
     int_default_map["n_threads"] = 0;
     lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 
-    float_default_map["minimum_sink_depth"] = 0.0f;
-    float_default_map["minimum_sink_area"] = 0.0f;
-    float_default_map["minimum_sink_volume"] = 0.0f;
+    float_default_map["min_sink_depth"] = 0.0f;
+    float_default_map["min_sink_area"] = 0.0f;
+    float_default_map["min_sink_volume"] = 0.0f;
     float_default_map["upslope_tagging_distance"] = 1.0e12f;
     float_default_map["fill_min_slope"] = 0.0001f;
     float_default_map["m_over_n"] = 0.45f;
@@ -658,7 +658,7 @@ int main(int argc, char* argv[])
         "reports parent_sink_id, hierarchy_level and true depression volume. Use "
         "it for genuinely nested terrain such as playas, karst or quarry benches. "
         "RISK: on rough surfaces every innermost hollow is tiny, so combining it "
-        "with sink_leaves_only and a minimum_pixels_in_patch threshold can filter "
+        "with sink_leaves_only and a min_pixels_in_patch threshold can filter "
         "out EVERY sink and report nothing at all.",
         "Detection", "switch", ""};
     help_map["sink_mode"] = {"string", "forced_outlet", "Sink routing mode.",
@@ -670,26 +670,26 @@ int main(int argc, char* argv[])
     help_map["sink_candidate_fname"] = {"string", "", "Reviewed candidate file.",
         "Required for route; CSV, FlatGeobuf, or GeoPackage.",
         "Review", "input", "internal_drainage_stage"};
-    help_map["sink_candidate_format"] = {"string", "same_as_extension", "Candidate format.",
+    help_map["sink_candidate_input_format"] = {"string", "same_as_extension", "Candidate format.",
         "same_as_extension, csv, flatgeobuf, or gpkg.", "Review", "param", ""};
     help_map["sink_candidate_layer_name"] = {"string", "", "Candidate layer name.",
         "Optional layer name for multi-layer GeoPackages.", "Review", "param", ""};
     help_map["write_output_format"] = {"string", "cog", "Raster output format.",
         "cog, gtiff, or same_as_input. PNG is rejected because it rescales "
         "analytical labels and values.", "Output", "param", ""};
-    help_map["sink_vector_format"] = {"string", "flatgeobuf", "Vector output format.",
+    help_map["write_vector_format"] = {"string", "flatgeobuf", "Vector output format.",
         "flatgeobuf is recommended; gpkg is supported with a filesystem warning.",
         "Output", "param", ""};
 
-    help_map["minimum_pixels_in_patch"] = {"int", "1", "Minimum sink pixels.",
+    help_map["min_pixels_in_patch"] = {"int", "1", "Minimum sink pixels.",
         "Legacy-compatible minimum depression size.", "Detection", "param", ""};
     help_map["n_threads"] = {"int", "0", "Thread count.", "0 uses available threads.",
         "Run control", "io", ""};
-    help_map["minimum_sink_depth"] = {"float", "0.0", "Minimum sink depth.",
+    help_map["min_sink_depth"] = {"float", "0.0", "Minimum sink depth.",
         "Reject shallower candidates.", "Detection", "param", ""};
-    help_map["minimum_sink_area"] = {"float", "0.0", "Minimum depression area.",
+    help_map["min_sink_area"] = {"float", "0.0", "Minimum depression area.",
         "Square metres.", "Detection", "param", ""};
-    help_map["minimum_sink_volume"] = {"float", "0.0", "Minimum depression volume.",
+    help_map["min_sink_volume"] = {"float", "0.0", "Minimum depression volume.",
         "Cubic metres.", "Detection", "param", ""};
     help_map["upslope_tagging_distance"] = {"float", "1e12", "Tagging distance.",
         "Maximum upstream flow distance from each sink in metres.",
@@ -759,7 +759,14 @@ int main(int argc, char* argv[])
         lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
         // Renamed 2026-09-08 for consistency: the chi reference area is
         // `chi_A0` in every CLI that has one. One-release compatibility window.
-        pp.set_deprecated_aliases({ {"A_0", "chi_A0"} });
+        pp.set_deprecated_aliases({
+            {"A_0", "chi_A0"},
+            {"sink_candidate_format", "sink_candidate_input_format"},
+            {"sink_vector_format", "write_vector_format"},
+            {"minimum_pixels_in_patch", "min_pixels_in_patch"},
+            {"minimum_sink_depth", "min_sink_depth"},
+            {"minimum_sink_area", "min_sink_area"},
+            {"minimum_sink_volume", "min_sink_volume"} });
 
         pp.parse_all_parameters(float_default_map, int_default_map,
                                 bool_default_map, string_default_map);
@@ -804,9 +811,9 @@ int main(int argc, char* argv[])
                          "Each filled patch becomes one sink, with no nesting to "
                          "expose. Use sink_detection_algorithm_choice: "
                          "depression_hierarchy if you need nested sinks.\n";
-        if (ip.at("minimum_pixels_in_patch") < 1 || ff.at("minimum_sink_depth") < 0.0f ||
-            ff.at("minimum_sink_area") < 0.0f || ff.at("minimum_sink_volume") < 0.0f)
-            throw std::invalid_argument("sink detection thresholds must be non-negative and minimum_pixels_in_patch >= 1");
+        if (ip.at("min_pixels_in_patch") < 1 || ff.at("min_sink_depth") < 0.0f ||
+            ff.at("min_sink_area") < 0.0f || ff.at("min_sink_volume") < 0.0f)
+            throw std::invalid_argument("sink detection thresholds must be non-negative and min_pixels_in_patch >= 1");
         if (ff.at("fill_min_slope") <= 0.0f)
             throw std::invalid_argument("fill_min_slope must be > 0 for D8 routing");
         if (bf.at("extract_sink_channel_networks") &&
@@ -825,7 +832,7 @@ int main(int argc, char* argv[])
                 ? (pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext())
                 : ".tif";
         const lsdtt::vector_output_format vector_format =
-            lsdtt::resolve_vector_output_format(sf.at("sink_vector_format"));
+            lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
         if (vector_format == lsdtt::vector_output_format::gpkg)
         {
             std::cerr << "WARNING: you have chosen GeoPackage (gpkg) output.\n"
@@ -847,10 +854,10 @@ int main(int argc, char* argv[])
             ? lsdtt::sink_detection_method::fill_difference
             : lsdtt::sink_detection_method::depression_hierarchy;
         detection_options.boundary_conditions = "oooo";
-        detection_options.min_pixels_in_patch = ip.at("minimum_pixels_in_patch");
-        detection_options.min_depth_m = ff.at("minimum_sink_depth");
-        detection_options.min_area_m2 = ff.at("minimum_sink_area");
-        detection_options.min_volume_m3 = ff.at("minimum_sink_volume");
+        detection_options.min_pixels_in_patch = ip.at("min_pixels_in_patch");
+        detection_options.min_depth_m = ff.at("min_sink_depth");
+        detection_options.min_area_m2 = ff.at("min_sink_area");
+        detection_options.min_volume_m3 = ff.at("min_sink_volume");
         detection_options.leaves_only = bf.at("sink_leaves_only");
         detection_options.n_threads = ip.at("n_threads");
 
@@ -918,7 +925,7 @@ int main(int argc, char* argv[])
             const std::string input =
                 candidate_input_path(pp, sf.at("sink_candidate_fname"));
             const lsdtt::sink_io_format input_format = lsdtt::resolve_sink_io_format(
-                input, sf.at("sink_candidate_format"));
+                input, sf.at("sink_candidate_input_format"));
             reviewed = lsdtt::read_sink_candidates(
                 input, dem.get_meta(), input_format,
                 sf.at("sink_candidate_layer_name"));

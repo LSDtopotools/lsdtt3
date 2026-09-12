@@ -2,7 +2,7 @@
 
 `build_crn_parameters_nc.py` assembles the `crn_parameters.nc` file that the
 cosmogenic tools (`lsdtt-cosmo-tool`, `lsdtt-cosmo-prediction`) read via the
-`crn_nc_file` option. It is required for the ERA40-style atmosphere and the
+`crn_nc_fname` option. It is required for the ERA40-style atmosphere and the
 time-integrated palaeomagnetic (time-varying production) correction
 (`sample_age_yr > 0`). Without it, the tools use the standard (SLHL) atmosphere
 with no palaeomagnetic correction.

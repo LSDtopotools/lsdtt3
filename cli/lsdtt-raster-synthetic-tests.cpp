@@ -35,6 +35,7 @@
 
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
@@ -340,7 +341,7 @@ int main(int argc, char* argv[])
 
     std::map<std::string, float> float_defaults =
     {
-        {"cell_size",                   1.0f},
+        {"cell_size_metres",            1.0f},
 
         // Uniform noise
         {"uniform_min_value",          -1.0f},
@@ -372,7 +373,7 @@ int main(int argc, char* argv[])
         {"quadratic_constant_abs_max",100.0f},
 
         // Wavelet fit
-        {"wavelet_lambda",            100.0f},
+        {"polyfit_lambda_metres",     100.0f},
 
         // Terrace staircase
         {"terrace_tread_width_metres",             300.0f},
@@ -397,7 +398,7 @@ int main(int argc, char* argv[])
 
         // Hillslope strip
         {"strip_baselevel_elevation",   0.0f},
-        {"strip_half_width",            0.0f},   // <=0 = auto from geometry
+        {"strip_half_width_metres",     0.0f},   // <=0 = auto from geometry
         {"strip_uplift",               1e-3f},
         {"strip_diffusivity",          1e-2f},
         {"strip_critical_slope",        0.8f},
@@ -406,9 +407,9 @@ int main(int argc, char* argv[])
 
     std::map<std::string, int> int_defaults =
     {
-        {"n_rows",                    256},
-        {"n_cols",                    256},
-        {"seed",                        1},
+        {"n_rows",                    128},
+        {"n_cols",                    128},
+        {"random_seed",                33},
         {"n_threads",                   0},
 
         // Red/blue noise
@@ -443,15 +444,15 @@ int main(int argc, char* argv[])
     std::map<std::string, std::vector<std::string>> help_map =
     {
         {"n_rows",
-            {"int","256","Number of rows in the synthetic raster.",""}},
+            {"int","128","Number of rows in the synthetic raster.",""}},
         {"n_cols",
-            {"int","256","Number of columns in the synthetic raster.",""}},
-        {"cell_size",
+            {"int","128","Number of columns in the synthetic raster.",""}},
+        {"cell_size_metres",
             {"float","1.0","Cell size in metres.",
              "Note: synthetic rasters have no CRS. wavelet_quadratic_fit() "
-             "is called with the supplied cell_size."}},
-        {"seed",
-            {"int","1","Random seed for all stochastic generators.",""}},
+              "is called with the supplied cell_size_metres."}},
+        {"random_seed",
+            {"int","33","Random seed for all stochastic generators.",""}},
         {"n_threads",
             {"int","0","Number of CPU threads (0 = all available).",""}},
         {"write_output_format",
@@ -484,9 +485,9 @@ int main(int argc, char* argv[])
         {"write_wavelet_residual_rasters",
             {"bool","false",
              "Write residual (fitted - analytic) rasters for each coefficient.",""}},
-        {"wavelet_lambda",
+        {"polyfit_lambda_metres",
             {"float","100","Wavelength lambda in metres for wavelet_quadratic_fit().",
-             "Should be >= cell_size. Larger values give smoother fits."}},
+              "Should be >= cell_size_metres. Larger values give smoother fits."}},
         {"periodic_n_components",
             {"int","8","Number of cosine modes in the periodic test surface.",""}},
         {"periodic_mode_min",
@@ -682,7 +683,7 @@ int main(int argc, char* argv[])
              "steady profile; false uses the linear parabola.",""}},
         {"strip_baselevel_elevation",
             {"float","0.0","Channel (Dirichlet) baselevel elevation in metres.",""}},
-        {"strip_half_width",
+        {"strip_half_width_metres",
             {"float","0.0",
              "Hillslope half-width L (divide-to-channel distance, m) for the "
              "analytic profile. <= 0 auto-derives L from the grid (recommended; "
@@ -736,6 +737,9 @@ int main(int argc, char* argv[])
     // units are spelled out, and a bool that writes a raster ends in _raster.
     // The old keys keep working and print a warning naming the replacement.
     pp.set_deprecated_aliases({
+        {"cell_size",                         "cell_size_metres"},
+        {"seed",                              "random_seed"},
+        {"strip_half_width",                  "strip_half_width_metres"},
         {"fan_lobe_half_angle_deg",          "fan_lobe_half_angle_degrees"},
         {"fan_lobe_inset_m",                 "fan_lobe_inset_metres"},
         {"fan_noise_amplitude_m",            "fan_noise_amplitude_metres"},
@@ -743,6 +747,7 @@ int main(int argc, char* argv[])
         {"terrace_riser_gap_width_m",        "terrace_riser_gap_width_metres"},
         {"terrace_riser_height_m",           "terrace_riser_height_metres"},
         {"terrace_tread_width_m",            "terrace_tread_width_metres"},
+        {"wavelet_lambda",                   "polyfit_lambda_metres"},
         {"write_alluvial_fan_lobe_id",       "write_alluvial_fan_lobe_id_raster"},
         {"write_terrace_staircase_tread_id", "write_terrace_staircase_tread_id_raster"},
     });
@@ -778,9 +783,9 @@ int main(int argc, char* argv[])
 
     const int   n_rows    = ifs["n_rows"];
     const int   n_cols    = ifs["n_cols"];
-    const int   seed      = ifs["seed"];
+    const int   seed      = ifs["random_seed"];
     const int   n_threads = ifs["n_threads"];
-    const float cell_size = ff["cell_size"];
+    const float cell_size = ff["cell_size_metres"];
 
     lsdtt::lsdtt_data_loader loader;
 
@@ -965,7 +970,7 @@ int main(int argc, char* argv[])
                     false,  // not an exact oracle for finite lambda
                     periodic.dem,
                     periodic.analytic_taylor,
-                    ff["wavelet_lambda"],
+                    ff["polyfit_lambda_metres"],
                     n_threads,
                     bf["write_wavelet_fitted_coefficient_rasters"],
                     bf["write_wavelet_residual_rasters"],
@@ -1023,7 +1028,7 @@ int main(int argc, char* argv[])
                     true,   // exact oracle away from invalid support edges
                     quad.dem,
                     quad.analytic_taylor,
-                    ff["wavelet_lambda"],
+                    ff["polyfit_lambda_metres"],
                     n_threads,
                     bf["write_wavelet_fitted_coefficient_rasters"],
                     bf["write_wavelet_residual_rasters"],
@@ -1153,7 +1158,7 @@ int main(int argc, char* argv[])
                     cfg, prof,
                     bf["strip_cross_axis_is_x"],
                     ff["strip_baselevel_elevation"],
-                    ff["strip_half_width"],
+                    ff["strip_half_width_metres"],
                     ff["strip_uplift"],
                     ff["strip_diffusivity"],
                     ff["strip_critical_slope"],

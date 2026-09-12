@@ -16,11 +16,11 @@
 ###           or the control scenario name (S0)
 ###
 ### Everything for one (mag, seed) lives in a single flat directory, exactly as
-### the hand runs did. That is not cosmetic: `crn_nc_file` and the landslide
+### the hand runs did. That is not cosmetic: `crn_nc_fname` and the landslide
 ### `*_raster_prefix` parameters are resolved relative to `read_path`, never to
 ### the working directory, so the CRN netCDF and the landslide rasters must sit
-### next to the DEM the run reads. `mask_fname`, `sample_points_filename` and
-### `step_change_basin_outlet_csv` go through `add_read_path_if_needed` and may
+### next to the DEM the run reads. `mask_fname`, `sample_points_fname` and
+### `step_change_basin_outlet_fname` go through `add_read_path_if_needed` and may
 ### therefore be absolute; the others may not.
 
 import os
@@ -43,8 +43,8 @@ CT_RATIOS = list(CTL.get("analysis", {}).get("ratios", []))
 CT_SRC_DIR = os.path.abspath(os.path.expanduser(CTL.get("source_dir", "SOURCE_DIR")))
 CT_SRC_DEM = CTL.get("source_dem_fname", "SOURCE_DEM")
 CT_SRC_STEM = os.path.splitext(CT_SRC_DEM)[0]
-CT_CRN_NC = CTL.get("crn_nc_file", "crn_parameters.nc")
-CT_OUTLET_CSV = CTL.get("basin_outlet_csv", "basin_outlet.csv")
+CT_CRN_NC = CTL.get("crn_nc_fname", "crn_parameters.nc")
+CT_OUTLET_CSV = CTL.get("basin_outlet_fname", "basin_outlet.csv")
 
 CT_RUNS = f"{ROOT}/{RUN_ID}/runs"
 CT_PREP = f"{ROOT}/{RUN_ID}/prep"
@@ -88,14 +88,14 @@ def _ct_event_volume_per_area_m(mag):
     years of post-step erosion, converted from a ROCK-equivalent depth to a
     GEOMETRIC scar depth by rho_rock / rho_scar. The two densities are not
     interchangeable -- Larsen's V = alpha * A^gamma is fitted to measured scar
-    volumes, so event_volume_per_area_m is a soil thickness while the erosion
+    volumes, so event_volume_per_area_metres is a soil thickness while the erosion
     budget it balances is rock.
 
     Formatted to 5 decimal places because the hand runs used 0.17667 / 0.35333
     and the realised landslide field depends on the exact value.
     """
     ls = CTL["landslides"]
-    override = ls.get("event_volume_per_area_m")
+    override = ls.get("event_volume_per_area_metres")
     if override is not None:
         return f"{float(override):.5f}"
     rho_rock = float(CTL["crn"]["rock_density_kg_m3"])
@@ -118,24 +118,24 @@ def _ct_step_change_block(mag):
         f"step_change_uplift_old_m_yr: {sc['uplift_old_m_yr']}\n"
         f"step_change_uplift_new_m_yr: {_ct_uplift_new(mag)}\n"
         f"step_change_age_yr: {sc['age_yr']}\n"
-        f"step_change_target_relief_m: {sc['target_relief_m']}\n"
+        f"step_change_target_relief_metres: {sc['target_relief_m']}\n"
         f"step_change_m_over_n: {sc['m_over_n']}\n"
         f"step_change_n: {sc['n']}\n"
         f"step_change_A_0: {sc['A_0']}\n"
         f"step_change_channel_pixels: {sc['channel_pixels']}\n"
         f"step_change_Sc_old: {sc['Sc_old']}\n"
         f"step_change_Sc_new: {sc['Sc_new']}\n"
-        f"step_change_basin_outlet_csv: {CT_OUTLET_CSV}\n"
+        f"step_change_basin_outlet_fname: {CT_OUTLET_CSV}\n"
     )
 
 
 def _ct_crn_block():
     crn = CTL["crn"]
     return (
-        # crn_nc_file is resolved as read_path + crn_nc_file, so it MUST be a
+        # crn_nc_fname is resolved as read_path + crn_nc_fname, so it MUST be a
         # bare filename staged into read_path. Without it, atmosphere: ERA40
         # silently degrades to standard.
-        f"crn_nc_file: {CT_CRN_NC}\n"
+        f"crn_nc_fname: {CT_CRN_NC}\n"
         f"scaling_scheme: {crn['scaling_scheme']}\n"
         f"muon_scheme: {crn['muon_scheme']}\n"
         f"atmosphere: {crn['atmosphere']}\n"
@@ -154,7 +154,7 @@ def _ct_routing_block():
         f"min_slope_for_fill: {rt['min_slope_for_fill']}\n"
         f"boundary_conditions: {rt['boundary_conditions']}\n"
         f"threshold_contributing_pixels: {rt['threshold_contributing_pixels']}\n"
-        f"snap_search_radius_pixels: {rt['snap_search_radius_pixels']}\n"
+        f"sample_snap_max_search_radius_pixels: {rt['sample_snap_max_search_radius_pixels']}\n"
     )
 
 
@@ -247,7 +247,7 @@ rule write_cosmo_transient_channel_params:
             f"boundary_conditions: {rt['boundary_conditions']}\n"
             f"threshold_contributing_pixels: {CTL['sampling']['threshold_contributing_pixels']}\n\n"
             "write_channel_network_points: true\n"
-            "channel_network_points_output_format: csv\n"
+            "channel_network_points_write_vector_format: csv\n"
         )
         out_path.write_text(text, encoding="utf-8")
 
@@ -354,7 +354,7 @@ rule write_cosmo_transient_landslide_params:
             f"mask_active_values: {ls['mask_active_values']}\n"
             f"landslide_mode: {ls['landslide_mode']}\n"
             f"event_time_yr: {ls['event_time_yr']}\n"
-            f"event_volume_per_area_m: {_ct_event_volume_per_area_m(wildcards.mag)}\n"
+            f"event_volume_per_area_metres: {_ct_event_volume_per_area_m(wildcards.mag)}\n"
             f"area_volume_preset: {ls['area_volume_preset']}\n"
             f"landslide_size_model: {ls['landslide_size_model']}\n"
             f"threshold_contributing_pixels: {ls['threshold_contributing_pixels']}\n"
@@ -456,7 +456,7 @@ rule write_cosmo_transient_conc_params:
             # interchangeable with rock_density_kg_m3 (2650) above.
             f"scar_density_kg_m3: {CTL['landslides']['scar_density_kg_m3']}\n"
             + _ct_routing_block()
-            + f"sample_points_filename: {points}\n"
+            + f"sample_points_fname: {points}\n"
             f"sample_points_stride: {CTL['sampling']['sample_points_stride']}\n"
         )
         out_path.write_text(text, encoding="utf-8")
@@ -510,7 +510,7 @@ rule write_cosmo_transient_inversion_params:
             f"read_fname: {wildcards.scen}_conc_SC_DEM.tif\n"
             f"write_fname: {wildcards.scen}_inv_{wildcards.nuc}\n"
             f"nuclide: {wildcards.nuc}\n"
-            f"points_filename: {wildcards.scen}_conc_sampled_crn_conc_{wildcards.nuc}.csv\n"
+            f"sample_points_fname: {wildcards.scen}_conc_sampled_crn_conc_{wildcards.nuc}.csv\n"
             f"concentration_column_name: {wildcards.nuc}_CONC\n"
             + _ct_crn_block()
             + f"self_consistent_age: {_ct_bool(CTL['inversion']['self_consistent_age'])}\n"

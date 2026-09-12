@@ -5,7 +5,7 @@
 # "this code has tests".
 #
 # C2: ridgeline_analysis_mode = range_defined_ridgelines with no
-#     corner_coordinates_csv takes resolve_dem_corners() and then
+#     corner_coordinates_fname takes resolve_dem_corners() and then
 #     extract_boundary_segments() -- the ~150 lines of boundary tracing and
 #     cardinal segmentation.
 #

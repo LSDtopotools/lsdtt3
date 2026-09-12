@@ -1,0 +1,20 @@
+# Pure old-key transfer: every Phase 5 alias is nondefault and canonical-free.
+write_path: __WRITE_PATH__
+write_fname: rasterlegacy5
+n_rows: 7
+n_cols: 9
+cell_size: 2
+seed: 19
+strip_half_width: 4
+fan_lobe_half_angle_deg: 21
+fan_lobe_inset_m: 3
+fan_noise_amplitude_m: 0.2
+terrace_noise_amplitude_m: 0.3
+terrace_riser_gap_width_m: 22
+terrace_riser_height_m: 7
+terrace_tread_width_m: 44
+wavelet_lambda: 77
+write_alluvial_fan_lobe_id: false
+write_terrace_staircase_tread_id: false
+write_hillslope_strip_surface: true
+write_output_format: gtiff

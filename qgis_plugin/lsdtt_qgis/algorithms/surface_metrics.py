@@ -203,7 +203,7 @@ class SurfaceMetricsAlgorithm(QgsProcessingAlgorithm):
         self._add_advanced(
             QgsProcessingParameterNumber(
                 self.THREADS,
-                "Threads (0 = auto)",
+                "Threads (0 = all hardware; set a physical-core limit on shared hosts)",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=0,
                 defaultValue=0,
@@ -378,7 +378,7 @@ class SurfaceMetricsAlgorithm(QgsProcessingAlgorithm):
                 self.LOCAL_RELIEF_WINDOW_SHAPE: "local_relief_window_shape",
                 self.POLYFIT_METRICS: "polyfit_metrics",
                 self.POLYFIT_LAMBDA: "polyfit_lambda_metres",
-                self.WRITE_SHAPE_CLASSIFICATION: "write_shape_classification",
+                self.WRITE_SHAPE_CLASSIFICATION: "write_shape_classification_raster",
                 self.SHAPE_CURVATURE_METHOD: "shape_curvature_method",
                 self.WRITE_MADK2: "write_madk2_rasters",
                 self.MADK2_WINDOW_RADIUS: "madk2_window_radius_metres",
@@ -476,7 +476,7 @@ class SurfaceMetricsAlgorithm(QgsProcessingAlgorithm):
                 parameters, self.CLAMP_SLOPE_TO_THRESHOLD, context
             ),
             # Surface shape classification (SMAP)
-            "write_shape_classification": write_shape_class,
+            "write_shape_classification_raster": write_shape_class,
             "shape_curvature_method": self.SHAPE_CURVATURE_METHOD_OPTIONS[
                 self.parameterAsEnum(parameters, self.SHAPE_CURVATURE_METHOD, context)
             ],
@@ -504,7 +504,7 @@ class SurfaceMetricsAlgorithm(QgsProcessingAlgorithm):
             "cloth_max_iterations": self.parameterAsInt(
                 parameters, self.CLOTH_MAX_ITERATIONS, context
             ),
-            "cloth_convergence_tol": self.parameterAsDouble(
+            "cloth_convergence_tolerance_metres": self.parameterAsDouble(
                 parameters, self.CLOTH_CONVERGENCE_TOL, context
             ),
         }

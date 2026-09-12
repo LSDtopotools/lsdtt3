@@ -5,7 +5,7 @@ write_fname: phase4_default_threshold
 
 internal_drainage_stage: both
 sink_mode: forced_outlet
-minimum_pixels_in_patch: 100
+min_pixels_in_patch: 100
 fill_min_slope: 0.0001
 
 # Deliberately omit threshold_contributing_pixels. This fixture pins the

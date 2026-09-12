@@ -133,7 +133,7 @@ Uncertainty method for pair inversions:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `transient_history_file` | string | `erosion_history.csv` | CSV file with erosion history. Required columns: `time` (yr BP), `rate` (m/yr), `removal` (m, used when `rate` = 0). **Row order matters — see below.** Last row: `time = -9999`, `rate` = background rate. |
+| `transient_history_fname` | string | `erosion_history.csv` | CSV file with erosion history. This history-first column mode defaults to a conventional filename; raster prediction instead uses `NULL` because its transient mode is optional. Required columns: `time` (yr BP), `rate` (m/yr), `removal` (m, used when `rate` = 0). **Row order matters - see below.** Last row: `time = -9999`, `rate` = background rate. |
 
 > ### ⚠ Row order: the FIRST data row is the MOST RECENT
 >
@@ -158,7 +158,7 @@ Uncertainty method for pair inversions:
 > Two rows may share a `time` **only** when the second is a removal event
 > (`rate = 0`, `removal > 0`), which is instantaneous.
 | `n_samples` | int | `10` | Number of evenly-spaced depth samples in the column. |
-| `sample_spacing_m` | float | `0.05` | Spacing between depth samples (m). First sample is at the surface (0 m). |
+| `sample_spacing_metres` | float | `0.05` | Spacing between depth samples (m). First sample is at the surface (0 m). |
 | `use_initial_concentration` | bool | `false` | If true, particles start with a user-specified concentration instead of steady state. Useful for re-exposed surfaces with a known inherited inventory. |
 | `initial_10Be_conc_atoms_g` | float | `0` | Initial ¹⁰Be concentration throughout the column (atoms/g). Used only when `use_initial_concentration: true`. |
 | `initial_26Al_conc_atoms_g` | float | `0` | Initial ²⁶Al concentration (atoms/g). |
@@ -170,8 +170,8 @@ Uncertainty method for pair inversions:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `burial_pairs_csv_file` | string | `burial_pairs.csv` | Input CSV for `burial_pair_batch`. |
-| `step_pairs_csv_file` | string | `step_pairs.csv` | Input CSV for `step_pair_batch`. |
+| `burial_pairs_fname` | string | `burial_pairs.csv` | Input CSV for `burial_pair_batch`. |
+| `step_pairs_fname` | string | `step_pairs.csv` | Input CSV for `step_pair_batch`. |
 
 `burial_pair_batch` required CSV columns:
 - `conc_fast_atoms_g`, `conc_slow_atoms_g`
@@ -298,9 +298,9 @@ latitude:   45.0
 elevation:  1500.0
 total_shielding: 1.0
 
-transient_history_file:  erosion_history.csv
+transient_history_fname: erosion_history.csv
 n_samples:               20
-sample_spacing_m:        0.05
+sample_spacing_metres:   0.05
 
 use_initial_concentration: false
 
@@ -331,7 +331,7 @@ output_file: burial_pair_c14_be10.csv
 
 ```
 column_mode: step_pair_batch
-step_pairs_csv_file: step_pairs.csv
+step_pairs_fname: step_pairs.csv
 output_file: step_pair_batch_results.csv
 ```
 

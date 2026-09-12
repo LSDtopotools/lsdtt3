@@ -268,9 +268,9 @@ def main():
                         + f"-9999,{erate_m_yr},0\n")
         prof = run(exe, workdir, {
             "column_mode": "full_transient",
-            "transient_history_file": str(hist),
+            "transient_history_fname": str(hist),
             "n_samples": 4,
-            "sample_spacing_m": 0.5,
+            "sample_spacing_metres": 0.5,
             "production_scaling": 1.0,
             "rock_density_kg_m3": density,
         }, "transient_const")
@@ -409,7 +409,7 @@ def main():
         )
         burial_rows = run(exe, workdir, {
             "column_mode": "burial_pair_batch",
-            "burial_pairs_csv_file": str(burial_in),
+            "burial_pairs_fname": str(burial_in),
         }, "burial_pair_batch", numeric=False)
         check("burial_pair_batch writes one result row per input row",
               len(burial_rows) == 3, f"got {len(burial_rows)}")
@@ -437,7 +437,7 @@ def main():
         )
         step_rows = run(exe, workdir, {
             "column_mode": "step_pair_batch",
-            "step_pairs_csv_file": str(step_in),
+            "step_pairs_fname": str(step_in),
         }, "step_pair_batch", numeric=False)
         check("step_pair_batch writes one result row per input row",
               len(step_rows) == 2, f"got {len(step_rows)}")

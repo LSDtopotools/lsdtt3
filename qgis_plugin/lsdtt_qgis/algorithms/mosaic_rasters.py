@@ -87,7 +87,7 @@ class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
             ],
             "enforce_projection": self.parameterAsBool(parameters, self.ENFORCE_PROJECTION, context),
             # Disable the default sea-level masking: this algorithm only mosaics.
-            "minimum_elevation": -99999.0,
+            "min_elevation": -99999.0,
             "mosaic_file_list": list_path,
         }
 

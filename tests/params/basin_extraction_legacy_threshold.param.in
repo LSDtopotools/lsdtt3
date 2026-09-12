@@ -8,5 +8,5 @@ source_pixels_threshold: 1
 select_all_basins: true
 write_basin_outlines: true
 write_basin_outlines_as_polygon: false
-basin_outlines_output_format: flatgeobuf
+basin_outlines_write_vector_format: flatgeobuf
 calculate_spatial_index: false

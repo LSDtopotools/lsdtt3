@@ -28,13 +28,13 @@ key: value
 | 1. Hillshade | `write_hillshade_raster: true` |
 | 2. Local relief | `write_local_relief_raster: true` |
 | 3. Polynomial surface fit + derived metrics | `write_polyfit_rasters: true` or `polyfit_metrics` is non-empty |
-| 3b. Surface shape classification (SMAP) | `write_shape_classification: true` |
+| 3b. Surface shape classification (SMAP) | `write_shape_classification_raster: true` |
 | 4. MADk2 roughness | `write_madk2_rasters: true` |
 | 5. Frangi filter | `write_frangi_raster: true` or `write_frangi_scale_raster: true` |
 | 6. Otsu threshold segmentation *(requires OpenCV)* | `write_otsu_raster: true` |
 | 7. Hough line extraction *(requires OpenCV)* | `write_hough_lines_raster: true` |
-| 8. Curvature skeletons | `write_curvature_skeletons: true` |
-| 9. VEC adaptive thresholding *(requires OpenCV)* | `write_vec_adaptive_threshold: true` |
+| 8. Curvature skeletons | `write_curvature_skeleton_rasters: true` |
+| 9. VEC adaptive thresholding *(requires OpenCV)* | `write_vec_adaptive_threshold_rasters: true` |
 
 ---
 
@@ -54,7 +54,7 @@ key: value
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `n_threads` | int | `1` | Number of OpenMP threads. `0` uses all hardware threads. `1` = serial (default). Applies to the wavelet and direct polynomial fits, the polyfit metric engine, and OpenCV normalisation passes. |
+| `n_threads` | int | `0` | Number of OpenMP threads. `0` uses all hardware threads (default); `1` is serial. Applies to wavelet/direct polynomial fits, the polyfit metric engine, Frangi, and OpenCV normalisation passes. Set an explicit limit no greater than your physical-core allocation in shared environments. |
 
 ---
 
@@ -162,7 +162,7 @@ Where `<method>` is `wavelet` or `direct` depending on `polyfit_method`.
 
 Output: `<write_fname>_<method>_shape_class.tif`
 
-A morphological surface-shape classification ported from the differential-geometry approach of TopoCurve (`CurveObj.m` / `CurveCalc`). Each pixel is labelled by the signs of Gaussian curvature (`KG = k₁·k₂`) and mean curvature (`KM = ½(k₁+k₂)`) formed from the two principal curvatures, after an optional threshold `kt` is applied to each principal curvature. This step builds on the polynomial fit, so it runs whenever `write_shape_classification: true` (the polyfit is triggered automatically and the required curvature metrics are added to `polyfit_metrics` for you).
+A morphological surface-shape classification ported from the differential-geometry approach of TopoCurve (`CurveObj.m` / `CurveCalc`). Each pixel is labelled by the signs of Gaussian curvature (`KG = k₁·k₂`) and mean curvature (`KM = ½(k₁+k₂)`) formed from the two principal curvatures, after an optional threshold `kt` is applied to each principal curvature. This step builds on the polynomial fit, so it runs whenever `write_shape_classification_raster: true` (the polyfit is triggered automatically and the required curvature metrics are added to `polyfit_metrics` for you).
 
 The classification uses the lsdtt3 curvature sign convention: **convex-up terrain (ridge, peak) → negative mean curvature; concave-up terrain (channel, basin) → positive mean curvature.**
 
@@ -187,7 +187,7 @@ With `kt = 0` only the four generic classes (`3`, `2`, `-2`, `-3`) appear, becau
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_shape_classification` | bool | `false` | Enable the shape classification. Requires the polynomial fit; `maximum_curvature`/`minimum_curvature` (polyfit method) or `fitted_surface` (fundamental_form method) are added to `polyfit_metrics` automatically. |
+| `write_shape_classification_raster` | bool | `false` | Enable the shape classification. Requires the polynomial fit; `maximum_curvature`/`minimum_curvature` (polyfit method) or `fitted_surface` (fundamental_form method) are added to `polyfit_metrics` automatically. |
 | `shape_curvature_method` | string | `polyfit` | Source of the principal curvatures. `polyfit`: analytic principal curvatures from the polynomial fit. `fundamental_form`: differential-geometry curvatures ported from TopoCurve `CurveCalc`, computed from the polyfit `fitted_surface` via the first and second fundamental forms (gradients of the surface and of its unit normal field). The smoothing scale is set by `polyfit_lambda_metres`. |
 | `shape_curvature_threshold` | float | `0.0` | Curvature threshold `kt` (units: 1/m). Principal curvatures with magnitude ≤ `kt` are set to zero before `KG`/`KM` are formed. |
 | `write_shape_curvature_rasters` | bool | `false` | Also write the post-threshold Gaussian and mean curvature rasters used for the classification. These differ from the raw `gaussian_curvature`/`mean_curvature` polyfit metrics because they reflect `kt`. |
@@ -235,7 +235,7 @@ and the DEM is a measure of valley incision.
 | `cloth_rigidity` | int | *(see `-h`)* | Stiffness of the sheet: higher spans wider valleys without sagging. |
 | `cloth_gravity` | float | *(see `-h`)* | Step size for the fall. |
 | `cloth_max_iterations` | int | *(see `-h`)* | Iteration cap. |
-| `cloth_convergence_tol` | float | *(see `-h`)* | Movement below which the cloth is considered settled. |
+| `cloth_convergence_tolerance_metres` | float | *(see `-h`)* | Movement below which the cloth is considered settled. |
 | `cloth_class_threshold` | float | *(see `-h`)* | Contact distance for the crest mask. |
 
 Run `lsdtt-surface-metrics -h <parameter>` for the current defaults and the
@@ -268,10 +268,10 @@ Outputs: `<write_fname>_frangi.tif`, `<write_fname>_frangi_scale.tif`
 | `write_frangi_raster` | bool | `false` | Write the Frangi filter response raster. |
 | `write_frangi_scale_raster` | bool | `false` | Write the scale-at-maximum-response raster (physical scale in metres). |
 | `frangi_sigma_min_metres` | float | `1.0` | Minimum Gaussian smoothing scale in metres. |
-| `frangi_sigma_max_metres` | float | `5.0` | Maximum Gaussian smoothing scale in metres. |
+| `frangi_sigma_max_metres` | float | `5.0` | Maximum Gaussian smoothing scale. This general terrain workflow searches broader lineaments up to 5 m; the drain-specific feature finder stops at 2.5 m. |
 | `frangi_n_scales` | int | `4` | Number of scales sampled logarithmically between min and max. |
-| `frangi_beta` | float | `0.5` | Controls suppression of blob-like structure relative to line-like structure. |
-| `frangi_c` | float | `15.0` | Controls suppression of low-structureness responses. |
+| `frangi_beta` | float | `0.5` | Controls suppression of blob-like structure. The general terrain default is 0.5; the drain finder uses 0.4 to prefer narrow lines more strongly. |
+| `frangi_c` | float | `1.0` | Controls suppression of low-structureness responses. Phase 5 intentionally changes the scientific default from 15 to 1 under approved decision D7, matching `lsdtt-feature-finder`; set `15` explicitly to reproduce the former response. |
 | `frangi_target` | string | `ridges` | Feature polarity. `ridges` or `valleys`. |
 
 ---
@@ -298,7 +298,7 @@ Applies probabilistic Hough transform (HoughLinesP) to a Canny edge image derive
 |---|---|---|---|
 | `write_hough_lines_raster` | bool | `false` | Enable Hough line extraction. Silently skipped if OpenCV was not compiled in. |
 | `hough_rho` | float | `1.0` | Distance resolution of the Hough accumulator in pixels. |
-| `hough_theta_deg` | float | `1.0` | Angle resolution of the accumulator in degrees. |
+| `hough_theta_degrees` | float | `1.0` | Angle resolution of the accumulator in degrees. |
 | `hough_threshold` | int | `50` | Minimum accumulator votes required to accept a line. Increase to suppress short or faint lines. |
 | `hough_min_line_length` | float | `30.0` | Minimum line segment length in pixels. |
 | `hough_max_line_gap` | float | `10.0` | Maximum gap in pixels between collinear points to bridge into one segment. |
@@ -327,7 +327,7 @@ Outputs:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_curvature_skeletons` | bool | `false` | Enable curvature skeleton extraction. |
+| `write_curvature_skeleton_rasters` | bool | `false` | Enable curvature skeleton extraction. |
 | `curvature_skeleton_lambda_metres` | float | `100.0` | Polyfit half-wavelength in metres for the direct fit. Larger values suppress noise; smaller values resolve finer features. |
 | `vec_skeleton_threshold` | float | `0.0` | VEC value above which pixels are classified as slope-break candidates. Ignored when `vec_skeleton_use_cdf_threshold` is true. Run once and read the printed CDF divergence threshold to tune this. |
 | `vec_skeleton_use_cdf_threshold` | bool | `false` | Auto-select the VEC threshold using CDF divergence. Overrides `vec_skeleton_threshold`. |
@@ -347,11 +347,11 @@ Outputs: `<write_fname>_vec_adaptive_curvature.tif`, `_vec_adaptive_mean.tif`, `
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_vec_adaptive_threshold` | bool | `false` | Enable VEC adaptive thresholding. Silently skipped if OpenCV was not compiled in. Uses `curvature_skeleton_lambda_metres` for the polyfit scale. |
+| `write_vec_adaptive_threshold_rasters` | bool | `false` | Enable VEC adaptive thresholding. Silently skipped if OpenCV was not compiled in. Uses `curvature_skeleton_lambda_metres` for the polyfit scale. |
 | `vec_adaptive_block_size_pixels` | int | `51` | Neighbourhood block size in pixels. Must be odd and ≥ 3. Should exceed the typical feature width but be smaller than the between-feature spacing. |
 | `vec_adaptive_C` | float | `0.0` | Constant subtracted from the local mean before thresholding. `0` = threshold at the local mean. Negative (e.g. `-5`) = stricter; positive = looser. |
 | `vec_adaptive_gaussian_sigma` | float | `0.0` | Sigma for optional Gaussian pre-blur before thresholding. `0` = no blur. |
-| `write_vec_adaptive_skeletons` | bool | `false` | Thin the adaptive binary masks to 1-pixel-wide Zhang-Suen skeletons. Uses `curvature_skeleton_spur_max_pixels` and `curvature_skeleton_min_component_pixels`. Only active when `write_vec_adaptive_threshold` is true. |
+| `write_vec_adaptive_skeleton_rasters` | bool | `false` | Thin the adaptive binary masks to 1-pixel-wide Zhang-Suen skeletons. Uses `curvature_skeleton_spur_max_pixels` and `curvature_skeleton_min_component_pixels`. Only active when `write_vec_adaptive_threshold_rasters` is true. |
 
 ---
 
@@ -377,7 +377,7 @@ polyfit_method:        direct
 polyfit_metrics:       slope,plan_curvature,profile_curvature,vertical_excess_curvature
 
 # Surface shape classification (SMAP)
-write_shape_classification:    true
+write_shape_classification_raster: true
 shape_curvature_method:        fundamental_form
 shape_curvature_threshold:     0.0
 write_shape_curvature_rasters: true

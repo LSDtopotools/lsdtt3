@@ -36,8 +36,8 @@ Steps run in this order when enabled:
 |---|---|
 | 0. Mosaic input tiles | `mosaic_file_list` |
 | 1. Projection check / reprojection | always runs |
-| 2. Threshold masking | `minimum_elevation`, `maximum_elevation` |
-| 2b. Binary mask | `apply_binary_mask: true` |
+| 2. Threshold masking | `min_elevation`, `maximum_elevation` |
+| 2b. Binary mask | `run_binary_mask: true` |
 | 2c. Clip to polygon | `clip_raster_to_polygon: true` |
 | 3. Interior nodata fill | `write_filled_nodata_raster: true` |
 | 4. Clip to max-valid rectangle | `write_clipped_rectangle_raster: true` |
@@ -92,7 +92,7 @@ Output files produced by reprojection receive a suffix indicating the chosen CRS
 |---|---|---|---|
 | `enforce_projection` | bool | `true` | If true and the raster is geographic or Web Mercator, reproject it automatically. If false and the raster is unprojected, the program exits with an error. |
 | `force_reproject` | bool | `false` | Reproject even when the input is already in a projected CRS. Useful for converting an existing projection to the preferred UTM/polar/LAEA analysis CRS. |
-| `resampling_method` | string | `cubic` | GDAL resampling algorithm used during reprojection. Options: `near`, `bilinear`, `cubic`, `cubicspline`, `lanczos`, `average`, `mode`, `max`, `min`, `med`, `q1`, `q3`, `sum`. |
+| `resampling_method` | string | `cubic` | GDAL resampling algorithm used during reprojection. Cubic is the default for continuous elevations; use `near` or `mode` for categorical rasters. Other options include `bilinear`, `cubicspline`, `lanczos`, `average`, `max`, `min`, `med`, `q1`, `q3`, `sum`. |
 | `grid_spacing` | float | `-1` | Target grid spacing in metres after reprojection. Negative (default) = auto-estimate from input pixel size, rounded to the nearest 5 m (≥20 m inputs), 2 m (5–20 m), or 1 m (<5 m). Set a positive value to enforce a specific spacing. |
 | `force_resampling` | bool | `false` | If true, use `forced_grid_spacing` as the target spacing instead of the auto-estimated or user-supplied `grid_spacing`. |
 | `forced_grid_spacing` | float | `-1` | Target grid spacing in metres when `force_resampling` is true. Must be positive. |
@@ -107,7 +107,7 @@ Pixels outside the elevation range are set to nodata. The masked raster is writt
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `minimum_elevation` | float | `0.0` | Pixels at or below this elevation (metres) are set to nodata. The default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Set to a large negative number (e.g. `-9999`) to disable. |
+| `min_elevation` | float | `0.0` | Pixels at or below this elevation (metres) are set to nodata. The default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Set to a large negative number (e.g. `-9999`) to disable. |
 | `maximum_elevation` | float | `30000` | Pixels above this elevation (metres) are set to nodata. Reduce to remove artefacts in low-relief study areas. |
 
 ---
@@ -120,8 +120,8 @@ Output: `<write_fname>_binary_masked.tif`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `apply_binary_mask` | bool | `false` | Enable binary mask application. |
-| `binary_mask_fname` | string | _(empty)_ | Path to the binary mask raster. Any GDAL-readable single-band raster is accepted. Pixels > 0.5 are treated as foreground (keep); all others set the DEM pixel to nodata. Must cover the same extent and have the same cell size and origin as the (possibly reprojected) DEM. Required when `apply_binary_mask` is true. |
+| `run_binary_mask` | bool | `false` | Enable binary mask application. |
+| `binary_mask_fname` | string | _(empty)_ | Path to the binary mask raster. Any GDAL-readable single-band raster is accepted. Pixels > 0.5 are treated as foreground (keep); all others set the DEM pixel to nodata. Must cover the same extent and have the same cell size and origin as the (possibly reprojected) DEM. Required when `run_binary_mask` is true. |
 
 ---
 
@@ -144,7 +144,7 @@ Output: `<write_fname>_polygon_clipped.tif`
 
 Overwrite individual cells with new values, listed in a point file. Use it to
 blank a handful of known-bad pixels, or to correct spot elevations, without
-building a mask raster — `apply_binary_mask` is the raster-driven equivalent.
+building a mask raster — `run_binary_mask` is the raster-driven equivalent.
 
 Runs **before** breaching, filling and interior nodata filling: it is a
 correction to the source data, so everything downstream sees the corrected DEM.
@@ -154,7 +154,7 @@ Output: `<write_fname>_pixels_replaced.tif` (with `write_replaced_pixels_raster`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `replace_pixels_from_csv` | string | _(empty)_ | Point file listing pixels to overwrite. CSV, FlatGeobuf or GeoPackage. Empty disables the step. |
+| `replace_pixels_fname` | string | _(empty)_ | Point file listing pixels to overwrite. CSV, FlatGeobuf or GeoPackage. Empty disables the step. |
 | `replace_pixels_value_field` | string | `value` | Name of the column holding each pixel's new value. |
 | `write_replaced_pixels_raster` | bool | `false` | Write the DEM after replacement. Without it the corrected DEM still feeds every later stage but is not written separately. |
 
@@ -321,7 +321,7 @@ if the downstream analysis can tolerate them.
 
 Trace closed depressions identified by the fill difference raster into vector polygons. Requires that `write_fill_raster` or `write_fill_diff_raster` is also true (the fill diff must be computed).
 
-Output: `<write_fname>_depressions.<ext>` (extension depends on `depression_polygons_output_format`)
+Output: `<write_fname>_depressions.<ext>` (extension depends on `write_vector_format`)
 
 Each polygon carries three attributes: `depression_id`, `area_m2`, `volume_m3`.
 
@@ -330,7 +330,7 @@ Each polygon carries three attributes: `depression_id`, `area_m2`, `volume_m3`.
 | `write_depression_polygons` | bool | `false` | Enable depression polygon output. Automatically enables `write_fill_diff_raster`. |
 | `depression_min_pixels` | int | `1` | Minimum depression size in pixels. Depressions smaller than this are removed before polygon tracing. |
 | `depression_min_depth` | float | `0.0` | Minimum fill depth in metres for a cell to be included in a depression. A small positive value (e.g. `0.01`) suppresses near-zero fill artefacts. |
-| `depression_polygons_output_format` | string | `flatgeobuf` | Output vector format. `flatgeobuf` or `fgb`: FlatGeobuf (recommended). `gpkg`: GeoPackage. |
+| `write_vector_format` | string | `flatgeobuf` | Output format for all vector writes. `flatgeobuf` or `fgb`: FlatGeobuf (recommended). `gpkg`: GeoPackage. |
 
 ---
 
@@ -371,13 +371,12 @@ Output: `<write_fname>_hillshade_multidirectional.tif`
 
 Clip a vector file to the bounding box of the output raster. The vector CRS need not match the raster CRS — the raster bounding box is reprojected into the vector's native CRS before clipping.
 
-Output: `<write_fname>_clipped_vector.<ext>` (extension depends on `vector_clip_output_format`)
+Output: `<write_fname>_clipped_vector.<ext>` (extension depends on `write_vector_format`)
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `clip_vector_data_to_raster` | bool | `false` | Enable vector clipping. |
 | `vector_data_fname` | string | _(empty)_ | Path to the input vector file. Any OGR-readable format is accepted (Shapefile, GeoPackage, FlatGeobuf, GeoJSON, etc.). Required when `clip_vector_data_to_raster` is true. |
-| `vector_clip_output_format` | string | `flatgeobuf` | Output vector format. `flatgeobuf` or `fgb`: FlatGeobuf (preferred, especially on WSL2). `gpkg`: GeoPackage. |
 
 ---
 
@@ -396,7 +395,7 @@ grid_spacing:             -1
 allow_lambert_projection: false
 
 # Masking
-minimum_elevation:        0.0
+min_elevation:            0.0
 maximum_elevation:        30000
 
 # Fill interior nodata voids first, then clip to a clean rectangle
