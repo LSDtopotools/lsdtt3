@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -280,10 +281,39 @@ private:
     float time_years_ = 0.0f;
 };
 
+#ifdef LSDTT_PYTHON_COMPATIBILITY_PROBE
+class KeywordCompatibilityProbe
+{
+public:
+    explicit KeywordCompatibilityProbe(int value) : value_(value) {}
+    int value() const noexcept { return value_; }
+
+private:
+    int value_;
+};
+#endif
+
 } // namespace
 
 void bind_landscape_model(nb::module_& module)
 {
+#ifdef LSDTT_PYTHON_COMPATIBILITY_PROBE
+    nb::class_<KeywordCompatibilityProbe>(module, "_KeywordCompatibilityProbe")
+        .def("__init__", [](KeywordCompatibilityProbe* self, int canonical)
+        {
+            new (self) KeywordCompatibilityProbe(canonical);
+        }, nb::arg("canonical"))
+        .def("__init__", [](KeywordCompatibilityProbe* self, int legacy)
+        {
+            if (PyErr_WarnEx(
+                    PyExc_DeprecationWarning,
+                    "'legacy' is deprecated; use 'canonical'", 1) < 0)
+                throw nb::python_error();
+            new (self) KeywordCompatibilityProbe(legacy);
+        }, nb::arg("legacy"))
+        .def_prop_ro("value", &KeywordCompatibilityProbe::value);
+#endif
+
     nb::class_<LandscapeStepResult>(module, "LandscapeStepResult", R"doc(
 Diagnostics and surface produced by one or more landscape-evolution steps.
 

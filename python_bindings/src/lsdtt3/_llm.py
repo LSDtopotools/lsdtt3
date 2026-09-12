@@ -37,22 +37,22 @@ F=FlowInfo(R,boundary_conditions='oooo',forced_outlets?,allow_pits_as_outlets?);
 F.drainage_area()->R; F.flow_direction()->R; F.flow_distance_to_outlet()->R; F.channel_scope(threshold_pixels=...)->S
 F.scope_from_heads(heads)->S; F.channel_network(S)->N; F.basins(outlets?)->B; F.height_above_channel(R,S|N,...)->R
 G=FlowGraph(R,method='mfd'|'dinf',boundary_conditions='oooo',...); G.drainage_area()->R
-topographic_wetness_index(G,slope:R,...)->R; sediment_connectivity_index(...)->ConnectivityResult; soil_topographic_index(...)->SoilTopographicIndexResult
+topographic_wetness_index(drainage_area:R,slope:R)->R; sediment_connectivity_index(...)->ConnectivityResult; soil_topographic_index(...)->SoilTopographicIndexResult
 """,
     "channel": """@channel
-extract_channel_heads(F|R,method=..., ...)->ChannelHeads; S=F.channel_scope(threshold_pixels=...)|F.scope_from_heads(heads)
+extract_channel_heads(R,F,method=..., ...)->ChannelHeads; S=F.channel_scope(threshold_pixels=...)|F.scope_from_heads(heads)
 N=F.channel_network(S); N.points_geodataframe()->V; N.lines_geodataframe()->V; N.links()->D; N.junctions()->D; N.junction_angles()->D
-N.chi(R,m_over_n=.45,area_threshold?)->C; N.chi_sweep(R,m_over_n_values,...)->D
+N.chi(outlets?,m_over_n=.45,reference_area=1,denominator?)->C; N.chi_sweep(R,m_over_n_values,...)->D
 find_channel_candidates(R,...)->ChannelCandidatesResult; water_centrelines(...)->WaterCentrelineResult; repair_water_lines(...)->WaterLineRepairResult
 """,
     "basin": """@basin
 B=F.basins(outlets?); junction_basins(N,selection='all',outlets?)->JunctionBasinCollection
-B.labels()->R; B.mask(id)->R; B.membership()->D; B.pixels()->D; B.polygons()->V; B.statistics(R,...)->D
+B.labels->R; B.mask(id)->R; B.membership(row,col)->list[int]; B.pixels(id)->array; B.polygons->V; B.statistics(R,...)->D
 basin_surface_metrics(B,R,...)->D; basin_channel_lengths(B,N,...)->D; basin_ridgeline_extrema(B,N,R,...)->V
-divide_migration(R,F,N,...)->DivideMigrationResult; B.outline_ridgelines(...)->list[Ridgeline]
+divide_migration(F,R,outlets,...)->DivideMigrationResult; B.outline_ridgelines(...)->list[Ridgeline]
 """,
     "chi": """@chi
-C=N.chi(R,m_over_n=.45,area_threshold?); C.nodes()->D; C.raster()->R; C.fit(...)->ChiFit
+C=N.chi(outlets?,m_over_n=.45,reference_area=1,denominator?); C.nodes()->D; C.raster()->R; C.fit(...)->ChiFit
 ksn: use N.chi(...).fit/segment workflow; ChiInversion via N.chi(...), inversion helpers, or chi_ksn_inversion API.
 N.chi_sweep(R,m_over_n_values,...)->D; chi_from_outlets/chi_from_outlets_inherited are F methods for outlet-defined chi.
 ! chi requires a D8 N/F and elevation R on the same grid; inspect N.points_geodataframe() for mapped network output.
@@ -61,7 +61,7 @@ N.chi_sweep(R,m_over_n_values,...)->D; chi_from_outlets/chi_from_outlets_inherit
 V inputs/outputs=GeoDataFrame; CRS must equal R projected metre CRS.
 bounds_from_vector(V)->VectorBounds; rasterize_polygons(R,V,...)->R; clip_to_polygons(R,V)->R; sample_points(R,V)->V
 burn_streams(R,V,...)->StreamBurnResult; water_centrelines(...)->WaterCentrelineResult; repair_water_lines(...)->WaterLineRepairResult
-extract_valley_centrelines(R,N|S,...)->ValleyCentrelineResult; extract_valley_cross_sections(R,baseline:V,...)->ValleyCrossSections
+extract_valley_centrelines(R,S|ordered_channels,...)->ValleyCentrelineResult; extract_valley_cross_sections(R,centrelines,...)->ValleyCrossSections
 """,
     "fetch": """@fetch
 fetch_dem(bounds|V,dataset='cop30',...)->R; fetch_dem_for_outlets(outlets:V,...)->OutletFetchResult
@@ -69,24 +69,24 @@ bounds_from_vector(V)->VectorBounds; utm_epsg_for_point(x,y)->int; cop30_tiles_f
 ! fetch expects geographic bounds/outlets where documented; returned R carries projected grid metadata. Save explicitly: R.write(path).
 """,
     "hydraulic": """@hydraulic
-fill_hydraulic_surface(z:R,h:R,node_state:R,boundary_conditions='oooo',...)->HydraulicSurfaceFill
-run_graphflood(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->HydraulicResult
-run_graphflood_optimised(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->GraphFloodOptimisedResult
-run_graphflood_optimised_v2(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,prescribed_qin:R|None=None,...)->GraphFloodOptimisedResult
-run_graphflood_multigrid(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,backend='optimised_v2',...)->GraphFloodMultigridResult
-run_graphflood_induced(z:R,node_state:R,rainfall_rate:R,friction_coefficient:R,qin_threshold,...)->GraphFloodInducedResult
+fill_hydraulic_surface(surface:R,node_state:R,boundary_conditions='oooo',...)->HydraulicSurfaceFill
+run_graphflood(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->HydraulicResult
+run_graphflood_optimised(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->GraphFloodOptimisedResult
+run_graphflood_optimised_v2(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,prescribed_qin:R|None=None,...)->GraphFloodOptimisedResult
+run_graphflood_multigrid(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,backend='optimised_v2',...)->GraphFloodMultigridResult
+run_graphflood_induced(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,qin_threshold,...)->GraphFloodInducedResult
 node_state: 0=outside/nodata,1=active,2=flux-only ghost,3=outlet; ghosts route prescribed_qin but evolve depth/qout from initial depth, only 3 drains; each active component needs an outlet unless check_valid_outlet=False.
 ! hydraulic routing is on z+h; stationary workflow fills h, not bed elevation.
 """,
     "landscape": """@landscape
-LandscapeModel(R,fluvial_method='d8'|'dinf',hillslope_model='linear'|'nonlinear'|'cellular',coupling_regime='auto'|..., ...)->L
-L.step(dt_years)->LandscapeStepResult; L.run(n_steps,dt_years)->R; L.set_forcing(uplift_rate,baselevel_fall_rate=0)
+LandscapeModel(R,fluvial_method='d8'|'dinf'|'none',hillslope_model='none'|'linear'|'roering'|'roering_implicit'|'cidre'|'adi'|'cellular',coupling_regime='automatic'|'coupled'|'channels_as_boundaries',...)->L
+L.step(compute_erosion_rate=False)->LandscapeStepResult; L.run(n_steps,compute_erosion_rate=False)->LandscapeStepResult; L.set_forcing(uplift_rate,baselevel_fall_rate=0)
 hillslope_transport_explicit|implicit|adi|cellular(R,channels,...)->HillslopeTransportResult
-route_sediment(R,F|G,...)->SedimentRoutingResult; trigger_landslides(R,...)->LandslideResult
+route_sediment(N,R,...)->SedimentRoutingResult; trigger_landslides(R,...)->LandslideResult
 """,
     "cosmo": """@cosmo
-CRNColumn(): history owner; add_erosion_rate(rate_m_yr,duration_yr); add_burial(...)
-crn_uniform_raster(R,value=1)->R; crn_production_scaling(R,...)->R; crn_steady_state(...); crn_step_change(...)
+Q=CRNColumn(rock_density_kg_m3=2650); Q.set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_m); Q.transient(...)
+crn_uniform_raster(R,value)->R; crn_production_scaling(R,...)->R; crn_steady_state(...); crn_step_change(...)
 crn_transient_history(column,production_scaling:R,topographic_shielding:R?)->{'be10':R,'al26':R,'c14':R}
 crn_invert_basin_erosion(...)->D; crn_outlet_concentration(...); crn_pair_diagnostics(...)
 """,
@@ -121,9 +121,9 @@ _CLASS_SIGNATURES = {
     "ChannelScope": "ChannelScope: F.channel_scope(...)|F.scope_from_heads(...) -> S",
     "ChannelNetwork": "ChannelNetwork: F.channel_network(S)->N",
     "BasinCollection": "BasinCollection: F.basins(outlets?)->B",
-    "ChiCollection": "ChiCollection: N.chi(dem,m_over_n=.45,...)->C",
-    "LandscapeModel": "LandscapeModel(dem,fluvial_method=...,hillslope_model=...,coupling_regime=...)->L",
-    "CRNColumn": "CRNColumn(); add_erosion_rate(rate_m_yr,duration_yr); add_burial(...)",
+    "ChiCollection": "ChiCollection: N.chi(outlets?,m_over_n=.45,reference_area=1,denominator?)->C",
+    "LandscapeModel": "LandscapeModel(dem,fluvial_method=...,hillslope_model=...,coupling_regime='automatic')->L",
+    "CRNColumn": "CRNColumn(rock_density_kg_m3=2650); set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_m)",
 }
 
 

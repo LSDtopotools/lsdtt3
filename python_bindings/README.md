@@ -43,6 +43,10 @@ grid metadata, values, and nodata masks. Analysis is deliberately functional:
 operations accept rasters and return new rasters rather than wrapping CLI
 parameter files or mutating inputs.
 
+See [Python bindings architecture and API contracts](../docs/developer_notes/python_bindings_architecture.md)
+for the backend/API distinction, contract manifests, extension workflow, and
+verification commands.
+
 ## Authors
 
 Boris Gailleton — boris.gailleton@univ-rennes.fr

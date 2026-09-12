@@ -164,6 +164,7 @@ nav:
     - Git from the command line: developer_notes/git_notes.md
     - Architecture: developer_notes/lsdtt3_architecture.md
     - Basin object architecture: developer_notes/basin_object_architecture.md
+    - Python bindings architecture: developer_notes/python_bindings_architecture.md
     - Building from source: developer_notes/building_from_source.md
     - Building on Windows (WSL2): developer_notes/lsdtt3_in_windows.md
     - Building on macOS (Multipass): developer_notes/lsdtt3_in_macos.md

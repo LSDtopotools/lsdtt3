@@ -18,3 +18,6 @@ for workflow context and complete scripts.
 Each documented entry identifies its public arguments, result type, notes, and
 author. Native overloads remain authoritative at runtime; the façade describes
 their supported public calling patterns.
+
+Developers changing bindings or signatures should read
+[Python bindings architecture and API contracts](../developer_notes/python_bindings_architecture.md).

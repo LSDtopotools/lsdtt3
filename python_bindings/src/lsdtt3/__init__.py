@@ -6,6 +6,7 @@ B. Gailleton
 """
 
 from functools import wraps
+from importlib.metadata import PackageNotFoundError, distribution
 import os
 from pathlib import Path
 
@@ -40,6 +41,16 @@ def _configure_bundled_geospatial_data() -> None:
 
 
 _configure_bundled_geospatial_data()
+
+try:
+    _distribution = distribution("lsdtt3")
+    _installed_package = Path(_distribution.locate_file("lsdtt3")).resolve()
+    if _installed_package != Path(__file__).resolve().parent:
+        raise PackageNotFoundError
+    __version__ = _distribution.version
+except PackageNotFoundError:
+    # Source-tree and direct CMake installs have no wheel metadata.
+    __version__ = "0.0.0"
 
 from ._core import (
     Raster,
@@ -255,6 +266,7 @@ from ._graphflood_accelerators import (
 
 __all__ = [
     "Raster",
+    "RasterHierarchy",
     "RasterMeta",
     "VectorBounds",
     "OutletFetchResult",

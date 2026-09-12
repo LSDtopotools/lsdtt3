@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "violations": [
+    {
+      "symbol": "CRNColumn",
+      "member": "set_erosion_history",
+      "parameter": "removal_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "CRNColumn",
+      "member": "transient",
+      "parameter": "sampling_depths_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "FlowInfo",
+      "member": "channel_mask",
+      "parameter": "threshold_pixels",
+      "rule": "qualify_contributing_pixel_threshold"
+    },
+    {
+      "symbol": "FlowInfo",
+      "member": "channel_scope",
+      "parameter": "threshold_pixels",
+      "rule": "qualify_contributing_pixel_threshold"
+    },
+    {
+      "symbol": "FlowInfo",
+      "member": "distance_to_channel",
+      "parameter": "threshold_pixels",
+      "rule": "qualify_contributing_pixel_threshold"
+    },
+    {
+      "symbol": "FlowInfo",
+      "member": "sources",
+      "parameter": "threshold_pixels",
+      "rule": "qualify_contributing_pixel_threshold"
+    },
+    {
+      "symbol": "crn_transient_history",
+      "member": "",
+      "parameter": "sampling_depth_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "extract_channel_heads",
+      "member": "",
+      "parameter": "surface_fitting_radius_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "extract_channel_heads",
+      "member": "",
+      "parameter": "threshold_pixels",
+      "rule": "qualify_contributing_pixel_threshold"
+    },
+    {
+      "symbol": "fetch_dem",
+      "member": "",
+      "parameter": "size_px",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "find_flat_surfaces",
+      "member": "",
+      "parameter": "relief_window_pixels",
+      "rule": "state_window_side_length"
+    },
+    {
+      "symbol": "find_internal_drainage",
+      "member": "",
+      "parameter": "min_area_metres2",
+      "rule": "use_m2_or_m3_suffix"
+    },
+    {
+      "symbol": "find_internal_drainage",
+      "member": "",
+      "parameter": "min_volume_metres3",
+      "rule": "use_m2_or_m3_suffix"
+    },
+    {
+      "symbol": "route_sediment",
+      "member": "",
+      "parameter": "active_layer_depth_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "route_sediment",
+      "member": "",
+      "parameter": "d50_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "route_sediment",
+      "member": "",
+      "parameter": "d84_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "route_sediment",
+      "member": "",
+      "parameter": "d90_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "run_graphflood",
+      "member": "",
+      "parameter": "tol_median_abs_dhw",
+      "rule": "name_tolerance_semantics"
+    },
+    {
+      "symbol": "run_graphflood",
+      "member": "",
+      "parameter": "tol_median_rel_dhw",
+      "rule": "name_tolerance_semantics"
+    },
+    {
+      "symbol": "run_graphflood_optimised",
+      "member": "",
+      "parameter": "tol_median_abs_dhw",
+      "rule": "name_tolerance_semantics"
+    },
+    {
+      "symbol": "run_graphflood_optimised",
+      "member": "",
+      "parameter": "tol_median_rel_dhw",
+      "rule": "name_tolerance_semantics"
+    },
+    {
+      "symbol": "run_graphflood_optimised_v2",
+      "member": "",
+      "parameter": "tol_median_abs_dhw",
+      "rule": "name_tolerance_semantics"
+    },
+    {
+      "symbol": "run_graphflood_optimised_v2",
+      "member": "",
+      "parameter": "tol_median_rel_dhw",
+      "rule": "name_tolerance_semantics"
+    },
+    {
+      "symbol": "run_landslide_series",
+      "member": "",
+      "parameter": "budget_tol",
+      "rule": "name_tolerance_semantics"
+    },
+    {
+      "symbol": "synthetic_network",
+      "member": "",
+      "parameter": "relief_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "wiener_filter",
+      "member": "",
+      "parameter": "signal_wavelength_long_m",
+      "rule": "spell_out_unit_suffix"
+    },
+    {
+      "symbol": "wiener_filter",
+      "member": "",
+      "parameter": "signal_wavelength_short_m",
+      "rule": "spell_out_unit_suffix"
+    }
+  ]
+}

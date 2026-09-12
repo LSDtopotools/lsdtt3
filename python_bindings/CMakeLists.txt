@@ -26,6 +26,8 @@ option(LSDTT_PYTHON_RELEASE_WHEEL
     "Stage GDAL and PROJ runtime data for a self-contained release wheel" OFF)
 option(LSDTT_PYTHON_CLI
     "Build the selected vanilla LSDTopoTools command-line drivers for the wheel" ON)
+option(LSDTT_PYTHON_COMPATIBILITY_PROBE
+    "Build private keyword-migration probes for API contract tests" OFF)
 
 # These optional overrides make a reproducible release build independent of
 # how CMake located GDAL and PROJ on the build host.
@@ -49,6 +51,9 @@ if(NANOBIND_CMAKE_DIR_RESULT EQUAL 0)
     list(PREPEND CMAKE_PREFIX_PATH "${NANOBIND_CMAKE_DIR}")
 endif()
 find_package(nanobind CONFIG REQUIRED)
+if(nanobind_VERSION VERSION_LESS "3.0" OR NOT nanobind_VERSION VERSION_LESS "3.1")
+    message(FATAL_ERROR "lsdtt3 Python bindings require nanobind >=3.0,<3.1")
+endif()
 find_package(GDAL REQUIRED)
 
 if(LSDTT_PYTHON_OPENMP AND NOT WIN32)

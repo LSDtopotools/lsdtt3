@@ -83,18 +83,32 @@ private:
     lsdtt::valley_cross_section_result result_;
 };
 
-ValleyCentrelineResult extract_valley_centrelines(
-    const Raster& dem, nb::object channels, double corridor_width_metres,
+lsdtt::valley_centreline_request make_centreline_request(
+    const Raster* valley_mask, double corridor_width_metres,
     double fallback_valley_hand_metres, int valley_dilation_pixels,
     double trough_scaling_factor, int centreline_loops, int n_threads)
 {
     lsdtt::valley_centreline_request request;
+    request.supplied_valley_mask =
+        valley_mask == nullptr ? nullptr : &valley_mask->native();
     request.corridor_width_metres = corridor_width_metres;
     request.fallback_valley_hand_metres = fallback_valley_hand_metres;
     request.valley_dilation_pixels = valley_dilation_pixels;
     request.trough_scaling_factor = trough_scaling_factor;
     request.centreline_loops = centreline_loops;
     request.n_threads = n_threads;
+    return request;
+}
+
+ValleyCentrelineResult extract_valley_centrelines(
+    const Raster& dem, nb::object channels, double corridor_width_metres,
+    double fallback_valley_hand_metres, int valley_dilation_pixels,
+    double trough_scaling_factor, int centreline_loops, int n_threads)
+{
+    const auto request = make_centreline_request(
+        nullptr, corridor_width_metres, fallback_valley_hand_metres,
+        valley_dilation_pixels, trough_scaling_factor, centreline_loops,
+        n_threads);
     return ValleyCentrelineResult(lsdtt::extract_valley_centrelines(
         dem.native(), make_scope(dem, channels), request));
 }
@@ -109,16 +123,48 @@ ValleyCentrelineResult extract_valley_centrelines_from_scope(
     if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.x_min != b.x_min ||
         a.y_min != b.y_min || a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt)
         throw std::invalid_argument("dem must share the ChannelScope flow grid");
-    lsdtt::valley_centreline_request request;
-    request.corridor_width_metres = corridor_width_metres;
-    request.fallback_valley_hand_metres = fallback_valley_hand_metres;
-    request.valley_dilation_pixels = valley_dilation_pixels;
-    request.trough_scaling_factor = trough_scaling_factor;
-    request.centreline_loops = centreline_loops;
-    request.n_threads = n_threads;
+    const auto request = make_centreline_request(
+        nullptr, corridor_width_metres, fallback_valley_hand_metres,
+        valley_dilation_pixels, trough_scaling_factor, centreline_loops,
+        n_threads);
     return ValleyCentrelineResult(lsdtt::extract_valley_centrelines(
         dem.native(), scope.native(), request));
 }
+
+#ifdef LSDTT_PYTHON_COMPATIBILITY_PROBE
+ValleyCentrelineResult extract_valley_centrelines_with_mask_probe(
+    const Raster& dem, nb::object channels, const Raster& valley_mask,
+    double corridor_width_metres, double fallback_valley_hand_metres,
+    int valley_dilation_pixels, double trough_scaling_factor,
+    int centreline_loops, int n_threads)
+{
+    const auto request = make_centreline_request(
+        &valley_mask, corridor_width_metres, fallback_valley_hand_metres,
+        valley_dilation_pixels, trough_scaling_factor, centreline_loops,
+        n_threads);
+    return ValleyCentrelineResult(lsdtt::extract_valley_centrelines(
+        dem.native(), make_scope(dem, channels), request));
+}
+
+ValleyCentrelineResult extract_valley_centrelines_from_scope_with_mask_probe(
+    const Raster& dem, const ChannelScope& scope, const Raster& valley_mask,
+    double corridor_width_metres, double fallback_valley_hand_metres,
+    int valley_dilation_pixels, double trough_scaling_factor,
+    int centreline_loops, int n_threads)
+{
+    const auto& a = dem.native().get_meta();
+    const auto& b = scope.flow().meta();
+    if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.x_min != b.x_min ||
+        a.y_min != b.y_min || a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt)
+        throw std::invalid_argument("dem must share the ChannelScope flow grid");
+    const auto request = make_centreline_request(
+        &valley_mask, corridor_width_metres, fallback_valley_hand_metres,
+        valley_dilation_pixels, trough_scaling_factor, centreline_loops,
+        n_threads);
+    return ValleyCentrelineResult(lsdtt::extract_valley_centrelines(
+        dem.native(), scope.native(), request));
+}
+#endif
 
 nb::object centreline_table(const ValleyCentrelineResult& result)
 {
@@ -318,6 +364,24 @@ Valley masks and centreline diagnostics for supplied channel paths.
             "Return hydraulic break stages and local heights above the thalweg.")
         .def_prop_ro("hydraulic_curve", &cross_section_hydraulic_curve,
             "Return optional BankfullMapper-style hydraulic geometry curves.");
+#ifdef LSDTT_PYTHON_COMPATIBILITY_PROBE
+    m.def("_extract_valley_centrelines_with_mask_probe",
+        &extract_valley_centrelines_from_scope_with_mask_probe,
+        nb::arg("dem"), nb::arg("scope"), nb::arg("valley_mask"),
+        nb::arg("corridor_width_metres") = 5000.0,
+        nb::arg("fallback_valley_hand_metres") = 10.0,
+        nb::arg("valley_dilation_pixels") = 4,
+        nb::arg("trough_scaling_factor") = 0.1,
+        nb::arg("centreline_loops") = 5, nb::arg("n_threads") = 0);
+    m.def("_extract_valley_centrelines_with_mask_probe",
+        &extract_valley_centrelines_with_mask_probe,
+        nb::arg("dem"), nb::arg("channels"), nb::arg("valley_mask"),
+        nb::arg("corridor_width_metres") = 5000.0,
+        nb::arg("fallback_valley_hand_metres") = 10.0,
+        nb::arg("valley_dilation_pixels") = 4,
+        nb::arg("trough_scaling_factor") = 0.1,
+        nb::arg("centreline_loops") = 5, nb::arg("n_threads") = 0);
+#endif
     m.def("extract_valley_centrelines", &extract_valley_centrelines_from_scope,
         nb::arg("dem"), nb::arg("scope"),
         nb::arg("corridor_width_metres") = 5000.0,

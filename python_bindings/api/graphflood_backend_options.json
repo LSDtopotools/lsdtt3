@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "accelerators": [
+    "run_graphflood_multigrid",
+    "run_graphflood_induced"
+  ],
+  "built_in_backends": {
+    "reference": {
+      "callable": "run_graphflood",
+      "options": [
+        "method",
+        "boundary_conditions",
+        "mfd_exponent",
+        "condition_bed",
+        "fill_slope_epsilon",
+        "check_valid_outlet",
+        "friction_depth_exponent",
+        "friction_slope_exponent",
+        "dt",
+        "min_slope",
+        "point_inflows",
+        "max_steps",
+        "run_until_converged",
+        "convergence_check_every",
+        "tol_median_abs_dhw",
+        "tol_median_rel_dhw",
+        "n_threads",
+        "initial_water_depth"
+      ]
+    },
+    "optimised": {
+      "callable": "run_graphflood_optimised",
+      "options": [
+        "boundary_conditions",
+        "mfd_exponent",
+        "condition_bed",
+        "fill_slope_epsilon",
+        "check_valid_outlet",
+        "friction_depth_exponent",
+        "friction_slope_exponent",
+        "dt",
+        "min_slope",
+        "point_inflows",
+        "max_steps",
+        "run_until_converged",
+        "convergence_check_every",
+        "tol_median_abs_dhw",
+        "tol_median_rel_dhw",
+        "reuse_topology",
+        "initial_water_depth"
+      ]
+    },
+    "optimised_v2": {
+      "callable": "run_graphflood_optimised_v2",
+      "options": [
+        "boundary_conditions",
+        "mfd_exponent",
+        "condition_bed",
+        "fill_slope_epsilon",
+        "check_valid_outlet",
+        "friction_depth_exponent",
+        "friction_slope_exponent",
+        "dt",
+        "min_slope",
+        "point_inflows",
+        "max_steps",
+        "run_until_converged",
+        "convergence_check_every",
+        "tol_median_abs_dhw",
+        "tol_median_rel_dhw",
+        "reuse_topology",
+        "dirty_tile_size",
+        "full_validation_every",
+        "initial_water_depth",
+        "prescribed_qin"
+      ]
+    }
+  },
+  "migration": {
+    "preferred_public_tolerance_parameters": {
+      "median_dhw_convergence_tolerance_metres": null,
+      "median_dhw_relative_convergence_tolerance": null
+    },
+    "null_means": "retain the selected backend's current default",
+    "legacy_conflicts_are_checked_before_backend_invocation": true
+  },
+  "custom_callable_policy": "Custom callables retain ownership of options outside the built-in schema during the deprecation window."
+}

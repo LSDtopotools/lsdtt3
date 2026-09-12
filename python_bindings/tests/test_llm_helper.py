@@ -6,6 +6,8 @@ B. Gailleton
 """
 
 import pytest
+import importlib.util
+from pathlib import Path
 
 import lsdtt3
 
@@ -42,3 +44,12 @@ def test_unknown_topic_or_symbol_is_actionable():
         lsdtt3.helper_for_llm("volcanoes")
     with pytest.raises(ValueError, match="Unknown lsdtt3 public symbol"):
         lsdtt3.helper_for_llm("symbol:not_a_binding")
+
+
+def test_high_risk_cards_match_runtime_contracts():
+    path = Path(__file__).parents[1] / "tools" / "check_llm_cards.py"
+    spec = importlib.util.spec_from_file_location("check_llm_cards", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.main() == 0

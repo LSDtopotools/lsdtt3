@@ -204,6 +204,157 @@ class HydraulicRoutingTest(unittest.TestCase):
         self.assertGreater(result.performance.persistent_working_bytes, 0)
         self.assertGreaterEqual(result.performance.topology_rebuilds, 1)
 
+    def test_direct_graphflood_current_defaults(self):
+        controls = dict(max_steps=2, run_until_converged=False)
+        cases = (
+            (lsdtt3.run_graphflood, dict(
+                method="mfd", boundary_conditions="oooo", mfd_exponent=1.0,
+                condition_bed="none", fill_slope_epsilon=1.0e-8,
+                check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
+                friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
+                point_inflows=None, convergence_check_every=100,
+                tol_median_abs_dhw=1.0e-7, tol_median_rel_dhw=1.0e-5,
+                n_threads=0, initial_water_depth=None,
+            )),
+            (lsdtt3.run_graphflood_optimised, dict(
+                boundary_conditions="oooo", mfd_exponent=1.0,
+                condition_bed="none", fill_slope_epsilon=1.0e-8,
+                check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
+                friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
+                point_inflows=None, convergence_check_every=20,
+                tol_median_abs_dhw=1.0e-7, tol_median_rel_dhw=1.0e-5,
+                reuse_topology=True, initial_water_depth=None,
+            )),
+            (lsdtt3.run_graphflood_optimised_v2, dict(
+                boundary_conditions="oooo", mfd_exponent=1.0,
+                condition_bed="none", fill_slope_epsilon=1.0e-8,
+                check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
+                friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
+                point_inflows=None, convergence_check_every=20,
+                tol_median_abs_dhw=1.0e-7, tol_median_rel_dhw=1.0e-5,
+                reuse_topology=True, dirty_tile_size=64,
+                full_validation_every=128, initial_water_depth=None,
+                prescribed_qin=None,
+            )),
+        )
+        for solver, explicit_defaults in cases:
+            with self.subTest(solver=solver.__name__):
+                implicit = solver(
+                    self.bed, self.states, self.rainfall_rate,
+                    self.friction_coefficient, **controls,
+                )
+                explicit = solver(
+                    self.bed, self.states, self.rainfall_rate,
+                    self.friction_coefficient, **controls, **explicit_defaults,
+                )
+                self.assertEqual(implicit.step_count, 2)
+                for field in ("water_depth", "qin", "qout", "dhw"):
+                    np.testing.assert_array_equal(
+                        getattr(implicit, field).to_numpy(),
+                        getattr(explicit, field).to_numpy(),
+                    )
+
+    def test_graphflood_convergence_defaults_are_sensitive(self):
+        zero_rain = lsdtt3.Raster.from_numpy(
+            np.zeros((5, 5), dtype=np.float32),
+            np.ones((5, 5), dtype=bool), self.meta,
+        )
+        for solver, expected_check_step in (
+            (lsdtt3.run_graphflood, 100),
+            (lsdtt3.run_graphflood_optimised, 20),
+            (lsdtt3.run_graphflood_optimised_v2, 20),
+        ):
+            with self.subTest(solver=solver.__name__):
+                result = solver(
+                    self.bed, self.states, zero_rain,
+                    self.friction_coefficient,
+                )
+                self.assertEqual(result.step_count, expected_check_step)
+
+        for solver in (
+            lsdtt3.run_graphflood,
+            lsdtt3.run_graphflood_optimised,
+            lsdtt3.run_graphflood_optimised_v2,
+        ):
+            with self.subTest(max_steps_solver=solver.__name__):
+                result = solver(
+                    self.bed, self.states, zero_rain,
+                    self.friction_coefficient, run_until_converged=False,
+                )
+                self.assertEqual(result.step_count, 10000)
+
+        initial_depth = lsdtt3.Raster.from_numpy(
+            np.full((5, 5), 0.01, dtype=np.float32),
+            np.ones((5, 5), dtype=bool), self.meta,
+        )
+        common = dict(
+            max_steps=1000, run_until_converged=True,
+            convergence_check_every=1, initial_water_depth=initial_depth,
+        )
+        for solver in (
+            lsdtt3.run_graphflood,
+            lsdtt3.run_graphflood_optimised,
+            lsdtt3.run_graphflood_optimised_v2,
+        ):
+            with self.subTest(tolerance_solver=solver.__name__):
+                default_tolerance = solver(
+                    self.bed, self.states, zero_rain,
+                    self.friction_coefficient, **common,
+                )
+                loose = solver(
+                    self.bed, self.states, zero_rain,
+                    self.friction_coefficient,
+                    tol_median_abs_dhw=1.0,
+                    tol_median_rel_dhw=1.0, **common,
+                )
+                self.assertEqual(default_tolerance.step_count, 1000)
+                self.assertLess(loose.step_count, default_tolerance.step_count)
+
+    def test_accelerators_forward_backend_options(self):
+        calls = []
+
+        def recording_backend(*args, **kwargs):
+            calls.append(kwargs.copy())
+            return lsdtt3.run_graphflood_optimised_v2(*args, **kwargs)
+
+        forwarded = dict(
+            boundary_conditions="nnno", mfd_exponent=1.25,
+            condition_bed="none", fill_slope_epsilon=2.0e-7,
+            check_valid_outlet=True, friction_depth_exponent=1.5,
+            friction_slope_exponent=0.4, dt=2.0e-3, min_slope=3.0e-4,
+            run_until_converged=False, convergence_check_every=7,
+            tol_median_abs_dhw=2.0e-7, tol_median_rel_dhw=3.0e-5,
+            reuse_topology=False, dirty_tile_size=2,
+            full_validation_every=0,
+        )
+        lsdtt3.run_graphflood_multigrid(
+            self.bed, self.states, self.rainfall_rate,
+            self.friction_coefficient, backend=recording_backend,
+            factors=(5, 1), steps_per_level=(1, 2),
+            point_inflows=[[0, 4, 0.01]], **forwarded,
+        )
+        self.assertEqual([call["max_steps"] for call in calls], [1, 2])
+        for call in calls:
+            for key, value in forwarded.items():
+                self.assertEqual(call[key], value)
+
+        calls.clear()
+        lsdtt3.run_graphflood_induced(
+            self.bed, self.states, self.rainfall_rate,
+            self.friction_coefficient, qin_threshold=1.0e-3,
+            backend=recording_backend, halo_cells=1, max_expansions=0,
+            point_inflows=[[0, 4, 0.01]], max_steps=2, **forwarded,
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["max_steps"], 1)
+        self.assertFalse(calls[0]["run_until_converged"])
+        self.assertEqual(calls[1]["max_steps"], 2)
+        for call in calls:
+            for key, value in forwarded.items():
+                if key == "run_until_converged" and call is calls[0]:
+                    continue
+                self.assertEqual(call[key], value)
+
     def test_v2_multigrid_and_induced_drivers(self):
         options = dict(
             boundary_conditions="nnno",

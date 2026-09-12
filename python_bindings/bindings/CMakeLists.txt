@@ -41,6 +41,9 @@ nanobind_add_module(_core
 
 target_link_libraries(_core PRIVATE lsdtt3::runtime)
 target_compile_features(_core PRIVATE cxx_std_17)
+if(LSDTT_PYTHON_COMPATIBILITY_PROBE)
+    target_compile_definitions(_core PRIVATE LSDTT_PYTHON_COMPATIBILITY_PROBE=1)
+endif()
 set_target_properties(_core PROPERTIES
     BUILD_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"
     INSTALL_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"

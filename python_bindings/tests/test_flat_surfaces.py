@@ -6,6 +6,27 @@ import lsdtt3
 
 
 class FlatSurfaceTest(unittest.TestCase):
+    def test_relief_window_pixels_is_full_side_length(self):
+        metadata = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
+        values = np.zeros((9, 9), dtype=np.float32)
+        values[4, 4] = 10.0
+        dem = lsdtt3.Raster.from_numpy(
+            values, np.ones(values.shape, dtype=bool), metadata
+        )
+        common = dict(
+            use_madk2=True, madk2_window_radius_metres=1.0,
+            use_residual_iqr=False, use_nvd=False, min_component_pixels=1,
+            relief_threshold_metres=20.0, n_threads=1,
+        )
+        relief3 = lsdtt3.find_flat_surfaces(
+            dem, relief_window_pixels=3, **common
+        ).relief.to_numpy()
+        relief5 = lsdtt3.find_flat_surfaces(
+            dem, relief_window_pixels=5, **common
+        ).relief.to_numpy()
+        self.assertEqual(relief3[4, 2], np.float32(0.0))
+        self.assertEqual(relief5[4, 2], np.float32(10.0))
+
     def test_find_flat_surfaces_returns_diagnostics_and_labels(self):
         metadata = lsdtt3.RasterMeta.from_shape(64, 64, cell_size=1.0)
         rows, cols = np.indices((64, 64), dtype=np.float32)

@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "api_release_status": "shipped",
+  "release_evidence": {
+    "declared_version": "0.0.0",
+    "local_python_release_tags": [],
+    "remote_release_query": "unavailable: GitHub credentials rejected",
+    "published_installation_contract": "docs/python/index.md instructs users to pip install lsdtt3",
+    "version_ownership": "Python SemVer is independent and released under python-vX.Y.Z tags",
+    "compatibility_policy": "deprecated keywords remain for at least one published minor release"
+  },
+  "approved_name_differences": [
+    {
+      "python": "mountain_front_outlets.min_contributing_pixels",
+      "cli": "basin_minimum_contributing_pixels",
+      "reason": "Independent Python function context is unambiguous."
+    }
+  ],
+  "completed_hard_renames": [
+    {
+      "symbol": "find_road_flow_discrimination",
+      "old": "flow_accumulation_threshold_pixels",
+      "new": "threshold_contributing_pixels"
+    },
+    {
+      "symbol": "find_road_flow_discrimination",
+      "old": "dem_is_filled",
+      "new": "raster_is_filled"
+    }
+  ],
+  "approved_default_differences": [
+    {
+      "python_contracts": [
+        {"symbol": "LandscapeModel", "member": "__init__", "parameter": "critical_hillslope_slope", "default": 0.6}
+      ],
+      "cli": "critical_hillslope_slope=0.8",
+      "status": "characterized in Phase 0; retain pending the separate Phase 5 decision"
+    },
+    {
+      "python_contracts": [
+        {"symbol": "run_graphflood", "parameter": "max_steps", "default": 10000},
+        {"symbol": "run_graphflood", "parameter": "convergence_check_every", "default": 100},
+        {"symbol": "run_graphflood", "parameter": "tol_median_abs_dhw", "default": 1e-7},
+        {"symbol": "run_graphflood", "parameter": "tol_median_rel_dhw", "default": 1e-5},
+        {"symbol": "run_graphflood_optimised", "parameter": "max_steps", "default": 10000},
+        {"symbol": "run_graphflood_optimised", "parameter": "convergence_check_every", "default": 20},
+        {"symbol": "run_graphflood_optimised", "parameter": "tol_median_abs_dhw", "default": 1e-7},
+        {"symbol": "run_graphflood_optimised", "parameter": "tol_median_rel_dhw", "default": 1e-5},
+        {"symbol": "run_graphflood_optimised_v2", "parameter": "max_steps", "default": 10000},
+        {"symbol": "run_graphflood_optimised_v2", "parameter": "convergence_check_every", "default": 20},
+        {"symbol": "run_graphflood_optimised_v2", "parameter": "tol_median_abs_dhw", "default": 1e-7},
+        {"symbol": "run_graphflood_optimised_v2", "parameter": "tol_median_rel_dhw", "default": 1e-5}
+      ],
+      "cli": "lsdtt-graphflood defaults",
+      "status": "characterized in Phase 0; retain pending the separate Phase 5 decision"
+    }
+  ],
+  "deprecated_names": [],
+  "documentation_coverage": {
+    "policy": "incomplete Phase 0 baseline; exact coverage required in Phase 1",
+    "documented_count": 62,
+    "missing_count": 145,
+    "non_public": [],
+    "excluded_symbols": []
+  },
+  "known_runtime_test_failures": [
+    {
+      "tests": [
+        "test_flow_info.py::FlowInfoTest::test_scope_workflows_and_basin_collection",
+        "test_terrain_features.py::TerrainFeatureTest::test_ridgeline_and_valley_centreline",
+        "test_valley_cross_sections.py::ValleyCrossSectionDiagnosticsTests::test_optional_diagnostic_tables_are_exposed"
+      ],
+      "reason": "Strict xfails still call the removed valley-centreline no-mask path; migration to explicit masks is owned by Python API plan Phase 2."
+    }
+  ],
+  "optional_features": [
+    {"name": "eigen", "symbols": ["ChiInversion"]},
+    {"name": "fftw", "symbols": ["spectral_analysis"], "conditional_driver": "lsdtt-spectral-analysis"},
+    {"name": "netcdf", "symbols": []},
+    {"name": "opencv", "symbols": []},
+    {"name": "openmp", "symbols": []}
+  ]
+}

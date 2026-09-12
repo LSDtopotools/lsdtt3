@@ -356,6 +356,11 @@ what should remain in `core` / `cpu` / `gpu`, the valid-data contract for
 utility functions, and when to use the main statistical tests and distance
 measures.
 
+**`docs/developer_notes/python_bindings_architecture.md`**
+explains the in-memory Python backend, public API contract, nanobind adapters,
+manifest/check tooling, bundled CLI drivers, and the safe binding change
+workflow.
+
 
 ---
 
