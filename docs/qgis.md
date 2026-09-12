@@ -1,0 +1,1 @@
+--8<-- "qgis_plugin/README.md"
