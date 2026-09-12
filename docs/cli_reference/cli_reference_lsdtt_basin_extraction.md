@@ -9,7 +9,7 @@ objects is in [Basin object architecture](../developer_notes/basin_object_archit
 !!! note "Multipart lines and points"
     `crossing_line_fname`, `single_channel_points_fname`, `side_tributary_points_fname` accept multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
 
-    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../vector_data.md).
+    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
 ## Selecting all basins of one stream order
 
 `select_all_basins_of_stream_order` is a basin-selection mode that extracts all

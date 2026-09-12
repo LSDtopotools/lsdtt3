@@ -389,7 +389,7 @@ the patch table keep their holes and their speckle.
 
 ## See also
 
-- [Floodplains, terraces and valleys](../fluvial_surfaces_and_valleys.md) — the
+- [Floodplains, terraces and valleys](../design_and_algorithms/fluvial_surfaces_and_valleys.md) — the
   band-then-label ordering, the three break finders, the resolvability floor,
   and where the methods come from
 - [CLI reference: lsdtt-flat-surface-finder](cli_reference_lsdtt_flat_surface_finder.md)

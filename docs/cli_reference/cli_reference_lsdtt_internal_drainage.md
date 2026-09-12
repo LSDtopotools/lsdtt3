@@ -12,7 +12,7 @@ treats the depression as the terminus it really is.
 For a complete worked example on a real dataset, including the human review step,
 The examples below show the complete review and routing workflow.
 For the sink detectors and the graph machinery behind them, see
-[Flow routing](../flow_routing.md).
+[Flow routing](../what_is_lsdtt3/flow_routing.md).
 
 ## Usage
 

@@ -12,7 +12,7 @@ valley is band 0 of a reference-field ladder — a formulation that also works o
 fan, which a corridor HAND break does not. `valley_mask_fname` is **required**;
 running without it is a hard error naming that tool. For the algorithms and their
 provenance in Clubb et al. (2022), see
-[Floodplains, terraces and valleys](../fluvial_surfaces_and_valleys.md).
+[Floodplains, terraces and valleys](../design_and_algorithms/fluvial_surfaces_and_valleys.md).
 
 ## Usage
 
@@ -235,7 +235,7 @@ says the same thing once.
 
 ## See also
 
-- [Floodplains, terraces and valleys](../fluvial_surfaces_and_valleys.md) — the
+- [Floodplains, terraces and valleys](../design_and_algorithms/fluvial_surfaces_and_valleys.md) — the
   trough construction, its origin in Clubb et al. (2022), and where lsdtt3
   departs from it
 - [CLI reference: lsdtt-fluvial-surfaces](cli_reference_lsdtt_fluvial_surfaces.md)

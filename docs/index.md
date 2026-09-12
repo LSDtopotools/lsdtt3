@@ -12,11 +12,11 @@
 
 | I want to… | Go to |
 |---|---|
-| Understand what lsdtt3 does | [Overview](overview.md) |
-| **Install lsdtt3** | [Installation](install_lsdtt3.md) — Linux, Windows, macOS, Colab |
-| Install on Windows | [Windows via WSL2](install_lsdtt3.md#windows-via-wsl2) |
-| Install on macOS | [macOS](install_lsdtt3.md#macos) |
-| Run it in a browser | [Google Colab](install_lsdtt3.md#google-colab) |
+| Understand what lsdtt3 does | [Overview](what_is_lsdtt3/overview.md) |
+| **Install lsdtt3** | [Installation](what_is_lsdtt3/install_lsdtt3.md) — Linux, Windows, macOS, Colab |
+| Install on Windows | [Windows via WSL2](what_is_lsdtt3/install_lsdtt3.md#windows-via-wsl2) |
+| Install on macOS | [macOS](what_is_lsdtt3/install_lsdtt3.md#macos) |
+| Run it in a browser | [Google Colab](what_is_lsdtt3/install_lsdtt3.md#google-colab) |
 | Look up parameters for a tool | [Command-line reference](cli_reference/cli_reference_lsdtt_channel_extraction.md) |
 | Compile the latest code | [Building from source](developer_notes/building_from_source.md) |
 | Contribute or modify the code | [Developer notes](developer_notes/lsdtt3_architecture.md) |

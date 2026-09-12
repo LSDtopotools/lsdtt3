@@ -67,19 +67,21 @@ lsdtt3/
 │   ├── lsdtt-valley-centreline.cpp
 │   ├── lsdtt-water-centreline.cpp
 │   └── lsdtt-water-line-repair.cpp
-├── docs/                                   — organised by audience
-│   ├── index.md, overview.md               — user-facing, and the mkdocs site root
-│   ├── install_lsdtt3.md                   — user-facing install guide
-│   ├── testing_and_benchmarking.md
+├── docs/                                   — MkDocs source, organised by purpose
+│   ├── index.md                            — documentation site root
+│   ├── what_is_lsdtt3/                     — overview, install, data, routing, workflows
+│   ├── design_and_algorithms/              — scientific design and algorithms
 │   ├── cli_reference/                      — one parameter reference per CLI
-│   ├── developer_notes/                    — architecture, building, packaging
+│   ├── developer_notes/                    — architecture, building, packaging, testing
 │   │   ├── lsdtt3_architecture.md          — this file
 │   │   ├── developer_onboarding.md
 │   │   ├── building_from_source.md
 │   │   ├── making_release_packages.md
 │   │   ├── debian_packaging.md
 │   │   ├── lsdtt_utils_guide.md
-│   │   └── using_lsdtt_flowinfo.md
+│   │   ├── using_lsdtt_flowinfo.md
+│   │   ├── cli_parameter_conventions.md
+│   │   └── testing_and_benchmarking.md
 │   └── tex_technical/                      — LaTeX method write-ups (untracked)
 ├── graphflood/                             — third-party graph-based flood routing (Gailleton et al.)
 │   ├── graphflood.hpp
@@ -1145,7 +1147,7 @@ that predate the shared layer still hand-declare their parameters. The remediati
 plan migrates them per-phase.
 
 **Naming standard:** Every shared parameter follows the conventions in
-`docs/cli_parameter_conventions.md`. That document is the durable record of what
+`docs/developer_notes/cli_parameter_conventions.md`. That document is the durable record of what
 names are canonical, what units they use, and when to use `min_` vs `minimum_`,
 `threshold_` vs `min_`, and so on.
 

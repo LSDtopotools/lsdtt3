@@ -62,7 +62,7 @@ options easy to inspect and keeps the parameter contract readable in one place.
 ### Parameter naming conventions
 
 Every parameter you add must follow the naming standard in
-`docs/cli_parameter_conventions.md`. The standard ensures that parameter names are
+`docs/developer_notes/cli_parameter_conventions.md`. The standard ensures that parameter names are
 self-documenting across all CLIs.
 
 **Checklist when adding a parameter:**

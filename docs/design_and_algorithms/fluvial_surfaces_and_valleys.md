@@ -5,8 +5,8 @@ This page explains the design choices behind lsdtt3's fluvial-surface tooling: w
 each do, why the work is split across three programs rather than one, which
 algorithms are used at each step, and where those algorithms come from. It is not a
 CLI reference — for parameter names, types and defaults see the reference pages for
-[lsdtt-fluvial-surfaces](cli_reference/cli_reference_lsdtt_fluvial_surfaces.md) and
-[lsdtt-valley-centreline](cli_reference/cli_reference_lsdtt_valley_centreline.md),
+[lsdtt-fluvial-surfaces](../cli_reference/cli_reference_lsdtt_fluvial_surfaces.md) and
+[lsdtt-valley-centreline](../cli_reference/cli_reference_lsdtt_valley_centreline.md),
 or run any of the three with `-h`.
 
 The methods here descend from two papers, **Clubb et al. (2017)** on geomorphometric
@@ -708,9 +708,9 @@ terrace level.
 
 **Related lsdtt3 pages**
 
-- [CLI reference: lsdtt-fluvial-surfaces](cli_reference/cli_reference_lsdtt_fluvial_surfaces.md)
-- [CLI reference: lsdtt-valley-centreline](cli_reference/cli_reference_lsdtt_valley_centreline.md)
-- [CLI reference: lsdtt-flat-surface-finder](cli_reference/cli_reference_lsdtt_flat_surface_finder.md)
-- [CLI reference: lsdtt-swath-profile](cli_reference/cli_reference_lsdtt_swath_profile.md)
-- [Flow routing in lsdtt3](flow_routing.md)
+- [CLI reference: lsdtt-fluvial-surfaces](../cli_reference/cli_reference_lsdtt_fluvial_surfaces.md)
+- [CLI reference: lsdtt-valley-centreline](../cli_reference/cli_reference_lsdtt_valley_centreline.md)
+- [CLI reference: lsdtt-flat-surface-finder](../cli_reference/cli_reference_lsdtt_flat_surface_finder.md)
+- [CLI reference: lsdtt-swath-profile](../cli_reference/cli_reference_lsdtt_swath_profile.md)
+- [Flow routing in lsdtt3](../what_is_lsdtt3/flow_routing.md)
 - [Surface metrics](surface_metrics.md)

@@ -1,7 +1,7 @@
 # Building lsdtt3 from source
 
 This is the developer route. If you only want to *use* lsdtt3, install a
-release package instead — see [`docs/install_lsdtt3.md`](../install_lsdtt3.md).
+release package instead — see [Installation](../what_is_lsdtt3/install_lsdtt3.md).
 Build from source when you need code that has not been released yet, or when
 you are modifying lsdtt3.
 
@@ -94,7 +94,7 @@ ctest --test-dir build --output-on-failure
 
 The default suite needs no network, no downloaded data and no Python packages.
 See `tests/README.md` in the repository for what each test covers, and
-[`docs/testing_and_benchmarking.md`](../testing_and_benchmarking.md) for
+[Testing and benchmarking](testing_and_benchmarking.md) for
 methodology.
 
 ---

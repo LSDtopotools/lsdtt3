@@ -26,7 +26,7 @@ Keys use `snake_case`. All keys and their defaults are listed below.
 !!! note "Multipart lines"
     `baseline_vector_fname` accepts multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
 
-    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../vector_data.md).
+    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
 
 ## Pipeline overview
 

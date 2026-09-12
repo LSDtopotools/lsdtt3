@@ -1,6 +1,6 @@
 # Making release packages
 
-How the downloadable packages that [`docs/install_lsdtt3.md`](../install_lsdtt3.md)
+How the downloadable packages that [Installation](../what_is_lsdtt3/install_lsdtt3.md)
 tells users to install are actually produced.
 
 > **The operational cheat sheet is `tools/README.md` in the repository.**
@@ -34,7 +34,7 @@ bundle filenames, the manifest, and the version the binaries report are all
 derived from `project(lsdtt3 VERSION ...)`, and `make_release.sh` aborts if the
 version it is asked to release disagrees with it. Bumping is therefore a
 one-line edit plus the version numbers quoted in the install documentation
-(`README.md`, `docs/install_lsdtt3.md`), which are examples and have no
+(`README.md`, `docs/what_is_lsdtt3/install_lsdtt3.md`), which are examples and have no
 authority — always check `CMakeLists.txt` rather than trusting a version you
 read in prose.
 

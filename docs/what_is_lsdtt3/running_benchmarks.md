@@ -9,7 +9,7 @@ self-contained directory of measurements you can use to see how fast and how mem
 
 If you want the reasoning behind the design — why particular comparisons are
 valid and others are not — see
-[Testing and benchmarking](testing_and_benchmarking.md). This page is just how
+[Testing and benchmarking](../developer_notes/testing_and_benchmarking.md). This page is just how
 to run it.
 
 It should be noted here that the comparisons are not all like-for-like. Details about different implemetations and choices made are available in the report produced by these benchmarking tests. 
@@ -322,7 +322,7 @@ Two practical consequences:
 
 The measured breakdown — which pass fails to scale and why, and a NUMA
 first-touch hypothesis for multi-socket machines — is in
-[Testing and benchmarking](testing_and_benchmarking.md).
+[Testing and benchmarking](../developer_notes/testing_and_benchmarking.md).
 
 ---
 
@@ -975,4 +975,4 @@ Two things to state alongside any number you quote:
   figure without its terrain is not interpretable;
 - **that value correctness is not tested here.** This suite measures speed and
   memory. Correctness lives in the CTest suite; see
-  [Testing and benchmarking](testing_and_benchmarking.md).
+  [Testing and benchmarking](../developer_notes/testing_and_benchmarking.md).

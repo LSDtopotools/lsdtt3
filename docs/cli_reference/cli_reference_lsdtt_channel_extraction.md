@@ -26,7 +26,7 @@ Keys use `snake_case`. All keys and their defaults are listed below.
 !!! note "Multipart lines"
     `stream_vector_path` accepts multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
 
-    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../vector_data.md).
+    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
 
 ## Pipeline overview
 
@@ -128,7 +128,7 @@ One point per channel pixel, with drainage area as an attribute.
     accumulated from the D8 direction code — one cell size per cardinal step,
     `cell_size × √2` per diagonal — so it is correct on a periodic domain and is
     unaffected by how the lines are packaged or split. See
-    [Vector data](../vector_data.md).
+    [Vector data](../what_is_lsdtt3/vector_data.md).
 
 Output file: `<write_fname>_channel_network.<ext>`
 
@@ -151,7 +151,7 @@ Output file: `<write_fname>_channel_network_lines.<ext>`
     have carried. A link that crosses a **periodic** boundary (available in
     `lsdtt-lem`) is split at the wrap, so no renderer draws a line across the
     whole domain. `link_length` is measured along the flow path, so it is
-    correct in either case. See [Vector data](../vector_data.md).
+    correct in either case. See [Vector data](../what_is_lsdtt3/vector_data.md).
 
 ---
 

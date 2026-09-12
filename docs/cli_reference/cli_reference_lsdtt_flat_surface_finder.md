@@ -9,7 +9,7 @@ floodplain/terrace classification.** Everything that needs a channel moved to
 [`lsdtt-fluvial-surfaces`](cli_reference_lsdtt_fluvial_surfaces.md), which takes
 this tool's `_combined_flat_mask.tif` as its `flat_mask_fname`. For the reasoning
 behind the split and the algorithms, see
-[Floodplains, terraces and valleys](../fluvial_surfaces_and_valleys.md).
+[Floodplains, terraces and valleys](../design_and_algorithms/fluvial_surfaces_and_valleys.md).
 
 ## Usage
 
@@ -260,7 +260,7 @@ rather than being ignored, so a stale parameter file cannot silently do nothing.
 
 ## See also
 
-- [Floodplains, terraces and valleys](../fluvial_surfaces_and_valleys.md) — the
+- [Floodplains, terraces and valleys](../design_and_algorithms/fluvial_surfaces_and_valleys.md) — the
   algorithms, and where they come from
 - [CLI reference: lsdtt-fluvial-surfaces](cli_reference_lsdtt_fluvial_surfaces.md)
 - [CLI reference: lsdtt-valley-centreline](cli_reference_lsdtt_valley_centreline.md)

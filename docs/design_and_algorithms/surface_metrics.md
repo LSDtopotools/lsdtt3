@@ -203,7 +203,7 @@ From `docs/testing_and_benchmarking.md` on `alpine_medium` (720x720, 30 m):
 
     For end-to-end numbers that include both phases, and for the marginal cost
     per metric and the crossover against TopoToolbox, see the surface-metrics
-    section of [Testing and benchmarking](testing_and_benchmarking.md). Summary
+    section of [Testing and benchmarking](../developer_notes/testing_and_benchmarking.md). Summary
     of the measured position, curvatures only on 1000x1000:
 
     | | fixed | per metric |
