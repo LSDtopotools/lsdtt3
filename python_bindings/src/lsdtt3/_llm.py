@@ -61,7 +61,7 @@ N.chi_sweep(R,m_over_n_values,...)->D; chi_from_outlets/chi_from_outlets_inherit
 V inputs/outputs=GeoDataFrame; CRS must equal R projected metre CRS.
 bounds_from_vector(V)->VectorBounds; rasterize_polygons(R,V,...)->R; clip_to_polygons(R,V)->R; sample_points(R,V)->V
 burn_streams(R,V,...)->StreamBurnResult; water_centrelines(...)->WaterCentrelineResult; repair_water_lines(...)->WaterLineRepairResult
-extract_valley_centrelines(R,S|ordered_channels,...)->ValleyCentrelineResult; extract_valley_cross_sections(R,centrelines,...)->ValleyCrossSections
+extract_valley_centrelines(R,S|ordered_channels,...,valley_mask=R)->ValleyCentrelineResult; extract_valley_cross_sections(R,centrelines,...)->ValleyCrossSections
 """,
     "fetch": """@fetch
 fetch_dem(bounds|V,dataset='cop30',...)->R; fetch_dem_for_outlets(outlets:V,...)->OutletFetchResult
@@ -79,7 +79,7 @@ node_state: 0=outside/nodata,1=active,2=flux-only ghost,3=outlet; ghosts route p
 ! hydraulic routing is on z+h; stationary workflow fills h, not bed elevation.
 """,
     "landscape": """@landscape
-LandscapeModel(R,fluvial_method='d8'|'dinf'|'none',hillslope_model='none'|'linear'|'roering'|'roering_implicit'|'cidre'|'adi'|'cellular',coupling_regime='automatic'|'coupled'|'channels_as_boundaries',...)->L
+LandscapeModel(R,incision_threshold_specific_area=0,fluvial_method='d8'|'dinf'|'none',hillslope_model='none'|'linear'|'roering'|'roering_implicit'|'cidre'|'adi'|'cellular',coupling_regime='automatic'|'coupled'|'channels_as_boundaries',...)->L
 L.step(compute_erosion_rate=False)->LandscapeStepResult; L.run(n_steps,compute_erosion_rate=False)->LandscapeStepResult; L.set_forcing(uplift_rate,baselevel_fall_rate=0)
 hillslope_transport_explicit|implicit|adi|cellular(R,channels,...)->HillslopeTransportResult
 route_sediment(N,R,...)->SedimentRoutingResult; trigger_landslides(R,...)->LandslideResult

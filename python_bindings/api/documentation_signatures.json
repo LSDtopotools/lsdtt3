@@ -270,6 +270,130 @@
       "matches_runtime_signature": false
     },
     {
+      "symbol": "LandscapeModel",
+      "facade_parameters": [],
+      "facade_definition": "",
+      "facade_parameter_records": [],
+      "runtime_overloads": [
+        [
+          "dem",
+          "timestep_years",
+          "erodibility",
+          "m_exponent",
+          "n_exponent",
+          "uplift_rate",
+          "hillslope_diffusivity",
+          "hillslope_model",
+          "nonlinear_hillslopes",
+          "critical_hillslope_slope",
+          "incision_threshold_specific_area",
+          "coupling_regime",
+          "boundary_conditions",
+          "fluvial_method",
+          "channel_mask",
+          "hold_channel_mask_fixed",
+          "fixed_pixels",
+          "n_threads",
+          "baselevel_fall_rate",
+          "cellular_r_match",
+          "cellular_cfl_safety",
+          "cellular_nonlocal_fraction",
+          "cellular_nonlocal_activation_ratio",
+          "cellular_nonlocal_deposition_probability",
+          "cellular_nonlocal_max_hops"
+        ],
+        [
+          "dem",
+          "timestep_years",
+          "erodibility",
+          "m_exponent",
+          "n_exponent",
+          "uplift_rate",
+          "hillslope_diffusivity",
+          "hillslope_model",
+          "nonlinear_hillslopes",
+          "critical_hillslope_slope",
+          "incision_threshold_area",
+          "coupling_regime",
+          "boundary_conditions",
+          "fluvial_method",
+          "channel_mask",
+          "hold_channel_mask_fixed",
+          "fixed_pixels",
+          "n_threads",
+          "baselevel_fall_rate",
+          "cellular_r_match",
+          "cellular_cfl_safety",
+          "cellular_nonlocal_fraction",
+          "cellular_nonlocal_activation_ratio",
+          "cellular_nonlocal_deposition_probability",
+          "cellular_nonlocal_max_hops"
+        ]
+      ],
+      "runtime_signatures": [
+        {
+          "definition": "def __init__(self, dem: lsdtt3.Raster, timestep_years: float = \\0, erodibility: float = \\1, m_exponent: float = \\2, n_exponent: float = \\3, uplift_rate: float = \\4, hillslope_diffusivity: float = \\5, hillslope_model: str = \\6, nonlinear_hillslopes: bool = \\7, critical_hillslope_slope: float = \\8, incision_threshold_specific_area: float = \\9, coupling_regime: str = \\10, boundary_conditions: str = \\11, fluvial_method: str = \\12, channel_mask: object | None = \\13, hold_channel_mask_fixed: bool = \\14, fixed_pixels: object | None = \\15, n_threads: int = \\16, baselevel_fall_rate: float = \\17, cellular_r_match: float = \\18, cellular_cfl_safety: float = \\19, cellular_nonlocal_fraction: float = \\20, cellular_nonlocal_activation_ratio: float = \\21, cellular_nonlocal_deposition_probability: float = \\22, cellular_nonlocal_max_hops: int = \\23) -> None",
+          "defaults": [
+            100.0,
+            0.0010000000474974513,
+            0.44999998807907104,
+            1.0,
+            9.999999747378752e-05,
+            0.0010000000474974513,
+            "cidre",
+            false,
+            0.6000000238418579,
+            0.0,
+            "automatic",
+            "oooo",
+            "d8",
+            null,
+            false,
+            null,
+            0,
+            0.0,
+            0.85,
+            0.8,
+            0.0,
+            0.8,
+            0.5,
+            4
+          ]
+        },
+        {
+          "definition": "def __init__(self, dem: lsdtt3.Raster, timestep_years: float = \\0, erodibility: float = \\1, m_exponent: float = \\2, n_exponent: float = \\3, uplift_rate: float = \\4, hillslope_diffusivity: float = \\5, hillslope_model: str = \\6, nonlinear_hillslopes: bool = \\7, critical_hillslope_slope: float = \\8, incision_threshold_area: float = \\9, coupling_regime: str = \\10, boundary_conditions: str = \\11, fluvial_method: str = \\12, channel_mask: object | None = \\13, hold_channel_mask_fixed: bool = \\14, fixed_pixels: object | None = \\15, n_threads: int = \\16, baselevel_fall_rate: float = \\17, cellular_r_match: float = \\18, cellular_cfl_safety: float = \\19, cellular_nonlocal_fraction: float = \\20, cellular_nonlocal_activation_ratio: float = \\21, cellular_nonlocal_deposition_probability: float = \\22, cellular_nonlocal_max_hops: int = \\23) -> None",
+          "defaults": [
+            100.0,
+            0.0010000000474974513,
+            0.44999998807907104,
+            1.0,
+            9.999999747378752e-05,
+            0.0010000000474974513,
+            "cidre",
+            false,
+            0.6000000238418579,
+            0.0,
+            "automatic",
+            "oooo",
+            "d8",
+            null,
+            false,
+            null,
+            0,
+            0.0,
+            0.85,
+            0.8,
+            0.0,
+            0.8,
+            0.5,
+            4
+          ]
+        }
+      ],
+      "matches_runtime_overload": false,
+      "matches_runtime_signature": false
+    },
+    {
       "symbol": "OutletFetchResult",
       "facade_parameters": [],
       "facade_definition": "",
@@ -1160,6 +1284,99 @@
       "matches_runtime_signature": false
     },
     {
+      "symbol": "extract_valley_centrelines",
+      "facade_parameters": [
+        "dem",
+        "scope_or_channels",
+        "valley_mask",
+        "args",
+        "kwargs"
+      ],
+      "facade_definition": "dem: Raster, scope_or_channels: Any, *args: Any, valley_mask: Raster, **kwargs: Any",
+      "facade_parameter_records": [
+        {
+          "name": "dem",
+          "kind": "positional_or_keyword",
+          "annotation": "Raster",
+          "default": null
+        },
+        {
+          "name": "scope_or_channels",
+          "kind": "positional_or_keyword",
+          "annotation": "Any",
+          "default": null
+        },
+        {
+          "name": "valley_mask",
+          "kind": "keyword_only",
+          "annotation": "Raster",
+          "default": null
+        },
+        {
+          "name": "args",
+          "kind": "var_positional",
+          "annotation": "",
+          "default": null
+        },
+        {
+          "name": "kwargs",
+          "kind": "var_keyword",
+          "annotation": "",
+          "default": null
+        }
+      ],
+      "runtime_overloads": [
+        [
+          "dem",
+          "scope",
+          "corridor_width_metres",
+          "fallback_valley_hand_metres",
+          "valley_dilation_pixels",
+          "trough_scaling_factor",
+          "centreline_loops",
+          "n_threads",
+          "valley_mask"
+        ],
+        [
+          "dem",
+          "channels",
+          "corridor_width_metres",
+          "fallback_valley_hand_metres",
+          "valley_dilation_pixels",
+          "trough_scaling_factor",
+          "centreline_loops",
+          "n_threads",
+          "valley_mask"
+        ]
+      ],
+      "runtime_signatures": [
+        {
+          "definition": "def extract_valley_centrelines(dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, corridor_width_metres: float = \\0, fallback_valley_hand_metres: object | None = \\1, valley_dilation_pixels: int = \\2, trough_scaling_factor: float = \\3, centreline_loops: int = \\4, n_threads: int = \\5, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult",
+          "defaults": [
+            5000.0,
+            null,
+            4,
+            0.1,
+            5,
+            0
+          ]
+        },
+        {
+          "definition": "def extract_valley_centrelines(dem: lsdtt3.Raster, channels: object, corridor_width_metres: float = \\0, fallback_valley_hand_metres: object | None = \\1, valley_dilation_pixels: int = \\2, trough_scaling_factor: float = \\3, centreline_loops: int = \\4, n_threads: int = \\5, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult",
+          "defaults": [
+            5000.0,
+            null,
+            4,
+            0.1,
+            5,
+            0
+          ]
+        }
+      ],
+      "matches_runtime_overload": false,
+      "matches_runtime_signature": false
+    },
+    {
       "symbol": "fetch_dem",
       "facade_parameters": [
         "west",
@@ -1751,6 +1968,102 @@
       "matches_runtime_signature": false
     },
     {
+      "symbol": "find_flat_surfaces",
+      "facade_parameters": [
+        "dem",
+        "relief_window_side_pixels",
+        "relief_threshold_metres",
+        "options"
+      ],
+      "facade_definition": "dem: Raster, *, relief_window_side_pixels: int=5, relief_threshold_metres: float=1.0, **options: Any",
+      "facade_parameter_records": [
+        {
+          "name": "dem",
+          "kind": "positional_or_keyword",
+          "annotation": "Raster",
+          "default": null
+        },
+        {
+          "name": "relief_window_side_pixels",
+          "kind": "keyword_only",
+          "annotation": "int",
+          "default": "5"
+        },
+        {
+          "name": "relief_threshold_metres",
+          "kind": "keyword_only",
+          "annotation": "float",
+          "default": "1.0"
+        },
+        {
+          "name": "options",
+          "kind": "var_keyword",
+          "annotation": "",
+          "default": null
+        }
+      ],
+      "runtime_overloads": [
+        [
+          "dem",
+          "use_madk2",
+          "madk2_window_radius_metres",
+          "madk2_threshold_percentile",
+          "use_residual_iqr",
+          "iqr_method",
+          "iqr_fit_lambda_metres",
+          "iqr_detrend_radius_metres",
+          "iqr_window_radius_metres",
+          "iqr_window_shape",
+          "iqr_threshold_percentile",
+          "use_nvd",
+          "nvd_polyfit_lambda",
+          "nvd_window_radius_metres",
+          "nvd_window_shape",
+          "nvd_threshold_percentile",
+          "require_all_metrics_pass",
+          "directional_close_line_length_pixels",
+          "directional_close_n_angles",
+          "min_component_pixels",
+          "relief_window_side_pixels",
+          "relief_threshold_metres",
+          "remove_risers",
+          "n_threads"
+        ]
+      ],
+      "runtime_signatures": [
+        {
+          "definition": "def find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = \\0, madk2_window_radius_metres: float = \\1, madk2_threshold_percentile: float = \\2, use_residual_iqr: bool = \\3, iqr_method: str = \\4, iqr_fit_lambda_metres: float = \\5, iqr_detrend_radius_metres: float = \\6, iqr_window_radius_metres: float = \\7, iqr_window_shape: str = \\8, iqr_threshold_percentile: float = \\9, use_nvd: bool = \\10, nvd_polyfit_lambda: float = \\11, nvd_window_radius_metres: float = \\12, nvd_window_shape: str = \\13, nvd_threshold_percentile: float = \\14, require_all_metrics_pass: bool = \\15, directional_close_line_length_pixels: int = \\16, directional_close_n_angles: int = \\17, min_component_pixels: int = \\18, relief_window_side_pixels: int = \\19, relief_threshold_metres: float = \\20, remove_risers: bool = \\21, n_threads: int = \\22) -> lsdtt3.FlatSurfaceResult",
+          "defaults": [
+            true,
+            100.0,
+            25.0,
+            true,
+            "fftw_highpass",
+            500.0,
+            500.0,
+            50.0,
+            "circular",
+            25.0,
+            false,
+            10.0,
+            100.0,
+            "circular",
+            25.0,
+            true,
+            0,
+            18,
+            100,
+            5,
+            1.0,
+            false,
+            0
+          ]
+        }
+      ],
+      "matches_runtime_overload": false,
+      "matches_runtime_signature": false
+    },
+    {
       "symbol": "frangi_filter",
       "facade_parameters": [
         "raster",
@@ -2224,12 +2537,12 @@
         "max_steps",
         "run_until_converged",
         "convergence_check_every",
-        "tol_median_abs_dhw",
-        "tol_median_rel_dhw",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "n_threads",
         "initial_water_depth"
       ],
-      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, method: str='mfd', boundary_conditions: str='oooo', mfd_exponent: float=1.0, condition_bed: str='none', fill_slope_epsilon: float=1e-08, check_valid_outlet: bool=True, friction_depth_exponent: float=5.0 / 3.0, friction_slope_exponent: float=0.5, dt: float=0.001, min_slope: float=0.0001, point_inflows: Any | None=None, max_steps: int=10000, run_until_converged: bool=True, convergence_check_every: int=100, tol_median_abs_dhw: float=1e-07, tol_median_rel_dhw: float=1e-05, n_threads: int=0, initial_water_depth: Raster | None=None",
+      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, method: str='mfd', boundary_conditions: str='oooo', mfd_exponent: float=1.0, condition_bed: str='none', fill_slope_epsilon: float=1e-08, check_valid_outlet: bool=True, friction_depth_exponent: float=5.0 / 3.0, friction_slope_exponent: float=0.5, dt: float=0.001, min_slope: float=0.0001, point_inflows: Any | None=None, max_steps: int=10000, run_until_converged: bool=True, convergence_check_every: int=100, median_dhw_convergence_tolerance_metres: float=1e-07, median_dhw_relative_convergence_tolerance: float=1e-05, n_threads: int=0, initial_water_depth: Raster | None=None",
       "facade_parameter_records": [
         {
           "name": "bed",
@@ -2340,13 +2653,13 @@
           "default": "100"
         },
         {
-          "name": "tol_median_abs_dhw",
+          "name": "median_dhw_convergence_tolerance_metres",
           "kind": "positional_or_keyword",
           "annotation": "float",
           "default": "1e-07"
         },
         {
-          "name": "tol_median_rel_dhw",
+          "name": "median_dhw_relative_convergence_tolerance",
           "kind": "positional_or_keyword",
           "annotation": "float",
           "default": "1e-05"
@@ -2384,15 +2697,15 @@
           "max_steps",
           "run_until_converged",
           "convergence_check_every",
-          "tol_median_abs_dhw",
-          "tol_median_rel_dhw",
+          "median_dhw_convergence_tolerance_metres",
+          "median_dhw_relative_convergence_tolerance",
           "n_threads",
           "initial_water_depth"
         ]
       ],
       "runtime_signatures": [
         {
-          "definition": "def run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, method: str = \\0, boundary_conditions: str = \\1, mfd_exponent: float = \\2, condition_bed: str = \\3, fill_slope_epsilon: float = \\4, check_valid_outlet: bool = \\5, friction_depth_exponent: float = \\6, friction_slope_exponent: float = \\7, dt: float = \\8, min_slope: float = \\9, point_inflows: object | None = \\10, max_steps: int = \\11, run_until_converged: bool = \\12, convergence_check_every: int = \\13, tol_median_abs_dhw: float = \\14, tol_median_rel_dhw: float = \\15, n_threads: int = \\16, initial_water_depth: object | None = \\17) -> lsdtt3.HydraulicResult",
+          "definition": "def run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, method: str = \\0, boundary_conditions: str = \\1, mfd_exponent: float = \\2, condition_bed: str = \\3, fill_slope_epsilon: float = \\4, check_valid_outlet: bool = \\5, friction_depth_exponent: float = \\6, friction_slope_exponent: float = \\7, dt: float = \\8, min_slope: float = \\9, point_inflows: object | None = \\10, max_steps: int = \\11, run_until_converged: bool = \\12, convergence_check_every: int = \\13, median_dhw_convergence_tolerance_metres: float = \\14, median_dhw_relative_convergence_tolerance: float = \\15, n_threads: int = \\16, initial_water_depth: object | None = \\17) -> lsdtt3.HydraulicResult",
           "defaults": [
             "mfd",
             "oooo",
@@ -2431,9 +2744,11 @@
         "edge_depth_threshold",
         "max_expansions",
         "point_inflows",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "backend_options"
       ],
-      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, qin_threshold: float, *, backend: Any='optimised_v2', halo_cells: int=3, edge_depth_threshold: float=0.0001, max_expansions: int=2, point_inflows: Any | None=None, **backend_options: Any",
+      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, qin_threshold: float, *, backend: Any='optimised_v2', halo_cells: int=3, edge_depth_threshold: float=0.0001, max_expansions: int=2, point_inflows: Any | None=None, median_dhw_convergence_tolerance_metres: float | None=None, median_dhw_relative_convergence_tolerance: float | None=None, **backend_options: Any",
       "facade_parameter_records": [
         {
           "name": "bed",
@@ -2496,6 +2811,18 @@
           "default": "None"
         },
         {
+          "name": "median_dhw_convergence_tolerance_metres",
+          "kind": "keyword_only",
+          "annotation": "float | None",
+          "default": "None"
+        },
+        {
+          "name": "median_dhw_relative_convergence_tolerance",
+          "kind": "keyword_only",
+          "annotation": "float | None",
+          "default": "None"
+        },
+        {
           "name": "backend_options",
           "kind": "var_keyword",
           "annotation": "",
@@ -2514,12 +2841,14 @@
           "edge_depth_threshold",
           "max_expansions",
           "point_inflows",
+          "median_dhw_convergence_tolerance_metres",
+          "median_dhw_relative_convergence_tolerance",
           "backend_options"
         ]
       ],
       "runtime_signatures": [
         {
-          "definition": "(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, qin_threshold: float, *, backend: Union[str, Callable[..., Any]] = 'optimised_v2', halo_cells: int = 3, edge_depth_threshold: float = 0.0001, max_expansions: int = 2, point_inflows: Any = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodInducedResult",
+          "definition": "(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, qin_threshold: float, *, backend: Union[str, Callable[..., Any]] = 'optimised_v2', halo_cells: int = 3, edge_depth_threshold: float = 0.0001, max_expansions: int = 2, point_inflows: Any = None, median_dhw_convergence_tolerance_metres: float | None = None, median_dhw_relative_convergence_tolerance: float | None = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodInducedResult",
           "defaults": []
         }
       ],
@@ -2538,9 +2867,11 @@
         "steps_per_level",
         "point_inflows",
         "initial_water_depth",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "backend_options"
       ],
-      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, *, backend: Any='optimised_v2', factors: Any=(8, 4, 2, 1), steps_per_level: Any=100, point_inflows: Any | None=None, initial_water_depth: Raster | None=None, **backend_options: Any",
+      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, *, backend: Any='optimised_v2', factors: Any=(8, 4, 2, 1), steps_per_level: Any=100, point_inflows: Any | None=None, initial_water_depth: Raster | None=None, median_dhw_convergence_tolerance_metres: float | None=None, median_dhw_relative_convergence_tolerance: float | None=None, **backend_options: Any",
       "facade_parameter_records": [
         {
           "name": "bed",
@@ -2597,6 +2928,18 @@
           "default": "None"
         },
         {
+          "name": "median_dhw_convergence_tolerance_metres",
+          "kind": "keyword_only",
+          "annotation": "float | None",
+          "default": "None"
+        },
+        {
+          "name": "median_dhw_relative_convergence_tolerance",
+          "kind": "keyword_only",
+          "annotation": "float | None",
+          "default": "None"
+        },
+        {
           "name": "backend_options",
           "kind": "var_keyword",
           "annotation": "",
@@ -2614,12 +2957,14 @@
           "steps_per_level",
           "point_inflows",
           "initial_water_depth",
+          "median_dhw_convergence_tolerance_metres",
+          "median_dhw_relative_convergence_tolerance",
           "backend_options"
         ]
       ],
       "runtime_signatures": [
         {
-          "definition": "(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, *, backend: Union[str, Callable[..., Any]] = 'optimised_v2', factors: Sequence[int] = (8, 4, 2, 1), steps_per_level: Union[int, Sequence[int]] = 100, point_inflows: Any = None, initial_water_depth: Any = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodMultigridResult",
+          "definition": "(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, *, backend: Union[str, Callable[..., Any]] = 'optimised_v2', factors: Sequence[int] = (8, 4, 2, 1), steps_per_level: Union[int, Sequence[int]] = 100, point_inflows: Any = None, initial_water_depth: Any = None, median_dhw_convergence_tolerance_metres: float | None = None, median_dhw_relative_convergence_tolerance: float | None = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodMultigridResult",
           "defaults": []
         }
       ],
@@ -2646,12 +2991,12 @@
         "max_steps",
         "run_until_converged",
         "convergence_check_every",
-        "tol_median_abs_dhw",
-        "tol_median_rel_dhw",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "reuse_topology",
         "initial_water_depth"
       ],
-      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, boundary_conditions: str='oooo', mfd_exponent: float=1.0, condition_bed: str='none', fill_slope_epsilon: float=1e-08, check_valid_outlet: bool=True, friction_depth_exponent: float=5.0 / 3.0, friction_slope_exponent: float=0.5, dt: float=0.001, min_slope: float=0.0001, point_inflows: Any | None=None, max_steps: int=10000, run_until_converged: bool=True, convergence_check_every: int=20, tol_median_abs_dhw: float=1e-07, tol_median_rel_dhw: float=1e-05, reuse_topology: bool=True, initial_water_depth: Raster | None=None",
+      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, boundary_conditions: str='oooo', mfd_exponent: float=1.0, condition_bed: str='none', fill_slope_epsilon: float=1e-08, check_valid_outlet: bool=True, friction_depth_exponent: float=5.0 / 3.0, friction_slope_exponent: float=0.5, dt: float=0.001, min_slope: float=0.0001, point_inflows: Any | None=None, max_steps: int=10000, run_until_converged: bool=True, convergence_check_every: int=20, median_dhw_convergence_tolerance_metres: float=1e-07, median_dhw_relative_convergence_tolerance: float=1e-05, reuse_topology: bool=True, initial_water_depth: Raster | None=None",
       "facade_parameter_records": [
         {
           "name": "bed",
@@ -2756,13 +3101,13 @@
           "default": "20"
         },
         {
-          "name": "tol_median_abs_dhw",
+          "name": "median_dhw_convergence_tolerance_metres",
           "kind": "positional_or_keyword",
           "annotation": "float",
           "default": "1e-07"
         },
         {
-          "name": "tol_median_rel_dhw",
+          "name": "median_dhw_relative_convergence_tolerance",
           "kind": "positional_or_keyword",
           "annotation": "float",
           "default": "1e-05"
@@ -2799,15 +3144,15 @@
           "max_steps",
           "run_until_converged",
           "convergence_check_every",
-          "tol_median_abs_dhw",
-          "tol_median_rel_dhw",
+          "median_dhw_convergence_tolerance_metres",
+          "median_dhw_relative_convergence_tolerance",
           "reuse_topology",
           "initial_water_depth"
         ]
       ],
       "runtime_signatures": [
         {
-          "definition": "def run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = \\0, mfd_exponent: float = \\1, condition_bed: str = \\2, fill_slope_epsilon: float = \\3, check_valid_outlet: bool = \\4, friction_depth_exponent: float = \\5, friction_slope_exponent: float = \\6, dt: float = \\7, min_slope: float = \\8, point_inflows: object | None = \\9, max_steps: int = \\10, run_until_converged: bool = \\11, convergence_check_every: int = \\12, tol_median_abs_dhw: float = \\13, tol_median_rel_dhw: float = \\14, reuse_topology: bool = \\15, initial_water_depth: object | None = \\16) -> lsdtt3.GraphFloodOptimisedResult",
+          "definition": "def run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = \\0, mfd_exponent: float = \\1, condition_bed: str = \\2, fill_slope_epsilon: float = \\3, check_valid_outlet: bool = \\4, friction_depth_exponent: float = \\5, friction_slope_exponent: float = \\6, dt: float = \\7, min_slope: float = \\8, point_inflows: object | None = \\9, max_steps: int = \\10, run_until_converged: bool = \\11, convergence_check_every: int = \\12, median_dhw_convergence_tolerance_metres: float = \\13, median_dhw_relative_convergence_tolerance: float = \\14, reuse_topology: bool = \\15, initial_water_depth: object | None = \\16) -> lsdtt3.GraphFloodOptimisedResult",
           "defaults": [
             "oooo",
             1.0,
@@ -2852,15 +3197,15 @@
         "max_steps",
         "run_until_converged",
         "convergence_check_every",
-        "tol_median_abs_dhw",
-        "tol_median_rel_dhw",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "reuse_topology",
         "dirty_tile_size",
         "full_validation_every",
         "initial_water_depth",
         "prescribed_qin"
       ],
-      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, boundary_conditions: str='oooo', mfd_exponent: float=1.0, condition_bed: str='none', fill_slope_epsilon: float=1e-08, check_valid_outlet: bool=True, friction_depth_exponent: float=5.0 / 3.0, friction_slope_exponent: float=0.5, dt: float=0.001, min_slope: float=0.0001, point_inflows: Any | None=None, max_steps: int=10000, run_until_converged: bool=True, convergence_check_every: int=20, tol_median_abs_dhw: float=1e-07, tol_median_rel_dhw: float=1e-05, reuse_topology: bool=True, dirty_tile_size: int=64, full_validation_every: int=128, initial_water_depth: Raster | None=None, prescribed_qin: Raster | None=None",
+      "facade_definition": "bed: Raster, node_state: Raster, rainfall_rate: Raster, friction_coefficient: Raster, boundary_conditions: str='oooo', mfd_exponent: float=1.0, condition_bed: str='none', fill_slope_epsilon: float=1e-08, check_valid_outlet: bool=True, friction_depth_exponent: float=5.0 / 3.0, friction_slope_exponent: float=0.5, dt: float=0.001, min_slope: float=0.0001, point_inflows: Any | None=None, max_steps: int=10000, run_until_converged: bool=True, convergence_check_every: int=20, median_dhw_convergence_tolerance_metres: float=1e-07, median_dhw_relative_convergence_tolerance: float=1e-05, reuse_topology: bool=True, dirty_tile_size: int=64, full_validation_every: int=128, initial_water_depth: Raster | None=None, prescribed_qin: Raster | None=None",
       "facade_parameter_records": [
         {
           "name": "bed",
@@ -2965,13 +3310,13 @@
           "default": "20"
         },
         {
-          "name": "tol_median_abs_dhw",
+          "name": "median_dhw_convergence_tolerance_metres",
           "kind": "positional_or_keyword",
           "annotation": "float",
           "default": "1e-07"
         },
         {
-          "name": "tol_median_rel_dhw",
+          "name": "median_dhw_relative_convergence_tolerance",
           "kind": "positional_or_keyword",
           "annotation": "float",
           "default": "1e-05"
@@ -3026,8 +3371,8 @@
           "max_steps",
           "run_until_converged",
           "convergence_check_every",
-          "tol_median_abs_dhw",
-          "tol_median_rel_dhw",
+          "median_dhw_convergence_tolerance_metres",
+          "median_dhw_relative_convergence_tolerance",
           "reuse_topology",
           "dirty_tile_size",
           "full_validation_every",
@@ -3037,7 +3382,7 @@
       ],
       "runtime_signatures": [
         {
-          "definition": "def run_graphflood_optimised_v2(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = \\0, mfd_exponent: float = \\1, condition_bed: str = \\2, fill_slope_epsilon: float = \\3, check_valid_outlet: bool = \\4, friction_depth_exponent: float = \\5, friction_slope_exponent: float = \\6, dt: float = \\7, min_slope: float = \\8, point_inflows: object | None = \\9, max_steps: int = \\10, run_until_converged: bool = \\11, convergence_check_every: int = \\12, tol_median_abs_dhw: float = \\13, tol_median_rel_dhw: float = \\14, reuse_topology: bool = \\15, dirty_tile_size: int = \\16, full_validation_every: int = \\17, initial_water_depth: object | None = \\18, prescribed_qin: object | None = \\19) -> lsdtt3.GraphFloodOptimisedResult",
+          "definition": "def run_graphflood_optimised_v2(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = \\0, mfd_exponent: float = \\1, condition_bed: str = \\2, fill_slope_epsilon: float = \\3, check_valid_outlet: bool = \\4, friction_depth_exponent: float = \\5, friction_slope_exponent: float = \\6, dt: float = \\7, min_slope: float = \\8, point_inflows: object | None = \\9, max_steps: int = \\10, run_until_converged: bool = \\11, convergence_check_every: int = \\12, median_dhw_convergence_tolerance_metres: float = \\13, median_dhw_relative_convergence_tolerance: float = \\14, reuse_topology: bool = \\15, dirty_tile_size: int = \\16, full_validation_every: int = \\17, initial_water_depth: object | None = \\18, prescribed_qin: object | None = \\19) -> lsdtt3.GraphFloodOptimisedResult",
           "defaults": [
             "oooo",
             1.0,

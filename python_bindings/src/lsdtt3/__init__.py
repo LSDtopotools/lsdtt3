@@ -7,10 +7,13 @@ B. Gailleton
 
 from functools import wraps
 from importlib.metadata import PackageNotFoundError, distribution
+import inspect
 import os
+import re
 from pathlib import Path
 
 from ._llm import helper_for_llm as _render_llm_api
+from ._compat import MISSING as _MISSING, resolve_deprecated_keyword as _resolve_deprecated_keyword
 
 
 def _configure_bundled_geospatial_data() -> None:
@@ -552,6 +555,37 @@ def _numpy_style_docstring(function):
     return documented
 
 
+def _with_deprecated_keywords(function, *pairs):
+    """Accept legacy keywords while preserving the native signature."""
+    @wraps(function)
+    def compatible(*args, **kwargs):
+        for canonical_name, legacy_name in pairs:
+            canonical = kwargs.pop(canonical_name, _MISSING)
+            legacy = kwargs.pop(legacy_name, _MISSING)
+            value = _resolve_deprecated_keyword(
+                canonical_name, canonical, legacy_name, legacy, stacklevel=4
+            )
+            if value is not _MISSING:
+                kwargs[canonical_name] = value
+        return function(*args, **kwargs)
+    native = inspect.unwrap(function)
+    definition, _doc, defaults = native.__nb_signature__[0]
+    parameters = []
+    for match in re.finditer(
+        r"(?:\(|, )([A-Za-z_]\w*):([^,)]*)", definition
+    ):
+        name, declaration = match.groups()
+        default_match = re.search(r" = \\(\d+)", declaration)
+        default = inspect.Parameter.empty
+        if default_match is not None:
+            default = defaults[int(default_match.group(1))]
+        parameters.append(inspect.Parameter(
+            name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default
+        ))
+    compatible.__signature__ = inspect.Signature(parameters)
+    return compatible
+
+
 def _numpy_style_class_docstring(cls):
     """Give an exported native-backed class a consistent public docstring.
 
@@ -600,6 +634,19 @@ def _numpy_style_class_docstring(cls):
     return cls
 
 
+for _graphflood_name in (
+    "run_graphflood", "run_graphflood_optimised", "run_graphflood_optimised_v2"
+):
+    globals()[_graphflood_name] = _with_deprecated_keywords(
+        globals()[_graphflood_name],
+        ("median_dhw_convergence_tolerance_metres", "tol_median_abs_dhw"),
+        ("median_dhw_relative_convergence_tolerance", "tol_median_rel_dhw"),
+    )
+
+find_flat_surfaces = _with_deprecated_keywords(
+    find_flat_surfaces, ("relief_window_side_pixels", "relief_window_pixels")
+)
+
 for _public_name in __all__:
     _public_value = globals()[_public_name]
     if isinstance(_public_value, type):
@@ -607,4 +654,4 @@ for _public_name in __all__:
     elif callable(_public_value):
         globals()[_public_name] = _numpy_style_docstring(_public_value)
 
-del _public_name, _public_value
+del _graphflood_name, _public_name, _public_value

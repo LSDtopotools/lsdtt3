@@ -100,13 +100,28 @@ lsdtt::valley_centreline_request make_centreline_request(
     return request;
 }
 
+void require_valley_mask_grid(const Raster& dem, const Raster& valley_mask)
+{
+    const auto& a = dem.native().get_meta();
+    const auto& b = valley_mask.native().get_meta();
+    if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.x_min != b.x_min ||
+        a.y_min != b.y_min || a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt)
+        throw std::invalid_argument("valley_mask must share the DEM grid");
+}
+
 ValleyCentrelineResult extract_valley_centrelines(
     const Raster& dem, nb::object channels, double corridor_width_metres,
-    double fallback_valley_hand_metres, int valley_dilation_pixels,
-    double trough_scaling_factor, int centreline_loops, int n_threads)
+    nb::object fallback_valley_hand_metres, int valley_dilation_pixels,
+    double trough_scaling_factor, int centreline_loops, int n_threads,
+    const Raster& valley_mask)
 {
+    if (!fallback_valley_hand_metres.is_none() &&
+        PyErr_WarnEx(PyExc_DeprecationWarning,
+            "'fallback_valley_hand_metres' is deprecated and ignored when a valley mask is supplied", 1) < 0)
+        throw nb::python_error();
+    require_valley_mask_grid(dem, valley_mask);
     const auto request = make_centreline_request(
-        nullptr, corridor_width_metres, fallback_valley_hand_metres,
+        &valley_mask, corridor_width_metres, 10.0,
         valley_dilation_pixels, trough_scaling_factor, centreline_loops,
         n_threads);
     return ValleyCentrelineResult(lsdtt::extract_valley_centrelines(
@@ -115,16 +130,22 @@ ValleyCentrelineResult extract_valley_centrelines(
 
 ValleyCentrelineResult extract_valley_centrelines_from_scope(
     const Raster& dem, const ChannelScope& scope, double corridor_width_metres,
-    double fallback_valley_hand_metres, int valley_dilation_pixels,
-    double trough_scaling_factor, int centreline_loops, int n_threads)
+    nb::object fallback_valley_hand_metres, int valley_dilation_pixels,
+    double trough_scaling_factor, int centreline_loops, int n_threads,
+    const Raster& valley_mask)
 {
+    if (!fallback_valley_hand_metres.is_none() &&
+        PyErr_WarnEx(PyExc_DeprecationWarning,
+            "'fallback_valley_hand_metres' is deprecated and ignored when a valley mask is supplied", 1) < 0)
+        throw nb::python_error();
+    require_valley_mask_grid(dem, valley_mask);
     const auto& a = dem.native().get_meta();
     const auto& b = scope.flow().meta();
     if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.x_min != b.x_min ||
         a.y_min != b.y_min || a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt)
         throw std::invalid_argument("dem must share the ChannelScope flow grid");
     const auto request = make_centreline_request(
-        nullptr, corridor_width_metres, fallback_valley_hand_metres,
+        &valley_mask, corridor_width_metres, 10.0,
         valley_dilation_pixels, trough_scaling_factor, centreline_loops,
         n_threads);
     return ValleyCentrelineResult(lsdtt::extract_valley_centrelines(
@@ -385,20 +406,22 @@ Valley masks and centreline diagnostics for supplied channel paths.
     m.def("extract_valley_centrelines", &extract_valley_centrelines_from_scope,
         nb::arg("dem"), nb::arg("scope"),
         nb::arg("corridor_width_metres") = 5000.0,
-        nb::arg("fallback_valley_hand_metres") = 10.0,
+        nb::arg("fallback_valley_hand_metres") = nb::none(),
         nb::arg("valley_dilation_pixels") = 4,
         nb::arg("trough_scaling_factor") = 0.1,
-        nb::arg("centreline_loops") = 5, nb::arg("n_threads") = 0, R"doc(
-Identify valley floors and route centrelines from a resolved ``ChannelScope``.
+        nb::arg("centreline_loops") = 5, nb::arg("n_threads") = 0,
+        nb::kw_only(), nb::arg("valley_mask"), R"doc(
+Route centrelines through a supplied valley mask using a resolved ``ChannelScope``.
 )doc");
     m.def("extract_valley_centrelines", &extract_valley_centrelines,
         nb::arg("dem"), nb::arg("channels"),
         nb::arg("corridor_width_metres") = 5000.0,
-        nb::arg("fallback_valley_hand_metres") = 10.0,
+        nb::arg("fallback_valley_hand_metres") = nb::none(),
         nb::arg("valley_dilation_pixels") = 4,
         nb::arg("trough_scaling_factor") = 0.1,
-        nb::arg("centreline_loops") = 5, nb::arg("n_threads") = 0, R"doc(
-Identify valley floors and route centrelines from ordered channel paths.
+        nb::arg("centreline_loops") = 5, nb::arg("n_threads") = 0,
+        nb::kw_only(), nb::arg("valley_mask"), R"doc(
+Route centrelines through a supplied valley mask from ordered channel paths.
 
 ``channels`` is a sequence of upstream-to-downstream ``(row, col)`` arrays.
 )doc");

@@ -352,7 +352,7 @@ B. Gailleton
              nb::arg("hillslope_diffusivity") = 1.0e-3f,
              nb::arg("hillslope_model") = "cidre", nb::arg("nonlinear_hillslopes") = false,
              nb::arg("critical_hillslope_slope") = 0.6f,
-             nb::arg("incision_threshold_area") = 0.0f,
+              nb::arg("incision_threshold_specific_area") = 0.0f,
              nb::arg("coupling_regime") = "automatic", nb::arg("boundary_conditions") = "oooo",
              nb::arg("fluvial_method") = "d8", nb::arg("channel_mask") = nb::none(),
              nb::arg("hold_channel_mask_fixed") = false, nb::arg("fixed_pixels") = nb::none(),
@@ -378,8 +378,8 @@ hillslope_model : {"none", "linear", "roering", "roering_implicit", "cidre", "ad
     Hillslope process model. ``none`` disables hillslope transport.
 nonlinear_hillslopes, critical_hillslope_slope : bool, float, optional
     Roering nonlinear-flux controls.
-incision_threshold_area : float, optional
-    Channel threshold in drainage-area units; zero supports fully coupled runs.
+incision_threshold_specific_area : float, optional
+    Channel threshold in specific catchment area A/dx (metres); zero supports fully coupled runs.
 coupling_regime : {"automatic", "coupled", "channels_as_boundaries"}, optional
     Whether hillslope channels emerge or are imposed.
 boundary_conditions : str, optional
@@ -408,6 +408,49 @@ Authors
 -------
 B. Gailleton
 )doc")
+        .def("__init__", [](LandscapeModel* self, const Raster& dem,
+              float timestep, float erodibility, float m_exponent, float n_exponent,
+              float uplift_rate, float hillslope_diffusivity,
+              const std::string& hillslope_model, bool nonlinear_hillslopes,
+              float critical_hillslope_slope, float incision_threshold_area,
+              const std::string& coupling_regime, const std::string& boundary_conditions,
+              const std::string& fluvial_method, nb::object channel_mask,
+              bool hold_channel_mask_fixed, nb::object fixed_pixels, int n_threads,
+              float baselevel_fall_rate, double cellular_r_match,
+              double cellular_cfl_safety, double cellular_nonlocal_fraction,
+              double cellular_nonlocal_activation_ratio,
+              double cellular_nonlocal_deposition_probability,
+              int cellular_nonlocal_max_hops)
+        {
+            if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                    "'incision_threshold_area' is deprecated; use "
+                    "'incision_threshold_specific_area'", 1) < 0)
+                throw nb::python_error();
+            new (self) LandscapeModel(
+                dem, timestep, erodibility, m_exponent, n_exponent, uplift_rate,
+                hillslope_diffusivity, hillslope_model, nonlinear_hillslopes,
+                critical_hillslope_slope, incision_threshold_area, coupling_regime,
+                boundary_conditions, fluvial_method, channel_mask,
+                hold_channel_mask_fixed, fixed_pixels, n_threads,
+                baselevel_fall_rate, cellular_r_match, cellular_cfl_safety,
+                cellular_nonlocal_fraction, cellular_nonlocal_activation_ratio,
+                cellular_nonlocal_deposition_probability, cellular_nonlocal_max_hops);
+        }, nb::arg("dem"), nb::arg("timestep_years") = 100.0f,
+           nb::arg("erodibility") = 1.0e-3f, nb::arg("m_exponent") = 0.45f,
+           nb::arg("n_exponent") = 1.0f, nb::arg("uplift_rate") = 1.0e-4f,
+           nb::arg("hillslope_diffusivity") = 1.0e-3f,
+           nb::arg("hillslope_model") = "cidre", nb::arg("nonlinear_hillslopes") = false,
+           nb::arg("critical_hillslope_slope") = 0.6f,
+           nb::arg("incision_threshold_area") = 0.0f,
+           nb::arg("coupling_regime") = "automatic", nb::arg("boundary_conditions") = "oooo",
+           nb::arg("fluvial_method") = "d8", nb::arg("channel_mask") = nb::none(),
+           nb::arg("hold_channel_mask_fixed") = false, nb::arg("fixed_pixels") = nb::none(),
+           nb::arg("n_threads") = 0, nb::arg("baselevel_fall_rate") = 0.0f,
+           nb::arg("cellular_r_match") = 0.85, nb::arg("cellular_cfl_safety") = 0.8,
+           nb::arg("cellular_nonlocal_fraction") = 0.0,
+           nb::arg("cellular_nonlocal_activation_ratio") = 0.8,
+           nb::arg("cellular_nonlocal_deposition_probability") = 0.5,
+           nb::arg("cellular_nonlocal_max_hops") = 4)
         .def_prop_ro("elevation", &LandscapeModel::elevation)
         .def_prop_ro("iteration", &LandscapeModel::iteration)
         .def_prop_ro("time_years", &LandscapeModel::time_years)

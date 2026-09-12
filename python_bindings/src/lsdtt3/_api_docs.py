@@ -1479,8 +1479,8 @@ def run_graphflood(bed: Raster, node_state: Raster, rainfall_rate: Raster,
                    point_inflows: Any | None = None, max_steps: int = 10000,
                    run_until_converged: bool = True,
                    convergence_check_every: int = 100,
-                   tol_median_abs_dhw: float = 1e-7,
-                   tol_median_rel_dhw: float = 1e-5,
+                   median_dhw_convergence_tolerance_metres: float = 1e-7,
+                   median_dhw_relative_convergence_tolerance: float = 1e-5,
                    n_threads: int = 0,
                    initial_water_depth: Raster | None = None) -> HydraulicResult:
     """Run stationary GraphFlood hydraulic routing on a selected domain.
@@ -1520,7 +1520,7 @@ def run_graphflood(bed: Raster, node_state: Raster, rainfall_rate: Raster,
         Stop when median depth-change criteria are met.
     convergence_check_every : int, default=100
         Iteration interval for convergence evaluation.
-    tol_median_abs_dhw, tol_median_rel_dhw : float
+    median_dhw_convergence_tolerance_metres, median_dhw_relative_convergence_tolerance : float
         Absolute and relative median depth-change tolerances.
     n_threads : int, default=0
         OpenMP thread count; zero uses the runtime default.
@@ -1554,8 +1554,8 @@ def run_graphflood_optimised(
         min_slope: float = 1e-4, point_inflows: Any | None = None,
         max_steps: int = 10000, run_until_converged: bool = True,
         convergence_check_every: int = 20,
-        tol_median_abs_dhw: float = 1e-7,
-        tol_median_rel_dhw: float = 1e-5, reuse_topology: bool = True,
+        median_dhw_convergence_tolerance_metres: float = 1e-7,
+        median_dhw_relative_convergence_tolerance: float = 1e-5, reuse_topology: bool = True,
         initial_water_depth: Raster | None = None) -> GraphFloodOptimisedResult:
     """Run the separate CPU-optimised stationary MFD GraphFlood solver.
 
@@ -1584,8 +1584,8 @@ def run_graphflood_optimised_v2(
         min_slope: float = 1e-4, point_inflows: Any | None = None,
         max_steps: int = 10000, run_until_converged: bool = True,
         convergence_check_every: int = 20,
-        tol_median_abs_dhw: float = 1e-7,
-        tol_median_rel_dhw: float = 1e-5, reuse_topology: bool = True,
+        median_dhw_convergence_tolerance_metres: float = 1e-7,
+        median_dhw_relative_convergence_tolerance: float = 1e-5, reuse_topology: bool = True,
         dirty_tile_size: int = 64, full_validation_every: int = 128,
         initial_water_depth: Raster | None = None,
         prescribed_qin: Raster | None = None) -> GraphFloodOptimisedResult:
@@ -1613,6 +1613,8 @@ def run_graphflood_multigrid(
         factors: Any = (8, 4, 2, 1), steps_per_level: Any = 100,
         point_inflows: Any | None = None,
         initial_water_depth: Raster | None = None,
+        median_dhw_convergence_tolerance_metres: float | None = None,
+        median_dhw_relative_convergence_tolerance: float | None = None,
         **backend_options: Any) -> Any:
     """Warm-start GraphFlood over an integer coarse-to-fine grid hierarchy.
 
@@ -1635,7 +1637,10 @@ def run_graphflood_induced(
         friction_coefficient: Raster, qin_threshold: float, *,
         backend: Any = "optimised_v2", halo_cells: int = 3,
         edge_depth_threshold: float = 1e-4, max_expansions: int = 2,
-        point_inflows: Any | None = None, **backend_options: Any) -> Any:
+        point_inflows: Any | None = None,
+        median_dhw_convergence_tolerance_metres: float | None = None,
+        median_dhw_relative_convergence_tolerance: float | None = None,
+        **backend_options: Any) -> Any:
     """Route on a discharge-selected channel and floodplain domain.
 
     A one-step full-domain prepass selects cells by ``qin_threshold``. Flux
@@ -1699,3 +1704,49 @@ class HydraulicResult:
     -------
     B. Gailleton
     """
+
+
+class LandscapeModel:
+    """Stateful coupled landscape-evolution model.
+
+    Parameters
+    ----------
+    dem : Raster
+        Initial elevation surface.
+    timestep_years : float, default=100
+        Duration of each model step.
+    incision_threshold_specific_area : float, default=0
+        Channel threshold in specific catchment area A/dx, measured in metres.
+    critical_hillslope_slope : float, default=0.6
+        Critical gradient for nonlinear hillslope models.
+
+    Notes
+    -----
+    Additional process parameters are shown by the runtime signature. The former
+    ``incision_threshold_area`` keyword is deprecated without changing values.
+    """
+
+    def step(self, compute_erosion_rate: bool = False) -> Any: ...
+    def run(self, n_steps: int, compute_erosion_rate: bool = False) -> Any: ...
+    def channel_mask(self) -> Raster: ...
+
+
+def find_flat_surfaces(
+    dem: Raster, *, relief_window_side_pixels: int = 5,
+    relief_threshold_metres: float = 1.0, **options: Any,
+) -> Any:
+    """Detect flat surfaces using texture and a full-side-length relief window."""
+    ...
+
+
+def extract_valley_centrelines(
+    dem: Raster, scope_or_channels: Any, *args: Any,
+    valley_mask: Raster, **kwargs: Any,
+) -> Any:
+    """Trace centrelines through an explicitly supplied valley mask.
+
+    ``valley_mask`` is required and must share the DEM grid. It may be obtained
+    from ``FlatSurfaceClassification.floodplain_mask`` or another in-memory
+    fluvial-surface workflow.
+    """
+    ...

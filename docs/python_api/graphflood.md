@@ -26,6 +26,14 @@
 
 ::: lsdtt3._api_docs.run_graphflood_induced
 
+The canonical convergence keywords are
+`median_dhw_convergence_tolerance_metres` and
+`median_dhw_relative_convergence_tolerance`. The former `tol_median_abs_dhw`
+and `tol_median_rel_dhw` spellings remain accepted with `DeprecationWarning`
+during the compatibility window. Multigrid and induced routing normalize these
+options before invoking built-in or custom backends; supplying old and new names
+together is an error.
+
 ::: lsdtt3._api_docs.GraphFloodMultigridResult
     options:
       members: false

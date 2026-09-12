@@ -703,8 +703,8 @@ drains. Code-3 cells are prescribed sinks wherever they occur.
         nb::arg("point_inflows") = nb::none(),
         nb::arg("max_steps") = 10000, nb::arg("run_until_converged") = true,
         nb::arg("convergence_check_every") = 100,
-        nb::arg("tol_median_abs_dhw") = 1.0e-7,
-        nb::arg("tol_median_rel_dhw") = 1.0e-5, nb::arg("n_threads") = 0,
+        nb::arg("median_dhw_convergence_tolerance_metres") = 1.0e-7,
+        nb::arg("median_dhw_relative_convergence_tolerance") = 1.0e-5, nb::arg("n_threads") = 0,
         nb::arg("initial_water_depth") = nb::none(),
         R"doc(
 Run stationary graph-based hydraulic routing on an evolving ``z + h`` surface.
@@ -736,8 +736,8 @@ are an N by 3 array of ``(row, col, discharge_m3_s)``.
         nb::arg("max_steps") = 10000,
         nb::arg("run_until_converged") = true,
         nb::arg("convergence_check_every") = 20,
-        nb::arg("tol_median_abs_dhw") = 1.0e-7,
-        nb::arg("tol_median_rel_dhw") = 1.0e-5,
+        nb::arg("median_dhw_convergence_tolerance_metres") = 1.0e-7,
+        nb::arg("median_dhw_relative_convergence_tolerance") = 1.0e-5,
         nb::arg("reuse_topology") = true,
         nb::arg("initial_water_depth") = nb::none(),
         R"doc(
@@ -762,8 +762,8 @@ direct raster MFD routing and validates a cached topology before reuse.
         nb::arg("max_steps") = 10000,
         nb::arg("run_until_converged") = true,
         nb::arg("convergence_check_every") = 20,
-        nb::arg("tol_median_abs_dhw") = 1.0e-7,
-        nb::arg("tol_median_rel_dhw") = 1.0e-5,
+        nb::arg("median_dhw_convergence_tolerance_metres") = 1.0e-7,
+        nb::arg("median_dhw_relative_convergence_tolerance") = 1.0e-5,
         nb::arg("reuse_topology") = true,
         nb::arg("dirty_tile_size") = 64,
         nb::arg("full_validation_every") = 128,
@@ -794,8 +794,8 @@ evolve normally. ``prescribed_qin=None`` means zero at ghost cells.
         nb::arg("point_inflows") = nb::none(),
         nb::arg("run_until_converged") = true,
         nb::arg("convergence_check_every") = 20,
-        nb::arg("tol_median_abs_dhw") = 1.0e-7,
-        nb::arg("tol_median_rel_dhw") = 1.0e-5,
+        nb::arg("median_dhw_convergence_tolerance_metres") = 1.0e-7,
+        nb::arg("median_dhw_relative_convergence_tolerance") = 1.0e-5,
         nb::arg("reuse_topology") = true, nb::arg("dirty_tile_size") = 64,
         nb::arg("full_validation_every") = 128,
         nb::arg("initial_water_depth") = nb::none());

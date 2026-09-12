@@ -63,10 +63,10 @@ class LandscapeModelTest(unittest.TestCase):
             uplift_rate=0.0, boundary_conditions="nnon", n_threads=1,
         )
         zero = lsdtt3.LandscapeModel(
-            self.dem, incision_threshold_area=0.0, **common
+            self.dem, incision_threshold_specific_area=0.0, **common
         )
         positive = lsdtt3.LandscapeModel(
-            self.dem, incision_threshold_area=20.0, **common
+            self.dem, incision_threshold_specific_area=20.0, **common
         )
         zero_mask = zero.channel_mask().to_numpy()
         positive_mask = positive.channel_mask().to_numpy()
@@ -89,7 +89,7 @@ class LandscapeModelTest(unittest.TestCase):
             timestep_years=0.1, erodibility=0.0, fluvial_method="none",
             uplift_rate=0.0, hillslope_model="cidre",
             hillslope_diffusivity=0.05, nonlinear_hillslopes=True,
-            incision_threshold_area=0.0, boundary_conditions="nnnn",
+            incision_threshold_specific_area=0.0, boundary_conditions="nnnn",
             fixed_pixels=[], n_threads=1,
         )
         default = lsdtt3.LandscapeModel(dem, **common).step().elevation.to_numpy()

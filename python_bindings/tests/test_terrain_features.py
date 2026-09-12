@@ -1,7 +1,6 @@
 import unittest
 
 import numpy as np
-import pytest
 
 import lsdtt3
 
@@ -43,14 +42,15 @@ class TerrainFeatureTest(unittest.TestCase):
         ridge.fit_profile()
 
         channel = np.column_stack((np.arange(4, 44), np.full(40, 24)))
-        try:
-            valleys = lsdtt3.extract_valley_centrelines(
-                valley_dem, [channel], corridor_width_metres=15.0,
-                fallback_valley_hand_metres=3.0, centreline_loops=1, n_threads=1,
-            )
-        except ValueError as error:
-            self.assertRegex(str(error), "no valley mask supplied")
-            pytest.xfail("Phase 2: supply fluvial-surface valley mask")
+        valley_values = (np.abs(cols - 24) <= 6).astype(np.float32)
+        valley_mask = lsdtt3.Raster.from_numpy(
+            valley_values, np.ones(valley_values.shape, dtype=bool), metadata,
+        )
+        valleys = lsdtt3.extract_valley_centrelines(
+            valley_dem, [channel], corridor_width_metres=15.0,
+            centreline_loops=1, n_threads=1,
+            valley_mask=valley_mask,
+        )
 
         self.assertTrue(ridge.is_four_connected())
         self.assertEqual(len(ridge.elevation), len(pixels))
@@ -60,7 +60,6 @@ class TerrainFeatureTest(unittest.TestCase):
             lsdtt3.fit_valley_baseline([0.0, 1.0, 2.0], [10.0, np.nan, 7.0]),
             [10.0, 8.5, 7.0],
         )
-        pytest.fail("Phase 2 supplied-mask migration succeeded; remove this xfail gate")
 
 
 if __name__ == "__main__":

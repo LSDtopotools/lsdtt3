@@ -13,7 +13,7 @@ dem = lsdtt3.Raster.from_numpy(terrain, np.ones((size, size), dtype=bool), meta)
 
 flats = lsdtt3.find_flat_surfaces(
     dem, madk2_window_radius_metres=3.0, use_residual_iqr=False,
-    min_component_pixels=1, relief_window_pixels=5, relief_threshold_metres=1.0,
+    min_component_pixels=1, relief_window_side_pixels=5, relief_threshold_metres=1.0,
 )
 roads = lsdtt3.find_roads(dem, smoothing_window_metres=3.0)
 road_flow = lsdtt3.find_road_flow_discrimination(
@@ -31,9 +31,13 @@ marsh = lsdtt3.find_marsh_platform(
 )
 
 channel = np.column_stack((np.arange(4, size - 4), np.full(size - 8, size // 2)))
+valley_values = (np.abs(col - size // 2) <= 6).astype(np.float32)
+valley_mask = lsdtt3.Raster.from_numpy(
+    valley_values, np.ones((size, size), dtype=bool), meta,
+)
 valleys = lsdtt3.extract_valley_centrelines(
-    dem, [channel], corridor_width_metres=15.0, fallback_valley_hand_metres=3.0,
-    centreline_loops=1,
+    dem, [channel], corridor_width_metres=15.0, centreline_loops=1,
+    valley_mask=valley_mask,
 )
 ridge = lsdtt3.Ridgeline(dem, np.column_stack((np.full(30, 8), np.arange(16, 46))))
 ridge.fill_elevation(dem)

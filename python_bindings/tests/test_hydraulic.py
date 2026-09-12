@@ -213,7 +213,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                 check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
                 friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
                 point_inflows=None, convergence_check_every=100,
-                tol_median_abs_dhw=1.0e-7, tol_median_rel_dhw=1.0e-5,
+                median_dhw_convergence_tolerance_metres=1.0e-7, median_dhw_relative_convergence_tolerance=1.0e-5,
                 n_threads=0, initial_water_depth=None,
             )),
             (lsdtt3.run_graphflood_optimised, dict(
@@ -222,7 +222,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                 check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
                 friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
                 point_inflows=None, convergence_check_every=20,
-                tol_median_abs_dhw=1.0e-7, tol_median_rel_dhw=1.0e-5,
+                median_dhw_convergence_tolerance_metres=1.0e-7, median_dhw_relative_convergence_tolerance=1.0e-5,
                 reuse_topology=True, initial_water_depth=None,
             )),
             (lsdtt3.run_graphflood_optimised_v2, dict(
@@ -231,7 +231,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                 check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
                 friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
                 point_inflows=None, convergence_check_every=20,
-                tol_median_abs_dhw=1.0e-7, tol_median_rel_dhw=1.0e-5,
+                median_dhw_convergence_tolerance_metres=1.0e-7, median_dhw_relative_convergence_tolerance=1.0e-5,
                 reuse_topology=True, dirty_tile_size=64,
                 full_validation_every=128, initial_water_depth=None,
                 prescribed_qin=None,
@@ -304,8 +304,8 @@ class HydraulicRoutingTest(unittest.TestCase):
                 loose = solver(
                     self.bed, self.states, zero_rain,
                     self.friction_coefficient,
-                    tol_median_abs_dhw=1.0,
-                    tol_median_rel_dhw=1.0, **common,
+                    median_dhw_convergence_tolerance_metres=1.0,
+                    median_dhw_relative_convergence_tolerance=1.0, **common,
                 )
                 self.assertEqual(default_tolerance.step_count, 1000)
                 self.assertLess(loose.step_count, default_tolerance.step_count)
@@ -323,7 +323,8 @@ class HydraulicRoutingTest(unittest.TestCase):
             check_valid_outlet=True, friction_depth_exponent=1.5,
             friction_slope_exponent=0.4, dt=2.0e-3, min_slope=3.0e-4,
             run_until_converged=False, convergence_check_every=7,
-            tol_median_abs_dhw=2.0e-7, tol_median_rel_dhw=3.0e-5,
+            median_dhw_convergence_tolerance_metres=2.0e-7,
+            median_dhw_relative_convergence_tolerance=3.0e-5,
             reuse_topology=False, dirty_tile_size=2,
             full_validation_every=0,
         )

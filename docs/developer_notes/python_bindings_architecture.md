@@ -240,6 +240,7 @@ Documentation:
 pixi run docs-build
 ```
 
-The pull-request Python API workflow runs the runtime checks without publishing.
-Cibuildwheel repeats them against installed platform wheels and additionally
+GitHub builds run only through the manually triggered Python version-increment
+workflow. Before requesting one, run these checks locally. Cibuildwheel then
+repeats the runtime contracts against installed platform wheels and additionally
 checks bundled executables and console scripts.

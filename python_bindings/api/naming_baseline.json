@@ -62,12 +62,6 @@
       "rule": "spell_out_unit_suffix"
     },
     {
-      "symbol": "find_flat_surfaces",
-      "member": "",
-      "parameter": "relief_window_pixels",
-      "rule": "state_window_side_length"
-    },
-    {
       "symbol": "find_internal_drainage",
       "member": "",
       "parameter": "min_area_metres2",
@@ -102,42 +96,6 @@
       "member": "",
       "parameter": "d90_m",
       "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "run_graphflood",
-      "member": "",
-      "parameter": "tol_median_abs_dhw",
-      "rule": "name_tolerance_semantics"
-    },
-    {
-      "symbol": "run_graphflood",
-      "member": "",
-      "parameter": "tol_median_rel_dhw",
-      "rule": "name_tolerance_semantics"
-    },
-    {
-      "symbol": "run_graphflood_optimised",
-      "member": "",
-      "parameter": "tol_median_abs_dhw",
-      "rule": "name_tolerance_semantics"
-    },
-    {
-      "symbol": "run_graphflood_optimised",
-      "member": "",
-      "parameter": "tol_median_rel_dhw",
-      "rule": "name_tolerance_semantics"
-    },
-    {
-      "symbol": "run_graphflood_optimised_v2",
-      "member": "",
-      "parameter": "tol_median_abs_dhw",
-      "rule": "name_tolerance_semantics"
-    },
-    {
-      "symbol": "run_graphflood_optimised_v2",
-      "member": "",
-      "parameter": "tol_median_rel_dhw",
-      "rule": "name_tolerance_semantics"
     },
     {
       "symbol": "run_landslide_series",

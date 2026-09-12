@@ -39,12 +39,11 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
+          # Public native objects are documented through a source-only
+          # Python facade rather than by importing the extension.
+          paths:
+            - python_bindings/src
           options:
-            # Public native objects are documented through a source-only
-            # Python façade. This retains accurate Python signatures and
-            # NumPy-style prose without importing or altering the extension.
-            paths:
-              - python_bindings/src
             force_inspection: false
             docstring_style: numpy
             docstring_options:
@@ -158,6 +157,7 @@ nav:
       - Fetching and vectors: python_api/fetch.md
       - Cosmogenic nuclides: python_api/cosmogenic.md
       - GraphFlood: python_api/graphflood.md
+      - Landscape and surfaces: python_api/landscape.md
   - Developer notes:
     - Developer onboarding: developer_notes/developer_onboarding.md
     - Parameter naming conventions: developer_notes/cli_parameter_conventions.md
