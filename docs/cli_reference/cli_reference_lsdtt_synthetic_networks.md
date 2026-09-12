@@ -405,3 +405,136 @@ Two practical notes:
   straight cardinal trunks while the chi surface is re-routed by D8 steepest
   descent, which still favours diagonals, so the two disagree more. See
   *Routing fidelity* above and `docs/testing_and_benchmarking.md` 8b.1b.
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Synthetic domain
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_rows` | `int` | `128` | `param` | - | Number of rows in the synthetic model domain. | Used only when the domain is generated rather than read from a DEM. |
+| `n_cols` | `int` | `128` | `param` | - | Number of columns in the synthetic model domain. | Used only when the domain is generated rather than read from a DEM. |
+| `cell_size_metres` | `float` | `1.0` | `param` | - | Cell size of the synthetic model domain in metres. | Sets the map scale of the generated surface. Anything expressed as a pixel count (for example threshold_contributing_pixels) corresponds to a different ground area as this changes. |
+| `random_seed` | `int` | `33` | `param` | - | Seed for every stochastic generator used to build the domain. | A fixed seed makes a run reproducible. Change it to draw a different realisation of the same statistical surface. |
+
+### Lattice geometry
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `outlet_spacing` | `int` | `1` | `param` | - | Column spacing of baselevel outlets, for outlet_mode north_south. | This is the knob that sets BASIN WIDTH. At 1 every boundary pixel is its own baselevel, so the tile is partitioned into as many basins as there are boundary cells and the basin scale is imposed by the grid rather than emerging from the optimisation - annealing temperature cannot change it, because temperature controls how each basin BRANCHES and not how many there are. Larger values force the drainage to organise into wider basins: it is the OCN analogue of the diamond-square feature wavelength, and the continuous version of the single-outlet configuration used in much of the OCN literature (outlet_mode single). Ignored in the other outlet modes. |
+| `outlet_col` | `int` | `-1` | `param` | - | Column of the single outlet on the south (bottom) edge. | -1 places the outlet at the centre column. Only used for outlet_mode single. |
+
+### Domain (rectangle vs irregular island)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `domain_type` | `string` | `rectangle` | `param` | - | Shape of the domain the network is grown on. | rectangle: the full n_rows x n_cols grid. efd_island: a smooth random island from an Elliptical Fourier descriptor. noise_island: a radially-tapered red-noise island (fractal coast). polygon: a user polygon vector scaled to the grid (set polygon_fname). |
+| `outlet_mode` | `string` | `auto` | `param` | - | Where drainage leaves the domain. | auto: islands use all_coast, the rectangle uses single. single: one outlet (whole domain drains through one network; most sensitive to boundary shape). all_coast: every coastal land pixel is a base level (an island draining to its whole coastline). north_south: every land pixel on the north and south edges, and nothing else -- the classic ridge-and-valley strip, and the mode to use with periodic sides (boundary_conditions: opop), where the main divide is free to sit anywhere between the two boundaries. |
+| `island_fill_fraction` | `float` | `0.7` | `param` | - | Approximate fraction of the grid occupied by land (island generators). | Span (efd) or area fraction (noise) of the island within the grid. |
+| `efd_n_harmonics` | `int` | `6` | `param` | - | Number of Elliptical Fourier harmonics for efd_island. | 1 = ellipse; more harmonics add lobes and bays. Try 4-12. |
+| `efd_roughness` | `float` | `1.5` | `param` | - | Harmonic amplitude decay exponent for efd_island. | Higher = smoother coast (high harmonics suppressed); lower = rougher. |
+| `coastline_blur_passes` | `int` | `6` | `param` | - | Smoothing passes for the noise_island coastline. | More passes = smoother, simpler coastline; fewer = rougher/fractal. |
+| `polygon_fname` | `string` | `NULL` | `param` | - | Vector polygon file defining the domain (domain_type = polygon). | The first polygon's exterior ring is used as the island coastline. |
+| `polygon_sizing` | `string` | `scaled` | `param` | - | How an imported polygon is fitted to a grid. | scaled: scale the polygon to fill the n_rows x n_cols grid (shape preserved, size set by the grid). true_area: derive the grid from the polygon's real extent and cell_size_metres, preserving real area and the polygon's CRS (n_rows/n_cols are computed, not taken from parameters). |
+
+### Energy and branching
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `energy_length_weighted` | `bool` | `true` | `param` | - | Weight each link's energy by its length: E = sum(A^gamma * L). | This is the physically correct form and the default. Link energy expenditure is E_i ~ L_i Q_i S_i (Strong and Mudd 2022 PNAS eq. 4; Goren and Shelef 2024 Earth Surf. Dynam. 12:1347-1369 eq. 5), which reduces to A^gamma * L. On a 4-connected lattice L factors out, which is why the literature writes sum(A^gamma) -- but on the 8-connected lattice used here a diagonal link is sqrt(2) longer and dropping L under-charges it, so the annealer buys free lateral movement and the main channels come out running diagonally. It also selects a length-aware (Dijkstra) seed tree instead of the Chebyshev breadth-first one. Measured on a 400x200 strip draining north-south, area-weighted over channels &gt;2 km2: diagonal flow falls from 0.937 to 0.056 and north-south rises from 0.062 to 0.944. Set false to reproduce OCNet (Carraro et al. 2020) bit-for-bit; that is defensible if you want the flow GRAPH rather than a geometric network. |
+
+### Energy / branching
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `energy_exponent_gamma` | `float` | `0.5` | `param` | - | Energy exponent gamma in E = sum(A^gamma) (OCNet expEnergy). | Must be in (0,1). Classical value 0.5. Smaller (more concave) gamma rewards aggregation more strongly -&gt; larger Tokunaga a,c and Horton ratios; gamma -&gt; 1 removes the aggregation incentive. |
+
+### Annealing schedule
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_iter` | `int` | `0` | `param` | - | Number of annealing iterations (proposed flips). | 0 selects the OCNet default 40*n_rows*n_cols. |
+| `cooling_rate` | `float` | `1.0` | `param` | - | Cooling rate (OCNet convention: larger = FASTER cooling). | Temperature after the no-cooling phase decays as T_k = T0*exp(-cooling_rate*k/N), N = n_rows*n_cols. Faster cooling freezes a more random network; slower cooling reaches lower-energy, more aggregated states. |
+| `initial_no_cooling_fraction` | `float` | `0.0` | `param` | - | Fraction of iterations held at the initial temperature before cooling. | Lets the chain equilibrate at high T (more random) before cooling. |
+| `initial_temperature` | `float` | `0.0` | `param` | - | Manual initial temperature; &lt;= 0 means auto. | When &lt;= 0, T0 = temperature_scale * E0 (E0 = initial-tree energy); temperature_scale = 1 reproduces OCNet's native T0 = E0. |
+| `temperature_scale` | `float` | `1.0` | `param` | - | Multiplier on the auto initial temperature (T0 = scale * E0). | Continuous knob for sweeping Tokunaga statistics: raise toward random (c~2), lower toward 0 for the optimised low-T limit (greedy at 0). |
+
+### Elevation synthesis (chi-based fluvial steady state, as in lsdtt-lem)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `steady_state_mode` | `string` | `relief` | `param` | - | How the fluvial relief of the synthetic DEM is set. | relief: total relief is set to target_relief (K is back-calculated). K: erodibility is given directly and relief follows from uplift_rate/erodibility. Identical to lsdtt-lem's steady-state solver. |
+| `target_relief` | `float` | `1000` | `param` | - | Target fluvial relief max(z)-baselevel in metres (relief mode). | Used when steady_state_mode = relief. |
+| `uplift_rate` | `float` | `1e-4` | `param` | - | Uplift rate U (m/yr) for the steady-state stream-power solution. | U = K*A^m*S^n. In relief mode only the resulting steepness matters. |
+| `erodibility` | `float` | `1e-3` | `param` | - | Erodibility K (K mode only). | Used when steady_state_mode = K; ignored in relief mode. |
+| `m_exponent` | `float` | `0.45` | `param` | - | Drainage-area exponent m in the stream-power / chi law. | Concavity is m/n. Set the same m and n as the LEM run you compare to. |
+| `n_exponent` | `float` | `1.0` | `param` | - | Slope exponent n in the stream-power / chi law. | Concavity is m/n. |
+| `baselevel_elevation` | `float` | `0.0` | `param` | - | Elevation assigned to the outlet(s) (base level). | Chi is integrated upstream from this elevation. Fluvial relief only. |
+
+### Georeference
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `centre_latitude` | `float` | `-9999` | `param` | - | Latitude of the synthetic grid centre in decimal degrees. | Must be supplied together with centre_longitude. -9999 keeps the historical default synthetic anchor. |
+| `centre_longitude` | `float` | `-9999` | `param` | - | Longitude of the synthetic grid centre in decimal degrees. | Must be supplied together with centre_latitude. -9999 keeps the historical default synthetic anchor. |
+| `projection_epsg` | `int` | `0` | `param` | - | Projected CRS EPSG for synthetic georeference. | 0 derives WGS84 UTM from centre_latitude/centre_longitude. Non-zero uses the supplied EPSG directly. |
+
+### Equilibration (optional, run_equilibration)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_equilibration` | `bool` | `false` | `switch` | - | Equilibrate the generated DEM in the same invocation (OCN -&gt; equilibrate). | Runs the landscape equilibration cycle on the synthetic DEM: pit-fill, re-route, re-snap, repeat. Without it the DEM is delivered exactly as the OCN synthesis produced it, and its D8 graph will differ from the OCN graph on roughly 6-9 percent of interior pixels. |
+| `steady_state_n_cycles` | `int` | `10` | `param` | `run_equilibration` | Number of equilibration cycles (a MAXIMUM when convergence checking is on). | Each cycle recomputes the flow graph from the previous cycle's elevations, letting divides migrate one pixel per cycle. |
+| `steady_state_check_convergence` | `bool` | `false` | `param` | `run_equilibration` | Stop early once the landscape stops changing. | Default false runs exactly steady_state_n_cycles cycles. |
+| `steady_state_tolerance_dz_over_relief` | `float` | `1e-3` | `param` | `steady_state_check_convergence` | Convergence tolerance on max\|dz\|/relief between cycles. | Used when steady_state_tolerance_dz_metres is 0. |
+| `steady_state_tolerance_dz_metres` | `float` | `0` | `param` | `steady_state_check_convergence` | Absolute convergence tolerance on max\|dz\| (m) between cycles. | If &gt; 0 this overrides steady_state_tolerance_dz_over_relief. |
+| `steady_state_tolerance_receiver_fraction` | `float` | `1e-3` | `param` | `steady_state_check_convergence` | Convergence tolerance on the fraction of pixels changing receiver. | Set &lt;= 0 to disable. A landscape can stop moving vertically while divides are still migrating, which is what this criterion catches. |
+| `steady_state_convergence_patience` | `int` | `2` | `param` | `steady_state_check_convergence` | Consecutive converged cycles required before stopping. | Cycle 1 is never eligible: it has no predecessor to compare against. |
+| `divide_merge_search_steps` | `int` | `5` | `param` | `run_equilibration` | Downstream search depth for the divide diagnostics. Must be &gt; 0. | Two adjacent pixels are a divide pair when their flow paths do not meet within this many receiver steps. |
+| `divide_use_d8_diagonals` | `bool` | `true` | `param` | `run_equilibration` | Include diagonal neighbours when enumerating divide pairs. | Affects diagnostics and convergence checks only, not the routing. |
+| `divide_gradient_target` | `float` | `0` | `param` | `run_equilibration` | Reporting-only divide-gradient acceptance target. | When &gt; 0 the final cycle reports whether the median divide gradient is at or below this value. It does not change stopping. |
+| `divide_area_by_dx` | `bool` | `true` | `param` | `run_equilibration` | Divide drainage area by cell size in the chi integrand. | Match this to how the OCN elevations were synthesised. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions (north/east/south/west): o=open, n=no-flux, p=periodic, b=forced outlet. | Used for equilibration routing AND, for the 'p' flags, for the annealing lattice itself: 'p' on east/west makes column 0 and column n_cols-1 D8 neighbours during generation, so the generated network and the routed DEM see the same lattice. East and west must match. Pair 'opop' with outlet_mode: north_south for a ridge-and-valley strip. |
+| `fill_min_slope` | `float` | `1e-4` | `param` | `run_equilibration` | Minimum slope imposed by the pit-fill between cycles. | - |
+| `n_threads` | `int` | `0` | `param` | - | Number of threads (0 = all available). | - |
+
+### Hillslopes inside the equilibration cycle
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_hillslope_steady_state` | `bool` | `false` | `param` | `run_equilibration` | Solve hillslope steady state inside the equilibration cycle. | Requires run_equilibration: true and incision_threshold_area_m2 &gt; 0; channel pixels become the Dirichlet set that pins the solve. |
+| `hillslope_ss_model` | `string` | `roering` | `param` | `run_hillslope_steady_state` | Hillslope solver: linear, roering, cidre, or critical_slope. | linear/roering are elliptic solves that FIND the divide position and reach a fixed point. critical_slope IMPOSES a gradient by upslope integration and may never settle -- it delivers a far larger divide step. Prefer an elliptic model unless you specifically want the critical-slope construction. |
+| `incision_threshold_area_m2` | `float` | `0` | `param` | `run_hillslope_steady_state` | Drainage area threshold (m^2) separating channels from hillslopes. | Required (&gt; 0) when run_hillslope_steady_state is true. |
+| `hillslope_diffusivity` | `float` | `0.005` | `param` | `run_hillslope_steady_state` | Hillslope diffusivity D (m^2/yr). | - |
+| `critical_hillslope_slope` | `float` | `0.8` | `param` | `run_hillslope_steady_state` | Critical hillslope gradient Sc (dimensionless). | - |
+| `enable_nonlinear_hillslopes` | `bool` | `true` | `param` | `run_hillslope_steady_state` | Use the nonlinear transport law. | - |
+| `hillslope_ss_tolerance` | `float` | `1e-4` | `param` | `run_hillslope_steady_state` | Convergence criterion for the hillslope solve: max\|delta_z\|. | - |
+| `hillslope_ss_max_iterations` | `int` | `10000` | `param` | `run_hillslope_steady_state` | Maximum iterations for the hillslope solver. | - |
+| `hillslope_sor_omega` | `float` | `0` | `param` | `run_hillslope_steady_state` | SOR relaxation factor omega (0 = auto-estimate). | The auto-estimate is tuned for the linear solver and has been observed to DIVERGE with hillslope_ss_model: roering. Set 1.3 if that happens. |
+| `hillslope_every_cycle` | `bool` | `true` | `param` | `run_hillslope_steady_state` | Solve the hillslopes on every cycle, not just the last. | Costs one extra solve per cycle, but it is the only way to show the divide is stable under re-routing. |
+| `channel_hysteresis_factor` | `float` | `0.5` | `param` | `run_hillslope_steady_state` | Hysteresis on the channel (Dirichlet) set between cycles. | A channel pixel stays a channel until its area falls below this factor times incision_threshold_area_m2. 1.0 disables the hysteresis. |
+
+### Outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_dem_raster` | `bool` | `true` | `switch` | - | Write the synthetic elevation (DEM) raster. | Output file: &lt;write_fname&gt;_ocn_dem.tif. |
+| `write_drainage_area_raster` | `bool` | `true` | `switch` | - | Write the OCN drainage-area (pixel count) raster. | Enabled by default because drainage area is a primary OCN result used to interpret the generated DEM, whereas analysis CLIs treat it as an optional diagnostic. Output file: &lt;write_fname&gt;_ocn_drainage_cells.tif. |
+| `verify_routing` | `bool` | `true` | `param` | - | Route the synthetic DEM through D8 and report graph fidelity. | Fidelity = fraction of interior pixels whose D8 receiver equals the OCN receiver. ~1 for relaxed (low-T) networks; lower for random (high-T). |
+| `write_equilibrated_dem_raster` | `bool` | `true` | `switch` | - | Write the equilibrated DEM (when run_equilibration is true). | Output file: &lt;write_fname&gt;_ocn_equilibrated_dem.tif. The un-equilibrated DEM is still written separately as &lt;write_fname&gt;_ocn_dem.tif, so the before/after pair is always available. |
+| `write_snap_convergence_csv` | `bool` | `true` | `switch` | - | Write per-cycle equilibration diagnostics (when run_equilibration is true). | Output file: &lt;write_fname&gt;_ocn_snap_convergence.csv. Read this when a run does not converge. |
+| `write_output_format` | `string` | `cog` | `io` | - | Output raster format. | cog (default), gtiff, or same_as_input. |
+
+<!-- END GENERATED CLI PARAMETERS -->

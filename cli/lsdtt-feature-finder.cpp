@@ -388,25 +388,25 @@ int main(int argc, char* argv[])
         "After Tarolli et al. (2013, https://doi.org/10.5721/EuJRS20134610): "
         "RPII = ln((A_r - A_sm) / A_sm), where A_r is drainage area on the "
         "filled original DEM and A_sm is drainage area on the filled smoothed DEM. "
-        "Output: <write_fname>_relative_path_impact_index.tif.",
+        "Output: <write_fname>_relative_path_impact_index.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_log10_area_raw_raster"] = true;
     help_map["write_rpii_log10_area_raw_raster"] = {"bool","true",
         "Write log10(A_r) where A_r is drainage area on the filled original DEM.",
-        "Output: <write_fname>_rpii_log10_area_raw.tif.",
+        "Output: <write_fname>_rpii_log10_area_raw.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_log10_area_smoothed_raster"] = true;
     help_map["write_rpii_log10_area_smoothed_raster"] = {"bool","true",
         "Write log10(A_sm) where A_sm is drainage area on the filled smoothed DEM.",
-        "Output: <write_fname>_rpii_log10_area_smoothed.tif.",
+        "Output: <write_fname>_rpii_log10_area_smoothed.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     bool_default_map["write_rpii_smoothed_surface_raster"] = false;
     help_map["write_rpii_smoothed_surface_raster"] = {"bool","false",
         "Write the surface-fitted DEM used by RPI.",
-        "Output: <write_fname>_rpii_smoothed_surface.tif.",
+        "Output: <write_fname>_rpii_smoothed_surface.<ext>.",
         "Relative Path Impact Index (Tarolli-style, D8 adaptation)", "switch", ""};
 
     // --- Local median + relative elevation ---
@@ -419,7 +419,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_local_median_raster"] = true;
     help_map["write_local_median_raster"] = {"bool","true",
         "Write local median elevation raster.",
-        "Output: <write_fname>_local_median.tif.",
+        "Output: <write_fname>_local_median.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_relative_elevation_raster"] = true;
@@ -427,7 +427,7 @@ int main(int argc, char* argv[])
         "Write relative elevation with respect to local median.",
         "relative = dem - local_median. Negative = below local median; "
         "positive = above local median. Output: "
-        "<write_fname>_local_median_relative_elevation.tif.",
+        "<write_fname>_local_median_relative_elevation.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     float_default_map["local_median_drain_negative_threshold_metres"] = 0.15f;
@@ -464,37 +464,37 @@ int main(int argc, char* argv[])
     bool_default_map["write_local_median_gradient_raster"] = true;
     help_map["write_local_median_gradient_raster"] = {"bool","true",
         "Write gradient magnitude of local-median relative elevation.",
-        "Output: <write_fname>_local_median_relative_elevation_gradient.tif.",
+        "Output: <write_fname>_local_median_relative_elevation_gradient.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_drain_candidate_mask_raster"] = true;
     help_map["write_local_median_drain_candidate_mask_raster"] = {"bool","true",
         "Write binary drain-candidate mask from negative relative elevation.",
-        "Output: <write_fname>_local_median_drain_candidate_mask.tif.",
+        "Output: <write_fname>_local_median_drain_candidate_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_top_mask_raster"] = true;
     help_map["write_local_median_top_mask_raster"] = {"bool","true",
         "Write binary top-surface candidate mask.",
-        "Output: <write_fname>_local_median_top_mask.tif.",
+        "Output: <write_fname>_local_median_top_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_bottom_mask_raster"] = true;
     help_map["write_local_median_bottom_mask_raster"] = {"bool","true",
         "Write binary bottom-surface candidate mask.",
-        "Output: <write_fname>_local_median_bottom_mask.tif.",
+        "Output: <write_fname>_local_median_bottom_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_hag_intermix_mask_raster"] = true;
     help_map["write_local_median_hag_intermix_mask_raster"] = {"bool","true",
         "Write binary top/bottom intermix mask.",
-        "Output: <write_fname>_local_median_hag_intermix_mask.tif.",
+        "Output: <write_fname>_local_median_hag_intermix_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
     bool_default_map["write_local_median_hag_transition_mask_raster"] = true;
     help_map["write_local_median_hag_transition_mask_raster"] = {"bool","true",
         "Write binary hag-transition candidate mask (intermix + high gradient).",
-        "Output: <write_fname>_local_median_hag_transition_mask.tif.",
+        "Output: <write_fname>_local_median_hag_transition_mask.<ext>.",
         "Local median + relative elevation", "switch", ""};
 
 
@@ -795,16 +795,16 @@ int main(int argc, char* argv[])
     help_map["flow_short_curvature_radius_metres"] = {"float","0.0",
         "Radius for the short-wavelength tangential curvature, in metres.",
         "The short polyfit half-wavelength is 2 * this radius; 0 uses ~3 pixels. "
-        "Output: _flow_short_tangential_curvature.tif.",
+        "Output: _flow_short_tangential_curvature.<ext>.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_intermediate_polyfit_lambda_metres"] = 15.0f;
     help_map["flow_intermediate_polyfit_lambda_metres"] = {"float","15.0",
         "Polyfit window (lengthscale) for the intermediate curvature rasters, in metres.",
         "Produces tangential, minimum, and maximum curvature at this scale. "
-        "Outputs: _flow_intermediate_tangential_curvature.tif, "
-        "_flow_intermediate_minimum_curvature.tif, "
-        "_flow_intermediate_maximum_curvature.tif.",
+        "Outputs: _flow_intermediate_tangential_curvature.<ext>, "
+        "_flow_intermediate_minimum_curvature.<ext>, "
+        "_flow_intermediate_maximum_curvature.<ext>.",
         "Flow-pathway road/channel discrimination", "param", ""};
 
     float_default_map["flow_roughness_radius_metres"] = 2.5f;
@@ -938,18 +938,18 @@ int main(int argc, char* argv[])
     bool_default_map["write_path_opened_raster"] = true;
     help_map["write_path_opened_raster"] = {"bool","true",
         "Write the path-opened (or path-closed) response raster.",
-        "Output: <write_fname>_path_opened.tif.",
+        "Output: <write_fname>_path_opened.<ext>.",
         "Path opening (generic curvilinear-feature filter)", "switch", ""};
 
     bool_default_map["write_path_tophat_raster"] = true;
     help_map["write_path_tophat_raster"] = {"bool","true",
         "Write the white top-hat residual (input minus path opening).",
-        "The path OPENING (_path_opened.tif) is the detector: it retains the "
+        "The path OPENING (_path_opened.<ext>) is the detector: it retains the "
         "long, laterally continuous bright threads (roads/channels) and "
         "suppresses isolated speckle. The top-hat is the complement: high where "
         "bright detail was REMOVED, i.e. the short-scale speckle and blobs that "
         "do NOT lie on a length-L path. Useful as a rejected-noise map or to "
-        "flatten background before thresholding. Output: <write_fname>_path_tophat.tif. "
+        "flatten background before thresholding. Output: <write_fname>_path_tophat.<ext>. "
         "Only meaningful for a path opening (not a closing).",
         "Path opening (generic curvilinear-feature filter)", "switch", ""};
 
@@ -972,21 +972,21 @@ int main(int argc, char* argv[])
     bool_default_map["write_coherence_raster"] = true;
     help_map["write_coherence_raster"] = {"bool","true",
         "Write the structure-tensor coherence raster (line-likeness, [0,1]).",
-        "Output: <write_fname>_coherence.tif.",
+        "Output: <write_fname>_coherence.<ext>.",
         "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     bool_default_map["write_orientation_raster"] = true;
     help_map["write_orientation_raster"] = {"bool","true",
         "Write the structure-tensor orientation raster (feature azimuth, [0,180) deg).",
         "Azimuth clockwise from north along which the feature runs. Meaningful "
-        "only where coherence is high. Output: <write_fname>_orientation_deg.tif.",
+        "only where coherence is high. Output: <write_fname>_orientation_deg.<ext>.",
         "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     bool_default_map["write_energy_raster"] = false;
     help_map["write_energy_raster"] = {"bool","false",
         "Write the structure-tensor energy raster (gradient energy, lam1+lam2).",
         "Distinguishes strong from faint oriented structure. "
-        "Output: <write_fname>_energy.tif.",
+        "Output: <write_fname>_energy.<ext>.",
         "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
     // --- Track spacing (local directional periodicity) ---
@@ -1025,20 +1025,20 @@ int main(int argc, char* argv[])
     help_map["write_spacing_strength_raster"] = {"bool","true",
         "Write the periodicity strength (peak prominence) raster.",
         "High where a sharp regular spacing dominates. "
-        "Output: <write_fname>_spacing_strength.tif.",
+        "Output: <write_fname>_spacing_strength.<ext>.",
         "Track spacing (local directional periodicity)", "switch", ""};
 
     bool_default_map["write_spacing_raster"] = true;
     help_map["write_spacing_raster"] = {"bool","true",
         "Write the dominant spacing raster, in metres.",
         "Use to classify feature families (ditches vs tracks vs wave dams). "
-        "Output: <write_fname>_spacing_metres.tif.",
+        "Output: <write_fname>_spacing_metres.<ext>.",
         "Track spacing (local directional periodicity)", "switch", ""};
 
     bool_default_map["write_spacing_orientation_raster"] = false;
     help_map["write_spacing_orientation_raster"] = {"bool","false",
         "Write the spacing orientation raster (line azimuth, [0,180) deg).",
-        "Output: <write_fname>_spacing_orientation_deg.tif.",
+        "Output: <write_fname>_spacing_orientation_deg.<ext>.",
         "Track spacing (local directional periodicity)", "switch", ""};
 
     // --- Ridge lines (oriented NMS + hysteresis) ---
@@ -1067,7 +1067,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_ridge_thinned_raster"] = true;
     help_map["write_ridge_thinned_raster"] = {"bool","true",
         "Write the NMS-thinned ridge response (1-pixel centrelines, response-valued).",
-        "Output: <write_fname>_ridge_thinned.tif.",
+        "Output: <write_fname>_ridge_thinned.<ext>.",
         "Ridge lines (oriented NMS + hysteresis)", "switch", ""};
 
     bool_default_map["write_ridge_mask_raster"] = true;
@@ -1075,7 +1075,7 @@ int main(int argc, char* argv[])
         "Write the binary hysteresis-linked ridge centreline mask.",
         "Enabled by default because this is a primary product of the ridge-finder "
         "stage, not the optional hilltop diagnostic exposed by the coupling CLI. "
-        "Output: <write_fname>_ridge_mask.tif.",
+        "Output: <write_fname>_ridge_mask.<ext>.",
         "Ridge lines (oriented NMS + hysteresis)", "switch", ""};
 
     // --- Thin-line extractor (separate lines from blobs/speckle) ---
@@ -1131,7 +1131,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_thin_mask_raster"] = true;
     help_map["write_thin_mask_raster"] = {"bool","true",
         "Write the final thin-line mask.",
-        "Output: <write_fname>_thin_mask.tif.",
+        "Output: <write_fname>_thin_mask.<ext>.",
         "Thin-line extractor (separate lines from blobs/speckle)", "switch", ""};
 
     bool_default_map["write_thin_diagnostic_rasters"] = false;
@@ -1158,14 +1158,14 @@ int main(int argc, char* argv[])
     bool_default_map["write_roughness_raster"] = true;
     help_map["write_roughness_raster"] = {"bool","true",
         "Write the roughness raster (stddev, or 1-R for circular input).",
-        "Output: <write_fname>_input_roughness.tif.",
+        "Output: <write_fname>_input_roughness.<ext>.",
         "Generic roughness / consistency of an input raster", "switch", ""};
 
     bool_default_map["write_consistency_raster"] = true;
     help_map["write_consistency_raster"] = {"bool","true",
         "Write the circular consistency raster R (only for roughness_circular=true).",
         "High where the angle is locally consistent. Output: "
-        "<write_fname>_input_consistency.tif.",
+        "<write_fname>_input_consistency.<ext>.",
         "Generic roughness / consistency of an input raster", "switch", ""};
 
     // --- Smoothness road extractor (roads = smooth ribbons) ---
@@ -1220,7 +1220,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_smooth_road_mask_raster"] = true;
     help_map["write_smooth_road_mask_raster"] = {"bool","true",
         "Write the final smoothness-based road mask.",
-        "Output: <write_fname>_smooth_road_mask.tif.",
+        "Output: <write_fname>_smooth_road_mask.<ext>.",
         "Smoothness road extractor (roads = smooth ribbons)", "switch", ""};
 
     bool_default_map["write_smooth_diagnostic_rasters"] = false;
@@ -1253,7 +1253,7 @@ int main(int argc, char* argv[])
     string_default_map["road_valley_curvature_fname"] = "";
     help_map["road_valley_curvature_fname"] = {"string","",
         "Optional regional-curvature raster for the valley veto (relative to read path).",
-        "Typically <prefix>_flow_regional_valley_curvature.tif from "
+        "Typically <prefix>_flow_regional_valley_curvature.<ext> from "
         "flow_road_discrimination. Empty = no valley veto. Centreline pixels "
         "where this raster >= road_valley_curvature_veto_threshold are removed.",
         "Road extractor (composed pipeline)", "param", ""};
@@ -1271,7 +1271,7 @@ int main(int argc, char* argv[])
         "Runs the directional-periodicity detector on the response and labels a "
         "component a track when at least road_track_min_fraction of its pixels lie "
         "in a field with periodicity strength >= road_track_min_strength. Uses the "
-        "spacing_* parameters. Output: <write_fname>_road_extract_classified.tif.",
+        "spacing_* parameters. Output: <write_fname>_road_extract_classified.<ext>.",
         "Road extractor (composed pipeline)", "param", ""};
 
     float_default_map["road_track_min_strength"] = 6.0f;
@@ -1300,7 +1300,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_road_extract_mask_raster"] = true;
     help_map["write_road_extract_mask_raster"] = {"bool","true",
         "Write the final extracted road mask.",
-        "Output: <write_fname>_road_extract_mask.tif.",
+        "Output: <write_fname>_road_extract_mask.<ext>.",
         "Road extractor (composed pipeline)", "switch", ""};
 
     bool_default_map["write_road_extract_diagnostic_rasters"] = false;
@@ -1354,7 +1354,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_diffused_raster"] = true;
     help_map["write_diffused_raster"] = {"bool","true",
         "Write the coherence-enhanced (diffused) raster.",
-        "Output: <write_fname>_diffused.tif.",
+        "Output: <write_fname>_diffused.<ext>.",
         "Coherence-enhancing diffusion", "switch", ""};
 
     // -------------------------------------------------------------------------

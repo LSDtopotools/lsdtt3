@@ -779,3 +779,102 @@ support.
   upstream `demtype` list this tool's catalogue mirrors
 - <https://planetarycomputer.microsoft.com/catalog> — collections for
   `pc_collection`
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Bounding box
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `west` | `string` | - | `param` | - | Western edge of the bounding box, WGS84 decimal degrees. | Required. Must be less than east. Range -180 to 180. |
+| `east` | `string` | - | `param` | - | Eastern edge of the bounding box, WGS84 decimal degrees. | Required. Must be greater than west. Range -180 to 180. |
+| `south` | `string` | - | `param` | - | Southern edge of the bounding box, WGS84 decimal degrees. | Required. Must be less than north. Range -90 to 90. |
+| `north` | `string` | - | `param` | - | Northern edge of the bounding box, WGS84 decimal degrees. | Required. Must be greater than south. Range -90 to 90. |
+| `bounds_mode` | `string` | `manual` | `param` | - | How the fetch area is specified. | manual: existing behavior (west/south/east/north or bounds_fname). vector: require bounds_fname and forbid explicit edges. outlets: E1 first-guess outlet mode using radius-based bounds from outlet points, with status CSV output. |
+| `bounds_fname` | `string` | - | `param` | - | Vector file defining the area, instead of west/south/east/north. | FlatGeobuf (.fgb), GeoPackage (.gpkg) or any other OGR-readable format. The layer must contain either one or more polygons (the envelope of all of them is used), or exactly two points marking opposite corners. For two points either diagonal works -- lower-left/upper-right and lower-right/upper-left give the same box, so the orientation is worked out automatically. If the layer is in a projected CRS such as UTM it is reprojected to WGS84 for you, so a box drawn in a GIS can be used directly. Set this or the four edge parameters, not both. |
+| `bounds_path` | `string` | - | `param` | - | Optional directory for bounds_fname. | If empty, read_path is used. Ignored when bounds_fname is an absolute path. |
+| `bounds_layer` | `string` | - | `param` | - | Layer name within bounds_fname. | If empty, the first layer is used (with a warning when the file has more than one). |
+| `outlet_points_fname` | `string` | - | `param` | - | Outlet point file used when bounds_mode is outlets. | CSV/FGB/GPKG. Required for bounds_mode: outlets. |
+| `outlet_points_path` | `string` | - | `param` | - | Optional directory for outlet_points_fname. | If empty, read_path is used. Ignored when outlet_points_fname is an absolute path. |
+| `prefetch_initial_radius_km` | `float` | `100.0` | `param` | - | Initial prefetch radius around each outlet (km). | Expanded iteratively when discovered basins touch edges. |
+| `basin_nested_enable` | `bool` | `true` | `param` | - | Enable staged outlet-mode nested fetching. | When true, outlet mode follows the staged coarse-&gt;90 m-&gt;30 m workflow (subject to basin_nested_stop_level). |
+| `basin_nested_stop_level` | `string` | `30m` | `param` | - | Where outlet-mode nested fetching stops. | One of: coarse, 90m, 30m. |
+| `coastal_mask_mode` | `string` | `clip_bbox_edges` | `param` | - | How outlet mode applies land/coast masking before fetch. | One of: off, clip_bbox_edges. |
+| `coastal_mask_dataset` | `string` | `natural_earth_110m_land` | `param` | - | Default built-in/managed land-mask dataset identifier. | Used when coastal_mask_fname is empty. |
+| `coastal_mask_auto_download` | `bool` | `false` | `param` | - | Auto-download default Natural Earth land mask when missing. | Only applies to coastal_mask_dataset=natural_earth_110m_land; writes to read_path/coastal_masks/. |
+| `coastal_mask_fname` | `string` | - | `param` | - | Optional land-mask vector file overriding coastal_mask_dataset. | Expected polygonal land areas in WGS84-compatible coordinates. |
+| `coastal_mask_path` | `string` | - | `param` | - | Optional directory for coastal_mask_fname. | If empty, read_path is used. Ignored for absolute paths. |
+| `coastal_mask_layer` | `string` | - | `param` | - | Layer name inside coastal_mask_fname. | If empty, the first layer is used. |
+| `coastal_mask_edge_buffer_km` | `float` | `2.0` | `param` | - | Safety margin added after coastal bbox edge contraction (km). | Must be &gt;= 0. |
+| `prefetch_expand_factor` | `float` | `1.8` | `param` | - | Expansion multiplier for iterative coarse prefetch. | Must be &gt; 1.0. |
+| `prefetch_max_iters` | `int` | `6` | `param` | - | Maximum prefetch expansion iterations per outlet/group. | Must be &gt;= 1. |
+| `prefetch_edge_buffer_pixels` | `int` | `3` | `param` | - | Minimum coarse-stage basin margin from raster edge (pixels). | Must be &gt;= 0. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Snapping method for outlet-mode basin delineation. | One of: none, expanding_square, downstream. |
+| `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for outlet snapping. | Higher values snap outlets onto better-defined channels. |
+| `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping radius in pixels. | Used when basin_outlet_snapping_method=expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping radius in pixels. | Used when basin_outlet_snapping_method=expanding_square. |
+| `tight_basin_bbox_buffer_pixels` | `int` | `3` | `param` | - | Pixel buffer around delineated basin for tight refetch bounds. | A value of 3 gives a 7x7 fetch for a 1-pixel basin. |
+| `tight_basin_bbox_refetch` | `bool` | `true` | `param` | - | Refetch group DEMs using tight basin bounds after delineation. | Applied in bounds_mode=outlets. |
+| `auto_split_disconnected_basins` | `bool` | `true` | `param` | - | Auto-split distant/disconnected basins into multiple final DEMs. | Used in bounds_mode: outlets. |
+| `split_cluster_gap_km` | `float` | `25.0` | `param` | - | Distance threshold for basin grouping (km). | Must be &gt; 0 when auto_split_disconnected_basins is true. |
+| `max_final_dem_area_km2` | `float` | `2500.0` | `param` | - | Maximum target area per final DEM group (km^2). | Must be &gt; 0. |
+| `split_overlap_km` | `float` | `2.0` | `param` | - | Overlap margin between adjacent split groups (km). | Must be &gt;= 0. |
+| `max_basins_per_dem` | `int` | `0` | `param` | - | Operational cap on number of basins per final DEM group. | 0 means unlimited. Must be &gt;= 0. |
+
+### Source
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `dem_source` | `string` | `cop30_aws` | `param` | - | Which provider to fetch from. | cop30_aws: Copernicus GLO-30 on AWS Open Data. Public and keyless, global 30 m coverage -- start here. opentopography: the OpenTopography REST API, which offers other datasets but needs a free API key (see ot_dem_type). planetary_computer: Microsoft Planetary Computer. Also keyless -- its asset URLs are signed automatically for you -- and gives access to many other STAC collections (see pc_collection). Any other value is an error rather than a silent substitution. |
+| `pc_collection` | `string` | `cop-dem-glo-30` | `param` | - | Planetary Computer STAC collection (only used when dem_source is planetary_computer). | Examples: cop-dem-glo-30, cop-dem-glo-90, nasadem, alos-dem, 3dep-seamless. Browse the full catalogue at https://planetarycomputer.microsoft.com/catalog. No account or key is needed: asset URLs are signed automatically. |
+| `pc_asset` | `string` | `data` | `param` | - | Asset key within each Planetary Computer STAC item. | Most elevation collections expose the raster as 'data'. Change this only if the collection you are using names it differently. |
+| `ot_dem_type` | `string` | `COP30` | `param` | - | OpenTopography dataset identifier (only used when dem_source is opentopography). | One of: COP30, COP90, SRTMGL1, SRTMGL1_E, SRTMGL3, NASADEM, AW3D30, AW3D30_E, GEDTM30, EU_DTM, ANADEM, CA_MRDEM_DTM, CA_MRDEM_DSM, SRTM15Plus, GEBCOIceTopo, GEBCOSubIceTopo, GEDI_L3. Run -h ot_dem_type for a table giving data type, grid spacing, coverage and purpose, or see https://portal.opentopography.org/apidocs/#/Public/getGlobalDem. Anything else is rejected before the request is sent. Every one of these datasets carries a citation requirement; the citation for the dataset you used is printed at the end of a successful run. THE API KEY IS NOT A PARAMETER: set the OT_API_KEY environment variable, or set OT_API_KEY_FILE to a file containing it. Parameter files are routinely committed and every parameter is echoed at the end of a run, so a key must never be written here. |
+| `prefetch_source` | `string` | `cop30_aws` | `param` | - | Source for coarse prefetch in bounds_mode: outlets. | Defaults to keyless cop30_aws. Can be cop30_aws, planetary_computer, or opentopography. |
+| `coarse_prefetch_demtype` | `string` | `GEBCOIceTopo` | `param` | - | OpenTopography demtype used for coarse nested prefetch. | Used in outlet mode when prefetch_source is opentopography and credentials are available. |
+| `allow_auth_fallback_to_keyless` | `bool` | `true` | `param` | - | Allow fallback to a keyless source on OpenTopography auth failure. | When true, auth failures in opentopography can fall back to auth_fallback_source. |
+| `auth_fallback_source` | `string` | `cop30_aws` | `param` | - | Fallback source used after OpenTopography auth failure. | Must be keyless: cop30_aws or planetary_computer. |
+
+### Output grid
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `prefetch_grid_spacing` | `float` | `90.0` | `param` | - | Grid spacing (m) for coarse prefetch in bounds_mode: outlets. | Used for the low-resolution basin-discovery stage. |
+| `discard_intermediate_rasters` | `bool` | `true` | `param` | - | Delete temporary intermediate rasters from nested outlet stages. | Final outputs and manifests are retained. |
+| `write_basin_outlines_fgb` | `bool` | `true` | `param` | - | Write basin outlines as FlatGeobuf outputs in outlet mode. | Applies to retained stages/final outputs. |
+| `write_fetch_extents_manifest` | `bool` | `true` | `param` | - | Write manifest of exact fetch extents used in outlet mode. | Includes stage/source/spacing and any bbox contractions. |
+| `write_discovered_bounds` | `bool` | `false` | `param` | - | Write discovered outlet-mode bounds for QC. | Used in bounds_mode: outlets. |
+| `write_discovered_basin_polygons` | `bool` | `false` | `param` | - | Write discovered basin polygons for QC. | Used in bounds_mode: outlets. |
+| `discovered_bounds_fname` | `string` | - | `param` | - | Optional filename override for discovered-bounds output. | Used only when write_discovered_bounds is true. |
+| `final_basin_edge_buffer_pixels` | `int` | `3` | `param` | - | Required basin margin from raster edges in final DEMs (pixels). | Must be &gt;= 0. |
+| `final_basin_nodata_buffer_pixels` | `int` | `1` | `param` | - | Required basin margin from nodata in final DEMs (pixels). | Must be &gt;= 0. |
+| `verify_final_resolution_basins` | `bool` | `true` | `param` | - | Recheck basin extraction on final-resolution DEM. | Guards against coarse-routing mismatch from prefetch. |
+| `final_verify_expand_factor` | `float` | `1.25` | `param` | - | Expansion factor for final-stage refetch after failed verification. | Must be &gt; 1.0. |
+| `final_verify_max_iters` | `int` | `3` | `param` | - | Maximum final-stage refetch retries after failed verification. | Must be &gt;= 1 when verify_final_resolution_basins is true. |
+| `target_epsg` | `int` | `0` | `param` | - | EPSG code of the output projection. | 0 derives the UTM zone from the bounding box centre, which is normally what you want. Set explicitly to pin a projection, for example when fetching several adjacent areas that must share a grid. |
+| `grid_spacing` | `float` | `30.0` | `param` | - | Output grid spacing in projection units (metres for UTM). | The source is nominally 30 m. Coarser values resample down; finer values interpolate and add no real detail. |
+| `resampling_method` | `string` | `cubic` | `param` | - | GDAL resampling method used when reprojecting. | Cubic is the default because fetched DEM elevations are continuous; it is not a categorical-raster default. Allowed values follow GDAL warp methods: near, bilinear, cubic, cubicspline, lanczos, average, mode, max, min, med, q1, q3. |
+| `size_pixels` | `int` | `0` | `param` | - | Crop an exact square of this many pixels from the centre. | 0 keeps the full reprojected extent. Use a positive value when the output dimensions must be deterministic, for example for test fixtures. The bounding box must be large enough to contain the crop. |
+| `no_data_value` | `float` | `-9999.0` | `param` | - | NoData value written into the output raster. | Matches the lsdtt3 default. Cells outside the source footprint are set to this rather than zero, which would otherwise read as sea level and behave as a large spurious depression in flow routing. |
+
+### Network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `http_timeout_seconds` | `int` | `60` | `param` | - | Maximum seconds for an individual HTTP request. | Bounds how long an unresponsive server can stall the fetch. |
+| `http_connect_timeout_seconds` | `int` | `15` | `param` | - | Maximum seconds to establish a connection. | Keep this short so an offline machine fails promptly. |
+| `http_max_retry` | `int` | `3` | `param` | - | Number of retries on a transient HTTP failure. | Cloud storage occasionally returns 5xx responses; retrying absorbs those without failing the run. |
+| `cache_dir` | `string` | - | `param` | - | Optional directory for caching fetched rasters. | Empty (the default) means no caching: the fetch always runs. When set, a previously fetched raster covering the same request is reused instead of downloading again. |
+
+<!-- END GENERATED CLI PARAMETERS -->

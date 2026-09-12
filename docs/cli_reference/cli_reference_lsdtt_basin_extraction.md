@@ -1,7 +1,8 @@
-# lsdtt3 basin extraction guide 
+# lsdtt3 basin extraction guide
 
-This document explains the design choices of different basin objects in `lsdtt3`
-and how to use these objects to extract basins.
+This document explains how to select and extract basins with
+`lsdtt-basin-extraction`. Developer documentation for the underlying basin
+objects is in [Basin object architecture](../developer_notes/basin_object_architecture.md).
 
 ---
 
@@ -9,115 +10,6 @@ and how to use these objects to extract basins.
     `crossing_line_fname`, `single_channel_points_fname`, `side_tributary_points_fname` accept multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
 
     Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../vector_data.md).
-## The `lsdtt_basin` object
-
-The `lsdtt_basin` object holds a single basin, based off an outlet node defined
-by a `flat_index` from `lsdtt_flow_base`, the flow info object. We assume that
-the `flat_index` has already been checked to be valid.
-
-The object holds an `lsdtt_flat_index_slice`, which is defined in 
-`lsdtt_flow_types.hpp` and points to a slice in the flow info s vector (the 
-Braun & Willett (2013) stack). The `lsdtt_basin` object therefore does not copy
-any data. 
-
-Note that the stack is the result of a depth-first search, which allows for this
-slicing of upstream nodes. Barnes (2019, Geomorphology) argues that a breadth-
-first search is better for parallel computing of an upstream-to-downstream D8
-order, however, the resulting order does not allow for upstream node slicing.
-Flow graphs resulting from multiple flow direction algorithms are also based
-on the breadth-first search (Anand et al., 2020, Environmental Modelling & 
-Software) and will therefore not work with the `lsdtt_basin`. 
-
-The `lsdtt_basin` has an abstract interface, `lsdtt_basin_base`, which lives in
-`src/core/`. This allows for a GPU version of `lsdtt_basin` to be developed in 
-the future. The CPU version with the actual code lives in `src/cpu/` and is 
-called `lsdtt_basin_cpu`. `lsdtt_basin_base` further contains shared types.
-
-The `lsdtt_basin_cpu` will have various member functions:
-- `check_basin_completeness(..)` takes boundary conditions and checks for each
-pixel if it is on an open (nonperiodic, nonbaselevel) boundary and if it borders
-a nodatavalue pixel. If this is true for any pixel, then the basin is incomplete
-and the function returns false. 
-- `get_basin_outline(..)` runs an edge tracing algorithm to get the outline of
-the basin. It returns an lsdtt_basin_outline, which is yet to be designed.
-- `get_basin_values(..)` takes an `lsdtt_raster_cpu` and uses the 
-`lsdtt_flat_index_slice` to sample all basin values and put those in a vector,
-which is returned. 
-- `get_number_of_basin_pixels(..)` returns the number of pixels in the basin.
-
-Functions that call a statistical method that is contained in `src/utils/`
-should **not** be member functions of the `lsdtt_basin_cpu` object, but put them
-instead in a different analysis file as free functions. This is to comply with
-the design rule: "Write free functions unless you need private data members".
-
-## The `lsdtt_junction_basin` object
-The `lsdtt_junction_basin` is a child of `lsdtt_basin` that is linked to the 
-`lsdtt_junction_network`. The `lsdtt_junction_network`, combined with the flow
-info, defines the channel network. The `lsdtt_junction_basin` therefore has 
-additional data members that denote the position of the basin in this network.
-
-At any junction, two channels (or, exceptionally, up to seven, in a D8 flow 
-routing world) combine that each define a basin. The pixels immediately upstream 
-of that junction define the outlets of these basins. From these outlets, you can
-go upstream and the first junction you encounter will be uniquely associated 
-with that basin. So, aditional data members are an int32 recording the basin's
-`junction_number` and the associated `pixel_stream_order`.
-
-An `lsdtt_junction_basin` can still be selected by the outlet node, even if that
-is not exactly a junction. The first junction encountered in upstream direction
-is noted down and will correspond to the correct stream order.
-
-## The `lsdtt_cosmo_basin` object 
-The `lsdtt_cosmo_basin` is also a child of `lsdtt_basin`. It has additional data
-members for holding cosmogenic information. It is used to process cosmogenic
-nuclide samples, which are taken at one specific point that is not necessarily a
-junction, so it does not inherit propeties from `lsdtt_junction_basin`.
-
-## The `lsdtt_basin_manager` object (or structure)?
-This is analysis code that lives in `/src/cpu`. It manages basin selection,
-filtering and provides the opportunity to apply `/src/utils` statistical
-analysis functions to all basins.
-
-When making a basin manager, we need to decide whether we want to work with 
-`lsdtt_basin` objects or with `lsdtt_junction_basin` objects. 
-
-To select `lsdtt_basin`s, it needs to get a vector of `flat_index` values that
-denote outlets. For each outlet, an `lsdtt_basin` is generated. In this case, 
-the basin manager is only dependent on flowinfo.
-
-To select `lsdtt_junction_basin`s, it needs to get an `lsdtt_junction_network`.
-For each junction in the network, an `lsdtt_junction_basin` is generated. 
-It should also be possible to get `lsdtt_junction_basin`s by supplying outlet
-`flat_index` values. For each outlet, it should iterate up the flow info and
-make `lsdtt_junction_basin` instances at each encountered junction. The
-downstream-most basins (which initiated from a flat_index) should hold that
-supplied `flat_index` as the outlet.
-
-Then, there are a bunch of filtering options. These are member functions that
-return `*this`, for optional chaining. Filtering methods are:
-- `filter_incomplete(..)` calls the `check_basin_completeness` method of 
-individual basins, and basins that return `false` are deleted.
-- `filter_by_area(..)` takes a min and max number of pixels and removes those 
-basins that do not have a number of pixels in this range.
-- `filter_by_stream_order(..)` takes a min amd max stream order and removes 
-those basins that are not in the range. Only works on an `lsdtt_junction_basin`
-- `filter_nested(..)` removes all basins that are nested (upstream of another
-basin)
-- `filter_duplicates(..)` removes basins that have the same outlet `flat_index`
-as another one.
-- `filter_largest(..)` filters out all basins but the one with the largest
-number of pixels.
-
-For applying `/src/utils` functions, need to come up with something clever. 
-All statistics functions expect a vector of data. `lsdtt_basin_cpu` has a
-`get_basin_values(..)` option. So `lsdtt_basin_manager` can be used to pass
-for each basin the value on to statistics functions. But I don't want to 
-write an endless number of member functions to lsdtt_basin_manager, that 
-just passes values into and out of the statistics functions. need to come up
-with a clever way for a cli to use the basin manager and appy the statistics
-of choice to it, and writes it to a file as desired by the cli using the
-lsdtt_data_loader.
-
 ## Selecting all basins of one stream order
 
 `select_all_basins_of_stream_order` is a basin-selection mode that extracts all
@@ -274,3 +166,144 @@ write_side_tributary_outlets: true
 write_side_tributary_basin_outlines: true
 side_tributary_write_vector_format: gpkg
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Threading / routing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. Applies to pit filling and flow-routing construction. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string for north, east, south, west. o = open, n = no-flux, p = periodic, b = forced outlet. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `raster_is_filled` | `bool` | `false` | `switch` | - | Assert that the input raster has ALREADY been pit-filled. | ASKS: has the input already been filled? Filling is REQUIRED for this analysis, so this switch does not choose whether to fill -- it only lets the tool skip filling a surface that is filled already. Setting it true for a DEM that still contains pits gives BAD routing, not different routing. Do not confuse this with fill_before_routing, which asks whether to fill at all. |
+
+### DEM preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed by pit filling. | Used only when raster_is_filled is false. Passed to fill_pits() to gently enforce downstream descent. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
+| `calculate_spatial_index` | `bool` | `true` | `io` | - | Whether or not to calculate a spatial index for vector data writes. | A spatial index helps a GIS to speed up spatial queries, so it is often helpful to have a spatial index calculated. But calculating this requires the entire vector layer to sit in memory, preventing feature-by-feature writes and adding a lot of overhead. In some cases (e.g. large datasets) it may therefore be preferred to generate vectors without spatial index - these can always be calculated later on using e.g. gdal. |
+| `write_channel_network_points` | `bool` | `false` | `switch` | - | Write the channel network as point data, where each channel pixel is a feature with attribute values, such as drainage_area. | Compared to write_channel_network_lines, this write will be larger because there are more features, but it does record the drainage area at each channel pixel. |
+| `write_channel_network_lines` | `bool` | `false` | `switch` | - | Write the channel network as vector lines, where each channel link (defined between source or upstream junction and outlet or downstream junction) is a feature. | Does not support csv writes, only gpkg and flatgeobuf/fgb. It is off by default because basin extraction does not require a channel-line deliverable. Compared to write_channel_network as points, the lines filesize will be smaller (there are fewer features), at the cost of not recording drainage area at each channel pixel. |
+| `write_channel_network_junctions` | `bool` | `false` | `switch` | - | Write the channel network junctions as point data. | Contains feature attributes: junction_number, receiver_junction, and stream_order. |
+
+### Single-channel side-basin extraction
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `extract_basins_from_single_channel` | `bool` | `false` | `switch` | - | Build one main channel from an upstream point and extract the side basins draining into it. | Reads single_channel_points_fname (one or two points; any CRS). With one point the D8 path is traced to the DEM edge; with two, the upstream point is identified by D8 reachability and the channel is truncated at the common-downstream point where the other point's flow joins it. Side basins are then filtered by side_tributary_minimum_contributing_pixels and reject_incomplete_side_tributary_basins, and written with the side-tributary writers (main channel, outlets, basin outlines). |
+| `single_channel_points_fname` | `string` | `NULL` | `param` | `extract_basins_from_single_channel` | Point vector file (1 or 2 points) for extract_basins_from_single_channel. | First/only point is the upstream seed; an optional second point is the downstream limit (identified and snapped automatically). Any OGR format; reprojected to the DEM CRS on read. |
+
+### Side-tributary basin extraction from seed points
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `extract_side_tributary_basins_from_points` | `bool` | `false` | `switch` | - | Extract side-tributary basins draining into D8 flowlines traced from input points. | If true, reads a point vector file, traces D8 downstream from each point, finds side tributaries entering those traced channels, filters them by minimum contributing pixels, rejects incomplete basins if requested, and writes side-tributary outlet points and basin outlines. |
+| `side_tributary_points_fname` | `string` | `NULL` | `param` | - | Input point vector file for side-tributary extraction. | Path to a GeoPackage or FlatGeobuf containing upstream seed points. If no path separator is present, read_path is prepended. Supported formats are those readable by GDAL/OGR. |
+| `side_tributary_points_layer` | `string` | - | `param` | - | Layer name in the side-tributary input point vector. | If empty, the first layer in the vector dataset is used. |
+| `side_tributary_minimum_contributing_pixels` | `int` | `1000` | `param` | - | Minimum contributing-pixel count for a side tributary basin. | Candidate side tributary outlets are only retained if their D8 upslope pixel count, including the outlet pixel itself, is at least this value. |
+| `reject_incomplete_side_tributary_basins` | `bool` | `true` | `param` | - | Reject side basins touching nodata or the raster edge. | A side basin is incomplete if any pixel in its upslope set is adjacent to nodata or an open/out-of-domain edge according to the flow object's boundary conditions. |
+| `include_side_tributary_stopping_point` | `bool` | `false` | `param` | - | Treat the last point in the input vector as a stopping point. | If true, the final feature in side_tributary_points_fname is not a source but a stopping point. Each D8 downstream trace along which side tributaries are found is truncated when it first enters a square window (half-width side_tributary_stopping_point_window_pixels) around this point. This limits side-tributary extraction to the reach upstream of the stopping point. The stopping point need not lie exactly on the main channel. |
+| `side_tributary_stopping_point_window_pixels` | `int` | `5` | `param` | - | Half-width in pixels of the square stopping-point window. | Used only when include_side_tributary_stopping_point is true. A trace is truncated at the first pixel within this many pixels (Chebyshev distance) of the stopping point. Default 5 gives an 11x11 window. |
+| `write_side_tributary_main_channel` | `bool` | `true` | `switch` | - | Write the traced main channel as vector lines. | The main channel is the set of D8 flow paths from the source points down to the outlet or stopping point, from which side tributaries are extracted. Output file: &lt;write_fname&gt;_side_tributary_main_channel.fgb or .gpkg. Uses side_tributary_write_vector_format. |
+| `write_side_tributary_outlets` | `bool` | `true` | `switch` | - | Write accepted side-tributary outlet points. | The outlets are one pixel upstream from the D8 flowlines traced from the input points. Output file: &lt;write_fname&gt;_side_tributary_outlets.fgb or .gpkg. |
+| `write_side_tributary_basin_outlines` | `bool` | `true` | `switch` | - | Write accepted side-tributary basin outlines. | Output file: &lt;write_fname&gt;_side_tributary_basin_outlines.fgb or .gpkg. |
+| `side_tributary_write_vector_format` | `string` | `same_as_write_vector_format` | `param` | - | Vector output format for side-tributary outputs. | Valid options: flatgeobuf, fgb, gpkg. FlatGeobuf is recommended because it is a single-file binary GIS format and is more robust than GeoPackage on some filesystems. |
+
+### Basin outlet input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_fname` | `string` | `NULL` | `param` | - | File of requested basin outlet points (CSV, FlatGeobuf, or GeoPackage). | Required when select_basins_from_outlets or select_basins_from_outlets_nested is true. Format is auto-detected from the file extension: *.csv is read as a text file with latitude and longitude columns (WGS84 / EPSG:4326 decimal degrees); *.fgb or *.gpkg is read as a point vector layer in its own CRS, which is then transformed to the raster CRS. For CSV inputs the file must contain columns named exactly 'latitude' and 'longitude'. For vector inputs all features must be point geometry. |
+
+### Basin outlet snapping
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | `write_basin_outlet_points` | Optional snapping of basin outlet CSV points to pixels that exceed a contributing-pixel threshold. | Allowed values: none, expanding_square, downstream. none: use the mapped raster pixel directly. expanding_square: search outward ring-by-ring until a qualifying pixel is found. downstream: follow the D8 receiver chain until a qualifying pixel is found. |
+| `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | `write_basin_outlet_points` | Contributing-pixel threshold used for optional basin outlet snapping. | This is the total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. |
+| `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | `write_basin_outlet_points` | Minimum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. 0 means the mapped input pixel is tested first. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `write_basin_outlet_points` | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. The search stops at the first radius containing one or more qualifying pixels. |
+| `write_basin_outlet_points` | `bool` | `false` | `switch` | - | Write requested basin outlet points to FlatGeobuf in the raster CRS. | Useful for debugging outlet locations after latitude/longitude input has been transformed into the DEM local/projected coordinate system. Points that fail coordinate transformation are omitted because they do not have valid raster-CRS coordinates. |
+
+### Basin selection
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `select_basins_from_outlets` | `bool` | `false` | `switch` | - | Select basins from supplied basin outlet points. | Reads basin_outlet_fname, optionally snaps the mapped pixels, and then constructs one lsdtt_junction_basin per supplied basin outlet. |
+| `select_basins_from_outlets_nested` | `bool` | `false` | `switch` | - | Select supplied basin outlets and all nested upstream basins. | Reads basin_outlet_fname, optionally snaps the mapped pixels, constructs one lsdtt_junction_basin per supplied basin outlet, and then expands selection to include all upstream nested basins from the junction-network s_vector. |
+| `select_basins_from_line_crossings` | `bool` | `false` | `switch` | - | Select basins whose channels cross a supplied line (e.g. a fault). | Reads crossing_line_fname (a polyline vector that MUST be in the same CRS as the DEM). Channel pixels lying on the line whose contributing pixel count is at least crossing_minimum_contributing_pixels become basin outlets. Incomplete and nested basins are removed automatically, leaving the largest complete basin for each independent crossing. Outputs basin outlines and outlet points. |
+| `crossing_line_fname` | `string` | `NULL` | `param` | - | Polyline vector file the channels must cross (same CRS as the DEM). | Required when select_basins_from_line_crossings is true. Any OGR-readable polyline layer (gpkg, fgb, shp, geojson). |
+| `crossing_minimum_contributing_pixels` | `int` | `500` | `param` | - | Minimum contributing pixels at a line crossing to seed a basin outlet. | Channel-line crossings with fewer upslope pixels are ignored. |
+| `select_all_basins` | `bool` | `false` | `switch` | - | Select one basin for every junction in the junction network. | Uses the junction network to derive a basin outlet flat index for each junction and constructs one lsdtt_junction_basin per junction. |
+| `select_all_basins_of_stream_order` | `bool` | `false` | `switch` | - | Select all basins whose junction stream order equals selected_stream_order. | This is equivalent to selecting all basins then filtering to one exact stream order. |
+| `selected_stream_order` | `int` | `-1` | `param` | - | Exact stream order used by select_all_basins_of_stream_order. | Must be &gt; 0 when select_all_basins_of_stream_order is true. |
+
+### Basin filtering
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `filter_basins_by_stream_order` | `bool` | `false` | `param` | - | Keep only basins within a stream-order range. | Only basins between basins_min_stream_order and basins_max_stream_order are kept. Use -1 for either bound to ignore that bound. |
+| `basins_min_stream_order` | `int` | `-1` | `param` | - | Minimum stream order to keep when filtering basins. | Inclusive. Defaults to -1, which means ignore minimum. |
+| `basins_max_stream_order` | `int` | `-1` | `param` | - | Maximum stream order to keep when filtering basins. | Inclusive. Defaults to -1, which means ignore maximum. |
+| `filter_basins_by_area` | `bool` | `false` | `param` | - | Keep only basins within an area range in pixels. | Only basins between basins_min_area_pixels and basins_max_area_pixels are kept. Use -1 for either bound to ignore that bound. |
+| `basins_min_area_pixels` | `int` | `-1` | `param` | - | Minimum basin area in pixels to keep when filtering basins by area. | Inclusive. Defaults to -1, which means ignore minimum. |
+| `basins_max_area_pixels` | `int` | `-1` | `param` | - | Maximum basin area in pixels to keep when filtering basins by area. | Inclusive. Defaults to -1, which means ignore maximum. |
+| `filter_incomplete_basins` | `bool` | `false` | `param` | - | Remove all incomplete basins. | An incomplete basin has at least one DEM pixel that is adjacent to an invalid pixel. Off-grid neighbours are invalid, unless an n or p boundary is supplied. |
+| `filter_all_but_largest_basin` | `bool` | `false` | `param` | - | Keep only the largest basin. | Applied later in the filtering order so it can be used after completeness or other filters. |
+| `filter_nested_basins` | `bool` | `false` | `param` | - | Remove nested basins. | Only the largest non-nested basins in the current selection are retained. |
+| `filter_nested_by_stream_order` | `bool` | `false` | `param` | - | Remove nested basins of the same stream order. | In a consecutive chain of nested basins with the same order, only the downstream-most is preserved. Nested basins of different orders are allowed. |
+
+### Basin printing to vector
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_basin_outlines` | `bool` | `false` | `switch` | - | Write selected basin outlines as vector features. | Features are labelled by their junction number. Use basin_outlines_write_vector_format to specify an override. To get basin outlines as polygons rather than polylines, use write_basin_outlines_as_polygon. To write basin outlines per stream order, use write_basin_outlines_per_order. |
+| `write_basin_outlines_as_polygon` | `bool` | `false` | `switch` | - | Write basin outlines as polygons rather than polylines. | Set to true when you want basins printed as areas. |
+| `write_basin_outlines_per_order` | `bool` | `false` | `switch` | - | Write basin outlines per stream order. | For GeoPackage output, this writes individual layers per stream order. For FlatGeobuf output, this writes multiple files, one per stream order. |
+| `basin_outlines_write_vector_format` | `string` | `same_as_write_vector_format` | `param` | - | Output format for basin outline visualisation. | Allowed values: flatgeobuf, fgb, gpkg. FlatGeobuf is the default. GeoPackage may have file I/O issues on some filesystems. CSV is not allowed for basin outline lines. |
+| `write_basin_outlines_to_csv` | `bool` | `false` | `switch` | - | Write basin outlines as a point CSV with distance and elevation. | Outputs a _basin_outlines.csv file containing points for all basins. |
+
+### Basin outlet writing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_selected_basin_outlets_csv` | `bool` | `false` | `switch` | - | Write the outlets of the final selected basins to a CSV file. | Outputs a _selected_basin_outlets.csv file with longitude, latitude, basin_junction_number, basin_outlet_flat_index, and the basin size as basin_n_pixels, basin_area_km2 and basin_fraction_of_domain. This file can be directly read back into lsdtt as basin_outlet_fname. Note: write_basin_outlet_points writes the requested outlets, but this option writes the outlets of the selected basins. |
+
+### Basin printing to raster
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_basins_raster` | `bool` | `false` | `switch` | - | Write the selected basins as a labelled raster. | Basins are labelled by junction number since that uniquely identifies extracted basins. Nested basins are printed on top of parent basins. |
+| `write_basins_datamap` | `bool` | `false` | `switch` | - | Write selected basin datamap as CSV. | For each basin, there is a row containing the junction number and outlet flat index. This can be helpful for debugging. |
+
+<!-- END GENERATED CLI PARAMETERS -->

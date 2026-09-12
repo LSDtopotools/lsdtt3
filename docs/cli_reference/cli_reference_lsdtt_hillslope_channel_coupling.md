@@ -413,3 +413,123 @@ upslope areas in grid digital elevation models. *Water Resources Research*
 Hurst, M.D., Mudd, S.M., Walcott, R., Attal, M. and Yoo, K. (2012), Using
 hilltop curvature to derive the spatial distribution of erosion rates. *JGR Earth
 Surface* 117:F02017.
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `boundary_conditions` | `string` | `nnnn` | `param` | - | Four-character N,E,S,W boundary code for the flow router. | 'n' no flux, 'p' periodic, 'o'/'b' open or base level. MUST match how the DEM was made: a grid with no draining edge makes the router throw. Note 'o' and 'b' are inconsistent between the router and the hillslope solvers, so divides within one hillslope length of such an edge are not trustworthy. |
+| `vertical_units` | `string` | `metres` | `param` | - | Vertical unit of the input elevations: metres, feet or us_survey_feet. | NO raster format records the vertical unit, so this CANNOT be detected and is NEVER applied automatically. Much US state lidar is NAVD88 FEET on a metre grid; left uncorrected, hilltop curvature, relief, E* and R* are all wrong by 3.28 and NOTHING downstream looks broken - the landscape merely appears far steeper than it is. Establish the vertical datum from the data provider before setting this. |
+| `min_elevation` | `float` | `-9999` | `param` | - | Pixels at or below this elevation become nodata. -9999 disables. | MANY DEMs CARRY NODATA AS ZERO regardless of what their header declares, and a block of zeros beside real terrain is a cliff hundreds of metres high: it corrupts the polyfit, drags every flow path into it, and inflates hillslope relief and gradient. Check the elevation histogram before trusting a run. Set to 0 to drop sea-level and nodata-as-zero pixels. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_before_routing` | `bool` | `true` | `switch` | - | Choose whether to pit-fill the DEM before building the flow network. | ASKS: should the DEM be filled at all? Filling is OPTIONAL here and this is a genuine analytical choice. True (the default) routes over a pit-free surface. False builds the flow network on the UNFILLED surface, so flow paths terminate at sinks instead of being carried through them. Do not confuse this with raster_is_filled, which is an assertion that the input is already filled. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+| `channel_network_fname` | `string` | - | `param` | - | Optional channel network to ingest instead of extracting one. | A point file written by lsdtt-channel-extraction (write_channel_network_points), carrying row, col, flat and stream_order. It MUST have been extracted on this DEM's grid: 'flat' is row-major on those dimensions and a mismatch is rejected. |
+
+### Basin selection
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_selection_choice` | `string` | `sibling` | `param` | - | How basins are chosen; ridgelines come from their outlines. | sibling: every junction with two or more donors becomes a parent and its donor sub-basins are the selection. This makes an interfluve STRUCTURAL -- a divide's two flanking basins share a parent by construction -- and is the recommended choice for hilltop work. all_junctions: one basin per junction; network-wide but deeply nested, so divides are traced many times and must be deduplicated. |
+| `min_basin_pixels` | `int` | `100` | `param` | - | Skip basins smaller than this. | Tiny basins produce degenerate outlines and no usable hillslopes. |
+
+### Ridge extraction
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `ridge_extraction_algorithm_choice` | `string` | `ridgeline` | `param` | - | How hilltop pixels are found. | ridgeline: hilltop pixels are the DEM pixels that an ORDERED ridgeline separates, so each one carries its position along the divide and which side it is on. divide_pairs: a flow-path merge test over the whole DEM that needs no basins, but yields no ordering and no divide identity. Use it as a fallback when basin outlines are slow or fragile. |
+| `diagonal_step_policy` | `string` | `skip` | `param` | - | What to do with a non-4-connected step in a ridgeline. | A diagonal corner-to-corner step lies along no lattice edge, so it separates no well-defined pixel pair. skip / bridge / fail. Measured on real basin outlines: 1808 of 1808 edges were cardinal, so this is a safety net rather than a routine path. |
+| `divide_merge_search_steps` | `int` | `5` | `param` | - | Merge tolerance K for the divide_pairs fallback route. | Two adjacent pixels are a divide pair if their flow paths do not meet within K steps. Ignored unless ridge_extraction_algorithm_choice is divide_pairs. |
+| `stream_network_padding_pixels` | `int` | `2` | `param` | - | Drop hilltop pixels within this many pixels of a channel. | NOT optional in practice. A basin outline includes the segments running beside the channel down to the outlet, so an unfiltered ridge set contains pixels sitting ON the channel with no hillslope at all -- measured at 39 percent on a test fixture. 0 disables; 1 drops only pixels that are themselves channel pixels. |
+| `threshold_hilltop_gradient` | `float` | `0.4` | `param` | - | Drop hilltop pixels steeper than this. &lt;= 0 disables. | Steep 'ridges' are usually landslide scarps or DEM noise. |
+| `remove_positive_curvature_hilltops` | `bool` | `true` | `param` | - | Drop hilltop pixels whose curvature is positive. | A hilltop is convex, and under lsdtt3's sign convention a convex-up ridge has NEGATIVE curvature. A positive value is therefore not a hilltop. Note this is the opposite sign to some other packages. |
+
+### Surface metrics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `surface_fitting_window_radius_metres` | `float` | `0` | `param` | - | Polynomial surface-fitting window radius in metres. 0 = 3 * cell size. | Cht is SCALE DEPENDENT, so this is a scientific parameter, not a smoothing detail. It is written into the output summary because an E* quoted without its window is not reproducible. |
+
+### Floodplain
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `floodplain_mask_fname` | `string` | - | `param` | - | Optional binary floodplain raster to ingest. | It does TWO things, and both matter: floodplain pixels are added to the SINK set, so a trace entering the valley floor terminates there, AND removed from the ridge set, so a floodplain-interior 'hilltop' cannot produce a degenerate zero-length row. |
+| `find_floodplain` | `bool` | `false` | `switch` | - | Detect a floodplain with a simple gradient + HAND rule. | floodplain = gradient &lt; threshold AND HAND &lt; threshold, hole-filled. This is a CONVENIENCE, not a classifier: it has no reach-relative banding and no terrace separation, so it will swallow terraces and plateaus. Use lsdtt-flat-surface-finder for real work. Default off so the tool's behaviour never silently depends on two arbitrary numbers. HAND is height above nearest drainage (Nobre et al. 2011, J. Hydrology 404:13-29). |
+| `floodplain_gradient_threshold` | `float` | `0.1` | `param` | `find_floodplain` | Gradient below which a pixel may be floodplain. | Used only when find_floodplain is true. |
+| `floodplain_hand_threshold` | `float` | `5.0` | `param` | `find_floodplain` | HAND (m) below which a pixel may be floodplain. | Used only when find_floodplain is true. |
+
+### Tracing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `trace_surface_choice` | `string` | `raw` | `param` | - | Which surface the flow paths are traced on: raw or fitted. | raw (default): the unmodified DEM, so paths follow true topography. That is the right choice in principle, but on high-resolution lidar micro-topography makes the Tarboton edge-routing branch cycle, and a trace that cycles yields no hillslope length at all -- measured at 48 percent of traces on a 1 m dataset. fitted: the polynomial fitted surface at surface_fitting_window_radius_metres, which is the SAME surface the curvature is measured on, so aspect and Cht become mutually consistent. It CHANGES WHAT Lh MEANS -- shorter, smoother paths -- so it is a declared choice and is reported in the run header, never applied silently. |
+| `hilltop_thinning` | `int` | `1` | `param` | - | Analyse every Nth hilltop pixel. 1 = all of them. | This THINS THE ANALYSIS and therefore changes every distribution in the output table. It is not a rendering option -- for that use trace_thinning. Leave at 1 unless you know why you are subsampling. |
+| `trace_thinning` | `int` | `20` | `param` | `write_hillslope_traces` | Write every Nth trace geometry. Affects the FILE only. | Full-resolution trace geometry on a large DEM is millions of LineStrings and tens of gigabytes, and no viewer will draw it. The hilltop table always comes from every analysed pixel regardless of this setting. |
+| `trace_max_steps` | `int` | `100000` | `param` | - | Hard cap on cell steps per trace. | Stops a runaway trace on flat or noisy topography. |
+| `flat_terminus_gradient` | `float` | `0.02` | `param` | - | Gradient below which a trace that revisits a cell is reported as stalled_on_flat (5) rather than loop_detected (2). | These are different failures and want different responses. A stall means the path descended CORRECTLY and then found no channel to terminate on - a statement about the channel network's coverage, not about the routing; extend the network, or read Lh as covering only the part of the DEM the network reaches. A loop means the trace revisited a cell on ground it could still have descended, which is a genuine routing failure and makes Lh unreliable. Measured as the steepest descent to any of the eight neighbours at the terminating cell. The default is below any hillslope and above the residual gradient a fill leaves on a flat; it is calibrated on one 1 m landscape, where 74% of reported loops turned out to be stalls. |
+| `plan_curvature_threshold` | `float` | `0.001` | `param` | - | abs(plan curvature) above this counts a path cell as curved. | Drives divergent_count and planar_count, which together sum to the number of visited cells. Note 'divergent' counts CURVED cells of either sign, because the test is on the magnitude. |
+
+### Chi
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_chi_analysis` | `bool` | `false` | `switch` | - | Fit the chi network and attach channel steepness to every hilltop row. | This is the COUPLING the tool is named for: hillslope form (Cht, Lh, E*, R*) alongside the k_sn of the channel that hillslope actually drains to. k_sn is fitted per SEGMENT, so each channel node is matched to the segment whose chi interval contains it. Off by default because the fit costs real time and is not needed for the hillslope metrics alone. |
+| `m_over_n` | `float` | `0.45` | `param` | `run_chi_analysis` | Concavity index m/n used for the chi integration. | Chi is only comparable between basins computed with the SAME m/n, so this value is written into the summary. |
+| `chi_A0` | `float` | `1.0` | `param` | `run_chi_analysis` | Reference drainage area A0 for the chi integration (m2). | LEAVE THIS AT 1.0 UNLESS YOU KNOW WHY YOU ARE CHANGING IT. The slope of a chi-elevation profile equals the channel steepness index k_sn ONLY when A0 = 1 m2; for any other A0 the gradient is k_sn scaled by A0^(m/n). The rescaling is silent and large - A0 = 1e6 m2 at m/n = 0.45 scales every gradient by about 631. Other packages default differently (TopoToolbox's chitransform uses a0 = 1e6), so state A0 explicitly whenever a value is compared across tools. |
+| `chi_critical_divergence_metres` | `float` | `5.0` | `param` | `run_chi_analysis` | Segment-fitting tolerance: max divergence (m) before a new segment. | Larger values give fewer, longer segments and therefore smoother k_sn. |
+
+### Non-dimensional
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `critical_hillslope_slope` | `float` | `0.8` | `param` | - | Critical gradient S_c used to non-dimensionalise E* and R*. | E* = 2\|Cht\|Lh/S_c and R* = R/(Lh S_c), so both are only as meaningful as this number and the tool cannot check it for you. 0.8 reproduces the value hard-coded in the legacy tool, which is the value to use for any comparison against legacy output. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `hilltop_points_write_vector_format` | `string` | `same_as_write_vector_format` | `io` | - | Format for the hilltop point output. | flatgeobuf (or fgb), gpkg, or csv. FlatGeobuf is the default and is recommended: GeoPackage is unreliable on mounted filesystems such as WSL2's /mnt/c. |
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
+| `write_output_format` | `string` | `cog` | `io` | - | Raster output format: cog, gtiff or png. | Shared by every raster this tool writes. |
+| `write_hilltop_points` | `bool` | `true` | `switch` | - | Write the hilltop table (one row per hilltop pixel). | The main product. |
+| `write_hillslope_traces` | `bool` | `false` | `switch` | - | Write the traced flow paths as lines, thinned by trace_thinning. | Off by default because the geometry is large and is a diagnostic rather than a result. |
+| `write_ridgelines` | `bool` | `false` | `switch` | - | Write the ordered ridgelines as lines. | Cheap, and it is what makes ridgeline_id and distance_along_ridgeline_m on the points usable -- without the lines those columns reference something the user cannot see. |
+| `write_ridge_mask_raster` | `bool` | `false` | `switch` | - | Write a raster of the hilltop pixels, coded by side. | This is an optional diagnostic in the coupling workflow, so it is off by default; the feature-finder mask with the same key is a primary output. 0 not a hilltop, 1 left of travel, 2 right of travel. |
+| `write_hilltop_curvature_raster` | `bool` | `false` | `switch` | - | Write Cht at the hilltop pixels. | - |
+| `write_hillslope_length_raster` | `bool` | `false` | `switch` | - | Write Lh at the hilltop pixels. | - |
+| `write_relief_raster` | `bool` | `false` | `switch` | - | Write hillslope relief at the hilltop pixels. | - |
+| `write_hand_raster` | `bool` | `false` | `switch` | `find_floodplain` | Write the HAND raster used by the floodplain detector. | Only produced when find_floodplain is true. |
+| `write_channel_mask_raster` | `bool` | `false` | `switch` | - | Write the channel mask actually used as sinks. | Worth having when the network was INGESTED: it is the only way to see what was really used, as opposed to what the file was supposed to contain. |
+| `write_floodplain_mask_raster` | `bool` | `false` | `switch` | - | Write the floodplain mask actually used. | Whether ingested or detected. |
+
+### Performance
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `param` | - | Thread count. 0 = hardware default. | Measured scaling on this workload saturates near 2x on four physical cores; hyperthreads add nothing. |
+
+<!-- END GENERATED CLI PARAMETERS -->

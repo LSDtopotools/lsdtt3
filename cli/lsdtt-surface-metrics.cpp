@@ -444,7 +444,7 @@ int main(int argc, char* argv[])
         "synform (-1), synformal saddle (-2), basin (-3), perfect saddle (-4). "
         "Requires the polynomial fit; maximum_curvature and minimum_curvature "
         "are added to the requested metrics automatically. "
-        "Output: _<method>_shape_class.tif.",
+        "Output: _<method>_shape_class.<ext>; write_output_format selects the extension.",
         "Surface shape classification (SMAP, TopoCurve-style)", "switch", ""};
 
     string_default_map["shape_curvature_method"] = "polyfit";
@@ -459,7 +459,7 @@ int main(int argc, char* argv[])
         "fundamental_form the polyfit fitted_surface is used as the smoothed "
         "input (smoothing scale set by polyfit_lambda_metres), and the "
         "fundamental-form principal curvatures are written as "
-        "_<method>_ff_maximum_curvature.tif / _<method>_ff_minimum_curvature.tif.",
+        "_<method>_ff_maximum_curvature.<ext> / _<method>_ff_minimum_curvature.<ext>.",
         "Surface shape classification (SMAP, TopoCurve-style)", "param", ""};
 
     float_default_map["shape_curvature_threshold"] = 0.0f;
@@ -479,8 +479,8 @@ int main(int argc, char* argv[])
         "the shape classification.",
         "These differ from the raw gaussian_curvature/mean_curvature polyfit "
         "metrics because they reflect shape_curvature_threshold (kt). "
-        "Outputs: _<method>_shape_gaussian_curvature.tif, "
-        "_<method>_shape_mean_curvature.tif. "
+        "Outputs: _<method>_shape_gaussian_curvature.<ext>, "
+        "_<method>_shape_mean_curvature.<ext>. "
         "Only active when write_shape_classification_raster = true.",
         "Surface shape classification (SMAP, TopoCurve-style)", "switch", ""};
 
@@ -648,9 +648,10 @@ int main(int argc, char* argv[])
         "and skeletonises; "
         "(2) computes local relief of plan_curvature over plan_relief_window_metres, "
         "thresholds at plan_relief_threshold, and skeletonises. "
-        "Outputs: _vec_skeleton_curvature.tif, _vec_skeleton_binary.tif, "
-        "_vec_skeleton.tif, _profile_curvature.tif, _profile_curvature_relief.tif, "
-        "_profile_skeleton_binary.tif, _profile_skeleton.tif.",
+        "Outputs use the selected raster extension: _vec_skeleton_curvature.<ext>, "
+        "_vec_skeleton_binary.<ext>, _vec_skeleton.<ext>, _profile_curvature.<ext>, "
+        "_profile_curvature_relief.<ext>, _profile_skeleton_binary.<ext>, "
+        "_profile_skeleton.<ext>.",
         "Curvature skeleton (VEC + plan curvature relief)", "switch", ""};
 
     float_default_map["curvature_skeleton_lambda_metres"] = 100.0f;
@@ -715,7 +716,7 @@ int main(int argc, char* argv[])
         "mean) of its local neighbourhood minus the constant vec_adaptive_C: a pixel is "
         "foreground if its normalised 8-bit value > local_mean - vec_adaptive_C. "
         "Negative C is stricter (retains only locally brightest pixels). "
-        "Outputs: _vec_adaptive_mean.tif, _vec_adaptive_gaussian.tif, "
+        "Outputs: _vec_adaptive_mean.<ext>, _vec_adaptive_gaussian.<ext>, "
         "and optionally their Zhang-Suen skeletons.",
         "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
 
@@ -749,7 +750,7 @@ int main(int argc, char* argv[])
         "Thin the adaptive-threshold VEC binary masks to 1-pixel skeletons.",
         "Applies Zhang-Suen thinning (and curvature_skeleton_spur_max_pixels pruning) "
         "to both the mean and Gaussian adaptive outputs. "
-        "Outputs: _vec_adaptive_mean_skeleton.tif, _vec_adaptive_gaussian_skeleton.tif."
+        "Outputs: _vec_adaptive_mean_skeleton.<ext>, _vec_adaptive_gaussian_skeleton.<ext>."
         "Only active when write_vec_adaptive_threshold_rasters = true.",
         "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
 
@@ -760,7 +761,7 @@ int main(int argc, char* argv[])
         "Runs a Verlet cloth simulation: a flat sheet at max DEM elevation falls "
         "under gravity and comes to rest on ridges and summits. The resting "
         "position is the upper landscape envelope. "
-        "Output: _cloth_envelope.tif. "
+        "Output: _cloth_envelope.<ext>. "
         "For best results supply a pit-filled or breached DEM.",
         "Cloth drape", "switch", ""};
 
@@ -770,7 +771,7 @@ int main(int argc, char* argv[])
         "Positive values indicate how far the terrain surface lies below the "
         "envelope at each pixel (valley incision depth). Negative values "
         "indicate residual pits or nodata artefacts above the envelope. "
-        "Output: _cloth_incision.tif.",
+        "Output: _cloth_incision.<ext>.",
         "Cloth drape", "switch", ""};
 
     bool_default_map["write_cloth_crest_mask_raster"] = false;
@@ -779,7 +780,7 @@ int main(int argc, char* argv[])
         "1 = cloth particle was pinned by terrain contact (ridge or summit); "
         "0 = particle settled freely between ridges. Useful for diagnosing "
         "which features govern the envelope shape. "
-        "Output: _cloth_crest_mask.tif.",
+        "Output: _cloth_crest_mask.<ext>.",
         "Cloth drape", "switch", ""};
 
     float_default_map["cloth_rigidity"] = 1.0f;

@@ -3199,6 +3199,13 @@ foreach(default_help_spec IN ITEMS
         PASS_REGULAR_EXPRESSION "${default_help_regex}")
 endforeach()
 
+add_test(NAME unit_raster_synthetic_help_defaults_exact
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_synthetic_help_defaults.py"
+        --exe "$<TARGET_FILE:lsdtt-raster-synthetic-tests>")
+set_tests_properties(unit_raster_synthetic_help_defaults_exact PROPERTIES
+    LABELS "unit;cli;parameters")
+
 add_lsdtt_cli_smoke_test(
     smoke_surface_metrics_madk2
     lsdtt-surface-metrics
@@ -4818,6 +4825,18 @@ set_tests_properties(unit_cli_parameter_conventions PROPERTIES
     LABELS "unit;cli;conventions"
     TIMEOUT 900)
 
+# Phase 6: generated Markdown parameter sections must exactly match the ordered
+# JSON help registries for every CLI.
+add_test(NAME unit_cli_reference_is_current
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/tools/generate_cli_reference.py"
+        --check
+        --bin-dir "$<TARGET_FILE_DIR:lsdtt-channel-extraction>"
+        --repo-root "${CMAKE_SOURCE_DIR}")
+set_tests_properties(unit_cli_reference_is_current PROPERTIES
+    LABELS "unit;cli;docs"
+    TIMEOUT 900)
+
 # =============================================================================
 # COMPARTMENTALISATION: domain and cost labels
 #
@@ -4886,7 +4905,7 @@ set(LSDTT_DOMAIN_RULES
     "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
-    "param|secret"           "core"
+    "param|secret|cli_reference" "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
     # Phase 2 of the CLI consistency remediation: the shared helper homes

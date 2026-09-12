@@ -312,3 +312,118 @@ tidal_outlet_mode:            edge_nodes
 tidal_station_spacing_metres: 10.0
 tidal_compute_cross_sections: true
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### -
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_marsh_platform` | `bool` | `true` | `switch` | - | Run marsh-platform extraction. | If true, lsdtt_marsh_platform_cpu is run on the DEM. Outputs include search-space, scarp, and marsh-platform rasters. |
+| `run_tidal_channels` | `bool` | `true` | `switch` | - | Run tidal-channel extraction. | If true, lsdtt_tidal_channel_cpu is run on the DEM. Outputs include channel mask, optional UPL, and optional skeleton. |
+| `run_tidal_skeleton_metrics` | `bool` | `true` | `switch` | - | Run tidal-skeleton metrics. | If true, lsdtt_tidal_skeleton_metrics_cpu is run using a channel mask and a skeleton. These can come from the tidal-channel stage or from supplied rasters. |
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. |
+| `write_output_format` | `string` | `cog` | `io` | - | Raster output format. | Allowed values: cog, gtiff, same_as_input. |
+| `marsh_use_supplied_slope` | `bool` | `false` | `param` | - | Use an externally supplied slope raster for marsh-platform extraction. | If false, slope is computed internally inside lsdtt_marsh_platform_cpu. |
+| `read_slope_fname` | `string` | `NULL` | `param` | - | Optional slope raster filename. | Used only when marsh_use_supplied_slope is true. |
+| `read_channel_mask_fname` | `string` | `NULL` | `param` | - | Optional tidal-channel mask raster filename. | Used when run_tidal_channels is false but tidal-skeleton metrics still need a channel mask. |
+| `read_skeleton_fname` | `string` | `NULL` | `param` | - | Optional skeleton raster filename. | Used when run_tidal_channels is false, or when an externally prepared skeleton should be used instead of the extracted one. |
+| `read_outlet_mask_fname` | `string` | `NULL` | `param` | - | Optional outlet mask raster filename. | Required only when tidal_outlet_mode is set to outlet_mask. |
+| `marsh_histogram_n_bins` | `int` | `100` | `param` | - | Number of bins used in marsh search/cutoff histograms. | Used in the search-space thresholding and final cutoff-elevation identification stages. |
+| `marsh_search_space_histogram_derivative_threshold` | `float` | `-2.0` | `param` | - | Histogram-derivative threshold used to define the marsh search space. | This is the legacy LSDMarshPlatform control on the DEM-relative-relief times slope-relative-relief crossover raster. |
+| `marsh_max_scarp_growth_iterations` | `int` | `50` | `param` | - | Maximum number of iterative scarp-growth passes. | Controls continuation of marsh scarp lines from seed maxima. |
+| `marsh_scarp_clean_relief_fraction` | `float` | `0.85` | `param` | - | Local-relief fraction used when cleaning marsh scarps. | Higher values keep only scarps in stronger local relief settings. |
+| `marsh_scarp_clean_min_neighbour_pixels` | `int` | `8` | `param` | - | Minimum number of nearby scarp pixels required after relief cleaning. | Used to remove isolated scarp artefacts. |
+| `marsh_max_platform_growth_iterations` | `int` | `100` | `param` | - | Maximum number of iterative marsh-platform growth passes. | Controls outward growth from scarp-seeded platform pixels. |
+| `marsh_cutoff_histogram_run_length_bins` | `int` | `8` | `param` | - | Run length below the mean histogram frequency needed to define the cutoff elevation. | This is the legacy marsh-platform elevation cutoff control. |
+| `marsh_preserve_scarps_in_final_platform` | `bool` | `true` | `param` | - | Reinsert cleaned scarps into the final marsh-platform mask. | This matches the legacy LSDMarshPlatform behaviour. |
+| `marsh_fill_high_gaps` | `bool` | `true` | `param` | - | Apply the legacy high-gap fill stage. | This fills isolated high-elevation gaps inside the platform domain. |
+| `marsh_fill_pools` | `bool` | `true` | `param` | - | Apply the legacy pool-filling stage. | This fills enclosed low areas inside the evolving platform mask. |
+| `marsh_fill_small_holes` | `bool` | `true` | `param` | - | Fill isolated one-pixel holes in the final marsh-platform mask. | Useful for minor raster cleanup. |
+| `marsh_apply_scarp_closing` | `bool` | `false` | `param` | - | Apply binary closing to the cleaned marsh scarp mask. | Useful for bridging tiny gaps in otherwise continuous scarps before platform seeding. |
+| `marsh_scarp_closing_radius_metres` | `float` | `0.0` | `param` | - | Binary closing radius for the marsh scarp mask, in metres. | Used only when marsh_apply_scarp_closing is true. |
+| `marsh_label_use_scarp_barriers` | `bool` | `false` | `param` | - | Treat scarps as barriers when labelling marsh-platform components. | Scarp pixels are removed from the raster used for final platform component labelling, so scarps separate adjacent platform surfaces. |
+| `marsh_label_use_d4_connectivity` | `bool` | `false` | `param` | - | Use d4 connectivity when labelling marsh-platform components. | Useful when 1-pixel scarps should block diagonal leakage between neighbouring platform surfaces. |
+| `marsh_min_platform_component_pixels` | `int` | `1` | `param` | - | Minimum component size for the final marsh-platform mask. | Set &gt; 1 to remove isolated tiny platform fragments. |
+| `tidal_use_flood_mask` | `bool` | `false` | `param` | - | Use simple elevation-threshold channel mask instead of multi-scale median. | When true, any pixel whose elevation is at or below tidal_flood_elevation_metres is classified as a channel. All cleanup, UPL, and skeleton steps still apply. |
+| `tidal_flood_elevation_metres` | `float` | `0.0` | `param` | - | Elevation threshold for the flood-mask channel method (metres). | Used only when tidal_use_flood_mask is true. Pixels at or below this value are marked as channel. |
+| `tidal_median_window_radii_metres` | `string` | `5,10,20` | `param` | - | Comma-delimited median-window radii for tidal-channel extraction. | One residual raster is generated for each scale using median minus DEM. |
+| `tidal_residual_thresholds_metres` | `string` | `0.1` | `param` | - | Comma-delimited residual thresholds for tidal-channel extraction. | If one value is supplied it is used for all scales. Otherwise there must be one threshold per scale. |
+| `tidal_scale_mode` | `string` | `any_scale_pass` | `param` | - | How per-scale tidal-channel masks are combined. | Allowed values: any_scale_pass, all_scales_pass. |
+| `tidal_apply_binary_closing` | `bool` | `false` | `param` | - | Apply binary closing to the tidal-channel mask. | Useful for sealing narrow gaps between neighbouring channel pixels. |
+| `tidal_binary_closing_radius_metres` | `float` | `0.0` | `param` | - | Closing radius for the tidal-channel mask. | Used only when tidal_apply_binary_closing is true. |
+| `tidal_fill_holes` | `bool` | `false` | `param` | - | Fill holes in the tidal-channel mask. | Useful when the thresholded channel mask contains enclosed voids. |
+| `tidal_min_channel_component_pixels` | `int` | `1` | `param` | - | Minimum connected-component size for the channel mask. | Set &gt; 1 to remove small isolated channel fragments. |
+| `tidal_extract_skeleton` | `bool` | `true` | `param` | - | Extract a 1-pixel skeleton from the tidal-channel mask. | Uses lsdtt3 raster skeletonisation tools. |
+| `tidal_skeleton_spur_max_pixels` | `int` | `10` | `param` | - | Maximum spur length removed from the tidal skeleton. | Used only when tidal_extract_skeleton is true. |
+| `tidal_skeleton_terminal_loop_max_pixels` | `int` | `10` | `param` | - | Maximum small terminal loop length removed from the tidal skeleton. | Used only when tidal_extract_skeleton is true. |
+| `tidal_skeleton_min_component_pixels` | `int` | `1` | `param` | - | Minimum connected-component size for the tidal skeleton. | Set &gt; 1 to remove isolated skeleton fragments. |
+| `tidal_connect_skeleton_segments` | `bool` | `false` | `param` | - | Attempt to reconnect nearby tidal skeleton endpoints. | Uses the existing lsdtt3 skeleton graph bridge-routing tools. |
+| `tidal_connect_tangent_fit_length_pixels` | `float` | `6.0` | `param` | - | Tangent support length for tidal skeleton endpoint reconnection. | Used only when tidal_connect_skeleton_segments is true. |
+| `tidal_connect_tangent_min_support_pixels` | `int` | `2` | `param` | - | Minimum support pixels for endpoint tangent estimation. | Used only when tidal_connect_skeleton_segments is true. |
+| `tidal_connect_max_gap_pixels` | `float` | `20.0` | `param` | - | Maximum gap distance considered when reconnecting skeleton endpoints. | Used only when tidal_connect_skeleton_segments is true. |
+| `tidal_connect_max_facing_angle_degrees` | `float` | `35.0` | `param` | - | Maximum endpoint-facing angle for skeleton reconnection candidates. | Used only when tidal_connect_skeleton_segments is true. |
+| `tidal_connect_max_heading_misalignment_degrees` | `float` | `45.0` | `param` | - | Maximum tangent-heading mismatch for skeleton reconnection candidates. | Used only when tidal_connect_skeleton_segments is true. |
+| `tidal_connect_max_candidate_score` | `float` | `1.0` | `param` | - | Maximum accepted candidate score for tidal skeleton reconnection. | Used only when tidal_connect_skeleton_segments is true. |
+| `tidal_connect_route_corridor_half_width_pixels` | `float` | `12.0` | `param` | - | Half-width of the least-cost routing corridor for accepted skeleton bridges. | Used only when tidal_connect_skeleton_segments is true. |
+| `tidal_compute_upl` | `bool` | `true` | `param` | - | Compute unchannelled path length (UPL). | UPL is the Euclidean distance to the nearest channel pixel. |
+| `tidal_outlet_mode` | `string` | `edge_nodes` | `param` | - | How outlet nodes are chosen for tidal skeleton metrics. | Allowed values: edge_nodes, endpoint_nodes, outlet_mask, lowest_endpoint. |
+| `tidal_station_spacing_metres` | `float` | `5.0` | `param` | - | Station spacing along tidal skeleton sections. | Stations are sampled at this spacing after section orientation. |
+| `tidal_compute_cross_sections` | `bool` | `true` | `param` | - | Compute cross-sections at tidal skeleton stations. | Width, depth, and area metrics are estimated at each station. |
+| `tidal_tangent_support_points` | `int` | `2` | `param` | - | Number of neighbouring stations used to estimate local section tangent. | Used in cross-section construction. |
+| `tidal_cross_section_half_length_metres` | `float` | `25.0` | `param` | - | Half-length of tidal cross-sections. | Each cross-section spans twice this half-length. |
+| `tidal_cross_section_sample_spacing_metres` | `float` | `1.0` | `param` | - | Sampling spacing along tidal cross-sections. | Controls width/depth/area estimation. |
+| `tidal_max_width_ratio` | `float` | `3.0` | `param` | - | Maximum accepted section-length to local-width ratio. | Sections exceeding this are rejected as implausible. |
+| `tidal_compute_station_strip_metrics` | `bool` | `true` | `param` | - | Assign each DEM pixel to its nearest tidal skeleton station and compute strip metrics. | This produces local and upstream strip areas and optional strip-mean raster values. |
+| `tidal_strip_include_dem` | `bool` | `true` | `param` | - | Include DEM elevation in tidal station strip summaries. | If true, local and upstream strip mean elevation are computed. |
+| `tidal_strip_include_upl` | `bool` | `false` | `param` | - | Include UPL in tidal station strip summaries. | Only available when the tidal-channel stage computed UPL. |
+| `tidal_strip_include_marsh_mask` | `bool` | `false` | `param` | - | Include marsh-platform mask values in tidal station strip summaries. | Only available when the marsh-platform stage was run. |
+| `marsh_points_write_vector_format` | `string` | `gpkg` | `param` | - | Output format for point vector outputs. | Allowed values: csv, flatgeobuf, fgb, gpkg. |
+| `write_marsh_search_space_raster` | `bool` | `true` | `switch` | - | Write marsh search-space raster. | Binary raster defining the candidate marsh search domain. |
+| `write_marsh_search_crossover_raster` | `bool` | `false` | `switch` | - | Write marsh search crossover raster. | Continuous DEM-relative-relief times slope-relative-relief raster. |
+| `write_marsh_scarp_seed_mask_raster` | `bool` | `false` | `switch` | - | Write marsh scarp seed mask. | Binary raster of initial slope maxima used to seed scarps. |
+| `write_marsh_scarp_order_raster` | `bool` | `false` | `switch` | - | Write marsh scarp order raster. | Stores iterative scarp-growth order values. |
+| `write_marsh_scarp_mask_raster` | `bool` | `true` | `switch` | - | Write cleaned marsh scarp mask. | Binary raster of retained marsh scarps. |
+| `write_marsh_platform_seed_mask_raster` | `bool` | `false` | `switch` | - | Write marsh platform seed mask. | Binary raster of scarp-seeded initial platform pixels. |
+| `write_marsh_platform_provisional` | `bool` | `false` | `switch` | - | Write provisional marsh-platform mask before final cleanup. | Useful for diagnosing the cutoff-elevation stage. |
+| `write_marsh_platform_mask_raster` | `bool` | `true` | `switch` | - | Write final marsh-platform mask. | Binary raster of the extracted marsh platform. |
+| `write_marsh_platform_labels_raster` | `bool` | `true` | `switch` | - | Write labelled marsh-platform raster. | Connected marsh-platform components are labelled 1,2,3,.... |
+| `write_marsh_polygons` | `bool` | `false` | `switch` | - | Vectorise labelled marsh-platform components to polygons. | Uses the existing raster polygonisation tools. |
+| `write_tidal_median_rasters` | `bool` | `false` | `switch` | - | Write per-scale tidal moving-window median rasters. | One raster is written for each requested tidal scale. |
+| `write_tidal_residual_rasters` | `bool` | `false` | `switch` | - | Write per-scale tidal residual rasters. | Residual = local median minus DEM, so positive values indicate local lows. |
+| `write_tidal_threshold_masks` | `bool` | `false` | `switch` | - | Write per-scale thresholded tidal masks. | These are the binary residual-threshold masks prior to multi-scale combination. |
+| `write_tidal_channel_mask_raster` | `bool` | `true` | `switch` | - | Write final tidal-channel mask. | Binary raster of detected tidal channels. |
+| `write_tidal_upl_raster` | `bool` | `true` | `switch` | - | Write UPL raster. | UPL is the Euclidean distance to the nearest channel pixel. |
+| `write_tidal_channel_skeleton` | `bool` | `true` | `switch` | - | Write raw tidal channel skeleton. | Written only when tidal_extract_skeleton is true. |
+| `write_tidal_connected_skeleton` | `bool` | `true` | `switch` | - | Write connected tidal channel skeleton. | If no skeleton reconnection is performed this may be empty or match the raw skeleton. |
+| `write_tidal_channel_polygons` | `bool` | `false` | `switch` | - | Vectorise tidal channel components to polygons. | Uses binary component labelling plus polygon tracing. |
+| `polygonise_min_component_pixels` | `int` | `1` | `param` | - | Minimum component size used when polygonising binary masks. | Set &gt; 1 to remove tiny components before vectorisation. |
+| `write_tidal_node_id_raster` | `bool` | `true` | `switch` | - | Write tidal skeleton node-id raster. | Node pixels store node ids; other pixels are nodata. |
+| `write_tidal_section_id_raster` | `bool` | `true` | `switch` | - | Write tidal skeleton section-id raster. | Skeleton pixels store section ids. |
+| `write_tidal_section_strahler_raster` | `bool` | `true` | `switch` | - | Write tidal skeleton section Strahler-order raster. | Skeleton pixels store section Strahler order. |
+| `write_tidal_section_hack_raster` | `bool` | `true` | `switch` | - | Write tidal skeleton section Hack-order raster. | Skeleton pixels store section Hack order. |
+| `write_tidal_nearest_station_id_raster` | `bool` | `true` | `switch` | - | Write nearest-station id raster. | Each valid DEM pixel stores the id of its nearest tidal station. |
+| `write_tidal_station_downstream_distance_raster` | `bool` | `true` | `switch` | - | Write station downstream-distance raster. | Each valid DEM pixel stores the downstream distance of its nearest station. |
+| `write_tidal_sections_vector` | `bool` | `true` | `switch` | - | Write tidal skeleton sections as lines. | Each oriented tidal section becomes one line feature. |
+| `write_tidal_stations_vector` | `bool` | `true` | `switch` | - | Write tidal skeleton stations as points. | Each station becomes one point feature with station-scale metrics. |
+| `write_tidal_stations_csv` | `bool` | `true` | `switch` | - | Write tidal skeleton stations to CSV. | This is a table export of station-scale metrics. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
+
+<!-- END GENERATED CLI PARAMETERS -->

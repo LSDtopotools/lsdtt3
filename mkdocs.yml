@@ -67,6 +67,8 @@ exclude_docs: |
   plan_docs/
   tex_technical/
   test_scripts/
+  cli_helper_function_audit.md
+  cli_parameter_consistency_audit.md
 
 nav:
   - Home: index.md
@@ -74,6 +76,7 @@ nav:
     - Overview: overview.md
     - Workflows: workflows.md
     - Flow routing: flow_routing.md
+    - Vector data: vector_data.md
     - Surface metrics: surface_metrics.md
   - Installation:
     - Install lsdtt3: install_lsdtt3.md
@@ -85,13 +88,22 @@ nav:
       - Raster preprocessing: cli_reference/cli_reference_lsdtt_raster_preprocessing.md
     - Surface analysis:
       - Surface metrics: cli_reference/cli_reference_lsdtt_surface_metrics.md
+      - Feature finder: cli_reference/cli_reference_lsdtt_feature_finder.md
+      - Spectral analysis: cli_reference/cli_reference_lsdtt_spectral_analysis.md
+      - Raster calculator: cli_reference/cli_reference_lsdtt_raster_calculator.md
+      - Basin surface metrics: cli_reference/cli_reference_lsdtt_basin_surface_metrics.md
+      - Swath profile: cli_reference/cli_reference_lsdtt_swath_profile.md
+      - Linear statistics: cli_reference/cli_reference_lsdtt_linear_stats.md
       - Hillslope-channel coupling: cli_reference/cli_reference_lsdtt_hillslope_channel_coupling.md
       - Mountain front: cli_reference/cli_reference_lsdtt_mountain_front.md
     - Flow routing and drainage:
       - Drainage analysis: cli_reference/cli_reference_lsdtt_drainage_analysis.md
       - Channel extraction: cli_reference/cli_reference_lsdtt_channel_extraction.md
       - Water line repair: cli_reference/cli_reference_lsdtt_water_line_repair.md
+      - Water centreline: cli_reference/cli_reference_lsdtt_water_centreline.md
       - Stream burning: cli_reference/cli_reference_lsdtt_stream_burning.md
+      - Sediment routing: cli_reference/cli_reference_lsdtt_sediment_routing.md
+      - GraphFlood: cli_reference/cli_reference_lsdtt_graphflood.md
       - Floodplains, terraces and valleys: fluvial_surfaces_and_valleys.md
       - Flat surface finder: cli_reference/cli_reference_lsdtt_flat_surface_finder.md
       - Fluvial surfaces: cli_reference/cli_reference_lsdtt_fluvial_surfaces.md
@@ -116,6 +128,8 @@ nav:
     - Landscape evolution:
       - Modelling choices: landscape_evolution_modelling.md
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
+      - Synthetic surfaces and tests: cli_reference/cli_reference_lsdtt_raster_synthetic_tests.md
+      - Synthetic networks: cli_reference/cli_reference_lsdtt_synthetic_networks.md
       - Cosmo landslides: cli_reference/cli_reference_lsdtt_cosmo_landslides.md
   - Python:
     - Overview: python/index.md
@@ -140,6 +154,7 @@ nav:
     - Parameter naming conventions: cli_parameter_conventions.md
     - Git from the command line: developer_notes/git_notes.md
     - Architecture: developer_notes/lsdtt3_architecture.md
+    - Basin object architecture: developer_notes/basin_object_architecture.md
     - Building from source: developer_notes/building_from_source.md
     - Building on Windows (WSL2): developer_notes/lsdtt3_in_windows.md
     - Building on macOS (Multipass): developer_notes/lsdtt3_in_macos.md

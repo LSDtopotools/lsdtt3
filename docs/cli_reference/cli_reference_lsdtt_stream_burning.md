@@ -331,3 +331,186 @@ merge_snap_tolerance_metres: 2
 ```
 
 To inspect the starting point before any burning, set `run_stream_burn: false` (writes the merged vector lines and the source-seeded DEM network, no burn).
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Threading
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. |
+
+### Routing boundary conditions
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for D8 flow routing. | Four-character string: north, east, south, west. o = open, n = no-flux, p = periodic, b = forced outlet. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `raster_is_filled` | `bool` | `false` | `switch` | - | Assert that the input raster has ALREADY been pit-filled. | ASKS: has the input already been filled? Filling is REQUIRED for this analysis, so this switch does not choose whether to fill -- it only lets the tool skip filling a surface that is filled already. Setting it true for a DEM that still contains pits gives BAD routing, not different routing. Do not confuse this with fill_before_routing, which asks whether to fill at all. |
+
+### DEM preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `carve_before_fill` | `bool` | `false` | `param` | - | Run depression breaching before pit filling. | Useful when the DEM has road or embankment obstructions across channels. |
+| `breach_algorithm_choice` | `string` | `lindsay2016` | `param` | - | Breaching algorithm used when carve_before_fill is true. | Allowed values: lindsay2016 (unbounded), least_cost (supports bounded breaching via breach_max_cost / breach_max_dist_pixels). |
+
+### Bounded least-cost breaching (breach_algorithm_choice = least_cost)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `breach_max_cost` | `float` | `0` | `param` | - | Cap on the total elevation (m, distance-weighted) carved along one least-cost breach path. 0 = unbounded. | Discriminates obstruction type by carve depth: shallow carves (lake spillways, small pits) stay below the cap and breach; deep carves through road/rail embankments exceed it and are left filled, so those crossings remain as gaps for the LCP burn (run_lcp_burn) to bridge under the vector line. Start ~2-5 (m). Only used when breach_algorithm_choice is least_cost. |
+| `breach_max_dist_pixels` | `int` | `1000` | `param` | - | Maximum breach-path length in pixels for least-cost breaching. | Must be large enough to span the widest water body you want breached. Only used when breach_algorithm_choice is least_cost. |
+| `breach_flat_increment` | `float` | `0` | `param` | - | Per-step elevation drop (m) imposed along a breach channel. | 0 = auto (derived from the DEM). Only used when breach_algorithm_choice is least_cost. |
+| `breach_fill_remainder` | `bool` | `true` | `param` | - | Fill any depression that could not be breached within the cost/distance bounds (so flow still routes off it). | Keep true for bounded breaching: road-dammed depressions that exceed breach_max_cost are filled (then routed by fill_min_slope) rather than carved. Only used when breach_algorithm_choice is least_cost. |
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed during pit filling. | Used only when raster_is_filled is false. |
+
+### Vector channel input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `stream_vector_path` | `string` | - | `param` | - | Path to the input vector file containing the channel network polylines. | Required. Must be a polyline (linestring / multilinestring) layer in the same CRS as the DEM. Supported: GeoPackage (.gpkg), FlatGeobuf (.fgb), Shapefile (.shp), and any GDAL/OGR format. |
+
+### Burn mode
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `stream_burn_mode` | `string` | `snap_to_network` | `param` | - | How the supplied vector network is used to condition the DEM. | burn_in_place: directly lower DEM pixels under the vector polylines to enforce a monotone-decreasing elevation profile (fast, no network extraction required beyond DEM preparation). snap_to_network: compare the supplied vector junctions against junctions extracted from the DEM flow network and produce a diagnostic point file showing where the two networks agree or diverge (first step toward guided carving). Best for less accurate vector layers (e.g. OS Rivers). snap_to_accumulation: for ACCURATE vector layers (e.g. OS VectorMap Local). Trace D8 along the vector (segmented_trace_test), accept the reaches that follow the LiDAR thalweg, and bridge the remaining obstruction gaps (roads/embankments) with least-cost-path carving (run_lcp_burn) to recover one continuous network. Preserves the LiDAR thalweg and writes the burned DEM plus the network extracted from it. |
+
+### snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `trace_max_divergence_metres` | `float` | `10` | `param` | - | Max distance (m) the D8 flow trace may stray from the vector before the segment is burned. | Set above the typical offset between the vector lines and the LiDAR valley bottom, so a channel that merely sits beside the thalweg is not burned; only genuine divergences (roads, captures) are. |
+| `merge_snap_tolerance_metres` | `float` | `2` | `param` | - | Endpoint snap tolerance (m) for merging degree-2 vector fragments. | Used by stream_burn_mode=snap_to_accumulation to write &lt;write_fname&gt;_merged_lines.fgb: fragmented vector lines whose endpoints fall within this distance and form a degree-2 junction (shared by exactly two fragments) are merged into one continuous line. The repaired vector layer fills road gaps with short bridge fragments, so endpoints are nearly coincident -- keep this SMALL (&lt; the shortest bridge fragment); too large collapses a short bridge and its two neighbours into one node (degree &gt;=3) and blocks the merge. Confluences (degree &gt;=3) and free ends (degree 1) remain breaks. |
+
+### switch
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_stream_burn` | `bool` | `true` | - | - | Run the stream-burning stage. Set false to stop after the INITIAL stage: fill/flow, the clipped+repaired vector network, the merged vector lines (&lt;write_fname&gt;_merged_lines.fgb) and the source-seeded D8 network (&lt;write_fname&gt;_dem_network_lines.fgb) are written, but no burning is done. Useful for inspecting the starting point before any burn. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `run_lcp_burn` | `bool` | `false` | - | - | After segmented_trace_test, connect the cleaned accepted reaches into a continuous network by least-cost-path burning the gaps (source / intermediate / outlet). Requires segmented_trace_test=true. Writes &lt;write_fname&gt;_burn_segments.fgb (start-&gt;end per gap), _lcp_burn_paths.fgb (the carved paths), _lcp_burn_raised.fgb (cells raised to block diversions), the burned DEM, and re-extracts the connected network. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `write_merged_lines` | `bool` | `true` | - | - | Write &lt;write_fname&gt;_merged_lines.fgb: the repaired vector fragments merged across degree-2 junctions into continuous lines (see merge_snap_tolerance_metres). Written in the initial stage, independent of the burn. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+
+### param
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `connect_tolerance_metres` | `float` | `0` | - | - | Gap tolerance (m) for run_lcp_burn: reaches whose ends are farther apart than this get a burn segment. Default 0 = EVERY gap between consecutive accepted reaches is burned (no short gap is ever dropped). | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `lcp_channel_alpha` | `float` | `4` | - | - | Drainage-area weighting for the run_lcp_burn least-cost path: higher = the path prefers existing channels (high drainage area) more strongly over a shorter straight route. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `segmented_trace_test` | `bool` | `false` | - | - | Diagnostic (no burning): trace D8 from points every segmented_trace_spacing_metres along each merged+repaired vector line, stopping each trace where the flow strays &gt; trace_max_divergence_metres from the line (or reaches the line end / outlet / sink). Writes &lt;write_fname&gt;_segmented_traces.fgb (fields line_id, seg_id, start_s_m, max_divergence_m, stop_reason). Runs in the initial stage; pair with run_stream_burn=false to stop after it. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `segmented_trace_spacing_metres` | `float` | `20` | - | - | Spacing (m) of trace start points along each line for segmented_trace_test. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `segmented_trace_min_pixels` | `int` | `20` | - | - | For segmented_trace_test: a trace is ACCEPTED if it reaches the line end OR stays within trace_max_divergence_metres of the line for more than this many cells. The accepted D8 traces (overlaps merged) are written to &lt;write_fname&gt;_accepted_segments.fgb. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `segmented_trace_spur_pixels` | `int` | `20` | - | - | For segmented_trace_test cleaning: after dropping contained traces, a remaining trace is removed as a SPUR if the cells unique to it (not shared with another kept trace) number fewer than this. The cleaned linework is written to &lt;write_fname&gt;_accepted_clean.fgb. | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+| `segmented_trace_endpoint_fraction` | `float` | `0.5` | - | - | For segmented_trace_test: an accepted trace is trimmed back from its downstream end until its last cell is within this FRACTION of trace_max_divergence_metres of the line. So a trace may wander up to the full divergence tolerance mid-way, but its endpoint sits close to the channel (default 0.5 = half the stop threshold). | snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) |
+
+### burn_in_place outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_burned_profiles_csv` | `bool` | `true` | `switch` | - | Write the burned stream elevation profiles as a CSV file. | Only used when stream_burn_mode is burn_in_place. Schema: feature_id, flow_distance, x, y, dem_elevation, burned_elevation. |
+| `write_burned_profiles_points` | `bool` | `false` | `switch` | - | Write the burned stream elevation profiles as a vector point file. | Only used when stream_burn_mode is burn_in_place. |
+| `burned_profiles_write_vector_format` | `string` | `same_as_write_vector_format` | `param` | - | Output format for burned profile point output. | Only used when write_burned_profiles_points is true. Allowed values: csv, flatgeobuf, fgb, gpkg. |
+
+### snap_to_network outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_junction_comparison` | `bool` | `true` | `switch` | - | Write a point file pairing first-layer junctions in the supplied vector network with the nearest junctions in the DEM-extracted network. | Only used when stream_burn_mode is snap_to_network. Each pair_id appears twice: once for the vector junction (is_dem_junction=0) and once for the DEM junction (is_dem_junction=1). Attribute distance_m gives the Euclidean distance between them. |
+| `junction_comparison_write_vector_format` | `string` | `same_as_write_vector_format` | `param` | - | Output format for the junction comparison point file. | Allowed values: flatgeobuf, fgb, gpkg, csv. |
+| `write_reach_divergence` | `bool` | `false` | `switch` | - | Diagnostic: compare each vector edge with the DEM channel walked between the matched DEM junctions. | For every vector edge whose both endpoints match a DEM junction, walks the DEM channel downstream and records geometric divergence metrics (detour ratio, lateral separation, gradient ratio) plus the reach status: ok / diverged / topology_break / unmatched_endpoint. Writes &lt;write_fname&gt;_reach_divergence_dem_reach + _vector_reach line layers and _reach_divergence.csv. Detection is purely geometric; mean channel score is logged for confirmation only (a road ditch scores like a channel). Only used when stream_burn_mode is snap_to_network. |
+| `reach_divergence_separation_metres` | `float` | `25.0` | `param` | - | Lateral separation [m] above which a DEM channel pixel counts as off the vector edge. | Set above typical digitising offset so a vector that merely fails to sit on the DEM thalweg is not flagged. Drives divergence_length_m and the severity score. Only used when write_reach_divergence is true. |
+| `reach_divergence_min_length_metres` | `float` | `100.0` | `param` | - | Sustained off-vector length [m] that flags a reach as diverged. | A reach is 'diverged' if its divergence_length_m exceeds this OR its detour ratio exceeds reach_divergence_detour_ratio. Only used when write_reach_divergence is true. |
+| `reach_divergence_detour_ratio` | `float` | `1.5` | `param` | - | Detour ratio (DEM path length / vector length) that flags a reach as diverged. | Secondary trigger alongside reach_divergence_min_length_metres. Only used when write_reach_divergence is true. |
+| `reach_divergence_match_radius_metres` | `float` | `50.0` | `param` | - | Max distance [m] for matching a vector junction to a DEM junction in the reach diagnostic. | A vector edge endpoint with no DEM junction within this radius makes the reach status 'unmatched_endpoint'. DEM confluences are offset from vector vertices, so this is generous by default (cf. junction_tolerance_metres in the repair). Only used when write_reach_divergence is true. |
+
+### snap_to_network: junction gap repair
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `repair_junction_gaps` | `bool` | `false` | `param` | - | Attempt to repair DEM obstructions at mismatched first-layer junctions. | For each junction pair whose distance exceeds junction_tolerance_metres, runs a least-cost terrain path from the DEM junction to the vector junction and carves the DEM to allow correct D8 routing. Falls back to burning under the input vector where no terrain path can be found (tunnels). Only used when stream_burn_mode is snap_to_network. |
+| `repair_reach_divergence` | `bool` | `false` | `param` | - | After topological junction repairs, repair reaches the junction matcher misses: a DEM channel captured by a road/ditch that detours a long way before rejoining the correct channel (status diverged or topology_break from the reach-divergence diagnostic). | Reuses the same channel-guided narrows repair as the junction gaps, anchored on the reach's downstream DEM confluence; the vector supplies topology only. Requires channel guidance; only used when repair_junction_gaps is true and stream_burn_mode is snap_to_network. |
+| `junction_tolerance_metres` | `float` | `50` | `param` | - | Minimum junction-pair distance (m) to trigger gap repair. | Pairs closer than this are considered correctly matched and skipped. |
+| `max_repair_gap_metres` | `float` | `100` | `param` | - | Maximum gap (m) the repair will attempt to carve. | A real road/embankment/culvert gap in a LiDAR DEM spans tens of metres. A much larger vector-to-DEM junction gap means the DEM flow is already correct and the vector network is a coarse local representation (e.g. a confluence whose branches genuinely reunite far downstream). Candidates beyond this are reported as topology mismatches and left unrepaired rather than carving a long spurious channel. Set 0 to disable the cap. |
+| `max_gap_search_pixels` | `int` | `60` | `param` | - | Search-window half-width in pixels for gap repair. | The Dijkstra search is bounded to a rectangle that spans the vector and DEM junction locations expanded by this many pixels on each side. |
+| `gap_uphill_penalty` | `float` | `20` | `param` | - | Cost multiplier applied to uphill elevation steps during gap repair. | Higher values force the repair path to cross obstructions at their lowest point; lower values allow more relaxed routing. |
+| `max_gap_climb_metres` | `float` | `10` | `param` | - | Maximum elevation the repair path may climb above the DEM junction (m). | Paths exceeding this limit are rejected as likely tunnels or deep cuts and fall back to the vector-burn strategy. |
+| `write_repaired_dem_raster` | `bool` | `false` | `switch` | - | Write the modified (gap-repaired) DEM as a raster. | Only used when repair_junction_gaps is true. |
+| `write_burned_outputs` | `bool` | `true` | `switch` | - | Write the final burned DEM and the stream network extracted from it. | In snap_to_network mode, after all conditioning and gap repair, writes &lt;write_fname&gt;_burned.tif (the carved elevation surface) and &lt;write_fname&gt;_burned_network_lines.fgb plus _burned_network_junctions.fgb (the D8 stream network extracted from the burned DEM, for checking that flow paths route correctly under roads and other obstructions). |
+| `write_channel_score_raster` | `bool` | `false` | `switch` | - | Write the channel candidate score raster used to guide gap repair. | Values in [0,1]: 1 = strong channel signal, 0 = off-channel. Useful for diagnosing why a repair path is or is not found. Only written when repair_junction_gaps is true and channel guidance is enabled. |
+| `write_divergence_points` | `bool` | `false` | `switch` | - | Write the divergence point chosen for each repair attempt as a vector point file. | Shows exactly where the channel-guided LCP starts. Only written when repair_junction_gaps is true. |
+| `write_repair_log` | `bool` | `true` | `switch` | - | Write a CSV log of every junction repair performed. | Only used when repair_junction_gaps is true. |
+| `max_repair_phases` | `int` | `10` | `param` | - | Maximum number of candidate-detection/repair phases. | Each phase repairs at most one upstream-most candidate per incomplete basin, then re-routes the DEM and re-runs candidate detection. |
+| `repair_min_slope` | `float` | `-1` | `param` | - | Minimum downhill slope imposed on carved repair paths (m/m). | Values &lt;= 0 default to fill_min_slope. Set 0 explicitly only if non-increasing flat burns are desired. |
+
+### snap_to_network: inward carving of edge sources
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `carve_inward_edge_sources` | `bool` | `true` | `param` | - | Carve a few DEM pixels inward at vector source junctions on the DEM edge. | When a vector source sits on the DEM boundary and the DEM's D8 flow at that pixel drains back off the raster, the DEM channel cannot be seeded inward. If the vector network confirms the source drains inward (its downstream junction is lower), the DEM is carved a few pixels along the vector path so D8 routes into the DEM. Sources the vector confirms drain OFF the edge (downstream junction off-raster or higher) are left alone. Used by stream_burn_mode snap_to_network and snap_to_accumulation; for snap_to_accumulation it runs before the LCP burn so the segmented trace and the source-seeded network build on the inward-routed DEM. |
+| `edge_source_carve_pixels` | `int` | `3` | `param` | - | Minimum pixels to carve inward along the vector path at edge sources. | The carve extends adaptively beyond this minimum (up to edge_source_carve_max_pixels) until the terminus reaches edge_source_min_interior_metres from the nearest DEM boundary. Only used when carve_inward_edge_sources is true. |
+| `edge_source_carve_max_pixels` | `int` | `40` | `param` | - | Maximum pixels to carve inward along the vector path at edge sources. | Safety cap on the adaptive carve. The carve normally stops earlier, once the terminus reaches edge_source_min_interior_metres from the boundary; this cap only binds for channels that approach the edge at a very shallow angle. Only used when carve_inward_edge_sources is true. |
+| `edge_source_min_interior_metres` | `float` | `10.0` | `param` | - | Perpendicular distance inward [m] the edge-source carve must reach. | The carve follows the downstream vector edge inward until the terminus pixel is at least this far from the nearest DEM boundary, so the seeded channel reaches genuine interior terrain rather than hugging the edge. A distance test is used rather than a D8-drains-off test because near the boundary the DEM flow runs along the edge and may never reach an outlet. Only used when carve_inward_edge_sources is true. |
+
+### Channel-score guidance for gap repair
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `channel_score_alpha` | `float` | `2.0` | `param` | - | Strength of channel-score weighting in the repair Dijkstra cost function. | Cost per step = step_distance x (1 + alpha x (1 - channel_score)) + max(0, Deltaelev) x gap_uphill_penalty. alpha=0 disables channel guidance (terrain cost only). Only used when repair_junction_gaps is true. |
+| `channel_lambda_min_metres` | `float` | `-1` | `param` | - | Minimum wavelength (m) for multiscale channel candidate detection. | Values &lt;= 0 default to 3 x DEM cell size. Only used when repair_junction_gaps is true. |
+| `channel_lambda_max_metres` | `float` | `-1` | `param` | - | Maximum wavelength (m) for multiscale channel candidate detection. | Values &lt;= 0 default to 10 x DEM cell size. Only used when repair_junction_gaps is true. |
+| `channel_n_scales` | `int` | `4` | `param` | - | Number of wavelength scales for channel candidate detection. | More scales improve robustness but increase compute time. Only used when repair_junction_gaps is true. |
+
+### Output - QC/diagnostic
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_sources` | `bool` | `true` | `switch` | - | Write the vector network source tips as a point layer. | Useful for checking that the source detection found the correct upstream channel heads. The outlet tip is also included with an attribute flag to distinguish it. |
+| `write_vector_outlet` | `bool` | `true` | `switch` | - | Include the vector network outlet tip in the source-tip output. | Only used when write_vector_sources is true. The outlet tip is labelled with is_outlet = 1. |
+| `vector_sources_write_vector_format` | `string` | `same_as_write_vector_format` | `param` | - | Output format for the vector source tip points. | Allowed values: flatgeobuf, fgb, gpkg, csv. |
+
+### Output - DEM network (seeded from vector sources)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_dem_network_points` | `bool` | `false` | `switch` | - | Write the DEM-extracted channel network as a point layer. | Each channel pixel becomes a feature with drainage_area and stream_order attributes. |
+| `write_dem_network_lines` | `bool` | `true` | `switch` | - | Write the DEM-extracted channel network as a line layer. | Each channel link (between junctions or source and junction) becomes a polyline feature. |
+| `write_dem_network_junctions` | `bool` | `false` | `switch` | - | Write the DEM-extracted channel network junctions as a point layer. | Includes junction_number, receiver_junction, and stream_order. |
+| `calculate_spatial_index` | `bool` | `true` | `io` | - | Compute a spatial index when writing vector outputs. | Improves GIS spatial query speed at the cost of buffering the entire layer in memory before writing. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
+
+### D8 cleaning of the clipped vector network (loops + dead ends)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `clean_vector_network_d8` | `bool` | `true` | `param` | - | Run D8-guided cleaning of the clipped vector network before junction finding. | Resolves loops (removes the arm farthest from a D8 channel) and dead-ending segments (links the downstream tip to the next segment along the D8 flow path). Writes a cleaned-network line layer. |
+| `d8_dead_end_search_max_metres` | `float` | `750.0` | `param` | - | Maximum D8 walk distance (m) when reconnecting a dead-ending tip. | If the flow path does not reach another vector segment within this distance the dead end is left unresolved. Only used when clean_vector_network_d8 is true. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+<!-- END GENERATED CLI PARAMETERS -->

@@ -133,7 +133,8 @@ int main(int argc, char* argv[])
     bool_default_map["write_2d_spectrum_rasters"] = true;
     help_map["write_2d_spectrum_rasters"] = {"bool","true",
         "Write the 2D observed and background PSD rasters.",
-        "Writes _psd_2d.tif and _background_psd_2d.tif in frequency space.",
+        "Writes _psd_2d.<ext> and _background_psd_2d.<ext> in frequency space; "
+        "write_output_format selects the extension.",
         "Output toggles", "switch", ""};
 
     bool_default_map["write_radial_spectrum"] = false;
@@ -474,7 +475,8 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: failed to write _psd_2d.tif: " << e.what() << "\n";
+            std::cerr << "Warning: failed to write _psd_2d" << output_ext
+                      << ": " << e.what() << "\n";
         }
 
         try
@@ -490,8 +492,8 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Warning: failed to write _background_psd_2d.tif: "
-                      << e.what() << "\n";
+            std::cerr << "Warning: failed to write _background_psd_2d"
+                      << output_ext << ": " << e.what() << "\n";
         }
     }
 

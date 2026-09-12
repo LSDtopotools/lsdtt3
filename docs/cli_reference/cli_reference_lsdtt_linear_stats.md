@@ -113,3 +113,32 @@ Output file: `<write_fname>_rose_diagram.tif`
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_vector_format` | string | `flatgeobuf` | Linear-statistics vector format: `flatgeobuf` / `fgb` or `gpkg`. CSV is not supported. |
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### param
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `vector_fname` | `string` | - | - | - | File name for the dataset containing linear features. | Input |
+| `interpolating_step_length` | `float` | `1.0` | - | - | Stride length for sample points when interpolating along linear features. | Process parameters |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `param` | - | Format for the output file. | Allowed values: gpkg, flatgeobuf/fgb. |
+
+<!-- END GENERATED CLI PARAMETERS -->

@@ -43,7 +43,16 @@ jobs:
             libeigen3-dev \
             libnetcdf-dev \
             libgomp1 \
-            patchelf
+            patchelf \
+            python3-pip
+
+      - name: Install documentation dependencies
+        run: >-
+          python3 -m pip install
+          mkdocs==1.6.1
+          mkdocs-material==9.7.7
+          mkdocstrings==1.0.6
+          mkdocstrings-python==2.0.7
 
       # The same driver script used for local releases: configure, build,
       # smoke-check, and package the self-contained backend bundle.
@@ -57,6 +66,11 @@ jobs:
           fi
           echo "Building release version: ${VERSION}"
           tools/make_release.sh --version "${VERSION}"
+
+      - name: Check CLI references and documentation
+        run: |
+          python3 tools/generate_cli_reference.py --check --bin-dir build/release
+          PYTHONPATH=./python_bindings/src mkdocs build --strict
 
       # Auto-generated notes only credit pull requests, so direct commits to
       # main are invisible. Prepend a commit-author roll-call so everyone who

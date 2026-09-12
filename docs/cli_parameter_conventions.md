@@ -15,9 +15,9 @@ standard below ensures that:
   deprecated-alias mechanism.
 - New contributors follow the existing patterns rather than inventing new ones.
 
-The standard applies to all new parameters and to all parameters adopted from
-legacy CLIs. Existing CLIs migrate to it one at a time during the remediation
-phases.
+The standard applies to all parameters. The conformance baseline is zero and a
+CTest guard checks every help-registered parameter in all 38 CLIs, so new
+violations fail the test rather than entering an allow-list.
 
 ---
 
@@ -99,9 +99,8 @@ to the synthetic initial surface, not to routing. It stays as it is.
 
 ## Shared parameter declaration layer
 
-As part of the remediation plan, a shared declaration layer is being created in
-`src/core/lsdtt_common_parameters.hpp` that all CLIs can adopt to eliminate
-duplication of parameter names and help text.
+The shared declaration layer in `src/core/lsdtt_common_parameters.hpp`
+eliminates duplication of common parameter names and help text.
 
 The layer exposes functions that populate a CLI's default maps and help registry
 in one call. This ensures there is exactly one place each shared name is spelled:
@@ -150,8 +149,7 @@ lsdtt::declare_synthetic_noise_relief_parameter(float_map, help_map);
 lsdtt::declare_diamond_square_parameters(float_map, help_map);
 ```
 
-As each CLI adopts these shared declarations during migration, it stops declaring
-these parameters itself.
+CLIs use these declarations for the shared concepts they expose.
 
 The flow and synthetic declarations are intentionally granular. `raster_is_filled` and
 `fill_before_routing` are different questions, and many CLIs support only one.

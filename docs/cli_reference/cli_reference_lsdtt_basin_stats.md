@@ -253,3 +253,111 @@ calculate_junction_area_ratios:  true
 threshold_contributing_pixels:   1000
 junction_area_ratio_bootstrap:   1000
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Threading
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all hardware threads. 1 = single-threaded. |
+
+### Output format
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_output_format` | `string` | `cog` | `io` | - | Output raster format. | cog: Cloud Optimised GeoTIFF (default). gtiff: plain compressed GeoTIFF. same_as_input: match the input raster format. |
+
+### Basin outlets
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_fname` | `string` | `NULL` | `param` | - | CSV file of requested basin outlet points. | Required. CSV must contain columns named latitude and longitude. Optional columns: gauge_id, gauge_name. Coordinates are interpreted as WGS84 (EPSG:4326) decimal degrees. |
+
+### Basin outlet snapping
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_snapping_method` | `string` | `none` | `param` | - | Optional snapping of basin outlet CSV points to pixels that exceed a contributing-pixel threshold. | Unlike extraction workflows, basin statistics defaults to none so an authoritative gauge/outlet pixel is not moved implicitly. Allowed values: none, expanding_square, downstream. none: use the mapped raster pixel directly. expanding_square: search outward ring-by-ring until a qualifying pixel is found. downstream: follow the D8 receiver chain until a qualifying pixel is found. |
+| `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for optional basin outlet snapping. | This is the total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. |
+| `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. 0 means the mapped input pixel is tested first. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. The search stops at the first radius containing one or more qualifying pixels. |
+
+### Sea removal
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation are set to nodata. | Default of 0.0 removes sea and ocean pixels from many DEM products. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_before_routing` | `bool` | `true` | `switch` | - | Choose whether to pit-fill the DEM before building the flow network. | ASKS: should the DEM be filled at all? Filling is OPTIONAL here and this is a genuine analytical choice. True (the default) routes over a pit-free surface. False builds the flow network on the UNFILLED surface, so flow paths terminate at sinks instead of being carried through them. Do not confuse this with raster_is_filled, which is an assertion that the input is already filled. |
+
+### Routing preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed during pit filling. | Used when fill_before_routing is true. |
+
+### Basin quality control
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `reject_nodata_edge_basins` | `bool` | `true` | `param` | - | Reject basins whose upslope area touches any nodata or raster-edge pixel. | When true, basins that drain from the edge of the DEM are skipped. This prevents incorrect drainage area and statistics for incomplete basins. |
+
+### Hillshade
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_hillshade_raster` | `bool` | `false` | `switch` | - | Write a hillshade raster after sea masking. | Useful for quick visual QC of the masked DEM. |
+| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from north. | 315 is the standard cartographic northwest illumination. |
+| `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_raster` | Sun altitude above horizon in degrees. | 45 degrees is a common default. |
+| `hillshade_z_factor` | `float` | `1.0` | `param` | `write_hillshade_raster` | Vertical exaggeration factor for hillshade. | Values greater than 1 emphasise relief. |
+
+### Channel statistics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `calculate_channel_stats` | `bool` | `true` | `switch` | - | Build a channel/junction network and compute channel length by stream order. | Requires threshold_contributing_pixels to define channel sources. |
+| `calculate_junction_area_ratios` | `bool` | `false` | `switch` | - | Compute per-junction drainage-area ratios (complement to Tokunaga). | Opt-in. Builds a channel network (using threshold_contributing_pixels) if one is not already built, then writes the ratio r = A_trib/A_main at every interior confluence plus a distribution summary. Outputs: &lt;write_fname&gt;_junction_area_ratios.csv, &lt;write_fname&gt;_junction_area_ratio_summary.csv (with branch-bootstrap confidence intervals), and a _junction_area_ratio_decades.csv collapse table. |
+| `junction_area_ratio_bootstrap` | `int` | `1000` | `param` | - | Branch-bootstrap replicates for junction area-ratio confidence intervals. | Resampling is over non-mainstem tributary branches. 0 disables it. |
+| `write_basin_polygons` | `bool` | `false` | `switch` | - | Write basin outline polygons with the per-basin metrics as attributes. | Attaches the hydromorphic stats (and shape metrics / centre-of-mass bearing when those are enabled) to each basin's outline polygon as a vector layer. Output: &lt;write_fname&gt;_basin_polygons.&lt;ext&gt;. Format set by write_vector_format. |
+| `write_vector_format` | `string` | `flatgeobuf` | `param` | - | Vector format for the basin-polygon output. | flatgeobuf (default) or gpkg. |
+| `calculate_centre_of_mass_bearing` | `bool` | `false` | `switch` | - | Compute the bearing from each basin outlet to its centre of mass. | Opt-in. The basin centre of mass is the planimetric centroid of all upslope pixels (already reported as centroid_x/centroid_y). This adds com_bearing_deg (geographic bearing from North, clockwise, outlet -&gt; centre of mass) and com_distance_m columns. The outlet is the user-supplied (optionally snapped) outlet pixel; the channel is not followed. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Basin shape metrics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `calculate_shape_metrics` | `bool` | `false` | `switch` | - | Trace each basin outline polygon and compute planform shape metrics. | Opt-in; off by default so the original curated hydromorphic stat set is reproduced unless explicitly requested. When true, adds basin_length_m, elongation_ratio, form_factor, circularity_ratio, gravelius_compactness, solidity, eccentricity, orientation_deg, and hypsometric_integral columns to the output CSV. When false, the outline is not traced and those columns are omitted, reproducing the original basin-stats output. See docs/tex_technical/basin_shape_metrics.tex. |
+| `basin_length_definition` | `string` | `flow_path` | `param` | `calculate_shape_metrics` | Definition of basin length L_b used in elongation ratio and form factor. | flow_path: the longest flow-path distance from the outlet (hydrologic basin length; the default and the usual geomorphic convention). geometric: the maximum Feret diameter of the basin outline polygon (longest straight-line caliper). The two are not interchangeable and Re, Rf both scale with L_b. See docs/tex_technical/basin_shape_metrics.tex. |
+| `shape_perimeter_simplify_cells` | `float` | `1.0` | `param` | `calculate_shape_metrics` | Douglas-Peucker simplification tolerance for the perimeter, in cells. | The basin outline is traced on the pixel-corner grid and is staircased, which inflates the perimeter and biases circularity_ratio and gravelius_compactness (the coastline paradox). The perimeter for those two metrics is measured on a ring simplified with tolerance (this value * cell_size) in metres. Set to 0 to disable simplification and use the raw staircased perimeter. Area-based metrics (elongation, form factor, solidity) are unaffected. |
+
+### Basin distribution output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_basin_pdf_cdf_csv` | `bool` | `false` | `switch` | - | Write PDF/CDF CSV output for each basin. | If true, writes one CSV per basin containing histogram counts, probabilities, PDF, and CDF of basin elevations. |
+| `n_histogram_bins` | `int` | `100` | `param` | `write_basin_pdf_cdf_csv` | Number of bins used for basin elevation histogram/PDF/CDF output. | Used when write_basin_pdf_cdf_csv is true. Default is 100 bins. |
+
+<!-- END GENERATED CLI PARAMETERS -->

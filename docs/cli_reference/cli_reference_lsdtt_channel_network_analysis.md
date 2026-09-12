@@ -300,3 +300,138 @@ write_junction_area_ratio_summary: true   # also writes the decades collapse tab
 junction_area_ratio_bootstrap:     1000
 junction_area_ratio_seed:          1
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Threading / routing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. Applies to pit filling and flow-routing construction. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string for north, east, south, west. o = open, n = no-flux, p = periodic, b = forced outlet. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `raster_is_filled` | `bool` | `false` | `switch` | - | Assert that the input raster has ALREADY been pit-filled. | ASKS: has the input already been filled? Filling is REQUIRED for this analysis, so this switch does not choose whether to fill -- it only lets the tool skip filling a surface that is filled already. Setting it true for a DEM that still contains pits gives BAD routing, not different routing. Do not confuse this with fill_before_routing, which asks whether to fill at all. |
+
+### DEM preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed by pit filling. | Used only when raster_is_filled is false. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Selection mode for bearing / junction-angle analyses
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `analyse_all_junctions` | `bool` | `false` | `param` | - | Analyse all junctions in the extracted junction network. | If no explicit analysis-selection mode is chosen, the CLI will default to this mode. |
+| `analyse_upstream_of_all_outlets` | `bool` | `false` | `param` | - | Analyse all junctions upstream of all outlet junctions. | This expands the selected outlet junctions to their full upstream junction subnetworks using the junction-network s_vector. |
+| `analyse_upstream_of_outlet_csv` | `bool` | `false` | `param` | - | Analyse all junctions upstream of outlet points supplied in a file. | The file (CSV, FlatGeobuf, or GeoPackage) is loaded, optionally snapped to the channel network, converted to junctions, and expanded to their full upstream junction subnetworks. Set basin_outlet_fname to the path of the file. |
+
+### Basin outlet input / snapping
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_fname` | `string` | `NULL` | `param` | - | File of requested outlet points (CSV, FlatGeobuf, or GeoPackage). | Required when analyse_upstream_of_outlet_csv is true. Format is auto-detected from the file extension: *.csv is read as latitude and longitude columns (EPSG:4326); *.fgb or *.gpkg is read as a point vector layer. For CSV inputs columns must be named 'latitude' and 'longitude'. For vector inputs all features must be point geometry. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Optional snapping of supplied outlet CSV points to channel pixels. | Allowed values: none, expanding_square, downstream. |
+| `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for optional outlet snapping. | This is total upslope contributing pixels from the flow-routing object. |
+| `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
+
+### Output general
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `calculate_spatial_index` | `bool` | `true` | `io` | - | Whether or not to calculate a spatial index for vector writes. | Spatial indexes speed up GIS use, but increase memory overhead. |
+
+### Link sampling for bearings / junction angles
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `link_sampling_mode` | `string` | `full_link` | `param` | - | How link geometry is sampled for bearing fitting. | Allowed values: full_link, fixed_length, fixed_n_pixels. full_link is the default and recommended mode. |
+| `link_sampling_fixed_length_metres` | `float` | `1000.0` | `param` | - | Length threshold for fixed_length sampling mode. | Used only when link_sampling_mode is fixed_length. |
+| `link_sampling_fixed_n_pixels` | `int` | `10` | `param` | - | Pixel-count threshold for fixed_n_pixels sampling mode. | Used only when link_sampling_mode is fixed_n_pixels. |
+| `link_sampling_min_nodes` | `int` | `2` | `param` | - | Minimum sampled nodes required for fitting a link bearing. | If sampling returns fewer nodes than this, the bearing fit is skipped. |
+| `channel_link_bearing_sample_anchor` | `string` | `upstream_end` | `param` | - | Which end of a compact downstream link to anchor link-bearing sampling. | Allowed values: upstream_end, downstream_end. For channel-link bearing output the upstream_end is a sensible default. |
+
+### Bearing outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_channel_link_bearings` | `bool` | `false` | `switch` | - | Write channel-link bearing output. | Writes one record per analysed compact downstream link. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Format for record-oriented network outputs. | Allowed values: csv, gpkg, flatgeobuf or fgb. Line-based QA layers use qa_write_vector_format. |
+
+### Junction-angle outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_junction_angles` | `bool` | `false` | `switch` | - | Write junction-angle output. | Writes one record per valid two-donor junction. |
+| `write_channel_link_bearing_vectors` | `bool` | `false` | `switch` | - | Write short downstream-pointing visual bearing vectors for analysed links. | This writes one short line per analysed compact downstream link. It is intended as a visual QA layer rather than a full attribute export. |
+| `write_junction_angle_bearing_vectors` | `bool` | `false` | `switch` | - | Write visual bearing vectors for junction-angle analysis. | This writes three short centred line features per analysed junction: donor_1, donor_2, and receiver. It is intended as a visual QA layer. |
+| `qa_write_vector_format` | `string` | `same_as_write_vector_format` | `param` | - | Output format override for line-based QA layers. | Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported. |
+
+### Strahler outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_strahler_channels` | `bool` | `false` | `switch` | - | Write Strahler-channel output. | Writes one record per derived Strahler channel. |
+
+### Tokunaga outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_tokunaga_channels` | `bool` | `false` | `switch` | - | Write Tokunaga-channel output. | Writes the same Strahler-channel geometry but with Tokunaga-focused attributes such as donor order, receiver order, and Tokunaga offset. |
+| `write_tokunaga_channel_data` | `bool` | `false` | `switch` | - | Write Tokunaga channel attributes to CSV. | This is a table-only export with no geometry. |
+| `write_tokunaga_summary_data` | `bool` | `false` | `switch` | - | Write Tokunaga pair counts, offset statistics, and fit summary to CSV. | This is a summary-of-network export, not a geometry export. |
+
+### Junction area-ratio outputs (complement to Tokunaga)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_junction_area_ratio_data` | `bool` | `false` | `switch` | - | Write per-junction drainage-area ratios to CSV. | One row per interior confluence: the ratio r = A_trib/A_main of the two merging tributary drainage areas, plus their Strahler orders. A continuous, high-sample-count complement to order-binned Tokunaga analysis. Output: &lt;write_fname&gt;_junction_area_ratios.csv. |
+| `write_area_scaling_summary` | `bool` | `false` | `switch` | - | Write the drainage-area exceedance exponent beta, P(A &gt; a) ~ a^-beta. | The standard description of how drainage area is partitioned across a network, complementing the junction area ratios: those describe how area splits at one confluence, this describes the resulting distribution. Literature values are ~0.43 for real networks and ~0.45 for Optimal Channel Networks (Rodriguez-Iturbe et al. 1992; Rigon et al. 1996). NOTE lsdtt3 currently measures ~0.54-0.58 on generated OCNs and the gap is unexplained -- read the reported a_min, n_decades and n_used before using the number, and see docs/testing_and_benchmarking.md 8b.1c. Outputs &lt;write_fname&gt;_area_scaling_summary.csv and _area_scaling_curve.csv. |
+| `area_scaling_upper_exclude_decades` | `float` | `1.0` | `param` | `write_area_scaling_summary` | Decades of the largest drainage areas excluded before fitting beta. | The top of the distribution is the finite-size rollover -- no basin can exceed the domain -- and fitting it measures the truncation, not the network. Raise this on small grids, lower it on large ones. |
+| `area_scaling_min_fit_decades` | `float` | `1.5` | `param` | `write_area_scaling_summary` | Minimum decades of drainage area the fitted range must span. | Cutoff selection on its own favours short ranges, because a short segment of any smooth curve looks like a power law. If this cannot be met the result is NaN, which is the correct answer when there is too little range to fit. |
+| `write_junction_area_ratio_summary` | `bool` | `false` | `switch` | - | Write a junction area-ratio distribution summary to CSV. | Mean/median r, the exponential tail rate lambda of x=-ln(r), a Horton area ratio R_A, and a model-dependent Tokunaga-equivalent c=R_A^lambda, with branch-bootstrap confidence intervals. Also writes an area-decade collapse table (&lt;write_fname&gt;_junction_area_ratio_decades.csv). Output: &lt;write_fname&gt;_junction_area_ratio_summary.csv. |
+| `junction_area_ratio_bootstrap` | `int` | `1000` | `param` | - | Number of branch-bootstrap replicates for area-ratio confidence intervals. | Resampling is over non-mainstem tributary branches (the main stem is always retained), the correct unit of independence for nested junctions. 0 disables bootstrapping (CI columns left as nan). |
+| `junction_area_ratio_seed` | `int` | `1` | `param` | - | RNG seed for the area-ratio branch bootstrap. | Fix for reproducible confidence intervals. |
+
+### Junction centre-of-mass bearing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_junction_centre_of_mass_bearings` | `bool` | `false` | `switch` | - | Write the basin centre-of-mass bearing for every junction. | For each junction the basin is defined by the pixel just before the next downstream junction (base level for the outlet junction); this writes the geographic bearing (degrees from North, clockwise) from that outlet to the basin centre of mass, plus the outlet and centre-of-mass coordinates and the basin pixel count. Output: &lt;write_fname&gt;_junction_com_bearings.csv. |
+
+### Complete-basin filtering
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `only_complete_basins` | `bool` | `true` | `param` | - | Restrict junction/bearing/angle analyses to complete basins. | A basin is complete if no pixel in its upslope area is influenced by nodata or the DEM edge. Incomplete (edge-truncated) basins are dropped before computing channel-link bearings, junction angles, and centre-of-mass bearings. Needed for stream-order-based statistics. |
+| `min_basin_pixels` | `int` | `0` | `param` | - | Drop junctions whose upslope basin has fewer than this many pixels. | 0 disables the size filter. Applied alongside only_complete_basins. |
+
+<!-- END GENERATED CLI PARAMETERS -->

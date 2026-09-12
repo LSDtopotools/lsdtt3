@@ -290,3 +290,104 @@ sti_min_valid_depth_cm: 30.0
 sti_ks_unit_scale_to_m_per_day: 1.0
 sti_spr_transform: ln_1_minus_spr
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Threading / routing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. Applies to pit filling, flow routing, and polyfit. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string for north, east, south, west. o = open, n = no-flux, p = periodic, b = forced outlet. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `raster_is_filled` | `bool` | `false` | `switch` | - | Assert that the input raster has ALREADY been pit-filled. | ASKS: has the input already been filled? Filling is REQUIRED for this analysis, so this switch does not choose whether to fill -- it only lets the tool skip filling a surface that is filled already. Setting it true for a DEM that still contains pits gives BAD routing, not different routing. Do not confuse this with fill_before_routing, which asks whether to fill at all. |
+
+### DEM preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed by pit filling. | Used only when raster_is_filled is false. Passed to fill_pits() to gently enforce downstream descent. |
+
+### MFD options
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `mfd_exponent` | `float` | `1.0` | `param` | - | Slope-weighting exponent for MFD flow partitioning. | Quinn et al. (1991) use 1.0; Freeman (1991) suggest 1.1. Only used when write_mfd_drainage_area_raster is true or twi_drainage_area_method is MFD. |
+
+### Flow routing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `build_flow_s_vector` | `bool` | `true` | `param` | - | Build the D8 s-vector during flow routing. | The s-vector stores each cell's upslope set as a contiguous interval, which makes is_upslope_of an O(1) test and is what chi analysis, basin summaries, source finding and the cosmogenic routines rely on. It also costs about 57 percent of the D8 build (~106 ms of ~186 ms on a 1000x1000 tile) and roughly 24 bytes per cell of the flowinfo object's ~43. Drainage area does NOT need it: accumulating over the topological order produces a bit-identical raster for less work. Set false when drainage area is all you want, or to measure lsdtt3 against tools that build no equivalent structure. Ignored, with a warning, when another requested output needs it. |
+
+### Drainage area outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_d8_drainage_area_raster` | `bool` | `false` | `switch` | - | Write a D8 drainage area raster. | Uses lsdtt_flowinfo (D8 single-receiver routing). Area is in square map units (m^2 for projected CRS). |
+| `write_dinf_drainage_area_raster` | `bool` | `false` | `switch` | - | Write a D-infinity drainage area raster. | Uses Tarboton (1997) D-infinity routing via lsdtt_flowgraph_cpu. Distributed flow gives smoother hillslope area estimates than D8. |
+| `write_mfd_drainage_area_raster` | `bool` | `false` | `switch` | - | Write a multiple-flow-direction (MFD) drainage area raster. | Uses Quinn et al. (1991) / Freeman (1991) MFD routing via lsdtt_flowgraph_cpu. Area is partitioned among all downslope neighbours weighted by slope^mfd_exponent. |
+
+### Topographic Wetness Index
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_twi_raster` | `bool` | `false` | `switch` | - | Write a Topographic Wetness Index (TWI) raster. | TWI = ln( (A / pixel_area) / slope ), where A is the upstream drainage area (m^2), pixel_area = cell_size^2, and slope is the gradient magnitude (m/m) from a local quadratic fit. Only valid where area &gt; 0 and slope &gt; 0. |
+| `twi_drainage_area_method` | `string` | `Dinf` | `param` | `write_twi_raster` | Flow routing method used to compute drainage area for TWI. | Allowed values: Dinf (D-infinity) or MFD. D-infinity (default) is generally preferred for hillslope TWI. |
+| `twi_window_radius_metres` | `float` | `100.0` | `param` | `write_twi_raster` | Polyfit window radius (metres) for slope computation in TWI. | Passed to direct_polyfit(). Larger values smooth out local roughness; smaller values capture fine-scale slope variation. |
+
+### Soil Topographic Index (STI)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_sti_raster` | `bool` | `false` | `switch` | - | Write STI raster using the ln(Ks*D) denominator term. | Output file: &lt;write_fname&gt;_sti.tif. Requires clipped soil and land-use vector overlays and the SSKIB Ksat horizon CSV. |
+| `write_sti_proxy_raster` | `bool` | `false` | `switch` | - | Write STI proxy raster using a runoff-based SPR denominator term. | Output file: &lt;write_fname&gt;_sti_proxy.tif. Uses SERIES_SPR.csv joined by normalised series code. |
+| `write_sti_intermediate_rasters` | `bool` | `false` | `switch` | - | Write STI debugging rasters (coded series, coded land use, term, valid mask). | Useful for checking joins and nodata coverage. |
+| `write_sti_lookup_csv` | `bool` | `false` | `switch` | - | Write per-series/land-use lookup diagnostics CSV. | CSV fields: series_code, land_use, n_profiles, ln_kd_median, spr_prc, spr_term, source. |
+| `sti_resample_to_1m_before_calculation` | `bool` | `false` | `switch` | - | Resample DEM to 1 m (cubic) before all calculations in this run. | When true, the input raster is GDAL-warped to 1 m spacing using cubic resampling before pit filling/flow/STI. Uses lsdtt reproject/warp machinery and writes the resampled raster to write_path. |
+| `write_sti_95th_percentile_rasters` | `bool` | `false` | `switch` | - | Write STI threshold rasters keeping only the top 5% of values. | After each requested STI output is computed, evaluates the 95th percentile over valid pixels and writes a companion raster where only pixels &gt;= P95 are retained; all others are set to nodata. Outputs: &lt;write_fname&gt;_sti_p95.tif and/or &lt;write_fname&gt;_sti_proxy_p95.tif. |
+| `write_sti_p95_jenks_rasters` | `bool` | `false` | `switch` | - | Write Jenks-classified STI category rasters from STI P95 outputs. | Runs Jenks natural breaks on valid values in each P95 raster and writes class rasters with IDs 1..K. Requires write_sti_95th_percentile_rasters=true. |
+| `sti_p95_jenks_n_classes` | `int` | `5` | `param` | `write_sti_p95_jenks_rasters` | Number of Jenks classes for STI P95 categorisation. | Used when write_sti_p95_jenks_rasters is true. If there are fewer distinct occupied histogram bins than requested classes, the effective number of classes is reduced automatically. |
+| `sti_p95_jenks_max_histogram_bins` | `int` | `2048` | `param` | `write_sti_p95_jenks_rasters` | Maximum histogram bins used by Jenks fitting on P95 rasters. | Higher values better preserve fine value structure but increase fit time. Used when write_sti_p95_jenks_rasters is true. |
+
+### Connectivity index (Cavalli et al. 2013)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_connectivity_raster` | `bool` | `false` | `switch` | - | Write the sediment connectivity index IC = log10(D_up / D_down). | Follows Cavalli et al. (2013). D8 routing is always used for D_up and D_down path calculations. The area raster method is controlled by connectivity_drainage_area_method. |
+| `connectivity_drainage_area_method` | `string` | `d8` | `param` | - | Flow routing method for the drainage area fed into D_up. | Allowed values: d8, dinf, mfd. D8 is the simplest; dinf and mfd give smoother hillslope area estimates. D8 routing is always used for the upslope mean and downstream path computations. |
+| `connectivity_area_threshold_m2` | `float` | `1e6` | `param` | - | Map drainage-area threshold in square metres defining channel / sink pixels. | This remains total map area in m^2 and is not a contributing-pixel or specific-area threshold. Pixels at or above it are treated as channels. D_down accumulation stops when the flow path reaches a channel. |
+| `connectivity_window_radius_metres` | `float` | `100.0` | `param` | - | Moving-window radius (metres) for slope and roughness computation. | Used for the polyfit slope and for the roughness metric (MADk2 or IQR of residuals). Square window always used. |
+| `connectivity_slope_method` | `string` | `polyfit_direct` | `param` | - | Method for computing slope used in IC. | Allowed values: polyfit_direct (fast, square window, no FFTW required), wavelet (FFT-based, requires FFTW). Both fit a local quadratic surface; slope magnitude = sqrt(dz/dx^2 + dz/dy^2). |
+| `connectivity_roughness_method` | `string` | `madk2` | `param` | - | Roughness metric used to compute the W weighting factor. | Allowed values: madk2 (Median Absolute Deviation of k2 differences, Trevisani &amp; Guth 2025 - default), iqr_residual (IQR of polyfit residuals, square window). W = max(1 - R/R_max, 0.001). |
+| `write_height_above_channel_raster` | `bool` | `false` | `switch` | - | Write a height-above-channel raster. | For each pixel: elevation difference to the nearest downstream channel pixel along the D8 flow path. Channel pixels are those whose D8 contributing-pixel count &gt;= threshold_contributing_pixels. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Output format
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_output_format` | `string` | `cog` | `io` | - | Output format for all raster outputs. | Allowed values: cog, gtiff, same_as_input. |
+
+<!-- END GENERATED CLI PARAMETERS -->

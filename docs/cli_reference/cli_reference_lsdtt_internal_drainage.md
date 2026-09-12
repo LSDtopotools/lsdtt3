@@ -10,7 +10,7 @@ routed away through a saddle that does not exist in the landscape. This tool
 treats the depression as the terminus it really is.
 
 For a complete worked example on a real dataset, including the human review step,
-see [Worked example: supraglacial moulins in Greenland](../internal_drainage_workflow.md).
+The examples below show the complete review and routing workflow.
 For the sink detectors and the graph machinery behind them, see
 [Flow routing](../flow_routing.md).
 
@@ -274,3 +274,106 @@ prints the same information.
 | `write_sink_punched_raster` | bool | `false` | Write punched DEM in hole mode. |
 | `write_sink_stats_csv` | bool | `true` | Write joined sink statistics. |
 | `write_vector_spatial_index` | bool | `false` | Build vector spatial indices. |
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Workflow
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `internal_drainage_stage` | `string` | `detect` | `switch` | - | Workflow stage. | detect writes candidates; route consumes reviewed candidates; both runs without review. |
+
+### Detection
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `sink_detection_algorithm_choice` | `string` | `fill_difference` | `switch` | - | Sink detector. | fill_difference (default) takes each connected patch that filling would raise as one sink: robust, fast, and what the published Greenland work used. depression_hierarchy additionally resolves NESTING, so a lake containing several hollows becomes a tree rather than one patch, and it reports parent_sink_id, hierarchy_level and true depression volume. Use it for genuinely nested terrain such as playas, karst or quarry benches. RISK: on rough surfaces every innermost hollow is tiny, so combining it with sink_leaves_only and a min_pixels_in_patch threshold can filter out EVERY sink and report nothing at all. |
+| `min_pixels_in_patch` | `int` | `1` | `param` | - | Minimum sink pixels. | Legacy-compatible minimum depression size. |
+| `min_sink_depth` | `float` | `0.0` | `param` | - | Minimum sink depth. | Reject shallower candidates. |
+| `min_sink_area` | `float` | `0.0` | `param` | - | Minimum depression area. | Square metres. |
+| `min_sink_volume` | `float` | `0.0` | `param` | - | Minimum depression volume. | Cubic metres. |
+| `sink_leaves_only` | `bool` | `true` | `switch` | - | Emit one sink per innermost closed hollow. | A large lake can contain several smaller closed hollows. true returns each innermost hollow, meaning one with nothing nested inside it; false also returns enclosing depressions, which may share pit cells and must be reviewed before routing. |
+
+### Routing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `sink_mode` | `string` | `forced_outlet` | `switch` | - | Sink routing mode. | forced_outlet is non-destructive; nodata_hole reproduces legacy routing. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Flow boundaries. | Phase 4 supports open boundaries only for sink-seeded filling. |
+| `upslope_tagging_distance` | `float` | `1e12` | `param` | - | Tagging distance. | Maximum upstream flow distance from each sink in metres. |
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Fill slope. | Minimum gradient imposed while preserving retained sinks. |
+| `priority_flood_queue` | `string` | `binary` | `param` | - | Priority-Flood queue. | binary (default) or radix. Used for retained-sink and punched-sink routing. |
+| `breach_before_fill` | `bool` | `false` | `switch` | - | Breach before filling (currently rejected). | Breach before filling (currently rejected). |
+
+### Review
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `sink_candidate_fname` | `string` | - | `input` | `internal_drainage_stage` | Reviewed candidate file. | Required for route; CSV, FlatGeobuf, or GeoPackage. |
+| `sink_candidate_input_format` | `string` | `same_as_extension` | `param` | - | Candidate format. | same_as_extension, csv, flatgeobuf, or gpkg. |
+| `sink_candidate_layer_name` | `string` | - | `param` | - | Candidate layer name. | Optional layer name for multi-layer GeoPackages. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_output_format` | `string` | `cog` | `param` | - | Raster output format. | cog, gtiff, or same_as_input. PNG is rejected because it rescales analytical labels and values. |
+| `write_vector_format` | `string` | `flatgeobuf` | `param` | - | Vector output format. | flatgeobuf is recommended; gpkg is supported with a filesystem warning. |
+| `write_sink_candidate_points` | `bool` | `true` | `switch` | - | Write candidate point vector. | Write candidate point vector. |
+| `write_sink_candidate_csv` | `bool` | `true` | `switch` | - | Write candidate CSV. | Write candidate CSV. |
+| `write_sink_depression_polygons` | `bool` | `true` | `switch` | - | Write candidate depression polygons. | Write candidate depression polygons. |
+| `write_sink_depression_csv` | `bool` | `false` | `switch` | - | Write depression attribute CSV. | Write depression attribute CSV. |
+| `write_accepted_sink_points` | `bool` | `true` | `switch` | - | Write accepted point vector. | Write accepted point vector. |
+| `write_accepted_sink_csv` | `bool` | `true` | `switch` | - | Write accepted CSV. | Write accepted CSV. |
+| `write_accepted_depression_polygons` | `bool` | `true` | `switch` | - | Write accepted depression polygons. | Write accepted depression polygons. |
+| `write_sink_basin_polygons` | `bool` | `false` | `switch` | - | Write tagged basin polygons. | Write tagged basin polygons. |
+| `write_sink_punched_raster` | `bool` | `false` | `switch` | - | Write punched DEM in hole mode. | Write punched DEM in hole mode. |
+| `write_sink_id_raster` | `bool` | `true` | `switch` | - | Write routing sink labels. | Write routing sink labels. |
+| `write_sink_drainage_area_raster` | `bool` | `true` | `switch` | - | Write per-cell contributing area. | Write per-cell contributing area. |
+| `write_flow_direction_raster` | `bool` | `false` | `switch` | - | Write ArcMap D8 directions. | Write ArcMap D8 directions. |
+| `write_sink_stats_csv` | `bool` | `true` | `switch` | - | Write joined sink statistics. | Write joined sink statistics. |
+| `write_vector_spatial_index` | `bool` | `false` | `switch` | - | Build vector spatial indices. | Build vector spatial indices. |
+
+### Run control
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Thread count. | 0 uses available threads. |
+
+### Chi
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `m_over_n` | `float` | `0.45` | `param` | `calculate_sink_chi` | Chi theta. | Chi is descriptive for multi-elevation moulins, not an erosion-rate proxy. |
+| `chi_A0` | `float` | `1.0` | `param` | `calculate_sink_chi` | Reference drainage area A0 for the chi integration (m2). | Positive reference area in square metres. LEAVE THIS AT 1.0 UNLESS YOU KNOW WHY YOU ARE CHANGING IT: a chi-elevation gradient equals the channel steepness index k_sn only when A0 = 1 m2, and any other value silently rescales it by A0^(m/n). |
+| `calculate_sink_chi` | `bool` | `false` | `switch` | - | Calculate full-raster sink-aware chi. | Calculate full-raster sink-aware chi. |
+| `write_chi_raster` | `bool` | `true` | `switch` | - | Write sink-aware chi raster. | Write sink-aware chi raster. |
+
+### Channels
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `extract_sink_channel_networks` | `bool` | `false` | `switch` | - | Extract channels in sink basins. | Extract channels in sink basins. |
+| `write_sink_channel_lines` | `bool` | `true` | `switch` | - | Write sink channel lines. | Write sink channel lines. |
+| `write_sink_channel_nodes_csv` | `bool` | `true` | `switch` | - | Write sink channel nodes. | Write sink channel nodes. |
+| `write_sink_junctions` | `bool` | `false` | `switch` | - | Write sink junction points. | Write sink junction points. |
+
+<!-- END GENERATED CLI PARAMETERS -->

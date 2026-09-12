@@ -1,0 +1,16 @@
+# Pure old-key transfer: every Phase 5 alias is nondefault and canonical-free.
+write_path: __WRITE_PATH__
+write_fname: lemlegacy5
+nrows: 9
+ncols: 6
+grid_resolution: 5
+initial_surface_type: red_noise
+noise_target_stddev: 0.25
+hillslope_implicit_picard_tol: 0.0002
+hillslope_implicit_error_tol: 0.0003
+steady_state_tolerance_dz_m: 0.004
+incision_threshold_area: 12.5
+channel_mask_threshold_area: 8.5
+random_seed: 33
+number_of_iterations: 0
+write_output_format: gtiff

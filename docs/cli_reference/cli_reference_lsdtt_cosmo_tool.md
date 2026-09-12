@@ -552,3 +552,94 @@ For the LSDn route use `muon_scheme: cronusEmulatorLSDn` with
 `scaling_scheme: lsdn` **and** `self_consistent_age: true` — see the
 `self_consistent_age` row above for why the fixed-age variant will not
 reproduce v3.
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### CRN physics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `nuclide` | `string` | `Be10` | `param` | - | Nuclide to use for erosion rate inversion. | Allowed values: Be10, Al26, C14. |
+| `muon_scheme` | `string` | `BraucherBorchers` | `param` | - | Muon production parameter scheme. | Allowed values: BraucherBorchers, Braucher, Granger, Schaller, newCRONUS, cronusEmulatorSt, cronusEmulatorLSDn. The cronusEmulator schemes fit lsdtt3's three muon pathways to the CRONUS v3 tabulated model-1A muon inventory; use them when the goal is agreement with the CRONUS v3 online calculator. They are pressure-dependent (a pressure raster is computed automatically) and nuclide-specific. Match cronusEmulatorSt with scaling_scheme: stone and cronusEmulatorLSDn with scaling_scheme: lsdn. |
+| `scaling_scheme` | `string` | `stone` | `param` | - | Production-rate scaling scheme. | stone = Stone (2000)/Lal, the lsdtt3 default and the CAIRN/OCTOPUS scheme. lsdn = Lifton, Sato &amp; Dunai (2014) nuclide-specific scaling, interpolated from the LSDn2015 scaling grids; requires the LSDn grids in crn_parameters.nc and supports Be10, Al26 and C14 only. Both schemes are evaluated per pixel, including when sample_age_yr &gt; 0. muon_scheme is unaffected: LSDn is a spallation scaling and the muon pathways receive it through the same Vermeesch redistribution as Stone. |
+| `rock_density_kg_m3` | `float` | `2650` | `param` | - | Rock (bulk) density in kg/m3. | Used to convert effective erosion rate (g/cm2/yr) to mm/kyr and mm/yr. |
+
+### Atmosphere and palaeomagnetic correction
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `crn_nc_fname` | `string` | - | `param` | - | Path to crn_parameters.nc (ERA40 grids + Muscheler VDM record). | For the ERA40 atmosphere and paleomagnetic correction. Leave empty to use the crn_parameters.nc bundled with lsdtt3 (found automatically); if that is not present either, the standard (SLHL) atmosphere is used with no correction. |
+| `sample_age_yr` | `float` | `0` | `param` | - | Sample exposure age in years (yr BP). Drives the time-integrated production correction; what it selects depends on scaling_scheme. | Set &gt; 0 to apply a time-integrated correction; requires crn_nc_fname. Default 0 = no correction (modern field). Under scaling_scheme=stone this is the Muscheler VDM Stone/Lal paleomagnetic correction. Under scaling_scheme=lsdn it instead drives the duration-weighted average of LSDn production over the Pavon-Carrasco geomagnetic record (Holocene moving paleopole, then a GAD dipole record to ~20 Ma), so it is longitude-dependent as well as latitude-dependent. NOTE: "now" is assumed to be 2010 (the reference year of the packed record); lsdtt3 has no sample-collection-year input yet, so no (collection year - 2010) shift is applied. That offset is at most ~16 yr against records of 1e2-1e7 yr and is therefore negligible, but it IS an assumption, not an exact treatment. |
+| `self_consistent_age` | `bool` | `false` | `param` | - | Iterate the sample age to the erosional integration timescale t = Gamma_sp/epsilon instead of holding it at sample_age_yr. This is the CRONUScalc / Balco v3 convention, and it is what published LSDn rates are computed with. | The nuclide inventory in an eroding column is accumulated over roughly one attenuation length of erosion, tau = Gamma_sp/epsilon (Gamma_sp = 160 g/cm2 in every muon scheme lsdtt3 ships), so the geomagnetic field the sample actually integrated is the field over that window, not the modern field. But tau depends on epsilon, which is the unknown, so the two are solved together: invert at sample_age_yr, form t = Gamma_sp/epsilon, rebuild production, re-invert, repeat until epsilon stops moving. Off by default, because it changes the meaning of the reported rate and because it costs one production-raster rebuild per iteration PER SAMPLE (the age, hence the whole raster, differs sample to sample). Typically converges in 2-4 iterations. With scaling_scheme=lsdn on a large DEM this is the dominant cost of a run. Matters most where the field departed furthest from modern, i.e. at low latitude and for slowly eroding samples with long tau; at 20 ka the effect on the inverted rate runs to ~10 %. sample_age_yr is then only the starting guess (0 = start from the modern field). |
+| `self_consistent_age_tolerance` | `float` | `0.001` | `param` | - | Relative convergence tolerance on the erosion rate for self_consistent_age. | Iteration stops when \|eps_new - eps_old\|/eps_new falls below this. The default 1e-3 is well inside the inversion solver's own convergence tolerance (~1e-3 round-trip), so tightening it buys precision the forward model cannot deliver. Ignored unless self_consistent_age: true. |
+| `self_consistent_age_max_iter` | `int` | `10` | `param` | - | Maximum self_consistent_age iterations before giving up on a sample. | A sample that has not converged by this many iterations is reported with a warning naming the sample and the last two erosion rates, and its LAST iterate is written out -- it is never silently accepted as converged. Ignored unless self_consistent_age: true. |
+| `atmosphere` | `string` | `ERA40` | `param` | - | Atmosphere model: ERA40 (default), NCEP, or standard. | ERA40 = Balco/Lifton ERA40 climatology + latitude-dependent lapse (lsdtt3 default). NCEP = Balco NCEPatm_2 (the atmosphere CAIRN/OCTOPUS use; requires NCEP grids in the crn_parameters.nc). standard = SLHL barometric formula, no climatology. ERA40/NCEP fall back to standard if the required grids are absent. |
+
+### Sample points
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `sample_points_fname` | `string` | `CRN_points.csv` | `param` | - | CSV file containing sample point locations and concentrations. | Must have latitude and longitude columns. |
+| `sample_column_name` | `string` | `sample_name` | `param` | - | Name of the sample identifier column in the points CSV. | Optional; if absent the column is omitted from output. |
+| `concentration_column_name` | `string` | - | `param` | - | Column name for the measured nuclide concentration (atoms/g). | Defaults to &lt;nuclide&gt;_CONC (e.g. Be10_CONC) if not set. |
+| `uncertainty_column_name` | `string` | - | `param` | - | Column name for concentration measurement uncertainty (1-sigma, atoms/g). | Defaults to &lt;nuclide&gt;_uncertainty. If absent, uncertainty bounds are skipped. |
+| `propagate_production_uncertainty` | `bool` | `false` | `switch` | - | If true, add a production-calibration term to external erosion-rate uncertainty. | Added in quadrature with concentration-derived uncertainty using production_rel_sigma. |
+| `production_rel_sigma` | `float` | `0` | `param` | - | Relative 1-sigma production uncertainty (dimensionless, e.g. 0.05 for 5%). | Used only when propagate_production_uncertainty is true. |
+| `propagate_decay_uncertainty` | `bool` | `false` | `switch` | - | If true, add a decay-constant term to external erosion-rate uncertainty. | Added in quadrature with concentration-derived uncertainty using decay_rel_sigma. |
+| `decay_rel_sigma` | `float` | `0` | `param` | - | Relative 1-sigma decay uncertainty term (dimensionless). | Used only when propagate_decay_uncertainty is true. |
+| `standardisation_column_name` | `string` | `standardisation` | `param` | - | Column name for the AMS standardisation name. | If absent, no standardisation correction is applied. |
+
+### Shielding
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `self_shield_eff_thickness` | `float` | `0` | `param` | - | Sample self-shielding as effective depth (g/cm2). | 0 = surface sample. |
+| `snow_shield_eff_thickness` | `float` | `0` | `param` | - | Snow shielding as effective depth (g/cm2). | 0 = no snow correction. Applied uniformly across the basin. |
+| `topo_shield_value` | `float` | `1` | `param` | - | Topographic shielding factor (dimensionless, 0-1). | 1 = no topographic shielding. Applied uniformly across the basin. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_before_routing` | `bool` | `true` | `switch` | - | Choose whether to pit-fill the DEM before building the flow network. | ASKS: should the DEM be filled at all? Filling is OPTIONAL here and this is a genuine analytical choice. True (the default) routes over a pit-free surface. False builds the flow network on the UNFILLED surface, so flow paths terminate at sinks instead of being carried through them. Do not confuse this with raster_is_filled, which is an assertion that the input is already filled. |
+
+### DEM preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `min_slope_for_fill` | `float` | `0.0001` | `param` | - | Minimum imposed slope during pit filling (m/m). | Used only when fill_before_routing is true. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | D8 flow routing boundary conditions. | Four-character string (N,E,S,W): o=open, b=forced outlet. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Channel snapping
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `sample_snap_max_search_radius_pixels` | `int` | `8` | `param` | - | Maximum search radius (pixels) when snapping points to channel. | Expanding square search up to this radius. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_production_raster` | `bool` | `false` | `switch` | - | Write the production scaling raster to a GeoTIFF. | Stone 2000 or LSDn, per scaling_scheme. Filename: &lt;write_fname&gt;_PROD.tif |
+| `write_basin_production_csv` | `bool` | `false` | `switch` | - | Write a per-sample basin-mean production-scaling + mean-elevation CSV (diagnostic; does not affect the inversion). | Filename: &lt;write_fname&gt;_BASIN_PROD.csv |
+| `write_cronus_v3_input` | `bool` | `true` | `switch` | - | Write a CRONUS v3 input file that can be pasted into the online calculator. | Basin-effective pressure + centroid latitude, in the calculator's batch format. Filename: &lt;write_fname&gt;_CRONUS_V3_INPUT.txt |
+
+<!-- END GENERATED CLI PARAMETERS -->

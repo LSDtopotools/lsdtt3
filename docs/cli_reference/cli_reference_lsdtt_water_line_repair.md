@@ -157,3 +157,42 @@ require_mutual_best: true
 
 write_tip_diagnostics: true
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### -
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `input_vector` | `string` | - | `param` | `write_tip_diagnostics` | Input vector dataset (e.g. a GeoPackage) holding both layers. | Required. Resolved against read_path if not absolute. Both layers must share the same CRS (projected metres recommended). |
+| `water_layer` | `string` | - | `param` | `write_tip_diagnostics` | Name of the water LINESTRING layer to repair. | Required. e.g. vml-nr73sw_Water_Line. |
+| `road_layer` | `string` | - | `param` | `write_tip_diagnostics` | Name of the road centreline LINESTRING layer used as the crossing test. | Required. e.g. vml-nr73sw_Road_Centreline. |
+| `road_vector` | `string` | - | `param` | `write_tip_diagnostics` | Dataset holding the road layer, if different from input_vector. | Use when the water network is in one file (e.g. the centreline .fgb) and roads are in another (e.g. the source .gpkg). Empty = same as input_vector. Resolved against read_path if not absolute. |
+| `road_name_field` | `string` | `roadName` | `param` | `write_tip_diagnostics` | Road attribute copied into the bridge crossed_road_name field. | Falls back to 'roadNumber' when this field is empty/absent. |
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Output VECTOR format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. Distinct from the raster key write_output_format used by the raster tools: this CLI writes vectors only. FlatGeobuf is preferred: it is compact, single-layer, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). GeoPackage is an SQLite database, and SQLite cannot take the file locks it needs on a drive mounted into WSL2, so a gpkg write there fails. |
+| `snap_tolerance` | `float` | `0.5` | `param` | `write_tip_diagnostics` | Endpoint coincidence tolerance (m) for degree counting. | Endpoints within this distance are treated as the same node, so shared confluences are not mistaken for dangling tips. |
+| `max_gap_length` | `float` | `25.0` | `param` | `write_tip_diagnostics` | Maximum ROAD-crossing bridge length (m); longer road gaps are rejected. | Roads are narrow, but raise for wide / dual-carriageway crossings or wide verges where a true crossing gap exceeds the default. |
+| `max_nonroad_gap` | `float` | `30.0` | `param` | `write_tip_diagnostics` | Maximum bridge length (m) for gaps NOT associated with a road. | Fills digitising breaks regardless of roads. The STRICT facing/heading gates still apply, so genuine headwaters and parallel streams are not joined. Set 0 to disable non-road bridging. |
+| `max_facing_angle` | `float` | `45.0` | `param` | `write_tip_diagnostics` | Strict tier: max angle (deg) EACH tip's tangent may deviate from the line to its partner. Used for non-road gaps. | Both tips must point toward each other across the gap. |
+| `max_heading_misalignment` | `float` | `50.0` | `param` | `write_tip_diagnostics` | Strict tier: max deviation from anti-parallel (deg) between the two tips' tangents. Used for non-road gaps. | A true continuation has the two outward tangents ~opposite (180 deg). Suppresses bridges between parallel unrelated streams. |
+| `road_max_facing_angle` | `float` | `60.0` | `param` | `write_tip_diagnostics` | Road tier: a road-associated bridge only needs AT LEAST ONE tip to face within this angle (no heading constraint). | The channel kinks at a road crossing so the dangling tip's own tangent is often unreliable; the partner across the road faces well. |
+| `tangent_fit_length` | `float` | `15.0` | `param` | `write_tip_diagnostics` | Inward arc length (m) used to estimate each tip's outward tangent. | Longer values smooth over digitising wiggle near the tip. |
+| `road_intersection_tolerance` | `float` | `10.0` | `param` | `write_tip_diagnostics` | Road-association distance (m): a bridge is 'road-associated' if its connector comes within this distance of a road centreline. | Covers staggered severances where the stub ends sit a few metres off the road. Uses segment-to-segment distance, not just a midpoint test. |
+| `require_mutual_best` | `bool` | `true` | `param` | `write_tip_diagnostics` | Require each tip to be the other's best partner before bridging. | Strongly suppresses spurious bridges; disable only to be more inclusive. |
+| `merge_chains` | `bool` | `false` | `param` | `write_tip_diagnostics` | Dissolve connected chains into single features (NOT yet implemented). | Leave false: keep originals + add bridge lines. Coincident endpoints already make the network topologically continuous downstream. |
+| `calculate_spatial_index` | `bool` | `true` | `io` | - | Build a spatial index when writing the output layer. | Speeds GIS queries; buffers the layer in memory before writing. |
+| `write_tip_diagnostics` | `bool` | `false` | `switch` | - | Write a diagnostic point layer of every dangling tip. | Output: &lt;write_fname&gt;_repair_tips.fgb. Attributes: bridged (1 if the tip was joined), road_dist_m (distance to nearest road), line_index. Use it to see which tips near roads stayed unbridged and why. |
+
+<!-- END GENERATED CLI PARAMETERS -->

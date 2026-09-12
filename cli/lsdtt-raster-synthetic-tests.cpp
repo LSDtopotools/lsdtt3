@@ -439,9 +439,9 @@ int main(int argc, char* argv[])
     };
 
     // -------------------------------------------------------------------------
-    // Help map
+    // Help registry
     // -------------------------------------------------------------------------
-    std::map<std::string, std::vector<std::string>> help_map =
+    const std::vector<std::pair<std::string, std::vector<std::string>>> help_entries =
     {
         {"n_rows",
             {"int","128","Number of rows in the synthetic raster.",""}},
@@ -466,6 +466,22 @@ int main(int argc, char* argv[])
             {"bool","false","Write a blue (high-frequency) noise surface.",""}},
         {"write_diamond_square_surface",
             {"bool","false","Write a fractal diamond-square terrain surface.",""}},
+        {"uniform_min_value",
+            {"float","-1.0","Minimum value of the uniform random surface.",""}},
+        {"uniform_max_value",
+            {"float","1.0","Maximum value of the uniform random surface.",""}},
+        {"red_noise_mean",
+            {"float","0.0","Mean value of the red noise surface.",""}},
+        {"red_noise_stddev",
+            {"float","1.0","Standard deviation of the red noise surface.",""}},
+        {"red_noise_blur_passes",
+            {"int","6","Number of smoothing passes used to make red noise.",""}},
+        {"blue_noise_mean",
+            {"float","0.0","Mean value of the blue noise surface.",""}},
+        {"blue_noise_stddev",
+            {"float","1.0","Standard deviation of the blue noise surface.",""}},
+        {"blue_noise_blur_passes",
+            {"int","6","Number of smoothing passes used to make blue noise.",""}},
         {"write_periodic_wave_surface",
             {"bool","false","Write a periodic cosine-mode test surface.",""}},
         {"write_global_quadratic_surface",
@@ -513,6 +529,10 @@ int main(int argc, char* argv[])
              "0.5 gives Brownian noise; lower = smoother; higher = rougher."}},
         {"diamond_square_initial_scale",
             {"float","1.0","Initial perturbation amplitude for diamond-square.",""}},
+        {"diamond_square_mean",
+            {"float","0.0","Target mean of the diamond-square surface.",""}},
+        {"diamond_square_stddev",
+            {"float","1.0","Target standard deviation of the diamond-square surface.",""}},
         {"diamond_square_parabola_relief",
             {"float","0.0",
              "Peak relief (m) of an N-S parabola superimposed on the "
@@ -701,16 +721,95 @@ int main(int argc, char* argv[])
     };
 
     // -------------------------------------------------------------------------
-    // Help - rendered from the declarations above; no parameter file needed
+    // Attach presentation metadata without duplicating parameter descriptions.
     // -------------------------------------------------------------------------
-    // This CLI declares its help map with brace initialisation, so copy it
-    // into a registry for the help renderer (alphabetical order; the
-    // entries carry no group metadata yet).
     lsdtt::lsdtt_help_registry help_registry;
-    for (const auto& [help_key, help_entry] : help_map)
+    for (const auto& [key, entry] : help_entries)
     {
-        help_registry[help_key] = help_entry;
+        help_registry[key] = entry;
     }
+
+    const auto starts_with = [](const std::string& value, const std::string& prefix)
+    {
+        return value.compare(0, prefix.size(), prefix) == 0;
+    };
+    for (const std::string& key : help_registry.key_order())
+    {
+        std::vector<std::string>& entry = help_registry[key];
+        entry.resize(7);
+        entry[4] = "Domain and output";
+        entry[5] = "param";
+
+        std::string parent;
+        if (starts_with(key, "uniform_") || key == "write_uniform_random_surface")
+        {
+            entry[4] = "Uniform random surface";
+            parent = "write_uniform_random_surface";
+        }
+        else if (starts_with(key, "red_noise_") || key == "write_red_noise_surface")
+        {
+            entry[4] = "Red noise surface";
+            parent = "write_red_noise_surface";
+        }
+        else if (starts_with(key, "blue_noise_") || key == "write_blue_noise_surface")
+        {
+            entry[4] = "Blue noise surface";
+            parent = "write_blue_noise_surface";
+        }
+        else if (starts_with(key, "diamond_square_") || key == "write_diamond_square_surface")
+        {
+            entry[4] = "Diamond-square surface";
+            parent = "write_diamond_square_surface";
+        }
+        else if (starts_with(key, "periodic_") || key == "write_periodic_wave_surface")
+        {
+            entry[4] = "Periodic wave surface";
+            parent = "write_periodic_wave_surface";
+        }
+        else if (starts_with(key, "quadratic_") || key == "write_global_quadratic_surface")
+        {
+            entry[4] = "Global quadratic surface";
+            parent = "write_global_quadratic_surface";
+        }
+        else if (starts_with(key, "terrace_") || starts_with(key, "write_terrace_"))
+        {
+            entry[4] = "Terrace staircase surface";
+            parent = "write_terrace_staircase_surface";
+        }
+        else if (starts_with(key, "fan_") || starts_with(key, "write_alluvial_"))
+        {
+            entry[4] = "Alluvial fan surface";
+            parent = "write_alluvial_fan_surface";
+        }
+        else if (starts_with(key, "strip_") || starts_with(key, "write_hillslope_"))
+        {
+            entry[4] = "Hillslope strip surface";
+            parent = "write_hillslope_strip_surface";
+        }
+        else if (starts_with(key, "test_wavelet_") ||
+                 starts_with(key, "write_true_coefficient_") ||
+                 starts_with(key, "write_wavelet_") || key == "polyfit_lambda_metres")
+        {
+            entry[4] = "Wavelet validation";
+        }
+
+        if (key == "n_threads" || key == "write_output_format")
+        {
+            entry[5] = "io";
+            parent.clear();
+        }
+        else if (starts_with(key, "write_") || starts_with(key, "test_"))
+        {
+            entry[5] = "switch";
+            if (parent == key)
+            {
+                parent.clear();
+            }
+        }
+        entry[6] = parent;
+    }
+
+    // Help is rendered from the declarations above; no parameter file needed.
 
     if (cli_args.help_requested)
     {
@@ -1205,7 +1304,7 @@ int main(int argc, char* argv[])
         // Help file + parameter echo
         // ---------------------------------------------------------------------
         pp.print_help(
-            help_map,
+            help_registry,
             pp.get_write_fname() + "_README",
             k_version,
             k_citation

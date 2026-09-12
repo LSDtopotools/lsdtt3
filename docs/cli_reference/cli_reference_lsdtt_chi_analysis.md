@@ -230,3 +230,130 @@ bootstrap_replicates: 500
 ## References
 
 Mudd, S.M., et al. (2018). A statistical framework to quantify spatial variation in channel gradients using the integral method of channel profile analysis. *Journal of Geophysical Research: Earth Surface*, 123(2), 344–364.
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Threading / routing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string: north, east, south, west. o = open, n = no-flux, p = periodic, b = forced outlet. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `raster_is_filled` | `bool` | `false` | `switch` | - | Assert that the input raster has ALREADY been pit-filled. | ASKS: has the input already been filled? Filling is REQUIRED for this analysis, so this switch does not choose whether to fill -- it only lets the tool skip filling a surface that is filled already. Setting it true for a DEM that still contains pits gives BAD routing, not different routing. Do not confuse this with fill_before_routing, which asks whether to fill at all. |
+
+### DEM preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed by pit filling. | Used only when raster_is_filled is false. |
+
+### Basin outlet input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_fname` | `string` | `NULL` | `param` | - | File of basin outlet points (CSV, FlatGeobuf, or GeoPackage). | If NULL (default), the largest basin outlet in the DEM is used. CSV files must have 'latitude' and 'longitude' columns (EPSG:4326). |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Optional snapping of supplied outlet points to qualifying channel pixels. | Allowed values: none, expanding_square, downstream. |
+| `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for optional outlet snapping. | Total upslope contributing pixels required at the snapped cell. |
+| `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
+
+### Diagnostic data maps
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_chi_data_maps` | `bool` | `false` | `switch` | - | Extract chi networks and print per-node data maps for diagnostic purposes. | Writes nodes (chi, drainage_area, flow_distance, elevation, source_key, basin_key), valid basin outlets, source-head points, and basin polygons. Basin keys are 0-based; source keys increment globally across all basins. Runs before fit_chi_networks so extraction can be verified independently. |
+| `chi_data_maps_write_vector_format` | `string` | `csv` | `param` | - | Output format for chi data map point files. | csv: latitude/longitude in EPSG:4326 (requires raster CRS). gpkg: GeoPackage in raster CRS. flatgeobuf/fgb: FlatGeobuf in raster CRS. Basin polygons are always vector (flatgeobuf fallback when csv requested). |
+| `write_chi_data_map_lines` | `bool` | `false` | `switch` | - | Write chi channels as polylines, one feature per source_key. | Each source_key represents the continuous channel from a headwater source to the basin outlet following the primary-donor (longest-path) convention. Attributes: source_key, basin_key. Only complete basins are written. Keys match those in the chi data map point output. |
+
+### Chi coordinate raster
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_chi_coordinate_raster` | `bool` | `false` | `switch` | - | Write a raster of the chi coordinate for every pixel of every complete basin. | Chi is integrated upstream from each retained basin outlet (chi = 0 at the outlet) across the whole upslope domain, so hillslope pixels get a chi value as well as channel pixels: this is the chi map used for divide-migration and cross-divide chi-contrast analysis. Basins are selected exactly as for the other chi outputs (threshold_contributing_pixels, then min_channel_pixels, then n_largest_basins), except that the completeness filter always runs: basins whose upslope area touches nodata or the DEM edge are never written, and every pixel outside the retained basins is nodata. Uses one m/n value per run (the first value of m_over_n, or of the mn sweep). Output: &lt;write_fname&gt;_chi_coordinate_mn_*.tif in write_output_format. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Source extraction
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `min_channel_pixels` | `int` | `20` | `param` | - | Reject basins whose extracted channel has fewer than this many pixels. | After chi extraction, any basin with fewer than this number of chi network nodes (channel pixels) is discarded before fitting, disorder, and inversion. Very short channels cannot be segmented meaningfully and can destabilise fitting. Set to 0 or 1 to keep all basins. |
+| `n_pixels_move_outlet_upstream` | `int` | `10` | `param` | - | Move interior (non-edge) auto-detected outlets this many pixels upstream. | When no basin_outlet_fname is supplied, outlets are auto-detected. An outlet not on the DEM bounding-box edge drains to interior nodata (e.g. an island coast where the sea is masked); it is walked this many pixels up the main stem so the resulting basin clears the coastal nodata fringe and can pass the completeness test. Set to 0 to disable. |
+| `n_largest_basins` | `int` | `5` | `param` | - | Keep only the N largest complete basins for all chi outputs. | After the min_channel_pixels filter, incomplete basins (upslope area touches the DEM edge / nodata) are dropped and only the N largest remaining complete basins, ranked by total basin pixels (drainage area), are analysed. This applies consistently to data maps, fitting, disorder, and inversion so basin keys stay stable. Set to 0 to keep all complete basins (no size cap). |
+
+### Chi extraction / fitting
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fit_chi_networks` | `bool` | `false` | `switch` | - | Run the piecewise-linear chi-network fitting and disorder sweep. | When false (default) only write_chi_data_maps (if enabled) and the inversion (if enabled) run. Set to true for the full m/n sweep. |
+| `chi_A0` | `float` | `1.0` | `param` | `fit_chi_networks` | Reference drainage area A0 for chi integration (m2). | Chi = integral of (A0/A)^(m/n) ds from the outlet. LEAVE THIS AT 1.0 UNLESS YOU KNOW WHY YOU ARE CHANGING IT. The slope of a chi-elevation profile equals the channel steepness index k_sn ONLY when A0 = 1 m2; for any other A0 the gradient is k_sn scaled by A0^(m/n), so it is a steepness index referenced to that area rather than k_sn itself. The rescaling is silent - the profile looks the same and only the numbers on the axis change - and it is large: A0 = 1e6 m2 at m/n = 0.45 scales every gradient by about 631. Other packages default differently (TopoToolbox's chitransform uses a0 = 1e6), so state A0 explicitly whenever a value is compared across tools or quoted in a paper. |
+| `mn_min` | `float` | `0.3` | `param` | `fit_chi_networks` | Minimum m/n ratio for the disorder sweep. | - |
+| `mn_max` | `float` | `0.6` | `param` | `fit_chi_networks` | Maximum m/n ratio for the disorder sweep. | - |
+| `mn_step` | `float` | `0.02` | `param` | `fit_chi_networks` | Step size for the m/n disorder sweep. | Must be &gt; 0. |
+| `m_over_n` | `string` | - | `param` | `fit_chi_networks` | Optional explicit m/n value(s) for chi extraction and fitting. | Comma-separated list (e.g. 0.45 or 0.35,0.45,0.55). When set, this overrides mn_min/mn_max/mn_step for chi data maps, fitting, and inversion. |
+| `fit_critical_divergence_metres` | `float` | `5.0` | `param` | `fit_chi_networks` | Critical elevation divergence (m) used to split chi-elevation branches. | - |
+
+### Disorder
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_subset_sensitivity` | `bool` | `false` | `switch` | - | Run subset sensitivity analysis on chi disorder. | - |
+| `subset_n_side_branches_per_sample` | `int` | `3` | `param` | - | Number of side branches selected per subset sensitivity sample. | - |
+| `run_jackknife` | `bool` | `false` | `switch` | - | Run jackknife (leave-one-out) analysis on chi disorder. | - |
+| `run_bootstrap` | `bool` | `false` | `switch` | - | Run bootstrap analysis on chi disorder. | - |
+| `bootstrap_replicates` | `int` | `1000` | `param` | - | Number of bootstrap replicates for disorder uncertainty estimation. | - |
+| `bootstrap_sample_full_tributary_count` | `bool` | `true` | `param` | - | Whether each bootstrap replicate samples the full number of side branches. | - |
+| `bootstrap_n_side_branches_per_replicate` | `int` | `3` | `param` | - | Number of side branches per bootstrap replicate. | - |
+| `bootstrap_with_replacement` | `bool` | `true` | `param` | - | Whether bootstrap resampling is done with replacement. | - |
+| `bootstrap_random_seed` | `int` | `5489` | `param` | - | Random seed for bootstrap resampling. | - |
+
+### Inversion
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_inversion` | `bool` | `false` | `switch` | - | Run spatial chi k_sn / u* inversion over the m/n sweep. | Requires Eigen3 at build time. If Eigen3 is not available, this flag is ignored and inversion is skipped with a warning. |
+| `inversion_coarse_cell_size` | `float` | `2000.0` | `param` | - | Cell size (m) of the coarse grid used in chi k_sn inversion. | - |
+| `inversion_roughness_weight` | `float` | `10000.0` | `param` | - | Tikhonov regularisation weight for spatial smoothness. | - |
+| `inversion_diagonal_jitter` | `float` | `1e-8` | `param` | - | Small diagonal perturbation added to the normal equations. | - |
+| `inversion_use_mae_for_model_selection` | `bool` | `true` | `param` | - | Use MAE (true) or RMSE (false) for m/n model selection. | - |
+| `write_inversion_rasters` | `bool` | `false` | `switch` | - | Write u* and support-count rasters for each basin. | - |
+
+### Outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_fit_tables` | `bool` | `true` | `switch` | - | Write chi network fit node and segment tables to CSV. | - |
+| `write_ksn_basin_summary` | `bool` | `true` | `switch` | - | Write a per-basin channel-steepness (k_sn) summary CSV. | One row per fitted basin with the number of segments, number of main-stem segments, total chi length, and mean / median / min / max / chi-weighted-mean k_sn plus main-stem mean and median k_sn. Written once per m/n value tested. Output: &lt;write_fname&gt;_chi_ksn_basin_summary_mn_*.csv. |
+| `write_chi_fit_segment_lines` | `bool` | `false` | `switch` | - | Write fitted chi segments as a vector polyline file. | One polyline feature per piecewise-linear segment. Attributes: basin_index, outlet_flat, segment_id, branch_id, k_sn (dz/dchi), downstream_chi, upstream_chi, downstream_elevation, upstream_elevation, n_nodes. Written once per m/n value tested. |
+| `calculate_spatial_index` | `bool` | `false` | `io` | - | Calculate a spatial index for vector outputs. | Unlike the smaller vector-export CLIs, chi analysis leaves this off by default because its per-m/n outputs can be large. Enabling it speeds up later GIS queries but buffers each layer in memory before writing. |
+| `write_disorder_sample_tables` | `bool` | `false` | `switch` | - | Write detailed disorder sample tables for each m/n value. | - |
+| `write_output_format` | `string` | `cog` | `io` | - | Raster output format for the chi coordinate and inversion rasters. | Allowed values: cog, gtiff, same_as_input. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
+
+<!-- END GENERATED CLI PARAMETERS -->
