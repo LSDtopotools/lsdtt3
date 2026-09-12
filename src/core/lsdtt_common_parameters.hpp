@@ -101,12 +101,12 @@
 //   basin_outlet_* (all five)                     cli/lsdtt-basin-extraction.cpp
 //   polyfit_lambda_metres, polyfit_metrics,
 //   compute_backend                               cli/lsdtt-surface-metrics.cpp
-//   n_rows, n_cols, cell_size_metres              cli/lsdtt-raster-synthetic-tests.cpp
+//   n_rows, n_cols, cell_size_metres              cli/lsdtt-synthetic-surfaces.cpp
 //   random_seed                                   cli/lsdtt-synthetic-networks.cpp
 //   synthetic_crs_wkt, noise_type,
 //   noise_target_stddev_metres                           cli/lsdtt-lem.cpp
 //   noise_relief_metres, diamond_square_roughness,
-//   diamond_square_initial_scale                  cli/lsdtt-raster-synthetic-tests.cpp
+//   diamond_square_initial_scale                  cli/lsdtt-synthetic-surfaces.cpp
 //
 // Two names declared here are NOT yet spelled this way by any CLI, and are
 // deliberate renames that adoption will carry:

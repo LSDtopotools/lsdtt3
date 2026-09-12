@@ -88,7 +88,11 @@ static void print_banner()
         << "|| Citation   : " << k_citation << "\n"
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
-        << "================================================================\n\n";
+        << "================================================================\n"
+        << "Evolves loaded or synthetic topography through geomorphic processes.\n"
+        << "For one-shot surfaces and ground-truth fixtures use\n"
+        << "lsdtt-synthetic-surfaces; for optimised drainage topology use\n"
+        << "lsdtt-synthetic-networks.\n\n";
 }
 
 // -----------------------------------------------------------------------------

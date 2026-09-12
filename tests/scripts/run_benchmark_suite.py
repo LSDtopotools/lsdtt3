@@ -802,7 +802,7 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
 #
 # WHY NOT SYNTHETIC
 #
-# lsdtt-raster-synthetic-tests can generate a diamond-square surface of any
+# lsdtt-synthetic-surfaces can generate a diamond-square surface of any
 # size in ~1.3 s with no network, which is tempting. It is not usable here.
 # Measured depression density (fraction of cells a no-epsilon fill raises,
 # RichDEM, 256^2):

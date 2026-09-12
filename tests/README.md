@@ -97,7 +97,7 @@ CSV. Generated in C++, never committed.
 ## lsdtt-lem
 
 `smoke_lem_strip_fixture` generates the hillslope strip through
-`lsdtt-raster-synthetic-tests`; `smoke_lem_roering_implicit_strip` then runs
+`lsdtt-synthetic-surfaces`; `smoke_lem_roering_implicit_strip` then runs
 `lsdtt-lem` with `hillslope_model: roering_implicit` on it and asserts the
 **converged steady state** — peak 4.9429 m and mean 3.2719 m, both two-sided.
 

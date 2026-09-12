@@ -293,13 +293,17 @@ lsdtt-drainage-analysis     my_params.driver
 
 **Detailed parameter references for each program are in `docs/`.**
 
+> **Command rename:** `lsdtt-synthetic-surfaces` replaces
+> `lsdtt-raster-synthetic-tests`. The old executable is not retained; update
+> scripts and reinstall lsdtt3 when upgrading.
+
 ### DEM preparation
 
 | Program | Description | Reference |
 |---|---|---|
 | `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/cli_reference/cli_reference_lsdtt_fetch_raster.md` |
 | `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | `docs/cli_reference/cli_reference_lsdtt_raster_preprocessing.md` |
-| `lsdtt-raster-synthetic-tests` | Generates synthetic test surfaces (random, fractal, diamond-square, mountain-range geometries) for algorithm validation. | — |
+| `lsdtt-synthetic-surfaces` | Generates one-shot analytical, stochastic, and ground-truth fixture surfaces for algorithm validation. | [reference](docs/cli_reference/cli_reference_lsdtt_synthetic_surfaces.md) |
 
 ### Surface analysis
 

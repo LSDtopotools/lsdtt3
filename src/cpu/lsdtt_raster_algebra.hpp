@@ -415,7 +415,7 @@ raster_jenks_classification_result classify_jenks_categories(
 // statistic is NaN rather than 0, so an empty comparison cannot be mistaken for
 // a perfect one.
 //
-// Written for lsdtt-raster-synthetic-tests, comparing a fitted surface against
+// Written for lsdtt-synthetic-surfaces, comparing a fitted surface against
 // an analytic one, but there was never anything synthetic-specific about it and
 // the benchmarking work wants exactly this for DEM-vs-DEM comparison.
 // -----------------------------------------------------------------------------

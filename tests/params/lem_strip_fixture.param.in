@@ -3,7 +3,7 @@
 #
 # Test domains are generated in C++, never in Python: this is the strip
 # generator in lsdtt_raster_synthetic_surfaces_cpu, driven through
-# lsdtt-raster-synthetic-tests.
+# lsdtt-synthetic-surfaces.
 #
 # 11 x 101 at dx = 1 m, channels at both end columns (cols 0 and 100), divide at
 # col 50, and a FLAT initial profile. Flat matters: the LEM run has to grow the

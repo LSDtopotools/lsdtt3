@@ -19,12 +19,13 @@ import sys
 
 _DRIVERS = frozenset(
     {
-        "lsdtt-raster-preprocessing", "lsdtt-raster-synthetic-tests",
+        "lsdtt-raster-preprocessing", "lsdtt-synthetic-surfaces",
         "lsdtt-synthetic-networks", "lsdtt-surface-metrics",
         "lsdtt-channel-extraction", "lsdtt-internal-drainage",
         "lsdtt-hillslope-channel-coupling", "lsdtt-drainage-analysis",
         "lsdtt-feature-finder", "lsdtt-mountain-front", "lsdtt-basin-stats",
         "lsdtt-basin-extraction", "lsdtt-flat-surface-finder",
+        "lsdtt-fluvial-surfaces",
         "lsdtt-valley-centreline", "lsdtt-graphflood",
         "lsdtt-channel-network-analysis", "lsdtt-cross-sections",
         "lsdtt-stream-burning", "lsdtt-water-line-repair",

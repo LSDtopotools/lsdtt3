@@ -58,7 +58,7 @@ static void print_banner()
 {
     std::cout
         << "=========================================================\n"
-        << "|| Welcome to lsdtt3 synthetic networks                ||\n"
+        << "|| Welcome to lsdtt-synthetic-networks                 ||\n"
         << "|| Optimal Channel Networks with tunable branching     ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
@@ -66,7 +66,11 @@ static void print_banner()
         << "|| Citation   : " << k_citation << "\n"
         << "|| -v or --version : full lsdtt3 release version\n"
         << "|| -h              : help explaining the parameters\n"
-        << "=========================================================\n\n";
+        << "=========================================================\n"
+        << "Creates optimised drainage networks and chi-based topography.\n"
+        << "For one-shot surfaces and ground-truth fixtures use\n"
+        << "lsdtt-synthetic-surfaces; for process-driven landscape evolution\n"
+        << "use lsdtt-lem.\n\n";
 }
 
 // =============================================================================

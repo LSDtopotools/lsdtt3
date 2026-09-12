@@ -42,6 +42,7 @@ core lsdtt-ridgeline-analysis
 core lsdtt-stream-burning
 core lsdtt-swath-profile
 core lsdtt-synthetic-networks
+core lsdtt-synthetic-surfaces
 core lsdtt-valley-centreline
 core lsdtt-lem
 core lsdtt-bearing-comparison
