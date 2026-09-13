@@ -3,12 +3,19 @@
 """Compile Python examples and reject calls to unknown lsdtt3 exports."""
 
 import ast
+import argparse
 import json
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run", action="store_true")
+    args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "api" / "public_api.json").read_text(encoding="utf-8"))
     decisions = json.loads((root / "api" / "decisions.json").read_text(encoding="utf-8"))
@@ -107,6 +114,12 @@ def main() -> int:
             "invalid example API usage\n"
             f"unknown: {unknown}\nstale: {stale}\ninvalid keywords: {invalid_keywords}"
         )
+    if args.run:
+        with tempfile.TemporaryDirectory(prefix="lsdtt3-api-example-") as work:
+            subprocess.run(
+                [sys.executable, str(root / "examples" / "api_smoke.py")],
+                cwd=work, check=True,
+            )
     print("Python examples compile and use known public exports")
     return 0
 

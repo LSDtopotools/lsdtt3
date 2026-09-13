@@ -84,13 +84,10 @@ jobs:
           python -m pip install \
             pytest \
             mkdocs==1.6.1 \
-            mkdocs-material==9.7.7 \
-            mkdocstrings==1.0.6 \
-            mkdocstrings-python==2.0.7
+            mkdocs-material==9.7.7
           python python_bindings/tools/check_api_naming.py
-          python python_bindings/tools/generate_documentation_exclusions.py --check
-          python python_bindings/tools/generate_documentation_signature_contract.py --check
-          python python_bindings/tools/check_api_examples.py
+          python python_bindings/tools/check_api_examples.py --run
+          python python_bindings/tools/generate_api_reference.py --check
           PYTHONPATH=./python_bindings/src mkdocs build --strict
 
   build-wheels:

@@ -150,7 +150,6 @@ mkdocs = "*"
 mkdocs-material = "*"
 
 [feature.docs.pypi-dependencies]
-mkdocstrings-python = ">=1.18"
 nanobind = ">=2.0"
 scikit-build-core = ">=0.10"
 

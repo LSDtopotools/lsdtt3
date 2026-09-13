@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import importlib
 import inspect
 import json
@@ -57,6 +56,10 @@ def first_doc_line(value: Any) -> str:
     return normalize_text(doc.splitlines()[0]) if doc else ""
 
 
+def full_doc(value: Any) -> str:
+    return normalize_text(inspect.getdoc(value) or "")
+
+
 def callable_signatures(value: Any) -> list[dict[str, Any]]:
     native = inspect.unwrap(value)
     nb_signatures = getattr(native, "__nb_signature__", None)
@@ -90,7 +93,7 @@ def public_class_members(cls: type[Any]) -> list[dict[str, Any]]:
                 {
                     "name": name,
                     "kind": "property",
-                    "doc": first_doc_line(value),
+                    "doc": full_doc(value),
                     "signatures": [],
                 }
             )
@@ -107,21 +110,11 @@ def public_class_members(cls: type[Any]) -> list[dict[str, Any]]:
                 {
                     "name": name,
                     "kind": kind,
-                    "doc": first_doc_line(bound_value),
+                    "doc": full_doc(bound_value),
                     "signatures": signatures,
                 }
             )
     return members
-
-
-def facade_symbols(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return sorted(
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-        and not node.name.startswith("_")
-    )
 
 
 def build_manifest() -> dict[str, Any]:
@@ -152,7 +145,7 @@ def build_manifest() -> dict[str, Any]:
                 {
                     "name": name,
                     "kind": "class",
-                    "doc": first_doc_line(value),
+                    "doc": full_doc(value),
                     "members": members,
                     "signatures": class_signatures,
                 }
@@ -162,7 +155,7 @@ def build_manifest() -> dict[str, Any]:
                 {
                     "name": name,
                     "kind": "function",
-                    "doc": first_doc_line(value),
+                    "doc": full_doc(value),
                     "members": [],
                     "signatures": callable_signatures(value),
                 }
@@ -172,25 +165,18 @@ def build_manifest() -> dict[str, Any]:
                 {
                     "name": name,
                     "kind": "value",
-                    "doc": first_doc_line(value),
+                    "doc": full_doc(value),
                     "members": [],
                     "signatures": [],
                 }
             )
 
-    docs_symbols = facade_symbols(package_root / "src" / "lsdtt3" / "_api_docs.py")
-    export_set = set(export_names)
     return {
         "schema_version": 1,
         "package": "lsdtt3",
         "signature_source": "nanobind __nb_signature__ v3",
         "export_count": len(exports),
         "exports": exports,
-        "documentation_facade": {
-            "documented": sorted(export_set.intersection(docs_symbols)),
-            "missing": sorted(export_set.difference(docs_symbols)),
-            "non_public": sorted(set(docs_symbols).difference(export_set)),
-        },
         "console_scripts": sorted(project["project"]["scripts"]),
         "declared_drivers": sorted(importlib.import_module("lsdtt3._cli")._DRIVERS),
     }
@@ -201,7 +187,7 @@ def validate_decisions(manifest: dict[str, Any], decisions: dict[str, Any]) -> N
         "schema_version", "api_release_status", "release_evidence",
         "approved_name_differences", "completed_hard_renames",
         "approved_default_differences", "deprecated_names",
-        "documentation_coverage", "known_runtime_test_failures", "optional_features",
+        "known_runtime_test_failures", "optional_features",
     }
     if set(decisions) != required:
         raise RuntimeError(
@@ -268,16 +254,6 @@ def validate_decisions(manifest: dict[str, Any], decisions: dict[str, Any]) -> N
         expected = {"symbol", "old", "new", "introduced", "earliest_removal"}
         if set(decision) != expected or decision["symbol"] not in exports:
             raise RuntimeError("deprecated-name decision has an invalid or stale schema")
-    coverage = decisions["documentation_coverage"]
-    actual_coverage = manifest["documentation_facade"]
-    if coverage["documented_count"] != len(actual_coverage["documented"]):
-        raise RuntimeError("stale documented_count in decision manifest")
-    if coverage["missing_count"] != len(actual_coverage["missing"]):
-        raise RuntimeError("stale missing_count in decision manifest")
-    if coverage["non_public"] != actual_coverage["non_public"]:
-        raise RuntimeError("stale non_public documentation decision")
-    if not set(coverage["excluded_symbols"]).issubset(actual_coverage["missing"]):
-        raise RuntimeError("documentation exclusions contain a stale symbol")
     feature_names = set()
     for feature in decisions["optional_features"]:
         if not {"name", "symbols"}.issubset(feature) or feature["name"] in feature_names:

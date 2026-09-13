@@ -70,13 +70,6 @@
     {"symbol": "find_flat_surfaces", "old": "relief_window_pixels", "new": "relief_window_side_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "extract_valley_centrelines", "old": "fallback_valley_hand_metres", "new": "valley_mask", "introduced": "next minor", "earliest_removal": "following minor"}
   ],
-  "documentation_coverage": {
-    "policy": "incomplete Phase 0 baseline; exact coverage required in Phase 1",
-    "documented_count": 65,
-    "missing_count": 142,
-    "non_public": [],
-    "excluded_symbols": []
-  },
   "known_runtime_test_failures": [],
   "optional_features": [
     {"name": "eigen", "symbols": ["ChiInversion"]},

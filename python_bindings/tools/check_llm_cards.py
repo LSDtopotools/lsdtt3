@@ -54,6 +54,7 @@ def main() -> int:
 
     hydraulic = lsdtt3.helper_for_llm("hydraulic")
     assert "fill_hydraulic_surface(surface:R,node_state:R" in hydraulic
+    assert "boundary_conditions='nnnn'" in hydraulic
     assert "fill_hydraulic_surface(z:R,h:R" not in hydraulic
     for function in (
         "run_graphflood", "run_graphflood_optimised",
@@ -90,6 +91,9 @@ def main() -> int:
     assert "route_sediment(N,R," in landscape
     assert "crn_uniform_raster(R,value)->R" in cosmo
     assert "crn_uniform_raster(R,value=1)" not in cosmo
+    fetch = lsdtt3.helper_for_llm("fetch")
+    assert "fetch_dem(bounds|V,source='cop30'" in fetch
+    assert "dataset='cop30'" not in fetch
     print("LLM API cards match current high-risk contracts")
     return 0
 

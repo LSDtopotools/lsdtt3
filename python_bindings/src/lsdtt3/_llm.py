@@ -64,12 +64,12 @@ burn_streams(R,V,...)->StreamBurnResult; water_centrelines(...)->WaterCentreline
 extract_valley_centrelines(R,S|ordered_channels,...,valley_mask=R)->ValleyCentrelineResult; extract_valley_cross_sections(R,centrelines,...)->ValleyCrossSections
 """,
     "fetch": """@fetch
-fetch_dem(bounds|V,dataset='cop30',...)->R; fetch_dem_for_outlets(outlets:V,...)->OutletFetchResult
+fetch_dem(bounds|V,source='cop30',...)->R; fetch_dem_for_outlets(outlets:V,...)->OutletFetchResult
 bounds_from_vector(V)->VectorBounds; utm_epsg_for_point(x,y)->int; cop30_tiles_for_bbox(...)->list[str]
 ! fetch expects geographic bounds/outlets where documented; returned R carries projected grid metadata. Save explicitly: R.write(path).
 """,
     "hydraulic": """@hydraulic
-fill_hydraulic_surface(surface:R,node_state:R,boundary_conditions='oooo',...)->HydraulicSurfaceFill
+fill_hydraulic_surface(surface:R,node_state:R,boundary_conditions='nnnn',...)->HydraulicSurfaceFill
 run_graphflood(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->HydraulicResult
 run_graphflood_optimised(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->GraphFloodOptimisedResult
 run_graphflood_optimised_v2(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,prescribed_qin:R|None=None,...)->GraphFloodOptimisedResult

@@ -1,10 +1,8 @@
 # Python API reference
 
-These pages are rendered from a Python-only documentation façade for the
-public `lsdtt3` API. It gives native nanobind callables readable Python
-signatures and NumPy-style descriptions without changing their C++
-implementation or runtime behaviour. Use the [Python guides](../python/index.md)
-for workflow context and complete scripts.
+These pages are generated directly from the built runtime API manifest, including
+nanobind overloads, defaults, methods, and properties. Use the
+[Python guides](../python/index.md) for workflow context and complete scripts.
 
 ## Groups
 
@@ -14,10 +12,15 @@ for workflow context and complete scripts.
 - [Fetching and vectors](fetch.md)
 - [Cosmogenic nuclides](cosmogenic.md)
 - [GraphFlood](graphflood.md)
+- [Landscape and hillslopes](landscape.md)
+- [Drainage and depressions](drainage.md)
+- [Sediment, landslides, and landforms](sediment.md)
+- [Synthetic workflows](synthetic.md)
+- [Fluvial, valley, marsh, and vector hydrology](fluvial.md)
+- [Statistics and utilities](statistics.md)
 
-Each documented entry identifies its public arguments, result type, notes, and
-author. Native overloads remain authoritative at runtime; the façade describes
-their supported public calling patterns.
+Every public export has exactly one primary entry. Runtime nanobind and Python
+signatures are authoritative; regeneration fails if the committed pages drift.
 
 Developers changing bindings or signatures should read
 [Python bindings architecture and API contracts](../developer_notes/python_bindings_architecture.md).
