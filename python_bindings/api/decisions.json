@@ -28,33 +28,7 @@
       "new": "raster_is_filled"
     }
   ],
-  "approved_default_differences": [
-    {
-      "python_contracts": [
-        {"symbol": "LandscapeModel", "member": "__init__", "parameter": "critical_hillslope_slope", "default": 0.6}
-      ],
-      "cli": "critical_hillslope_slope=0.8",
-      "status": "characterized in Phase 0; retain pending the separate Phase 5 decision"
-    },
-    {
-      "python_contracts": [
-        {"symbol": "run_graphflood", "parameter": "max_steps", "default": 10000},
-        {"symbol": "run_graphflood", "parameter": "convergence_check_every", "default": 100},
-        {"symbol": "run_graphflood", "parameter": "median_dhw_convergence_tolerance_metres", "default": 1e-7},
-        {"symbol": "run_graphflood", "parameter": "median_dhw_relative_convergence_tolerance", "default": 1e-5},
-        {"symbol": "run_graphflood_optimised", "parameter": "max_steps", "default": 10000},
-        {"symbol": "run_graphflood_optimised", "parameter": "convergence_check_every", "default": 20},
-        {"symbol": "run_graphflood_optimised", "parameter": "median_dhw_convergence_tolerance_metres", "default": 1e-7},
-        {"symbol": "run_graphflood_optimised", "parameter": "median_dhw_relative_convergence_tolerance", "default": 1e-5},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "max_steps", "default": 10000},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "convergence_check_every", "default": 20},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "median_dhw_convergence_tolerance_metres", "default": 1e-7},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "median_dhw_relative_convergence_tolerance", "default": 1e-5}
-      ],
-      "cli": "lsdtt-graphflood defaults",
-      "status": "characterized in Phase 0; retain pending the separate Phase 5 decision"
-    }
-  ],
+  "approved_default_differences": [],
   "deprecated_names": [
     {"symbol": "run_graphflood", "old": "tol_median_abs_dhw", "new": "median_dhw_convergence_tolerance_metres", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "run_graphflood", "old": "tol_median_rel_dhw", "new": "median_dhw_relative_convergence_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},

@@ -1,3 +1,4 @@
+import inspect
 import unittest
 
 import numpy as np
@@ -212,8 +213,8 @@ class HydraulicRoutingTest(unittest.TestCase):
                 condition_bed="none", fill_slope_epsilon=1.0e-8,
                 check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
                 friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
-                point_inflows=None, convergence_check_every=100,
-                median_dhw_convergence_tolerance_metres=1.0e-7, median_dhw_relative_convergence_tolerance=1.0e-5,
+                point_inflows=None, convergence_check_every=10,
+                median_dhw_convergence_tolerance_metres=1.0e-6, median_dhw_relative_convergence_tolerance=1.0e-4,
                 n_threads=0, initial_water_depth=None,
             )),
             (lsdtt3.run_graphflood_optimised, dict(
@@ -221,8 +222,8 @@ class HydraulicRoutingTest(unittest.TestCase):
                 condition_bed="none", fill_slope_epsilon=1.0e-8,
                 check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
                 friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
-                point_inflows=None, convergence_check_every=20,
-                median_dhw_convergence_tolerance_metres=1.0e-7, median_dhw_relative_convergence_tolerance=1.0e-5,
+                point_inflows=None, convergence_check_every=10,
+                median_dhw_convergence_tolerance_metres=1.0e-6, median_dhw_relative_convergence_tolerance=1.0e-4,
                 reuse_topology=True, initial_water_depth=None,
             )),
             (lsdtt3.run_graphflood_optimised_v2, dict(
@@ -230,8 +231,8 @@ class HydraulicRoutingTest(unittest.TestCase):
                 condition_bed="none", fill_slope_epsilon=1.0e-8,
                 check_valid_outlet=True, friction_depth_exponent=5.0 / 3.0,
                 friction_slope_exponent=0.5, dt=1.0e-3, min_slope=1.0e-4,
-                point_inflows=None, convergence_check_every=20,
-                median_dhw_convergence_tolerance_metres=1.0e-7, median_dhw_relative_convergence_tolerance=1.0e-5,
+                point_inflows=None, convergence_check_every=10,
+                median_dhw_convergence_tolerance_metres=1.0e-6, median_dhw_relative_convergence_tolerance=1.0e-4,
                 reuse_topology=True, dirty_tile_size=64,
                 full_validation_every=128, initial_water_depth=None,
                 prescribed_qin=None,
@@ -254,22 +255,38 @@ class HydraulicRoutingTest(unittest.TestCase):
                         getattr(explicit, field).to_numpy(),
                     )
 
+    def test_direct_graphflood_defaults_match_cli(self):
+        for solver in (
+            lsdtt3.run_graphflood,
+            lsdtt3.run_graphflood_optimised,
+            lsdtt3.run_graphflood_optimised_v2,
+        ):
+            parameters = inspect.signature(solver).parameters
+            self.assertEqual(parameters["max_steps"].default, 100)
+            self.assertEqual(parameters["convergence_check_every"].default, 10)
+            self.assertEqual(
+                parameters["median_dhw_convergence_tolerance_metres"].default, 1.0e-6
+            )
+            self.assertEqual(
+                parameters["median_dhw_relative_convergence_tolerance"].default, 1.0e-4
+            )
+
     def test_graphflood_convergence_defaults_are_sensitive(self):
         zero_rain = lsdtt3.Raster.from_numpy(
             np.zeros((5, 5), dtype=np.float32),
             np.ones((5, 5), dtype=bool), self.meta,
         )
-        for solver, expected_check_step in (
-            (lsdtt3.run_graphflood, 100),
-            (lsdtt3.run_graphflood_optimised, 20),
-            (lsdtt3.run_graphflood_optimised_v2, 20),
+        for solver in (
+            lsdtt3.run_graphflood,
+            lsdtt3.run_graphflood_optimised,
+            lsdtt3.run_graphflood_optimised_v2,
         ):
             with self.subTest(solver=solver.__name__):
                 result = solver(
                     self.bed, self.states, zero_rain,
                     self.friction_coefficient,
                 )
-                self.assertEqual(result.step_count, expected_check_step)
+                self.assertEqual(result.step_count, 10)
 
         for solver in (
             lsdtt3.run_graphflood,
@@ -281,7 +298,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                     self.bed, self.states, zero_rain,
                     self.friction_coefficient, run_until_converged=False,
                 )
-                self.assertEqual(result.step_count, 10000)
+                self.assertEqual(result.step_count, 100)
 
         initial_depth = lsdtt3.Raster.from_numpy(
             np.full((5, 5), 0.01, dtype=np.float32),
@@ -307,8 +324,15 @@ class HydraulicRoutingTest(unittest.TestCase):
                     median_dhw_convergence_tolerance_metres=1.0,
                     median_dhw_relative_convergence_tolerance=1.0, **common,
                 )
-                self.assertEqual(default_tolerance.step_count, 1000)
-                self.assertLess(loose.step_count, default_tolerance.step_count)
+                strict = solver(
+                    self.bed, self.states, zero_rain,
+                    self.friction_coefficient,
+                    median_dhw_convergence_tolerance_metres=1.0e-7,
+                    median_dhw_relative_convergence_tolerance=1.0e-5, **common,
+                )
+                self.assertEqual(default_tolerance.step_count, 1)
+                self.assertEqual(loose.step_count, default_tolerance.step_count)
+                self.assertEqual(strict.step_count, 1000)
 
     def test_accelerators_forward_backend_options(self):
         calls = []

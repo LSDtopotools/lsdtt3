@@ -78,7 +78,7 @@ class LandscapeModelTest(unittest.TestCase):
         # produce different exact masks.
         self.assertEqual(np.count_nonzero(positive_mask), 197)
 
-    def test_default_critical_slope_is_point_six_not_point_eight(self):
+    def test_default_critical_slope_is_point_eight(self):
         meta = lsdtt3.RasterMeta.from_shape(7, 7, cell_size=1.0)
         rows, cols = np.indices((7, 7), dtype=np.float32)
         values = 20.0 - 0.7 * rows - 0.01 * (cols - 3.0) ** 2
@@ -99,7 +99,7 @@ class LandscapeModelTest(unittest.TestCase):
         point_eight = lsdtt3.LandscapeModel(
             dem, critical_hillslope_slope=0.8, **common
         ).step().elevation.to_numpy()
-        np.testing.assert_array_equal(default, point_six)
+        np.testing.assert_array_equal(default, point_eight)
         self.assertGreater(np.max(np.abs(point_six - point_eight)), 1.0e-6)
 
 
