@@ -1479,10 +1479,10 @@
         {
           "name": "channel_mask",
           "kind": "method",
-          "doc": "channel_mask(self, threshold_pixels: int) -> lsdtt3.Raster\n\nReturn a 0/1 raster where contributing pixels meet the threshold.",
+          "doc": "channel_mask(self, threshold_contributing_pixels: int) -> lsdtt3.Raster\n\nReturn a 0/1 raster where contributing pixels meet the threshold.",
           "signatures": [
             {
-              "definition": "def channel_mask(self, threshold_pixels: int) -> lsdtt3.Raster",
+              "definition": "def channel_mask(self, threshold_contributing_pixels: int) -> lsdtt3.Raster",
               "defaults": []
             }
           ]
@@ -1501,10 +1501,10 @@
         {
           "name": "channel_scope",
           "kind": "method",
-          "doc": "channel_scope(self, threshold_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> lsdtt3.ChannelScope\n\nResolve threshold or supplied source paths into a ChannelScope.",
+          "doc": "channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> lsdtt3.ChannelScope\n\nResolve threshold or supplied source paths into a ChannelScope.",
           "signatures": [
             {
-              "definition": "def channel_scope(self, threshold_pixels: int, sources: object | None = \\0, outlets: object | None = \\1, snap_sources: bool = \\2, source_snap_max_radius_pixels: int = \\3, outlet_snap_max_distance_metres: float = \\4, auto_detect_roles: bool = \\5) -> lsdtt3.ChannelScope",
+              "definition": "def channel_scope(self, threshold_contributing_pixels: int, sources: object | None = \\0, outlets: object | None = \\1, snap_sources: bool = \\2, source_snap_max_radius_pixels: int = \\3, outlet_snap_max_distance_metres: float = \\4, auto_detect_roles: bool = \\5) -> lsdtt3.ChannelScope",
               "defaults": [
                 null,
                 null,
@@ -1567,10 +1567,10 @@
         {
           "name": "distance_to_channel",
           "kind": "method",
-          "doc": "distance_to_channel(self, threshold_pixels: int) -> lsdtt3.Raster",
+          "doc": "distance_to_channel(self, threshold_contributing_pixels: int) -> lsdtt3.Raster",
           "signatures": [
             {
-              "definition": "def distance_to_channel(self, threshold_pixels: int) -> lsdtt3.Raster",
+              "definition": "def distance_to_channel(self, threshold_contributing_pixels: int) -> lsdtt3.Raster",
               "defaults": []
             }
           ]
@@ -1788,10 +1788,10 @@
         {
           "name": "sources",
           "kind": "method",
-          "doc": "sources(self, threshold_pixels: int) -> object\n\nReturn channel sources as an N by 2 (row, col) array.",
+          "doc": "sources(self, threshold_contributing_pixels: int) -> object\n\nReturn channel sources as an N by 2 (row, col) array.",
           "signatures": [
             {
-              "definition": "def sources(self, threshold_pixels: int) -> object",
+              "definition": "def sources(self, threshold_contributing_pixels: int) -> object",
               "defaults": []
             }
           ]
@@ -5247,11 +5247,11 @@
     {
       "name": "extract_channel_heads",
       "kind": "function",
-      "doc": "extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads\n\nExtract D8 channel heads by drainage threshold or Wiener curvature.\n\n``method='wiener'`` requires FFTW and a projected-metre DEM. With\n``diagnostics=True``, the result retains the filtered DEM, tangential\ncurvature, candidate channel mask, skeleton, and QQ table.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
+      "doc": "extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads\n\nExtract D8 channel heads by drainage threshold or Wiener curvature.\n\n``method='wiener'`` requires FFTW and a projected-metre DEM. With\n``diagnostics=True``, the result retains the filtered DEM, tangential\ncurvature, candidate channel mask, skeleton, and QQ table.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
       "members": [],
       "signatures": [
         {
-          "definition": "def extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = \\0, threshold_pixels: int = \\1, pruning_drainage_area_m2: float = \\2, surface_fitting_radius_metres: float = \\3, connected_components_threshold_pixels: int = \\4, diagnostics: bool = \\5) -> lsdtt3.ChannelHeads",
+          "definition": "def extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = \\0, threshold_contributing_pixels: int = \\1, pruning_drainage_area_m2: float = \\2, surface_fitting_radius_metres: float = \\3, connected_components_threshold_pixels: int = \\4, diagnostics: bool = \\5) -> lsdtt3.ChannelHeads",
           "defaults": [
             "threshold",
             1000,

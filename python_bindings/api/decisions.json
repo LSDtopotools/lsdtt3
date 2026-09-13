@@ -78,7 +78,9 @@
     {"symbol": "route_sediment", "old": "d90_m", "new": "d90_metres", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "find_internal_drainage", "old": "min_area_metres2", "new": "min_area_m2", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "find_internal_drainage", "old": "min_volume_metres3", "new": "min_volume_m3", "introduced": "next minor", "earliest_removal": "following minor"},
-    {"symbol": "run_landslide_series", "old": "budget_tol", "new": "event_budget_relative_tolerance", "introduced": "next minor", "earliest_removal": "following minor"}
+    {"symbol": "run_landslide_series", "old": "budget_tol", "new": "event_budget_relative_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "FlowInfo", "old": "threshold_pixels", "new": "threshold_contributing_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "extract_channel_heads", "old": "threshold_pixels", "new": "threshold_contributing_pixels", "introduced": "next minor", "earliest_removal": "following minor"}
   ],
   "known_runtime_test_failures": [],
   "optional_features": [

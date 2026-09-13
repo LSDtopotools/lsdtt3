@@ -555,7 +555,7 @@ def _numpy_style_docstring(function):
     return documented
 
 
-def _with_deprecated_keywords(function, *pairs):
+def _with_deprecated_keywords(function, *pairs, is_method=False):
     """Accept legacy keywords while preserving the native signature."""
     @wraps(function)
     def compatible(*args, **kwargs):
@@ -563,7 +563,8 @@ def _with_deprecated_keywords(function, *pairs):
             canonical = kwargs.pop(canonical_name, _MISSING)
             legacy = kwargs.pop(legacy_name, _MISSING)
             value = _resolve_deprecated_keyword(
-                canonical_name, canonical, legacy_name, legacy, stacklevel=4
+                canonical_name, canonical, legacy_name, legacy,
+                stacklevel=3 if is_method else 4,
             )
             if value is not _MISSING:
                 kwargs[canonical_name] = value
@@ -571,6 +572,8 @@ def _with_deprecated_keywords(function, *pairs):
     native = inspect.unwrap(function)
     definition, _doc, defaults = native.__nb_signature__[0]
     parameters = []
+    if is_method:
+        parameters.append(inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD))
     for match in re.finditer(
         r"(?:\(|, )([A-Za-z_]\w*):([^,)]*)", definition
     ):
@@ -653,11 +656,6 @@ wiener_filter = _with_deprecated_keywords(
     ("signal_wavelength_short_metres", "signal_wavelength_short_m"),
 )
 
-extract_channel_heads = _with_deprecated_keywords(
-    extract_channel_heads,
-    ("surface_fitting_radius_metres", "surface_fitting_radius_m"),
-)
-
 route_sediment = _with_deprecated_keywords(
     route_sediment,
     ("active_layer_depth_metres", "active_layer_depth_m"),
@@ -672,6 +670,25 @@ find_internal_drainage = _with_deprecated_keywords(
     ("min_volume_m3", "min_volume_metres3"),
 )
 
+for _flow_threshold_method in (
+    "channel_mask", "channel_scope", "distance_to_channel", "sources"
+):
+    setattr(
+        FlowInfo,
+        _flow_threshold_method,
+        _with_deprecated_keywords(
+            getattr(FlowInfo, _flow_threshold_method),
+            ("threshold_contributing_pixels", "threshold_pixels"),
+            is_method=True,
+        ),
+    )
+
+extract_channel_heads = _with_deprecated_keywords(
+    extract_channel_heads,
+    ("threshold_contributing_pixels", "threshold_pixels"),
+    ("surface_fitting_radius_metres", "surface_fitting_radius_m"),
+)
+
 run_landslide_series = _with_deprecated_keywords(
     run_landslide_series,
     ("event_budget_relative_tolerance", "budget_tol"),
@@ -684,4 +701,4 @@ for _public_name in __all__:
     elif callable(_public_value):
         globals()[_public_name] = _numpy_style_docstring(_public_value)
 
-del _graphflood_name, _public_name, _public_value
+del _flow_threshold_method, _graphflood_name, _public_name, _public_value

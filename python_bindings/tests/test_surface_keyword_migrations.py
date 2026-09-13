@@ -34,12 +34,12 @@ def test_surface_keyword_migrations_preserve_native_signatures():
 def test_channel_head_legacy_radius_warns_and_matches_canonical():
     dem, flow = raster_and_flow()
     canonical = lsdtt3.extract_channel_heads(
-        dem, flow, threshold_pixels=3, surface_fitting_radius_metres=8.0
+        dem, flow, threshold_contributing_pixels=3, surface_fitting_radius_metres=8.0
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         legacy = lsdtt3.extract_channel_heads(
-            dem, flow, threshold_pixels=3, surface_fitting_radius_m=8.0
+            dem, flow, threshold_contributing_pixels=3, surface_fitting_radius_m=8.0
         )
     assert len(caught) == 1
     assert caught[0].category is DeprecationWarning

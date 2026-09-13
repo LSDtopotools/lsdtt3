@@ -34,13 +34,13 @@ spectral_analysis(R,...)->SpectralResult; frangi_filter(R,...)->FrangiResult; sw
 """,
     "flow": """@flow
 F=FlowInfo(R,boundary_conditions='oooo',forced_outlets?,allow_pits_as_outlets?); F is immutable D8 topology.
-F.drainage_area()->R; F.flow_direction()->R; F.flow_distance_to_outlet()->R; F.channel_scope(threshold_pixels=...)->S
+ F.drainage_area()->R; F.flow_direction()->R; F.flow_distance_to_outlet()->R; F.channel_scope(threshold_contributing_pixels=...)->S
 F.scope_from_heads(heads)->S; F.channel_network(S)->N; F.basins(outlets?)->B; F.height_above_channel(R,S|N,...)->R
 G=FlowGraph(R,method='mfd'|'dinf',boundary_conditions='oooo',...); G.drainage_area()->R
 topographic_wetness_index(drainage_area:R,slope:R)->R; sediment_connectivity_index(...)->ConnectivityResult; soil_topographic_index(...)->SoilTopographicIndexResult
 """,
     "channel": """@channel
-extract_channel_heads(R,F,method=..., ...)->ChannelHeads; S=F.channel_scope(threshold_pixels=...)|F.scope_from_heads(heads)
+ extract_channel_heads(R,F,method=..., ...)->ChannelHeads; S=F.channel_scope(threshold_contributing_pixels=...)|F.scope_from_heads(heads)
 N=F.channel_network(S); N.points_geodataframe()->V; N.lines_geodataframe()->V; N.links()->D; N.junctions()->D; N.junction_angles()->D
 N.chi(outlets?,m_over_n=.45,reference_area=1,denominator?)->C; N.chi_sweep(R,m_over_n_values,...)->D
 find_channel_candidates(R,...)->ChannelCandidatesResult; water_centrelines(...)->WaterCentrelineResult; repair_water_lines(...)->WaterLineRepairResult

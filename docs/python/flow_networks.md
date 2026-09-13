@@ -10,7 +10,7 @@ dem = lsdtt3.fill_pits(lsdtt3.Raster.read("dem.tif"))
 flow = lsdtt3.FlowInfo(dem)
 
 # A simple area-threshold channel definition.
-scope = flow.channel_scope(threshold_pixels=500)
+scope = flow.channel_scope(threshold_contributing_pixels=500)
 network = flow.channel_network(scope)
 
 area = flow.drainage_area()

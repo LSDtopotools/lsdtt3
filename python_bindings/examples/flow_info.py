@@ -8,10 +8,10 @@ import lsdtt3
 
 dem = lsdtt3.Raster.read("perso_tests/dem/green_river_1.tif")
 filled = lsdtt3.fill_pits(dem)
-threshold_pixels = max(100, filled.valid_pixel_count // 250)
+threshold_contributing_pixels = max(100, filled.valid_pixel_count // 250)
 
 flow = lsdtt3.FlowInfo(filled)
-channels = flow.channel_mask(threshold_pixels)
+channels = flow.channel_mask(threshold_contributing_pixels)
 hand = flow.height_above_channel(filled, channels)
 
 

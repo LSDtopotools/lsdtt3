@@ -88,7 +88,7 @@ nb::object qq_table(const ChannelHeads& heads)
 }
 
 ChannelHeads extract_channel_heads(const Raster& dem, const FlowInfo& flow,
-                                   const std::string& method, int threshold_pixels,
+                                    const std::string& method, int threshold_contributing_pixels,
                                    double pruning_drainage_area_m2,
                                    double surface_fitting_radius_metres,
                                    int connected_components_threshold_pixels,
@@ -96,9 +96,9 @@ ChannelHeads extract_channel_heads(const Raster& dem, const FlowInfo& flow,
 {
     require_flow_grid(dem, flow);
     if (method == "threshold") {
-        if (threshold_pixels < 1)
-            throw std::invalid_argument("threshold_pixels must be positive");
-        return ChannelHeads(flow.native().get_sources_index_threshold(threshold_pixels),
+        if (threshold_contributing_pixels < 1)
+            throw std::invalid_argument("threshold_contributing_pixels must be positive");
+        return ChannelHeads(flow.native().get_sources_index_threshold(threshold_contributing_pixels),
                             method, flow.shared_native());
     }
     if (method != "wiener")
@@ -180,7 +180,7 @@ Use ``pixels`` as explicit ``FlowInfo.channel_scope(..., sources=...)`` input.
 
     module.def("extract_channel_heads", &extract_channel_heads,
         nb::arg("dem"), nb::arg("flow"), nb::arg("method") = "threshold",
-        nb::arg("threshold_pixels") = 1000,
+        nb::arg("threshold_contributing_pixels") = 1000,
         nb::arg("pruning_drainage_area_m2") = 1000.0,
         nb::arg("surface_fitting_radius_metres") = 6.0,
         nb::arg("connected_components_threshold_pixels") = 100,

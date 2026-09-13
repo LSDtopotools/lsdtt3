@@ -89,13 +89,13 @@ nb::object scope_table(const ChannelScope& scope)
     return nb::module_::import_("pandas").attr("DataFrame")(data);
 }
 
-ChannelScope make_scope(const FlowInfo& flow, int threshold_pixels, nb::object sources,
+ChannelScope make_scope(const FlowInfo& flow, int threshold_contributing_pixels, nb::object sources,
                         nb::object outlets, bool snap_sources, int source_snap_max_radius_pixels,
                         double outlet_snap_max_distance_metres, bool auto_detect_roles)
 {
-    if (threshold_pixels < 1) throw std::invalid_argument("threshold_pixels must be positive");
+    if (threshold_contributing_pixels < 1) throw std::invalid_argument("threshold_contributing_pixels must be positive");
     lsdtt::channel_scope_request request;
-    request.threshold_contributing_pixels = threshold_pixels;
+    request.threshold_contributing_pixels = threshold_contributing_pixels;
     request.source_flats = pixels_to_flats(flow, sources, "sources");
     request.outlet_flats = pixels_to_flats(flow, outlets, "outlets");
     request.snap_sources = snap_sources;
@@ -533,7 +533,7 @@ void bind_flow_network(nb::module_& module, nb::class_<FlowInfo>& flow)
         .def("disorder_bootstrap", &chi_fit_bootstrap, nb::arg("replicates") = 1000, nb::arg("seed") = 5489u, nb::arg("sample_full_tributary_count") = true, nb::arg("n_side_branches") = 3, nb::arg("with_replacement") = true, "Bootstrap disorder over side branches.")
         .def("invert_ksn", &invert_ksn, nb::arg("m_over_n_values"), nb::arg("reference_area") = 1.0, nb::arg("coarse_cell_size_metres") = 2000.0, nb::arg("roughness_weight") = 1.e4, nb::arg("diagonal_jitter") = 1.e-8, nb::arg("use_mae") = true, "Run regularised spatial ksn/u-star inversion over m/n trials.");
     nb::class_<ChiInversion>(module, "ChiInversion").def_prop_ro("trials", &inversion_trials).def_prop_ro("summary", &inversion_summary).def_prop_ro("nodes", &inversion_nodes).def("u_star_raster", &inversion_u_star, nb::arg("basin_id") = 0).def("support_raster", &inversion_support, nb::arg("basin_id") = 0);
-    flow.def("channel_scope", &make_scope, nb::arg("threshold_pixels"), nb::arg("sources") = nb::none(), nb::arg("outlets") = nb::none(), nb::arg("snap_sources") = true, nb::arg("source_snap_max_radius_pixels") = 25, nb::arg("outlet_snap_max_distance_metres") = 0.0, nb::arg("auto_detect_roles") = false,
+    flow.def("channel_scope", &make_scope, nb::arg("threshold_contributing_pixels"), nb::arg("sources") = nb::none(), nb::arg("outlets") = nb::none(), nb::arg("snap_sources") = true, nb::arg("source_snap_max_radius_pixels") = 25, nb::arg("outlet_snap_max_distance_metres") = 0.0, nb::arg("auto_detect_roles") = false,
         "Resolve threshold or supplied source paths into a ChannelScope.")
         .def("channel_network", &network_from_scope, nb::arg("scope"), "Build a compact junction graph from a ChannelScope.")
         .def("flow_lines_geodataframe", &flow_lines_geodataframe, "Return all D8 receiver edges as a GeoPandas line layer.")

@@ -14,40 +14,10 @@
       "rule": "spell_out_unit_suffix"
     },
     {
-      "symbol": "FlowInfo",
-      "member": "channel_mask",
-      "parameter": "threshold_pixels",
-      "rule": "qualify_contributing_pixel_threshold"
-    },
-    {
-      "symbol": "FlowInfo",
-      "member": "channel_scope",
-      "parameter": "threshold_pixels",
-      "rule": "qualify_contributing_pixel_threshold"
-    },
-    {
-      "symbol": "FlowInfo",
-      "member": "distance_to_channel",
-      "parameter": "threshold_pixels",
-      "rule": "qualify_contributing_pixel_threshold"
-    },
-    {
-      "symbol": "FlowInfo",
-      "member": "sources",
-      "parameter": "threshold_pixels",
-      "rule": "qualify_contributing_pixel_threshold"
-    },
-    {
       "symbol": "crn_transient_history",
       "member": "",
       "parameter": "sampling_depth_m",
       "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "extract_channel_heads",
-      "member": "",
-      "parameter": "threshold_pixels",
-      "rule": "qualify_contributing_pixel_threshold"
     },
     {
       "symbol": "fetch_dem",

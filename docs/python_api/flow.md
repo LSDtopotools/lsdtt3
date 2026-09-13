@@ -730,6 +730,9 @@ construction; later operations explicitly receive rasters where needed.
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `threshold_pixels` -> `threshold_contributing_pixels`; earliest removal: following minor.
+
 ```python
 def __init__(self, dem: lsdtt3.Raster, boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, forced_outlets: object | None = None, allow_pits_as_outlets: bool = False, n_threads: int = 0) -> None
 ```
@@ -778,12 +781,12 @@ def basins(self, outlets: object | None = None, min_upslope_pixels: int = 0) -> 
 
 #### `channel_mask`
 
-channel_mask(self, threshold_pixels: int) -> lsdtt3.Raster
+channel_mask(self, threshold_contributing_pixels: int) -> lsdtt3.Raster
 
 Return a 0/1 raster where contributing pixels meet the threshold.
 
 ```python
-def channel_mask(self, threshold_pixels: int) -> lsdtt3.Raster
+def channel_mask(self, threshold_contributing_pixels: int) -> lsdtt3.Raster
 ```
 
 #### `channel_network`
@@ -798,12 +801,12 @@ def channel_network(self, scope: lsdtt3.ChannelScope) -> lsdtt3.ChannelNetwork
 
 #### `channel_scope`
 
-channel_scope(self, threshold_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> lsdtt3.ChannelScope
+channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> lsdtt3.ChannelScope
 
 Resolve threshold or supplied source paths into a ChannelScope.
 
 ```python
-def channel_scope(self, threshold_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> lsdtt3.ChannelScope
+def channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> lsdtt3.ChannelScope
 ```
 
 #### `chi_from_outlets`
@@ -840,10 +843,10 @@ def contributing_pixels(self) -> lsdtt3.Raster
 
 #### `distance_to_channel`
 
-distance_to_channel(self, threshold_pixels: int) -> lsdtt3.Raster
+distance_to_channel(self, threshold_contributing_pixels: int) -> lsdtt3.Raster
 
 ```python
-def distance_to_channel(self, threshold_pixels: int) -> lsdtt3.Raster
+def distance_to_channel(self, threshold_contributing_pixels: int) -> lsdtt3.Raster
 ```
 
 #### `distance_to_farthest_ridge`
@@ -1002,12 +1005,12 @@ def scope_from_heads(self, heads: lsdtt3.ChannelHeads, outlets: object | None = 
 
 #### `sources`
 
-sources(self, threshold_pixels: int) -> object
+sources(self, threshold_contributing_pixels: int) -> object
 
 Return channel sources as an N by 2 (row, col) array.
 
 ```python
-def sources(self, threshold_pixels: int) -> object
+def sources(self, threshold_contributing_pixels: int) -> object
 ```
 
 #### `upslope_mean`
@@ -1313,7 +1316,7 @@ def divide_migration(flow: lsdtt3.FlowInfo, dem: lsdtt3.Raster, outlets: object,
 
 ## `extract_channel_heads`
 
-extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
+extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 
     Parameters
     ----------
@@ -1329,7 +1332,7 @@ extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = '
 
     Notes
     -----
-    extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
+    extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 
 Extract D8 channel heads by drainage threshold or Wiener curvature.
 
@@ -1344,9 +1347,10 @@ curvature, candidate channel mask, skeleton, and QQ table.
 
 **Deprecated compatibility names:**
 - `surface_fitting_radius_m` -> `surface_fitting_radius_metres`; earliest removal: following minor.
+- `threshold_pixels` -> `threshold_contributing_pixels`; earliest removal: following minor.
 
 ```python
-def extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
+def extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 ```
 
 ---

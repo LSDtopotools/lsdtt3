@@ -28,21 +28,21 @@ void require_compatible(const FlowInfo& flow, const Raster& raster, const char* 
         if (fm.data()[i] != rm[i]) throw std::invalid_argument(std::string(name) + " must share the flow validity mask");
 }
 
-Raster channel_mask(const FlowInfo& flow, int threshold_pixels)
+Raster channel_mask(const FlowInfo& flow, int threshold_contributing_pixels)
 {
-    if (threshold_pixels < 1) throw std::invalid_argument("threshold_pixels must be positive");
+    if (threshold_contributing_pixels < 1) throw std::invalid_argument("threshold_contributing_pixels must be positive");
     const auto& f = flow.native(); const std::size_t n = f.full_grid_size();
     std::vector<float> data(n, 0.0f);
     std::vector<std::uint8_t> mask(f.mask_array().data(), f.mask_array().data() + n);
     for (std::size_t i = 0; i < n; ++i)
-        if (mask[i] != 0 && f.s_vector_size_array().data()[i] >= static_cast<std::uint64_t>(threshold_pixels)) data[i] = 1.0f;
+        if (mask[i] != 0 && f.s_vector_size_array().data()[i] >= static_cast<std::uint64_t>(threshold_contributing_pixels)) data[i] = 1.0f;
     return Raster(lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), f.meta()));
 }
 
-nb::object sources(const FlowInfo& flow, int threshold_pixels)
+nb::object sources(const FlowInfo& flow, int threshold_contributing_pixels)
 {
-    if (threshold_pixels < 1) throw std::invalid_argument("threshold_pixels must be positive");
-    const auto flats = flow.native().get_sources_index_threshold(threshold_pixels);
+    if (threshold_contributing_pixels < 1) throw std::invalid_argument("threshold_contributing_pixels must be positive");
+    const auto flats = flow.native().get_sources_index_threshold(threshold_contributing_pixels);
     std::vector<std::int64_t> pixels; pixels.reserve(flats.size() * 2);
     for (const auto flat : flats) { pixels.push_back(flow.native().row_from_flat_unchecked(flat)); pixels.push_back(flow.native().col_from_flat_unchecked(flat)); }
     nb::object numpy = nb::module_::import_("numpy");
@@ -100,12 +100,12 @@ void bind_flow_products(nb::class_<FlowInfo>& flow)
         .def("contributing_pixels", [](const FlowInfo& s) { return as_raster(s.native().get_n_contributing_pixels_raster()); })
         .def("drainage_area", [](const FlowInfo& s) { return as_raster(s.native().get_drainage_area_raster()); })
         .def("flow_distance_to_outlet", [](const FlowInfo& s) { return as_raster(s.native().get_distance_from_outlet_raster()); })
-        .def("channel_mask", &channel_mask, nb::arg("threshold_pixels"), "Return a 0/1 raster where contributing pixels meet the threshold.")
-        .def("sources", &sources, nb::arg("threshold_pixels"), "Return channel sources as an N by 2 (row, col) array.")
+        .def("channel_mask", &channel_mask, nb::arg("threshold_contributing_pixels"), "Return a 0/1 raster where contributing pixels meet the threshold.")
+        .def("sources", &sources, nb::arg("threshold_contributing_pixels"), "Return channel sources as an N by 2 (row, col) array.")
         .def("accumulate", &accumulate, nb::arg("weights") = nb::none(), "Accumulate weights downstream; default weights are cell areas.")
         .def("height_above_channel", &hand, nb::arg("dem"), nb::arg("channels"), "Compute HAND from an explicit 0/1 channel raster.")
         .def("height_above_channel_with_donor", &hand_donor, nb::arg("dem"), nb::arg("channels"))
-        .def("distance_to_channel", [](const FlowInfo& s, int threshold_pixels) { return as_raster(s.native().get_distance_to_channel_raster(threshold_pixels)); }, nb::arg("threshold_pixels"))
+        .def("distance_to_channel", [](const FlowInfo& s, int threshold_contributing_pixels) { return as_raster(s.native().get_distance_to_channel_raster(threshold_contributing_pixels)); }, nb::arg("threshold_contributing_pixels"))
         .def("upslope_sum", &upslope_sum, nb::arg("values"), nb::arg("include_self") = true)
         .def("upslope_mean", &upslope_mean, nb::arg("values"), nb::arg("include_self") = true)
         .def("downstream_sum", &downstream_sum, nb::arg("values"), nb::arg("sinks"))
