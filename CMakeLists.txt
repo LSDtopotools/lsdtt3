@@ -72,6 +72,70 @@ find_package(GDAL REQUIRED)
 if(NOT GDAL_FOUND)
     message(FATAL_ERROR "GDAL not found. Install libgdal-dev and try again.")
 endif()
+# -----------------------------------------------------------------------------
+# GDAL headers and library MUST come from the same installation.
+#
+# CMake's FindGDAL locates the headers and the library in separate searches.
+# With a conda environment active (needed on some machines for Eigen), those
+# searches can land in DIFFERENT installations: seen on forth01 as
+# GDAL_INCLUDE_DIR=/usr/include/gdal but GDAL_LIBRARY=<env>/lib/libgdal.so.
+# Everything then compiles against one GDAL's headers and fails to LINK against
+# the other's library, with undefined references to functions whose signatures
+# changed between versions (GDALDataset::GetRasterXSize(),
+# OGRCoordinateTransformation::Transform(int, ...)). The same mix also puts the
+# env's lib/ on every target's runtime path, which is what produces the
+# "Cannot generate a safe runtime search path ... libgomp.so.1" warnings.
+#
+# The code compiles against the headers, so the headers win: if the library is
+# from a different prefix, the library next to the headers is used instead.
+# This also repairs a build directory whose cache already holds the mix.
+# -----------------------------------------------------------------------------
+function(lsdtt_install_prefix_of path out_var)
+    # <prefix>/include/gdal, <prefix>/include, <prefix>/lib[64][/<triplet>]/x
+    get_filename_component(_p "${path}" REALPATH)
+    if(NOT IS_DIRECTORY "${_p}")
+        get_filename_component(_p "${_p}" DIRECTORY)
+    endif()
+    string(REGEX REPLACE "/(include/gdal|include|lib64|lib(/[^/]+-[^/]+-[^/]+)?|Library/(include|lib))$" "" _p "${_p}")
+    set(${out_var} "${_p}" PARENT_SCOPE)
+endfunction()
+
+if(GDAL_INCLUDE_DIR AND GDAL_LIBRARY AND NOT WIN32)
+    lsdtt_install_prefix_of("${GDAL_INCLUDE_DIR}" _lsdtt_gdal_inc_prefix)
+    lsdtt_install_prefix_of("${GDAL_LIBRARY}"     _lsdtt_gdal_lib_prefix)
+    if(NOT _lsdtt_gdal_inc_prefix STREQUAL _lsdtt_gdal_lib_prefix)
+        unset(_lsdtt_gdal_matching_lib CACHE)
+        find_library(_lsdtt_gdal_matching_lib
+            NAMES gdal
+            PATHS "${_lsdtt_gdal_inc_prefix}/lib/${CMAKE_LIBRARY_ARCHITECTURE}"
+                  "${_lsdtt_gdal_inc_prefix}/lib64"
+                  "${_lsdtt_gdal_inc_prefix}/lib"
+            NO_DEFAULT_PATH)
+        if(_lsdtt_gdal_matching_lib)
+            message(STATUS
+                "GDAL headers are from ${_lsdtt_gdal_inc_prefix} but the library "
+                "found was ${GDAL_LIBRARY}; using ${_lsdtt_gdal_matching_lib} so "
+                "headers and library match")
+            set(GDAL_LIBRARY "${_lsdtt_gdal_matching_lib}" CACHE FILEPATH
+                "GDAL library (matched to GDAL_INCLUDE_DIR)" FORCE)
+            set(GDAL_LIBRARIES "${_lsdtt_gdal_matching_lib}")
+            if(TARGET GDAL::GDAL)
+                set_target_properties(GDAL::GDAL PROPERTIES
+                    IMPORTED_LOCATION "${_lsdtt_gdal_matching_lib}")
+            endif()
+        else()
+            message(FATAL_ERROR
+                "GDAL headers (${GDAL_INCLUDE_DIR}) and GDAL library "
+                "(${GDAL_LIBRARY}) come from different installations, and no "
+                "libgdal was found next to the headers under "
+                "${_lsdtt_gdal_inc_prefix}. Mixing them fails at link time. "
+                "Point both at one installation, e.g. "
+                "-DGDAL_INCLUDE_DIR=<prefix>/include -DGDAL_LIBRARY=<prefix>/lib/libgdal.so")
+        endif()
+        unset(_lsdtt_gdal_matching_lib CACHE)
+    endif()
+endif()
+
 message(STATUS "GDAL version : ${GDAL_VERSION}")
 message(STATUS "GDAL include : ${GDAL_INCLUDE_DIRS}")
 message(STATUS "GDAL libs    : ${GDAL_LIBRARIES}")
