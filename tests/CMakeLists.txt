@@ -2159,6 +2159,15 @@ add_test(NAME unit_flow_properties
 set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 
+# BYTE-IDENTITY PIN for the D8 flow object. Pins were generated from the code
+# BEFORE the section-9.4 speed refactor of lsdtt_flowinfo (commit 7e81a39); a
+# speed change must never need them regenerated. Integer-terrain fixtures only,
+# so the hashes are reproducible on any machine. See the file header.
+add_executable(lsdtt-test-flow-d8-identity cpp/test_flow_d8_identity.cpp)
+target_link_libraries(lsdtt-test-flow-d8-identity PRIVATE lsdtt3_cpu)
+add_test(NAME unit_flow_d8_identity COMMAND lsdtt-test-flow-d8-identity)
+set_tests_properties(unit_flow_d8_identity PROPERTIES LABELS "unit;flow")
+
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
 set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
 
@@ -4912,7 +4921,7 @@ set(LSDTT_DOMAIN_RULES
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
     "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
-    "chi|channel|drainage|basin|flow_properties|flow_snapping|link_length"  "network"
+    "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
     "depression_hierarchy"   "network"
