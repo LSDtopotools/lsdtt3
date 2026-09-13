@@ -154,7 +154,7 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 # three different size and speed requirements:
 #
 #   FIXTURE_DIR   the downloaded region sources and their crops. Large
-#                 (~512 MB for the server profile), reused across every
+#                 (~300 MB for the server profile), reused across every
 #                 campaign, and worth keeping. Default is inside the repo,
 #                 which is WRONG on a cluster where the repo sits on a quota'd
 #                 home filesystem -- override with --fixture-dir.
@@ -2542,7 +2542,7 @@ def main() -> int:
                     help="where the downloaded region sources and their crops "
                          "live. Defaults to <out-dir>/benchmark_fixtures when "
                          "--out-dir is given, otherwise tests/data/dem_cache "
-                         "inside the repo. The server profile stores ~512 MB "
+                         "inside the repo. The server profile stores ~300 MB "
                          "here, so on a cluster keep it off a quota'd home: "
                          "point it at project or scratch storage. Reused "
                          "across campaigns, so it is worth keeping.")

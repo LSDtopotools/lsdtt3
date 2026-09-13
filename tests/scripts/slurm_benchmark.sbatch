@@ -155,7 +155,7 @@ BENCH_PROFILE="${BENCH_PROFILE:-server}"
 
 # Both default into the SUBMIT directory rather than the repository: the repo
 # usually sits on a quota'd home filesystem and the server profile stores
-# ~512 MB of region sources. Submitting from a data directory therefore puts
+# ~300 MB of region sources. Submitting from a data directory therefore puts
 # the campaign and the fixtures in that data directory.
 #
 # The fixture cache is worth putting somewhere persistent and shared -- it is
@@ -173,7 +173,7 @@ if [ ! -x "${BENCH_BUILD_DIR}/lsdtt-raster-preprocessing" ]; then
 fi
 
 # Submitting from inside the checkout dumps the campaign AND the fixture cache
-# into the source tree -- ~512 MB of DEMs under, say, tests/scripts/. It is
+# into the source tree -- ~300 MB of DEMs under, say, tests/scripts/. It is
 # allowed, because someone may genuinely want it, but it is almost never what
 # was intended and it is invisible until the repository grows.
 _repo_real="$(cd "${BENCH_REPO}" && pwd -P)"
@@ -181,7 +181,7 @@ _submit_real="$(cd "${SUBMIT_DIR}" && pwd -P)"
 case "${_submit_real}/" in
     "${_repo_real}"/*)
         echo "WARNING: submitted from inside the lsdtt3 checkout." >&2
-        echo "         Campaign output and ~512 MB of cached DEMs will be" >&2
+        echo "         Campaign output and ~300 MB of cached DEMs will be" >&2
         echo "         written into the source tree:" >&2
         echo "           ${BENCH_OUT_DIR}" >&2
         echo "           ${BENCH_FIXTURE_DIR}" >&2
