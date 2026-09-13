@@ -107,11 +107,22 @@ Note that if you are running on a personal computer (e.g., your laptop), the com
 
 | | `laptop` | `server` |
 |---|---|---|
-| DEM sizes | 500², 1000² | 1000², 2000², 4000², 8000² |
-| Threads | 1, 2, 4 | 1, 2, 4, 8 |
+| DEM sizes | 500², 1000² | 1000², 2000², 4000² |
+| Threads | 1, 2, 4 | 1, 2, 4, 8 (Whitebox: 1, 2) |
 | Repeats | 3 | 5 |
-| Download (first run) | ~4 MB per region | ~256 MB per region |
+| Download (first run) | ~4 MB per region | ~64 MB per region |
 | Runtime | minutes | hours |
+
+The `server` ladder stopped at 8000² on 2026-09-13. On the first full server
+campaign that rung took 4.2 h of 5.5 h, and for the surface metrics, D8 and
+D-infinity every engine's throughput at 8000² was within 0.95–1.04× of its
+4000² figure. Add it back with `--ladder 1000,2000,4000,8000` if you want a
+size study. If the 8000 px source is already in your fixture cache it is reused
+rather than downloading a new one, and existing crops keep their hashes.
+
+Whitebox is measured at 1 and 2 threads only: on that campaign it scaled
+0.96–1.04× at every thread count on every surface case, so higher counts
+repeated the same number.
 
 ```sh
 pixi run bench-laptop      # a real baseline, and the shakedown run
@@ -384,7 +395,7 @@ outputs. The Python references are the ones to watch rather than lsdtt3: they
 work in NumPy and a 64 M-cell float64 array is 512 MB each, and RichDEM
 constructs arrays per call.
 
-**On 16 GB the full `server` ladder should fit, but confirm rather than assume.**
+**On 8 GB the `server` ladder should fit, but confirm rather than assume.**
 Every row records `peak_rss_mb`, so after a first run:
 
 ```sh
@@ -402,8 +413,25 @@ carries on — so you get a campaign with holes rather than a crash. Check for
 top rung:
 
 ```sh
---ladder 1000,2000,4000
+--ladder 1000,2000
 ```
+
+!!! warning "Memory columns from before 2026-09-13 are invalid"
+
+    On Linux a child process inherits its parent's **peak** memory, and the
+    kernel reports that inherited figure as the child's own. The suite used to
+    launch every engine straight from its driver, which had already reached a
+    large peak computing fixture statistics, so almost every row reported the
+    driver's peak instead of the engine's. On the first server campaign 441 of
+    504 rows read exactly 3557 MiB. Only values above that floor were real.
+
+    Every command now starts through `tests/scripts/rusage_launcher.py`, a
+    small separate process. Each campaign measures the remaining floor by
+    launching `/bin/true` the same way, and prints it above the memory table.
+    If that floor exceeds 64 MiB, the summary says the memory column must not
+    be quoted. Cells marked `<` are close enough to the floor that they may be
+    reporting it. The CSV also gains `cpu_seconds_process`: CPU time well above
+    wall time means a command used more cores than its thread label says.
 
 ### Route A: a plain bash session
 
@@ -709,7 +737,7 @@ pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
 
 # just the top of the ladder, where the scaling signal is strongest
 pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
-    --profile server --suites surface --ladder 4000,8000
+    --profile server --suites surface --ladder 2000,4000
 
 # check the plan before committing the time
 pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
@@ -724,10 +752,11 @@ count, for the reason in [§4 above](#4-scaling-curves-need-a-ceiling-and-the-bi
 Whole-process wall time includes GDAL read and write, and the surface-metric
 kernels are fast. On a 2400² fixture the compute is a small fraction of the
 run, so I/O dominates and the scaling signal is buried no matter how many
-threads you give it. That is why the `server` ladder goes to 8000 px: at 64M
-cells there is enough work to measure. If you shorten the ladder for a quick
-answer, shorten it from the *bottom* (`--ladder 4000,8000`), never to the small
-rungs.
+threads you give it. That is why the `server` ladder goes to 4000 px: at 16M
+cells there is enough work to measure, and on the first server campaign the
+surface-metric scaling curves at 8000² matched those at 4000². If you shorten
+the ladder for a quick answer, shorten it from the *bottom*
+(`--ladder 2000,4000`), never to the small rungs.
 
 The per-run `Compute time` and `Write time` the CLI prints are captured in the
 results, so you can check the ratio for yourself rather than guessing.

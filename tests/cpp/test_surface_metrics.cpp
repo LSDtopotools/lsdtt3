@@ -46,6 +46,8 @@
 //   C3  rotation invariance under a 90 degree grid rotation
 //   C4  thread determinism (n_threads = 1, 2, 8)
 //   C5  MADk2 invariants and directional response
+//   C6  3x3 kernels (hillshade, gradient, plan curvature) byte-identical to
+//       their reference implementations after the 2026-09-13 speed change
 //
 // REGRESSION GUARD: the two C5 directional checks caught a real defect in the
 // MADk2 axial statistics (fixed 2026-07-22 in lsdtt_surface_texture_cpu.cpp).
@@ -69,6 +71,10 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #ifdef LSDTT_HAS_OPENCV
 #include "lsdtt_raster_opencv_cpu.hpp"
@@ -1626,6 +1632,211 @@ void test_madk2()
 // =============================================================================
 // C1 driver: run the identities on every surface family used above.
 // =============================================================================
+// =============================================================================
+// C6: 3x3 kernels are BYTE-IDENTICAL to their pre-2026-09-13 implementations
+//
+// compute_hillshade, compute_gradient_magnitude_3x3_square and
+// compute_plan_curvature_3x3_square were changed for speed only: they stopped
+// copying the input raster, and replaced a per-pixel 9-cell nodata test with a
+// precomputed 1-byte invalid-cell plane (skipped entirely when the raster has
+// no invalid cell). Neither change may alter a single output byte.
+//
+// The reference functions below are the OLD algorithms, verbatim in arithmetic
+// and in validity semantics: a window is invalid if any cell has mask == 0 OR a
+// value equal to the nodata value. The inputs deliberately separate those two
+// conditions (value == nodata with mask 1, and mask 0 with a finite value), use
+// both a finite and a NaN nodata value, put nodata on the border, and include
+// grids too small to have any interior. Outputs are compared with memcmp over
+// data AND mask, at 1 and 4 threads.
+//
+// If this fails, the speed change altered results: do not loosen it.
+// =============================================================================
+namespace c6
+{
+
+bool window_bad(const lsdtt_raster_cpu& r, int row, int col)
+{
+    const lsdtt_raster_meta& meta = r.get_meta();
+    const int nc = meta.n_cols;
+    for (int dr = -1; dr <= 1; ++dr)
+        for (int dc = -1; dc <= 1; ++dc)
+        {
+            const std::size_t i = static_cast<std::size_t>(row + dr) * nc + (col + dc);
+            if (r.get_mask()[i] == 0) return true;
+            if (meta.is_nodata(r.get_data()[i])) return true;
+        }
+    return false;
+}
+
+template <class F>
+lsdtt_raster_cpu kernel_3x3(const lsdtt_raster_cpu& r, F f)
+{
+    const lsdtt_raster_meta& meta = r.get_meta();
+    const int nr = meta.n_rows, nc = meta.n_cols;
+    std::vector<float> out(static_cast<std::size_t>(nr) * nc,
+                           static_cast<float>(meta.no_data_value));
+    std::vector<std::uint8_t> out_mask(out.size(), 0);
+    for (int row = 1; row < nr - 1; ++row)
+        for (int col = 1; col < nc - 1; ++col)
+        {
+            if (window_bad(r, row, col)) continue;
+            auto z = [&](int dr, int dc) {
+                return static_cast<double>(
+                    r.get_data()[static_cast<std::size_t>(row + dr) * nc + (col + dc)]);
+            };
+            float v;
+            if (!f(z, v)) continue;
+            out[static_cast<std::size_t>(row) * nc + col] = v;
+            out_mask[static_cast<std::size_t>(row) * nc + col] = 1;
+        }
+    return lsdtt_raster_cpu(std::move(out), std::move(out_mask), meta);
+}
+
+lsdtt_raster_cpu ref_hillshade(const lsdtt_raster_cpu& r, double azimuth,
+                               double altitude, double z_factor)
+{
+    const double L = r.get_meta().cell_size;
+    const double sin_alt = std::sin(altitude * k_pi / 180.0);
+    const double cos_alt = std::cos(altitude * k_pi / 180.0);
+    const double A = azimuth * (k_pi / 180.0) - k_pi;
+    const double sin_A = std::sin(A), cos_A = std::cos(A);
+    const double inv_2L = 1.0 / (2.0 * L);
+    return kernel_3x3(r, [&](auto z, float& v) {
+        const double p = (z(0, 1) * z_factor - z(0, -1) * z_factor) * inv_2L;
+        const double q = (z(-1, 0) * z_factor - z(1, 0) * z_factor) * inv_2L;
+        double hs = 1.0 + 254.0
+                  * (sin_alt + cos_alt * (sin_A * p + cos_A * q))
+                  / std::sqrt(1.0 + p * p + q * q);
+        hs = std::max(0.0, std::min(255.0, hs));
+        v = static_cast<float>(hs);
+        return true;
+    });
+}
+
+lsdtt_raster_cpu ref_gradient(const lsdtt_raster_cpu& r)
+{
+    const double inv_2L = 1.0 / (2.0 * r.get_meta().cell_size);
+    return kernel_3x3(r, [&](auto z, float& v) {
+        const double dzdx = (z(0, 1) - z(0, -1)) * inv_2L;
+        const double dzdy = (z(-1, 0) - z(1, 0)) * inv_2L;
+        v = static_cast<float>(std::sqrt(dzdx * dzdx + dzdy * dzdy));
+        return true;
+    });
+}
+
+lsdtt_raster_cpu ref_plan_curvature(const lsdtt_raster_cpu& r)
+{
+    const double L = r.get_meta().cell_size;
+    const double inv_2L = 1.0 / (2.0 * L), inv_L2 = 1.0 / (L * L);
+    const double inv_4L2 = 1.0 / (4.0 * L * L);
+    return kernel_3x3(r, [&](auto z, float& v) {
+        const double p = (z(0, 1) - z(0, -1)) * inv_2L;
+        const double q = (z(-1, 0) - z(1, 0)) * inv_2L;
+        const double slope2 = p * p + q * q;
+        if (slope2 < 1e-12) { v = 0.0f; return true; }
+        const double r_xx = (z(0, 1) + z(0, -1) - 2.0 * z(0, 0)) * inv_L2;
+        const double t_yy = (z(-1, 0) + z(1, 0) - 2.0 * z(0, 0)) * inv_L2;
+        const double s_xy = (z(-1, 1) - z(-1, -1) - z(1, 1) + z(1, -1)) * inv_4L2;
+        v = static_cast<float>(
+            (q * q * r_xx - 2.0 * p * q * s_xy + p * p * t_yy) / std::pow(slope2, 1.5));
+        return true;
+    });
+}
+
+// kind: 0 all valid, 1 holes (mask and value agree), 2 nodata border,
+//       3 value == nodata but mask 1, 4 mask 0 but finite value
+lsdtt_raster_cpu make_awkward(int nr, int nc, double ndv, int kind, unsigned seed)
+{
+    lsdtt_raster_meta meta = make_meta(nr, nc, 10.0);
+    meta.no_data_value = ndv;
+    std::vector<float> d(static_cast<std::size_t>(nr) * nc);
+    std::vector<std::uint8_t> m(d.size(), 1);
+    std::uint32_t s = seed * 2654435761u + 1u;
+    auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (s >> 8) / 16777216.0; };
+    const float fndv = static_cast<float>(ndv);
+    for (int row = 0; row < nr; ++row)
+        for (int col = 0; col < nc; ++col)
+        {
+            const std::size_t i = static_cast<std::size_t>(row) * nc + col;
+            d[i] = static_cast<float>(100.0 + 20.0 * std::sin(row * 0.13) * std::cos(col * 0.07)
+                                      + 3.0 * rnd() + 0.5 * row);
+            // exact flats so the plan-curvature slope2 < 1e-12 branch is hit
+            if (row % 17 == 5 && col % 13 < 4) d[i] = 250.0f;
+            const bool hit = rnd() < 0.03;
+            if (kind == 1 && hit) { d[i] = fndv; m[i] = 0; }
+            if (kind == 2 && (row < 2 || col < 3 || row >= nr - 1)) { d[i] = fndv; m[i] = 0; }
+            if (kind == 3 && hit) { d[i] = fndv; }
+            if (kind == 4 && hit) { m[i] = 0; }
+        }
+    return lsdtt_raster_cpu(std::move(d), std::move(m), meta);
+}
+
+bool bytes_equal(const lsdtt_raster_cpu& a, const lsdtt_raster_cpu& b)
+{
+    return a.get_data().size() == b.get_data().size()
+        && a.get_mask().size() == b.get_mask().size()
+        && std::memcmp(a.get_data().data(), b.get_data().data(),
+                       a.get_data().size() * sizeof(float)) == 0
+        && std::memcmp(a.get_mask().data(), b.get_mask().data(),
+                       a.get_mask().size()) == 0;
+}
+
+} // namespace c6
+
+void test_3x3_bit_identity()
+{
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    struct grid { int nr, nc; };
+    const grid grids[] = {{97, 131}, {3, 3}, {2, 7}, {1, 1}};
+
+#ifdef _OPENMP
+    const int saved_threads = omp_get_max_threads();
+#endif
+    for (int threads : {1, 4})
+    {
+#ifdef _OPENMP
+        omp_set_num_threads(threads);
+#endif
+        int n_cases = 0, n_bad = 0;
+        std::string first_bad;
+        for (const grid& g : grids)
+            for (double ndv : {-9999.0, nan})
+                for (int kind = 0; kind <= 4; ++kind)
+                {
+                    const lsdtt_raster_cpu r =
+                        c6::make_awkward(g.nr, g.nc, ndv, kind, 11u + kind);
+                    std::ostringstream tag;
+                    tag << g.nr << "x" << g.nc << " kind " << kind
+                        << " ndv " << (std::isnan(ndv) ? "NaN" : "-9999");
+                    auto cmp = [&](const char* what, const lsdtt_raster_cpu& lib,
+                                   const lsdtt_raster_cpu& ref) {
+                        ++n_cases;
+                        if (!c6::bytes_equal(lib, ref))
+                        {
+                            ++n_bad;
+                            if (first_bad.empty()) first_bad = std::string(what) + " " + tag.str();
+                        }
+                    };
+                    cmp("hillshade 315/45", lsdtt::compute_hillshade(r, 315.0, 45.0, 1.0),
+                        c6::ref_hillshade(r, 315.0, 45.0, 1.0));
+                    cmp("hillshade 17/60 z2.5", lsdtt::compute_hillshade(r, 17.0, 60.0, 2.5),
+                        c6::ref_hillshade(r, 17.0, 60.0, 2.5));
+                    cmp("gradient_3x3", lsdtt::compute_gradient_magnitude_3x3_square(r),
+                        c6::ref_gradient(r));
+                    cmp("plan_curvature_3x3", lsdtt::compute_plan_curvature_3x3_square(r),
+                        c6::ref_plan_curvature(r));
+                }
+        std::ostringstream nm, dt;
+        nm << "C6 3x3 kernels byte-identical to reference, " << threads << " thread(s)";
+        dt << n_cases - n_bad << "/" << n_cases << " identical";
+        if (!first_bad.empty()) dt << ", first mismatch: " << first_bad;
+        check(nm.str(), n_bad == 0, dt.str());
+    }
+#ifdef _OPENMP
+    omp_set_num_threads(saved_threads);
+#endif
+}
+
 void test_all_identities()
 {
     const lsdtt_raster_meta meta = make_meta(101, 101, 10.0);
@@ -1699,6 +1910,9 @@ int main(int argc, char** argv)
 
     std::cout << "\n--- C5: MADk2 invariants ---\n";
     test_madk2();
+
+    std::cout << "\n--- C6: 3x3 kernels byte-identical to reference ---\n";
+    test_3x3_bit_identity();
 
     // Every measured error is written out so the tolerances above can be
     // re-derived on another machine rather than taken on trust.

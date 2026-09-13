@@ -939,7 +939,14 @@ The suite fetches **one large real DEM per region** with `lsdtt-fetch-raster`
 | profile | regions | ladder (px) | source fetched at | download |
 |---|---|---|---|---|
 | `laptop` | alpine, lakeland | 500, 1000 | 1000 px (30 km) | ~4 MB/region |
-| `server` | alpine, lakeland | 1000, 2000, 4000, 8000 | 8000 px (240 km) | ~256 MB/region |
+| `server` | alpine, lakeland | 1000, 2000, 4000 | 4000 px (120 km) | ~64 MB/region |
+
+The `server` ladder went to 8000 px until 2026-09-13. On the forth02 campaign
+of 2026-09-09 that rung took 4.2 h of 5.5 h. For the surface suite, D8 and
+D-infinity, every engine's 8000² throughput was 0.95–1.04× its 4000² figure.
+The fill family still fell further (0.59–0.82×), but that fall is confounded
+with terrain, because each rung is a wider crop. A cached larger source is
+reused rather than re-fetched, so rung hashes do not change.
 
 | region | centre | UTM | terrain |
 |---|---|---|---|
@@ -1202,8 +1209,10 @@ expensive per-metric operation. Quote the metric family alongside the number.
    curvatures; TopoToolbox's `curvature_all4` yields 4 curvatures. Not the same
    products.
 3. **`polyfit_many` has no counterpart at all** — no reference exposes an
-   eight-metric call. It is an lsdtt3-only row, included to show the fit
-   amortising, not to score a comparison.
+   eight-metric call. It was an lsdtt3-only row, included to show the fit
+   amortising. It was removed from the campaign on 2026-09-13: it cost ~44 min
+   of a server campaign, mostly writing eight rasters. The table above remains
+   the record of the amortisation.
 
 !!! warning "Correction: window size is free, contrary to an earlier claim"
     This document previously stated that lsdtt3's default
@@ -1477,12 +1486,30 @@ produce a single number. Quoting only the first would be cherry-picking. Note th
 window size does NOT tilt this: the `direct` fit's cost is independent of
 `polyfit_lambda_metres` (measured flat over a 729× range of window cells).
 
-`fill_spill_merge` compares lsdtt3's nested depression hierarchy (Barnes 2020)
-plus Fill-Spill-Merge (Barnes 2021) against the cheapest thing the other tools
-offer. The ratio necessarily flatters them; it is recorded only because the
-absolute cost of the hierarchy is a number users ask for. Note the hierarchy is
+`fill_spill_merge` measures lsdtt3's nested depression hierarchy (Barnes 2020)
+plus Fill-Spill-Merge (Barnes 2021), lsdtt3 only. It is recorded because the
+absolute cost of the hierarchy is a number users ask for. Until 2026-09-13 it
+was paired with Whitebox's `sink`, which only labels depression cells, so that
+ratio compared nothing and the pairing was removed. Note the hierarchy is
 not separately switchable -- it is built as the first half of the
 `barnesetal2021` fill, which is the only CLI path that reaches it.
+
+Two cases reuse rows rather than re-measuring (`reuse_from` in the case
+registry, `reused_from` in the CSV). `accum_d8_no_svector` copies the
+reference rows of `accum_d8`, because the references run the identical call in
+both. `fill_wang_liu` copies lsdtt3's `fill_priority_flood` row, because lsdtt3
+has no Wang & Liu fill and its side of that case was the same barnes2014 command.
+
+**Memory.** Every command is launched through `tests/scripts/rusage_launcher.py`.
+A Linux child inherits its parent's lifetime peak RSS and `wait4` reports it as
+the child's own. Measured on WSL2: after a Python parent touched and freed
+1.5 GiB, `/bin/true` launched from it reported 1509.5 MiB; from a fresh process,
+9.0 MiB. The 2026-09-09 forth02 campaign launched directly from a driver that
+had peaked at 3.5 GB in `describe_fixture()`, and 441 of its 504 rows read
+exactly 3556.98 MiB. Memory columns from campaigns before 2026-09-13 are invalid
+except where a value exceeds that floor. Each campaign now records `rss_floor`
+(`/bin/true` through the launcher: 11.0 MiB on WSL2, against 93.0 MiB launched
+directly) and fails a tripwire above 64 MiB.
 
 ### Accumulation runs on a shared, pre-filled DEM
 
@@ -4669,6 +4696,32 @@ because the real function also runs a 3x3 nodata check per pixel (nine mask
 lookups) and writes an output mask; that check, not the arithmetic, is now the
 dominant remaining cost and is the next lever if hillshade ever matters more.
 
+**Both levers pulled, 2026-09-13, byte-identical.** Two further costs sat in
+front of the arithmetic:
+
+1. `data_view()` / `mask_view()` in `lsdtt_raster_surface_metrics_cpu.cpp` were
+   documented as non-owning views but built `lsdtt_array2d` objects with the
+   `from_ptr` constructor, which COPIES. Every kernel using them duplicated
+   the DEM and mask (5 B/cell) serially before doing any work. They now return
+   a `raster_view2d<T>` (pointer plus dimensions). This covers all 11 users in
+   the file.
+2. The per-pixel 9-cell nodata test is replaced, in `compute_hillshade`,
+   `compute_gradient_magnitude_3x3_square` and
+   `compute_plan_curvature_3x3_square`, by a 1-byte invalid-cell plane built
+   once in parallel and a branch-free 9-byte OR. When the raster has no invalid
+   cell, the plane is released and the test is skipped entirely.
+
+Single precision was also tried and rejected: it changes output bytes.
+
+Verified byte-identical before/after on 19 calls x 15 inputs (every view user;
+nodata holes, nodata border, value==nodata with mask 1, mask 0 with a finite
+value, finite and NaN nodata values, 1x1/2x5/3x3 grids, a real DEM) at 1 and 4
+threads. Pinned permanently by section C6 of `unit_surface_metrics`, which
+compares the three 3x3 kernels with verbatim reference copies of the old
+algorithms (memcmp, data and mask). C6 was mutation-tested: dropping one cell
+from the window OR fails it. The speedup was confirmed in direction on the
+laptop; the quotable figure awaits the server campaign.
+
 Note on the end-to-end benchmark: it is too noisy on this thermally-constrained
 laptop to confirm the ratio cleanly - TopoToolbox's *own* reference time moved
 from 4.07 ms to 2.61 ms between two runs of the identical code, and an 8-thread
@@ -6334,8 +6387,8 @@ same-work-per-engine row.
 Two genuine RichDEM absences were recorded in `NOT_IMPLEMENTED` rather than
 left as silent gaps, since an unexplained absence reads as "we did not bother":
 `hillshade` (no hillshade attribute in 2.3.0) and `polyfit_many` (no
-eight-metric call — recorded for all three references, as that row exists to
-show lsdtt3's shared fit amortising and has no reference equivalent by design).
+eight-metric call — recorded for all three references, as that row existed to
+show lsdtt3's shared fit amortising; the case was removed 2026-09-13).
 
 First measurement, alpine_1000, 1 thread, 3 repeats, **on the thermally limited
 laptop — not quotable**, recorded only to show the rows are produced:
