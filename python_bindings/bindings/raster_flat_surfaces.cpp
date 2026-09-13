@@ -270,7 +270,7 @@ Results from texture- and relief-based flat-surface detection.
         nb::arg("directional_close_line_length_pixels") = 0,
         nb::arg("directional_close_n_angles") = 18,
         nb::arg("min_component_pixels") = 100,
-        nb::arg("relief_window_pixels") = 5,
+        nb::arg("relief_window_side_pixels") = 5,
         nb::arg("relief_threshold_metres") = 1.0,
         nb::arg("remove_risers") = false, nb::arg("n_threads") = 0,
         "Detect and label flat surfaces from texture and local relief.");

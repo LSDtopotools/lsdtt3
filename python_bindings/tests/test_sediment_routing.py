@@ -1,4 +1,6 @@
+import inspect
 import unittest
+import warnings
 
 import numpy as np
 
@@ -28,6 +30,45 @@ class SedimentRoutingTest(unittest.TestCase):
         self.assertEqual(result.reaches.shape[0], self.network.n_junctions)
         self.assertEqual(result.deposition.shape, self.dem.shape)
         self.assertEqual(result.active_layer_d50.shape, self.dem.shape)
+
+    def test_dimension_keyword_compatibility_preserves_routing_results(self):
+        parameters = inspect.signature(lsdtt3.route_sediment).parameters
+        for canonical, legacy in (
+            ("active_layer_depth_metres", "active_layer_depth_m"),
+            ("d50_metres", "d50_m"),
+            ("d84_metres", "d84_m"),
+            ("d90_metres", "d90_m"),
+        ):
+            self.assertIn(canonical, parameters)
+            self.assertNotIn(legacy, parameters)
+
+        values = dict(
+            active_layer_depth_metres=0.08,
+            d50_metres=0.02,
+            d84_metres=0.05,
+            d90_metres=0.06,
+        )
+        common = dict(n_timesteps=2, timestep_seconds=3600.0)
+        canonical = lsdtt3.route_sediment(self.network, self.dem, **values, **common)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            legacy = lsdtt3.route_sediment(
+                self.network, self.dem,
+                active_layer_depth_m=0.08, d50_m=0.02, d84_m=0.05, d90_m=0.06,
+                **common,
+            )
+        self.assertEqual([warning.category for warning in caught], [DeprecationWarning] * 4)
+        self.assertTrue(all(warning.filename == __file__ for warning in caught))
+        self.assertEqual(canonical.total_flux_out_m3, legacy.total_flux_out_m3)
+        np.testing.assert_allclose(canonical.deposition.to_numpy(), legacy.deposition.to_numpy())
+        np.testing.assert_allclose(
+            canonical.active_layer_d50.to_numpy(), legacy.active_layer_d50.to_numpy()
+        )
+        with self.assertRaisesRegex(TypeError, "cannot both be supplied"):
+            lsdtt3.route_sediment(
+                self.network, self.dem, active_layer_depth_metres=0.08,
+                active_layer_depth_m=0.08, **common,
+            )
 
     def test_rejects_invalid_discharge_shape(self):
         with self.assertRaisesRegex(ValueError, "n_timesteps, n_junctions"):

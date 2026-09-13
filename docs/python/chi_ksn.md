@@ -9,7 +9,7 @@ import lsdtt3
 
 dem = lsdtt3.fill_pits(lsdtt3.Raster.read("dem.tif"))
 flow = lsdtt3.FlowInfo(dem)
-network = flow.channel_network(flow.channel_scope(threshold_pixels=500))
+network = flow.channel_network(flow.channel_scope(threshold_contributing_pixels=500))
 
 chi = network.chi(m_over_n=0.45)
 fit = chi.fit(dem, critical_divergence_metres=0.1)

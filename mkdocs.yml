@@ -36,29 +36,6 @@ extra_css:
 
 plugins:
   - search
-  - mkdocstrings:
-      handlers:
-        python:
-          options:
-            # Public native objects are documented through a source-only
-            # Python façade. This retains accurate Python signatures and
-            # NumPy-style prose without importing or altering the extension.
-            paths:
-              - python_bindings/src
-            force_inspection: false
-            docstring_style: numpy
-            docstring_options:
-              # Nanobind exposes rendered signatures dynamically. Griffe can
-              # read the docstrings but not every parameter name, so this
-              # structural check would otherwise produce false warnings.
-              warn_unknown_params: false
-            # API pages are written around the public ``lsdtt3`` namespace;
-            # hide the implementation-only ``_core`` collector path.
-            filters:
-              - "!^__.*"
-            show_root_full_path: false
-            show_signature_annotations: false
-            show_source: false
 
 markdown_extensions:
   - pymdownx.snippets:
@@ -158,6 +135,12 @@ nav:
       - Fetching and vectors: python_api/fetch.md
       - Cosmogenic nuclides: python_api/cosmogenic.md
       - GraphFlood: python_api/graphflood.md
+      - Landscape and surfaces: python_api/landscape.md
+      - Drainage and depressions: python_api/drainage.md
+      - Sediment and landforms: python_api/sediment.md
+      - Synthetic workflows: python_api/synthetic.md
+      - Fluvial and vector hydrology: python_api/fluvial.md
+      - Statistics and utilities: python_api/statistics.md
   - Developer notes:
     - Developer onboarding: developer_notes/developer_onboarding.md
     - Parameter naming conventions: developer_notes/cli_parameter_conventions.md

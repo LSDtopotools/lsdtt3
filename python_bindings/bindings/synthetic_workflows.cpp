@@ -130,7 +130,7 @@ SyntheticNetworkResult synthetic_network(const lsdtt::lsdtt_raster_meta& meta,
                                          const std::string& outlet_mode, bool periodic_columns,
                                          int outlet_spacing, double gamma, long long n_iterations,
                                          double temperature_scale, double m_exponent, double n_exponent,
-                                         double relief_m, std::uint64_t seed)
+                                          double relief_metres, std::uint64_t seed)
 {
     if (!meta.is_valid()) throw std::invalid_argument("metadata must describe a non-empty raster");
     lsdtt::lsdtt_ocn_options options;
@@ -139,7 +139,7 @@ SyntheticNetworkResult synthetic_network(const lsdtt::lsdtt_raster_meta& meta,
     options.periodic_columns = periodic_columns; options.outlet_spacing = outlet_spacing;
     options.gamma = gamma; options.n_iter = n_iterations; options.temperature_scale = temperature_scale;
     options.m_exponent = static_cast<float>(m_exponent); options.n_exponent = static_cast<float>(n_exponent);
-    options.relief_mode = true; options.target_relief = static_cast<float>(relief_m); options.seed = seed;
+    options.relief_mode = true; options.target_relief = static_cast<float>(relief_metres); options.seed = seed;
     if (outlet_mode == "single_south") options.outlet_mode = lsdtt::ocn_outlet_mode::single_south;
     else if (outlet_mode == "all_coast") options.outlet_mode = lsdtt::ocn_outlet_mode::all_coast;
     else if (outlet_mode == "north_south") options.outlet_mode = lsdtt::ocn_outlet_mode::north_south;
@@ -202,7 +202,7 @@ B. Gailleton
         nb::arg("outlet_mode") = "single_south", nb::arg("periodic_columns") = false,
         nb::arg("outlet_spacing") = 1, nb::arg("gamma") = .5, nb::arg("n_iterations") = -1,
         nb::arg("temperature_scale") = 1., nb::arg("m_exponent") = .45, nb::arg("n_exponent") = 1.,
-        nb::arg("relief_m") = 1000., nb::arg("seed") = 1,
+        nb::arg("relief_metres") = 1000., nb::arg("seed") = 1,
         "Optimise a synthetic D8 optimal channel network and derive its chi steady-state DEM.");
 }
 } // namespace lsdtt3_python

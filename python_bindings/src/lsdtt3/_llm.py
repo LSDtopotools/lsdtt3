@@ -34,13 +34,13 @@ spectral_analysis(R,...)->SpectralResult; frangi_filter(R,...)->FrangiResult; sw
 """,
     "flow": """@flow
 F=FlowInfo(R,boundary_conditions='oooo',forced_outlets?,allow_pits_as_outlets?); F is immutable D8 topology.
-F.drainage_area()->R; F.flow_direction()->R; F.flow_distance_to_outlet()->R; F.channel_scope(threshold_pixels=...)->S
+ F.drainage_area()->R; F.flow_direction()->R; F.flow_distance_to_outlet()->R; F.channel_scope(threshold_contributing_pixels=...)->S
 F.scope_from_heads(heads)->S; F.channel_network(S)->N; F.basins(outlets?)->B; F.height_above_channel(R,S|N,...)->R
 G=FlowGraph(R,method='mfd'|'dinf',boundary_conditions='oooo',...); G.drainage_area()->R
 topographic_wetness_index(drainage_area:R,slope:R)->R; sediment_connectivity_index(...)->ConnectivityResult; soil_topographic_index(...)->SoilTopographicIndexResult
 """,
     "channel": """@channel
-extract_channel_heads(R,F,method=..., ...)->ChannelHeads; S=F.channel_scope(threshold_pixels=...)|F.scope_from_heads(heads)
+ extract_channel_heads(R,F,method=..., ...)->ChannelHeads; S=F.channel_scope(threshold_contributing_pixels=...)|F.scope_from_heads(heads)
 N=F.channel_network(S); N.points_geodataframe()->V; N.lines_geodataframe()->V; N.links()->D; N.junctions()->D; N.junction_angles()->D
 N.chi(outlets?,m_over_n=.45,reference_area=1,denominator?)->C; N.chi_sweep(R,m_over_n_values,...)->D
 find_channel_candidates(R,...)->ChannelCandidatesResult; water_centrelines(...)->WaterCentrelineResult; repair_water_lines(...)->WaterLineRepairResult
@@ -61,15 +61,15 @@ N.chi_sweep(R,m_over_n_values,...)->D; chi_from_outlets/chi_from_outlets_inherit
 V inputs/outputs=GeoDataFrame; CRS must equal R projected metre CRS.
 bounds_from_vector(V)->VectorBounds; rasterize_polygons(R,V,...)->R; clip_to_polygons(R,V)->R; sample_points(R,V)->V
 burn_streams(R,V,...)->StreamBurnResult; water_centrelines(...)->WaterCentrelineResult; repair_water_lines(...)->WaterLineRepairResult
-extract_valley_centrelines(R,S|ordered_channels,...)->ValleyCentrelineResult; extract_valley_cross_sections(R,centrelines,...)->ValleyCrossSections
+extract_valley_centrelines(R,S|ordered_channels,...,valley_mask=R)->ValleyCentrelineResult; extract_valley_cross_sections(R,centrelines,...)->ValleyCrossSections
 """,
     "fetch": """@fetch
-fetch_dem(bounds|V,dataset='cop30',...)->R; fetch_dem_for_outlets(outlets:V,...)->OutletFetchResult
+fetch_dem(bounds|V,source='cop30',...)->R; fetch_dem_for_outlets(outlets:V,...)->OutletFetchResult
 bounds_from_vector(V)->VectorBounds; utm_epsg_for_point(x,y)->int; cop30_tiles_for_bbox(...)->list[str]
 ! fetch expects geographic bounds/outlets where documented; returned R carries projected grid metadata. Save explicitly: R.write(path).
 """,
     "hydraulic": """@hydraulic
-fill_hydraulic_surface(surface:R,node_state:R,boundary_conditions='oooo',...)->HydraulicSurfaceFill
+fill_hydraulic_surface(surface:R,node_state:R,boundary_conditions='nnnn',...)->HydraulicSurfaceFill
 run_graphflood(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->HydraulicResult
 run_graphflood_optimised(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,...)->GraphFloodOptimisedResult
 run_graphflood_optimised_v2(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R,prescribed_qin:R|None=None,...)->GraphFloodOptimisedResult
@@ -79,13 +79,13 @@ node_state: 0=outside/nodata,1=active,2=flux-only ghost,3=outlet; ghosts route p
 ! hydraulic routing is on z+h; stationary workflow fills h, not bed elevation.
 """,
     "landscape": """@landscape
-LandscapeModel(R,fluvial_method='d8'|'dinf'|'none',hillslope_model='none'|'linear'|'roering'|'roering_implicit'|'cidre'|'adi'|'cellular',coupling_regime='automatic'|'coupled'|'channels_as_boundaries',...)->L
+LandscapeModel(R,incision_threshold_specific_area=0,fluvial_method='d8'|'dinf'|'none',hillslope_model='none'|'linear'|'roering'|'roering_implicit'|'cidre'|'adi'|'cellular',coupling_regime='automatic'|'coupled'|'channels_as_boundaries',...)->L
 L.step(compute_erosion_rate=False)->LandscapeStepResult; L.run(n_steps,compute_erosion_rate=False)->LandscapeStepResult; L.set_forcing(uplift_rate,baselevel_fall_rate=0)
 hillslope_transport_explicit|implicit|adi|cellular(R,channels,...)->HillslopeTransportResult
 route_sediment(N,R,...)->SedimentRoutingResult; trigger_landslides(R,...)->LandslideResult
 """,
     "cosmo": """@cosmo
-Q=CRNColumn(rock_density_kg_m3=2650); Q.set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_m); Q.transient(...)
+ Q=CRNColumn(rock_density_kg_m3=2650); Q.set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_metres); Q.transient(...)
 crn_uniform_raster(R,value)->R; crn_production_scaling(R,...)->R; crn_steady_state(...); crn_step_change(...)
 crn_transient_history(column,production_scaling:R,topographic_shielding:R?)->{'be10':R,'al26':R,'c14':R}
 crn_invert_basin_erosion(...)->D; crn_outlet_concentration(...); crn_pair_diagnostics(...)
@@ -123,7 +123,7 @@ _CLASS_SIGNATURES = {
     "BasinCollection": "BasinCollection: F.basins(outlets?)->B",
     "ChiCollection": "ChiCollection: N.chi(outlets?,m_over_n=.45,reference_area=1,denominator?)->C",
     "LandscapeModel": "LandscapeModel(dem,fluvial_method=...,hillslope_model=...,coupling_regime='automatic')->L",
-    "CRNColumn": "CRNColumn(rock_density_kg_m3=2650); set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_m)",
+    "CRNColumn": "CRNColumn(rock_density_kg_m3=2650); set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_metres)",
 }
 
 

@@ -17,7 +17,7 @@ print("surface 10Be:", steady.concentration_be10, "atoms/g")
 column.set_erosion_history(
     time_yr_bp=[0.0, 10_000.0, -9999.0],
     erosion_rate_m_yr=[0.0002, 0.00005, 0.00005],
-    removal_m=[0.0, 0.0, 0.0],
+    removal_metres=[0.0, 0.0, 0.0],
 )
 profile = column.transient(np.linspace(0.0, 2.0, 101))
 

@@ -88,17 +88,17 @@ nb::object qq_table(const ChannelHeads& heads)
 }
 
 ChannelHeads extract_channel_heads(const Raster& dem, const FlowInfo& flow,
-                                   const std::string& method, int threshold_pixels,
+                                    const std::string& method, int threshold_contributing_pixels,
                                    double pruning_drainage_area_m2,
-                                   double surface_fitting_radius_m,
+                                   double surface_fitting_radius_metres,
                                    int connected_components_threshold_pixels,
                                    bool diagnostics)
 {
     require_flow_grid(dem, flow);
     if (method == "threshold") {
-        if (threshold_pixels < 1)
-            throw std::invalid_argument("threshold_pixels must be positive");
-        return ChannelHeads(flow.native().get_sources_index_threshold(threshold_pixels),
+        if (threshold_contributing_pixels < 1)
+            throw std::invalid_argument("threshold_contributing_pixels must be positive");
+        return ChannelHeads(flow.native().get_sources_index_threshold(threshold_contributing_pixels),
                             method, flow.shared_native());
     }
     if (method != "wiener")
@@ -106,7 +106,7 @@ ChannelHeads extract_channel_heads(const Raster& dem, const FlowInfo& flow,
 
     lsdtt::wiener_source_extraction_params options;
     options.pruning_drainage_area_m2 = pruning_drainage_area_m2;
-    options.surface_fitting_radius_m = surface_fitting_radius_m;
+    options.surface_fitting_radius_m = surface_fitting_radius_metres;
     options.connected_components_threshold_pixels = connected_components_threshold_pixels;
     options.write_filtered_dem = diagnostics;
     options.write_tangential_curvature = diagnostics;
@@ -180,9 +180,9 @@ Use ``pixels`` as explicit ``FlowInfo.channel_scope(..., sources=...)`` input.
 
     module.def("extract_channel_heads", &extract_channel_heads,
         nb::arg("dem"), nb::arg("flow"), nb::arg("method") = "threshold",
-        nb::arg("threshold_pixels") = 1000,
+        nb::arg("threshold_contributing_pixels") = 1000,
         nb::arg("pruning_drainage_area_m2") = 1000.0,
-        nb::arg("surface_fitting_radius_m") = 6.0,
+        nb::arg("surface_fitting_radius_metres") = 6.0,
         nb::arg("connected_components_threshold_pixels") = 100,
         nb::arg("diagnostics") = false,
         R"doc(Extract D8 channel heads by drainage threshold or Wiener curvature.

@@ -43,17 +43,17 @@ LandslideResult trigger_landslides(const Raster& dem,const FlowInfo& flow,double
     std::vector<std::uint8_t> mask=dem.native().get_mask(); std::vector<float> times(mask.size(),static_cast<float>(dm.no_data_value)),depth(mask.size(),0.f); lsdtt::lsdtt_raster_cpu tfail(std::move(times),std::vector<std::uint8_t>(mask),dm),exc(std::move(depth),std::move(mask),dm),z=dem.native();
     lsdtt::LandslideEventConfig cfg; cfg.target_volume_m3=volume; cfg.event_time_yr=event_time; cfg.anneal_time_yr=anneal; cfg.seed=seed; auto result=lsdtt::trigger_landslide_event(z,tfail,exc,placer,sampler,cfg); return LandslideResult(std::move(z),std::move(tfail),std::move(exc),result);
 }
-LandslideSeriesResult run_landslide_series(const Raster& dem,const FlowInfo& flow,double start,double end,double recurrence,bool poisson,double volume,double erosion_rate,int threshold,const std::string& model,const std::string& preset,int min_pixels,double max_area,double anneal,double budget_tol,int budget_max_iter,std::uint64_t seed,const Raster* active_mask) {
+LandslideSeriesResult run_landslide_series(const Raster& dem,const FlowInfo& flow,double start,double end,double recurrence,bool poisson,double volume,double erosion_rate,int threshold,const std::string& model,const std::string& preset,int min_pixels,double max_area,double anneal,double event_budget_relative_tolerance,int budget_max_iter,std::uint64_t seed,const Raster* active_mask) {
     const auto& fm=flow.native().meta(); const auto& dm=dem.native().get_meta();
     if(fm.n_rows!=dm.n_rows||fm.n_cols!=dm.n_cols||fm.cell_size!=dm.cell_size||fm.x_min!=dm.x_min||fm.y_min!=dm.y_min) throw std::invalid_argument("flow must share the DEM grid");
-    if(!(end>start)||recurrence<=0||threshold<1||min_pixels<1||budget_tol<=0||budget_max_iter<1) throw std::invalid_argument("time bounds, recurrence, placement controls, and budget controls must be positive");
+    if(!(end>start)||recurrence<=0||threshold<1||min_pixels<1||event_budget_relative_tolerance<=0||budget_max_iter<1) throw std::invalid_argument("time bounds, recurrence, placement controls, and budget controls must be positive");
     if((volume>0)==(erosion_rate>0)) throw std::invalid_argument("provide exactly one of target_volume_per_event_m3 or long_term_erosion_rate_mm_kyr");
     if(active_mask) same(dem,*active_mask,"active_mask");
     lsdtt::LandslideSizeParams p; if(!lsdtt::parse_landslide_size_model(model,p.model)) throw std::invalid_argument("size_model must be 'inverse_gamma' or 'truncated_pareto'"); if(!lsdtt::AreaVolumeScaling::from_name(preset,p.av)) throw std::invalid_argument("unknown area_volume_preset");
     p.n_min_pixels=min_pixels; double cap=threshold*dm.cell_size*dm.cell_size; p.area_max_m2=max_area>0?max_area:cap; if(p.area_max_m2>cap) throw std::invalid_argument("max_area_m2 cannot exceed the channel-threshold area");
     lsdtt::LandslideSizeSampler sampler(p,dm.cell_size); lsdtt::LandslidePlacementConfig place; place.channel_threshold_pixels=threshold; lsdtt::LandslidePlacer placer(flow.native(),dm,place,active_mask?&active_mask->native():nullptr);
     std::vector<std::uint8_t> mask=dem.native().get_mask(); std::vector<float> times(mask.size(),static_cast<float>(dm.no_data_value)),depth(mask.size(),0.f); lsdtt::lsdtt_raster_cpu tfail(std::move(times),std::vector<std::uint8_t>(mask),dm),exc(std::move(depth),std::move(mask),dm),z=dem.native();
-    lsdtt::LandslideSeriesConfig cfg; cfg.start_time_yr=start; cfg.end_time_yr=end; cfg.mean_recurrence_yr=recurrence; cfg.poisson_timing=poisson; cfg.target_volume_per_event_m3=volume; cfg.long_term_erosion_rate_mm_kyr=erosion_rate; cfg.anneal_time_yr=anneal; cfg.budget_tol=budget_tol; cfg.budget_max_iter=budget_max_iter; cfg.seed=seed;
+    lsdtt::LandslideSeriesConfig cfg; cfg.start_time_yr=start; cfg.end_time_yr=end; cfg.mean_recurrence_yr=recurrence; cfg.poisson_timing=poisson; cfg.target_volume_per_event_m3=volume; cfg.long_term_erosion_rate_mm_kyr=erosion_rate; cfg.anneal_time_yr=anneal; cfg.budget_tol=event_budget_relative_tolerance; cfg.budget_max_iter=budget_max_iter; cfg.seed=seed;
     auto result=lsdtt::run_landslide_series(z,tfail,exc,placer,sampler,cfg);
     return LandslideSeriesResult(std::move(z),std::move(tfail),std::move(exc),std::move(result));
 }
@@ -106,7 +106,7 @@ Authors
 -------
 B. Gailleton
 )doc");
- m.def("run_landslide_series",&run_landslide_series,nb::arg("dem"),nb::arg("flow"),nb::arg("start_time_yr")=0.,nb::arg("end_time_yr")=100000.,nb::arg("mean_recurrence_yr")=1000.,nb::arg("poisson_timing")=true,nb::arg("target_volume_per_event_m3")=0.,nb::arg("long_term_erosion_rate_mm_kyr")=0.,nb::arg("channel_threshold_pixels")=1000,nb::arg("size_model")="inverse_gamma",nb::arg("area_volume_preset")="larsen_soil_scar",nb::arg("min_pixels")=1,nb::arg("max_area_m2")=0.,nb::arg("anneal_time_yr")=0.,nb::arg("budget_tol")=.02,nb::arg("budget_max_iter")=50,nb::arg("seed")=1u,nb::arg("active_mask")=nullptr,R"doc(Run a reproducible, annealing-aware landslide time series.
+ m.def("run_landslide_series",&run_landslide_series,nb::arg("dem"),nb::arg("flow"),nb::arg("start_time_yr")=0.,nb::arg("end_time_yr")=100000.,nb::arg("mean_recurrence_yr")=1000.,nb::arg("poisson_timing")=true,nb::arg("target_volume_per_event_m3")=0.,nb::arg("long_term_erosion_rate_mm_kyr")=0.,nb::arg("channel_threshold_pixels")=1000,nb::arg("size_model")="inverse_gamma",nb::arg("area_volume_preset")="larsen_soil_scar",nb::arg("min_pixels")=1,nb::arg("max_area_m2")=0.,nb::arg("anneal_time_yr")=0.,nb::arg("event_budget_relative_tolerance")=.02,nb::arg("budget_max_iter")=50,nb::arg("seed")=1u,nb::arg("active_mask")=nullptr,R"doc(Run a reproducible, annealing-aware landslide time series.
 
 Provide exactly one budget: a fixed ``target_volume_per_event_m3`` or a
 ``long_term_erosion_rate_mm_kyr`` over the eligible host area. The final DEM
@@ -131,7 +131,7 @@ channel_threshold_pixels, size_model, area_volume_preset :
     Native scar-placement and size-distribution controls.
 min_pixels, max_area_m2, anneal_time_yr :
     Scar bounds and time before failed ground becomes eligible again.
-budget_tol, budget_max_iter, seed, active_mask :
+ event_budget_relative_tolerance, budget_max_iter, seed, active_mask :
     Event-budget solver controls, reproducibility, and optional host mask.
 
 Returns

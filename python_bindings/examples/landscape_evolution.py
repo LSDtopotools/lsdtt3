@@ -38,7 +38,7 @@ model = lsdtt3.LandscapeModel(
     uplift_rate=2.0e-3,
     hillslope_model="roering_implicit",
     hillslope_diffusivity=0.02,
-    incision_threshold_area=1.0,
+    incision_threshold_specific_area=1.0,
     coupling_regime="coupled",
     boundary_conditions="nnon",  # south edge is the fixed outlet
 )

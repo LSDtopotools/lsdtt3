@@ -12,8 +12,8 @@ hillshade = np.where(
 )
 
 methods = [
-    ("Threshold: 100 pixels", dict(method="threshold", threshold_pixels=100)),
-    ("Threshold: 500 pixels", dict(method="threshold", threshold_pixels=500)),
+    ("Threshold: 100 pixels", dict(method="threshold", threshold_contributing_pixels=100)),
+    ("Threshold: 500 pixels", dict(method="threshold", threshold_contributing_pixels=500)),
     ("Wiener: 500 m²", dict(method="wiener", pruning_drainage_area_m2=500.0,
                               connected_components_threshold_pixels=10)),
     ("Wiener: 2,000 m²", dict(method="wiener", pruning_drainage_area_m2=2000.0,

@@ -22,8 +22,8 @@ class SpectralTest(unittest.TestCase):
             lsdtt3.highpass_filter(raster, 100.0, n_threads=1),
             lsdtt3.bandpass_filter(raster, 20.0, 100.0, n_threads=1),
             lsdtt3.wiener_filter(
-                raster, signal_wavelength_long_m=300.0,
-                signal_wavelength_short_m=30.0, n_threads=1,
+                raster, signal_wavelength_long_metres=300.0,
+                signal_wavelength_short_metres=30.0, n_threads=1,
             ),
         ]
         self.assertTrue(all(output.shape == raster.shape for output in outputs))

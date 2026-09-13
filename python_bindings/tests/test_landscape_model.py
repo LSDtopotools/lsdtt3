@@ -63,10 +63,10 @@ class LandscapeModelTest(unittest.TestCase):
             uplift_rate=0.0, boundary_conditions="nnon", n_threads=1,
         )
         zero = lsdtt3.LandscapeModel(
-            self.dem, incision_threshold_area=0.0, **common
+            self.dem, incision_threshold_specific_area=0.0, **common
         )
         positive = lsdtt3.LandscapeModel(
-            self.dem, incision_threshold_area=20.0, **common
+            self.dem, incision_threshold_specific_area=20.0, **common
         )
         zero_mask = zero.channel_mask().to_numpy()
         positive_mask = positive.channel_mask().to_numpy()
@@ -78,7 +78,7 @@ class LandscapeModelTest(unittest.TestCase):
         # produce different exact masks.
         self.assertEqual(np.count_nonzero(positive_mask), 197)
 
-    def test_default_critical_slope_is_point_six_not_point_eight(self):
+    def test_default_critical_slope_is_point_eight(self):
         meta = lsdtt3.RasterMeta.from_shape(7, 7, cell_size=1.0)
         rows, cols = np.indices((7, 7), dtype=np.float32)
         values = 20.0 - 0.7 * rows - 0.01 * (cols - 3.0) ** 2
@@ -89,7 +89,7 @@ class LandscapeModelTest(unittest.TestCase):
             timestep_years=0.1, erodibility=0.0, fluvial_method="none",
             uplift_rate=0.0, hillslope_model="cidre",
             hillslope_diffusivity=0.05, nonlinear_hillslopes=True,
-            incision_threshold_area=0.0, boundary_conditions="nnnn",
+            incision_threshold_specific_area=0.0, boundary_conditions="nnnn",
             fixed_pixels=[], n_threads=1,
         )
         default = lsdtt3.LandscapeModel(dem, **common).step().elevation.to_numpy()
@@ -99,7 +99,7 @@ class LandscapeModelTest(unittest.TestCase):
         point_eight = lsdtt3.LandscapeModel(
             dem, critical_hillslope_slope=0.8, **common
         ).step().elevation.to_numpy()
-        np.testing.assert_array_equal(default, point_six)
+        np.testing.assert_array_equal(default, point_eight)
         self.assertGreater(np.max(np.abs(point_six - point_eight)), 1.0e-6)
 
 

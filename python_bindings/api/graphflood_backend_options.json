@@ -22,8 +22,8 @@
         "max_steps",
         "run_until_converged",
         "convergence_check_every",
-        "tol_median_abs_dhw",
-        "tol_median_rel_dhw",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "n_threads",
         "initial_water_depth"
       ]
@@ -44,8 +44,8 @@
         "max_steps",
         "run_until_converged",
         "convergence_check_every",
-        "tol_median_abs_dhw",
-        "tol_median_rel_dhw",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "reuse_topology",
         "initial_water_depth"
       ]
@@ -66,8 +66,8 @@
         "max_steps",
         "run_until_converged",
         "convergence_check_every",
-        "tol_median_abs_dhw",
-        "tol_median_rel_dhw",
+        "median_dhw_convergence_tolerance_metres",
+        "median_dhw_relative_convergence_tolerance",
         "reuse_topology",
         "dirty_tile_size",
         "full_validation_every",

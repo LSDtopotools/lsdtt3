@@ -105,12 +105,12 @@ Raster bandpass_filter(const Raster& raster, double short_metres,
     ));
 }
 
-Raster wiener_filter(const Raster& raster, double signal_wavelength_long_m,
-                     double signal_wavelength_short_m, const std::string& window,
+Raster wiener_filter(const Raster& raster, double signal_wavelength_long_metres,
+                      double signal_wavelength_short_metres, const std::string& window,
                      bool clip_to_valid_rectangle, int n_threads)
 {
     return Raster(lsdtt::fftw2D_wiener_filter(
-        raster.native(), signal_wavelength_long_m, signal_wavelength_short_m,
+        raster.native(), signal_wavelength_long_metres, signal_wavelength_short_metres,
         parse_window(window), clip_to_valid_rectangle, n_threads
     ));
 }
@@ -222,8 +222,8 @@ cycles per metre and wavelengths are in metres.
         nb::arg("clip_to_valid_rectangle") = false, nb::arg("n_threads") = 0,
         "Return the DEM component between two wavelengths.");
     m.def("wiener_filter", &wiener_filter, nb::arg("raster"),
-        nb::arg("signal_wavelength_long_m") = 1000.0,
-        nb::arg("signal_wavelength_short_m") = 100.0, nb::arg("window") = "hann",
+        nb::arg("signal_wavelength_long_metres") = 1000.0,
+        nb::arg("signal_wavelength_short_metres") = 100.0, nb::arg("window") = "hann",
         nb::arg("clip_to_valid_rectangle") = false, nb::arg("n_threads") = 0,
         "Attenuate high-frequency white noise with an adaptive Wiener filter.");
     m.def("masked_surface_recovery", &masked_surface_recovery, nb::arg("raster"),

@@ -1,7 +1,6 @@
 import unittest
 
 import numpy as np
-import pytest
 
 import lsdtt3
 
@@ -15,18 +14,16 @@ class ValleyCrossSectionDiagnosticsTests(unittest.TestCase):
         dem = lsdtt3.Raster.from_numpy(data, np.ones(data.shape, dtype=bool), meta)
         channel = np.column_stack((np.arange(4, 37), np.full(33, 20, dtype=int)))
 
-        try:
-            centrelines = lsdtt3.extract_valley_centrelines(
-                dem,
-                [channel],
-                corridor_width_metres=120.0,
-                fallback_valley_hand_metres=4.0,
-                valley_dilation_pixels=1,
-                centreline_loops=1,
-            )
-        except ValueError as error:
-            self.assertRegex(str(error), "no valley mask supplied")
-            pytest.xfail("Phase 2: supply fluvial-surface valley mask")
+        valley_values = np.zeros((41, 41), dtype=np.float32)
+        valley_values[4:37, 14:27] = 1.0
+        valley_mask = lsdtt3.Raster.from_numpy(
+            valley_values, np.ones(valley_values.shape, dtype=bool), meta,
+        )
+        centrelines = lsdtt3.extract_valley_centrelines(
+            dem, [channel], corridor_width_metres=120.0,
+            valley_dilation_pixels=1,
+            centreline_loops=1, valley_mask=valley_mask,
+        )
         sections = lsdtt3.extract_valley_cross_sections(
             dem,
             centrelines,
@@ -54,7 +51,6 @@ class ValleyCrossSectionDiagnosticsTests(unittest.TestCase):
             {"width_metres", "area_metres2", "hydraulic_depth_metres"}
             <= set(sections.hydraulic_curve.columns)
         )
-        pytest.fail("Phase 2 supplied-mask migration succeeded; remove this xfail gate")
 
 
 if __name__ == "__main__":

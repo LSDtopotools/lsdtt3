@@ -13,7 +13,7 @@ def test_crn_column_steady_state_round_trip():
 
 def test_crn_column_transient_profile():
     column = lsdtt3.CRNColumn()
-    column.set_erosion_history([0.0, 1000.0, -9999.0], [0.0001, 0.0001, 0.0001], [0.0, 0.0, 0.0])
-    profile = column.transient([0.0, 1.0])
+    column.set_erosion_history([0.0, 1000.0, -9999.0], [0.0001, 0.0001, 0.0001], removal_metres=[0.0, 0.0, 0.0])
+    profile = column.transient(sampling_depths_metres=[0.0, 1.0])
     assert len(profile) == 2
     assert profile[0].concentration_be10 > profile[1].concentration_be10

@@ -6,6 +6,33 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
+from ._compat import MISSING, resolve_deprecated_keyword
+
+
+def _normalize_convergence_options(
+    absolute: float | None,
+    relative: float | None,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    options = dict(options)
+    pairs = (
+        ("median_dhw_convergence_tolerance_metres", "tol_median_abs_dhw", absolute),
+        ("median_dhw_relative_convergence_tolerance", "tol_median_rel_dhw", relative),
+    )
+    for canonical, legacy, explicit in pairs:
+        canonical_value = MISSING if explicit is None else explicit
+        if canonical in options:
+            if canonical_value is not MISSING:
+                raise TypeError(f"{canonical!r} was supplied twice")
+            canonical_value = options.pop(canonical)
+        value = resolve_deprecated_keyword(
+            canonical, canonical_value, legacy, options.pop(legacy, MISSING),
+            stacklevel=3,
+        )
+        if value is not MISSING:
+            options[canonical] = value
+    return options
+
 
 @dataclass(frozen=True)
 class GraphFloodMultigridResult:
@@ -201,6 +228,8 @@ def run_graphflood_multigrid(
     steps_per_level: int | Sequence[int] = 100,
     point_inflows: Any = None,
     initial_water_depth: Any = None,
+    median_dhw_convergence_tolerance_metres: float | None = None,
+    median_dhw_relative_convergence_tolerance: float | None = None,
     **backend_options: Any,
 ) -> GraphFloodMultigridResult:
     """Run a compatible GraphFlood backend from coarse to fine grids.
@@ -232,6 +261,12 @@ def run_graphflood_multigrid(
     B. Gailleton
     """
     from . import Raster, RasterHierarchy
+
+    backend_options = _normalize_convergence_options(
+        median_dhw_convergence_tolerance_metres,
+        median_dhw_relative_convergence_tolerance,
+        backend_options,
+    )
 
     solver, backend_name = _backend(backend)
     factors = tuple(int(value) for value in factors)
@@ -477,6 +512,8 @@ def run_graphflood_induced(
     edge_depth_threshold: float = 1.0e-4,
     max_expansions: int = 2,
     point_inflows: Any = None,
+    median_dhw_convergence_tolerance_metres: float | None = None,
+    median_dhw_relative_convergence_tolerance: float | None = None,
     **backend_options: Any,
 ) -> GraphFloodInducedResult:
     """Run GraphFlood on a discharge-selected domain and floodplain halo.
@@ -510,6 +547,12 @@ def run_graphflood_induced(
     B. Gailleton
     """
     from . import Raster
+
+    backend_options = _normalize_convergence_options(
+        median_dhw_convergence_tolerance_metres,
+        median_dhw_relative_convergence_tolerance,
+        backend_options,
+    )
 
     if qin_threshold < 0 or halo_cells < 0 or max_expansions < 0:
         raise ValueError("threshold, halo_cells, and max_expansions must be non-negative")

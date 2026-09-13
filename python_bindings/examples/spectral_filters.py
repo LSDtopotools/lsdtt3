@@ -14,8 +14,8 @@ rasters = {
     "Low-pass": lsdtt3.lowpass_filter(dem, cutoff_metres=500.0),
     "High-pass": lsdtt3.highpass_filter(dem, cutoff_metres=500.0),
     "Band-pass": lsdtt3.bandpass_filter(dem, short_metres=30.0, long_metres=500.0),
-    "Wiener": lsdtt3.wiener_filter(dem, signal_wavelength_long_m=500.0,
-                                    signal_wavelength_short_m=30.0),
+    "Wiener": lsdtt3.wiener_filter(dem, signal_wavelength_long_metres=500.0,
+                                    signal_wavelength_short_metres=30.0),
 }
 
 fig, axes = plt.subplots(1, len(rasters), figsize=(16, 4), constrained_layout=True)

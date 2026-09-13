@@ -1,4 +1,6 @@
+import inspect
 import unittest
+import warnings
 
 import numpy as np
 from pyproj import CRS
@@ -43,6 +45,33 @@ class InternalDrainageTest(unittest.TestCase):
         self.assertTrue(result.candidates.empty)
         self.assertIn("sink_id", result.candidates.columns)
         self.assertIn("volume_m3", result.candidates.columns)
+
+    def test_area_and_volume_keyword_compatibility_preserves_candidates(self):
+        parameters = inspect.signature(lsdtt3.find_internal_drainage).parameters
+        self.assertIn("min_area_m2", parameters)
+        self.assertIn("min_volume_m3", parameters)
+        self.assertNotIn("min_area_metres2", parameters)
+        self.assertNotIn("min_volume_metres3", parameters)
+
+        canonical = lsdtt3.find_internal_drainage(
+            self.dem, min_area_m2=100.0, min_volume_m3=100.0
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            legacy = lsdtt3.find_internal_drainage(
+                self.dem, min_area_metres2=100.0, min_volume_metres3=100.0
+            )
+        self.assertEqual([warning.category for warning in caught], [DeprecationWarning] * 2)
+        self.assertTrue(all(warning.filename == __file__ for warning in caught))
+        self.assertEqual(canonical.n_candidates, legacy.n_candidates)
+        self.assertEqual(
+            canonical.candidates[["pit_row", "pit_col"]].values.tolist(),
+            legacy.candidates[["pit_row", "pit_col"]].values.tolist(),
+        )
+        with self.assertRaisesRegex(TypeError, "cannot both be supplied"):
+            lsdtt3.find_internal_drainage(
+                self.dem, min_area_m2=100.0, min_area_metres2=100.0
+            )
 
     def test_complete_hierarchy_exposes_labels_and_parent_tree(self):
         hierarchy = lsdtt3.depression_hierarchy(self.dem)

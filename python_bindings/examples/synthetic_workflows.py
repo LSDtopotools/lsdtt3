@@ -22,7 +22,7 @@ range_case = lsdtt3.synthetic_mountain_range(
 )
 
 # A compact OCN experiment.  Use more iterations for quantitative branching work.
-ocn = lsdtt3.synthetic_network(meta, n_iterations=5_000, relief_m=800.0, seed=7)
+ocn = lsdtt3.synthetic_network(meta, n_iterations=5_000, relief_metres=800.0, seed=7)
 
 fig, axes = plt.subplots(1, 3, figsize=(13, 4), constrained_layout=True)
 axes[0].imshow(noise.to_numpy(), cmap="terrain")

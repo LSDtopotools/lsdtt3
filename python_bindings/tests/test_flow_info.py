@@ -4,7 +4,6 @@ from tempfile import TemporaryDirectory
 
 import geopandas as gpd
 import numpy as np
-import pytest
 from pyproj import CRS
 from shapely.geometry import box
 
@@ -145,13 +144,14 @@ class FlowInfoTest(unittest.TestCase):
 
     def test_scope_workflows_and_basin_collection(self):
         scope = self.flow.channel_scope(3)
-        try:
-            valleys = lsdtt3.extract_valley_centrelines(
-                self.dem, scope, corridor_width_metres=100.0, n_threads=1
-            )
-        except ValueError as error:
-            self.assertRegex(str(error), "no valley mask supplied")
-            pytest.xfail("Phase 2: supply fluvial-surface valley mask")
+        valley_mask = lsdtt3.Raster.from_numpy(
+            np.ones(self.dem.shape, dtype=np.float32),
+            np.ones(self.dem.shape, dtype=bool), self.meta,
+        )
+        valleys = lsdtt3.extract_valley_centrelines(
+            self.dem, scope, corridor_width_metres=100.0, n_threads=1,
+            valley_mask=valley_mask,
+        )
         self.assertEqual(valleys.valley_mask.shape, self.dem.shape)
 
         labels = lsdtt3.Raster.from_numpy(
@@ -169,7 +169,6 @@ class FlowInfoTest(unittest.TestCase):
         self.assertEqual(basins.pixels(0).shape[1], 2)
         self.assertEqual(int(basins.table.loc[1, "parent_id"]), 0)
         np.testing.assert_array_equal(basins.membership(0, 0), [0, 1])
-        pytest.fail("Phase 2 supplied-mask migration succeeded; remove this xfail gate")
 
 
 if __name__ == "__main__":

@@ -51,8 +51,6 @@ jobs:
           python3 -m pip install
           mkdocs==1.6.1
           mkdocs-material==9.7.7
-          mkdocstrings==1.0.6
-          mkdocstrings-python==2.0.7
 
       # The same driver script used for local releases: configure, build,
       # smoke-check, and package the self-contained backend bundle.

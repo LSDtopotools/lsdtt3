@@ -7,10 +7,13 @@ B. Gailleton
 
 from functools import wraps
 from importlib.metadata import PackageNotFoundError, distribution
+import inspect
 import os
+import re
 from pathlib import Path
 
 from ._llm import helper_for_llm as _render_llm_api
+from ._compat import MISSING as _MISSING, resolve_deprecated_keyword as _resolve_deprecated_keyword
 
 
 def _configure_bundled_geospatial_data() -> None:
@@ -552,6 +555,40 @@ def _numpy_style_docstring(function):
     return documented
 
 
+def _with_deprecated_keywords(function, *pairs, is_method=False):
+    """Accept legacy keywords while preserving the native signature."""
+    @wraps(function)
+    def compatible(*args, **kwargs):
+        for canonical_name, legacy_name in pairs:
+            canonical = kwargs.pop(canonical_name, _MISSING)
+            legacy = kwargs.pop(legacy_name, _MISSING)
+            value = _resolve_deprecated_keyword(
+                canonical_name, canonical, legacy_name, legacy,
+                stacklevel=3 if is_method else 4,
+            )
+            if value is not _MISSING:
+                kwargs[canonical_name] = value
+        return function(*args, **kwargs)
+    native = inspect.unwrap(function)
+    definition, _doc, defaults = native.__nb_signature__[0]
+    parameters = []
+    if is_method:
+        parameters.append(inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD))
+    for match in re.finditer(
+        r"(?:\(|, )([A-Za-z_]\w*):([^,)]*)", definition
+    ):
+        name, declaration = match.groups()
+        default_match = re.search(r" = \\(\d+)", declaration)
+        default = inspect.Parameter.empty
+        if default_match is not None:
+            default = defaults[int(default_match.group(1))]
+        parameters.append(inspect.Parameter(
+            name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default
+        ))
+    compatible.__signature__ = inspect.Signature(parameters)
+    return compatible
+
+
 def _numpy_style_class_docstring(cls):
     """Give an exported native-backed class a consistent public docstring.
 
@@ -600,6 +637,88 @@ def _numpy_style_class_docstring(cls):
     return cls
 
 
+for _graphflood_name in (
+    "run_graphflood", "run_graphflood_optimised", "run_graphflood_optimised_v2"
+):
+    globals()[_graphflood_name] = _with_deprecated_keywords(
+        globals()[_graphflood_name],
+        ("median_dhw_convergence_tolerance_metres", "tol_median_abs_dhw"),
+        ("median_dhw_relative_convergence_tolerance", "tol_median_rel_dhw"),
+    )
+
+find_flat_surfaces = _with_deprecated_keywords(
+    find_flat_surfaces, ("relief_window_side_pixels", "relief_window_pixels")
+)
+
+wiener_filter = _with_deprecated_keywords(
+    wiener_filter,
+    ("signal_wavelength_long_metres", "signal_wavelength_long_m"),
+    ("signal_wavelength_short_metres", "signal_wavelength_short_m"),
+)
+
+route_sediment = _with_deprecated_keywords(
+    route_sediment,
+    ("active_layer_depth_metres", "active_layer_depth_m"),
+    ("d50_metres", "d50_m"),
+    ("d84_metres", "d84_m"),
+    ("d90_metres", "d90_m"),
+)
+
+find_internal_drainage = _with_deprecated_keywords(
+    find_internal_drainage,
+    ("min_area_m2", "min_area_metres2"),
+    ("min_volume_m3", "min_volume_metres3"),
+)
+
+for _flow_threshold_method in (
+    "channel_mask", "channel_scope", "distance_to_channel", "sources"
+):
+    setattr(
+        FlowInfo,
+        _flow_threshold_method,
+        _with_deprecated_keywords(
+            getattr(FlowInfo, _flow_threshold_method),
+            ("threshold_contributing_pixels", "threshold_pixels"),
+            is_method=True,
+        ),
+    )
+
+for _crn_depth_method, _canonical_name, _legacy_name in (
+    ("set_erosion_history", "removal_metres", "removal_m"),
+    ("transient", "sampling_depths_metres", "sampling_depths_m"),
+):
+    setattr(
+        CRNColumn,
+        _crn_depth_method,
+        _with_deprecated_keywords(
+            getattr(CRNColumn, _crn_depth_method),
+            (_canonical_name, _legacy_name),
+            is_method=True,
+        ),
+    )
+
+extract_channel_heads = _with_deprecated_keywords(
+    extract_channel_heads,
+    ("threshold_contributing_pixels", "threshold_pixels"),
+    ("surface_fitting_radius_metres", "surface_fitting_radius_m"),
+)
+
+crn_transient_history = _with_deprecated_keywords(
+    crn_transient_history,
+    ("sampling_depth_metres", "sampling_depth_m"),
+)
+
+fetch_dem = _with_deprecated_keywords(fetch_dem, ("size_pixels", "size_px"))
+
+synthetic_network = _with_deprecated_keywords(
+    synthetic_network, ("relief_metres", "relief_m")
+)
+
+run_landslide_series = _with_deprecated_keywords(
+    run_landslide_series,
+    ("event_budget_relative_tolerance", "budget_tol"),
+)
+
 for _public_name in __all__:
     _public_value = globals()[_public_name]
     if isinstance(_public_value, type):
@@ -607,4 +726,5 @@ for _public_name in __all__:
     elif callable(_public_value):
         globals()[_public_name] = _numpy_style_docstring(_public_value)
 
-del _public_name, _public_value
+del _canonical_name, _crn_depth_method, _flow_threshold_method, _graphflood_name
+del _legacy_name, _public_name, _public_value

@@ -36,9 +36,9 @@ This writes the complete static site to `site/` — plain HTML, CSS and
 JavaScript, no server-side anything. You can open `site/index.html` directly in
 a browser to check it.
 
-Both documentation tasks put `python_bindings/src` on `PYTHONPATH`, then serve
-or build MkDocs. This lets the Python API reference use the source-only facade
-without building the native extension or installing an editable wheel.
+The Python API pages are generated from the committed runtime manifest before
+release. MkDocs reads those Markdown pages directly, so serving or building the
+site does not require the native extension.
 
 `--strict` **turns warnings into errors**.
 That is deliberate: without it, a link to a page you renamed or deleted still

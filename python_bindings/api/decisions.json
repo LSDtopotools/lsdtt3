@@ -28,51 +28,40 @@
       "new": "raster_is_filled"
     }
   ],
-  "approved_default_differences": [
-    {
-      "python_contracts": [
-        {"symbol": "LandscapeModel", "member": "__init__", "parameter": "critical_hillslope_slope", "default": 0.6}
-      ],
-      "cli": "critical_hillslope_slope=0.8",
-      "status": "characterized in Phase 0; retain pending the separate Phase 5 decision"
-    },
-    {
-      "python_contracts": [
-        {"symbol": "run_graphflood", "parameter": "max_steps", "default": 10000},
-        {"symbol": "run_graphflood", "parameter": "convergence_check_every", "default": 100},
-        {"symbol": "run_graphflood", "parameter": "tol_median_abs_dhw", "default": 1e-7},
-        {"symbol": "run_graphflood", "parameter": "tol_median_rel_dhw", "default": 1e-5},
-        {"symbol": "run_graphflood_optimised", "parameter": "max_steps", "default": 10000},
-        {"symbol": "run_graphflood_optimised", "parameter": "convergence_check_every", "default": 20},
-        {"symbol": "run_graphflood_optimised", "parameter": "tol_median_abs_dhw", "default": 1e-7},
-        {"symbol": "run_graphflood_optimised", "parameter": "tol_median_rel_dhw", "default": 1e-5},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "max_steps", "default": 10000},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "convergence_check_every", "default": 20},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "tol_median_abs_dhw", "default": 1e-7},
-        {"symbol": "run_graphflood_optimised_v2", "parameter": "tol_median_rel_dhw", "default": 1e-5}
-      ],
-      "cli": "lsdtt-graphflood defaults",
-      "status": "characterized in Phase 0; retain pending the separate Phase 5 decision"
-    }
+  "approved_default_differences": [],
+  "deprecated_names": [
+    {"symbol": "run_graphflood", "old": "tol_median_abs_dhw", "new": "median_dhw_convergence_tolerance_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood", "old": "tol_median_rel_dhw", "new": "median_dhw_relative_convergence_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_optimised", "old": "tol_median_abs_dhw", "new": "median_dhw_convergence_tolerance_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_optimised", "old": "tol_median_rel_dhw", "new": "median_dhw_relative_convergence_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_optimised_v2", "old": "tol_median_abs_dhw", "new": "median_dhw_convergence_tolerance_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_optimised_v2", "old": "tol_median_rel_dhw", "new": "median_dhw_relative_convergence_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_multigrid", "old": "tol_median_abs_dhw", "new": "median_dhw_convergence_tolerance_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_multigrid", "old": "tol_median_rel_dhw", "new": "median_dhw_relative_convergence_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_induced", "old": "tol_median_abs_dhw", "new": "median_dhw_convergence_tolerance_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_graphflood_induced", "old": "tol_median_rel_dhw", "new": "median_dhw_relative_convergence_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "LandscapeModel", "old": "incision_threshold_area", "new": "incision_threshold_specific_area", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "find_flat_surfaces", "old": "relief_window_pixels", "new": "relief_window_side_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "extract_valley_centrelines", "old": "fallback_valley_hand_metres", "new": "valley_mask", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "wiener_filter", "old": "signal_wavelength_long_m", "new": "signal_wavelength_long_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "wiener_filter", "old": "signal_wavelength_short_m", "new": "signal_wavelength_short_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "extract_channel_heads", "old": "surface_fitting_radius_m", "new": "surface_fitting_radius_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "active_layer_depth_m", "new": "active_layer_depth_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "d50_m", "new": "d50_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "d84_m", "new": "d84_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "d90_m", "new": "d90_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "find_internal_drainage", "old": "min_area_metres2", "new": "min_area_m2", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "find_internal_drainage", "old": "min_volume_metres3", "new": "min_volume_m3", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_landslide_series", "old": "budget_tol", "new": "event_budget_relative_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "FlowInfo", "old": "threshold_pixels", "new": "threshold_contributing_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "extract_channel_heads", "old": "threshold_pixels", "new": "threshold_contributing_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "CRNColumn", "old": "removal_m", "new": "removal_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "CRNColumn", "old": "sampling_depths_m", "new": "sampling_depths_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "crn_transient_history", "old": "sampling_depth_m", "new": "sampling_depth_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "fetch_dem", "old": "size_px", "new": "size_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "synthetic_network", "old": "relief_m", "new": "relief_metres", "introduced": "next minor", "earliest_removal": "following minor"}
   ],
-  "deprecated_names": [],
-  "documentation_coverage": {
-    "policy": "incomplete Phase 0 baseline; exact coverage required in Phase 1",
-    "documented_count": 62,
-    "missing_count": 145,
-    "non_public": [],
-    "excluded_symbols": []
-  },
-  "known_runtime_test_failures": [
-    {
-      "tests": [
-        "test_flow_info.py::FlowInfoTest::test_scope_workflows_and_basin_collection",
-        "test_terrain_features.py::TerrainFeatureTest::test_ridgeline_and_valley_centreline",
-        "test_valley_cross_sections.py::ValleyCrossSectionDiagnosticsTests::test_optional_diagnostic_tables_are_exposed"
-      ],
-      "reason": "Strict xfails still call the removed valley-centreline no-mask path; migration to explicit masks is owned by Python API plan Phase 2."
-    }
-  ],
+  "known_runtime_test_failures": [],
   "optional_features": [
     {"name": "eigen", "symbols": ["ChiInversion"]},
     {"name": "fftw", "symbols": ["spectral_analysis"], "conditional_driver": "lsdtt-spectral-analysis"},

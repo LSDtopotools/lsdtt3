@@ -42,7 +42,7 @@ and dispatch their console scripts through `_cli.py`.
 | Public Python API | Supported names, signatures, defaults, objects, and behavior reached through `import lsdtt3` |
 | `python_bindings/api/` | Machine-readable API snapshots, baselines, schemas, and reviewed decisions |
 | `python_bindings/tools/` | Developer programs that generate or check those contracts |
-| `_api_docs.py` | Source-only MkDocs facade; documentation, not runtime authority |
+| Generated `docs/python_api/*.md` | Complete runtime-manifest reference; signatures are not handwritten |
 | Bundled `lsdtt-*` drivers | File-oriented executables inside wheels; not in-memory bindings |
 
 The backend is how behavior is implemented and exposed. The API is the public
@@ -77,10 +77,10 @@ Python modules in the package have separate roles:
 - `_compat.py` contains private keyword-migration plumbing;
 - `_cli.py` forwards installed console scripts to bundled executables;
 - `_llm.py` provides compact, checked API cards;
-- `_api_docs.py` lets MkDocs render API pages without loading `_core`.
+- `generate_api_reference.py` renders API pages from the committed runtime manifest.
 
-`_api_docs.py` is not executable truth. Runtime nanobind signatures and Python
-functions are authoritative, and contract checks report facade drift.
+Runtime nanobind signatures and Python functions are authoritative. MkDocs reads
+their committed generated representation and does not import `_core`.
 
 ## API Contract Files
 
@@ -95,8 +95,7 @@ functions are authoritative, and contract checks report facade drift.
 - `graphflood_backend_options.json`: accepted built-in backend options and the
   accelerator migration policy;
 - `naming_baseline.json`: current naming violations; it may only shrink;
-- `documentation_exclusions.json`: explicit symbols awaiting Phase 3 API docs;
-- `documentation_signatures.json`: source-facade and runtime signature snapshot.
+- generated domain pages under `docs/python_api/`: every export exactly once.
 
 These files make public changes visible in review. An implementation-only change
 should leave them unchanged. A deliberate API change updates code, tests,
@@ -186,7 +185,7 @@ temporary files.
    the binding seam.
 4. Export the object deliberately through `__init__.py` and `__all__`.
 5. Add runtime tests that exercise behavior, errors, signatures, and defaults.
-6. Add/update `_api_docs.py`, an API page, and an example where useful.
+6. Add authored workflow guidance where useful and regenerate the API pages.
 7. Run the manifest and naming checks. Update generated files only for an
    intentional public change.
 8. Add a decision record and release note for compatibility-sensitive changes.
@@ -227,8 +226,7 @@ With a current installed extension:
 ```bash
 python3 python_bindings/tools/generate_public_api_manifest.py --check
 python3 python_bindings/tools/check_api_naming.py
-python3 python_bindings/tools/generate_documentation_exclusions.py --check
-python3 python_bindings/tools/generate_documentation_signature_contract.py --check
+python3 python_bindings/tools/generate_api_reference.py --check
 python3 python_bindings/tools/check_api_examples.py
 python3 python_bindings/tools/check_llm_cards.py
 python3 -m pytest -q python_bindings/tests
@@ -240,6 +238,7 @@ Documentation:
 pixi run docs-build
 ```
 
-The pull-request Python API workflow runs the runtime checks without publishing.
-Cibuildwheel repeats them against installed platform wheels and additionally
+GitHub builds run only through the manually triggered Python version-increment
+workflow. Before requesting one, run these checks locally. Cibuildwheel then
+repeats the runtime contracts against installed platform wheels and additionally
 checks bundled executables and console scripts.

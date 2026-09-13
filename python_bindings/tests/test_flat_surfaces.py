@@ -19,10 +19,10 @@ class FlatSurfaceTest(unittest.TestCase):
             relief_threshold_metres=20.0, n_threads=1,
         )
         relief3 = lsdtt3.find_flat_surfaces(
-            dem, relief_window_pixels=3, **common
+            dem, relief_window_side_pixels=3, **common
         ).relief.to_numpy()
         relief5 = lsdtt3.find_flat_surfaces(
-            dem, relief_window_pixels=5, **common
+            dem, relief_window_side_pixels=5, **common
         ).relief.to_numpy()
         self.assertEqual(relief3[4, 2], np.float32(0.0))
         self.assertEqual(relief5[4, 2], np.float32(10.0))
@@ -42,7 +42,7 @@ class FlatSurfaceTest(unittest.TestCase):
             use_residual_iqr=False,
             use_nvd=False,
             min_component_pixels=1,
-            relief_window_pixels=5,
+            relief_window_side_pixels=5,
             relief_threshold_metres=1.0,
             n_threads=1,
         )
