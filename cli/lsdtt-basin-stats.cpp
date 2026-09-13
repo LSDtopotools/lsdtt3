@@ -1066,9 +1066,6 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    const lsdtt::lsdtt_array2d_f&  grad_data = gradient_raster.get_data_array();
-    const lsdtt::lsdtt_array2d_u8& grad_mask = gradient_raster.get_mask_array();
-
     // -------------------------------------------------------------------------
     // Flow-distance-from-outlet raster
     // -------------------------------------------------------------------------
@@ -1087,9 +1084,6 @@ int main(int argc, char* argv[])
                   << e.what() << "\n";
         return 1;
     }
-
-    const lsdtt::lsdtt_array2d_f&  fd_data = flow_dist_raster.get_data_array();
-    const lsdtt::lsdtt_array2d_u8& fd_mask = flow_dist_raster.get_mask_array();
 
     // -------------------------------------------------------------------------
     // Optional channel network for stream-order statistics
@@ -1305,13 +1299,6 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     std::vector<basin_stats_record> basin_rows;
     basin_rows.reserve(requested_outlets.size());
-
-    const lsdtt::lsdtt_array2d_f&  dem_data = dem.get_data_array();
-    const lsdtt::lsdtt_array2d_u8& dem_mask = dem.get_mask_array();
-
-    const double cell_size     = meta.cell_size;
-    const double cell_area_km2 = cell_size * cell_size / 1.0e6;
-    const double diag_len      = cell_size * std::sqrt(2.0);
 
     lsdtt::lsdtt_square_snap_options square_snap_options;
     square_snap_options.contributing_pixels_threshold =

@@ -72,27 +72,6 @@ void check(bool ok, const std::string& what)
     else     { std::cout << "  ok  : " << what << "\n"; }
 }
 
-void check_close(double got, double expected, double rel_tol,
-                 const std::string& what)
-{
-    const double denom = std::fabs(expected) > 0.0 ? std::fabs(expected) : 1.0;
-    const double rel   = std::fabs(got - expected) / denom;
-    ++g_checks;
-    if (!(rel <= rel_tol))
-    {
-        ++g_failures;
-        std::cout << "  FAIL: " << what << "\n"
-                  << "        got " << std::setprecision(10) << got
-                  << ", expected " << expected
-                  << " (rel " << rel << " > " << rel_tol << ")\n";
-    }
-    else
-    {
-        std::cout << "  ok  : " << what << "  ("
-                  << std::setprecision(8) << got << ")\n";
-    }
-}
-
 lsdtt::lsdtt_raster_cpu make_dem(int n_rows, int n_cols, double cell)
 {
     lsdtt::lsdtt_raster_meta meta;

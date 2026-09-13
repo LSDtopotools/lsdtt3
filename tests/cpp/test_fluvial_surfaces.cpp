@@ -2110,7 +2110,7 @@ void run_perona_malik_checks()
         bool threw = false;
         lsdtt::perona_malik_options bad = opt;
         bad.lambda = 0.30;
-        try { lsdtt::perona_malik_diffusion(dem, bad); }
+        try { (void)lsdtt::perona_malik_diffusion(dem, bad); }
         catch (const std::exception&) { threw = true; }
         check(threw, "PM7: lambda above the 0.25 stability limit is rejected");
     }
@@ -2256,7 +2256,7 @@ void run_coherence_diffusion_checks()
         bool threw = false;
         try
         {
-            lsdtt::coherence_enhancing_diffusion(
+            (void)lsdtt::coherence_enhancing_diffusion(
                 dem, 5, 0.30, cell, 3.0 * cell, 0.2, 0.001, 1);
         }
         catch (const std::exception&) { threw = true; }
