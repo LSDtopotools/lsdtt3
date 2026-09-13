@@ -54,6 +54,10 @@ public:
     );
 
     void clear() noexcept;
+
+    // Full internal-consistency audit; throws on any broken invariant.
+    // TEST-TIME ONLY: create() does not call it. Exercised by
+    // unit_flow_d8_identity.
     void validate() const;
 
     // -------------------------------------------------------------------------

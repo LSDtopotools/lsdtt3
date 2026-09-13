@@ -17,6 +17,11 @@
 // and its pins generated, from the code BEFORE that refactor (commit 7e81a39),
 // so every later change is measured against the original behaviour.
 //
+// The junction network built on top of each fixture is audited the same way:
+// lsdtt_junction_network_cpu::validate() no longer runs inside its create()
+// either, so it is called here for every fixture, at a dense, a moderate and a
+// sparse channel threshold, and for each junction-network option combination.
+//
 // It is also the replacement for lsdtt_flowinfo::validate() running on every
 // build: code correctness is established here, once, in CTest, rather than paid
 // for in every flow routing call. Every object built below is passed through
@@ -85,6 +90,7 @@
 #endif
 
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "lsdtt_junction_network_cpu.hpp"
 
 namespace
 {
@@ -419,6 +425,61 @@ hash_row hash_object(const fixture& fx, const config& cfg, int threads,
     return out;
 }
 
+// Build junction networks on the fixture and audit each with validate().
+// Sources need the flow object's s-vector and topological order.
+void check_junction_networks_validate(const fixture& fx)
+{
+    lsdtt::lsdtt_flowinfo_options opts;
+    opts.boundary_conditions       = fx.spec.bc;
+    opts.interior_nodata_is_outlet = fx.spec.interior_nodata_is_outlet;
+    opts.allow_pits_as_outlets     = fx.spec.pits_as_outlets;
+    opts.forced_outlet_flats       = fx.forced;
+    const lsdtt::lsdtt_flowinfo flow(fx.dem, fx.mask, fx.meta, opts);
+
+    struct jcfg { const char* name; bool topo; bool sv; };
+    constexpr jcfg jcfgs[] = {
+        {"topo+sv", true, true}, {"topo_only", true, false}, {"neither", false, false}};
+
+    const int sparse = static_cast<int>(std::max<std::int64_t>(
+        1, (static_cast<std::int64_t>(fx.spec.n_rows) * fx.spec.n_cols) / 8));
+
+    int n_built = 0, n_failed = 0;
+    std::string first_error;
+    for (const int threshold : {3, 12, sparse})
+    {
+        const std::vector<std::int64_t> sources =
+            flow.get_sources_index_threshold(threshold);
+        // An empty source list is an input error by design (create() rejects
+        // it); a tiny grid at a sparse threshold simply has no channel.
+        if (sources.empty()) continue;
+        for (const jcfg& jc : jcfgs)
+        {
+            lsdtt::lsdtt_junction_network_options jo;
+            jo.build_topological_order = jc.topo;
+            jo.build_s_vector          = jc.sv;
+            std::string err;
+            try
+            {
+                const lsdtt::lsdtt_junction_network_cpu jn(flow, sources, jo);
+                jn.validate();
+                ++n_built;
+            }
+            catch (const std::exception& e) { err = e.what(); }
+            if (!err.empty())
+            {
+                ++n_failed;
+                if (first_error.empty())
+                    first_error = "threshold " + std::to_string(threshold) + " "
+                                + jc.name + ": " + err;
+            }
+        }
+    }
+    std::ostringstream dt;
+    dt << n_built << " networks built and validated";
+    if (!first_error.empty()) dt << "; first failure: " << first_error;
+    check(fx.spec.name + " junction networks validate()", n_failed == 0, dt.str());
+}
+
 // How many valid non-outlet cells have two or more neighbours on the exact
 // steepest slope -- i.e. how much the tie-break is actually exercised.
 std::int64_t count_tied_cells(const fixture& fx)
@@ -603,6 +664,8 @@ int main(int argc, char** argv)
 
         if (!print_pins)
         {
+            check_junction_networks_validate(fx);
+
             // lsdtt3 must not behave differently with the s-vector on or off.
             check(spec.name + " drainage area identical with s-vector on and off",
                   !area_sv_on.empty() && area_sv_on.size() == area_sv_off.size() &&

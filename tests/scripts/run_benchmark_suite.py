@@ -285,6 +285,24 @@ REFERENCE_SCRIPTS = {
 # Verified 2026-09-08 against richdem 2.3.0, topotoolbox 0.0.12,
 # whitebox_workflows 2.0.6.
 NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
+    "fill": {
+        "whitebox": "no grayscale-reconstruction fill in whitebox_workflows "
+                    "2.0.6 (hydrology offers fill_depressions [priority-flood, "
+                    "measured in fill_priority_flood], "
+                    "fill_depressions_wang_and_liu, "
+                    "fill_depressions_planchon_and_darboux, fill_pits)",
+    },
+    "breach": {
+        "whitebox": "no Lindsay (2016) complete breaching in whitebox_workflows "
+                    "2.0.6 (hydrology offers breach_depressions_least_cost "
+                    "[measured in breach_least_cost] and "
+                    "breach_single_cell_pits)",
+    },
+    "breach_least_cost": {
+        "richdem": "no least-cost breaching in richdem 2.3.0 "
+                   "(rd.BreachDepressions is Lindsay 2016 complete breaching, "
+                   "measured in breach)",
+    },
     "accum_dinf": {
         "topotoolbox": "not bound in the Python package 0.0.12 "
                        "(FlowObject takes method='d8' only); TopoToolbox 3 "
@@ -360,7 +378,13 @@ CASES: dict[str, dict[str, Any]] = {
         "note": ("RECONSTRUCTION family: grayscale reconstruction by erosion "
                  "(Vincent 1993 hybrid -- raster scans + FIFO queue, O(N)). "
                  "lsdtt3 vincent1993 vs TopoToolbox hybrid=True"),
-        "engines": {"topotoolbox": "fill", "whitebox": "fill"},
+        # Whitebox was paired here until 2026-09-13, but its fill_depressions
+        # is a PRIORITY-FLOOD tool (its own tool description: "priority-flood
+        # strategy"), so it compared a heap fill with a reconstruction fill --
+        # the exact mismatch that once reported lsdtt3 2.9x slow. It is now in
+        # `fill_priority_flood`. Whitebox has no reconstruction fill; see
+        # NOT_IMPLEMENTED.
+        "engines": {"topotoolbox": "fill"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0",
@@ -375,9 +399,13 @@ CASES: dict[str, dict[str, Any]] = {
         "suite": "flow",
         "note": ("PRIORITY-FLOOD family: heap-based flood, O(N log N). "
                  "lsdtt3 barnes2014 vs TopoToolbox hybrid=False vs RichDEM "
-                 "(Zhou 2016). Same surface as the reconstruction case, "
-                 "roughly 2-3x the cost in every implementation"),
-        "engines": {"richdem": "fill", "topotoolbox": "fill_priority_flood"},
+                 "(Zhou 2016) vs Whitebox fill_depressions. Same surface as "
+                 "the reconstruction case, roughly 2-3x the cost in every "
+                 "implementation"),
+        # Whitebox `fill` = fill_depressions(fix_flats=False), a priority-flood
+        # fill (moved here from `fill` 2026-09-13).
+        "engines": {"richdem": "fill", "topotoolbox": "fill_priority_flood",
+                    "whitebox": "fill"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0",
@@ -390,8 +418,20 @@ CASES: dict[str, dict[str, Any]] = {
         "note": ("fill with a gradient imposed across flats. PRIORITY-FLOOD "
                  "ONLY in every tool: reconstruction fills to exactly the "
                  "spill level and has no mechanism for a gradient, so there "
-                 "is no reconstruction row to compare against here"),
-        "engines": {"richdem": "fill_epsilon", "whitebox": "fill_epsilon"},
+                 "is no reconstruction row to compare against here. Whitebox "
+                 "runs fill_depressions_wang_and_liu with flat_increment "
+                 "matched to fill_min_slope * cell size"),
+        # Whitebox: the Wang & Liu tool, not `fill_epsilon` (its Barnes-style
+        # fill_depressions), which disagrees with three other implementations
+        # by up to 9.78 m (benchmarking plan section 2.2) -- and until
+        # 2026-09-13 it also ran at Whitebox's default flat_increment of 1e-4 m
+        # per cell against lsdtt3's 1e-4 GRADIENT (3e-3 m per cell at 30 m),
+        # a 30x different amount of flat work. The increment is now matched
+        # per fixture: see `whitebox_flat_increment_from` and
+        # reference_extra_args().
+        "engines": {"richdem": "fill_epsilon",
+                    "whitebox": "depression_fill_wl_epsilon"},
+        "whitebox_flat_increment_from": "fill_min_slope",
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0.0001",
@@ -401,11 +441,36 @@ CASES: dict[str, dict[str, Any]] = {
     "breach": {
         "sequential": True,
         "suite": "flow",
-        "note": "least-cost breaching, Lindsay (2016)",
-        "engines": {"richdem": "breach", "whitebox": "breach"},
+        "note": "complete breaching, Lindsay (2016): lsdtt3 vs RichDEM",
+        # Whitebox was paired here until 2026-09-13, but it runs
+        # breach_depressions_least_cost -- Lindsay (2020), a different
+        # algorithm with a bounded search. It is now compared in
+        # `breach_least_cost` against lsdtt3's own least-cost breach.
+        "engines": {"richdem": "breach"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_breached_raster": "true",
                              "breach_algorithm_choice": "lindsay2016"},
+                  "output": "_breached.tif"},
+    },
+    # Added 2026-09-13 so Whitebox's breach is paired with the SAME algorithm.
+    # Matched explicitly: max search distance 100 cells (whitebox_reference.py
+    # --breach-max-dist default), unresolved depressions filled afterwards
+    # (Whitebox fill_deps=True, lsdtt3 fill_remainder_after_breach, default
+    # true), no cost cap (lsdtt3 default; Whitebox's max_cost left unset).
+    # NOT verified equal, because whitebox_workflows 2.0.6 does not report its
+    # defaults: minimize_dist (lsdtt3 min_dist=true) and flat_increment
+    # (lsdtt3 0). A timing row, not a value comparison.
+    "breach_least_cost": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("least-cost breaching, Lindsay (2020), max_dist 100, "
+                 "unresolved depressions filled: lsdtt3 vs Whitebox"),
+        "engines": {"whitebox": "breach"},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_breached_raster": "true",
+                             "breach_algorithm_choice": "least_cost",
+                             "breach_lc_max_dist": "100",
+                             "fill_remainder_after_breach": "true"},
                   "output": "_breached.tif"},
     },
     "accum_d8": {
@@ -1527,9 +1592,36 @@ def reference_env(threads: int) -> dict[str, str]:
     return env
 
 
+def reference_extra_args(engine: str, case: dict,
+                         fixture: pathlib.Path) -> list[str]:
+    """Per-fixture arguments a reference needs to do the SAME work as lsdtt3.
+
+    `whitebox_flat_increment_from: <lsdtt3 param>` converts lsdtt3's flat
+    GRADIENT into Whitebox's flat_increment, which is metres PER CELL:
+    increment = gradient * cell size. Handing Whitebox the raw gradient (or
+    leaving its default) makes it impose a 30x smaller increment on a 30 m
+    grid -- a different amount of flat-resolution work. Same conversion as
+    run_flow_benchmark.py uses for its value comparison.
+    """
+    param = case.get("whitebox_flat_increment_from")
+    if engine != "whitebox" or not param:
+        return []
+    gradient = float(case["lsdtt"]["params"][param])
+    try:
+        from osgeo import gdal
+        gdal.UseExceptions()
+        ds = gdal.Open(str(fixture))
+        cell = abs(float(ds.GetGeoTransform()[1]))
+    except Exception as exc:
+        raise RuntimeError(f"cannot read cell size of {fixture} to match "
+                           f"Whitebox flat_increment: {exc}") from exc
+    return ["--flat-increment", repr(gradient * cell)]
+
+
 def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
                       threads: int, repeats: int, python_exe: str,
-                      timeout: float | None = None) -> dict[str, Any] | None:
+                      timeout: float | None = None,
+                      extra_args: list[str] | None = None) -> dict[str, Any] | None:
     """Time one reference implementation via its standalone script.
 
     Each reference is a subprocess so that a missing optional package is a
@@ -1546,6 +1638,8 @@ def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
     # rejecting an unknown flag is how argparse tells us we got that wrong.
     if engine == "whitebox":
         cmd += ["--threads", str(threads)]
+    if extra_args:
+        cmd += list(extra_args)
 
     r = run_with_rusage(cmd, env=reference_env(threads), timeout=timeout)
     if r.get("timed_out"):
@@ -2922,10 +3016,10 @@ def main() -> int:
                     # campaign without a word.
                     if engine in SERIAL_REFERENCES and threads != baseline_threads:
                         continue
-                    info = measure_reference(engine, routine, in_path,
-                                             threads, profile["repeats"],
-                                             args.python_exe,
-                                             timeout=measurement_timeout)
+                    info = measure_reference(
+                        engine, routine, in_path, threads, profile["repeats"],
+                        args.python_exe, timeout=measurement_timeout,
+                        extra_args=reference_extra_args(engine, case, in_path))
                     rows.append(build_row(case["suite"], case_name, engine,
                                           fx_key, meta["sha256_12"],
                                           meta["n_cells"], threads, info, case,

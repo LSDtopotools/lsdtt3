@@ -1471,7 +1471,7 @@ question, and an open one.
 
 | Suite | Cases | Status |
 |---|---|---|
-| `flow` | fill, fill_epsilon, breach, accum_d8 | timing; values asserted separately in §4-5 |
+| `flow` | fill, fill_priority_flood, fill_epsilon, breach, breach_least_cost, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
 | `mfd` | accum_dinf, accum_mfd | **timing only** -- Tarboton vs Quinn vs Freeman proportioning genuinely differ |
 | `surface` | slope_only, polyfit_all, hillshade | **timing only** -- curvature definitions and aspect handedness differ |
 | `depression` | fill_spill_merge, fill_wang_liu | **timing only**, and the depression hierarchy has no counterpart at all |
@@ -1485,6 +1485,28 @@ pays, and `slope_only` is where it does not -- lsdtt3 pays for a full fit to
 produce a single number. Quoting only the first would be cherry-picking. Note that the
 window size does NOT tilt this: the `direct` fit's cost is independent of
 `polyfit_lambda_metres` (measured flat over a 729× range of window cells).
+
+**Pairings corrected 2026-09-13.** Three reference rows ran a different
+algorithm from the lsdtt3 row they were compared against:
+
+- `fill` is the grayscale-RECONSTRUCTION case, but Whitebox's `fill_depressions`
+  is a priority-flood tool (its own tool description). Whitebox now appears in
+  `fill_priority_flood`; `fill@whitebox` is `n/a` because whitebox_workflows
+  2.0.6 has no reconstruction fill.
+- `fill_epsilon@whitebox` ran `fill_depressions` (the tool that disagrees with
+  three other implementations by up to 9.78 m, see §10o) at Whitebox's default
+  `flat_increment` of 1e-4 m per cell, against lsdtt3's 1e-4 GRADIENT (3e-3 m
+  per cell at 30 m) — 30x less flat work. It now runs
+  `fill_depressions_wang_and_liu(fix_flats=True)` with
+  `flat_increment = fill_min_slope * cell size`, read from each fixture.
+- `breach@whitebox` ran `breach_depressions_least_cost` (Lindsay 2020) against
+  lsdtt3's and RichDEM's Lindsay (2016). `breach` is now lsdtt3 vs RichDEM, and
+  the new `breach_least_cost` compares lsdtt3's least-cost breach with Whitebox's
+  at max_dist 100 cells with unresolved depressions filled. Whitebox's
+  `minimize_dist` and `flat_increment` defaults are not reported by the
+  package, so they are not verified equal to lsdtt3's.
+
+Campaigns before 2026-09-13 carry the old pairings in those three rows.
 
 `fill_spill_merge` measures lsdtt3's nested depression hierarchy (Barnes 2020)
 plus Fill-Spill-Merge (Barnes 2021), lsdtt3 only. It is recorded because the
@@ -1963,10 +1985,21 @@ server allocation (`315e81a`, `7e81a39` and `eb65499` built side by side).
     and is slower on flat terrain (data-dependent branching in the slope
     comparison).
 
+**The junction network followed (2026-09-13).**
+`lsdtt_junction_network_cpu::create()` also ended with `validate()`. It was a
+much smaller share of that build than the flow object's audit (laptop only,
+thermally limited, direction only: roughly 1-11% of the junction network build
+and ~1-2% of flow plus network), but the reasoning is the same, so it was moved
+the same way. `unit_flow_d8_identity` now builds junction networks on every
+flow fixture, at dense, moderate and sparse channel thresholds and with each
+option combination, and calls `validate()` on each. Checked by injecting a
+junction donor-count bug: 6 fixtures fail.
+
 **Still open:** the receiver-build branch cost on flat terrain (any change
-must keep the strict first-wins tie-break);
-`lsdtt_junction_network_cpu::validate()`, which also runs on every
-junction-network build and has not been costed.
+must keep the strict first-wins tie-break). The junction network BUILD itself,
+not its audit: with a dense channel network it cost more than the D8 build
+(laptop, same warning as above: 4.0 s against 1.6 s on a 4000² alpine grid at a
+50-pixel threshold).
 
 ## 7. Cosmogenic nuclide testing
 
@@ -6180,9 +6213,10 @@ difference.
 One discrepancy remains open. Whitebox's Barnes `fill_depressions` disagrees
 with lsdtt3 by up to 9.78 m on alpine — the same offset by which it disagrees
 with Whitebox's *own* `wang_and_liu`, which is bit-exact. So the disagreement is
-that tool, not the increment scheme, and `fill@whitebox` in the timing campaign
-still calls it. **Why it disagrees with three other implementations is
-unresolved.**
+that tool, not the increment scheme. Until 2026-09-13 `fill@whitebox` and
+`fill_epsilon@whitebox` in the timing campaign still called it; the pairings
+are now corrected (see "What is compared"). **Why it disagrees with three other
+implementations is unresolved.**
 
 ### Drainage area without the s-vector (same session)
 
