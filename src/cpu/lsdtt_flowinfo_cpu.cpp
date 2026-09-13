@@ -206,8 +206,7 @@ void lsdtt_flowinfo::create(
     initialise_storage(mask, meta, options);
 
     build_receiver_graph_d8(dem, options);
-    build_donor_count_d8();
-    build_outlets();
+    build_donor_counts_and_outlets_d8();
 
     const bool need_topological_order =
         options.build_topological_order ||
@@ -241,7 +240,12 @@ void lsdtt_flowinfo::create(
         has_topological_order_ = false;
     }
 
-    validate();
+    // validate() is NOT called here. It audits the object this function has
+    // just built, so it can only fire on a bug in this file, never on a bad
+    // DEM -- pits, flats, cycles and bad inputs are all caught above. Run on
+    // every build it cost time and ~10 B/cell of transient memory. Code correctness is established in CTest instead:
+    // unit_flow_d8_identity and unit_flow_properties call validate() on every
+    // fixture. Removed 2026-09-13; see docs/testing_and_benchmarking.md.
     is_built_ = true;
 }
 
@@ -274,6 +278,17 @@ void lsdtt_flowinfo::clear() noexcept
 
 // =============================================================================
 // Validation
+//
+// A TEST-TIME AUDIT, not a runtime check. Walks the whole object and throws if
+// any internal invariant is broken: receivers and direction codes vs the mask,
+// donor counts vs receivers, the outlet list, the topological order (every
+// donor before its receiver), and every s-vector interval.
+//
+// create() does not call it (it did until 2026-09-13): on a correct build none
+// of these checks can fail whatever the DEM, so they only detect bugs in this
+// file, and that is the test suite's job. It allocates an 8 B/cell position
+// array and 1 B/cell work planes, so do not call it in production paths. Call
+// it from tests, or when debugging a suspected flow-routing defect.
 // =============================================================================
 
 void lsdtt_flowinfo::validate() const
@@ -1023,16 +1038,11 @@ void lsdtt_flowinfo::initialise_storage(
     s_vector_.clear();
 
 
-    if (options.build_s_vector)
-    {
-        s_vector_start_.resize(meta_.n_rows, meta_.n_cols, nodata_receiver);
-        s_vector_size_.resize(meta_.n_rows, meta_.n_cols, std::uint64_t{0});
-    }
-    else
-    {
-        s_vector_start_ = lsdtt_array2d<std::int64_t>{};
-        s_vector_size_  = lsdtt_array2d<std::uint64_t>{};
-    }
+    // Released here and sized by build_s_vector() only when it runs. They used
+    // to be allocated and filled here as well, then filled again by the
+    // resize() at the top of build_s_vector() -- 16 B/cell written twice.
+    s_vector_start_ = lsdtt_array2d<std::int64_t>{};
+    s_vector_size_  = lsdtt_array2d<std::uint64_t>{};
 
     has_topological_order_ = false;
     has_s_vector_          = false;
@@ -1113,6 +1123,14 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
     int  fail_row  = 0;
     int  fail_col  = 0;
 
+    // Flat-index offset of each D8 direction, for the interior fast path.
+    std::array<std::int64_t, 8> d8_flat_offset{};
+    for (int dir = 0; dir < 8; ++dir)
+    {
+        d8_flat_offset[dir] =
+            static_cast<std::int64_t>(d8_row[dir]) * meta_.n_cols + d8_col[dir];
+    }
+
     int nthreads = options.n_threads;
 #ifdef _OPENMP
     if (nthreads == 0) nthreads = omp_get_max_threads();
@@ -1159,7 +1177,51 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
             std::uint8_t best_dir           = no_direction;
             bool         has_allowed_outlet = false;
 
-            for (int dir = 0; dir < 8; ++dir)
+            // INTERIOR FAST PATH. For a cell with a neighbour on every side,
+            // resolve_neighbour() always lands inside the grid at
+            // (row + d8_row[dir], col + d8_col[dir]) whatever the boundary
+            // conditions, and a neighbour can never be the cell itself. So the
+            // boundary logic is skipped and neighbours are reached by a
+            // precomputed flat offset. The comparisons below are the SAME
+            // expressions in the SAME direction order as the general path, so
+            // the strict `>` first-wins tie-break is unchanged. Pinned
+            // byte-for-byte by unit_flow_d8_identity.
+            const bool interior =
+                row > 0 && row < meta_.n_rows - 1 &&
+                col > 0 && col < meta_.n_cols - 1;
+
+            if (interior)
+            {
+                for (int dir = 0; dir < 8; ++dir)
+                {
+                    const std::int64_t nb_flat = flat + d8_flat_offset[dir];
+
+                    if (mask_.data()[nb_flat] == 0)
+                    {
+                        if (options.interior_nodata_is_outlet)
+                        {
+                            has_allowed_outlet = true;
+                        }
+                        continue;
+                    }
+
+                    const float  z_nb = dem.data()[nb_flat];
+                    const double dz   = static_cast<double>(z) - static_cast<double>(z_nb);
+
+                    if (dz <= 0.0) continue;
+
+                    const double path_length = (dir % 2 == 0) ? cardinal_length : diagonal_length;
+                    const double slope       = dz / path_length;
+
+                    if (slope > best_slope)
+                    {
+                        best_slope    = slope;
+                        best_receiver = nb_flat;
+                        best_dir      = static_cast<std::uint8_t>(dir);
+                    }
+                }
+            }
+            else for (int dir = 0; dir < 8; ++dir)
             {
                 const resolved_neighbour nb = resolve_neighbour(
                     row, col, dir,
@@ -1266,7 +1328,12 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
 }
 
 // =============================================================================
-// build_donor_count_d8
+// build_donor_counts_and_outlets_d8
+//
+// One row-major pass that both counts donors and collects outlets. These were
+// two separate full-grid passes (build_donor_count_d8, build_outlets) over the
+// same receiver array; merging them changes nothing observable -- outlets_ is
+// still in row-major order, donor counts are the same increments.
 //
 // Parallelism notes:
 //   This function is currently serial by design.
@@ -1288,9 +1355,12 @@ void lsdtt_flowinfo::build_receiver_graph_d8(
 //   donor_count_ is stored as uint8_t. For D8 routing on a regular grid, the
 //   maximum number of direct donors of a cell is 8, so uint8_t is sufficient.
 // =============================================================================
-void lsdtt_flowinfo::build_donor_count_d8()
+void lsdtt_flowinfo::build_donor_counts_and_outlets_d8()
 {
-    donor_count_.fill(std::uint8_t{0});
+    // donor_count_ is already zero-filled by initialise_storage(), which is
+    // the only thing that runs before this; filling it again was a second
+    // full-grid write of the same zeros.
+    outlets_.clear();
 
     for (int row = 0; row < meta_.n_rows; ++row)
     {
@@ -1328,27 +1398,7 @@ void lsdtt_flowinfo::build_donor_count_d8()
 
                 ++donor_count_.data()[rec];
             }
-
-        }
-    }
-}
-
-
-// =============================================================================
-// build_outlets
-// =============================================================================
-void lsdtt_flowinfo::build_outlets()
-{
-    outlets_.clear();
-
-    for (int row = 0; row < meta_.n_rows; ++row)
-    {
-        for (int col = 0; col < meta_.n_cols; ++col)
-        {
-            if (mask_(row, col) == 0) continue;
-
-            const std::int64_t flat = flat_index_unchecked(row, col);
-            if (receiver_.data()[flat] == outlet_receiver)
+            else if (rec == outlet_receiver)
             {
                 outlets_.push_back(flat);
             }
@@ -1392,8 +1442,13 @@ void lsdtt_flowinfo::build_topological_order()
         donor_count_.data() + donor_count_.size()
     );
 
-    std::vector<std::int64_t> ready_queue;
-    ready_queue.reserve(static_cast<std::size_t>(n_valid_cells_));
+    // The Kahn queue IS the topological order: every cell is popped in exactly
+    // the order it was pushed, so the queue's contents once the loop ends are
+    // the order. It used to be copied, cell by cell, into topological_order_
+    // from a separate ready_queue of the same length -- two n-cell int64
+    // vectors holding identical contents. topological_order_ is now the queue
+    // itself, with `head` as the read cursor.
+    std::vector<std::int64_t>& ready_queue = topological_order_;
 
     // Seed the queue with headwater cells (no donors).
     for (int row = 0; row < meta_.n_rows; ++row)
@@ -1414,7 +1469,6 @@ void lsdtt_flowinfo::build_topological_order()
     while (head < ready_queue.size())
     {
         const std::int64_t flat = ready_queue[head++];
-        topological_order_.push_back(flat);
 
         const std::int64_t rec = receiver_.data()[flat];
         if (rec >= 0)
@@ -1523,7 +1577,14 @@ void lsdtt_flowinfo::build_s_vector()
         std::uint8_t              next_donor = 0;
     };
 
-    auto make_frame = [this](std::int64_t flat) -> dfs_frame
+    const std::int64_t nc = meta_.n_cols;
+    const std::array<std::int64_t, 8> ascending_neighbour_offset{{
+        -nc - 1, -nc, -nc + 1,
+        -1,            1,
+         nc - 1,  nc,  nc + 1
+    }};
+
+    auto make_frame = [this, &ascending_neighbour_offset](std::int64_t flat) -> dfs_frame
     {
         dfs_frame frame;
         frame.flat = flat;
@@ -1538,6 +1599,27 @@ void lsdtt_flowinfo::build_s_vector()
 
         const int row = row_from_flat_unchecked(flat);
         const int col = col_from_flat_unchecked(flat);
+
+        // INTERIOR FAST PATH. For a cell with a neighbour on every side, every
+        // neighbour is inside the grid whatever the boundary conditions, no two
+        // directions reach the same cell, and none reaches the cell itself.
+        // Visiting the neighbours by flat offset in ASCENDING flat order
+        // (NW, N, NE, W, E, SW, S, SE) therefore yields the donors already
+        // sorted and free of duplicates -- exactly what the general path below
+        // produces after its dedup and insertion sort. Pinned byte-for-byte by
+        // unit_flow_d8_identity.
+        if (row > 0 && row < meta_.n_rows - 1 &&
+            col > 0 && col < meta_.n_cols - 1)
+        {
+            for (const std::int64_t offset : ascending_neighbour_offset)
+            {
+                const std::int64_t donor_flat = flat + offset;
+                if (mask_.data()[donor_flat] == 0) continue;
+                if (receiver_.data()[donor_flat] != flat) continue;
+                frame.donors[frame.n_donors++] = donor_flat;
+            }
+            return frame;
+        }
 
         // Collect direct donors of this cell.
         for (int dir = 0; dir < 8; ++dir)
@@ -1935,8 +2017,19 @@ std::vector<double> lsdtt_flowinfo::accumulate(
 
     std::vector<double> accum(static_cast<std::size_t>(n_cells), 0.0);
 
-    for (std::int64_t flat : topological_order_)
-        accum[static_cast<std::size_t>(flat)] = use_default ? default_w : cell_weights[static_cast<std::size_t>(flat)];
+    // Seed each valid cell with its own weight. Row-major rather than in
+    // topological order: the topological order holds exactly the valid cells
+    // (it is only kept when it covers all of them), so the SAME values land in
+    // the SAME cells, but as a sequential sweep instead of scattered writes,
+    // which on a large grid is most of the cost of this loop. No addition
+    // happens here, so no order of arithmetic changes.
+    const std::uint8_t* valid = mask_.data();
+    for (std::int64_t flat = 0; flat < n_cells; ++flat)
+    {
+        if (valid[flat] == 0) continue;
+        accum[static_cast<std::size_t>(flat)] =
+            use_default ? default_w : cell_weights[static_cast<std::size_t>(flat)];
+    }
 
     // Forward push: each cell propagates its accumulated value to its receiver.
     // receiver_ holds outlet_receiver (-2) for outlets and nodata_receiver (-1)
@@ -1965,13 +2058,25 @@ lsdtt_raster_result lsdtt_flowinfo::accumulate_raster(
 
     lsdtt_raster_result result;
     result.meta = meta_;
-    result.data.resize(n, ndv);
-    result.mask.resize(n, 0);
+    result.data.resize(n);
+    result.mask.resize(n);
 
-    for (std::int64_t flat : topological_order_)
+    // Row-major copy, not scattered writes in topological order: the
+    // topological order holds exactly the valid cells, so each cell receives
+    // the same value either way. See accumulate().
+    const std::uint8_t* valid = mask_.data();
+    for (std::size_t i = 0; i < n; ++i)
     {
-        result.data[static_cast<std::size_t>(flat)] = static_cast<float>(accum[static_cast<std::size_t>(flat)]);
-        result.mask[static_cast<std::size_t>(flat)] = 1;
+        if (valid[i] != 0)
+        {
+            result.data[i] = static_cast<float>(accum[i]);
+            result.mask[i] = 1;
+        }
+        else
+        {
+            result.data[i] = ndv;
+            result.mask[i] = 0;
+        }
     }
 
     return result;
@@ -2003,7 +2108,8 @@ lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster() const
     // Accumulating over the topological order gives a BIT-IDENTICAL raster
     // (measured: 0 differing cells of 1,000,000) for less total work.
     //
-    // Pinned by `unit_flow_drainage_area_svector_parity`.
+    // Pinned by P11 in tests/cpp/test_flow_properties.cpp (CTest
+    // unit_flow_properties) and by unit_flow_d8_identity.
     if (!has_s_vector_)
     {
         if (!has_topological_order_)

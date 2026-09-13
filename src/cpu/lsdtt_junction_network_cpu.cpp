@@ -87,7 +87,6 @@ void lsdtt_junction_network_cpu::create(
     if (n_channel_cells_ == 0)
     {
         is_built_ = true;
-        validate();
         return;
     }
 
@@ -120,8 +119,12 @@ void lsdtt_junction_network_cpu::create(
         has_topological_order_ = false;
     }
 
+    // validate() is NOT called here, for the same reason as in
+    // lsdtt_flowinfo::create(): it audits what this function just built, so it
+    // only detects bugs in this file, and that is established in CTest
+    // (unit_flow_d8_identity builds and validates junction networks on every
+    // flow fixture) rather than paid for on every build. Removed 2026-09-13.
     is_built_ = true;
-    validate();
 }
 
 void lsdtt_junction_network_cpu::clear() noexcept
@@ -159,6 +162,11 @@ void lsdtt_junction_network_cpu::clear() noexcept
 
 // =============================================================================
 // validation
+//
+// A TEST-TIME AUDIT, not a runtime check: throws if the channel mask, junction
+// ids, receivers, donor counts, direct donor lists, topological order or
+// s-vector are inconsistent with each other. create() does not call it (it did
+// until 2026-09-13); it is exercised by unit_flow_d8_identity.
 // =============================================================================
 
 void lsdtt_junction_network_cpu::validate() const

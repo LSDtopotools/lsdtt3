@@ -127,39 +127,107 @@ bool gpu_polyfit_cache_matches(const poly_fit_coeffs& polycoeff)
 #endif
 
 // -----------------------------------------------------------------------------
-// Internal helper - build lsdtt_array2d views from a raster base object.
+// Internal helper - non-owning 2D views of a raster's data and mask.
 //
-// These are non-owning views: the array2d objects share memory with the
-// raster's internal vectors. They are used only within this translation
-// unit. The raster must outlive the views.
+// Only the three members the kernels in this file use: unchecked (row, col)
+// access, in_bounds, and the raw pointer. The raster must outlive the view.
+//
+// These were once `lsdtt_array2d` objects built with the `from_ptr`
+// constructor, which COPIES the buffer -- so every kernel here duplicated the
+// whole DEM and mask, serially, before doing any work (5 bytes per cell,
+// ~320 MB at 8000^2). The copies were serial, so they also capped thread
+// scaling. Removing them changes no output byte.
 // -----------------------------------------------------------------------------
-static lsdtt_array2d<float> data_view(const lsdtt_raster_cpu&raster)
+template <typename T>
+struct raster_view2d
+{
+    const T* ptr    = nullptr;
+    int      n_rows = 0;
+    int      n_cols = 0;
+
+    const T& operator()(int row, int col) const
+    {
+        return ptr[static_cast<std::size_t>(row) * n_cols + col];
+    }
+
+    bool in_bounds(int row, int col) const
+    {
+        return row >= 0 && row < n_rows && col >= 0 && col < n_cols;
+    }
+
+    const T* data() const { return ptr; }
+};
+
+static raster_view2d<float> data_view(const lsdtt_raster_cpu& raster)
 {
     const lsdtt_raster_meta& meta = raster.get_meta();
-    return lsdtt_array2d<float>(
-        meta.n_rows, meta.n_cols,
-        lsdtt_array2d<float>::from_ptr,
-        raster.get_data().data()
-    );
+    return {raster.get_data().data(), meta.n_rows, meta.n_cols};
 }
 
-static lsdtt_array2d<uint8_t> mask_view(const lsdtt_raster_cpu&raster)
+static raster_view2d<uint8_t> mask_view(const lsdtt_raster_cpu& raster)
 {
     const lsdtt_raster_meta& meta = raster.get_meta();
-    return lsdtt_array2d<uint8_t>(
-        meta.n_rows, meta.n_cols,
-        lsdtt_array2d<uint8_t>::from_ptr,
-        raster.get_mask().data()
-    );
+    return {raster.get_mask().data(), meta.n_rows, meta.n_cols};
 }
 
 // -----------------------------------------------------------------------------
-// Internal helper - check whether all pixels in a 3x3 window are valid.
-// Used by algorithms that require a full 3x3 neighbourhood.
+// Internal helper - which cells cannot be part of a complete 3x3 window.
+//
+// A 3x3 kernel requires every cell of its window to have mask != 0 AND a value
+// that is not the nodata value. The old per-pixel test did 9 mask reads and 9
+// meta.is_nodata() calls, with early exits that defeated vectorisation. This
+// classifies every cell ONCE into a 1-byte plane, so the per-pixel test becomes
+// a branch-free OR of nine bytes (window3x3_invalid below).
+//
+// Returns the number of invalid cells. When it is zero the caller skips the
+// window test entirely and the plane is released: on a DEM with no nodata at
+// all there is nothing to test.
+//
+// The classification is exactly the old one -- `mask == 0 ||
+// meta.is_nodata(value)` with the float value promoted to double as before --
+// so kernels that switch to it produce byte-identical output. Pinned by
+// section C6 of tests/cpp/test_surface_metrics.cpp (CTest unit_surface_metrics).
 // -----------------------------------------------------------------------------
+static std::int64_t build_window_invalid_plane(
+    const raster_view2d<float>&   dem,
+    const raster_view2d<uint8_t>& mask,
+    const lsdtt_raster_meta&      meta,
+    std::vector<std::uint8_t>&    invalid
+)
+{
+    const int nrows = meta.n_rows;
+    const int ncols = meta.n_cols;
+    invalid.assign(static_cast<std::size_t>(nrows) * ncols, std::uint8_t{0});
+
+    std::int64_t n_invalid = 0;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) reduction(+:n_invalid)
+#endif
+    for (int row = 0; row < nrows; ++row)
+    {
+        const std::size_t base = static_cast<std::size_t>(row) * ncols;
+        for (int col = 0; col < ncols; ++col)
+        {
+            const std::size_t i = base + col;
+            const bool bad =
+                mask.data()[i] == 0 || meta.is_nodata(dem.data()[i]);
+            invalid[i] = bad ? std::uint8_t{1} : std::uint8_t{0};
+            n_invalid += bad ? 1 : 0;
+        }
+    }
+
+    if (n_invalid == 0)
+    {
+        std::vector<std::uint8_t>().swap(invalid);
+    }
+    return n_invalid;
+}
+
+// Per-pixel form of the same test, for kernels that interleave it with other
+// per-pixel logic (total_curvature_3x3_square_fast's fallback fit).
 static bool window3x3_has_nodata(
-    const lsdtt_array2d<float>&   dem,
-    const lsdtt_array2d<uint8_t>& mask,
+    const raster_view2d<float>&   dem,
+    const raster_view2d<uint8_t>& mask,
     const lsdtt_raster_meta&      meta,
     int row, int col
 )
@@ -173,6 +241,19 @@ static bool window3x3_has_nodata(
         }
     }
     return false;
+}
+
+// True if any cell of the 3x3 window centred on (row, col) is invalid.
+// (row, col) must be an interior cell.
+static inline bool window3x3_invalid(
+    const std::vector<std::uint8_t>& invalid,
+    int ncols, int row, int col
+)
+{
+    const std::uint8_t* a = invalid.data() + (static_cast<std::size_t>(row - 1) * ncols + col);
+    const std::uint8_t* b = a + ncols;
+    const std::uint8_t* c = b + ncols;
+    return (a[-1] | a[0] | a[1] | b[-1] | b[0] | b[1] | c[-1] | c[0] | c[1]) != 0;
 }
 
 
@@ -292,8 +373,8 @@ lsdtt_raster_cpu compute_hillshade(
     const float  nodata  = static_cast<float>(meta.no_data_value);
 
     // Build 2D views of the input data and mask
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     // Precompute the sun vector.
     //
@@ -345,6 +426,12 @@ lsdtt_raster_cpu compute_hillshade(
     const double cos_A   = std::cos(A_rad);
     const double inv_2L  = 1.0 / (2.0 * L);
 
+    // Cells that cannot sit in a complete 3x3 window, classified once.
+    // n_invalid == 0 (no nodata anywhere) skips the per-pixel test entirely.
+    std::vector<std::uint8_t> invalid;
+    const std::int64_t n_invalid =
+        build_window_invalid_plane(dem, mask, meta, invalid);
+
     // Output arrays - initialised to nodata / invalid
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -358,7 +445,8 @@ lsdtt_raster_cpu compute_hillshade(
     {
         for (int col = 1; col < ncols - 1; ++col)
         {
-            if (window3x3_has_nodata(dem, mask, meta, row, col)) continue;
+            if (n_invalid != 0 &&
+                window3x3_invalid(invalid, ncols, row, col)) continue;
 
             // Cardinal neighbours (Zevenbergen and Thorne eq. 13)
             // north = row-1, south = row+1, east = col+1, west = col-1
@@ -503,8 +591,14 @@ lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(
     const double inv_2L  = 1.0 / (2.0 * L);
     const float  nodata  = static_cast<float>(meta.no_data_value);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
+
+    // Cells that cannot sit in a complete 3x3 window, classified once.
+    // n_invalid == 0 (no nodata anywhere) skips the per-pixel test entirely.
+    std::vector<std::uint8_t> invalid;
+    const std::int64_t n_invalid =
+        build_window_invalid_plane(dem, mask, meta, invalid);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -516,7 +610,8 @@ lsdtt_raster_cpu compute_gradient_magnitude_3x3_square(
     {
         for (int col = 1; col < ncols - 1; ++col)
         {
-            if (window3x3_has_nodata(dem, mask, meta, row, col)) continue;
+            if (n_invalid != 0 &&
+                window3x3_invalid(invalid, ncols, row, col)) continue;
 
             const double z_n = static_cast<double>(dem(row - 1, col));
             const double z_s = static_cast<double>(dem(row + 1, col));
@@ -566,8 +661,14 @@ lsdtt_raster_cpu compute_plan_curvature_3x3_square(
     const double inv_4L2 = 1.0 / (4.0 * L * L);
     const float  nodata = static_cast<float>(meta.no_data_value);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
+
+    // Cells that cannot sit in a complete 3x3 window, classified once.
+    // n_invalid == 0 (no nodata anywhere) skips the per-pixel test entirely.
+    std::vector<std::uint8_t> invalid;
+    const std::int64_t n_invalid =
+        build_window_invalid_plane(dem, mask, meta, invalid);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -579,7 +680,8 @@ lsdtt_raster_cpu compute_plan_curvature_3x3_square(
     {
         for (int col = 1; col < ncols - 1; ++col)
         {
-            if (window3x3_has_nodata(dem, mask, meta, row, col)) continue;
+            if (n_invalid != 0 &&
+                window3x3_invalid(invalid, ncols, row, col)) continue;
 
             const double z_c  = static_cast<double>(dem(row,     col    ));
             const double z_n  = static_cast<double>(dem(row - 1, col    ));
@@ -661,8 +763,8 @@ lsdtt_raster_cpu moving_window_mean(
     );
 
     // Build 2D views
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     // Output arrays
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
@@ -1105,8 +1207,8 @@ lsdtt_raster_cpu moving_window_stddev(
 
     const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -1176,8 +1278,8 @@ lsdtt_raster_cpu moving_window_median(
 
     const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -1245,8 +1347,8 @@ lsdtt_raster_cpu moving_window_mad(
 
     const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -1317,8 +1419,8 @@ lsdtt_raster_cpu moving_window_tpi(
 
     const window_offsets win = make_window_offsets(radius_metres, meta.cell_size, shape);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -2477,8 +2579,8 @@ static lsdtt_raster_cpu total_curvature_3x3_square_fast(
     const double L       = meta.cell_size;
     const double inv_l2  = 1.0 / (L * L);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -2601,8 +2703,8 @@ lsdtt_raster_cpu moving_window_total_curvature(
 
     const window_offsets win = make_window_offsets(radius_metres, L, shape);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     lsdtt_array2d<float>   out(nrows, ncols, nodata);
     lsdtt_array2d<uint8_t> out_mask(nrows, ncols, uint8_t{0});
@@ -3397,8 +3499,8 @@ principal_curvatures fundamental_form_principal_curvatures(
     const std::size_t npix   =
         static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
 
-    lsdtt_array2d<float>   dem  = data_view(raster);
-    lsdtt_array2d<uint8_t> mask = mask_view(raster);
+    const raster_view2d<float>   dem  = data_view(raster);
+    const raster_view2d<uint8_t> mask = mask_view(raster);
 
     const int threads = resolve_thread_count(n_threads);
     (void)threads;   // suppresses unused-variable warning when OpenMP absent

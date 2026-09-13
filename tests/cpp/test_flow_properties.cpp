@@ -72,6 +72,19 @@ void check(const std::string& name, bool ok, const std::string& detail = "")
     std::cout << "\n";
 }
 
+// lsdtt_flowinfo::validate() audits the built object's internal consistency
+// (receivers vs mask, donor counts vs receivers, outlets, topological order,
+// every s-vector interval). It no longer runs inside create(): a code bug is
+// caught HERE, in CTest, instead of being paid for on every flow routing call.
+// See unit_flow_d8_identity for the full boundary-condition matrix.
+void check_flow_validates(const std::string& name, const lsdtt::lsdtt_flowinfo& fi)
+{
+    std::string err;
+    try { fi.validate(); }
+    catch (const std::exception& e) { err = e.what(); }
+    check(name + ": lsdtt_flowinfo::validate() passes", err.empty(), err);
+}
+
 
 // =============================================================================
 // Fixtures
@@ -713,6 +726,7 @@ void test_d8_accumulation_properties(const fixture& fx)
                              filled.get_mask_array(),
                              filled.meta(),
                              opts);
+    check_flow_validates("D8 object on " + fx.name, fi);
 
     const std::vector<double> accum = fi.accumulate();
     const lsdtt::lsdtt_raster_meta&  meta  = filled.meta();
@@ -1152,6 +1166,8 @@ void test_drainage_area_svector_parity(const fixture& fx)
         opts.build_s_vector          = build_s_vector;
         lsdtt::lsdtt_flowinfo fi(filled.get_data_array(), filled.get_mask_array(),
                                  filled.get_meta(), opts);
+        check_flow_validates(std::string("D8 object, s-vector ")
+                             + (build_s_vector ? "on, " : "off, ") + fx.name, fi);
         return fi.get_drainage_area_raster();
     };
 

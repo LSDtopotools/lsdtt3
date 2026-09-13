@@ -55,7 +55,10 @@ WHAT MAKES THIS DEFENSIBLE (and where it still is not)
 
   Memory is the child process peak RSS, measured with wait4(2) around the whole
   child, so it covers the C++/Rust allocation the process actually made rather
-  than what a Python-level probe can see.
+  than what a Python-level probe can see.  Every command is started through
+  rusage_launcher.py, because a Linux child inherits its launcher's lifetime
+  peak RSS; the resulting floor is measured and tripwired every campaign
+  (`rss_floor` in the manifest, see calibrate_rss_floor()).
 
   Fixture identity is hashed.  Every row carries the fixture's SHA256 prefix.
   A campaign compared against another campaign on a different fixture build is
@@ -151,7 +154,7 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 # three different size and speed requirements:
 #
 #   FIXTURE_DIR   the downloaded region sources and their crops. Large
-#                 (~512 MB for the server profile), reused across every
+#                 (~300 MB for the server profile), reused across every
 #                 campaign, and worth keeping. Default is inside the repo,
 #                 which is WRONG on a cluster where the repo sits on a quota'd
 #                 home filesystem -- override with --fixture-dir.
@@ -181,6 +184,45 @@ MIN_TRUSTWORTHY_FACTOR = 3.0
 # because re-running a serial tool at --threads 8 measures nothing and triples
 # the campaign length.
 SERIAL_REFERENCES = ("richdem", "topotoolbox")
+
+# Parallel-capable references whose thread sweep is CAPPED, engine -> highest
+# thread count measured. lsdtt3 still sweeps the full profile list.
+#
+# Whitebox did not scale on any surface case on forth02 (2026-09-09): 0.96x to
+# 1.04x at 2, 4 and 8 threads for slope, hillshade and curvature, every
+# fixture. Separately, a laptop check found `max_procs=1` already uses ~1.3
+# cores for d8_flow_accum and ~1.9 for slope, and `max_procs=-1` changes
+# neither. Measuring it at 4 and 8 threads repeated the same number under
+# larger labels for ~12 min per campaign. 2 threads is kept so the flat curve
+# stays visible in the scaling table rather than being assumed.
+REFERENCE_MAX_THREADS: dict[str, int] = {"whitebox": 2}
+
+
+def _engine_thread_count(engine: str, case: dict, threads: list[int]) -> int:
+    """How many thread counts `engine` is measured at for `case`.
+
+    Mirrors the measurement loop in main(), which --dry-run and the progress
+    counter must agree with."""
+    if case.get("sequential") or engine in SERIAL_REFERENCES:
+        return 1
+    base = min(threads)
+    cap = REFERENCE_MAX_THREADS.get(engine)
+    if cap is None:
+        return len(threads)
+    return sum(1 for t in threads if t == base or t <= cap)
+
+
+# REUSE_FROM_NOTE
+#
+# A case may carry `reuse_from: {engine: source_case}`. For those engines the
+# row measured for `source_case` (same fixture, same thread count) is COPIED
+# into this case instead of being measured again, with `reused_from` set in the
+# CSV. Only for engines whose command is byte-for-byte identical between the
+# two cases -- that is the whole justification, and each use states it.
+#
+# Source cases run first (see the case ordering in main()). If the source case
+# is not selected in this run, or produced no row, the engine is measured
+# normally, so `--cases` subsets never lose a row.
 
 # Cases where lsdtt3's OWN implementation is inherently sequential too, so no
 # engine in the case has anything to gain from more threads.
@@ -243,6 +285,24 @@ REFERENCE_SCRIPTS = {
 # Verified 2026-09-08 against richdem 2.3.0, topotoolbox 0.0.12,
 # whitebox_workflows 2.0.6.
 NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
+    "fill": {
+        "whitebox": "no grayscale-reconstruction fill in whitebox_workflows "
+                    "2.0.6 (hydrology offers fill_depressions [priority-flood, "
+                    "measured in fill_priority_flood], "
+                    "fill_depressions_wang_and_liu, "
+                    "fill_depressions_planchon_and_darboux, fill_pits)",
+    },
+    "breach": {
+        "whitebox": "no Lindsay (2016) complete breaching in whitebox_workflows "
+                    "2.0.6 (hydrology offers breach_depressions_least_cost "
+                    "[measured in breach_least_cost] and "
+                    "breach_single_cell_pits)",
+    },
+    "breach_least_cost": {
+        "richdem": "no least-cost breaching in richdem 2.3.0 "
+                   "(rd.BreachDepressions is Lindsay 2016 complete breaching, "
+                   "measured in breach)",
+    },
     "accum_dinf": {
         "topotoolbox": "not bound in the Python package 0.0.12 "
                        "(FlowObject takes method='d8' only); TopoToolbox 3 "
@@ -261,13 +321,6 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     "hillshade": {
         "richdem": "no hillshade in richdem 2.3.0 (rd.TerrainAttribute's "
                    "attribute set is slope_*/aspect/curvature only)",
-    },
-    "polyfit_many": {
-        "richdem": "no eight-metric call; rd.TerrainAttribute computes one "
-                   "attribute per call and refits the 3x3 quadratic each "
-                   "time. This is the lsdtt3-only amortisation row",
-        "topotoolbox": "no eight-metric call (see the case note)",
-        "whitebox": "no eight-metric call (see the case note)",
     },
 }
 
@@ -325,7 +378,13 @@ CASES: dict[str, dict[str, Any]] = {
         "note": ("RECONSTRUCTION family: grayscale reconstruction by erosion "
                  "(Vincent 1993 hybrid -- raster scans + FIFO queue, O(N)). "
                  "lsdtt3 vincent1993 vs TopoToolbox hybrid=True"),
-        "engines": {"topotoolbox": "fill", "whitebox": "fill"},
+        # Whitebox was paired here until 2026-09-13, but its fill_depressions
+        # is a PRIORITY-FLOOD tool (its own tool description: "priority-flood
+        # strategy"), so it compared a heap fill with a reconstruction fill --
+        # the exact mismatch that once reported lsdtt3 2.9x slow. It is now in
+        # `fill_priority_flood`. Whitebox has no reconstruction fill; see
+        # NOT_IMPLEMENTED.
+        "engines": {"topotoolbox": "fill"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0",
@@ -340,9 +399,13 @@ CASES: dict[str, dict[str, Any]] = {
         "suite": "flow",
         "note": ("PRIORITY-FLOOD family: heap-based flood, O(N log N). "
                  "lsdtt3 barnes2014 vs TopoToolbox hybrid=False vs RichDEM "
-                 "(Zhou 2016). Same surface as the reconstruction case, "
-                 "roughly 2-3x the cost in every implementation"),
-        "engines": {"richdem": "fill", "topotoolbox": "fill_priority_flood"},
+                 "(Zhou 2016) vs Whitebox fill_depressions. Same surface as "
+                 "the reconstruction case, roughly 2-3x the cost in every "
+                 "implementation"),
+        # Whitebox `fill` = fill_depressions(fix_flats=False), a priority-flood
+        # fill (moved here from `fill` 2026-09-13).
+        "engines": {"richdem": "fill", "topotoolbox": "fill_priority_flood",
+                    "whitebox": "fill"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0",
@@ -355,8 +418,20 @@ CASES: dict[str, dict[str, Any]] = {
         "note": ("fill with a gradient imposed across flats. PRIORITY-FLOOD "
                  "ONLY in every tool: reconstruction fills to exactly the "
                  "spill level and has no mechanism for a gradient, so there "
-                 "is no reconstruction row to compare against here"),
-        "engines": {"richdem": "fill_epsilon", "whitebox": "fill_epsilon"},
+                 "is no reconstruction row to compare against here. Whitebox "
+                 "runs fill_depressions_wang_and_liu with flat_increment "
+                 "matched to fill_min_slope * cell size"),
+        # Whitebox: the Wang & Liu tool, not `fill_epsilon` (its Barnes-style
+        # fill_depressions), which disagrees with three other implementations
+        # by up to 9.78 m (benchmarking plan section 2.2) -- and until
+        # 2026-09-13 it also ran at Whitebox's default flat_increment of 1e-4 m
+        # per cell against lsdtt3's 1e-4 GRADIENT (3e-3 m per cell at 30 m),
+        # a 30x different amount of flat work. The increment is now matched
+        # per fixture: see `whitebox_flat_increment_from` and
+        # reference_extra_args().
+        "engines": {"richdem": "fill_epsilon",
+                    "whitebox": "depression_fill_wl_epsilon"},
+        "whitebox_flat_increment_from": "fill_min_slope",
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0.0001",
@@ -366,11 +441,36 @@ CASES: dict[str, dict[str, Any]] = {
     "breach": {
         "sequential": True,
         "suite": "flow",
-        "note": "least-cost breaching, Lindsay (2016)",
-        "engines": {"richdem": "breach", "whitebox": "breach"},
+        "note": "complete breaching, Lindsay (2016): lsdtt3 vs RichDEM",
+        # Whitebox was paired here until 2026-09-13, but it runs
+        # breach_depressions_least_cost -- Lindsay (2020), a different
+        # algorithm with a bounded search. It is now compared in
+        # `breach_least_cost` against lsdtt3's own least-cost breach.
+        "engines": {"richdem": "breach"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_breached_raster": "true",
                              "breach_algorithm_choice": "lindsay2016"},
+                  "output": "_breached.tif"},
+    },
+    # Added 2026-09-13 so Whitebox's breach is paired with the SAME algorithm.
+    # Matched explicitly: max search distance 100 cells (whitebox_reference.py
+    # --breach-max-dist default), unresolved depressions filled afterwards
+    # (Whitebox fill_deps=True, lsdtt3 fill_remainder_after_breach, default
+    # true), no cost cap (lsdtt3 default; Whitebox's max_cost left unset).
+    # NOT verified equal, because whitebox_workflows 2.0.6 does not report its
+    # defaults: minimize_dist (lsdtt3 min_dist=true) and flat_increment
+    # (lsdtt3 0). A timing row, not a value comparison.
+    "breach_least_cost": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("least-cost breaching, Lindsay (2020), max_dist 100, "
+                 "unresolved depressions filled: lsdtt3 vs Whitebox"),
+        "engines": {"whitebox": "breach"},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_breached_raster": "true",
+                             "breach_algorithm_choice": "least_cost",
+                             "breach_lc_max_dist": "100",
+                             "fill_remainder_after_breach": "true"},
                   "output": "_breached.tif"},
     },
     "accum_d8": {
@@ -408,6 +508,12 @@ CASES: dict[str, dict[str, Any]] = {
                  "s-vector (~57% of the D8 build) that no reference builds"),
         "engines": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
                     "whitebox": "accum_d8"},
+        # The references run EXACTLY the call they run in `accum_d8` -- none
+        # of them has an s-vector to switch off -- so measuring them again only
+        # measured noise (RichDEM 10.50 vs 10.17 Mcells/s on forth02). Their
+        # `accum_d8` rows are copied here instead. See REUSE_FROM_NOTE.
+        "reuse_from": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
+                       "whitebox": "accum_d8"},
         "lsdtt": {"exe": "lsdtt-drainage-analysis",
                   "params": {"write_d8_drainage_area_raster": "true",
                              "raster_is_filled": "true",
@@ -491,7 +597,7 @@ CASES: dict[str, dict[str, Any]] = {
     # 2. `polyfit_all` is where lsdtt3's one-fit-many-metrics design starts to
     #    pay and `slope_only` is where it does not -- there the full quadratic
     #    fit produces a single number. Both are measured; quoting only the
-    #    first would be cherry-picking. `polyfit_many` shows the amortisation.
+    #    first would be cherry-picking.
     # 3. The metric SETS differ between tools, so even `polyfit_all` is not
     #    like-for-like in what it produces. Hence report_only throughout.
     #
@@ -544,31 +650,11 @@ CASES: dict[str, dict[str, Any]] = {
                   "output": "_direct_polyfit_slope.tif"},
         "report_only": True,
     },
-    # The case that shows what the shared fit is FOR. lsdtt3 derives eight
-    # metrics from the same single fit; the fixed cost is paid once and the
-    # marginal cost is ~20-25 ms per metric, so lsdtt3's position improves with
-    # every metric added. There is no matching reference routine -- neither
-    # TopoToolbox nor Whitebox exposes an eight-metric call -- so this is an
-    # lsdtt3-only row, recorded to show the amortisation rather than to score a
-    # comparison.
-    "polyfit_many": {
-        "suite": "surface",
-        "note": ("eight metrics from ONE lsdtt3 fit. lsdtt3-only: no "
-                 "reference exposes an equivalent call. Compare its cost "
-                 "against `slope_only` and `polyfit_all` to see the shared "
-                 "fit amortising. TIMING ONLY"),
-        "engines": {},
-        "lsdtt": {"exe": "lsdtt-surface-metrics",
-                  "params": {"polyfit_metrics":
-                             "slope,aspect_degrees,profile_curvature,"
-                             "plan_curvature,mean_curvature,"
-                             "gaussian_curvature,tangential_curvature,"
-                             "laplacian",
-                             "polyfit_method": "direct",
-                             "polyfit_lambda_metres": "70.0"},
-                  "output": "_direct_polyfit_slope.tif"},
-        "report_only": True,
-    },
+    # `polyfit_many` (eight metrics from one lsdtt3 fit, lsdtt3-only) was
+    # REMOVED 2026-09-13. It had no reference to compare against, cost ~44 min
+    # of a server campaign -- most of it writing eight rasters (33 s of a 47 s
+    # process at 8000^2) -- and the amortisation it showed is already visible
+    # between `slope_only` and `polyfit_all`.
     "hillshade": {
         "suite": "surface",
         "note": "hillshade rendering, not an algorithmic comparison. TIMING ONLY",
@@ -589,9 +675,14 @@ CASES: dict[str, dict[str, Any]] = {
         "sequential": True,
         "suite": "depression",
         "note": ("lsdtt3 builds a nested depression hierarchy (Barnes 2020) "
-                 "then Fill-Spill-Merge (Barnes 2021); the references only "
-                 "label or fill. TIMING ONLY, and NOT a fair ratio"),
-        "engines": {"whitebox": "depression_sink"},
+                 "then Fill-Spill-Merge (Barnes 2021). lsdtt3-only: the "
+                 "absolute cost of the hierarchy. TIMING ONLY"),
+        # lsdtt3-ONLY since 2026-09-13. Whitebox used to be paired here through
+        # `sink`, which only labels cells lying in depressions -- a different,
+        # far cheaper operation, so the row compared nothing and cost ~22 min
+        # of a server campaign. whitebox_reference.py keeps the routine because
+        # calibrate_overheads() uses it as the dispatch tripwire.
+        "engines": {},
         # The depression hierarchy is not separately switchable: it is built as
         # the first half of the barnesetal2021 fill, which is the only CLI path
         # that reaches it. An earlier version of this table asked for
@@ -610,6 +701,11 @@ CASES: dict[str, dict[str, Any]] = {
         "suite": "depression",
         "note": "Wang & Liu (2006) fill lineage, a second fill implementation",
         "engines": {"whitebox": "depression_fill_wl"},
+        # lsdtt3 has no Wang & Liu fill. Its side of this case is the CLI
+        # default, barnes2014 at fill_min_slope 0 -- byte-for-byte the command
+        # `fill_priority_flood` already runs (7.63 vs 7.65 Mcells/s on
+        # forth02). That row is copied here instead of re-measured.
+        "reuse_from": {"lsdtt3": "fill_priority_flood"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0"},
@@ -637,10 +733,19 @@ PROFILES: dict[str, dict[str, Any]] = {
     "server": {
         "description": "full ladder and thread sweep; the quotable profile",
         "regions": ["alpine", "lakeland"],
-        # 8000 px at 30 m is a 240 km box, ~256 MB per region, fetched ONCE and
-        # cropped into every rung. 64M cells is enough work that a 32-thread
-        # run has something to do; the current 2400 px fixture was not.
-        "ladder": [1000, 2000, 4000, 8000],
+        # 4000 px at 30 m is a 120 km box, fetched ONCE and cropped into every
+        # rung.
+        #
+        # 8000 px was DROPPED 2026-09-13. On forth02 it was 4.2 h of a 5.5 h
+        # campaign, and for the surface suite, D8 and D-inf every engine's
+        # throughput at 8000^2 was within 0.95-1.04x of 4000^2 with the same
+        # thread-scaling curve. What it did still show -- fill-family
+        # throughput falling further (0.59-0.82x of 4000^2) -- is confounded
+        # with terrain, because each rung is a wider crop. Pass --ladder to add
+        # it back for a one-off size study. Rungs already cropped from an 8000
+        # source are reused as they are (same SHA), so campaigns stay
+        # comparable; see ensure_source_raster().
+        "ladder": [1000, 2000, 4000],
         "threads": [1, 2, 4, 8],
         "repeats": 5,
         "suites": ["flow", "surface", "mfd", "depression"],
@@ -702,10 +807,22 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
     the parent is a high-water mark across ALL children, so differencing it
     across calls attributes one child's peak to another.
 
-    subprocess's own helpers reap the child, which consumes the rusage before
-    it can be read, so the pipes are drained manually first.  stderr goes to a
-    temp file rather than a second pipe: reading two pipes sequentially
-    deadlocks the moment the unread one fills its buffer.
+    *** THE COMMAND IS LAUNCHED THROUGH rusage_launcher.py, NOT DIRECTLY. ***
+    A Linux child inherits its parent's lifetime peak RSS and wait4 reports it
+    as the child's own, so launching straight from this driver made every
+    measurement report at least this driver's peak. The 2026-09-09 forth02
+    campaign lost its entire memory column to that: 441 of 504 rows read
+    exactly 3556.98 MiB, the peak describe_fixture() had reached. The launcher
+    is a fresh small process, so the floor under each measurement is ITS peak,
+    which calibrate_overheads() measures as `rss_floor_mb`. See the launcher's
+    docstring for the kernel mechanism and the measurement that confirmed it.
+
+    The launcher does the wait4 and writes the result to a temp file; its wall
+    time brackets only the measured command, so the Python start-up of the
+    launcher itself is not charged to `wall_seconds`.
+
+    stderr goes to a temp file rather than a second pipe: reading two pipes
+    sequentially deadlocks the moment the unread one fills its buffer.
 
     `timeout` kills the child after that many seconds and returns
     timed_out=True.  A server campaign runs unattended for hours and the
@@ -735,56 +852,81 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
                 "wall_seconds": time.perf_counter() - t0,
                 "peak_rss_mb": None, "timed_out": False}
 
+    import signal
+
     timed_out = False
+    fd, result_name = tempfile.mkstemp(prefix="rusage_", suffix=".json")
+    os.close(fd)
+    result_path = pathlib.Path(result_name)
+    launcher = [sys.executable, str(SCRIPT_DIR / "rusage_launcher.py"),
+                str(result_path), "--"]
 
-    with tempfile.TemporaryFile(mode="w+") as errf:
-        t0 = time.perf_counter()
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
-                                text=True, env=env,
-                                cwd=str(cwd) if cwd else None)
+    try:
+        with tempfile.TemporaryFile(mode="w+") as errf:
+            t0 = time.perf_counter()
+            # start_new_session: the launcher leads its own process group, so a
+            # timeout can kill the launcher AND the command it is waiting on.
+            # Killing the launcher alone would orphan the measured command and
+            # leave it running for the rest of the campaign.
+            proc = subprocess.Popen(launcher + list(cmd), stdout=subprocess.PIPE,
+                                    stderr=errf, text=True, env=env,
+                                    cwd=str(cwd) if cwd else None,
+                                    start_new_session=True)
 
-        # A watchdog thread rather than Popen.communicate(timeout=...):
-        # communicate() reaps the child, which consumes the rusage before
-        # wait4 can read it, and the memory column is the whole reason this
-        # function exists.
-        timer = None
-        if timeout is not None:
-            def _kill():
-                nonlocal timed_out
-                timed_out = True
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-            timer = threading.Timer(timeout, _kill)
-            timer.start()
+            timer = None
+            if timeout is not None:
+                def _kill():
+                    nonlocal timed_out
+                    timed_out = True
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                timer = threading.Timer(timeout, _kill)
+                timer.start()
+
+            try:
+                stdout = proc.stdout.read() if proc.stdout else ""
+                if proc.stdout:
+                    proc.stdout.close()
+                proc.wait()
+            finally:
+                if timer is not None:
+                    timer.cancel()
+
+            outer_wall = time.perf_counter() - t0
+            errf.seek(0)
+            stderr = errf.read()
 
         try:
-            stdout = proc.stdout.read() if proc.stdout else ""
-            if proc.stdout:
-                proc.stdout.close()
-            pid, status, ru = os.wait4(proc.pid, 0)
-        finally:
-            if timer is not None:
-                timer.cancel()
+            res = json.loads(result_path.read_text())
+        except (OSError, ValueError):
+            res = None
+    finally:
+        result_path.unlink(missing_ok=True)
 
-        wall = time.perf_counter() - t0
-        # Tell Popen the child is already reaped so its destructor does not
-        # warn about an abandoned process.
-        proc.returncode = os.waitstatus_to_exitcode(status)
-        errf.seek(0)
-        stderr = errf.read()
+    if res is None:
+        # The launcher died before writing a result: killed on timeout, or it
+        # could not start. No memory figure is better than a wrong one.
+        return {"returncode": proc.returncode, "stdout": stdout,
+                "stderr": stderr, "wall_seconds": outer_wall,
+                "timed_out": timed_out, "peak_rss_mb": None,
+                "cpu_seconds": None}
 
     return {
-        "returncode": proc.returncode,
+        "returncode": res["exit_code"],
         "stdout": stdout,
         "stderr": stderr,
-        "wall_seconds": wall,
+        "wall_seconds": res["wall_seconds"],
         "timed_out": timed_out,
         # ru_maxrss is kibibytes on Linux, bytes on macOS. Linux is where the
         # server campaign runs; on macOS this reads ~1024x high, which is
         # obvious rather than subtle.
-        "peak_rss_mb": ru.ru_maxrss / 1024.0,
+        "peak_rss_mb": res["peak_rss_kib"] / 1024.0,
+        # user + system CPU of the measured command. cpu_seconds / wall well
+        # above 1 means the command used more cores than its thread label says.
+        "cpu_seconds": res["cpu_seconds"],
+        "launcher_peak_rss_mb": res["launcher_peak_rss_kib"] / 1024.0,
     }
 
 
@@ -879,6 +1021,26 @@ def ensure_source_raster(region: str, source_px: int,
     out = source_raster_path(region, source_px)
     if out.exists():
         return out
+
+    # A LARGER cached source is used in preference to a new download. Rungs are
+    # cached by name (`alpine_2000.tif`), so on a machine that ran the old
+    # 8000 px ladder they already exist, cropped from the 8000 source; fetching
+    # a fresh 4000 source would change nothing but the download bill. Taking
+    # the smallest adequate source keeps any NEW crop as close as possible to
+    # what a fresh fetch would give.
+    larger = []
+    for p in FIXTURE_DIR.glob(f"{region}_src*.tif"):
+        try:
+            px = int(p.stem.rsplit("_src", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        if px >= source_px:
+            larger.append((px, p))
+    if larger:
+        px, p = min(larger)
+        print(f"  {region}: using cached {px}px source for a {source_px}px "
+              f"ladder ({p.name})")
+        return p
     if not allow_fetch or fetch_exe is None or not fetch_exe.exists():
         return None
     if region not in REGIONS:
@@ -1350,7 +1512,7 @@ def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
         return {"error": f"exit {r['returncode']}",
                 "stderr": r["stderr"][-1500:], "stdout": r["stdout"][-1500:]}
 
-    timings, rss, computes, writes = [], [], [], []
+    timings, rss, computes, writes, cpus = [], [], [], [], []
     for _ in range(max(1, repeats)):
         r = run_with_rusage(cmd, env=env, timeout=timeout)
         if r.get("timed_out"):
@@ -1361,6 +1523,8 @@ def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
         timings.append(r["wall_seconds"])
         if r["peak_rss_mb"] is not None:
             rss.append(r["peak_rss_mb"])
+        if r.get("cpu_seconds") is not None:
+            cpus.append(r["cpu_seconds"])
         reported = parse_reported_times(r["stdout"])
         if reported["compute"] is not None:
             computes.append(reported["compute"])
@@ -1372,6 +1536,7 @@ def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
         "peak_rss_mb": max(rss) if rss else None,
         "seconds_process": min(timings),
         "seconds_process_median": statistics.median(timings),
+        "cpu_seconds_process": statistics.median(cpus) if cpus else None,
     }
 
     if computes:
@@ -1427,9 +1592,36 @@ def reference_env(threads: int) -> dict[str, str]:
     return env
 
 
+def reference_extra_args(engine: str, case: dict,
+                         fixture: pathlib.Path) -> list[str]:
+    """Per-fixture arguments a reference needs to do the SAME work as lsdtt3.
+
+    `whitebox_flat_increment_from: <lsdtt3 param>` converts lsdtt3's flat
+    GRADIENT into Whitebox's flat_increment, which is metres PER CELL:
+    increment = gradient * cell size. Handing Whitebox the raw gradient (or
+    leaving its default) makes it impose a 30x smaller increment on a 30 m
+    grid -- a different amount of flat-resolution work. Same conversion as
+    run_flow_benchmark.py uses for its value comparison.
+    """
+    param = case.get("whitebox_flat_increment_from")
+    if engine != "whitebox" or not param:
+        return []
+    gradient = float(case["lsdtt"]["params"][param])
+    try:
+        from osgeo import gdal
+        gdal.UseExceptions()
+        ds = gdal.Open(str(fixture))
+        cell = abs(float(ds.GetGeoTransform()[1]))
+    except Exception as exc:
+        raise RuntimeError(f"cannot read cell size of {fixture} to match "
+                           f"Whitebox flat_increment: {exc}") from exc
+    return ["--flat-increment", repr(gradient * cell)]
+
+
 def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
                       threads: int, repeats: int, python_exe: str,
-                      timeout: float | None = None) -> dict[str, Any] | None:
+                      timeout: float | None = None,
+                      extra_args: list[str] | None = None) -> dict[str, Any] | None:
     """Time one reference implementation via its standalone script.
 
     Each reference is a subprocess so that a missing optional package is a
@@ -1446,6 +1638,8 @@ def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
     # rejecting an unknown flag is how argparse tells us we got that wrong.
     if engine == "whitebox":
         cmd += ["--threads", str(threads)]
+    if extra_args:
+        cmd += list(extra_args)
 
     r = run_with_rusage(cmd, env=reference_env(threads), timeout=timeout)
     if r.get("timed_out"):
@@ -1466,6 +1660,7 @@ def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
                 "stdout": r["stdout"][-800:]}
 
     info["peak_rss_mb"] = r["peak_rss_mb"]
+    info["cpu_seconds_process"] = r.get("cpu_seconds")
     info["seconds_process"] = r["wall_seconds"]
     info["timing_scope"] = "in_process_routine"
     return info
@@ -1491,6 +1686,74 @@ def make_tiny_grid(fixture: pathlib.Path, work_dir: pathlib.Path,
     except Exception:
         return None
     return out if out.exists() else None
+
+
+# Peak RSS a do-nothing command may report through rusage_launcher.py before
+# the memory column is declared untrustworthy. The launcher is a bare Python
+# interpreter (~10 MiB measured on WSL2); anything near this limit means the
+# launcher has started importing things or the inheritance trap is back.
+RSS_FLOOR_LIMIT_MB = 64.0
+
+# A row whose peak is below this multiple of the floor may be reporting the
+# floor rather than itself, so it is flagged `rss_near_floor`.
+RSS_NEAR_FLOOR_FACTOR = 1.5
+
+
+def calibrate_rss_floor() -> dict[str, Any]:
+    """Measure the smallest peak RSS any measurement can report. TRIPWIRE.
+
+    A Linux child inherits its parent's lifetime peak RSS (see
+    rusage_launcher.py). So the memory column is only honest if the process
+    each command is launched FROM has a small peak. This measures that floor
+    directly, by launching `/bin/true` -- whose own footprint is ~1 MiB --
+    through exactly the path every real measurement takes.
+
+    It is called AFTER describe_fixture() has run, which is the driver's own
+    largest allocation, so it measures the floor in the state the campaign is
+    actually measured in rather than at start-up when it would look fine.
+
+    Three numbers are recorded, because together they show the mechanism
+    rather than just a verdict:
+
+      floor_mb          /bin/true through the launcher. Should be ~10 MiB.
+      direct_mb         /bin/true launched straight from this driver, i.e. the
+                        old behaviour. Equals the driver's peak when the trap
+                        is present on this kernel.
+      driver_peak_mb    this driver's own lifetime peak.
+
+    `ok` is False when floor_mb exceeds RSS_FLOOR_LIMIT_MB; write_summary()
+    then says, above the memory table, that the column must not be quoted.
+    """
+    import resource
+
+    true_exe = shutil.which("true") or "/bin/true"
+    out: dict[str, Any] = {"command": true_exe,
+                           "limit_mb": RSS_FLOOR_LIMIT_MB}
+
+    if not hasattr(os, "wait4"):
+        out.update({"available": False, "ok": False})
+        return out
+
+    floors = []
+    for _ in range(3):
+        r = run_with_rusage([true_exe])
+        if r.get("peak_rss_mb") is not None:
+            floors.append(r["peak_rss_mb"])
+
+    # The old, broken route, kept only to show whether the trap is live here.
+    proc = subprocess.Popen([true_exe])
+    _, _, ru = os.wait4(proc.pid, 0)
+    proc.returncode = 0
+
+    out.update({
+        "available": bool(floors),
+        "floor_mb": max(floors) if floors else None,
+        "direct_mb": ru.ru_maxrss / 1024.0,
+        "driver_peak_mb":
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0,
+    })
+    out["ok"] = bool(floors) and out["floor_mb"] <= RSS_FLOOR_LIMIT_MB
+    return out
 
 
 def calibrate_overheads(build_dir: pathlib.Path, fixture: pathlib.Path,
@@ -1526,9 +1789,13 @@ def calibrate_overheads(build_dir: pathlib.Path, fixture: pathlib.Path,
     meet, and RichDEM is the reference lsdtt3 is most often compared against.
 
     Also returns `whitebox_dispatch_seconds` as a REGRESSION TRIPWIRE for the
-    tool-handle bug; see whitebox_reference.py's `_make_call`.
+    tool-handle bug; see whitebox_reference.py's `_make_call`, and `rss_floor`,
+    the tripwire for the peak-RSS inheritance trap; see calibrate_rss_floor().
     """
     out: dict[str, Any] = {}
+    # A dict, not a float, so the "fixed overhead" printers (which render
+    # floats as milliseconds) leave it alone.
+    out["rss_floor"] = calibrate_rss_floor()
 
     exe = build_dir / "lsdtt-raster-preprocessing"
     if exe.exists():
@@ -1722,9 +1989,10 @@ CSV_FIELDS = [
     "threads", "repeats",
     "seconds_median", "seconds_best", "seconds_stdev", "seconds_all",
     "seconds_read", "seconds_write", "seconds_process", "timing_scope",
-    "peak_rss_mb", "mcells_per_second",
+    "peak_rss_mb", "rss_near_floor", "cpu_seconds_process",
+    "mcells_per_second",
     "report_only", "serial_reference", "sequential_case",
-    "overhead_dominated",
+    "overhead_dominated", "reused_from",
     "status", "note",
 ]
 
@@ -1791,7 +2059,19 @@ def build_row(suite, case_name, engine, fixture_key, fixture_sha, n_cells,
         "timing_scope": info.get("timing_scope", ""),
         "peak_rss_mb": (f"{info['peak_rss_mb']:.2f}"
                         if info.get("peak_rss_mb") is not None else ""),
+        "cpu_seconds_process": (f"{info['cpu_seconds_process']:.9g}"
+                                if info.get("cpu_seconds_process") is not None
+                                else ""),
     })
+
+    # A peak this close to the launcher floor may be the floor, not the
+    # command. See calibrate_rss_floor().
+    floor_mb = (overhead.get("rss_floor") or {}).get("floor_mb")
+    if floor_mb and info.get("peak_rss_mb") is not None:
+        row["rss_near_floor"] = bool(
+            info["peak_rss_mb"] < RSS_NEAR_FLOOR_FACTOR * floor_mb)
+    else:
+        row["rss_near_floor"] = ""
 
     if median and n_cells:
         row["mcells_per_second"] = f"{(n_cells / median) / 1e6:.6g}"
@@ -2015,6 +2295,30 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append("")
     L.append("## Peak memory (MiB, whole child process)")
     L.append("")
+    fl = overhead.get("rss_floor") or {}
+    if fl.get("available"):
+        L.append(f"Measurement floor: `/bin/true` launched the same way as every "
+                 f"row reports **{fl['floor_mb']:.1f} MiB** "
+                 f"(tripwire limit {fl['limit_mb']:.0f} MiB). Launched directly "
+                 f"from the driver it reports {fl['direct_mb']:.1f} MiB, against a "
+                 f"driver peak of {fl['driver_peak_mb']:.1f} MiB -- the gap is the "
+                 "peak-RSS inheritance that `rusage_launcher.py` exists to remove. "
+                 f"Cells marked `<` are below {RSS_NEAR_FLOOR_FACTOR:g}x the floor "
+                 "and may be reporting the floor rather than the engine.")
+        L.append("")
+        if not fl.get("ok"):
+            L.append(f"> **MEMORY TRIPWIRE FAILED: the floor is "
+                     f"{fl['floor_mb']:.1f} MiB.** Every row reports at least "
+                     "this, so the memory column below measures the launcher, "
+                     "not the engines. **Do not quote it.** Check that "
+                     "`rusage_launcher.py` has not grown imports and that "
+                     "`run_with_rusage()` still launches through it.")
+            L.append("")
+    else:
+        L.append("> **The memory floor could not be measured**, so nothing "
+                 "below shows whether a row reports the engine or an inherited "
+                 "peak. Treat the column as unverified.")
+        L.append("")
     _memory_table(L, ok)
 
     bad = [r for r in rows
@@ -2202,11 +2506,14 @@ def _memory_table(L: list[str], rows: list[dict]) -> None:
                 # Peak across thread counts: memory is reported per engine and
                 # fixture, and the worst case is the number that matters for
                 # "will this fit".
-                m = [float(r["peak_rss_mb"]) for r in mem
-                     if r["case"] == case_name and r["fixture"] == fx
-                     and r["engine"] == eng]
-                if m:
-                    cells.append(f"{max(m):.0f}")
+                match = [r for r in mem
+                         if r["case"] == case_name and r["fixture"] == fx
+                         and r["engine"] == eng]
+                if match:
+                    worst = max(match, key=lambda r: float(r["peak_rss_mb"]))
+                    near = str(worst.get("rss_near_floor")) == "True"
+                    cells.append(("<" if near else "")
+                                 + f"{float(worst['peak_rss_mb']):.0f}")
                     any_val = True
                 elif eng in NOT_IMPLEMENTED.get(case_name, {}):
                     cells.append("n/a")
@@ -2235,7 +2542,7 @@ def main() -> int:
                     help="where the downloaded region sources and their crops "
                          "live. Defaults to <out-dir>/benchmark_fixtures when "
                          "--out-dir is given, otherwise tests/data/dem_cache "
-                         "inside the repo. The server profile stores ~512 MB "
+                         "inside the repo. The server profile stores ~300 MB "
                          "here, so on a cluster keep it off a quota'd home: "
                          "point it at project or scratch storage. Reused "
                          "across campaigns, so it is worth keeping.")
@@ -2413,10 +2720,13 @@ def main() -> int:
         for name, case in sorted(selected_cases.items()):
             engines = ["lsdtt3"] + sorted(case["engines"])
             seq = bool(case.get("sequential"))
-            nt = 1 if seq else len(profile["threads"])
             per_engine = []
             for e in engines:
-                t = 1 if e in SERIAL_REFERENCES else nt
+                src = case.get("reuse_from", {}).get(e)
+                if src and src in selected_cases:
+                    per_engine.append(f"{e}<-{src}")
+                    continue
+                t = _engine_thread_count(e, case, profile["threads"])
                 per_engine.append(f"{e}x{t}")
                 n += t * n_fixtures
             tag = "  [sequential: no thread sweep]" if seq else ""
@@ -2559,6 +2869,13 @@ def main() -> int:
     for k, v in overhead.items():
         if isinstance(v, float):
             print(f"  {k}: {v * 1000:.1f} ms")
+    _fl = overhead.get("rss_floor") or {}
+    if _fl.get("available"):
+        print(f"  rss floor: {_fl['floor_mb']:.1f} MiB through the launcher "
+              f"(direct launch {_fl['direct_mb']:.1f} MiB, driver peak "
+              f"{_fl['driver_peak_mb']:.1f} MiB)"
+              + ("" if _fl.get("ok") else
+                 "   *** TRIPWIRE: memory column will not be trustworthy ***"))
 
     manifest = {
         "created_at": dt.datetime.now().isoformat(timespec="seconds"),
@@ -2588,18 +2905,43 @@ def main() -> int:
     # reference runs once, a parallel reference runs at every thread count.
     baseline_threads = min(profile["threads"])
     measurement_timeout = args.timeout_seconds if args.timeout_seconds > 0 else None
-    n_threads = len(profile["threads"])
     def _case_measurements(c):
-        nt = 1 if c.get("sequential") else n_threads
-        return nt + sum(1 if e in SERIAL_REFERENCES else nt
-                        for e in c["engines"])
+        return sum(0 if c.get("reuse_from", {}).get(e) in selected_cases
+                   else _engine_thread_count(e, c, profile["threads"])
+                   for e in ["lsdtt3"] + list(c["engines"]))
 
     total = sum(len(fixtures) * _case_measurements(c)
                 for c in selected_cases.values())
     done = 0
 
+    def _reused_row(case_name, case, engine, fx_key, threads):
+        """Copy of the source case's row for this engine, or None to measure.
+
+        See REUSE_FROM_NOTE."""
+        src = case.get("reuse_from", {}).get(engine)
+        if not src or src not in selected_cases:
+            return None
+        for r in rows:
+            if (r["case"] == src and r["engine"] == engine
+                    and r["fixture"] == fx_key
+                    and int(r["threads"]) == int(threads)):
+                copy = dict(r)
+                copy.update({
+                    "suite": case["suite"], "case": case_name,
+                    "report_only": bool(case.get("report_only", False)),
+                    "sequential_case": bool(case.get("sequential", False)),
+                    "reused_from": src,
+                    "note": (f"REUSED from `{src}`: identical command, not "
+                             f"re-measured. {case.get('note', '')}")[:400],
+                })
+                return copy
+        return None
+
+    # Cases that reuse another case's rows run AFTER everything else, so their
+    # sources exist by the time they are reached.
     for case_name, case in sorted(selected_cases.items(),
-                                  key=lambda kv: (kv[1]["suite"], kv[0])):
+                                  key=lambda kv: (bool(kv[1].get("reuse_from")),
+                                                  kv[1]["suite"], kv[0])):
         for fx_key, fx_path in fixtures.items():
             meta = fixture_meta[fx_key]
 
@@ -2633,19 +2975,36 @@ def main() -> int:
 
             for threads in case_threads:
                 # lsdtt3
-                info = measure_lsdtt(case_name, case, in_path, work_dir,
-                                     threads, profile["repeats"], build_dir,
-                                     timeout=measurement_timeout)
-                rows.append(build_row(case["suite"], case_name, "lsdtt3",
-                                      fx_key, meta["sha256_12"],
-                                      meta["n_cells"], threads, info, case,
-                                      overhead))
-                done += 1
-                _progress(done, total, case_name, "lsdtt3", fx_key, threads,
-                          rows[-1],
-                          report_only=bool(case.get("report_only")))
+                reused = _reused_row(case_name, case, "lsdtt3", fx_key, threads)
+                if reused is not None:
+                    rows.append(reused)
+                else:
+                    info = measure_lsdtt(case_name, case, in_path, work_dir,
+                                         threads, profile["repeats"], build_dir,
+                                         timeout=measurement_timeout)
+                    rows.append(build_row(case["suite"], case_name, "lsdtt3",
+                                          fx_key, meta["sha256_12"],
+                                          meta["n_cells"], threads, info, case,
+                                          overhead))
+                    done += 1
+                    _progress(done, total, case_name, "lsdtt3", fx_key, threads,
+                              rows[-1],
+                              report_only=bool(case.get("report_only")))
 
                 for engine, routine in sorted(case["engines"].items()):
+                    # A capped reference (see REFERENCE_MAX_THREADS) is not
+                    # measured above its cap; the scaling table shows `-`. The
+                    # baseline is always measured, or `--threads 4,8` would
+                    # drop the engine from the campaign without a word.
+                    if (threads != baseline_threads
+                            and threads > REFERENCE_MAX_THREADS.get(engine,
+                                                                    threads)):
+                        continue
+                    reused = _reused_row(case_name, case, engine, fx_key,
+                                         threads)
+                    if reused is not None:
+                        rows.append(reused)
+                        continue
                     # A serial reference is measured ONCE, at the baseline
                     # thread count. Running it again at 2/4/8 would record the
                     # same number under a different label and imply it had been
@@ -2657,10 +3016,10 @@ def main() -> int:
                     # campaign without a word.
                     if engine in SERIAL_REFERENCES and threads != baseline_threads:
                         continue
-                    info = measure_reference(engine, routine, in_path,
-                                             threads, profile["repeats"],
-                                             args.python_exe,
-                                             timeout=measurement_timeout)
+                    info = measure_reference(
+                        engine, routine, in_path, threads, profile["repeats"],
+                        args.python_exe, timeout=measurement_timeout,
+                        extra_args=reference_extra_args(engine, case, in_path))
                     rows.append(build_row(case["suite"], case_name, engine,
                                           fx_key, meta["sha256_12"],
                                           meta["n_cells"], threads, info, case,

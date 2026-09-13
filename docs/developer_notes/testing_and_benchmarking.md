@@ -939,7 +939,14 @@ The suite fetches **one large real DEM per region** with `lsdtt-fetch-raster`
 | profile | regions | ladder (px) | source fetched at | download |
 |---|---|---|---|---|
 | `laptop` | alpine, lakeland | 500, 1000 | 1000 px (30 km) | ~4 MB/region |
-| `server` | alpine, lakeland | 1000, 2000, 4000, 8000 | 8000 px (240 km) | ~256 MB/region |
+| `server` | alpine, lakeland | 1000, 2000, 4000 | 4000 px (120 km) | ~64 MB/region |
+
+The `server` ladder went to 8000 px until 2026-09-13. On the forth02 campaign
+of 2026-09-09 that rung took 4.2 h of 5.5 h. For the surface suite, D8 and
+D-infinity, every engine's 8000² throughput was 0.95–1.04× its 4000² figure.
+The fill family still fell further (0.59–0.82×), but that fall is confounded
+with terrain, because each rung is a wider crop. A cached larger source is
+reused rather than re-fetched, so rung hashes do not change.
 
 | region | centre | UTM | terrain |
 |---|---|---|---|
@@ -1202,8 +1209,10 @@ expensive per-metric operation. Quote the metric family alongside the number.
    curvatures; TopoToolbox's `curvature_all4` yields 4 curvatures. Not the same
    products.
 3. **`polyfit_many` has no counterpart at all** — no reference exposes an
-   eight-metric call. It is an lsdtt3-only row, included to show the fit
-   amortising, not to score a comparison.
+   eight-metric call. It was an lsdtt3-only row, included to show the fit
+   amortising. It was removed from the campaign on 2026-09-13: it cost ~44 min
+   of a server campaign, mostly writing eight rasters. The table above remains
+   the record of the amortisation.
 
 !!! warning "Correction: window size is free, contrary to an earlier claim"
     This document previously stated that lsdtt3's default
@@ -1462,7 +1471,7 @@ question, and an open one.
 
 | Suite | Cases | Status |
 |---|---|---|
-| `flow` | fill, fill_epsilon, breach, accum_d8 | timing; values asserted separately in §4-5 |
+| `flow` | fill, fill_priority_flood, fill_epsilon, breach, breach_least_cost, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
 | `mfd` | accum_dinf, accum_mfd | **timing only** -- Tarboton vs Quinn vs Freeman proportioning genuinely differ |
 | `surface` | slope_only, polyfit_all, hillshade | **timing only** -- curvature definitions and aspect handedness differ |
 | `depression` | fill_spill_merge, fill_wang_liu | **timing only**, and the depression hierarchy has no counterpart at all |
@@ -1477,12 +1486,52 @@ produce a single number. Quoting only the first would be cherry-picking. Note th
 window size does NOT tilt this: the `direct` fit's cost is independent of
 `polyfit_lambda_metres` (measured flat over a 729× range of window cells).
 
-`fill_spill_merge` compares lsdtt3's nested depression hierarchy (Barnes 2020)
-plus Fill-Spill-Merge (Barnes 2021) against the cheapest thing the other tools
-offer. The ratio necessarily flatters them; it is recorded only because the
-absolute cost of the hierarchy is a number users ask for. Note the hierarchy is
+**Pairings corrected 2026-09-13.** Three reference rows ran a different
+algorithm from the lsdtt3 row they were compared against:
+
+- `fill` is the grayscale-RECONSTRUCTION case, but Whitebox's `fill_depressions`
+  is a priority-flood tool (its own tool description). Whitebox now appears in
+  `fill_priority_flood`; `fill@whitebox` is `n/a` because whitebox_workflows
+  2.0.6 has no reconstruction fill.
+- `fill_epsilon@whitebox` ran `fill_depressions` (the tool that disagrees with
+  three other implementations by up to 9.78 m, see §10o) at Whitebox's default
+  `flat_increment` of 1e-4 m per cell, against lsdtt3's 1e-4 GRADIENT (3e-3 m
+  per cell at 30 m) — 30x less flat work. It now runs
+  `fill_depressions_wang_and_liu(fix_flats=True)` with
+  `flat_increment = fill_min_slope * cell size`, read from each fixture.
+- `breach@whitebox` ran `breach_depressions_least_cost` (Lindsay 2020) against
+  lsdtt3's and RichDEM's Lindsay (2016). `breach` is now lsdtt3 vs RichDEM, and
+  the new `breach_least_cost` compares lsdtt3's least-cost breach with Whitebox's
+  at max_dist 100 cells with unresolved depressions filled. Whitebox's
+  `minimize_dist` and `flat_increment` defaults are not reported by the
+  package, so they are not verified equal to lsdtt3's.
+
+Campaigns before 2026-09-13 carry the old pairings in those three rows.
+
+`fill_spill_merge` measures lsdtt3's nested depression hierarchy (Barnes 2020)
+plus Fill-Spill-Merge (Barnes 2021), lsdtt3 only. It is recorded because the
+absolute cost of the hierarchy is a number users ask for. Until 2026-09-13 it
+was paired with Whitebox's `sink`, which only labels depression cells, so that
+ratio compared nothing and the pairing was removed. Note the hierarchy is
 not separately switchable -- it is built as the first half of the
 `barnesetal2021` fill, which is the only CLI path that reaches it.
+
+Two cases reuse rows rather than re-measuring (`reuse_from` in the case
+registry, `reused_from` in the CSV). `accum_d8_no_svector` copies the
+reference rows of `accum_d8`, because the references run the identical call in
+both. `fill_wang_liu` copies lsdtt3's `fill_priority_flood` row, because lsdtt3
+has no Wang & Liu fill and its side of that case was the same barnes2014 command.
+
+**Memory.** Every command is launched through `tests/scripts/rusage_launcher.py`.
+A Linux child inherits its parent's lifetime peak RSS and `wait4` reports it as
+the child's own. Measured on WSL2: after a Python parent touched and freed
+1.5 GiB, `/bin/true` launched from it reported 1509.5 MiB; from a fresh process,
+9.0 MiB. The 2026-09-09 forth02 campaign launched directly from a driver that
+had peaked at 3.5 GB in `describe_fixture()`, and 441 of its 504 rows read
+exactly 3556.98 MiB. Memory columns from campaigns before 2026-09-13 are invalid
+except where a value exceeds that floor. Each campaign now records `rss_floor`
+(`/bin/true` through the launcher: 11.0 MiB on WSL2, against 93.0 MiB launched
+directly) and fails a tripwire above 64 MiB.
 
 ### Accumulation runs on a shared, pre-filled DEM
 
@@ -1846,6 +1895,111 @@ a drainage-area run makes accumulation ~35 % slower than passing 1.
 should be documented as applying to graph construction only.
 
 ---
+
+### The D8 flow object build: refactored for speed, byte-identical (2026-09-13)
+
+`lsdtt_flowinfo::create()` builds every D8 flow object in lsdtt3 (every CLI,
+and every LEM timestep that re-routes). On the 2026-09-09 forth02 campaign,
+lsdtt3's D8 drainage area as shipped (s-vector on) took 4.0-5.0x as long as
+Whitebox's `d8_flow_accum`, and 2.2x with the s-vector off. Profiling found
+that most of the difference was bookkeeping rather than the algorithm. It was
+refactored under one rule: **not one output byte may change.**
+
+**The pin, written first.** `unit_flow_d8_identity`
+(`tests/cpp/test_flow_d8_identity.cpp`) was committed (`c9aecb1`) BEFORE any
+change. It pins hashes of every array the build produces: receivers,
+direction codes, donor counts, outlets, topological order, the full s-vector
+with its start/size arrays, drainage area, and a weighted accumulation (the
+path the cosmogenic code uses). The fixtures are 17 surfaces covering every
+boundary code (`o`, `n`, `p`, `b`, mixed), forced outlets, pits as outlets,
+nodata holes with nodata-as-outlet on and off, a nodata border, a non-integer
+cell size, the periodic 2-row and 1-column degenerate cases, and 1x1 / 2xN
+grids. Each is built in 4 option configurations at 1 and 3 threads. It also
+asserts that drainage area is identical with the s-vector on and off, and that
+each larger fixture actually contains tied steepest slopes (76-383 cells), so
+the tie-break is exercised.
+
+The fixtures are integer terrain (`z = 1000 * steps-to-outlet + {0,250,500,750}`),
+routable by construction and exactly reproducible on any machine:
+`tests/data/dem_cache` is gitignored, and libm-built surfaces can differ in the
+last bit across platforms. Mutation-tested: flipping the receiver tie-break
+`>` to `>=` fails 277 checks; reordering s-vector donors fails exactly the
+s-vector pins.
+
+**What changed (`eb65499`), each change run against the pin on its own:**
+
+| change | why it is identical by construction |
+|---|---|
+| interior cells find neighbours by precomputed flat offset, skipping the per-direction boundary-condition resolution | an interior cell's neighbours are inside the grid under every boundary code; same comparisons in the same direction order, so the strict `>` first-wins tie-break is unchanged |
+| donor counting and outlet collection merged into one pass | same increments; outlets still row-major |
+| the Kahn queue is used as the topological order | the queue's contents in push order ARE the order; it used to be copied cell by cell into a second n-cell vector |
+| `accumulate()` seeds weights, and `accumulate_raster()` copies, in row-major order | the topological order holds exactly the valid cells, so the same values land in the same cells; no addition is reordered |
+| `class lsdtt_flowinfo final` | removes indirect calls to the virtual index helpers from the build loops (objdump: 0 left) |
+| s-vector donor search on interior cells visits neighbours in ascending flat order | yields the donors already sorted and duplicate-free, which the general path achieves by dedup and insertion sort |
+| `s_vector_start_`/`s_vector_size_` and `donor_count_` no longer filled twice | the second fill wrote the same values |
+
+The mutation tests were repeated against the new interior paths (tie-break:
+252 checks fail; donor order: 22 s-vector checks fail). `ctest -L flow -LE heavy`
+18/18, `ctest -L network -LE heavy` 92/92.
+
+**`validate()` moved from every build to CTest.** `create()` ended with
+`validate()`, a full audit of the object it had just built. None of its 36
+checks can fail on a correct build, whatever the DEM: pits, flats, cycles and
+bad inputs are caught earlier by `build_receiver_graph_d8`,
+`build_topological_order`, `build_s_vector` and `validate_inputs`, which are
+unchanged. So it only ever detected bugs in `lsdtt_flowinfo_cpu.cpp`. It cost
+time on every D8 build (see the laptop note below) and ~10 B/cell of transient
+peak memory (an
+8 B/cell `position` array plus two 1 B/cell planes). It is now called
+explicitly by `unit_flow_d8_identity` (every fixture, configuration and thread
+count) and `unit_flow_properties` (the fractal, nodata and pit surfaces, with
+the s-vector on and off), and no longer by `create()`. Checked by injecting a
+donor-count bug: `create()` no longer throws on it, and the CTest `validate()`
+checks fail on it. `validate()` remains public, documented as test-time only.
+
+**Rejected, and why:**
+
+- *Stack (depth-first) accumulation, as Whitebox does.* It was the largest
+  single gain profiled, but it adds a receiver's donors in a different order,
+  so the s-vector-off path would compute drainage area in a different order
+  from the s-vector-on path. lsdtt3 must not behave differently depending on
+  the s-vector switch, and `accumulate(weights)` feeds the cosmogenic
+  calculations, where addition order can change the last bits.
+- *32-bit flat indices.* 64-bit indices are a deliberate design choice so very
+  large rasters work: 32-bit caps a raster at 2,147,483,647 cells (46,340²),
+  and a 50 x 50 km 1 m lidar mosaic is 2.5e9 cells. It was also a small gain.
+- *Single-precision slopes.* Changes output bytes.
+
+**Speed.** Not yet measured on a server; the before/after is part of the next
+server allocation (`315e81a`, `7e81a39` and `eb65499` built side by side).
+
+!!! warning "Laptop figures only -- not results"
+    The only measurements so far are from a thermally limited laptop (4-core,
+    15 W, WSL2), where speeds are unreliable and drift with temperature. They
+    show the direction of the change and nothing more. With that warning:
+    against an in-process copy of the old code, the new build was 1.3x faster
+    at 1000² and 1.5-1.6x at 4000² with the s-vector off, while still running
+    `validate()`. `validate()` alone took roughly 10-16% of a build. Against
+    the old library in earlier runs, roughly 1.5-1.9x
+    with the s-vector on or off. The receiver build remains the largest phase,
+    and is slower on flat terrain (data-dependent branching in the slope
+    comparison).
+
+**The junction network followed (2026-09-13).**
+`lsdtt_junction_network_cpu::create()` also ended with `validate()`. It was a
+much smaller share of that build than the flow object's audit (laptop only,
+thermally limited, direction only: roughly 1-11% of the junction network build
+and ~1-2% of flow plus network), but the reasoning is the same, so it was moved
+the same way. `unit_flow_d8_identity` now builds junction networks on every
+flow fixture, at dense, moderate and sparse channel thresholds and with each
+option combination, and calls `validate()` on each. Checked by injecting a
+junction donor-count bug: 6 fixtures fail.
+
+**Still open:** the receiver-build branch cost on flat terrain (any change
+must keep the strict first-wins tie-break). The junction network BUILD itself,
+not its audit: with a dense channel network it cost more than the D8 build
+(laptop, same warning as above: 4.0 s against 1.6 s on a 4000² alpine grid at a
+50-pixel threshold).
 
 ## 7. Cosmogenic nuclide testing
 
@@ -4669,6 +4823,32 @@ because the real function also runs a 3x3 nodata check per pixel (nine mask
 lookups) and writes an output mask; that check, not the arithmetic, is now the
 dominant remaining cost and is the next lever if hillshade ever matters more.
 
+**Both levers pulled, 2026-09-13, byte-identical.** Two further costs sat in
+front of the arithmetic:
+
+1. `data_view()` / `mask_view()` in `lsdtt_raster_surface_metrics_cpu.cpp` were
+   documented as non-owning views but built `lsdtt_array2d` objects with the
+   `from_ptr` constructor, which COPIES. Every kernel using them duplicated
+   the DEM and mask (5 B/cell) serially before doing any work. They now return
+   a `raster_view2d<T>` (pointer plus dimensions). This covers all 11 users in
+   the file.
+2. The per-pixel 9-cell nodata test is replaced, in `compute_hillshade`,
+   `compute_gradient_magnitude_3x3_square` and
+   `compute_plan_curvature_3x3_square`, by a 1-byte invalid-cell plane built
+   once in parallel and a branch-free 9-byte OR. When the raster has no invalid
+   cell, the plane is released and the test is skipped entirely.
+
+Single precision was also tried and rejected: it changes output bytes.
+
+Verified byte-identical before/after on 19 calls x 15 inputs (every view user;
+nodata holes, nodata border, value==nodata with mask 1, mask 0 with a finite
+value, finite and NaN nodata values, 1x1/2x5/3x3 grids, a real DEM) at 1 and 4
+threads. Pinned permanently by section C6 of `unit_surface_metrics`, which
+compares the three 3x3 kernels with verbatim reference copies of the old
+algorithms (memcmp, data and mask). C6 was mutation-tested: dropping one cell
+from the window OR fails it. The speedup was confirmed in direction on the
+laptop; the quotable figure awaits the server campaign.
+
 Note on the end-to-end benchmark: it is too noisy on this thermally-constrained
 laptop to confirm the ratio cleanly - TopoToolbox's *own* reference time moved
 from 4.07 ms to 2.61 ms between two runs of the identical code, and an 8-thread
@@ -6033,9 +6213,10 @@ difference.
 One discrepancy remains open. Whitebox's Barnes `fill_depressions` disagrees
 with lsdtt3 by up to 9.78 m on alpine — the same offset by which it disagrees
 with Whitebox's *own* `wang_and_liu`, which is bit-exact. So the disagreement is
-that tool, not the increment scheme, and `fill@whitebox` in the timing campaign
-still calls it. **Why it disagrees with three other implementations is
-unresolved.**
+that tool, not the increment scheme. Until 2026-09-13 `fill@whitebox` and
+`fill_epsilon@whitebox` in the timing campaign still called it; the pairings
+are now corrected (see "What is compared"). **Why it disagrees with three other
+implementations is unresolved.**
 
 ### Drainage area without the s-vector (same session)
 
@@ -6334,8 +6515,8 @@ same-work-per-engine row.
 Two genuine RichDEM absences were recorded in `NOT_IMPLEMENTED` rather than
 left as silent gaps, since an unexplained absence reads as "we did not bother":
 `hillshade` (no hillshade attribute in 2.3.0) and `polyfit_many` (no
-eight-metric call — recorded for all three references, as that row exists to
-show lsdtt3's shared fit amortising and has no reference equivalent by design).
+eight-metric call — recorded for all three references, as that row existed to
+show lsdtt3's shared fit amortising; the case was removed 2026-09-13).
 
 First measurement, alpine_1000, 1 thread, 3 repeats, **on the thermally limited
 laptop — not quotable**, recorded only to show the rows are produced:

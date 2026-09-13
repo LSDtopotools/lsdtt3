@@ -4,15 +4,15 @@ lsdtt3 includes a benchmark suite that measures how it compares against three
 other topographic analysis implementations — **RichDEM**, **TopoToolbox** and
 **Whitebox Workflows** on *your* hardware, on real terrain.
 
-It is deliberately not part of the test suite: the test suite is used to making sure the clis and routines do not break with updates and have the correct implementation. This is a different excercise. `ctest` never runs it  and it cannot fail a build. Its only product is a
-self-contained directory of measurements you can use to see how fast and how memory thirsty the difference implemetaions are. 
+It is deliberately not part of the test suite: the test suite makes sure the CLIs and routines do not break with updates and are implemented correctly. This is a different exercise. `ctest` never runs it and it cannot fail a build. Its only product is a
+self-contained directory of measurements you can use to see how fast and how memory-hungry the different implementations are.
 
 If you want the reasoning behind the design — why particular comparisons are
 valid and others are not — see
 [Testing and benchmarking](../developer_notes/testing_and_benchmarking.md). This page is just how
 to run it.
 
-It should be noted here that the comparisons are not all like-for-like. Details about different implemetations and choices made are available in the report produced by these benchmarking tests. 
+It should be noted here that the comparisons are not all like-for-like. Details about the different implementations and the choices made are available in the report produced by these benchmarking tests.
 
 ---
 
@@ -102,16 +102,32 @@ everything is cached and the suite runs offline.
 
 ## The two profiles
 
-Only run the `server` version is you have powerful compute available. 
-Note that if you are running on a personal computer (e.g., your laptop), the compute will become thermally limited (this is when you fan starts going crazy). In that event, your computer will throttle the CPU speed and the speed reporting will not be reliable. 
+Only run the `server` version if you have powerful compute available.
+Note that if you are running on a personal computer (e.g., your laptop), the compute will become thermally limited (this is when your fan starts going crazy). In that event, your computer will throttle the CPU speed and the speed reporting will not be reliable. 
 
 | | `laptop` | `server` |
 |---|---|---|
-| DEM sizes | 500², 1000² | 1000², 2000², 4000², 8000² |
-| Threads | 1, 2, 4 | 1, 2, 4, 8 |
+| DEM sizes | 500², 1000² | 1000², 2000², 4000² |
+| Threads | 1, 2, 4 | 1, 2, 4, 8 (Whitebox: 1, 2) |
 | Repeats | 3 | 5 |
-| Download (first run) | ~4 MB per region | ~256 MB per region |
-| Runtime | minutes | hours |
+| Download (first run) | ~4 MB per region | ~64 MB per region |
+| Runtime | minutes | ~1.5-2 hours (estimated, see below) |
+
+The `server` ladder stopped at 8000² on 2026-09-13. On the first full server
+campaign that rung took 4.2 h of 5.5 h, and for the surface metrics, D8 and
+D-infinity every engine's throughput at 8000² was within 0.95–1.04× of its
+4000² figure. Add it back with `--ladder 1000,2000,4000,8000` if you want a
+size study. If the 8000 px source is already in your fixture cache it is reused
+rather than downloading a new one, and existing crops keep their hashes.
+
+Whitebox is measured at 1 and 2 threads only: on that campaign it scaled
+0.96–1.04× at every thread count on every surface case, so higher counts
+repeated the same number.
+
+The server runtime is an estimate: that same campaign spent 80 minutes on the
+1000-4000² rungs, and three reference pairings have since been added or
+corrected (see [Reading the results](#2-only-compare-like-with-like)). The
+wrapper's default Slurm time limit is 12 hours.
 
 ```sh
 pixi run bench-laptop      # a real baseline, and the shakedown run
@@ -243,7 +259,7 @@ Three separate locations, with three different lifetimes:
     ```
 
 On a shared machine or a cluster, move the DEM cache off the repository with
-`--fixture-dir` — the `server` profile stores ~512 MB there, and it is reused by
+`--fixture-dir` — the `server` profile stores ~300 MB there, and it is reused by
 every later run, so put it somewhere persistent.
 
 ---
@@ -273,7 +289,24 @@ others of the same scope:
 - `whole_process` — wall clock for an entire CLI run, **never** put in a ratio
 
 We do this for a reason. lsdtt3's fill on a small DEM is ~7.6 ms of compute inside
-a ~279 ms process: spinup costs time but we wish to measure compute. 
+a ~279 ms process: spinup costs time but we wish to measure compute.
+
+!!! warning "Three rows changed on 2026-09-13 -- do not compare them with older campaigns"
+    Three reference rows used to run a different algorithm from the lsdtt3 row
+    beside them, and were corrected:
+
+    - Whitebox's fill is a priority-flood tool, so it moved from `fill` (the
+      grayscale-reconstruction case) to `fill_priority_flood`.
+    - `fill_epsilon` for Whitebox now uses its Wang & Liu tool, with the flat
+      increment matched to lsdtt3's gradient times the cell size. It previously
+      imposed an increment 30x smaller on a 30 m grid.
+    - Whitebox's breach is least-cost (Lindsay 2020). It moved from `breach`
+      (Lindsay 2016, now lsdtt3 against RichDEM) to a new `breach_least_cost`
+      case against lsdtt3's own least-cost breach.
+
+    The same campaign also removed `polyfit_many`, made `fill_spill_merge`
+    lsdtt3-only, and reuses identical reference rows instead of re-measuring
+    them (a `reused_from` column in the CSV).
 
 ### 3. Respect the flags
 
@@ -330,6 +363,36 @@ first-touch hypothesis for multi-socket machines — is in
 
 Everything is a flag or an environment variable; no file needs editing.
 
+### Pre-flight checklist
+
+Before submitting a long run:
+
+1. **Rebuild after every `git pull`.** The suite runs whatever is in the build
+   directory. A binary older than the source measures the old code, and the
+   campaign still records the repository's current git SHA.
+   ```sh
+   git pull
+   cmake --build build -j
+   ```
+2. **Check the references import** in the environment the job will use (see
+   [What you need](#what-you-need)). On a conda site, run this after
+   `BENCH_SETUP_CMD`'s activation.
+3. **Reuse an existing DEM cache** if you have one: point `BENCH_FIXTURE_DIR`
+   (or `--fixture-dir`) at it. Nothing is downloaded, and the fixtures keep the
+   same hashes as your previous campaign, so the two stay comparable. A cache
+   built for the old 8000² ladder works as-is.
+4. **Dry-run** to see exactly what will be measured (from the lsdtt3 checkout;
+   it downloads and measures nothing). It lists every case, which engines run
+   it and at how many thread counts; the current `server` plan is 294
+   measurements:
+   ```sh
+   cd /path/to/lsdtt3
+   pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
+       --profile server --dry-run
+   ```
+5. **Submit the plumbing test first** ([Slurm run a](#a-the-plumbing-test-one-case-one-region-2-minutes)),
+   then the server profile.
+
 ```sh
 pixi run bench-server --out-dir "$PWD" --fixture-dir /scratch/$USER/lsdtt3_fixtures
 ```
@@ -367,7 +430,7 @@ site runs the identical command a non-scheduler site runs.
 
 ### How much memory the run needs
 
-Not previously stated here, and it decides which ladder rungs you can use.
+This decides which ladder rungs you can use.
 
 lsdtt3's flow object is about **43 bytes per cell**, and the suite runs one
 engine at a time, so the peak is roughly one engine plus the staged DEM:
@@ -384,7 +447,7 @@ outputs. The Python references are the ones to watch rather than lsdtt3: they
 work in NumPy and a 64 M-cell float64 array is 512 MB each, and RichDEM
 constructs arrays per call.
 
-**On 16 GB the full `server` ladder should fit, but confirm rather than assume.**
+**On 8 GB the `server` ladder should fit, but confirm rather than assume.**
 Every row records `peak_rss_mb`, so after a first run:
 
 ```sh
@@ -402,8 +465,25 @@ carries on — so you get a campaign with holes rather than a crash. Check for
 top rung:
 
 ```sh
---ladder 1000,2000,4000
+--ladder 1000,2000
 ```
+
+!!! warning "Memory columns from before 2026-09-13 are invalid"
+
+    On Linux a child process inherits its parent's **peak** memory, and the
+    kernel reports that inherited figure as the child's own. The suite used to
+    launch every engine straight from its driver, which had already reached a
+    large peak computing fixture statistics, so almost every row reported the
+    driver's peak instead of the engine's. On the first server campaign 441 of
+    504 rows read exactly 3557 MiB. Only values above that floor were real.
+
+    Every command now starts through `tests/scripts/rusage_launcher.py`, a
+    small separate process. Each campaign measures the remaining floor by
+    launching `/bin/true` the same way, and prints it above the memory table.
+    If that floor exceeds 64 MiB, the summary says the memory column must not
+    be quoted. Cells marked `<` are close enough to the floor that they may be
+    reporting it. The CSV also gains `cpu_seconds_process`: CPU time well above
+    wall time means a command used more cores than its thread label says.
 
 ### Route A: a plain bash session
 
@@ -551,7 +631,7 @@ Expect most rows to be flagged `overhead_dominated` — the DEMs are small. That
 is correct behaviour, not a problem. See
 [Reading the results](#reading-the-results).
 
-#### c. The server profile — hours, ~512 MB
+#### c. The server profile — ~1.5-2 hours, ~300 MB
 
 The quotable run. `server` is the default, so there is nothing to set:
 
@@ -569,7 +649,7 @@ sbatch --account=PROJECT --cpus-per-task=32 \
 ```
 
 !!! tip "Point the DEM cache at scratch"
-    ~512 MB, reused by every later campaign, so somewhere persistent beats a
+    ~300 MB, reused by every later campaign, so somewhere persistent beats a
     quota'd home directory:
     ```sh
     export BENCH_FIXTURE_DIR=/scratch/$USER/lsdtt3_fixtures
@@ -597,7 +677,7 @@ both the campaign and the DEM cache default there.
 | `cd /path/to/lsdtt3/tests/scripts && sbatch slurm_benchmark.sbatch` | `/path/to/lsdtt3/tests/scripts/` |
 
 !!! warning "Submitting from the script's own directory writes into the repository"
-    The second row puts `benchmark_campaigns/` **and ~512 MB of cached DEMs**
+    The second row puts `benchmark_campaigns/` **and ~300 MB of cached DEMs**
     inside `tests/scripts/`, in your source tree. The job warns when it detects
     this but does not stop. Submit from a data directory, or set `BENCH_OUT_DIR`
     and `BENCH_FIXTURE_DIR` explicitly.
@@ -709,7 +789,7 @@ pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
 
 # just the top of the ladder, where the scaling signal is strongest
 pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
-    --profile server --suites surface --ladder 4000,8000
+    --profile server --suites surface --ladder 2000,4000
 
 # check the plan before committing the time
 pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
@@ -724,10 +804,11 @@ count, for the reason in [§4 above](#4-scaling-curves-need-a-ceiling-and-the-bi
 Whole-process wall time includes GDAL read and write, and the surface-metric
 kernels are fast. On a 2400² fixture the compute is a small fraction of the
 run, so I/O dominates and the scaling signal is buried no matter how many
-threads you give it. That is why the `server` ladder goes to 8000 px: at 64M
-cells there is enough work to measure. If you shorten the ladder for a quick
-answer, shorten it from the *bottom* (`--ladder 4000,8000`), never to the small
-rungs.
+threads you give it. That is why the `server` ladder goes to 4000 px: at 16M
+cells there is enough work to measure, and on the first server campaign the
+surface-metric scaling curves at 8000² matched those at 4000². If you shorten
+the ladder for a quick answer, shorten it from the *bottom*
+(`--ladder 2000,4000`), never to the small rungs.
 
 The per-run `Compute time` and `Write time` the CLI prints are captured in the
 results, so you can check the ratio for yourself rather than guessing.

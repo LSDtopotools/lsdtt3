@@ -105,7 +105,7 @@ import time
 FLOW_ROUTINES = (
     "fill",             # plain fill, true flats -- the tight comparison
     "fill_epsilon",     # constant increment across flats, like lsdtt3
-    "breach",           # Lindsay 2016 least-cost breaching
+    "breach",           # breach_depressions_least_cost: Lindsay (2020)
     "accum_d8",
     "accum_dinf",
     "accum_mfd",
