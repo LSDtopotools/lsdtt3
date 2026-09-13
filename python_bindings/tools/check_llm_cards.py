@@ -71,7 +71,7 @@ def main() -> int:
     assert "dt_years" not in landscape
 
     cosmo = lsdtt3.helper_for_llm("cosmo")
-    assert "set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_m)" in cosmo
+    assert "set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_metres)" in cosmo
     assert "add_erosion_rate" not in cosmo
     assert "add_burial" not in cosmo
     flow = lsdtt3.helper_for_llm("flow")

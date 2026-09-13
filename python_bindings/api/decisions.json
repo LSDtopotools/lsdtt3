@@ -80,7 +80,12 @@
     {"symbol": "find_internal_drainage", "old": "min_volume_metres3", "new": "min_volume_m3", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "run_landslide_series", "old": "budget_tol", "new": "event_budget_relative_tolerance", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "FlowInfo", "old": "threshold_pixels", "new": "threshold_contributing_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
-    {"symbol": "extract_channel_heads", "old": "threshold_pixels", "new": "threshold_contributing_pixels", "introduced": "next minor", "earliest_removal": "following minor"}
+    {"symbol": "extract_channel_heads", "old": "threshold_pixels", "new": "threshold_contributing_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "CRNColumn", "old": "removal_m", "new": "removal_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "CRNColumn", "old": "sampling_depths_m", "new": "sampling_depths_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "crn_transient_history", "old": "sampling_depth_m", "new": "sampling_depth_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "fetch_dem", "old": "size_px", "new": "size_pixels", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "synthetic_network", "old": "relief_m", "new": "relief_metres", "introduced": "next minor", "earliest_removal": "following minor"}
   ],
   "known_runtime_test_failures": [],
   "optional_features": [

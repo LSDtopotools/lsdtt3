@@ -85,7 +85,7 @@ hillslope_transport_explicit|implicit|adi|cellular(R,channels,...)->HillslopeTra
 route_sediment(N,R,...)->SedimentRoutingResult; trigger_landslides(R,...)->LandslideResult
 """,
     "cosmo": """@cosmo
-Q=CRNColumn(rock_density_kg_m3=2650); Q.set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_m); Q.transient(...)
+ Q=CRNColumn(rock_density_kg_m3=2650); Q.set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_metres); Q.transient(...)
 crn_uniform_raster(R,value)->R; crn_production_scaling(R,...)->R; crn_steady_state(...); crn_step_change(...)
 crn_transient_history(column,production_scaling:R,topographic_shielding:R?)->{'be10':R,'al26':R,'c14':R}
 crn_invert_basin_erosion(...)->D; crn_outlet_concentration(...); crn_pair_diagnostics(...)
@@ -123,7 +123,7 @@ _CLASS_SIGNATURES = {
     "BasinCollection": "BasinCollection: F.basins(outlets?)->B",
     "ChiCollection": "ChiCollection: N.chi(outlets?,m_over_n=.45,reference_area=1,denominator?)->C",
     "LandscapeModel": "LandscapeModel(dem,fluvial_method=...,hillslope_model=...,coupling_regime='automatic')->L",
-    "CRNColumn": "CRNColumn(rock_density_kg_m3=2650); set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_m)",
+    "CRNColumn": "CRNColumn(rock_density_kg_m3=2650); set_erosion_history(time_yr_bp,erosion_rate_m_yr,removal_metres)",
 }
 
 

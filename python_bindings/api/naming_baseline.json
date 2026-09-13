@@ -1,35 +1,4 @@
 {
   "schema_version": 1,
-  "violations": [
-    {
-      "symbol": "CRNColumn",
-      "member": "set_erosion_history",
-      "parameter": "removal_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "CRNColumn",
-      "member": "transient",
-      "parameter": "sampling_depths_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "crn_transient_history",
-      "member": "",
-      "parameter": "sampling_depth_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "fetch_dem",
-      "member": "",
-      "parameter": "size_px",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "synthetic_network",
-      "member": "",
-      "parameter": "relief_m",
-      "rule": "spell_out_unit_suffix"
-    }
-  ]
+  "violations": []
 }

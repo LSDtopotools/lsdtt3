@@ -683,10 +683,35 @@ for _flow_threshold_method in (
         ),
     )
 
+for _crn_depth_method, _canonical_name, _legacy_name in (
+    ("set_erosion_history", "removal_metres", "removal_m"),
+    ("transient", "sampling_depths_metres", "sampling_depths_m"),
+):
+    setattr(
+        CRNColumn,
+        _crn_depth_method,
+        _with_deprecated_keywords(
+            getattr(CRNColumn, _crn_depth_method),
+            (_canonical_name, _legacy_name),
+            is_method=True,
+        ),
+    )
+
 extract_channel_heads = _with_deprecated_keywords(
     extract_channel_heads,
     ("threshold_contributing_pixels", "threshold_pixels"),
     ("surface_fitting_radius_metres", "surface_fitting_radius_m"),
+)
+
+crn_transient_history = _with_deprecated_keywords(
+    crn_transient_history,
+    ("sampling_depth_metres", "sampling_depth_m"),
+)
+
+fetch_dem = _with_deprecated_keywords(fetch_dem, ("size_pixels", "size_px"))
+
+synthetic_network = _with_deprecated_keywords(
+    synthetic_network, ("relief_metres", "relief_m")
 )
 
 run_landslide_series = _with_deprecated_keywords(
@@ -701,4 +726,5 @@ for _public_name in __all__:
     elif callable(_public_value):
         globals()[_public_name] = _numpy_style_docstring(_public_value)
 
-del _flow_threshold_method, _graphflood_name, _public_name, _public_value
+del _canonical_name, _crn_depth_method, _flow_threshold_method, _graphflood_name
+del _legacy_name, _public_name, _public_value

@@ -32,12 +32,12 @@ public:
 
     void set_erosion_history(const std::vector<double>& time_yr_bp,
                              const std::vector<double>& erosion_rate_m_yr,
-                             const std::vector<double>& removal_m)
+                              const std::vector<double>& removal_metres)
     {
         if (time_yr_bp.size() != erosion_rate_m_yr.size() ||
-            time_yr_bp.size() != removal_m.size())
-            throw std::invalid_argument("time_yr_bp, erosion_rate_m_yr, and removal_m must have equal lengths");
-        column_.set_erosion_time_series(time_yr_bp, erosion_rate_m_yr, removal_m);
+             time_yr_bp.size() != removal_metres.size())
+            throw std::invalid_argument("time_yr_bp, erosion_rate_m_yr, and removal_metres must have equal lengths");
+        column_.set_erosion_time_series(time_yr_bp, erosion_rate_m_yr, removal_metres);
     }
 
     void read_erosion_history(const std::string& path) { column_.read_erosion_time_series(path); }
@@ -71,12 +71,12 @@ public:
     }
 
     std::vector<lsdtt::CrnColumnSample> transient(
-        const std::vector<double>& sampling_depths_m,
+        const std::vector<double>& sampling_depths_metres,
         double production_scaling, double total_shielding,
         const std::string& muon_scheme, double initial_10Be,
         double initial_26Al, double initial_14C) const
     {
-        return column_.run_transient(sampling_depths_m, production_scaling,
+        return column_.run_transient(sampling_depths_metres, production_scaling,
                                      total_shielding, muon_scheme, initial_10Be,
                                      initial_26Al, initial_14C);
     }
@@ -99,10 +99,10 @@ void require_same_grid(const Raster& a, const Raster& b, const char* name)
 
 nb::object crn_transient_history(const CRNColumn& column, const Raster& production_scaling,
                                  const Raster* topographic_shielding,
-                                 double sampling_depth_m, const std::string& muon_scheme)
+                                  double sampling_depth_metres, const std::string& muon_scheme)
 {
-    if (sampling_depth_m < 0.0)
-        throw std::invalid_argument("sampling_depth_m must be non-negative");
+    if (sampling_depth_metres < 0.0)
+        throw std::invalid_argument("sampling_depth_metres must be non-negative");
     lsdtt::lsdtt_raster_cpu unity;
     const lsdtt::lsdtt_raster_cpu* shielding = nullptr;
     if (topographic_shielding) {
@@ -113,7 +113,7 @@ nb::object crn_transient_history(const CRNColumn& column, const Raster& producti
         shielding = &unity;
     }
     auto result = lsdtt::calculate_crn_concentration_raster_transient_multi(
-        muon_scheme, column.native(), production_scaling.native(), *shielding, sampling_depth_m);
+        muon_scheme, column.native(), production_scaling.native(), *shielding, sampling_depth_metres);
     nb::dict output;
     output["be10"] = Raster(std::move(result.Be10));
     output["al26"] = Raster(std::move(result.Al26));
@@ -146,7 +146,7 @@ are effective rates in g/cm²/yr.
 )doc")
         .def(nb::init<double>(), nb::arg("rock_density_kg_m3") = 2650.0)
         .def("set_erosion_history", &CRNColumn::set_erosion_history,
-             nb::arg("time_yr_bp"), nb::arg("erosion_rate_m_yr"), nb::arg("removal_m"),
+              nb::arg("time_yr_bp"), nb::arg("erosion_rate_m_yr"), nb::arg("removal_metres"),
              R"doc(Set the history. Last row must be ``time=-9999`` with a positive background rate.)doc")
         .def("read_erosion_history", &CRNColumn::read_erosion_history, nb::arg("path"))
         .def_prop_ro("depth_change_m", &CRNColumn::depth_change_m)
@@ -167,7 +167,7 @@ are effective rates in g/cm²/yr.
              nb::arg("production_scaling") = 1.0, nb::arg("total_shielding") = 1.0,
              nb::arg("muon_scheme") = "BraucherBorchers")
         .def("transient", &CRNColumn::transient,
-             nb::arg("sampling_depths_m"), nb::arg("production_scaling") = 1.0,
+              nb::arg("sampling_depths_metres"), nb::arg("production_scaling") = 1.0,
              nb::arg("total_shielding") = 1.0, nb::arg("muon_scheme") = "BraucherBorchers",
              nb::arg("initial_10be") = -1.0, nb::arg("initial_26al") = -1.0,
              nb::arg("initial_14c") = -1.0);
@@ -221,7 +221,7 @@ are effective rates in g/cm²/yr.
 
     m.def("crn_transient_history", &crn_transient_history,
           nb::arg("column"), nb::arg("production_scaling"),
-          nb::arg("topographic_shielding") = nullptr, nb::arg("sampling_depth_m") = 0.0,
+           nb::arg("topographic_shielding") = nullptr, nb::arg("sampling_depth_metres") = 0.0,
           nb::arg("muon_scheme") = "BraucherBorchers", R"doc(
 Predict Be-10, Al-26, and C-14 raster concentrations for an arbitrary erosion history.
 
@@ -233,7 +233,7 @@ production_scaling : Raster
     Per-pixel production-scaling factor.
 topographic_shielding : Raster, optional
     Same-grid shielding factor. Unity is used when omitted.
-sampling_depth_m : float, optional
+ sampling_depth_metres : float, optional
     Depth below the present surface at which to predict concentration.
 
 Returns

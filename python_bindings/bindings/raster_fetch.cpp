@@ -33,7 +33,7 @@ Raster fetch_dem(
     double west, double south, double east, double north,
     const std::string& source, int target_epsg,
     double grid_spacing, const std::string& resampling, double nodata_value,
-    int size_px, const std::string& cache_dir, const std::string& ot_dem_type,
+    int size_pixels, const std::string& cache_dir, const std::string& ot_dem_type,
     const std::string& pc_collection, const std::string& pc_asset,
     int http_timeout_seconds, int http_connect_timeout_seconds, int http_max_retry)
 {
@@ -48,7 +48,7 @@ Raster fetch_dem(
     options.grid_spacing = grid_spacing;
     options.resampling = resampling;
     options.no_data_value = nodata_value;
-    options.size_px = size_px;
+    options.size_px = size_pixels;
     options.cache_dir = cache_dir;
     options.ot_dem_type = ot_dem_type;
     options.pc_collection = pc_collection;
@@ -455,7 +455,7 @@ corners. Geometry is transformed to WGS84 before its bounds are calculated.
         nb::arg("source") = "cop30_aws",
         nb::arg("target_epsg") = 0, nb::arg("grid_spacing") = 30.0,
         nb::arg("resampling") = "cubic", nb::arg("nodata_value") = -9999.0,
-        nb::arg("size_px") = 0, nb::arg("cache_dir") = "",
+        nb::arg("size_pixels") = 0, nb::arg("cache_dir") = "",
         nb::arg("ot_dem_type") = "COP30", nb::arg("pc_collection") = "cop-dem-glo-30",
         nb::arg("pc_asset") = "data", nb::arg("http_timeout_seconds") = 60,
         nb::arg("http_connect_timeout_seconds") = 15, nb::arg("http_max_retry") = 3,

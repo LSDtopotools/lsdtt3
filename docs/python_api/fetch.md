@@ -204,7 +204,7 @@ def cop30_tiles_for_bbox(west: float, south: float, east: float, north: float) -
 
 ## `fetch_dem`
 
-fetch_dem(west: float, south: float, east: float, north: float, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_px: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.Raster
+fetch_dem(west: float, south: float, east: float, north: float, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_pixels: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.Raster
 
     Parameters
     ----------
@@ -220,7 +220,7 @@ fetch_dem(west: float, south: float, east: float, north: float, source: str = 'c
 
     Notes
     -----
-    fetch_dem(west: float, south: float, east: float, north: float, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_px: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.Raster
+    fetch_dem(west: float, south: float, east: float, north: float, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_pixels: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.Raster
 
 Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.
 
@@ -252,8 +252,11 @@ Raster
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `size_px` -> `size_pixels`; earliest removal: following minor.
+
 ```python
-def fetch_dem(west: float, south: float, east: float, north: float, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_px: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.Raster
+def fetch_dem(west: float, south: float, east: float, north: float, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_pixels: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.Raster
 ```
 
 ---

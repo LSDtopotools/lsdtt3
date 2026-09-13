@@ -118,7 +118,7 @@ def synthetic_mountain_range(metadata: lsdtt3.RasterMeta, geometry: str = 'linea
 
 ## `synthetic_network`
 
-synthetic_network(metadata: lsdtt3.RasterMeta, outlet_mode: str = 'single_south', periodic_columns: bool = False, outlet_spacing: int = 1, gamma: float = 0.5, n_iterations: int = -1, temperature_scale: float = 1.0, m_exponent: float = 0.45, n_exponent: float = 1.0, relief_m: float = 1000.0, seed: int = 1) -> lsdtt3.SyntheticNetworkResult
+synthetic_network(metadata: lsdtt3.RasterMeta, outlet_mode: str = 'single_south', periodic_columns: bool = False, outlet_spacing: int = 1, gamma: float = 0.5, n_iterations: int = -1, temperature_scale: float = 1.0, m_exponent: float = 0.45, n_exponent: float = 1.0, relief_metres: float = 1000.0, seed: int = 1) -> lsdtt3.SyntheticNetworkResult
 
     Parameters
     ----------
@@ -134,7 +134,7 @@ synthetic_network(metadata: lsdtt3.RasterMeta, outlet_mode: str = 'single_south'
 
     Notes
     -----
-    synthetic_network(metadata: lsdtt3.RasterMeta, outlet_mode: str = 'single_south', periodic_columns: bool = False, outlet_spacing: int = 1, gamma: float = 0.5, n_iterations: int = -1, temperature_scale: float = 1.0, m_exponent: float = 0.45, n_exponent: float = 1.0, relief_m: float = 1000.0, seed: int = 1) -> lsdtt3.SyntheticNetworkResult
+    synthetic_network(metadata: lsdtt3.RasterMeta, outlet_mode: str = 'single_south', periodic_columns: bool = False, outlet_spacing: int = 1, gamma: float = 0.5, n_iterations: int = -1, temperature_scale: float = 1.0, m_exponent: float = 0.45, n_exponent: float = 1.0, relief_metres: float = 1000.0, seed: int = 1) -> lsdtt3.SyntheticNetworkResult
 
 Optimise a synthetic D8 optimal channel network and derive its chi steady-state DEM.
 
@@ -143,8 +143,11 @@ Optimise a synthetic D8 optimal channel network and derive its chi steady-state 
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `relief_m` -> `relief_metres`; earliest removal: following minor.
+
 ```python
-def synthetic_network(metadata: lsdtt3.RasterMeta, outlet_mode: str = 'single_south', periodic_columns: bool = False, outlet_spacing: int = 1, gamma: float = 0.5, n_iterations: int = -1, temperature_scale: float = 1.0, m_exponent: float = 0.45, n_exponent: float = 1.0, relief_m: float = 1000.0, seed: int = 1) -> lsdtt3.SyntheticNetworkResult
+def synthetic_network(metadata: lsdtt3.RasterMeta, outlet_mode: str = 'single_south', periodic_columns: bool = False, outlet_spacing: int = 1, gamma: float = 0.5, n_iterations: int = -1, temperature_scale: float = 1.0, m_exponent: float = 0.45, n_exponent: float = 1.0, relief_metres: float = 1000.0, seed: int = 1) -> lsdtt3.SyntheticNetworkResult
 ```
 
 ---

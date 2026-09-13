@@ -96,6 +96,10 @@ are effective rates in g/cm²/yr.
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `removal_m` -> `removal_metres`; earliest removal: following minor.
+- `sampling_depths_m` -> `sampling_depths_metres`; earliest removal: following minor.
+
 ```python
 def __init__(self, rock_density_kg_m3: float = 2650.0) -> None
 ```
@@ -136,12 +140,12 @@ def read_erosion_history(self, path: str) -> None
 
 #### `set_erosion_history`
 
-set_erosion_history(self, time_yr_bp: collections.abc.Sequence[float], erosion_rate_m_yr: collections.abc.Sequence[float], removal_m: collections.abc.Sequence[float]) -> None
+set_erosion_history(self, time_yr_bp: collections.abc.Sequence[float], erosion_rate_m_yr: collections.abc.Sequence[float], removal_metres: collections.abc.Sequence[float]) -> None
 
 Set the history. Last row must be ``time=-9999`` with a positive background rate.
 
 ```python
-def set_erosion_history(self, time_yr_bp: collections.abc.Sequence[float], erosion_rate_m_yr: collections.abc.Sequence[float], removal_m: collections.abc.Sequence[float]) -> None
+def set_erosion_history(self, time_yr_bp: collections.abc.Sequence[float], erosion_rate_m_yr: collections.abc.Sequence[float], removal_metres: collections.abc.Sequence[float]) -> None
 ```
 
 #### `steady_state`
@@ -166,10 +170,10 @@ def step_change(self, effective_depth_g_cm2: float = 0.0, effective_erosion_rate
 
 #### `transient`
 
-transient(self, sampling_depths_m: collections.abc.Sequence[float], production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', initial_10be: float = -1.0, initial_26al: float = -1.0, initial_14c: float = -1.0) -> list[lsdtt3.CRNColumnSample]
+transient(self, sampling_depths_metres: collections.abc.Sequence[float], production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', initial_10be: float = -1.0, initial_26al: float = -1.0, initial_14c: float = -1.0) -> list[lsdtt3.CRNColumnSample]
 
 ```python
-def transient(self, sampling_depths_m: collections.abc.Sequence[float], production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', initial_10be: float = -1.0, initial_26al: float = -1.0, initial_14c: float = -1.0) -> list[lsdtt3.CRNColumnSample]
+def transient(self, sampling_depths_metres: collections.abc.Sequence[float], production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', initial_10be: float = -1.0, initial_26al: float = -1.0, initial_14c: float = -1.0) -> list[lsdtt3.CRNColumnSample]
 ```
 
 ---
@@ -685,7 +689,7 @@ def crn_step_change_pair(nuclide_fast: str, nuclide_slow: str, concentration_fas
 
 ## `crn_transient_history`
 
-crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_m: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
+crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_metres: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
 
     Parameters
     ----------
@@ -701,7 +705,7 @@ crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raste
 
     Notes
     -----
-    crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_m: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
+    crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_metres: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
 
 Predict Be-10, Al-26, and C-14 raster concentrations for an arbitrary erosion history.
 
@@ -713,7 +717,7 @@ production_scaling : Raster
     Per-pixel production-scaling factor.
 topographic_shielding : Raster, optional
     Same-grid shielding factor. Unity is used when omitted.
-sampling_depth_m : float, optional
+ sampling_depth_metres : float, optional
     Depth below the present surface at which to predict concentration.
 
 Returns
@@ -734,8 +738,11 @@ B. Gailleton
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `sampling_depth_m` -> `sampling_depth_metres`; earliest removal: following minor.
+
 ```python
-def crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_m: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
+def crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_metres: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
 ```
 
 ---
