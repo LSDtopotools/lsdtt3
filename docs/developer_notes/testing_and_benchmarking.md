@@ -1874,6 +1874,100 @@ should be documented as applying to graph construction only.
 
 ---
 
+### The D8 flow object build: refactored for speed, byte-identical (2026-09-13)
+
+`lsdtt_flowinfo::create()` builds every D8 flow object in lsdtt3 (every CLI,
+and every LEM timestep that re-routes). On the 2026-09-09 forth02 campaign,
+lsdtt3's D8 drainage area as shipped (s-vector on) took 4.0-5.0x as long as
+Whitebox's `d8_flow_accum`, and 2.2x with the s-vector off. Profiling found
+that most of the difference was bookkeeping rather than the algorithm. It was
+refactored under one rule: **not one output byte may change.**
+
+**The pin, written first.** `unit_flow_d8_identity`
+(`tests/cpp/test_flow_d8_identity.cpp`) was committed (`c9aecb1`) BEFORE any
+change. It pins hashes of every array the build produces: receivers,
+direction codes, donor counts, outlets, topological order, the full s-vector
+with its start/size arrays, drainage area, and a weighted accumulation (the
+path the cosmogenic code uses). The fixtures are 17 surfaces covering every
+boundary code (`o`, `n`, `p`, `b`, mixed), forced outlets, pits as outlets,
+nodata holes with nodata-as-outlet on and off, a nodata border, a non-integer
+cell size, the periodic 2-row and 1-column degenerate cases, and 1x1 / 2xN
+grids. Each is built in 4 option configurations at 1 and 3 threads. It also
+asserts that drainage area is identical with the s-vector on and off, and that
+each larger fixture actually contains tied steepest slopes (76-383 cells), so
+the tie-break is exercised.
+
+The fixtures are integer terrain (`z = 1000 * steps-to-outlet + {0,250,500,750}`),
+routable by construction and exactly reproducible on any machine:
+`tests/data/dem_cache` is gitignored, and libm-built surfaces can differ in the
+last bit across platforms. Mutation-tested: flipping the receiver tie-break
+`>` to `>=` fails 277 checks; reordering s-vector donors fails exactly the
+s-vector pins.
+
+**What changed (`eb65499`), each change run against the pin on its own:**
+
+| change | why it is identical by construction |
+|---|---|
+| interior cells find neighbours by precomputed flat offset, skipping the per-direction boundary-condition resolution | an interior cell's neighbours are inside the grid under every boundary code; same comparisons in the same direction order, so the strict `>` first-wins tie-break is unchanged |
+| donor counting and outlet collection merged into one pass | same increments; outlets still row-major |
+| the Kahn queue is used as the topological order | the queue's contents in push order ARE the order; it used to be copied cell by cell into a second n-cell vector |
+| `accumulate()` seeds weights, and `accumulate_raster()` copies, in row-major order | the topological order holds exactly the valid cells, so the same values land in the same cells; no addition is reordered |
+| `class lsdtt_flowinfo final` | removes indirect calls to the virtual index helpers from the build loops (objdump: 0 left) |
+| s-vector donor search on interior cells visits neighbours in ascending flat order | yields the donors already sorted and duplicate-free, which the general path achieves by dedup and insertion sort |
+| `s_vector_start_`/`s_vector_size_` and `donor_count_` no longer filled twice | the second fill wrote the same values |
+
+The mutation tests were repeated against the new interior paths (tie-break:
+252 checks fail; donor order: 22 s-vector checks fail). `ctest -L flow -LE heavy`
+18/18, `ctest -L network -LE heavy` 92/92.
+
+**`validate()` moved from every build to CTest.** `create()` ended with
+`validate()`, a full audit of the object it had just built. None of its 36
+checks can fail on a correct build, whatever the DEM: pits, flats, cycles and
+bad inputs are caught earlier by `build_receiver_graph_d8`,
+`build_topological_order`, `build_s_vector` and `validate_inputs`, which are
+unchanged. So it only ever detected bugs in `lsdtt_flowinfo_cpu.cpp`. It cost
+time on every D8 build (see the laptop note below) and ~10 B/cell of transient
+peak memory (an
+8 B/cell `position` array plus two 1 B/cell planes). It is now called
+explicitly by `unit_flow_d8_identity` (every fixture, configuration and thread
+count) and `unit_flow_properties` (the fractal, nodata and pit surfaces, with
+the s-vector on and off), and no longer by `create()`. Checked by injecting a
+donor-count bug: `create()` no longer throws on it, and the CTest `validate()`
+checks fail on it. `validate()` remains public, documented as test-time only.
+
+**Rejected, and why:**
+
+- *Stack (depth-first) accumulation, as Whitebox does.* It was the largest
+  single gain profiled, but it adds a receiver's donors in a different order,
+  so the s-vector-off path would compute drainage area in a different order
+  from the s-vector-on path. lsdtt3 must not behave differently depending on
+  the s-vector switch, and `accumulate(weights)` feeds the cosmogenic
+  calculations, where addition order can change the last bits.
+- *32-bit flat indices.* 64-bit indices are a deliberate design choice so very
+  large rasters work: 32-bit caps a raster at 2,147,483,647 cells (46,340²),
+  and a 50 x 50 km 1 m lidar mosaic is 2.5e9 cells. It was also a small gain.
+- *Single-precision slopes.* Changes output bytes.
+
+**Speed.** Not yet measured on a server; the before/after is part of the next
+server allocation (`315e81a`, `7e81a39` and `eb65499` built side by side).
+
+!!! warning "Laptop figures only -- not results"
+    The only measurements so far are from a thermally limited laptop (4-core,
+    15 W, WSL2), where speeds are unreliable and drift with temperature. They
+    show the direction of the change and nothing more. With that warning:
+    against an in-process copy of the old code, the new build was 1.3x faster
+    at 1000² and 1.5-1.6x at 4000² with the s-vector off, while still running
+    `validate()`. `validate()` alone took roughly 10-16% of a build. Against
+    the old library in earlier runs, roughly 1.5-1.9x
+    with the s-vector on or off. The receiver build remains the largest phase,
+    and is slower on flat terrain (data-dependent branching in the slope
+    comparison).
+
+**Still open:** the receiver-build branch cost on flat terrain (any change
+must keep the strict first-wins tie-break);
+`lsdtt_junction_network_cpu::validate()`, which also runs on every
+junction-network build and has not been costed.
+
 ## 7. Cosmogenic nuclide testing
 
 > **The CRN numeric core is locked.** The analytical solutions exercised by

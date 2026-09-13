@@ -240,7 +240,12 @@ void lsdtt_flowinfo::create(
         has_topological_order_ = false;
     }
 
-    validate();
+    // validate() is NOT called here. It audits the object this function has
+    // just built, so it can only fire on a bug in this file, never on a bad
+    // DEM -- pits, flats, cycles and bad inputs are all caught above. Run on
+    // every build it cost time and ~10 B/cell of transient memory. Code correctness is established in CTest instead:
+    // unit_flow_d8_identity and unit_flow_properties call validate() on every
+    // fixture. Removed 2026-09-13; see docs/testing_and_benchmarking.md.
     is_built_ = true;
 }
 
@@ -273,6 +278,17 @@ void lsdtt_flowinfo::clear() noexcept
 
 // =============================================================================
 // Validation
+//
+// A TEST-TIME AUDIT, not a runtime check. Walks the whole object and throws if
+// any internal invariant is broken: receivers and direction codes vs the mask,
+// donor counts vs receivers, the outlet list, the topological order (every
+// donor before its receiver), and every s-vector interval.
+//
+// create() does not call it (it did until 2026-09-13): on a correct build none
+// of these checks can fail whatever the DEM, so they only detect bugs in this
+// file, and that is the test suite's job. It allocates an 8 B/cell position
+// array and 1 B/cell work planes, so do not call it in production paths. Call
+// it from tests, or when debugging a suspected flow-routing defect.
 // =============================================================================
 
 void lsdtt_flowinfo::validate() const
@@ -2092,7 +2108,8 @@ lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster() const
     // Accumulating over the topological order gives a BIT-IDENTICAL raster
     // (measured: 0 differing cells of 1,000,000) for less total work.
     //
-    // Pinned by `unit_flow_drainage_area_svector_parity`.
+    // Pinned by P11 in tests/cpp/test_flow_properties.cpp (CTest
+    // unit_flow_properties) and by unit_flow_d8_identity.
     if (!has_s_vector_)
     {
         if (!has_topological_order_)

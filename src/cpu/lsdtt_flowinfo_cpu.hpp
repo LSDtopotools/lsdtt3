@@ -142,6 +142,11 @@ public:
     );
 
     void clear() noexcept;
+
+    // Full internal-consistency audit of a built object; throws on any broken
+    // invariant. TEST-TIME ONLY: create() does not call it, and it allocates
+    // ~10 B/cell of work arrays. Exercised by unit_flow_d8_identity and
+    // unit_flow_properties.
     void validate() const;
 
     // -------------------------------------------------------------------------

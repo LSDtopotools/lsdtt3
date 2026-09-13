@@ -19,7 +19,9 @@
 //
 // It is also the replacement for lsdtt_flowinfo::validate() running on every
 // build: code correctness is established here, once, in CTest, rather than paid
-// for in every flow routing call.
+// for in every flow routing call. Every object built below is passed through
+// validate() explicitly -- every fixture, every configuration, both thread
+// counts.
 //
 // WHAT IS PINNED
 //
@@ -333,7 +335,8 @@ using hash_row = std::array<std::uint64_t, c_count>;
 
 hash_row hash_object(const fixture& fx, const config& cfg, int threads,
                      std::vector<float>* area_data_out,
-                     std::vector<std::uint8_t>* area_mask_out)
+                     std::vector<std::uint8_t>* area_mask_out,
+                     std::string* validate_error)
 {
     lsdtt::lsdtt_flowinfo_options opts;
     opts.boundary_conditions       = fx.spec.bc;
@@ -346,6 +349,14 @@ hash_row hash_object(const fixture& fx, const config& cfg, int threads,
     opts.n_threads                 = threads;
 
     const lsdtt::lsdtt_flowinfo fi(fx.dem, fx.mask, fx.meta, opts);
+
+    // The internal-consistency audit that create() used to run on every build.
+    if (validate_error)
+    {
+        try { fi.validate(); }
+        catch (const std::exception& e) { *validate_error = e.what(); }
+    }
+
     const std::int64_t n = static_cast<std::int64_t>(fx.meta.n_rows) * fx.meta.n_cols;
 
     hash_row out{};
@@ -548,15 +559,16 @@ int main(int argc, char** argv)
         {
             const std::string key = spec.name + "/" + cfg.name;
             hash_row h1, h3;
-            std::string err;
+            std::string err, verr1, verr3;
             try
             {
                 h1 = hash_object(fx, cfg, 1,
                                  std::string(cfg.name) == "sv_on"  ? &area_sv_on
                                : std::string(cfg.name) == "sv_off" ? &area_sv_off : nullptr,
                                  std::string(cfg.name) == "sv_on"  ? &mask_sv_on
-                               : std::string(cfg.name) == "sv_off" ? &mask_sv_off : nullptr);
-                h3 = hash_object(fx, cfg, 3, nullptr, nullptr);
+                               : std::string(cfg.name) == "sv_off" ? &mask_sv_off : nullptr,
+                                 &verr1);
+                h3 = hash_object(fx, cfg, 3, nullptr, nullptr, &verr3);
             }
             catch (const std::exception& e)
             {
@@ -571,6 +583,8 @@ int main(int argc, char** argv)
             if (print_pins) continue;
 
             check(key + " identical at 1 and 3 threads", h1 == h3);
+            check(key + " validate() passes at 1 and 3 threads",
+                  verr1.empty() && verr3.empty(), verr1.empty() ? verr3 : verr1);
 
             const auto it = pins().find(key);
             if (it == pins().end())
