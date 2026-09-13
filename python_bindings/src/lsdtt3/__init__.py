@@ -647,6 +647,17 @@ find_flat_surfaces = _with_deprecated_keywords(
     find_flat_surfaces, ("relief_window_side_pixels", "relief_window_pixels")
 )
 
+wiener_filter = _with_deprecated_keywords(
+    wiener_filter,
+    ("signal_wavelength_long_metres", "signal_wavelength_long_m"),
+    ("signal_wavelength_short_metres", "signal_wavelength_short_m"),
+)
+
+extract_channel_heads = _with_deprecated_keywords(
+    extract_channel_heads,
+    ("surface_fitting_radius_metres", "surface_fitting_radius_m"),
+)
+
 for _public_name in __all__:
     _public_value = globals()[_public_name]
     if isinstance(_public_value, type):

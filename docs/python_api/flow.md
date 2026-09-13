@@ -1313,7 +1313,7 @@ def divide_migration(flow: lsdtt3.FlowInfo, dem: lsdtt3.Raster, outlets: object,
 
 ## `extract_channel_heads`
 
-extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_m: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
+extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 
     Parameters
     ----------
@@ -1329,7 +1329,7 @@ extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = '
 
     Notes
     -----
-    extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_m: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
+    extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 
 Extract D8 channel heads by drainage threshold or Wiener curvature.
 
@@ -1342,8 +1342,11 @@ curvature, candidate channel mask, skeleton, and QQ table.
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `surface_fitting_radius_m` -> `surface_fitting_radius_metres`; earliest removal: following minor.
+
 ```python
-def extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_m: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
+def extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 ```
 
 ---

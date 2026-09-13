@@ -2941,7 +2941,7 @@ def total_curvature(raster: lsdtt3.Raster, radius_metres: float) -> lsdtt3.Raste
 
 ## `wiener_filter`
 
-wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_m: float = 1000.0, signal_wavelength_short_m: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
+wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_metres: float = 1000.0, signal_wavelength_short_metres: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
     Parameters
     ----------
@@ -2957,7 +2957,7 @@ wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_m: float = 1000.0, s
 
     Notes
     -----
-    wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_m: float = 1000.0, signal_wavelength_short_m: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
+    wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_metres: float = 1000.0, signal_wavelength_short_metres: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
 Attenuate high-frequency white noise with an adaptive Wiener filter.
 
@@ -2966,6 +2966,10 @@ Attenuate high-frequency white noise with an adaptive Wiener filter.
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `signal_wavelength_long_m` -> `signal_wavelength_long_metres`; earliest removal: following minor.
+- `signal_wavelength_short_m` -> `signal_wavelength_short_metres`; earliest removal: following minor.
+
 ```python
-def wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_m: float = 1000.0, signal_wavelength_short_m: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
+def wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_metres: float = 1000.0, signal_wavelength_short_metres: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 ```

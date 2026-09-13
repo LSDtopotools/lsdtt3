@@ -46,12 +46,6 @@
     {
       "symbol": "extract_channel_heads",
       "member": "",
-      "parameter": "surface_fitting_radius_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "extract_channel_heads",
-      "member": "",
       "parameter": "threshold_pixels",
       "rule": "qualify_contributing_pixel_threshold"
     },
@@ -107,18 +101,6 @@
       "symbol": "synthetic_network",
       "member": "",
       "parameter": "relief_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "wiener_filter",
-      "member": "",
-      "parameter": "signal_wavelength_long_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "wiener_filter",
-      "member": "",
-      "parameter": "signal_wavelength_short_m",
       "rule": "spell_out_unit_suffix"
     }
   ]

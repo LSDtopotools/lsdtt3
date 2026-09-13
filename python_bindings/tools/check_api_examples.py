@@ -97,7 +97,7 @@ def main(argv=None) -> int:
         compile(tree, str(path), "exec")
         check_tree(tree, path.name)
         for name in banned:
-            if name in source:
+            if re.search(rf"\b{re.escape(name)}\b", source):
                 stale.append(f"{path.name}:{name}")
 
     docs_root = root.parents[0] / "docs" / "python"
