@@ -56,48 +56,6 @@
       "rule": "spell_out_unit_suffix"
     },
     {
-      "symbol": "find_internal_drainage",
-      "member": "",
-      "parameter": "min_area_metres2",
-      "rule": "use_m2_or_m3_suffix"
-    },
-    {
-      "symbol": "find_internal_drainage",
-      "member": "",
-      "parameter": "min_volume_metres3",
-      "rule": "use_m2_or_m3_suffix"
-    },
-    {
-      "symbol": "route_sediment",
-      "member": "",
-      "parameter": "active_layer_depth_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "route_sediment",
-      "member": "",
-      "parameter": "d50_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "route_sediment",
-      "member": "",
-      "parameter": "d84_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "route_sediment",
-      "member": "",
-      "parameter": "d90_m",
-      "rule": "spell_out_unit_suffix"
-    },
-    {
-      "symbol": "run_landslide_series",
-      "member": "",
-      "parameter": "budget_tol",
-      "rule": "name_tolerance_semantics"
-    },
-    {
       "symbol": "synthetic_network",
       "member": "",
       "parameter": "relief_m",

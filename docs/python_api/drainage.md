@@ -380,7 +380,7 @@ def find_drains(raster: lsdtt3.Raster, sigma_min_metres: float = 1.0, sigma_max_
 
 ## `find_internal_drainage`
 
-find_internal_drainage(dem: lsdtt3.Raster, method: str = 'hierarchy', boundary_conditions: str = 'oooo', min_pixels: int = 1, min_depth_metres: float = 0.0, min_area_metres2: float = 0.0, min_volume_metres3: float = 0.0, leaves_only: bool = True, include_polygons: bool = True, n_threads: int = 0) -> lsdtt3.InternalDrainageResult
+find_internal_drainage(dem: lsdtt3.Raster, method: str = 'hierarchy', boundary_conditions: str = 'oooo', min_pixels: int = 1, min_depth_metres: float = 0.0, min_area_m2: float = 0.0, min_volume_m3: float = 0.0, leaves_only: bool = True, include_polygons: bool = True, n_threads: int = 0) -> lsdtt3.InternalDrainageResult
 
     Parameters
     ----------
@@ -396,7 +396,7 @@ find_internal_drainage(dem: lsdtt3.Raster, method: str = 'hierarchy', boundary_c
 
     Notes
     -----
-    find_internal_drainage(dem: lsdtt3.Raster, method: str = 'hierarchy', boundary_conditions: str = 'oooo', min_pixels: int = 1, min_depth_metres: float = 0.0, min_area_metres2: float = 0.0, min_volume_metres3: float = 0.0, leaves_only: bool = True, include_polygons: bool = True, n_threads: int = 0) -> lsdtt3.InternalDrainageResult
+    find_internal_drainage(dem: lsdtt3.Raster, method: str = 'hierarchy', boundary_conditions: str = 'oooo', min_pixels: int = 1, min_depth_metres: float = 0.0, min_area_m2: float = 0.0, min_volume_m3: float = 0.0, leaves_only: bool = True, include_polygons: bool = True, n_threads: int = 0) -> lsdtt3.InternalDrainageResult
 
 Detect internally drained topographic depressions in a projected DEM.
 
@@ -410,7 +410,7 @@ boundary_conditions : str, optional
     Four-character north/east/south/west boundary condition string.
 min_pixels : int, optional
     Minimum depression footprint size in raster cells.
-min_depth_metres, min_area_metres2, min_volume_metres3 : float, optional
+ min_depth_metres, min_area_m2, min_volume_m3 : float, optional
     Post-detection filters on depression properties.
 leaves_only : bool, optional
     For ``method="hierarchy"``, return only innermost depressions.
@@ -439,8 +439,12 @@ B. Gailleton
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `min_area_metres2` -> `min_area_m2`; earliest removal: following minor.
+- `min_volume_metres3` -> `min_volume_m3`; earliest removal: following minor.
+
 ```python
-def find_internal_drainage(dem: lsdtt3.Raster, method: str = 'hierarchy', boundary_conditions: str = 'oooo', min_pixels: int = 1, min_depth_metres: float = 0.0, min_area_metres2: float = 0.0, min_volume_metres3: float = 0.0, leaves_only: bool = True, include_polygons: bool = True, n_threads: int = 0) -> lsdtt3.InternalDrainageResult
+def find_internal_drainage(dem: lsdtt3.Raster, method: str = 'hierarchy', boundary_conditions: str = 'oooo', min_pixels: int = 1, min_depth_metres: float = 0.0, min_area_m2: float = 0.0, min_volume_m3: float = 0.0, leaves_only: bool = True, include_polygons: bool = True, n_threads: int = 0) -> lsdtt3.InternalDrainageResult
 ```
 
 ---

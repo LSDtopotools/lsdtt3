@@ -120,29 +120,29 @@ private:
 
 SedimentRoutingResult route_sediment(
     const ChannelNetwork& network, const Raster& dem, const std::string& formula,
-    int n_timesteps, double timestep_seconds, double porosity, double active_layer_depth_m,
+    int n_timesteps, double timestep_seconds, double porosity, double active_layer_depth_metres,
     double width_coefficient, double width_exponent, double discharge_coefficient,
-    double discharge_exponent, double d50_m, double d84_m, double d90_m,
+    double discharge_exponent, double d50_metres, double d84_metres, double d90_metres,
     double mannings_n, nb::object grain_sizes_mm, nb::object grain_fractions,
     nb::object discharge, int n_threads)
 {
     require_network_grid(network, dem);
     if (n_timesteps <= 0 || timestep_seconds <= 0.0 || porosity < 0.0 || porosity >= 1.0 ||
-        width_coefficient <= 0.0 || d50_m <= 0.0 || d84_m <= 0.0 || d90_m <= 0.0 || mannings_n <= 0.0)
+         width_coefficient <= 0.0 || d50_metres <= 0.0 || d84_metres <= 0.0 || d90_metres <= 0.0 || mannings_n <= 0.0)
         throw std::invalid_argument("invalid routing dimensions or sediment properties");
     lsdtt::lsdtt_sediment_routing_options options;
     options.formula = formula_from_name(formula);
     options.n_timesteps = n_timesteps;
     options.timestep_s = timestep_seconds;
     options.porosity = porosity;
-    options.active_layer_depth_m = active_layer_depth_m;
+    options.active_layer_depth_m = active_layer_depth_metres;
     options.width_coefficient = width_coefficient;
     options.width_exponent = width_exponent;
     options.discharge_coefficient = discharge_coefficient;
     options.discharge_exponent = discharge_exponent;
-    options.D50_m = d50_m;
-    options.D84_m = d84_m;
-    options.D90_m = d90_m;
+    options.D50_m = d50_metres;
+    options.D84_m = d84_metres;
+    options.D90_m = d90_metres;
     options.mannings_n = mannings_n;
     options.n_threads = n_threads;
     if (!grain_sizes_mm.is_none() || !grain_fractions.is_none())
@@ -194,10 +194,11 @@ B. Gailleton
     module.def("route_sediment", &route_sediment,
         nb::arg("network"), nb::arg("dem"), nb::arg("formula") = "wilcock_crowe",
         nb::arg("n_timesteps") = 365, nb::arg("timestep_seconds") = 86400.0,
-        nb::arg("porosity") = 0.4, nb::arg("active_layer_depth_m") = -1.0,
+        nb::arg("porosity") = 0.4, nb::arg("active_layer_depth_metres") = -1.0,
         nb::arg("width_coefficient") = 2.76, nb::arg("width_exponent") = 0.40,
         nb::arg("discharge_coefficient") = 1.0e-5, nb::arg("discharge_exponent") = 0.80,
-        nb::arg("d50_m") = 0.016, nb::arg("d84_m") = 0.045, nb::arg("d90_m") = 0.055,
+        nb::arg("d50_metres") = 0.016, nb::arg("d84_metres") = 0.045,
+        nb::arg("d90_metres") = 0.055,
         nb::arg("mannings_n") = 0.04, nb::arg("grain_sizes_mm") = nb::none(),
         nb::arg("grain_fractions") = nb::none(), nb::arg("discharge") = nb::none(),
         nb::arg("n_threads") = 0, R"doc(
@@ -218,14 +219,14 @@ formula : {"wong_parker", "wilcock_crowe", "engelund_hansen"}, optional
     Bedload transport-capacity relation.
 n_timesteps, timestep_seconds : int, float, optional
     Number and duration of routing timesteps.
-porosity, active_layer_depth_m : float, optional
+ porosity, active_layer_depth_metres : float, optional
     Sediment porosity and initial active-layer depth; a non-positive depth uses
     twice D90.
 width_coefficient, width_exponent : float, optional
     Width relation ``W = coefficient * drainage_area ** exponent``.
 discharge_coefficient, discharge_exponent : float, optional
     Default discharge relation when ``discharge`` is omitted.
-d50_m, d84_m, d90_m, mannings_n : float, optional
+ d50_metres, d84_metres, d90_metres, mannings_n : float, optional
     Uniform reach sediment and hydraulic properties.
 grain_sizes_mm, grain_fractions : array-like, optional
     Equal-length grain-size classes and mass fractions summing to one.

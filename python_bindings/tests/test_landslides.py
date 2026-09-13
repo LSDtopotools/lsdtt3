@@ -1,4 +1,6 @@
+import inspect
 import unittest
+import warnings
 
 import numpy as np
 
@@ -55,6 +57,34 @@ class LandslideTest(unittest.TestCase):
             report_time_yr=1_000.0,
         )
         self.assertEqual(be10.shape, self.dem.shape)
+
+    def test_event_budget_tolerance_keyword_compatibility(self):
+        parameters = inspect.signature(lsdtt3.run_landslide_series).parameters
+        self.assertIn("event_budget_relative_tolerance", parameters)
+        self.assertNotIn("budget_tol", parameters)
+
+        common = dict(
+            end_time_yr=1_000.0, mean_recurrence_yr=250.0, poisson_timing=False,
+            target_volume_per_event_m3=1_000.0, channel_threshold_pixels=100,
+            seed=4,
+        )
+        canonical = lsdtt3.run_landslide_series(
+            self.dem, self.flow, event_budget_relative_tolerance=0.01, **common
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            legacy = lsdtt3.run_landslide_series(
+                self.dem, self.flow, budget_tol=0.01, **common
+            )
+        self.assertEqual([warning.category for warning in caught], [DeprecationWarning])
+        self.assertEqual(caught[0].filename, __file__)
+        self.assertEqual(canonical.total_volume_m3, legacy.total_volume_m3)
+        np.testing.assert_allclose(canonical.elevation.to_numpy(), legacy.elevation.to_numpy())
+        with self.assertRaisesRegex(TypeError, "cannot both be supplied"):
+            lsdtt3.run_landslide_series(
+                self.dem, self.flow, event_budget_relative_tolerance=0.01,
+                budget_tol=0.01, **common,
+            )
 
 
 if __name__ == "__main__":

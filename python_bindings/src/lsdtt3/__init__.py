@@ -658,6 +658,25 @@ extract_channel_heads = _with_deprecated_keywords(
     ("surface_fitting_radius_metres", "surface_fitting_radius_m"),
 )
 
+route_sediment = _with_deprecated_keywords(
+    route_sediment,
+    ("active_layer_depth_metres", "active_layer_depth_m"),
+    ("d50_metres", "d50_m"),
+    ("d84_metres", "d84_m"),
+    ("d90_metres", "d90_m"),
+)
+
+find_internal_drainage = _with_deprecated_keywords(
+    find_internal_drainage,
+    ("min_area_m2", "min_area_metres2"),
+    ("min_volume_m3", "min_volume_metres3"),
+)
+
+run_landslide_series = _with_deprecated_keywords(
+    run_landslide_series,
+    ("event_budget_relative_tolerance", "budget_tol"),
+)
+
 for _public_name in __all__:
     _public_value = globals()[_public_name]
     if isinstance(_public_value, type):

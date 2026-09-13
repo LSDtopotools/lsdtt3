@@ -998,7 +998,7 @@ def mountain_front_outlets(mountain_mask: lsdtt3.Raster, contributing_pixels: ls
 
 ## `route_sediment`
 
-route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_m: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_m: float = 0.016, d84_m: float = 0.045, d90_m: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
+route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_metres: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_metres: float = 0.016, d84_metres: float = 0.045, d90_metres: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
 
     Parameters
     ----------
@@ -1014,7 +1014,7 @@ route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str 
 
     Notes
     -----
-    route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_m: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_m: float = 0.016, d84_m: float = 0.045, d90_m: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
+    route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_metres: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_metres: float = 0.016, d84_metres: float = 0.045, d90_metres: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
 
 Route bedload through an existing D8 channel network.
 
@@ -1033,14 +1033,14 @@ formula : {"wong_parker", "wilcock_crowe", "engelund_hansen"}, optional
     Bedload transport-capacity relation.
 n_timesteps, timestep_seconds : int, float, optional
     Number and duration of routing timesteps.
-porosity, active_layer_depth_m : float, optional
+ porosity, active_layer_depth_metres : float, optional
     Sediment porosity and initial active-layer depth; a non-positive depth uses
     twice D90.
 width_coefficient, width_exponent : float, optional
     Width relation ``W = coefficient * drainage_area ** exponent``.
 discharge_coefficient, discharge_exponent : float, optional
     Default discharge relation when ``discharge`` is omitted.
-d50_m, d84_m, d90_m, mannings_n : float, optional
+ d50_metres, d84_metres, d90_metres, mannings_n : float, optional
     Uniform reach sediment and hydraulic properties.
 grain_sizes_mm, grain_fractions : array-like, optional
     Equal-length grain-size classes and mass fractions summing to one.
@@ -1064,15 +1064,21 @@ B. Gailleton
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `active_layer_depth_m` -> `active_layer_depth_metres`; earliest removal: following minor.
+- `d50_m` -> `d50_metres`; earliest removal: following minor.
+- `d84_m` -> `d84_metres`; earliest removal: following minor.
+- `d90_m` -> `d90_metres`; earliest removal: following minor.
+
 ```python
-def route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_m: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_m: float = 0.016, d84_m: float = 0.045, d90_m: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
+def route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_metres: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_metres: float = 0.016, d84_metres: float = 0.045, d90_metres: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
 ```
 
 ---
 
 ## `run_landslide_series`
 
-run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, budget_tol: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
+run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, event_budget_relative_tolerance: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
 
     Parameters
     ----------
@@ -1088,7 +1094,7 @@ run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: f
 
     Notes
     -----
-    run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, budget_tol: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
+    run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, event_budget_relative_tolerance: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
 
 Run a reproducible, annealing-aware landslide time series.
 
@@ -1115,7 +1121,7 @@ channel_threshold_pixels, size_model, area_volume_preset :
     Native scar-placement and size-distribution controls.
 min_pixels, max_area_m2, anneal_time_yr :
     Scar bounds and time before failed ground becomes eligible again.
-budget_tol, budget_max_iter, seed, active_mask :
+ event_budget_relative_tolerance, budget_max_iter, seed, active_mask :
     Event-budget solver controls, reproducibility, and optional host mask.
 
 Returns
@@ -1133,8 +1139,11 @@ B. Gailleton
     B. Gailleton
 
 
+**Deprecated compatibility names:**
+- `budget_tol` -> `event_budget_relative_tolerance`; earliest removal: following minor.
+
 ```python
-def run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, budget_tol: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
+def run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, event_budget_relative_tolerance: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
 ```
 
 ---

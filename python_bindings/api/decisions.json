@@ -71,7 +71,14 @@
     {"symbol": "extract_valley_centrelines", "old": "fallback_valley_hand_metres", "new": "valley_mask", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "wiener_filter", "old": "signal_wavelength_long_m", "new": "signal_wavelength_long_metres", "introduced": "next minor", "earliest_removal": "following minor"},
     {"symbol": "wiener_filter", "old": "signal_wavelength_short_m", "new": "signal_wavelength_short_metres", "introduced": "next minor", "earliest_removal": "following minor"},
-    {"symbol": "extract_channel_heads", "old": "surface_fitting_radius_m", "new": "surface_fitting_radius_metres", "introduced": "next minor", "earliest_removal": "following minor"}
+    {"symbol": "extract_channel_heads", "old": "surface_fitting_radius_m", "new": "surface_fitting_radius_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "active_layer_depth_m", "new": "active_layer_depth_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "d50_m", "new": "d50_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "d84_m", "new": "d84_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "route_sediment", "old": "d90_m", "new": "d90_metres", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "find_internal_drainage", "old": "min_area_metres2", "new": "min_area_m2", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "find_internal_drainage", "old": "min_volume_metres3", "new": "min_volume_m3", "introduced": "next minor", "earliest_removal": "following minor"},
+    {"symbol": "run_landslide_series", "old": "budget_tol", "new": "event_budget_relative_tolerance", "introduced": "next minor", "earliest_removal": "following minor"}
   ],
   "known_runtime_test_failures": [],
   "optional_features": [

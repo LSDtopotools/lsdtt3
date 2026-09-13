@@ -168,7 +168,7 @@ DepressionHierarchyResult depression_hierarchy(const Raster& dem,
 InternalDrainageResult find_internal_drainage(const Raster& dem, const std::string& method,
                                               const std::string& boundary_conditions,
                                               int min_pixels, float min_depth_metres,
-                                              double min_area_metres2, double min_volume_metres3,
+                                               double min_area_m2, double min_volume_m3,
                                               bool leaves_only, bool include_polygons, int n_threads)
 {
     lsdtt::sink_detection_options options;
@@ -178,8 +178,8 @@ InternalDrainageResult find_internal_drainage(const Raster& dem, const std::stri
     options.boundary_conditions = boundary_conditions;
     options.min_pixels_in_patch = min_pixels;
     options.min_depth_m = min_depth_metres;
-    options.min_area_m2 = min_area_metres2;
-    options.min_volume_m3 = min_volume_metres3;
+    options.min_area_m2 = min_area_m2;
+    options.min_volume_m3 = min_volume_m3;
     options.leaves_only = leaves_only;
     options.n_threads = n_threads;
     const auto sinks = lsdtt::find_internal_drainage(dem.native(), options);
@@ -249,7 +249,7 @@ B. Gailleton
     module.def("find_internal_drainage", &find_internal_drainage,
         nb::arg("dem"), nb::arg("method") = "hierarchy", nb::arg("boundary_conditions") = "oooo",
         nb::arg("min_pixels") = 1, nb::arg("min_depth_metres") = 0.0f,
-        nb::arg("min_area_metres2") = 0.0, nb::arg("min_volume_metres3") = 0.0,
+        nb::arg("min_area_m2") = 0.0, nb::arg("min_volume_m3") = 0.0,
         nb::arg("leaves_only") = true, nb::arg("include_polygons") = true, nb::arg("n_threads") = 0,
         R"doc(Detect internally drained topographic depressions in a projected DEM.
 
@@ -263,7 +263,7 @@ boundary_conditions : str, optional
     Four-character north/east/south/west boundary condition string.
 min_pixels : int, optional
     Minimum depression footprint size in raster cells.
-min_depth_metres, min_area_metres2, min_volume_metres3 : float, optional
+ min_depth_metres, min_area_m2, min_volume_m3 : float, optional
     Post-detection filters on depression properties.
 leaves_only : bool, optional
     For ``method="hierarchy"``, return only innermost depressions.
