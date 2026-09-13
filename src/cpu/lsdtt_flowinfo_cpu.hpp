@@ -114,7 +114,7 @@ namespace lsdtt
 // -----------------------------------------------------------------------------
 // lsdtt_flowinfo
 // -----------------------------------------------------------------------------
-class lsdtt_flowinfo : public lsdtt_flow_base
+class lsdtt_flowinfo final : public lsdtt_flow_base
 {
 public:
 
@@ -684,13 +684,12 @@ private:
         const lsdtt_flowinfo_options& options
     );
 
-    // build_donor_count_d8:
-    //   Increments donor_count_[receiver] for each valid cell. Multiple cells
-    //   can share the same receiver, so concurrent writes require atomic
-    //   increments if parallelised. Currently serial.
-    void build_donor_count_d8();
-
-    void build_outlets();
+    // build_donor_counts_and_outlets_d8:
+    //   One pass: increments donor_count_[receiver] for each valid cell and
+    //   collects outlets_ in row-major order. Multiple cells can share the same
+    //   receiver, so concurrent writes require atomic increments if
+    //   parallelised. Currently serial.
+    void build_donor_counts_and_outlets_d8();
     void build_topological_order();
     void build_s_vector();
 
