@@ -693,38 +693,48 @@ void sobel_s16(
     for (int r = -radius; r < rows + radius; ++r)
         row_map[static_cast<std::size_t>(r + radius)] = border_index(r, rows, border);
 
-    // Row pass (kx), exact integers.
+    // Integer arithmetic, so summation order is irrelevant; loops run
+    // tap-outer, pixel-inner over border-padded rows so they vectorise.
+    const int nk = ksize;
     std::vector<std::int32_t> tmp(src.size());
+    std::vector<std::int32_t> padded(static_cast<std::size_t>(cols + 2 * radius));
     for (int r = 0; r < rows; ++r)
     {
         const std::uint8_t* s = src.data() + static_cast<std::size_t>(r) * cols;
-        for (int c = 0; c < cols; ++c)
+        for (int c = -radius; c < cols + radius; ++c)
+            padded[static_cast<std::size_t>(c + radius)] = s[col_map[static_cast<std::size_t>(c + radius)]];
+        std::int32_t* t = tmp.data() + static_cast<std::size_t>(r) * cols;
+        for (int c = 0; c < cols; ++c) t[c] = 0;
+        for (int k = 0; k < nk; ++k)
         {
-            std::int32_t acc = 0;
-            for (int k = -radius; k <= radius; ++k)
-                acc += kx[static_cast<std::size_t>(k + radius)] *
-                       s[col_map[static_cast<std::size_t>(c + k + radius)]];
-            tmp[static_cast<std::size_t>(r) * cols + c] = acc;
+            const std::int32_t w = kx[static_cast<std::size_t>(k)];
+            if (w == 0) continue;
+            const std::int32_t* q = padded.data() + k;
+            for (int c = 0; c < cols; ++c) t[c] += w * q[c];
         }
     }
 
-    // Column pass (ky), then scale and saturate.
     dst.assign(src.size(), 0);
+    std::vector<std::int64_t> acc(static_cast<std::size_t>(cols));
+    const std::int64_t lo = std::numeric_limits<std::int16_t>::min();
+    const std::int64_t hi = std::numeric_limits<std::int16_t>::max();
     for (int r = 0; r < rows; ++r)
     {
+        for (int c = 0; c < cols; ++c) acc[static_cast<std::size_t>(c)] = 0;
+        for (int k = 0; k < nk; ++k)
+        {
+            const std::int64_t w = ky[static_cast<std::size_t>(k)];
+            if (w == 0) continue;
+            const std::int32_t* q =
+                tmp.data() + static_cast<std::size_t>(row_map[static_cast<std::size_t>(r + k)]) * cols;
+            for (int c = 0; c < cols; ++c) acc[static_cast<std::size_t>(c)] += w * q[c];
+        }
+        std::int16_t* d = dst.data() + static_cast<std::size_t>(r) * cols;
         for (int c = 0; c < cols; ++c)
         {
-            std::int64_t acc = 0;
-            for (int k = -radius; k <= radius; ++k)
-            {
-                const int rr = row_map[static_cast<std::size_t>(r + k + radius)];
-                acc += static_cast<std::int64_t>(ky[static_cast<std::size_t>(k + radius)]) *
-                       tmp[static_cast<std::size_t>(rr) * cols + c];
-            }
-            std::int64_t v = divisor == 1 ? acc : div_round_half_even(acc, divisor);
-            v = std::min<std::int64_t>(std::numeric_limits<std::int16_t>::max(),
-                std::max<std::int64_t>(std::numeric_limits<std::int16_t>::min(), v));
-            dst[static_cast<std::size_t>(r) * cols + c] = static_cast<std::int16_t>(v);
+            std::int64_t v = acc[static_cast<std::size_t>(c)];
+            if (divisor != 1) v = div_round_half_even(v, divisor);
+            d[c] = static_cast<std::int16_t>(v < lo ? lo : (v > hi ? hi : v));
         }
     }
 }
@@ -773,6 +783,424 @@ std::vector<std::pair<int, int>> bresenham_line(int r0, int c0, int r1, int c1)
     }
 
     return pixels;
+}
+
+
+
+// =============================================================================
+// Line rasterisation matching cv::line (LINE_8)
+// =============================================================================
+
+std::vector<std::pair<int, int>> line_pixels_opencv8(int r0, int c0, int r1, int c1)
+{
+    // LineIterator::init with connectivity 8 and leftToRight = true, then
+    // operator++ in point mode (drawing.cpp / imgproc.hpp).
+    int x1 = c0, y1 = r0;
+    const int x2 = c1, y2 = r1;
+    int delta_x = 1, delta_y = 1;
+    int dx = x2 - x1;
+    int dy = y2 - y1;
+    if (dx < 0)
+    {
+        dx = -dx;
+        dy = -dy;
+        x1 = x2;
+        y1 = y2;
+    }
+    if (dy < 0)
+    {
+        dy = -dy;
+        delta_y = -1;
+    }
+    const bool vert = dy > dx;
+    if (vert)
+    {
+        std::swap(dx, dy);
+        std::swap(delta_x, delta_y);
+    }
+
+    int err = dx - (dy + dy);
+    const int plus_delta  = dx + dx;
+    const int minus_delta = -(dy + dy);
+    int minus_shift = delta_x;   // x increment on every step
+    int plus_shift  = 0;         // extra x increment when err < 0
+    int minus_step  = 0;         // y increment on every step
+    int plus_step   = delta_y;   // extra y increment when err < 0
+    const int count = dx + 1;
+    if (vert)
+    {
+        std::swap(plus_step, plus_shift);
+        std::swap(minus_step, minus_shift);
+    }
+
+    std::vector<std::pair<int, int>> pixels;
+    pixels.reserve(static_cast<std::size_t>(count));
+    int px = x1, py = y1;
+    for (int i = 0; i < count; ++i)
+    {
+        pixels.emplace_back(py, px);
+        const bool neg = err < 0;
+        err += minus_delta + (neg ? plus_delta : 0);
+        px += minus_shift + (neg ? plus_shift : 0);
+        py += minus_step + (neg ? plus_step : 0);
+    }
+    return pixels;
+}
+
+
+// =============================================================================
+// Canny
+// =============================================================================
+
+void canny_u8(
+    const std::vector<std::uint8_t>& src,
+    int                              rows,
+    int                              cols,
+    double                           low_threshold,
+    double                           high_threshold,
+    int                              aperture,
+    std::vector<std::uint8_t>&       dst)
+{
+    const char* who = "lsdtt::image::canny_u8";
+    require_image(src.size(), rows, cols, who);
+    if (aperture != 3 && aperture != 5 && aperture != 7)
+    {
+        throw std::invalid_argument(std::string(who) + ": aperture must be 3, 5 or 7");
+    }
+
+    if (aperture == 7)
+    {
+        low_threshold  = low_threshold / 16.0;
+        high_threshold = high_threshold / 16.0;
+    }
+    if (low_threshold > high_threshold)
+    {
+        std::swap(low_threshold, high_threshold);
+    }
+    const int low  = static_cast<int>(std::floor(low_threshold));
+    const int high = static_cast<int>(std::floor(high_threshold));
+
+    std::vector<std::int16_t> gx, gy;
+    const int divisor = aperture == 7 ? 16 : 1;
+    sobel_s16(src, rows, cols, 1, 0, aperture, divisor, border_mode::replicate, gx);
+    sobel_s16(src, rows, cols, 0, 1, aperture, divisor, border_mode::replicate, gy);
+
+    // Magnitude with a one-pixel ring of zeros.
+    const int mcols = cols + 2;
+    std::vector<int> mag(static_cast<std::size_t>(rows + 2) * mcols, 0);
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * cols + c;
+            mag[static_cast<std::size_t>(r + 1) * mcols + c + 1] =
+                std::abs(static_cast<int>(gx[i])) + std::abs(static_cast<int>(gy[i]));
+        }
+
+    // Map: 1 = cannot be an edge, 0 = weak candidate, 2 = edge. The outer ring
+    // is 1, as in OpenCV.
+    std::vector<std::uint8_t> map(mag.size(), 1);
+    std::vector<std::size_t>  stack;
+    const int k_tg22 = 13573;
+
+    for (int r = 0; r < rows; ++r)
+    {
+        const int* mp = mag.data() + static_cast<std::size_t>(r)     * mcols + 1;   // previous row
+        const int* ma = mag.data() + static_cast<std::size_t>(r + 1) * mcols + 1;   // actual row
+        const int* mn = mag.data() + static_cast<std::size_t>(r + 2) * mcols + 1;   // next row
+        for (int c = 0; c < cols; ++c)
+        {
+            const std::size_t mi = static_cast<std::size_t>(r + 1) * mcols + c + 1;
+            const int m = ma[c];
+            if (m <= low)
+            {
+                continue;   // stays 1
+            }
+            const std::size_t i = static_cast<std::size_t>(r) * cols + c;
+            const std::int16_t xs = gx[i];
+            const std::int16_t ys = gy[i];
+            const int x = std::abs(static_cast<int>(xs));
+            const int y = std::abs(static_cast<int>(ys)) << 15;
+            const int tg22x = x * k_tg22;
+
+            bool is_max;
+            if (y < tg22x)
+            {
+                is_max = m > ma[c - 1] && m >= ma[c + 1];
+            }
+            else
+            {
+                const int tg67x = tg22x + (x << 16);
+                if (y > tg67x)
+                {
+                    is_max = m > mp[c] && m >= mn[c];
+                }
+                else
+                {
+                    const int sgn = ((xs ^ ys) < 0) ? -1 : 1;
+                    is_max = m > mp[c - sgn] && m > mn[c + sgn];
+                }
+            }
+            if (!is_max)
+            {
+                continue;   // stays 1
+            }
+            if (m > high)
+            {
+                map[mi] = 2;
+                stack.push_back(mi);
+            }
+            else
+            {
+                map[mi] = 0;
+            }
+        }
+    }
+
+    // Hysteresis.
+    const std::size_t step = static_cast<std::size_t>(mcols);
+    while (!stack.empty())
+    {
+        const std::size_t m = stack.back();
+        stack.pop_back();
+        const std::size_t nb[8] = {m - step - 1, m - step, m - step + 1, m - 1,
+                                   m + 1, m + step - 1, m + step, m + step + 1};
+        for (std::size_t q : nb)
+        {
+            if (map[q] == 0)
+            {
+                map[q] = 2;
+                stack.push_back(q);
+            }
+        }
+    }
+
+    dst.assign(src.size(), 0);
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+            if (map[static_cast<std::size_t>(r + 1) * mcols + c + 1] == 2)
+                dst[static_cast<std::size_t>(r) * cols + c] = 255;
+}
+
+
+// =============================================================================
+// Probabilistic Hough
+// =============================================================================
+
+namespace {
+
+// cvRound for float: nearest, ties to even, independent of the FP mode.
+inline int round_half_even_f(float v)
+{
+    const float f = std::floor(v);
+    const float diff = v - f;
+    float r;
+    if (diff < 0.5f)       r = f;
+    else if (diff > 0.5f)  r = f + 1.0f;
+    else                   r = (std::fmod(f, 2.0f) == 0.0f) ? f : f + 1.0f;
+    return static_cast<int>(r);
+}
+
+inline constexpr double k_pi = 3.1415926535897932384626433832795;   // CV_PI
+
+} // namespace
+
+std::vector<line_segment> hough_lines_probabilistic(
+    const std::vector<std::uint8_t>& edges,
+    int                              rows,
+    int                              cols,
+    float                            rho,
+    float                            theta,
+    int                              threshold,
+    int                              line_length,
+    int                              line_gap,
+    lsdtt::random::splitmix64_stream& rng)
+{
+    return hough_lines_probabilistic(edges, rows, cols, rho, theta, threshold, line_length, line_gap,
+        [&rng](std::uint64_t count) { return rng.bounded(count); });
+}
+
+std::vector<line_segment> hough_lines_probabilistic(
+    const std::vector<std::uint8_t>&                  edges,
+    int                                               rows,
+    int                                               cols,
+    float                                             rho,
+    float                                             theta,
+    int                                               threshold,
+    int                                               line_length,
+    int                                               line_gap,
+    const std::function<std::uint64_t(std::uint64_t)>& choose_index)
+{
+    const char* who = "lsdtt::image::hough_lines_probabilistic";
+    require_image(edges.size(), rows, cols, who);
+    if (!(rho > 0.0f) || !(theta > 0.0f))
+    {
+        throw std::invalid_argument(std::string(who) + ": rho and theta must be positive");
+    }
+
+    const int width = cols, height = rows;
+    const float irho = 1 / rho;
+
+    // computeNumangle(0, CV_PI, theta)
+    int numangle = static_cast<int>(std::floor((k_pi - 0.0) / static_cast<double>(theta))) + 1;
+    if (numangle > 1 && std::fabs(k_pi - (numangle - 1) * static_cast<double>(theta)) < static_cast<double>(theta) / 2)
+    {
+        --numangle;
+    }
+    const float numrho_f = static_cast<float>((width + height) * 2 + 1) / rho;
+    const int numrho = round_half_even_f(numrho_f);
+
+    std::vector<int> accum(static_cast<std::size_t>(numangle) * numrho, 0);
+    std::vector<float> ttab(static_cast<std::size_t>(numangle) * 2);
+    for (int n = 0; n < numangle; ++n)
+    {
+        ttab[static_cast<std::size_t>(n) * 2]     = static_cast<float>(std::cos(static_cast<double>(n) * theta) * irho);
+        ttab[static_cast<std::size_t>(n) * 2 + 1] = static_cast<float>(std::sin(static_cast<double>(n) * theta) * irho);
+    }
+
+    std::vector<std::uint8_t> mask(edges.size(), 0);
+    struct point { int x, y; };
+    std::vector<point> nzloc;
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            if (edges[static_cast<std::size_t>(y) * width + x])
+            {
+                mask[static_cast<std::size_t>(y) * width + x] = 1;
+                nzloc.push_back({x, y});
+            }
+
+    auto rho_bin = [&](int n, std::int64_t xj, std::int64_t yi)
+    {
+        const float a = static_cast<float>(xj) * ttab[static_cast<std::size_t>(n) * 2];
+        const float b = static_cast<float>(yi) * ttab[static_cast<std::size_t>(n) * 2 + 1];
+        const float sum = a + b;
+        return round_half_even_f(sum) + (numrho - 1) / 2;
+    };
+
+    std::vector<line_segment> lines;
+    const int shift = 16;
+
+    for (int count = static_cast<int>(nzloc.size()); count > 0; --count)
+    {
+        const std::uint64_t pick = choose_index(static_cast<std::uint64_t>(count));
+        if (pick >= static_cast<std::uint64_t>(count))
+        {
+            throw std::out_of_range(std::string(who) + ": choose_index returned an index >= count");
+        }
+        const int idx = static_cast<int>(pick);
+        int max_val = threshold - 1, max_n = 0;
+        const point pt = nzloc[static_cast<std::size_t>(idx)];
+        point line_end[2] = {{pt.x, pt.y}, {pt.x, pt.y}};
+        const int i = pt.y, j = pt.x;
+
+        nzloc[static_cast<std::size_t>(idx)] = nzloc[static_cast<std::size_t>(count - 1)];
+
+        if (!mask[static_cast<std::size_t>(i) * width + j])
+        {
+            continue;
+        }
+
+        for (int n = 0; n < numangle; ++n)
+        {
+            const int r = rho_bin(n, j, i);
+            const int val = ++accum[static_cast<std::size_t>(n) * numrho + r];
+            if (max_val < val)
+            {
+                max_val = val;
+                max_n = n;
+            }
+        }
+
+        if (max_val < threshold)
+        {
+            continue;
+        }
+
+        const float a = -ttab[static_cast<std::size_t>(max_n) * 2 + 1];
+        const float b = ttab[static_cast<std::size_t>(max_n) * 2];
+        std::int64_t x0 = j, y0 = i, dx0, dy0;
+        bool xflag;
+        if (std::fabs(a) > std::fabs(b))
+        {
+            xflag = true;
+            dx0 = a > 0 ? 1 : -1;
+            const float bs = b * (1 << shift);
+            dy0 = round_half_even_f(bs / std::fabs(a));
+            y0 = (y0 << shift) + (1 << (shift - 1));
+        }
+        else
+        {
+            xflag = false;
+            dy0 = b > 0 ? 1 : -1;
+            const float as = a * (1 << shift);
+            dx0 = round_half_even_f(as / std::fabs(b));
+            x0 = (x0 << shift) + (1 << (shift - 1));
+        }
+
+        for (int k = 0; k < 2; ++k)
+        {
+            int gap = 0;
+            std::int64_t x = x0, y = y0, dx = dx0, dy = dy0;
+            if (k > 0) { dx = -dx; dy = -dy; }
+            for (;; x += dx, y += dy)
+            {
+                std::int64_t i1, j1;
+                if (xflag) { j1 = x; i1 = y >> shift; }
+                else       { j1 = x >> shift; i1 = y; }
+                if (j1 < 0 || j1 >= width || i1 < 0 || i1 >= height)
+                {
+                    break;
+                }
+                if (mask[static_cast<std::size_t>(i1 * width + j1)])
+                {
+                    gap = 0;
+                    line_end[k].y = static_cast<int>(i1);
+                    line_end[k].x = static_cast<int>(j1);
+                }
+                else if (++gap > line_gap)
+                {
+                    break;
+                }
+            }
+        }
+
+        const bool good_line = std::abs(line_end[1].x - line_end[0].x) >= line_length ||
+                               std::abs(line_end[1].y - line_end[0].y) >= line_length;
+
+        for (int k = 0; k < 2; ++k)
+        {
+            std::int64_t x = x0, y = y0, dx = dx0, dy = dy0;
+            if (k > 0) { dx = -dx; dy = -dy; }
+            for (;; x += dx, y += dy)
+            {
+                std::int64_t i1, j1;
+                if (xflag) { j1 = x; i1 = y >> shift; }
+                else       { j1 = x >> shift; i1 = y; }
+                std::uint8_t& md = mask[static_cast<std::size_t>(i1 * width + j1)];
+                if (md)
+                {
+                    if (good_line)
+                    {
+                        for (int n = 0; n < numangle; ++n)
+                        {
+                            const int r = rho_bin(n, j1, i1);
+                            --accum[static_cast<std::size_t>(n) * numrho + r];
+                        }
+                    }
+                    md = 0;
+                }
+                if (i1 == line_end[k].y && j1 == line_end[k].x)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (good_line)
+        {
+            lines.push_back({line_end[0].x, line_end[0].y, line_end[1].x, line_end[1].y});
+        }
+    }
+    return lines;
 }
 
 } // namespace image

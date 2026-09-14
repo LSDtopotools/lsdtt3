@@ -1,4 +1,4 @@
-captured_utc: 2026-09-14T17:10:38Z
+captured_utc: 2026-09-14T17:56:45Z
 opencv_version: 4.13.0-dev
 ipp_available_in_default_mode: yes
 ipp_version: ippIP AVX2 (l9) 2022.1.0 (-) Jan 30 2025

@@ -322,6 +322,33 @@ int main(int argc, char* argv[])
             return out;
         });
         for (int ap : {3, 5, 7})
+            for (const auto& th : {std::pair<double, double>{20.0, 40.0}, {50.0, 100.0}, {80.0, 300.0}, {120.0, 60.0}})
+                emit("canny_u8", "aperture=" + std::to_string(ap) + ";low=" + fmt(th.first) + ";high=" + fmt(th.second),
+                     in_u8_hash, "u8", [&]()
+                     {
+                         cv::Mat out;
+                         cv::Canny(mu8, out, th.first, th.second, ap);
+                         return out;
+                     });
+        // cv::line (LINE_8, thickness 1) for 2000 segments whose endpoints are
+        // drawn from splitmix64 inside the image; covers every octant.
+        emit("line8", "segments=2000", "none", "u8", [&]()
+        {
+            cv::Mat out(R, Cc, CV_8UC1, cv::Scalar(0));
+            for (std::uint64_t i = 0; i < 2000; ++i)
+            {
+                const int x0 = static_cast<int>(splitmix64(0x11 + 4 * i) % static_cast<std::uint64_t>(Cc));
+                const int y0 = static_cast<int>(splitmix64(0x12 + 4 * i) % static_cast<std::uint64_t>(R));
+                const int x1 = static_cast<int>(splitmix64(0x13 + 4 * i) % static_cast<std::uint64_t>(Cc));
+                const int y1 = static_cast<int>(splitmix64(0x14 + 4 * i) % static_cast<std::uint64_t>(R));
+                // Accumulate counts so overlapping segments are also checked.
+                cv::Mat one(R, Cc, CV_8UC1, cv::Scalar(0));
+                cv::line(one, cv::Point(x0, y0), cv::Point(x1, y1), cv::Scalar(1), 1, cv::LINE_8);
+                out += one;
+            }
+            return out;
+        });
+        for (int ap : {3, 5, 7})
             for (int dir = 0; dir < 2; ++dir)
                 emit("sobel_s16", "aperture=" + std::to_string(ap) + ";dx=" + std::to_string(1 - dir),
                      in_u8_hash, "s16", [&]()
@@ -331,6 +358,47 @@ int main(int argc, char* argv[])
                                    cv::BORDER_REPLICATE);
                          return out;
                      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Hough segment lists: cv::HoughLinesP on the Canny edges of every input
+    // without nodata (OpenCV's own 8-bit conversion, pre-blur and Canny). The
+    // native Canny is identical on these inputs, so a test can replay cv::RNG
+    // through the native Hough and require the same segments, in order.
+    // -------------------------------------------------------------------------
+    {
+        set_mode(mode::reference);
+        std::ofstream hs(out_dir / "hough_opencv_segments.csv");
+        hs << "input,params,n_segments,index,x0,y0,x1,y1\n";
+        for (const auto& in : inputs)
+        {
+            if (in.name.find("_full") == std::string::npos) continue;
+            ocv::mat8u_params prm;
+            const cv::Mat base = ocv::raster_to_mat8u(in.raster, prm, 1);
+            for (double sigma : {0.0, 1.0})
+                for (double ct : {30.0, 50.0})
+                    for (int thr : {20, 50, 80})
+                    {
+                        cv::Mat img = base.clone();
+                        if (sigma > 0.0)
+                        {
+                            const int ksize = 2 * static_cast<int>(std::ceil(3.0 * sigma)) + 1;
+                            cv::GaussianBlur(img, img, cv::Size(ksize, ksize), sigma, sigma);
+                        }
+                        cv::Mat edges;
+                        cv::Canny(img, edges, ct, ct * 2.0, 3);
+                        std::vector<cv::Vec4i> lines;
+                        cv::HoughLinesP(edges, lines, 1.0, CV_PI / 180.0, thr, 30.0, 10.0);
+                        std::ostringstream ps;
+                        ps << "sigma=" << fmt(sigma) << ";canny_threshold=" << fmt(ct) << ";threshold=" << thr
+                           << ";min_line_length=30;max_line_gap=10";
+                        if (lines.empty())
+                            hs << in.name << ",\"" << ps.str() << "\",0,-1,0,0,0,0\n";
+                        for (std::size_t i = 0; i < lines.size(); ++i)
+                            hs << in.name << ",\"" << ps.str() << "\"," << lines.size() << ',' << i << ','
+                               << lines[i][0] << ',' << lines[i][1] << ',' << lines[i][2] << ',' << lines[i][3] << '\n';
+                    }
+        }
     }
 
     {

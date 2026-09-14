@@ -21,6 +21,7 @@
 #include <string>
 
 #include "../utils/lsdtt_image_filters.hpp"
+#include "../utils/lsdtt_random.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
 
 #ifdef _OPENMP
@@ -247,6 +248,104 @@ lsdtt_raster_cpu threshold_adaptive_gaussian(
     int                     n_threads)
 {
     return adaptive_impl(raster, true, block_size, C, gaussian_sigma, n_threads);
+}
+
+
+
+namespace {
+
+void preblur_u8(std::vector<std::uint8_t>& img, int rows, int cols, double sigma)
+{
+    if (sigma <= 0.0) return;
+    const int ksize = 2 * static_cast<int>(std::ceil(3.0 * sigma)) + 1;
+    std::vector<std::uint8_t> blurred;
+    image::gaussian_blur_u8(img, rows, cols, ksize, sigma, image::border_mode::reflect_101, blurred);
+    img.swap(blurred);
+}
+
+} // namespace
+
+
+// -----------------------------------------------------------------------------
+// detect_edges_canny
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu detect_edges_canny(
+    const lsdtt_raster_cpu& raster,
+    double                  threshold,
+    double                  ratio,
+    int                     aperture_size,
+    double                  gaussian_sigma,
+    int                     n_threads)
+{
+    if (aperture_size != 3 && aperture_size != 5 && aperture_size != 7)
+        throw std::invalid_argument("detect_edges_canny: aperture_size must be 3, 5, or 7.");
+    if (threshold < 0.0 || threshold > 255.0)
+        throw std::invalid_argument("detect_edges_canny: threshold must be in [0, 255].");
+    if (ratio <= 0.0)
+        throw std::invalid_argument("detect_edges_canny: ratio must be positive.");
+
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    u8_params params;
+    std::vector<std::uint8_t> img = raster_to_u8(raster, params, n_threads);
+    preblur_u8(img, meta.n_rows, meta.n_cols, gaussian_sigma);
+
+    std::vector<std::uint8_t> edges;
+    image::canny_u8(img, meta.n_rows, meta.n_cols, threshold, threshold * ratio, aperture_size, edges);
+    return binary_raster_from_u8(edges, raster, n_threads);
+}
+
+
+// -----------------------------------------------------------------------------
+// extract_lines_hough
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu extract_lines_hough(
+    const lsdtt_raster_cpu& raster,
+    double                  rho,
+    double                  theta_deg,
+    int                     hough_threshold,
+    double                  min_line_length,
+    double                  max_line_gap,
+    double                  canny_threshold,
+    double                  canny_ratio,
+    double                  gaussian_sigma,
+    int                     n_threads)
+{
+    if (rho <= 0.0)
+        throw std::invalid_argument("extract_lines_hough: rho must be positive.");
+    if (theta_deg <= 0.0 || theta_deg > 180.0)
+        throw std::invalid_argument("extract_lines_hough: theta_deg must be in (0, 180].");
+    if (hough_threshold <= 0)
+        throw std::invalid_argument("extract_lines_hough: hough_threshold must be positive.");
+    if (min_line_length < 0.0)
+        throw std::invalid_argument("extract_lines_hough: min_line_length must be non-negative.");
+    if (max_line_gap < 0.0)
+        throw std::invalid_argument("extract_lines_hough: max_line_gap must be non-negative.");
+
+    const lsdtt_raster_meta& meta = raster.get_meta();
+    const int rows = meta.n_rows, cols = meta.n_cols;
+
+    u8_params params;
+    std::vector<std::uint8_t> img = raster_to_u8(raster, params, n_threads);
+    preblur_u8(img, rows, cols, gaussian_sigma);
+
+    std::vector<std::uint8_t> edges;
+    image::canny_u8(img, rows, cols, canny_threshold, canny_threshold * canny_ratio, 3, edges);
+
+    // cv::HoughLinesP: rho and theta as float, lengths rounded with cvRound.
+    const double theta_rad = theta_deg * 3.1415926535897932384626433832795 / 180.0;
+    const int line_length = static_cast<int>(std::nearbyint(min_line_length));
+    const int line_gap    = static_cast<int>(std::nearbyint(max_line_gap));
+    random::splitmix64_stream rng(k_hough_seed);
+    const std::vector<image::line_segment> segments = image::hough_lines_probabilistic(
+        edges, rows, cols, static_cast<float>(rho), static_cast<float>(theta_rad),
+        hough_threshold, line_length, line_gap, rng);
+
+    std::vector<std::uint8_t> drawn(edges.size(), 0);
+    for (const auto& seg : segments)
+        for (const auto& rc : image::line_pixels_opencv8(seg.y0, seg.x0, seg.y1, seg.x1))
+            drawn[static_cast<std::size_t>(rc.first) * cols + rc.second] = 255;
+
+    return binary_raster_from_u8(drawn, raster, n_threads);
 }
 
 } // namespace image_ops_cpu

@@ -32,8 +32,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
+
+#include "lsdtt_random.hpp"
 
 namespace lsdtt {
 namespace image {
@@ -267,6 +270,112 @@ void sobel_s16(
 // -----------------------------------------------------------------------------
 [[nodiscard]] std::vector<std::pair<int, int>> bresenham_line(
     int r0, int c0, int r1, int c1);
+
+
+
+// =============================================================================
+// Line rasterisation matching cv::line
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// line_pixels_opencv8
+//
+// The pixels cv::line(img, (c0,r0), (c1,r1), color, 1, LINE_8) sets
+// (drawing.cpp: LineIterator with connectivity 8, leftToRight = true), as
+// (row, col) pairs. Tie-breaking differs from bresenham_line, which is why
+// both exist. Both endpoints must lie inside the image (no clipping is done).
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<std::pair<int, int>> line_pixels_opencv8(
+    int r0, int c0, int r1, int c1);
+
+
+// =============================================================================
+// Canny edge detection (cv::Canny, 8-bit input, L1 gradient)
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// canny_u8
+//
+// Port of OpenCV's portable Canny (canny.cpp):
+//   1. aperture 7: both thresholds /16. If low > high they are swapped.
+//      Integer thresholds: low = floor(low), high = floor(high).
+//   2. dx, dy = sobel_s16 with replicate borders (divisor 16 for aperture 7).
+//   3. magnitude m = |dx| + |dy|; magnitudes outside the image count as 0.
+//   4. Non-maximum suppression, with x = |dx|, y = |dy| << 15,
+//      tg22x = x * 13573, tg67x = tg22x + (x << 16):
+//        y <  tg22x : edge candidate if m >  m(left)  and m >= m(right)
+//        y >  tg67x : edge candidate if m >  m(up)    and m >= m(down)
+//        otherwise  : s = (dx ^ dy) < 0 ? -1 : 1;
+//                     candidate if m > m(up, col - s) and m > m(down, col + s)
+//      A candidate with m > low is strong if m > high, weak otherwise.
+//   5. Hysteresis: every weak candidate 8-connected (through weak candidates)
+//      to a strong one becomes an edge.
+// Output: 255 on edges, 0 elsewhere. aperture must be 3, 5 or 7.
+// -----------------------------------------------------------------------------
+void canny_u8(
+    const std::vector<std::uint8_t>& src,
+    int                              rows,
+    int                              cols,
+    double                           low_threshold,
+    double                           high_threshold,
+    int                              aperture,
+    std::vector<std::uint8_t>&       dst
+);
+
+
+// =============================================================================
+// Progressive probabilistic Hough transform (cv::HoughLinesP)
+// =============================================================================
+
+// A detected segment, in pixel coordinates (x = column, y = row).
+struct line_segment
+{
+    int x0, y0, x1, y1;
+};
+
+// -----------------------------------------------------------------------------
+// hough_lines_probabilistic
+//
+// Port of OpenCV's HoughLinesProbabilistic (hough.cpp; Matas, Galambos &
+// Kittler 2000, "Robust detection of lines using the progressive probabilistic
+// Hough transform", CVIU 78(1)). Identical to OpenCV in every step EXCEPT the
+// random choice of the next edge point: OpenCV uses cv::RNG, this uses
+// rng.bounded(count), so the order points are visited in - and therefore the
+// segments found - differ from OpenCV while following the same algorithm.
+// The sequence is fully specified, so results are identical on every platform.
+//
+//   rho, theta      accumulator resolution (pixels, radians), as float
+//   threshold       minimum accumulator votes
+//   line_length     minimum segment extent: |dx| or |dy| >= line_length
+//   line_gap        maximum run of empty pixels bridged while walking a line
+// Non-zero pixels of `edges` are the input points.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<line_segment> hough_lines_probabilistic(
+    const std::vector<std::uint8_t>& edges,
+    int                              rows,
+    int                              cols,
+    float                            rho,
+    float                            theta,
+    int                              threshold,
+    int                              line_length,
+    int                              line_gap,
+    lsdtt::random::splitmix64_stream& rng
+);
+
+// Same algorithm with the point choice supplied by the caller:
+// choose_index(count) must return an integer in [0, count). Exists so tests can
+// replay OpenCV's cv::RNG sequence and check the port segment for segment.
+[[nodiscard]] std::vector<line_segment> hough_lines_probabilistic(
+    const std::vector<std::uint8_t>&                  edges,
+    int                                               rows,
+    int                                               cols,
+    float                                             rho,
+    float                                             theta,
+    int                                               threshold,
+    int                                               line_length,
+    int                                               line_gap,
+    const std::function<std::uint64_t(std::uint64_t)>& choose_index
+);
 
 } // namespace image
 } // namespace lsdtt

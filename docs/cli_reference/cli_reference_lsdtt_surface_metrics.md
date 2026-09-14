@@ -413,7 +413,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all hardware threads (default). 1 = serial. In shared environments, set an explicit limit no greater than the physical-core allocation. Applies to the direct and wavelet quadratic fits, polyfit metric engine, and OpenCV normalisation passes. |
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all hardware threads (default). 1 = serial. In shared environments, set an explicit limit no greater than the physical-core allocation. Applies to the direct and wavelet quadratic fits, polyfit metric engine, and the 8-bit image-operation passes (Otsu, adaptive thresholds, Canny, Hough). |
 
 ### Output format
 
@@ -489,11 +489,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_otsu_raster` | `bool` | `false` | `switch` | - | Write a binary raster produced by Otsu threshold segmentation. | The DEM is normalised to 8-bit and Otsu's method selects the threshold that minimises intra-class greyscale variance. Output: 1.0 = foreground (above threshold), 0.0 = background. |
 
-### Hough line extraction (requires OpenCV)
+### Hough line extraction
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_hough_lines_raster` | `bool` | `false` | `switch` | - | Write a binary raster of detected straight line segments. | Requires OpenCV (LSDTT_HAS_OPENCV). Uses the probabilistic Hough transform (HoughLinesP) on a Canny edge image derived from the DEM. Output: 1.0 = line pixel, 0.0 = other. |
+| `write_hough_lines_raster` | `bool` | `false` | `switch` | - | Write a binary raster of detected straight line segments. | Uses the progressive probabilistic Hough transform (Matas et al. 2000) on a Canny edge image derived from the DEM. The algorithm and parameters are those of OpenCV's HoughLinesP; the random order in which edge points are visited uses lsdtt3's own fixed-seed generator, so results are reproducible on every platform but not identical to OpenCV's. Output: 1.0 = line pixel, 0.0 = other. |
 | `hough_rho` | `float` | `1.0` | `param` | `write_hough_lines_raster` | Distance resolution of the Hough accumulator in pixels. | Smaller values give finer angular resolution but increase memory and compute cost. |
 | `hough_theta_degrees` | `float` | `1.0` | `param` | `write_hough_lines_raster` | Angle resolution of the Hough accumulator in degrees. | Converted to radians internally. Typical range: 0.5-2.0 degrees. |
 | `hough_threshold` | `int` | `50` | `param` | `write_hough_lines_raster` | Minimum number of accumulator votes required to accept a line. | Increase to suppress short or faint lines. Decrease to detect more lines in noisy data. |

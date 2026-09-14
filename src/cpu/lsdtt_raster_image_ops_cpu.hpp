@@ -11,7 +11,7 @@
 // lsdtt_raster_image_ops_cpu
 //
 // Native image-processing operations on lsdtt_raster_cpu: Otsu and adaptive
-// thresholding. These replace the OpenCV-based lsdtt::opencv_cpu functions of
+// thresholding, Canny edges, and probabilistic Hough line extraction. These replace the OpenCV-based lsdtt::opencv_cpu functions of
 // the same names. On rasters without nodata they reproduce OpenCV's output bit
 // for bit (checked against frozen OpenCV outputs in tests/expected/image_ops/);
 // on rasters with nodata they deliberately differ (see 8-bit normalisation).
@@ -125,6 +125,74 @@ struct u8_params
     double                  C              = 0.0,
     double                  gaussian_sigma = 0.0,
     int                     n_threads      = 0
+);
+
+// -----------------------------------------------------------------------------
+// detect_edges_canny
+//
+// cv::Canny on the 8-bit image, optionally pre-blurred (as the adaptive
+// thresholds). Hysteresis thresholds [threshold, threshold * ratio] in 8-bit
+// gradient units; aperture_size is the Sobel size (3, 5 or 7); L1 gradient.
+// Output: 1.0 on edges, 0.0 elsewhere; nodata pixels 0.0 with mask 0.
+//
+// Throws std::invalid_argument for aperture_size not in {3,5,7}, threshold
+// outside [0, 255], or ratio <= 0.
+//
+// Reference: Canny, J. (1986) IEEE Trans. Pattern Analysis and Machine
+// Intelligence 8(6), 679-698.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu detect_edges_canny(
+    const lsdtt_raster_cpu& raster,
+    double                  threshold      = 50.0,
+    double                  ratio          = 2.0,
+    int                     aperture_size  = 3,
+    double                  gaussian_sigma = 1.0,
+    int                     n_threads      = 0
+);
+
+// Seed of the point-selection sequence in extract_lines_hough. Fixed so that
+// repeated runs, and runs on different platforms, give identical output.
+inline constexpr std::uint64_t k_hough_seed = 0x6C736474743348ULL;   // "lsdtt3H"
+
+// -----------------------------------------------------------------------------
+// extract_lines_hough
+//
+// Straight line segments by the progressive probabilistic Hough transform on
+// Canny edges, rasterised back to the grid:
+//   1. 8-bit image (see raster_to_u8); optional pre-blur (gaussian_sigma > 0)
+//   2. Canny with [canny_threshold, canny_threshold * canny_ratio], aperture 3
+//   3. image::hough_lines_probabilistic with rho, theta_deg (converted to
+//      radians), hough_threshold, round(min_line_length), round(max_line_gap),
+//      and a splitmix64 stream seeded with k_hough_seed
+//   4. each segment drawn 1 pixel wide, 8-connected, as cv::line does
+//
+// The algorithm and parameter meanings are those of cv::HoughLinesP. The
+// order in which edge points are visited is random in both, but drawn from a
+// different generator here, so the segments found are not identical to
+// OpenCV's (the planted lines of a test image are recovered; see
+// tests/cpp/test_image_ops.cpp).
+//
+// Output: 1.0 on segment pixels, 0.0 elsewhere; mask and metadata from input
+// (nodata pixels 0.0 with mask 0).
+//
+// Throws std::invalid_argument for rho <= 0, theta_deg outside (0, 180],
+// hough_threshold <= 0, or a negative min_line_length / max_line_gap.
+//
+// Reference: Matas, J., Galambos, C. and Kittler, J. (2000) Robust detection
+// of lines using the progressive probabilistic Hough transform. Computer Vision
+// and Image Understanding 78(1), 119-137.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_raster_cpu extract_lines_hough(
+    const lsdtt_raster_cpu& raster,
+    double                  rho             = 1.0,
+    double                  theta_deg       = 1.0,
+    int                     hough_threshold = 50,
+    double                  min_line_length = 30.0,
+    double                  max_line_gap    = 10.0,
+    double                  canny_threshold = 50.0,
+    double                  canny_ratio     = 2.0,
+    double                  gaussian_sigma  = 1.0,
+    int                     n_threads       = 0
 );
 
 } // namespace image_ops_cpu

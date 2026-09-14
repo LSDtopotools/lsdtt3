@@ -21,8 +21,8 @@
 //   4b. Surface shape classification (SMAP, TopoCurve-style)
 //   5. MADk2 roughness
 //   6. Frangi filter
-//   7. Otsu threshold segmentation (requires OpenCV)
-//   8. Hough line extraction (requires OpenCV)
+//   7. Otsu threshold segmentation
+//   8. Hough line extraction
 //   9. Curvature skeletons
 //  10. Cloth drape - upper envelope surface and incision depth
 //
@@ -63,9 +63,6 @@
 
 #include "../src/cpu/lsdtt_raster_image_ops_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
-#ifdef LSDTT_HAS_OPENCV
-#include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
-#endif
 
 static const std::string k_version  = "1.0.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
@@ -274,7 +271,8 @@ int main(int argc, char* argv[])
         "0 = use all hardware threads (default). 1 = serial. In shared "
         "environments, set an explicit limit no greater than the physical-core allocation. "
         "Applies to the direct and wavelet quadratic fits, polyfit metric "
-        "engine, and OpenCV normalisation passes.",
+        "engine, and the 8-bit image-operation passes (Otsu, adaptive thresholds, "
+        "Canny, Hough).",
         "Threading", "io", ""};
 
     // --- Output format ---
@@ -580,47 +578,50 @@ int main(int argc, char* argv[])
         "Output: 1.0 = foreground (above threshold), 0.0 = background.",
         "Otsu threshold segmentation", "switch", ""};
 
-    // --- Hough line extraction (requires OpenCV) ---
+    // --- Hough line extraction ---
     bool_default_map["write_hough_lines_raster"] = false;
     help_map["write_hough_lines_raster"] = {"bool","false",
         "Write a binary raster of detected straight line segments.",
-        "Requires OpenCV (LSDTT_HAS_OPENCV). "
-        "Uses the probabilistic Hough transform (HoughLinesP) on a Canny "
-        "edge image derived from the DEM. Output: 1.0 = line pixel, 0.0 = other.",
-        "Hough line extraction (requires OpenCV)", "switch", ""};
+        "Uses the progressive probabilistic Hough transform (Matas et al. 2000) "
+        "on a Canny edge image derived from the DEM. The algorithm and "
+        "parameters are those of OpenCV's HoughLinesP; the random order in "
+        "which edge points are visited uses lsdtt3's own fixed-seed generator, "
+        "so results are reproducible on every platform but not identical to "
+        "OpenCV's. Output: 1.0 = line pixel, 0.0 = other.",
+        "Hough line extraction", "switch", ""};
 
     float_default_map["hough_rho"] = 1.0f;
     help_map["hough_rho"] = {"float","1.0",
         "Distance resolution of the Hough accumulator in pixels.",
         "Smaller values give finer angular resolution but increase memory "
         "and compute cost.",
-        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
+        "Hough line extraction", "param", "write_hough_lines_raster"};
 
     float_default_map["hough_theta_degrees"] = 1.0f;
     help_map["hough_theta_degrees"] = {"float","1.0",
         "Angle resolution of the Hough accumulator in degrees.",
         "Converted to radians internally. Typical range: 0.5-2.0 degrees.",
-        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
+        "Hough line extraction", "param", "write_hough_lines_raster"};
 
     int_default_map["hough_threshold"] = 50;
     help_map["hough_threshold"] = {"int","50",
         "Minimum number of accumulator votes required to accept a line.",
         "Increase to suppress short or faint lines. "
         "Decrease to detect more lines in noisy data.",
-        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
+        "Hough line extraction", "param", "write_hough_lines_raster"};
 
     float_default_map["hough_min_line_length"] = 30.0f;
     help_map["hough_min_line_length"] = {"float","30.0",
         "Minimum line segment length in pixels.",
         "Segments shorter than this are discarded. "
         "Scale this relative to your pixel resolution.",
-        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
+        "Hough line extraction", "param", "write_hough_lines_raster"};
 
     float_default_map["hough_max_line_gap"] = 10.0f;
     help_map["hough_max_line_gap"] = {"float","10.0",
         "Maximum gap in pixels between collinear points to bridge into one segment.",
         "Increase to connect dashed or broken linear features.",
-        "Hough line extraction (requires OpenCV)", "param", "write_hough_lines_raster"};
+        "Hough line extraction", "param", "write_hough_lines_raster"};
 
     // --- Shared Canny parameters (used by Hough; also available standalone) ---
     float_default_map["canny_threshold"] = 50.0f;
@@ -884,22 +885,6 @@ int main(int argc, char* argv[])
         std::cerr << "Error parsing polyfit_metrics: " << e.what() << "\n";
         return 1;
     }
-
-    // -------------------------------------------------------------------------
-    // Cross-parameter logic
-    //
-    // If the Hough output (still OpenCV-based) is requested but OpenCV was not
-    // compiled in, warn and disable so the pipeline continues cleanly for the
-    // other steps.
-    // -------------------------------------------------------------------------
-#ifndef LSDTT_HAS_OPENCV
-    if (bf["write_hough_lines_raster"])
-    {
-        std::cerr << "Warning: write_hough_lines_raster requested but this "
-                     "build does not include OpenCV. Skipping.\n";
-        bf["write_hough_lines_raster"] = false;
-    }
-#endif
 
     // -------------------------------------------------------------------------
     // Nothing-to-do check
@@ -1705,7 +1690,6 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 7 - Hough line extraction
     // -------------------------------------------------------------------------
-#ifdef LSDTT_HAS_OPENCV
     if (bf["write_hough_lines_raster"])
     {
         std::cout << "\n--- Hough line extraction ---\n";
@@ -1721,7 +1705,7 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::lsdtt_raster_cpu hough_result =
-                lsdtt::opencv_cpu::extract_lines_hough(
+                lsdtt::image_ops_cpu::extract_lines_hough(
                     dem,
                     ff["hough_rho"],
                     ff["hough_theta_degrees"],
@@ -1731,8 +1715,7 @@ int main(int argc, char* argv[])
                     ff["canny_threshold"],
                     ff["canny_ratio"],
                     ff["canny_gaussian_sigma"],
-                    n_threads,
-                    0
+                    n_threads
                 );
 
             const std::string o = pp.make_output_path( "_hough_lines" + output_ext);
@@ -1750,7 +1733,6 @@ int main(int argc, char* argv[])
                       << e.what() << "\n";
         }
     }
-#endif
 
     // -------------------------------------------------------------------------
     // Step 8 - Curvature skeleton (VEC threshold + plan curvature relief)
