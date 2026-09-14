@@ -190,74 +190,18 @@ Windows files).
 
 ## For the developer: creating a release
 
-### How the build pipeline works
+The release procedure is not repeated here, so it cannot drift out of step:
 
-The file `.github/workflows/release.yml` defines a GitHub Actions workflow that
-runs automatically whenever a version tag is pushed to the repository. GitHub
-Actions works on private repositories, but minutes are metered, so the
-workflow runs only on version tags (and manual dispatch) - see
-`docs/developer_notes/making_release_packages.md` and `tools/README.md`.
+- [Making release packages](making_release_packages.md) — what the bundles
+  are, what runs in CI and what is built by hand, and why.
+- [`tools/README.md`](https://github.com/LSDtopotools/lsdtt3/blob/main/tools/README.md)
+  in the repository — the release cheat sheet: bumping the version, tagging,
+  local test releases with `tools/make_release.sh --publish --prerelease`
+  (no Actions minutes), and attaching Windows and macOS bundles.
 
-The workflow:
-
-1. Starts an Ubuntu 22.04 virtual machine.
-2. Installs the build dependencies via apt.
-3. Runs `tools/make_release.sh`, which configures and builds in Release
-   mode, smoke-checks the release CLIs, and packages the self-contained
-   backend bundle (`tools/package_linux_backend.sh`).
-4. Attaches `lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz` to a
-   GitHub Release named after the tag.
-
-### Creating an official release
-
-1. Make sure `main` is in the state you want to release and all tests pass.
-2. Choose a version number following semantic versioning, e.g. `0.4.0`.
-3. Bump `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` to match and
-   commit (the build fails on purpose if the tag and CMake version differ).
-4. Tag and push:
-   ```bash
-   git tag v0.4.0
-   git push origin main v0.4.0
-   ```
-5. Go to the repository on GitHub -> **Actions**. You will see the
-   "Build and release" workflow running.
-6. When it finishes, go to **Releases**. A new release named `v0.4.0` will
-   have been created automatically with the Linux bundle attached.
-7. Optionally build and attach the Windows / macOS bundles from the
-   respective machines (`tools/package_windows_backend.ps1`,
-   `tools/package_macos_backend.sh`), then
-   `gh release upload v0.4.0 dist/<bundle>`.
-
-### Test releases between versions (no Actions minutes)
-
-The same release can be built entirely locally - useful for sharing an
-experimental build with a beta tester without spending CI minutes on the
-private repo:
-
-```bash
-tools/make_release.sh --version 0.4.0-rc1 --publish --prerelease
-```
-
-This builds, smoke-checks, packages, and creates a GitHub **prerelease**
-with the bundle attached (uploading release assets costs no Actions
-minutes). Without `--publish` it stops at `dist/` and you can share the
-tarball by any other route. Development builds self-identify: their
-binaries report e.g. `lsdtt3 0.4.0-dev, git v0.2.0-14-g04460f4` from
-`-v` / `--version`.
-
-You can also trigger the CI workflow manually (Actions -> Build and
-release -> Run workflow); a manual run builds at the current CMake version
-and uploads the bundle as a workflow **artifact** (14-day retention), not
-a release.
-
-### After a dependency change
-
-If a new dependency is added to CMakeLists.txt, add the `-dev` package to
-the `Install dependencies` step of `.github/workflows/release.yml` (and to
-`apptainer_def/lsdtt3.def`). The bundle picks up new runtime libraries
-automatically - the packaging script resolves the dependency closure with
-`ldd` and fails if anything is missing, so there is no separate runtime
-package list to maintain.
+For a beta tester, a local prerelease or a plain tarball from `dist/` is
+usually the right thing to send. Development builds identify themselves: `-v`
+reports e.g. `lsdtt3 0.4.0-dev, git v0.4.0-86-g88c4847-dirty`.
 
 ---
 

@@ -72,7 +72,7 @@
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
-static const std::string k_version   = "0.2.0";
+static const std::string k_version   = "1.0.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-fetch-raster";
 
@@ -87,10 +87,13 @@ static void print_banner()
         << "|| Download a DEM for a bounding box, ready to analyse  ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                      ||\n"
         << "=========================================================\n"
-        << "|| CLI version: " << k_version  << "\n"
-        << "|| Citation   : " << k_citation << "\n"
-        << "|| -v or --version : full lsdtt3 release version\n"
-        << "|| -h              : help explaining the parameters\n"
+        << "|| -v or --version    : full lsdtt3 release version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| If CLI version number is lower than 1.0.0 it means\n"
+        << "|| this CLI is still experimental and not fully tested.\n"
+        << "=========================================================\n"
+        << "|| Citation : " << k_citation << "\n"
+        << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n\n";
 }
 

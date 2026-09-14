@@ -5,17 +5,21 @@ release package instead — see [Installation](../what_is_lsdtt3/install_lsdtt3.
 Build from source when you need code that has not been released yet, or when
 you are modifying lsdtt3.
 
-lsdtt3 is a Linux-native C++17 codebase. **Linux is the reference platform**
-and is the only one where every tool builds. The other sections below get you
-to a Linux environment, or explain the deliberately reduced native Windows
-build.
+lsdtt3 is a Linux-native C++17 codebase. **Linux is the reference platform**:
+every tool builds there, CI builds there, and the test suite is run there. This
+page is the reference build; the platform pages only cover what is different on
+their platform, and link back here for everything else.
 
-| Your machine | Route |
-|---|---|
-| Linux | [Linux](#linux) |
-| Windows | [Windows via WSL2](#windows-via-wsl2) — full build |
-| Windows, native `.exe` needed | [Windows native (QGIS backend only)](#windows-native-qgis-backend-only) — reduced |
-| macOS | [macOS native](#macos-native-build-recommended) (recommended) or [macOS via Multipass](#macos-via-multipass-alternative) |
+| Your machine | Route | Page |
+|---|---|---|
+| Linux | Native build — full tool set | this page, [Linux](#linux) |
+| Windows | WSL2 (Ubuntu) — full tool set, **recommended** | [Building on Windows](building_on_windows.md#wsl2-recommended) |
+| Windows, native `.exe` needed | Visual Studio + vcpkg — reduced, QGIS backend only | [Building on Windows](building_on_windows.md#native-windows-qgis-backend-only) |
+| macOS | Native (Homebrew) or a Multipass Ubuntu VM | [Building on macOS](building_on_macos.md) |
+
+Once you have a build, turning it into something other people can install is
+covered in [Making release packages](making_release_packages.md), and the QGIS
+plugin workflow in [QGIS plugin development](qgis_plugin_development.md).
 
 ---
 
@@ -53,6 +57,9 @@ set gives you a partial tool set rather than an error.
 
 ### Clone and build
 
+If you have not cloned from GitHub before, [Git from the command
+line](git_notes.md) walks through setting up an SSH key.
+
 ```bash
 git clone git@github.com:lsdtopotools/lsdtt3.git
 cd lsdtt3
@@ -60,9 +67,23 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
-CMake prints a summary of which optional libraries it found. Read it — it is
-the quickest way to discover that, say, Eigen was missing and chi inversion
-was silently dropped.
+CMake prints a summary of which optional libraries it found:
+
+```
+=== lsdtt3 build configuration ===
+  Build type  : Release
+  C++ std     : 17
+  GDAL        : <version>
+  OpenMP      : TRUE
+  FFTW3       : TRUE
+  OpenCV      : TRUE
+  GPU (CUDA)  : FALSE
+  Eigen3      : TRUE
+===================================
+```
+
+Read it — it is the quickest way to discover that, say, Eigen was missing and
+chi inversion was silently dropped.
 
 ### Put the tools on your PATH
 
@@ -72,19 +93,7 @@ source ~/.bashrc
 lsdtt-channel-extraction --help
 ```
 
-### CMake options
-
-| Option | Default | Effect |
-|---|---|---|
-| `CMAKE_BUILD_TYPE` | `Release` | `Debug` for development, `RelWithDebInfo` for profiling |
-| `LSDTT_OPENCV` | `ON` | OpenCV-dependent routines (auto-off if OpenCV is absent) |
-| `LSDTT_EIGEN` | `ON` | Eigen3-dependent routines (auto-off if Eigen3 is absent) |
-| `LSDTT_OPENMP` | `ON` | OpenMP parallelism. **Must be `OFF` on MSVC** — see below |
-| `LSDTT_GPU` | `OFF` | GPU compute backend (needs the CUDA toolkit) |
-| `BUILD_TESTING` | `ON` | Build the CTest suite |
-| `LSDTT_ENABLE_BENCHMARKS` | `OFF` | RichDEM comparison benchmarks (needs network + pixi) |
-| `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Tests that download data |
-| `LSDTT_ENABLE_PERF_TESTS` | `OFF` | Flow-routing performance benchmarks |
+Replace `/path/to/lsdtt3` with wherever you cloned the repository.
 
 ### Run the tests
 
@@ -93,181 +102,48 @@ ctest --test-dir build --output-on-failure
 ```
 
 The default suite needs no network, no downloaded data and no Python packages.
-See `tests/README.md` in the repository for what each test covers, and
-[Testing and benchmarking](testing_and_benchmarking.md) for
-methodology.
+While developing, run one domain rather than the whole suite, e.g.
+`ctest --test-dir build -L <domain> -LE heavy`. See `tests/README.md` in the
+repository for what each test covers, and
+[Testing and benchmarking](testing_and_benchmarking.md) for methodology.
 
 ---
 
-## Windows via WSL2
+## CMake options
 
-WSL2 gives you a full Ubuntu environment, so you build exactly as in
-[Linux](#linux) above. This is the recommended way to develop lsdtt3 on a
-Windows machine — every tool builds, and the resulting binaries run faster
-than a native Windows build on the same hardware.
+These apply on every platform.
 
-[`lsdtt3_in_windows.md`](lsdtt3_in_windows.md) has the full walkthrough:
-installing WSL2 and Ubuntu 22.04, apt dependencies, SSH keys and cloning,
-building with CMake, PATH setup, and reaching your Windows files from Ubuntu.
+| Option | Default | Effect |
+|---|---|---|
+| `CMAKE_BUILD_TYPE` | `Release` | `Debug` for development, `RelWithDebInfo` for profiling |
+| `LSDTT_OPENCV` | `ON` | OpenCV-dependent routines (auto-off if OpenCV is absent) |
+| `LSDTT_EIGEN` | `ON` | Eigen3-dependent routines (auto-off if Eigen3 is absent) |
+| `LSDTT_OPENMP` | `ON` | OpenMP parallelism. **Must be `OFF` on MSVC** — see [Building on Windows](building_on_windows.md#why-openmp-must-be-off-on-msvc) |
+| `LSDTT_GPU` | `OFF` | GPU compute backend (needs the CUDA toolkit) |
+| `BUILD_TESTING` | `ON` | Build the CTest suite |
+| `LSDTT_ENABLE_BENCHMARKS` | `OFF` | RichDEM comparison benchmarks (needs network + pixi) |
+| `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Tests that download data |
+| `LSDTT_ENABLE_PERF_TESTS` | `OFF` | Flow-routing performance benchmarks |
 
----
+## Build directory conventions
 
-## Windows native (QGIS backend only)
+Keep one build directory per configuration. The packaging scripts look in these
+by default, and mixing configurations in one tree silently ships the wrong
+binaries:
 
-This path produces native `.exe` files for the subset of tools the QGIS plugin
-drives. It is **not** the primary development route.
-
-Limitations, up front:
-
-- Full lsdtt3 functionality exists only on Linux (including WSL2).
-- Native Windows is a reduced-feature profile: Eigen and OpenCV are off.
-  FFTW3 *is* included via vcpkg, so spectral analysis and Wiener channel
-  extraction work.
-- Benchmarking suggests the Linux build run under WSL2 on a Windows machine is
-  faster than a native Windows build on the same machine. These builds exist
-  for the QGIS plugin backend, not for performance.
-
-### What you need
-
-- Visual Studio Community 2022 with the C++ build tools
-- `Developer PowerShell for VS 2022`
-- CMake and Ninja on the path in that shell
-- `vcpkg` in your user folder, so dependencies install without admin rights
-
-### Open an x64 developer shell
-
-Launch `Developer PowerShell for VS 2022` from the Start menu.
-
-> [!WARNING]
-> Some Visual Studio shell entries start in an **x86** toolchain context. CMake
-> then picks a 32-bit compiler and rejects `gdal:x64-windows` as incompatible.
-> Always confirm `cl` reports `for x64` before configuring.
-
-If the Start menu shortcut is unavailable, or `cl` reports x86:
-
-```powershell
-& "$env:ProgramW6432\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64
-cl
-```
-
-`x64 Native Tools Command Prompt for VS 2022` works too. Verify the toolchain:
-
-```powershell
-cmake --version
-ninja --version
-cl        # expect: ... Optimizing Compiler Version ... for x64
-```
-
-### Install GDAL and FFTW3 via vcpkg
-
-> [!WARNING]
-> This takes a long time — around 2 hours on a standard 2026 laptop.
-
-```powershell
-git clone https://github.com/microsoft/vcpkg "$env:USERPROFILE\tools\vcpkg"
-& "$env:USERPROFILE\tools\vcpkg\bootstrap-vcpkg.bat"
-& "$env:USERPROFILE\tools\vcpkg\vcpkg.exe" install gdal:x64-windows fftw3:x64-windows
-```
-
-Notes:
-
-- GDAL is required; FFTW3 is optional but cheap (one extra DLL).
-- CMake finds the vcpkg FFTW3 port through its CMake config package
-  (`FFTW3::fftw3`), so pkg-config is not needed on Windows.
-- If Visual Studio has set a conflicting `VCPKG_ROOT`, clear it for the
-  session with `Remove-Item Env:VCPKG_ROOT`.
-
-### Configure and build
-
-From the repository root:
-
-```powershell
-cmake -S . -B build\windows-qgis -G "Ninja" `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\tools\vcpkg\scripts\buildsystems\vcpkg.cmake" `
-  -DVCPKG_TARGET_TRIPLET=x64-windows `
-  -DBUILD_TESTING=OFF `
-  -DLSDTT_OPENMP=OFF `
-  -DLSDTT_EIGEN=OFF `
-  -DLSDTT_OPENCV=OFF `
-  -DLSDTT_GPU=OFF `
-  -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
-
-cmake --build build\windows-qgis
-```
-
-Or build only the CLIs the QGIS bundle needs, rather than the whole tree:
-
-```powershell
-cmake --build build\windows-qgis --target `
-  lsdtt-raster-preprocessing lsdtt-channel-extraction lsdtt-chi-analysis `
-  lsdtt-basin-extraction lsdtt-basin-stats lsdtt-surface-metrics `
-  lsdtt-channel-network-analysis
-```
-
-**`-DLSDTT_OPENMP=OFF` is not optional on MSVC.** Visual Studio's `/openmp`
-selects OpenMP **2.0** (2002), which rejects unsigned loop indices, silently
-ignores `collapse`, and has no min/max reductions — all of which this codebase
-uses. Leaving it on fails with `C3016`, `C4849` and `C7660` part-way through
-`lsdtt3_cpu`. CMake warns about this at configure time.
-
-The loss is smaller than it sounds: `C4849` means `collapse` was being ignored
-anyway, so MSVC was only ever parallelising outer loops. `/openmp:llvm` would
-give real OpenMP 3.1+, but it switches the runtime from `vcomp140.dll` to
-`libomp140.x86_64.dll`, which `package_windows_backend.ps1` does not bundle —
-so that is a deliberate change, not a flag flip.
-
-**`-DBUILD_TESTING=OFF`** drops test targets the bundle does not need and which
-pull in code only exercised on Linux.
-
-Disabling PkgConfig does **not** disable FFTW3; the configure summary should
-still report `FFTW3       : ON`.
-
-### Verify
-
-```powershell
-Get-ChildItem build\windows-qgis\lsdtt-*.exe
-.\build\windows-qgis\lsdtt-raster-preprocessing.exe --version
-```
-
-### Troubleshooting (Windows native)
-
-- GDAL configure error mentioning "configuration files were considered but not
-  accepted" and `64bit`: your shell is on an x86 toolchain. Re-open an x64
-  developer shell and confirm `cl` reports `for x64`.
-- `cl : Command line error D8021 : invalid numeric argument '/Wextra'`: update
-  to a revision whose `CMakeLists.txt` uses MSVC warning flags (`/W4`) rather
-  than GCC-style `-Wextra`.
-
----
-
-## macOS native build (recommended)
-
-Build natively on macOS using Homebrew and Xcode Command Line Tools for full speed
-and a simple workflow. All tools build and run on macOS.
-
-[`lsdtt3_in_macos.md`](lsdtt3_in_macos.md) has the full walkthrough: Xcode CLT
-installation, Homebrew setup, dependencies, CMake configuration, bundling for QGIS,
-and troubleshooting. If you encounter platform-specific issues, the Multipass route
-(below) is an alternative.
-
----
-
-## macOS via Multipass (alternative)
-
-If you prefer a sandboxed Linux environment or encounter macOS-specific problems,
-build inside an Ubuntu 22.04 VM managed by [Multipass](https://multipass.run),
-then follow [Linux](#linux) inside it.
-
-[`lsdtt3_in_macos.md`](lsdtt3_in_macos.md) has the full walkthrough: installing
-Homebrew and Multipass, launching the instance, dependencies, SSH keys and
-cloning, building, and sharing macOS folders into the VM.
+| Build | Directory |
+|---|---|
+| Everyday Linux / WSL2 development | `build/` |
+| Linux release (made by `tools/make_release.sh`) | `build/release/` |
+| Native Windows QGIS backend | `build/windows-qgis/` |
+| Native macOS | `build/macos-core/` |
 
 ---
 
 ## See also
 
-- [`developer_onboarding.md`](developer_onboarding.md) — start here as a new contributor
-- [`lsdtt3_architecture.md`](lsdtt3_architecture.md) — layer design, naming conventions, module APIs
-- [`making_release_packages.md`](making_release_packages.md) — turning a build into a distributable package
-- [`debian_packaging.md`](debian_packaging.md) — building a `.deb`
+- [Developer onboarding](developer_onboarding.md) — start here as a new contributor
+- [Architecture](lsdtt3_architecture.md) — layer design, naming conventions, module APIs
+- [Making release packages](making_release_packages.md) — turning a build into a distributable package
+- [QGIS plugin development](qgis_plugin_development.md) — the plugin and its backend bundle
+- [Debian packaging](debian_packaging.md) — building a `.deb`

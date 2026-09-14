@@ -75,8 +75,11 @@ lsdtt3/
 │   ├── developer_notes/                    — architecture, building, packaging, testing
 │   │   ├── lsdtt3_architecture.md          — this file
 │   │   ├── developer_onboarding.md
-│   │   ├── building_from_source.md
+│   │   ├── building_from_source.md          — build hub + reference Linux build
+│   │   ├── building_on_windows.md           — WSL2 and native (QGIS backend)
+│   │   ├── building_on_macos.md             — native and Multipass
 │   │   ├── making_release_packages.md
+│   │   ├── qgis_plugin_development.md
 │   │   ├── debian_packaging.md
 │   │   ├── lsdtt_utils_guide.md
 │   │   ├── using_lsdtt_flowinfo.md
@@ -925,10 +928,13 @@ CLI source files follow this layout, in order:
 2. `#include` block
 3. `static const` version, citation, and tool-name strings
 4. `print_banner()` — fixed-width box to stdout. Required content: a
-   brief summary of what the CLI does; `|| CLI version: <k_version>`
-   (labelled as the CLI's own version, not the package version);
-   the citation; a line pointing to `-v` / `--version` for the full
-   lsdtt3 release version; and a line pointing to `-h` for parameter help
+   brief summary of what the CLI does; then a versioning box, directly
+   below the summary, containing a line pointing to `-v` / `--version`
+   for the full lsdtt3 release version, `|| This CLI's version : <k_version>`
+   (the CLI's own version, not the package version), and the note that a
+   CLI version below 1.0.0 means the CLI is still experimental and not
+   fully tested; then the citation and a line pointing to `-h` for
+   parameter help. Bump `k_version` to 1.0.0 only once a CLI is tested
 5. helper free functions (if unavoidable — see helper rule below)
 6. `main()`:
    a. call `print_banner()` and `lsdtt_param_parser::parse_args_deferred()`

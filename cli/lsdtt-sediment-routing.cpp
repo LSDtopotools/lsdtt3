@@ -63,10 +63,13 @@ static void print_banner()
         << "|| Battista et al (2022) but adds some extra bells||\n"
         << "|| and whistles for isotope tracking              ||\n"
         << "=====================================================\n"
-        << "|| CLI version: " << k_version  << "\n"
-        << "|| Citation   : " << k_citation << "\n"
-        << "|| -v or --version : full lsdtt3 release version\n"
-        << "|| -h              : help explaining the parameters\n"
+        << "|| -v or --version    : full lsdtt3 release version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| If CLI version number is lower than 1.0.0 it means\n"
+        << "|| this CLI is still experimental and not fully tested.\n"
+        << "=====================================================\n"
+        << "|| Citation : " << k_citation << "\n"
+        << "|| -h       : help explaining the parameters\n"
         << "=====================================================\n\n";
 }
 
