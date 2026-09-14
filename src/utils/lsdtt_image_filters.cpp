@@ -198,6 +198,24 @@ std::vector<double> gaussian_kernel_opencv(int ksize, double sigma)
 // Separable filtering
 // =============================================================================
 
+namespace {
+
+// Row pointers indexed by vertical offset (negative offsets allowed).
+struct const_float_ptr_view
+{
+    const float* const* base;
+    const float* operator[](int k) const { return base[k]; }
+};
+
+bool is_symmetric(const std::vector<float>& k)
+{
+    for (std::size_t i = 0; i < k.size() / 2; ++i)
+        if (k[i] != k[k.size() - 1 - i]) return false;
+    return true;
+}
+
+} // namespace
+
 void separable_filter_f32(
     const std::vector<float>&  src,
     int                        rows,
@@ -214,10 +232,11 @@ void separable_filter_f32(
 
     const int rx = static_cast<int>(kx.size() / 2);
     const int ry = static_cast<int>(ky.size() / 2);
-    std::vector<float> fkx(kx.begin(), kx.end());
-    std::vector<float> fky(ky.begin(), ky.end());
+    const std::vector<float> fkx(kx.begin(), kx.end());
+    const std::vector<float> fky(ky.begin(), ky.end());
+    const bool row_symm_small = is_symmetric(fkx) && fkx.size() <= 5;
+    const bool col_symm       = is_symmetric(fky);
 
-    // Precompute the border-mapped column and row offsets once.
     std::vector<int> col_map(static_cast<std::size_t>(cols + 2 * rx));
     for (int c = -rx; c < cols + rx; ++c)
         col_map[static_cast<std::size_t>(c + rx)] = border_index(c, cols, border);
@@ -225,45 +244,197 @@ void separable_filter_f32(
     for (int r = -ry; r < rows + ry; ++r)
         row_map[static_cast<std::size_t>(r + ry)] = border_index(r, rows, border);
 
-    // Row pass.
+    const int nkx = static_cast<int>(fkx.size());
+    const int nky = static_cast<int>(fky.size());
+    const float* kxp = fkx.data();
+    const float* kyp = fky.data();
+
+    // Row pass. Each row is copied once into a border-padded buffer so the
+    // inner loops are plain pointer arithmetic; the order of every float
+    // operation is exactly as documented in the header.
     std::vector<float> tmp(src.size());
+    std::vector<float> padded(static_cast<std::size_t>(cols + 2 * rx));
     for (int r = 0; r < rows; ++r)
     {
         const float* s = src.data() + static_cast<std::size_t>(r) * cols;
-        float*       t = tmp.data() + static_cast<std::size_t>(r) * cols;
-        for (int c = 0; c < cols; ++c)
+        for (int c = -rx; c < cols + rx; ++c)
+            padded[static_cast<std::size_t>(c + rx)] = s[col_map[static_cast<std::size_t>(c + rx)]];
+        float* t = tmp.data() + static_cast<std::size_t>(r) * cols;
+
+        // Loops run tap-outer, pixel-inner: every pixel still sees exactly the
+        // documented sequence of float operations, but the inner loop has no
+        // dependency between pixels, so the compiler can vectorise it.
+        if (row_symm_small)
         {
-            float acc = fkx[static_cast<std::size_t>(rx)] * s[c];
+            const float* p = padded.data() + rx;               // p[c] is pixel c
+            for (int c = 0; c < cols; ++c) t[c] = kxp[rx] * p[c];
             for (int k = 1; k <= rx; ++k)
             {
-                acc += fkx[static_cast<std::size_t>(rx - k)] *
-                           s[col_map[static_cast<std::size_t>(c - k + rx)]] +
-                       fkx[static_cast<std::size_t>(rx + k)] *
-                           s[col_map[static_cast<std::size_t>(c + k + rx)]];
+                const float w = kxp[rx + k];
+                for (int c = 0; c < cols; ++c)
+                {
+                    const float pair = p[c - k] + p[c + k];
+                    const float term = w * pair;
+                    t[c] = t[c] + term;
+                }
             }
-            t[c] = acc;
+        }
+        else
+        {
+            const float* p = padded.data();                    // p[c] is pixel c - rx
+            for (int c = 0; c < cols; ++c) t[c] = kxp[0] * p[c];
+            for (int k = 1; k < nkx; ++k)
+            {
+                const float w = kxp[k];
+                const float* q = p + k;
+                for (int c = 0; c < cols; ++c)
+                {
+                    const float term = w * q[c];
+                    t[c] = t[c] + term;
+                }
+            }
         }
     }
 
-    // Column pass.
+    // Column pass. For each output row, gather pointers to the border-mapped
+    // rows of the vertical support, then accumulate per pixel.
     dst.assign(src.size(), 0.0f);
+    std::vector<const float*> rp(static_cast<std::size_t>(nky));
     for (int r = 0; r < rows; ++r)
     {
+        for (int k = -ry; k <= ry; ++k)
+            rp[static_cast<std::size_t>(k + ry)] =
+                tmp.data() + static_cast<std::size_t>(row_map[static_cast<std::size_t>(r + k + ry)]) * cols;
+        const const_float_ptr_view up_down{rp.data() + ry};
         float* d = dst.data() + static_cast<std::size_t>(r) * cols;
-        for (int c = 0; c < cols; ++c)
+
+        if (col_symm)
         {
-            float acc = fky[static_cast<std::size_t>(ry)] *
-                        tmp[static_cast<std::size_t>(r) * cols + c];
+            const float* mid = up_down[0];
+            for (int c = 0; c < cols; ++c) d[c] = kyp[ry] * mid[c];
             for (int k = 1; k <= ry; ++k)
             {
-                const int up   = row_map[static_cast<std::size_t>(r - k + ry)];
-                const int down = row_map[static_cast<std::size_t>(r + k + ry)];
-                acc += fky[static_cast<std::size_t>(ry - k)] *
-                           tmp[static_cast<std::size_t>(up) * cols + c] +
-                       fky[static_cast<std::size_t>(ry + k)] *
-                           tmp[static_cast<std::size_t>(down) * cols + c];
+                const float w = kyp[ry + k];
+                const float* dn = up_down[k];
+                const float* up = up_down[-k];
+                for (int c = 0; c < cols; ++c)
+                {
+                    const float pair = dn[c] + up[c];
+                    const float term = w * pair;
+                    d[c] = d[c] + term;
+                }
             }
-            d[c] = acc;
+        }
+        else
+        {
+            const float* first = up_down[-ry];
+            for (int c = 0; c < cols; ++c) d[c] = kyp[0] * first[c];
+            for (int k = 1; k < nky; ++k)
+            {
+                const float w = kyp[k];
+                const float* q = up_down[k - ry];
+                for (int c = 0; c < cols; ++c)
+                {
+                    const float term = w * q[c];
+                    d[c] = d[c] + term;
+                }
+            }
+        }
+    }
+}
+
+
+// =============================================================================
+// Fixed-point Gaussian blur (8-bit)
+// =============================================================================
+
+std::vector<std::uint16_t> gaussian_kernel_fixed_8_8(int ksize, double sigma)
+{
+    require_odd_kernel(ksize, "lsdtt::image::gaussian_kernel_fixed_8_8");
+    const std::vector<double> k = gaussian_kernel_opencv(ksize, sigma);
+    const int n = ksize;
+    const int half = n / 2;
+    std::vector<std::uint16_t> out(static_cast<std::size_t>(n), 0);
+    double err = 0.0;
+    long sum = 0;
+    for (int i = 0; i < half; ++i)
+    {
+        const double adj = k[static_cast<std::size_t>(i)] * 256.0 + err;
+        const double v = round_half_even(adj);
+        err = adj - v;
+        out[static_cast<std::size_t>(i)] = static_cast<std::uint16_t>(v);
+        out[static_cast<std::size_t>(n - 1 - i)] = static_cast<std::uint16_t>(v);
+        sum += static_cast<long>(v);
+    }
+    out[static_cast<std::size_t>(half)] = static_cast<std::uint16_t>(256 - 2 * sum);
+    return out;
+}
+
+void gaussian_blur_u8(
+    const std::vector<std::uint8_t>& src,
+    int                              rows,
+    int                              cols,
+    int                              ksize,
+    double                           sigma,
+    border_mode                      border,
+    std::vector<std::uint8_t>&       dst)
+{
+    const char* who = "lsdtt::image::gaussian_blur_u8";
+    require_image(src.size(), rows, cols, who);
+    require_odd_kernel(ksize, who);
+    if (ksize == 1)
+    {
+        dst = src;
+        return;
+    }
+
+    const std::vector<std::uint16_t> k = gaussian_kernel_fixed_8_8(ksize, sigma);
+    const int radius = ksize / 2;
+
+    std::vector<int> col_map(static_cast<std::size_t>(cols + 2 * radius));
+    for (int c = -radius; c < cols + radius; ++c)
+        col_map[static_cast<std::size_t>(c + radius)] = border_index(c, cols, border);
+    std::vector<int> row_map(static_cast<std::size_t>(rows + 2 * radius));
+    for (int r = -radius; r < rows + radius; ++r)
+        row_map[static_cast<std::size_t>(r + radius)] = border_index(r, rows, border);
+
+    // Integer arithmetic throughout, so summation order does not matter; the
+    // loops run tap-outer, pixel-inner so they vectorise.
+    const int nk = ksize;
+    std::vector<std::uint32_t> h(src.size());
+    std::vector<std::uint32_t> padded(static_cast<std::size_t>(cols + 2 * radius));
+    for (int r = 0; r < rows; ++r)
+    {
+        const std::uint8_t* s = src.data() + static_cast<std::size_t>(r) * cols;
+        for (int c = -radius; c < cols + radius; ++c)
+            padded[static_cast<std::size_t>(c + radius)] = s[col_map[static_cast<std::size_t>(c + radius)]];
+        std::uint32_t* hr = h.data() + static_cast<std::size_t>(r) * cols;
+        for (int c = 0; c < cols; ++c) hr[c] = 0;
+        for (int j = 0; j < nk; ++j)
+        {
+            const std::uint32_t w = k[static_cast<std::size_t>(j)];
+            const std::uint32_t* q = padded.data() + j;
+            for (int c = 0; c < cols; ++c) hr[c] += w * q[c];
+        }
+    }
+
+    dst.assign(src.size(), 0);
+    std::vector<std::uint64_t> acc(static_cast<std::size_t>(cols));
+    for (int r = 0; r < rows; ++r)
+    {
+        for (int c = 0; c < cols; ++c) acc[static_cast<std::size_t>(c)] = 0;
+        for (int i = 0; i < nk; ++i)
+        {
+            const std::uint64_t w = k[static_cast<std::size_t>(i)];
+            const std::uint32_t* q =
+                h.data() + static_cast<std::size_t>(row_map[static_cast<std::size_t>(r + i)]) * cols;
+            for (int c = 0; c < cols; ++c) acc[static_cast<std::size_t>(c)] += w * q[c];
+        }
+        std::uint8_t* d = dst.data() + static_cast<std::size_t>(r) * cols;
+        for (int c = 0; c < cols; ++c)
+        {
+            const std::uint64_t v = (acc[static_cast<std::size_t>(c)] + (1u << 15)) >> 16;
+            d[c] = static_cast<std::uint8_t>(v > 255 ? 255 : v);
         }
     }
 }

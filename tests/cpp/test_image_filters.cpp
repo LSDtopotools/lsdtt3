@@ -456,6 +456,74 @@ void test_separable()
 
 
 // =============================================================================
+// E3-E6 - fixed-point 8-bit Gaussian blur
+// =============================================================================
+void test_fixed_blur()
+{
+    std::cout << "\n--- E: gaussian_blur_u8 (fixed point) ---\n";
+
+    bool sums = true, symm = true;
+    for (int k = 3; k <= 21; k += 2)
+        for (double sigma : {0.5, 1.0, 2.3, 5.0})
+        {
+            const auto kr = img::gaussian_kernel_fixed_8_8(k, sigma);
+            long t = 0;
+            for (auto v : kr) t += v;
+            if (t != 256) sums = false;
+            for (std::size_t i = 0; i < kr.size() / 2; ++i) if (kr[i] != kr[kr.size() - 1 - i]) symm = false;
+        }
+    check("E3 fixed-point kernels sum to exactly 256", sums);
+    check("E4 fixed-point kernels are symmetric", symm);
+
+    // Error diffusion, from the definition: for sigma 2.3, ksize 15 the
+    // running error must stay within +-0.5 and the centre absorbs the rest.
+    {
+        const auto kd = img::gaussian_kernel_opencv(15, 2.3);
+        const auto kr = img::gaussian_kernel_fixed_8_8(15, 2.3);
+        double err = 0.0, worst = 0.0;
+        for (int i = 0; i < 7; ++i)
+        {
+            err += kd[static_cast<std::size_t>(i)] * 256.0 - kr[static_cast<std::size_t>(i)];
+            worst = std::max(worst, std::fabs(err));
+        }
+        check("E5 error-diffused kernel: cumulative rounding error stays within 0.5", worst <= 0.5,
+              "max |cumulative error| " + std::to_string(worst));
+    }
+
+    // Brute force: exact integer convolution then (v + 2^15) >> 16.
+    {
+        const int rows = 17, cols = 31;
+        const auto src = random_u8(rows, cols, 44);
+        int bad = 0;
+        for (border_mode b : k_borders)
+            for (double sigma : {0.7, 1.5, 3.1})
+            {
+                const int k = 2 * static_cast<int>(std::ceil(3 * sigma)) + 1;
+                const auto kr = img::gaussian_kernel_fixed_8_8(k, sigma);
+                std::vector<std::uint8_t> got;
+                img::gaussian_blur_u8(src, rows, cols, k, sigma, b, got);
+                const int r = k / 2;
+                for (int y = 0; y < rows; ++y)
+                    for (int x = 0; x < cols; ++x)
+                    {
+                        std::uint64_t acc = 0;
+                        for (int j = -r; j <= r; ++j)
+                            for (int i = -r; i <= r; ++i)
+                                acc += static_cast<std::uint64_t>(kr[static_cast<std::size_t>(j + r)]) * kr[static_cast<std::size_t>(i + r)] *
+                                       src[static_cast<std::size_t>(ref_border(y + j, rows, b)) * cols + ref_border(x + i, cols, b)];
+                        if (got[static_cast<std::size_t>(y) * cols + x] != static_cast<std::uint8_t>((acc + 32768) >> 16)) ++bad;
+                    }
+            }
+        check("E6 fixed-point blur equals brute-force 2-D integer convolution (kernel wider than image, both borders)",
+              bad == 0, std::to_string(bad) + " pixels differ");
+        std::vector<std::uint8_t> c(static_cast<std::size_t>(rows) * cols, 91), out;
+        img::gaussian_blur_u8(c, rows, cols, 19, 3.1, border_mode::reflect_101, out);
+        check("E7 constant image is unchanged by the fixed-point blur", out == c);
+    }
+}
+
+
+// =============================================================================
 // F - Otsu
 // =============================================================================
 
@@ -736,6 +804,7 @@ int main()
     test_gaussian();
     test_box_mean();
     test_separable();
+    test_fixed_blur();
     test_otsu();
     test_sobel();
     test_bresenham();

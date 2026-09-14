@@ -20,6 +20,7 @@
 #ifdef LSDTT_HAS_OPENCV
 #include "lsdtt_raster_opencv_cpu.hpp"
 #endif
+#include "lsdtt_raster_image_ops_cpu.hpp"
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
@@ -599,11 +600,6 @@ vec_skeleton_result find_vec_skeleton(
     const lsdtt_raster_cpu&     mask,
     const vec_skeleton_request& request)
 {
-#ifndef LSDTT_HAS_OPENCV
-    throw std::runtime_error(
-        "find_vec_skeleton: OpenCV is required for adaptive thresholding "
-        "but was not compiled in (LSDTT_HAS_OPENCV not defined)");
-#else
     vec_skeleton_result result;
 
     // ------------------------------------------------------------------
@@ -638,7 +634,7 @@ vec_skeleton_result find_vec_skeleton(
 
     if (request.adaptive_method == "mean")
     {
-        result.adaptive_binary = opencv_cpu::threshold_adaptive_mean(
+        result.adaptive_binary = image_ops_cpu::threshold_adaptive_mean(
             result.vertical_excess_curvature,
             request.adaptive_block_size,
             request.adaptive_C,
@@ -647,7 +643,7 @@ vec_skeleton_result find_vec_skeleton(
     }
     else
     {
-        result.adaptive_binary = opencv_cpu::threshold_adaptive_gaussian(
+        result.adaptive_binary = image_ops_cpu::threshold_adaptive_gaussian(
             result.vertical_excess_curvature,
             request.adaptive_block_size,
             request.adaptive_C,
@@ -747,8 +743,6 @@ vec_skeleton_result find_vec_skeleton(
     }
 
     return result;
-
-#endif // LSDTT_HAS_OPENCV
 }
 
 

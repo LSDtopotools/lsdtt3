@@ -1985,6 +1985,14 @@ target_link_libraries(lsdtt-test-image-filters PRIVATE lsdtt3_utils)
 add_test(NAME unit_image_filters COMMAND lsdtt-test-image-filters)
 set_tests_properties(unit_image_filters PROPERTIES LABELS "unit;image_ops")
 
+# Native raster image operations vs the frozen OpenCV oracle, plus invariants
+# (OpenCV removal, Phase 2). No OpenCV needed.
+add_executable(lsdtt-test-image-ops cpp/test_image_ops.cpp)
+target_link_libraries(lsdtt-test-image-ops PRIVATE lsdtt3_cpu)
+add_test(NAME unit_image_ops
+         COMMAND lsdtt-test-image-ops ${CMAKE_CURRENT_SOURCE_DIR}/expected/image_ops)
+set_tests_properties(unit_image_ops PROPERTIES LABELS "unit;image_ops")
+
 # Image-ops oracle capture (docs: OpenCV removal, Phase 0). Freezes the
 # behaviour of lsdtt::opencv_cpu into tests/expected/image_ops/ so the native
 # replacements can be checked without OpenCV. Run by hand, never by CTest:

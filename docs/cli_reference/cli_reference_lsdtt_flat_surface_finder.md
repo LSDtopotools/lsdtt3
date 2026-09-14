@@ -312,7 +312,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `flat_opening_radius_metres` | `float` | `0` | `param` | - | Radius (m) for morphological opening of the relief flat mask. | Opening (erosion then dilation) removes thin connections between blobs that should be separate flat surfaces, while restoring the size of the surviving blobs. 0 or negative = disabled. |
 | `open_then_close` | `bool` | `false` | `param` | - | Apply opening before closing instead of closing before opening. | false (default): closing first, then opening. true: opening first, then closing. Has no effect when either radius is 0. |
 
-### Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)
+### Slope break finder (VEC adaptive threshold skeleton)
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|

@@ -241,7 +241,7 @@ elevation_connect_result connect_skeleton_by_elevation(
 //   5. Spur pruning and component filtering
 //   6. Elevation-based contour connection of skeleton endpoints (optional)
 //
-// Requires OpenCV (LSDTT_HAS_OPENCV).
+// Adaptive thresholding is native (lsdtt_raster_image_ops_cpu); no OpenCV.
 // =============================================================================
 struct vec_skeleton_request
 {
@@ -293,7 +293,7 @@ struct vec_skeleton_result
 //   request - parameters
 //
 // Throws:
-//   std::runtime_error - OpenCV unavailable, polyfit failure
+//   std::runtime_error - polyfit failure
 // =============================================================================
 vec_skeleton_result find_vec_skeleton(
     const lsdtt_raster_cpu&     dem,

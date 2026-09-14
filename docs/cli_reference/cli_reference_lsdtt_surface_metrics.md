@@ -483,11 +483,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `frangi_c` | `float` | `1.0` | `param` | - | Frangi c parameter. | Controls suppression of low-structureness responses. Phase 5 decision D7 intentionally changed the scientific default from 15 to 1, matching lsdtt-feature-finder; set 15 explicitly to reproduce the former response. |
 | `frangi_target` | `string` | `ridges` | `param` | - | Feature polarity for the Frangi filter. | Valid options are ridges or valleys. |
 
-### Otsu threshold segmentation (requires OpenCV)
+### Otsu threshold segmentation
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_otsu_raster` | `bool` | `false` | `switch` | - | Write a binary raster produced by Otsu threshold segmentation. | Requires OpenCV (LSDTT_HAS_OPENCV). The DEM is normalised to 8-bit and Otsu's method selects the threshold that minimises intra-class greyscale variance. Output: 1.0 = foreground (above threshold), 0.0 = background. |
+| `write_otsu_raster` | `bool` | `false` | `switch` | - | Write a binary raster produced by Otsu threshold segmentation. | The DEM is normalised to 8-bit and Otsu's method selects the threshold that minimises intra-class greyscale variance. Output: 1.0 = foreground (above threshold), 0.0 = background. |
 
 ### Hough line extraction (requires OpenCV)
 
@@ -522,11 +522,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `curvature_skeleton_spur_max_pixels` | `int` | `10` | `param` | `write_curvature_skeleton_rasters` | Maximum endpoint-rooted spur length (pixels) pruned from curvature skeletons. | 0 = skip spur pruning. |
 | `curvature_skeleton_min_component_pixels` | `int` | `1` | `param` | `write_curvature_skeleton_rasters` | Minimum component size (pixels) retained in curvature skeletons. | Applied after thinning and spur pruning. |
 
-### VEC adaptive thresholding (requires OpenCV)
+### VEC adaptive thresholding
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_vec_adaptive_threshold_rasters` | `bool` | `false` | `switch` | - | Apply adaptive mean and Gaussian thresholding to vertical_excess_curvature. | Requires OpenCV (LSDTT_HAS_OPENCV). Uses curvature_skeleton_lambda_metres for the polyfit scale. Each pixel is compared to the mean (or Gaussian-weighted mean) of its local neighbourhood minus the constant vec_adaptive_C: a pixel is foreground if its normalised 8-bit value &gt; local_mean - vec_adaptive_C. Negative C is stricter (retains only locally brightest pixels). Outputs: _vec_adaptive_mean.&lt;ext&gt;, _vec_adaptive_gaussian.&lt;ext&gt;, and optionally their Zhang-Suen skeletons. |
+| `write_vec_adaptive_threshold_rasters` | `bool` | `false` | `switch` | - | Apply adaptive mean and Gaussian thresholding to vertical_excess_curvature. | Uses curvature_skeleton_lambda_metres for the polyfit scale. Each pixel is compared to the mean (or Gaussian-weighted mean) of its local neighbourhood minus the constant vec_adaptive_C: a pixel is foreground if its normalised 8-bit value &gt; local_mean - vec_adaptive_C. Negative C is stricter (retains only locally brightest pixels). Outputs: _vec_adaptive_mean.&lt;ext&gt;, _vec_adaptive_gaussian.&lt;ext&gt;, and optionally their Zhang-Suen skeletons. |
 | `vec_adaptive_block_size_pixels` | `int` | `51` | `param` | - | Neighbourhood block size (pixels) for adaptive VEC thresholding. | Must be odd and &gt;= 3. Should be larger than the typical feature width but smaller than the between-feature spacing. Larger values make the threshold surface smoother and less sensitive to local intensity variation. |
 | `vec_adaptive_C` | `float` | `0.0` | `param` | - | Constant subtracted from the local neighbourhood mean before VEC thresholding. | Threshold = local_mean - C. 0 = threshold at the local mean (foreground = above-average pixels). Negative (e.g. -5) = stricter, retains only pixels well above the local mean. Positive = looser. |
 | `vec_adaptive_gaussian_sigma` | `float` | `0.0` | `param` | - | Sigma for optional Gaussian pre-blur before adaptive VEC thresholding. | 0 = no blur. A small value (e.g. 1.0) smooths pixel-scale noise before the local threshold is applied. |

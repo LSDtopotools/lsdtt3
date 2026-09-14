@@ -342,6 +342,16 @@ set(LSDTT3_UTILS_SOURCES
 
 add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
 
+# The image-filter primitives reproduce OpenCV's float32 accumulation order bit
+# for bit. Compilers that target hardware with FMA (e.g. Apple Silicon) may
+# otherwise fuse a*b+c into one instruction and change the rounding.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(
+        src/utils/lsdtt_image_filters.cpp
+        src/cpu/lsdtt_raster_image_ops_cpu.cpp
+        PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 target_include_directories(lsdtt3_utils
     PUBLIC
         ${CMAKE_SOURCE_DIR}/src
@@ -420,6 +430,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_binary_mask_vectorise_cpu.cpp
     src/cpu/lsdtt_raster_binary_mask_cpu.cpp
     src/cpu/lsdtt_raster_linear_features_cpu.cpp
+    src/cpu/lsdtt_raster_image_ops_cpu.cpp
     src/cpu/lsdtt_burn_streams_cpu.cpp
     src/cpu/lsdtt_least_cost_path.cpp
     src/cpu/lsdtt_terrace_edge_tracer_cpu.cpp

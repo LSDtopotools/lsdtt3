@@ -62,11 +62,11 @@ inline double hash_uniform(std::uint64_t seed, int r, int c)
     return static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0);
 }
 
-inline lsdtt::lsdtt_raster_meta oracle_meta(int n)
+inline lsdtt::lsdtt_raster_meta oracle_meta(int n, int n_cols = 0)
 {
     lsdtt::lsdtt_raster_meta m;
     m.n_rows        = n;
-    m.n_cols        = n;
+    m.n_cols        = n_cols > 0 ? n_cols : n;
     m.cell_size     = 1.0;
     m.x_min         = 0.0;
     m.y_min         = 0.0;
@@ -76,10 +76,11 @@ inline lsdtt::lsdtt_raster_meta oracle_meta(int n)
 
 // Nodata pattern: a 6-pixel border plus an interior disc of radius n/12
 // centred at (row n/3, col 5n/8).
-inline bool oracle_is_nodata(int n, int r, int c)
+inline bool oracle_is_nodata(int n, int r, int c, int n_cols = 0)
 {
     const int border = 6;
-    if (r < border || c < border || r >= n - border || c >= n - border) return true;
+    const int nc = n_cols > 0 ? n_cols : n;
+    if (r < border || c < border || r >= n - border || c >= nc - border) return true;
     const double rr = r - n / 3.0;
     const double cc = c - 5.0 * n / 8.0;
     const double rad = n / 12.0;
@@ -87,17 +88,18 @@ inline bool oracle_is_nodata(int n, int r, int c)
 }
 
 inline lsdtt::lsdtt_raster_cpu make_oracle_raster(
-    int n, bool with_nodata, double (*z)(int, int, int))
+    int n, bool with_nodata, double (*z)(int, int, int), int n_cols = 0)
 {
-    const lsdtt::lsdtt_raster_meta meta = oracle_meta(n);
-    std::vector<float>   data(static_cast<std::size_t>(n) * n);
-    std::vector<uint8_t> mask(static_cast<std::size_t>(n) * n, 1);
+    const int nc = n_cols > 0 ? n_cols : n;
+    const lsdtt::lsdtt_raster_meta meta = oracle_meta(n, nc);
+    std::vector<float>   data(static_cast<std::size_t>(n) * nc);
+    std::vector<uint8_t> mask(static_cast<std::size_t>(n) * nc, 1);
     for (int r = 0; r < n; ++r)
     {
-        for (int c = 0; c < n; ++c)
+        for (int c = 0; c < nc; ++c)
         {
-            const std::size_t i = static_cast<std::size_t>(r) * n + c;
-            if (with_nodata && oracle_is_nodata(n, r, c))
+            const std::size_t i = static_cast<std::size_t>(r) * nc + c;
+            if (with_nodata && oracle_is_nodata(n, r, c, nc))
             {
                 data[i] = static_cast<float>(meta.no_data_value);
                 mask[i] = 0;
@@ -146,6 +148,16 @@ inline double z_signed(int n, int r, int c)
 
 inline double z_flat(int, int, int) { return 5.0; }
 
+// High-entropy field with fractional values: every 8-bit rounding decision is
+// exercised, so float accumulation order, float-vs-double scaling and the
+// fixed-point kernel construction all change the output if done differently
+// from OpenCV (measured 2026-09-14 against OpenCV 4.13 while it was still
+// installed). Non-square (97 x 113) to catch row/column mix-ups.
+inline double z_entropy(int, int r, int c)
+{
+    return 1000.0 + 0.9 * c + 0.4 * r + 60.0 * hash_uniform(101, r, c);
+}
+
 inline const std::vector<planted_segment>& lines_planted_segments()
 {
     static const std::vector<planted_segment> segs = {
@@ -184,23 +196,52 @@ inline double z_lines(int n, int r, int c)
 
 inline std::vector<oracle_input> make_oracle_inputs()
 {
-    struct field { const char* name; int n; double (*z)(int, int, int); };
+    struct field { const char* name; int n; double (*z)(int, int, int); int n_cols; };
     const field fields[] = {
-        {"ramp",   128, z_ramp},
-        {"peaks",  128, z_peaks},
-        {"noise",  128, z_noise},
-        {"steps",  128, z_steps},
-        {"signed", 128, z_signed},
-        {"flat",   128, z_flat},
-        {"lines",  256, z_lines},
+        {"ramp",    128, z_ramp,    0},
+        {"peaks",   128, z_peaks,   0},
+        {"noise",   128, z_noise,   0},
+        {"steps",   128, z_steps,   0},
+        {"signed",  128, z_signed,  0},
+        {"flat",    128, z_flat,    0},
+        {"lines",   256, z_lines,   0},
+        {"entropy",  97, z_entropy, 113},
     };
     std::vector<oracle_input> out;
     for (const auto& f : fields)
     {
-        out.push_back({std::string(f.name) + "_full",   make_oracle_raster(f.n, false, f.z)});
-        out.push_back({std::string(f.name) + "_nodata", make_oracle_raster(f.n, true,  f.z)});
+        out.push_back({std::string(f.name) + "_full",   make_oracle_raster(f.n, false, f.z, f.n_cols)});
+        out.push_back({std::string(f.name) + "_nodata", make_oracle_raster(f.n, true,  f.z, f.n_cols)});
     }
     return out;
+}
+
+// --- primitive-level oracle input ---------------------------------------------
+// A large high-entropy image for checking the filtering primitives' own 8-bit
+// output (not a thresholded result) against OpenCV. At this size a single
+// different rounding decision anywhere changes the hash. Float variant for the
+// normalisation check.
+inline constexpr int k_primitive_rows = 512;
+inline constexpr int k_primitive_cols = 487;
+
+inline std::vector<std::uint8_t> make_primitive_u8()
+{
+    std::vector<std::uint8_t> v(static_cast<std::size_t>(k_primitive_rows) * k_primitive_cols);
+    for (int r = 0; r < k_primitive_rows; ++r)
+        for (int c = 0; c < k_primitive_cols; ++c)
+            v[static_cast<std::size_t>(r) * k_primitive_cols + c] =
+                static_cast<std::uint8_t>(splitmix64(0xA5A5ULL + static_cast<std::uint64_t>(r) * 100003ULL + c) & 0xFF);
+    return v;
+}
+
+inline std::vector<float> make_primitive_f32()
+{
+    std::vector<float> v(static_cast<std::size_t>(k_primitive_rows) * k_primitive_cols);
+    for (int r = 0; r < k_primitive_rows; ++r)
+        for (int c = 0; c < k_primitive_cols; ++c)
+            v[static_cast<std::size_t>(r) * k_primitive_cols + c] =
+                static_cast<float>(1000.0 + 0.37 * c - 0.21 * r + 61.3 * hash_uniform(202, r, c));
+    return v;
 }
 
 // FNV-1a 64-bit over raw bytes: a tripwire hash for inputs and records.

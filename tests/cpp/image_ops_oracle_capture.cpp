@@ -45,6 +45,7 @@
 
 #include <opencv2/core/utility.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -254,6 +255,82 @@ int main(int argc, char* argv[])
             if (diff) { ++n_records_differing; total_diff_pixels += diff; }
         }
         std::cout << "captured " << in.name << " (" << ops.size() << " records)\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // Primitive-level records: OpenCV's own intermediate 8-bit / 16-bit images
+    // on a large random image, stored as hashes (primitives.csv). These pin the
+    // rounding and accumulation order of each primitive, which thresholded
+    // outputs are too coarse to reveal.
+    // -------------------------------------------------------------------------
+    {
+        const int R = k_primitive_rows, Cc = k_primitive_cols;
+        std::vector<std::uint8_t> u8 = make_primitive_u8();
+        std::vector<float>        f32 = make_primitive_f32();
+        const cv::Mat mu8(R, Cc, CV_8UC1, u8.data());
+        const cv::Mat mf32(R, Cc, CV_32FC1, f32.data());
+
+        std::ofstream prim(out_dir / "primitives.csv");
+        prim << "primitive,params,rows,cols,input_hash,dtype,reference_hash,default_hash\n";
+        const std::string in_u8_hash  = hex64(fnv1a64(u8.data(), u8.size()));
+        const std::string in_f32_hash = hex64(fnv1a64(reinterpret_cast<const unsigned char*>(f32.data()), f32.size() * sizeof(float)));
+
+        auto hash_mat = [](const cv::Mat& m)
+        {
+            return hex64(fnv1a64(m.data, m.total() * m.elemSize()));
+        };
+        auto emit = [&](const std::string& name, const std::string& params, const std::string& in_hash,
+                        const char* dtype, const std::function<cv::Mat()>& run)
+        {
+            set_mode(mode::reference);
+            const std::string ref = hash_mat(run());
+            set_mode(mode::deflt);
+            const std::string def = hash_mat(run());
+            prim << name << ",\"" << params << "\"," << R << ',' << Cc << ',' << in_hash << ','
+                 << dtype << ',' << ref << ',' << def << '\n';
+        };
+
+        for (int block : {11, 21, 31, 51})
+            emit("gaussian_mean_u8", "block=" + std::to_string(block), in_u8_hash, "u8", [&]()
+            {
+                cv::Mat f, g, out;
+                mu8.convertTo(f, CV_32F);
+                cv::GaussianBlur(f, g, cv::Size(block, block), 0, 0, cv::BORDER_REPLICATE | cv::BORDER_ISOLATED);
+                g.convertTo(out, CV_8U);
+                return out;
+            });
+        for (double sigma : {0.7, 1.0, 1.5, 2.3, 3.1})
+            emit("gaussian_blur_u8", "sigma=" + fmt(sigma), in_u8_hash, "u8", [&]()
+            {
+                const int ksize = 2 * static_cast<int>(std::ceil(3.0 * sigma)) + 1;
+                cv::Mat out;
+                cv::GaussianBlur(mu8, out, cv::Size(ksize, ksize), sigma, sigma);
+                return out;
+            });
+        for (int block : {3, 9, 15, 17, 31, 51})
+            emit("box_mean_u8", "block=" + std::to_string(block), in_u8_hash, "u8", [&]()
+            {
+                cv::Mat out;
+                cv::boxFilter(mu8, out, CV_8U, cv::Size(block, block), cv::Point(-1, -1), true,
+                              cv::BORDER_REPLICATE | cv::BORDER_ISOLATED);
+                return out;
+            });
+        emit("normalize_u8", "", in_f32_hash, "u8", [&]()
+        {
+            cv::Mat out;
+            cv::normalize(mf32, out, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+            return out;
+        });
+        for (int ap : {3, 5, 7})
+            for (int dir = 0; dir < 2; ++dir)
+                emit("sobel_s16", "aperture=" + std::to_string(ap) + ";dx=" + std::to_string(1 - dir),
+                     in_u8_hash, "s16", [&]()
+                     {
+                         cv::Mat out;
+                         cv::Sobel(mu8, out, CV_16S, 1 - dir, dir, ap, ap == 7 ? 1.0 / 16.0 : 1.0, 0,
+                                   cv::BORDER_REPLICATE);
+                         return out;
+                     });
     }
 
     {

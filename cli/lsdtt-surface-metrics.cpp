@@ -61,9 +61,10 @@
 #include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_drape_cpu.hpp"
 
+#include "../src/cpu/lsdtt_raster_image_ops_cpu.hpp"
+#include "../src/utils/lsdtt_string_utils.hpp"
 #ifdef LSDTT_HAS_OPENCV
 #include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
-#include "../src/utils/lsdtt_string_utils.hpp"
 #endif
 
 static const std::string k_version  = "1.0.0";
@@ -570,15 +571,14 @@ int main(int argc, char* argv[])
 
 
 
-    // --- Otsu threshold segmentation (requires OpenCV) ---
+    // --- Otsu threshold segmentation ---
     bool_default_map["write_otsu_raster"] = false;
     help_map["write_otsu_raster"] = {"bool","false",
         "Write a binary raster produced by Otsu threshold segmentation.",
-        "Requires OpenCV (LSDTT_HAS_OPENCV). "
         "The DEM is normalised to 8-bit and Otsu's method selects the "
         "threshold that minimises intra-class greyscale variance. "
         "Output: 1.0 = foreground (above threshold), 0.0 = background.",
-        "Otsu threshold segmentation (requires OpenCV)", "switch", ""};
+        "Otsu threshold segmentation", "switch", ""};
 
     // --- Hough line extraction (requires OpenCV) ---
     bool_default_map["write_hough_lines_raster"] = false;
@@ -711,18 +711,18 @@ int main(int argc, char* argv[])
         "Applied after thinning and spur pruning.",
         "Curvature skeleton (VEC + plan curvature relief)", "param", "write_curvature_skeleton_rasters"};
 
-    // --- VEC adaptive thresholding (requires OpenCV) ---
+    // --- VEC adaptive thresholding ---
     bool_default_map["write_vec_adaptive_threshold_rasters"] = false;
     help_map["write_vec_adaptive_threshold_rasters"] = {"bool","false",
         "Apply adaptive mean and Gaussian thresholding to vertical_excess_curvature.",
-        "Requires OpenCV (LSDTT_HAS_OPENCV). Uses curvature_skeleton_lambda_metres "
+        "Uses curvature_skeleton_lambda_metres "
         "for the polyfit scale. Each pixel is compared to the mean (or Gaussian-weighted "
         "mean) of its local neighbourhood minus the constant vec_adaptive_C: a pixel is "
         "foreground if its normalised 8-bit value > local_mean - vec_adaptive_C. "
         "Negative C is stricter (retains only locally brightest pixels). "
         "Outputs: _vec_adaptive_mean.<ext>, _vec_adaptive_gaussian.<ext>, "
         "and optionally their Zhang-Suen skeletons.",
-        "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
+        "VEC adaptive thresholding", "switch", ""};
 
     int_default_map["vec_adaptive_block_size_pixels"] = 51;
     help_map["vec_adaptive_block_size_pixels"] = {"int","51",
@@ -731,7 +731,7 @@ int main(int argc, char* argv[])
         "but smaller than the between-feature spacing. "
         "Larger values make the threshold surface smoother and less sensitive to "
         "local intensity variation.",
-        "VEC adaptive thresholding (requires OpenCV)", "param", ""};
+        "VEC adaptive thresholding", "param", ""};
 
     float_default_map["vec_adaptive_C"] = 0.0f;
     help_map["vec_adaptive_C"] = {"float","0.0",
@@ -740,14 +740,14 @@ int main(int argc, char* argv[])
         "0 = threshold at the local mean (foreground = above-average pixels). "
         "Negative (e.g. -5) = stricter, retains only pixels well above the local mean. "
         "Positive = looser.",
-        "VEC adaptive thresholding (requires OpenCV)", "param", ""};
+        "VEC adaptive thresholding", "param", ""};
 
     float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;
     help_map["vec_adaptive_gaussian_sigma"] = {"float","0.0",
         "Sigma for optional Gaussian pre-blur before adaptive VEC thresholding.",
         "0 = no blur. A small value (e.g. 1.0) smooths pixel-scale noise "
         "before the local threshold is applied.",
-        "VEC adaptive thresholding (requires OpenCV)", "param", ""};
+        "VEC adaptive thresholding", "param", ""};
 
     bool_default_map["write_vec_adaptive_skeleton_rasters"] = false;
     help_map["write_vec_adaptive_skeleton_rasters"] = {"bool","false",
@@ -756,7 +756,7 @@ int main(int argc, char* argv[])
         "to both the mean and Gaussian adaptive outputs. "
         "Outputs: _vec_adaptive_mean_skeleton.<ext>, _vec_adaptive_gaussian_skeleton.<ext>."
         "Only active when write_vec_adaptive_threshold_rasters = true.",
-        "VEC adaptive thresholding (requires OpenCV)", "switch", ""};
+        "VEC adaptive thresholding", "switch", ""};
 
     // --- Cloth drape ---
     bool_default_map["write_cloth_envelope_raster"] = false;
@@ -888,16 +888,11 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Cross-parameter logic
     //
-    // If either OpenCV output is requested but OpenCV was not compiled in,
-    // warn and disable so the pipeline continues cleanly for the other steps.
+    // If the Hough output (still OpenCV-based) is requested but OpenCV was not
+    // compiled in, warn and disable so the pipeline continues cleanly for the
+    // other steps.
     // -------------------------------------------------------------------------
 #ifndef LSDTT_HAS_OPENCV
-    if (bf["write_otsu_raster"])
-    {
-        std::cerr << "Warning: write_otsu_raster requested but this build "
-                     "does not include OpenCV. Skipping.\n";
-        bf["write_otsu_raster"] = false;
-    }
     if (bf["write_hough_lines_raster"])
     {
         std::cerr << "Warning: write_hough_lines_raster requested but this "
@@ -1681,7 +1676,6 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 6 - Otsu threshold segmentation
     // -------------------------------------------------------------------------
-#ifdef LSDTT_HAS_OPENCV
     if (bf["write_otsu_raster"])
     {
         std::cout << "\n--- Otsu threshold segmentation ---\n";
@@ -1690,11 +1684,7 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::lsdtt_raster_cpu otsu_result =
-                lsdtt::opencv_cpu::threshold_otsu(
-                    dem,
-                    n_threads,
-                    0   // disable OpenCV pool; we use n_threads
-                );
+                lsdtt::image_ops_cpu::threshold_otsu(dem, n_threads);
 
             const std::string o = pp.make_output_path( "_otsu" + output_ext);
             std::cout << "Writing: " << o << "\n";
@@ -1711,7 +1701,6 @@ int main(int argc, char* argv[])
                       << e.what() << "\n";
         }
     }
-#endif
 
     // -------------------------------------------------------------------------
     // Step 7 - Hough line extraction
@@ -1850,9 +1839,8 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Step 9 - VEC adaptive thresholding (requires OpenCV)
+    // Step 9 - VEC adaptive thresholding
     // -------------------------------------------------------------------------
-#ifdef LSDTT_HAS_OPENCV
     if (bf["write_vec_adaptive_threshold_rasters"])
     {
         std::cout << "\n--- VEC adaptive thresholding ---\n";
@@ -1893,7 +1881,7 @@ int main(int argc, char* argv[])
 
             // Adaptive mean threshold
             lsdtt::lsdtt_raster_cpu mean_binary =
-                lsdtt::opencv_cpu::threshold_adaptive_mean(
+                lsdtt::image_ops_cpu::threshold_adaptive_mean(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
                 const std::string o = pp.make_output_path( "_vec_adaptive_mean" + output_ext);
@@ -1904,7 +1892,7 @@ int main(int argc, char* argv[])
 
             // Adaptive Gaussian threshold
             lsdtt::lsdtt_raster_cpu gauss_binary =
-                lsdtt::opencv_cpu::threshold_adaptive_gaussian(
+                lsdtt::image_ops_cpu::threshold_adaptive_gaussian(
                     vec_raster, block_size, C_val, sigma, n_threads);
             {
                 const std::string o = pp.make_output_path( "_vec_adaptive_gaussian" + output_ext);
@@ -1942,13 +1930,6 @@ int main(int argc, char* argv[])
                       << e.what() << "\n";
         }
     }
-#else
-    if (bf["write_vec_adaptive_threshold_rasters"])
-    {
-        std::cerr << "Warning: write_vec_adaptive_threshold_rasters requested but this "
-                     "build does not include OpenCV. Skipping.\n";
-    }
-#endif
 
     // -------------------------------------------------------------------------
     // Step 10 - Cloth drape (upper envelope + incision)

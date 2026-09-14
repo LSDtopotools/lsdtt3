@@ -126,7 +126,30 @@ def main():
     ap.add_argument("--fixture-dir", required=True, type=Path)
     ap.add_argument("--work-dir", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--check", action="store_true",
+                    help="run each CLI once (current build, default environment) and "
+                         "compare against the reference hashes in --out instead of writing it")
     args = ap.parse_args()
+
+    if args.check:
+        want = {(r["cli"], r["file"]): r["reference_sha256"]
+                for r in csv.DictReader(args.out.open())}
+        n_same = n_diff = 0
+        for exe_name, template in CASES:
+            exe = (args.bin_dir / exe_name).resolve()
+            got = run_case(exe, template, args.fixture_dir.resolve(),
+                           args.work_dir / f"{exe_name}_check", {})
+            for name in sorted(set(got) | {f for (c, f) in want if c == exe_name}):
+                w = want.get((exe_name, name), "")
+                g = got.get(name, "")
+                status = "same" if (w and w == g) else ("MISSING" if not g else ("NEW" if not w else "DIFFERS"))
+                if status == "same":
+                    n_same += 1
+                else:
+                    n_diff += 1
+                print(f"{status:8s} {exe_name} {name}")
+        print(f"identical: {n_same}; different/missing/new: {n_diff}")
+        sys.exit(0 if n_diff == 0 else 1)
 
     rows = []
     for exe_name, template in CASES:

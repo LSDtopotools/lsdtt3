@@ -108,6 +108,15 @@ if(Eigen3_FOUND)
     list(APPEND LSDTT3_CPU_SOURCES "${LSDTT3_SRC_DIR}/cpu/lsdtt_chi_ksn_inversion_cpu.cpp")
 endif()
 
+# The image-filter primitives reproduce OpenCV's float32 accumulation order bit
+# for bit; stop FMA-capable targets fusing a*b+c (see the top-level CMakeLists).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(
+        "${LSDTT3_SRC_DIR}/utils/lsdtt_image_filters.cpp"
+        "${LSDTT3_SRC_DIR}/cpu/lsdtt_raster_image_ops_cpu.cpp"
+        PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 if(WIN32)
     # Keep the LSDTT implementation inside the extension on Windows. The
     # project does not annotate its C++ API for DLL export, so a separate

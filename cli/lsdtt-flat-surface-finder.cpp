@@ -24,7 +24,7 @@
 //      Removes thin connections between blobs that should be separate.
 //      Order of steps 2 and 3 is controlled by open_then_close.
 //   4. Remove components < min_component_pixels -> working flat mask
-//   5. Slope break detection (requires OpenCV): adaptive thresholding of
+//   5. Slope break detection: adaptive thresholding of
 //      vertical_excess_curvature -> closing -> Zhang-Suen skeleton -> spur and
 //      terminal-loop pruning -> optional elevation-based endpoint bridging.
 //   6. Optional channel breaks (break_flats_with_channels): D8 drainage-area
@@ -73,11 +73,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-// opencv must precede any header that transitively includes lsdtt_array2d.hpp
-#ifdef LSDTT_HAS_OPENCV
-#include "../src/cpu/lsdtt_raster_opencv_cpu.hpp"
-#endif
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
@@ -255,26 +250,26 @@ int main(int argc, char* argv[])
         "Has no effect when either radius is 0.",
         "Morphological post-processing of relief mask", "param", ""};
 
-    // --- Slope break finder (VEC adaptive threshold skeleton, requires OpenCV) ---
+    // --- Slope break finder (VEC adaptive threshold skeleton) ---
     float_default_map["polyfit_lambda_metres"] = 100.0f;
     help_map["polyfit_lambda_metres"] = {"float","100",
         "Window half-wavelength (m) for the direct polyfit curvature computation.",
         "Controls the scale of the fitted surface.  Larger values smooth more.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     string_default_map["vec_adaptive_method"] = "gaussian";
     help_map["vec_adaptive_method"] = {"string","gaussian",
         "Adaptive thresholding method applied to vertical_excess_curvature.",
         "gaussian: Gaussian-weighted local mean (smoother threshold surface). "
         "mean: unweighted local mean.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     int_default_map["vec_adaptive_block_size_pixels"] = 51;
     help_map["vec_adaptive_block_size_pixels"] = {"int","51",
         "Neighbourhood block size (pixels) for adaptive VEC thresholding.",
         "Must be odd and >= 3.  Should be larger than a typical slope-break "
         "feature width but smaller than the between-feature spacing.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     float_default_map["vec_adaptive_C"] = 0.0f;
     help_map["vec_adaptive_C"] = {"float","0.0",
@@ -282,25 +277,25 @@ int main(int argc, char* argv[])
         "Threshold = local_mean - C.  "
         "0 = foreground where VEC is above the local mean.  "
         "Negative (e.g. -5) = stricter, retains only pixels well above the local mean.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;
     help_map["vec_adaptive_gaussian_sigma"] = {"float","0.0",
         "Sigma for an optional Gaussian pre-blur before adaptive thresholding.",
         "0 = no blur.  A small value (e.g. 1.0) suppresses pixel-scale noise.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     float_default_map["slope_break_closing_radius_metres"] = 0.0f;
     help_map["slope_break_closing_radius_metres"] = {"float","0",
         "Closing radius (m) applied to the adaptive binary mask before skeletonisation.",
         "Seals small gaps in the detected slope-break regions.  0 = disabled.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     int_default_map["slope_break_binary_min_component_pixels"] = 1;
     help_map["slope_break_binary_min_component_pixels"] = {"int","1",
         "Minimum connected-component size (pixels) retained in the adaptive binary mask.",
         "Applied before skeletonisation.  1 = keep all components.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     // The demotion, made explicit. The VEC skeleton stays as a morphometric
     // product; what changes is that it no longer breaks the mask before
@@ -322,65 +317,65 @@ int main(int argc, char* argv[])
     help_map["write_slope_break_centreline_raster"] = {"bool","true",
         "Write the 1-pixel slope-break skeleton.",
         "Output suffix: _slope_break_centreline.tif",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
 
     int_default_map["slope_break_centreline_max_spur_pixels"] = 10;
     help_map["slope_break_centreline_max_spur_pixels"] = {"int","10",
         "Maximum endpoint-rooted spur length (pixels) removed from the skeleton.",
         "0 = skip spur pruning.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     int_default_map["slope_break_centreline_max_terminal_loop_pixels"] = 10;
     help_map["slope_break_centreline_max_terminal_loop_pixels"] = {"int","10",
         "Maximum endpoint-rooted terminal loop length (pixels) removed from the skeleton.",
         "0 = skip terminal loop pruning.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     int_default_map["slope_break_centreline_min_component_pixels"] = 1;
     help_map["slope_break_centreline_min_component_pixels"] = {"int","1",
         "Minimum component size (pixels) retained in the skeleton.",
         "Applied after thinning and spur pruning.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     float_default_map["slope_break_connect_search_radius_metres"] = 0.0f;
     help_map["slope_break_connect_search_radius_metres"] = {"float","0",
         "Search radius (m) for elevation-based skeleton endpoint connection.",
         "Bridges nearby endpoints on the same contour.  0 = disabled.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     float_default_map["slope_break_connect_elevation_tolerance_metres"] = 2.0f;
     help_map["slope_break_connect_elevation_tolerance_metres"] = {"float","2",
         "Maximum elevation difference (m) allowed between two bridged endpoints.","",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     float_default_map["slope_break_connect_corridor_half_width_pixels"] = 12.0f;
     help_map["slope_break_connect_corridor_half_width_pixels"] = {"float","12",
         "Half-width (pixels) of the A* corridor for contour-routed bridges.","",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     bool_default_map["slope_break_connect_same_component"] = false;
     help_map["slope_break_connect_same_component"] = {"bool","false",
         "Allow bridging between endpoints on the same skeleton component.",
         "Default false: only bridge endpoints from different components.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "param", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
 
     bool_default_map["write_slope_break_endpoints"] = false;
     help_map["write_slope_break_endpoints"] = {"bool","false",
         "Write skeleton endpoints and their DEM elevations to a FlatGeobuf point layer.",
         "Output suffix: _slope_break_endpoints.fgb  Fields: row, col, elev_m, comp_size.",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
 
     bool_default_map["write_slope_break_bridge_mask_raster"] = true;
     help_map["write_slope_break_bridge_mask_raster"] = {"bool","true",
         "Write the raster of newly inserted bridge pixels from skeleton reconnection.",
         "Output suffix: _slope_break_bridge_mask.tif",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
 
     bool_default_map["write_slope_break_centreline_connected_raster"] = true;
     help_map["write_slope_break_centreline_connected_raster"] = {"bool","true",
         "Write the connected skeleton after accepted bridge routing.",
         "Output suffix: _slope_break_centreline_connected.tif",
-        "Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)", "switch", ""};
+        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
 
     // --- Component filtering ---
     int_default_map["min_component_pixels"] = 100;

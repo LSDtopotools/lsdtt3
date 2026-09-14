@@ -102,9 +102,18 @@ int border_index(int i, int n, border_mode mode);
 //
 // Correlate a float image with kx along rows, then ky along columns (no kernel
 // flip, matching OpenCV's sepFilter2D). Both kernels must have odd length; the
-// anchor is the centre. Intermediate and final sums are accumulated in float,
-// centre weight first and then symmetric pairs outward, which is the order
-// OpenCV's symmetric-kernel column filters use.
+// anchor is the centre. All sums are float32, accumulated in the order OpenCV's
+// CV_32F filter engine uses (filter.simd.hpp), so results match bit for bit:
+//
+//   row, symmetric kernel, ksize <= 5 (SymmRowSmallFilter):
+//       k0*S[0] + k1*(S[-1] + S[1]) + k2*(S[-2] + S[2])
+//   row, otherwise (RowFilter): left to right, kx[0]*S[-r] + kx[1]*S[-r+1] + ...
+//   column, symmetric kernel (SymmColumnFilter):
+//       ky0*S[0] + ky1*(S[+1] + S[-1]) + ky2*(S[+2] + S[-2]) + ...
+//   column, otherwise (ColumnFilter): top to bottom, ky[0]*S[-r] + ...
+//
+// "Symmetric" means kernel[i] == kernel[n-1-i] exactly. Multiply and add are
+// never fused (the file is compiled with -ffp-contract=off where supported).
 // -----------------------------------------------------------------------------
 void separable_filter_f32(
     const std::vector<float>&  src,
@@ -115,6 +124,38 @@ void separable_filter_f32(
     border_mode                border,
     std::vector<float>&        dst
 );
+
+
+// -----------------------------------------------------------------------------
+// gaussian_blur_u8
+//
+// Bit-exact port of OpenCV's 8-bit GaussianBlur (smooth.dispatch.cpp ->
+// GaussianBlurFixedPoint), which cv::GaussianBlur always takes for CV_8U input:
+//
+//   1. Kernel: gaussian_kernel_opencv(ksize, sigma), converted to 8.8 fixed
+//      point with error diffusion (getGaussianKernelFixedPoint_ED): for
+//      i < ksize/2, adj = k[i]*256 + err; v = round_half_even(adj);
+//      err = adj - v; symmetric; centre = 256 - 2*sum(others).
+//   2. Horizontal: h = sum kraw[j] * src[r, border(c+j-radius)]   (exact)
+//   3. Vertical:   v = sum kraw[i] * h[border(r+i-radius), c]     (exact)
+//   4. Output:     (v + 2^15) >> 16, saturated to 0..255.
+//
+// The same kernel is used in both directions. ksize must be odd and >= 1.
+// OpenCV builds the kernel with software floating point; this uses double, so a
+// kernel value exactly on a rounding boundary could in principle differ.
+// -----------------------------------------------------------------------------
+void gaussian_blur_u8(
+    const std::vector<std::uint8_t>& src,
+    int                              rows,
+    int                              cols,
+    int                              ksize,
+    double                           sigma,
+    border_mode                      border,
+    std::vector<std::uint8_t>&       dst
+);
+
+// The 8.8 fixed-point kernel of step 1 above (sums to exactly 256).
+[[nodiscard]] std::vector<std::uint16_t> gaussian_kernel_fixed_8_8(int ksize, double sigma);
 
 
 // =============================================================================
