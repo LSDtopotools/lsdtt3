@@ -1531,7 +1531,10 @@ had peaked at 3.5 GB in `describe_fixture()`, and 441 of its 504 rows read
 exactly 3556.98 MiB. Memory columns from campaigns before 2026-09-13 are invalid
 except where a value exceeds that floor. Each campaign now records `rss_floor`
 (`/bin/true` through the launcher: 11.0 MiB on WSL2, against 93.0 MiB launched
-directly) and fails a tripwire above 64 MiB.
+directly) and fails a tripwire above 64 MiB. **Confirmed on the server
+2026-09-13 (forth01):** floor 10.5 MiB through the launcher against 942.5 MiB
+launched directly; 233 distinct peak values across 318 rows, none near the
+floor, scaling with grid size.
 
 ### Accumulation runs on a shared, pre-filled DEM
 
@@ -1970,8 +1973,12 @@ checks fail on it. `validate()` remains public, documented as test-time only.
   and a 50 x 50 km 1 m lidar mosaic is 2.5e9 cells. It was also a small gain.
 - *Single-precision slopes.* Changes output bytes.
 
-**Speed.** Not yet measured on a server; the before/after is part of the next
-server allocation (`315e81a`, `7e81a39` and `eb65499` built side by side).
+**Speed (server).** Measured in the 2026-09-13 forth01 campaign against the
+2026-09-09 forth02 campaign; see "Server campaign 2026-09-13" below for the
+method and caveats. Single thread, old time / new time: D8 drainage area as
+shipped (s-vector on) **2.07-2.38x** faster, s-vector off **1.33-1.71x**,
+growing with grid size. forth01 ran unchanged code 5-24% slower than forth02,
+so these understate the gain slightly.
 
 !!! warning "Laptop figures only -- not results"
     The only measurements so far are from a thermally limited laptop (4-core,
@@ -2000,6 +2007,97 @@ must keep the strict first-wins tie-break). The junction network BUILD itself,
 not its audit: with a dense channel network it cost more than the D8 build
 (laptop, same warning as above: 4.0 s against 1.6 s on a 4000² alpine grid at a
 50-pixel threshold).
+
+### Server campaign 2026-09-13 (forth01): speedups confirmed, thread scaling not measured
+
+`server` profile (1000/2000/4000², threads 1/2/4/8, 5 repeats) at `39b5293`
+(dirty tree), on **forth01**. The previous campaign (2026-09-09) ran on
+**forth02**. Same CPU model (AMD EPYC 9654P, one socket, 192 logical cores),
+compiler (GCC 13.3.0, Release), reference package versions, and byte-identical
+fixtures (same SHA256 prefixes). Neither run was an exclusive allocation. 318
+rows, all `ok`. Raw data: `../data/benchmarking/server_forth01.geos.ed.ac.uk_20260913_162715`.
+
+**The machines were not equivalent during the run.** The reference engines did
+not change between campaigns, so their movement measures the machine:
+
+| drift control (old time / new time; < 1 = forth01 slower) | median | range |
+|---|---|---|
+| RichDEM (serial) | 0.89 | 0.76-1.00 |
+| TopoToolbox (serial) | 0.92 | 0.82-1.00 |
+| Whitebox, serial tools (D-inf, MFD, Wang & Liu) | 0.75-0.93 | |
+| Whitebox, internally multi-threaded tools (slope, hillshade, curvature, D8) | 0.25-0.63 | |
+| lsdtt3, code unchanged since 09-09 (fill, breach, fill_epsilon, fill-spill-merge, D-inf, MFD; 1 thread) | 0.85 | 0.76-0.95 |
+
+The slowdown was worst on the largest grids, which points to memory-bandwidth
+contention.
+
+**Thread scaling was NOT measured.** Every multi-threaded measurement in the
+campaign took the same time at 2, 4 and 8 threads as at 1. Process CPU time
+divided by wall time was 1.3-1.7 at every thread count, for lsdtt3 and for
+Whitebox alike. For example, `polyfit_all` on alpine_4000 took 2.29 s at 1 thread
+and 2.18 s at 8 (forth02: 2.13 s and 0.62 s). Something limited the whole job to
+about 1.5 cores. Candidates, not yet resolved: a per-user CPU limit or load on
+forth01, or (not ruled out) an interaction with the `rusage_launcher.py` launch
+path, which is the only harness change since 09-09. No scaling figure from this
+campaign may be quoted, and no Whitebox timing from its multi-threaded tools.
+
+**lsdtt3 speedups (single thread, old time / new time, all six fixtures):**
+
+| case | speedup | code change |
+|---|---|---|
+| `accum_d8` (s-vector on, as shipped) | **2.07-2.38x** | D8 flow object refactor, `validate()` removed from `create()` |
+| `accum_d8_no_svector` | **1.33-1.71x** | same |
+| `hillshade` | **1.56-1.65x** | no input copies, invalid-cell plane |
+| `slope_only`, `polyfit_all` (1 thread) | 0.90-0.94 | unchanged; matches the machine |
+
+**Where lsdtt3 now stands (same run, 1 thread; reference time / lsdtt3 time):**
+
+| case | RichDEM | TopoToolbox | Whitebox (serial tools only) |
+|---|---|---|---|
+| D8 as shipped | 1.04-1.17 | 1.56-1.78 | (multi-threaded, not comparable) |
+| D8, s-vector off | 1.41-1.71 | 2.09-2.43 | (multi-threaded, not comparable) |
+| D-inf | 0.93-1.16 | n/a | 0.70-0.89 |
+| MFD (Quinn vs Freeman) | 0.64-0.66 | n/a | 0.53-0.63 |
+| fill, reconstruction | - | 0.80-1.09 | n/a |
+| fill, priority-flood | 0.50-0.55 alpine, 0.64-0.79 lakeland | 0.71-0.95 alpine, 3.3-9.5 lakeland | 0.13-0.19 alpine, 2.4-18 lakeland |
+| fill_epsilon | 0.94-1.04 | n/a | 0.88-1.13 alpine, 1.18-1.71 lakeland |
+| breach (Lindsay 2016) | 0.96-1.06 | - | n/a |
+| breach, least-cost | n/a | - | 0.53-1.27 alpine, 0.20-0.21 lakeland |
+| hillshade | n/a | 0.51-0.56 | (multi-threaded, not comparable) |
+| slope_only (lsdtt3 at 1 thread) | 0.43-0.49 | 0.95-1.01 | (multi-threaded, not comparable) |
+| polyfit_all (lsdtt3 at 1 thread; metric sets differ) | 0.20-0.26 | 1.05-1.21 | (multi-threaded, not comparable) |
+
+On 2026-09-09 the D8 build as shipped was 0.46-0.48x RichDEM and 0.60-0.73x
+TopoToolbox (4000²); it now beats both. Hillshade went from 0.31x TopoToolbox
+to 0.55x. The surface-metric ratios against RichDEM are single-thread lsdtt3
+against serial RichDEM; lsdtt3's multi-threaded figures would change them, but
+this campaign could not measure those.
+
+**Memory (peak RSS of the whole process, 4000²; reference MiB / lsdtt3 MiB, > 1 =
+lsdtt3 uses less).** Python reference processes carry ~100-200 MiB of
+interpreter and NumPy before any work, so the small-grid ratios flatter lsdtt3;
+4000² is the rung to read.
+
+| case | RichDEM | TopoToolbox | Whitebox |
+|---|---|---|---|
+| D8 as shipped (lsdtt3 1015 MiB) | 0.99 | 1.33 | 1.33-1.34 |
+| D8, s-vector off (769 MiB) | 1.31 | 1.75 | 1.76 |
+| D-inf (1320-1364 MiB) | 0.74-0.76 | n/a | 0.99-1.02 |
+| MFD (2734-2736 MiB) | 0.37 | n/a | 0.49 |
+| fill, priority-flood (570-585 MiB) | 0.61-0.62 | 0.81-0.84 | 3.03-3.11 |
+| fill_epsilon (570-585 MiB) | 0.59 | n/a | 3.01-3.08 |
+| breach (539-555 MiB) | 0.76-0.78 | - | n/a |
+| breach, least-cost (434-533 MiB) | n/a | - | 3.33-4.07 |
+| hillshade (285 MiB) | n/a | 1.57 | 4.67 |
+| slope_only / polyfit_all (742-743 MiB) | 0.45 / 0.59 | 1.01 / 1.69 | 1.79 / 2.29 |
+
+The s-vector costs 246 MiB at 4000² (1015 against 769 MiB), 15.4 B/cell of
+peak memory. This is the first campaign in which that is visible.
+
+**To do before quoting scaling:** establish why the job had ~1.5 cores (check
+`cpu.max` / `Cpus_allowed_list` / load on the node, and one direct
+`/usr/bin/time -v` run of a surface CLI at `n_threads: 8` outside the harness),
+then re-run `--suites surface` where 8 threads really get 8 cores.
 
 ## 7. Cosmogenic nuclide testing
 
@@ -4846,8 +4944,10 @@ value, finite and NaN nodata values, 1x1/2x5/3x3 grids, a real DEM) at 1 and 4
 threads. Pinned permanently by section C6 of `unit_surface_metrics`, which
 compares the three 3x3 kernels with verbatim reference copies of the old
 algorithms (memcmp, data and mask). C6 was mutation-tested: dropping one cell
-from the window OR fails it. The speedup was confirmed in direction on the
-laptop; the quotable figure awaits the server campaign.
+from the window OR fails it. Server result (2026-09-13 forth01 against
+2026-09-09 forth02, single thread): **1.56-1.65x** faster on every fixture; see
+"Server campaign 2026-09-13" in section 6. Multi-threaded hillshade was not
+measurable in that run.
 
 Note on the end-to-end benchmark: it is too noisy on this thermally-constrained
 laptop to confirm the ratio cleanly - TopoToolbox's *own* reference time moved
