@@ -18,6 +18,7 @@
 #include "lsdtt_proximity_cpu.hpp"
 #include "../core/lsdtt_flow_base.hpp"
 #include "../utils/lsdtt_binary_array2d_tracing.hpp"
+#include "../utils/lsdtt_image_filters.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -390,42 +391,6 @@ static std::vector<double> build_frangi_scales(const frangi_request& request)
 }
 
 // -----------------------------------------------------------------------------
-// build_gaussian_kernel_1d
-// -----------------------------------------------------------------------------
-static std::vector<double> build_gaussian_kernel_1d(double sigma_pixels)
-{
-    if (!std::isfinite(sigma_pixels) || sigma_pixels <= 0.0)
-    {
-        throw std::runtime_error(
-            "lsdtt::frangi_filter: sigma in pixels must be finite and > 0"
-        );
-    }
-
-    const int radius = std::max(
-        1,
-        static_cast<int>(std::ceil(3.0 * sigma_pixels))
-    );
-
-    std::vector<double> kernel(static_cast<std::size_t>(2 * radius + 1), 0.0);
-
-    double sum = 0.0;
-    for (int k = -radius; k <= radius; ++k)
-    {
-        const double x = static_cast<double>(k);
-        const double w = std::exp(-(x * x) / (2.0 * sigma_pixels * sigma_pixels));
-        kernel[static_cast<std::size_t>(k + radius)] = w;
-        sum += w;
-    }
-
-    for (double& w : kernel)
-    {
-        w /= sum;
-    }
-
-    return kernel;
-}
-
-// -----------------------------------------------------------------------------
 // gaussian_smooth_conservative
 //
 // Applies separable Gaussian smoothing. Output is valid only where the full
@@ -443,7 +408,7 @@ static lsdtt_raster_cpu gaussian_smooth_conservative(
     }
 
     const double sigma_pixels = sigma_metres / meta.cell_size;
-    const std::vector<double> kernel = build_gaussian_kernel_1d(sigma_pixels);
+    const std::vector<double> kernel = image::gaussian_kernel_truncated(sigma_pixels);
     const int radius = static_cast<int>(kernel.size() / 2);
 
     const int nrows = meta.n_rows;
