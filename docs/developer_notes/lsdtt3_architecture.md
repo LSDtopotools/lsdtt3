@@ -11,7 +11,7 @@ Can also be used as a developer guide.
 - **Package name:** lsdtt3
 - **Repository:** https://github.com/LSDtopotools/lsdtt3
 - **Copyright:** Simon M. Mudd
-- **Licence:** GPL-3.0
+- **Licence:** AGPL-3.0-or-later
 - **C++ standard:** C++17
 - **Build system:** CMake 3.15+
 

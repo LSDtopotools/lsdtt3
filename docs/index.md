@@ -47,4 +47,4 @@ If you use lsdtt3 in research, please also cite the original LSDTopoTools2:
 
 > Mudd, S. M., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Gailleton, B., Hurst, M. D., Valters, D. V., Wickert, A. D., & Hutton, E. W. H. (2023). LSDtopotools/LSDTopoTools2: LSDTopoTools2 v0.9. Zenodo. [https://doi.org/10.5281/zenodo.8076231](https://doi.org/10.5281/zenodo.8076231)
 
-**Copyright:** Simon M. Mudd | **Licence:** GPL-3.0
+**Copyright:** Simon M. Mudd | **Licence:** AGPL-3.0-or-later

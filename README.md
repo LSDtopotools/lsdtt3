@@ -5,7 +5,7 @@
 A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) with a modern C++ architecture.
 
 **Copyright:** Simon M. Mudd  
-**Licence:** GPL-3.0  
+**Licence:** AGPL-3.0-or-later  
 **Additional developers:** Rutger Vervoordeldonk, Boris Gailleton
 
 **Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Martin Hurst, Declan Valters 

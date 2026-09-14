@@ -227,7 +227,8 @@ not yet submitted to conda-forge because the repository is private.
 
 When the repository goes public:
 
-1. Update the `source.sha256` field in `conda-recipe/meta.yaml`:
+1. In `conda-recipe/meta.yaml`, replace `source: path: ..` with the tagged
+   tarball `url:` (already there, commented out), and fill in `sha256`:
    ```bash
    curl -fsSL https://github.com/LSDtopotools/lsdtt3/archive/refs/tags/vX.Y.Z.tar.gz \
        | sha256sum
@@ -247,7 +248,9 @@ conda build conda-recipe/
 ```
 
 This builds the package on your local machine using your local source tree. The
-result is a `.tar.bz2` file you can install with `conda install --use-local lsdtt3`.
+result is a `.conda` file you can install with `conda install --use-local lsdtt3`.
+Built from the working tree, the binaries report a `-dev` version; that is
+expected.
 
 ### Personal Anaconda.org channel (interim, before conda-forge)
 
