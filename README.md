@@ -5,7 +5,7 @@
 A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) with a modern C++ architecture.
 
 **Copyright:** Simon M. Mudd  
-**Licence:** GPL-3.0  
+**Licence:** AGPL-3.0-or-later  
 **Additional developers:** Rutger Vervoordeldonk, Boris Gailleton
 
 **Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Martin Hurst, Declan Valters 
@@ -145,15 +145,14 @@ OpenMP is included with GCC and needs no separate install.
 ### Windows (WSL2)
 
 Build inside a WSL2 Ubuntu environment and use the Ubuntu instructions above.
-`docs/developer_notes/lsdtt3_in_windows.md` has the full walkthrough. A native
-Windows build is possible with Visual Studio and vcpkg but is a deliberately
-reduced profile (no Eigen, no OpenCV, no OpenMP) intended as the QGIS plugin
-backend — see `docs/developer_notes/building_from_source.md`.
+A native Windows build is possible with Visual Studio and vcpkg but is a
+deliberately reduced profile (no Eigen, no OpenCV, no OpenMP) intended as the
+QGIS plugin backend. Both are in `docs/developer_notes/building_on_windows.md`.
 
 ### macOS
 
-lsdtt3 does not build with Apple Clang. Build inside an Ubuntu VM managed by
-Multipass — see `docs/developer_notes/lsdtt3_in_macos.md`.
+Build natively with Homebrew and the Xcode Command Line Tools, or inside an
+Ubuntu VM managed by Multipass — see `docs/developer_notes/building_on_macos.md`.
 
 ### Apptainer container
 
@@ -391,7 +390,10 @@ The `docs/` tree is organised by audience:
 | `docs/developer_notes/lsdtt3_architecture.md` | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
 | `docs/developer_notes/developer_onboarding.md` | Getting-started guide for new contributors. |
 | `docs/developer_notes/git_notes.md` | Setting up an SSH key and cloning, for people new to git. |
-| `docs/developer_notes/building_from_source.md` | Compiling on Linux, Windows (WSL2 and native) and macOS; CMake options. |
+| `docs/developer_notes/building_from_source.md` | Start here for compiling: the reference Linux build, CMake options, and which page covers your platform. |
+| `docs/developer_notes/building_on_windows.md` | Windows: WSL2 (full build) and native Visual Studio + vcpkg (QGIS backend). |
+| `docs/developer_notes/building_on_macos.md` | macOS: native Homebrew build, and a Multipass Ubuntu VM. |
+| `docs/developer_notes/qgis_plugin_development.md` | The QGIS plugin and its backend bundle: version checks and the development loop. |
 | `docs/developer_notes/making_release_packages.md` | How the release packages are built and published. |
 | `docs/developer_notes/building_the_docs.md` | Building the documentation site with MkDocs, and publishing it. |
 | `docs/developer_notes/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |
@@ -399,8 +401,6 @@ The `docs/` tree is organised by audience:
 | `docs/developer_notes/lsdtt_utils_guide.md` | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
 | `docs/developer_notes/gpu_compute.md` | GPU backend design and the compute-dispatch mechanism. |
 | `docs/developer_notes/beta_testing_notes.md` | Getting bundles to beta testers, the release pipeline, and the future conda-forge plan. |
-| `docs/developer_notes/lsdtt3_in_windows.md` | Windows (WSL2) development setup. |
-| `docs/developer_notes/lsdtt3_in_macos.md` | macOS development setup via a Multipass Ubuntu VM. |
 | `docs/developer_notes/debian_packaging.md` | Building a Debian package. |
 | `docs/developer_notes/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
 | `tools/README.md` | Building redistributable bundles, and the git/gh commands for cutting a tagged release. |

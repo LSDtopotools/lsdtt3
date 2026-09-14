@@ -3,7 +3,8 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
 // Triggered landslides with an imposed size distribution.
@@ -73,10 +74,13 @@ static void print_banner()
         << "|| Triggered landslides, imposed size distribution    ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                    ||\n"
         << "========================================================\n"
-        << "|| CLI version: " << k_version  << "\n"
-        << "|| Citation   : " << k_citation << "\n"
-        << "|| -v or --version : full lsdtt3 release version\n"
-        << "|| -h              : help explaining the parameters\n"
+        << "|| -v or --version    : full lsdtt3 release version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| If CLI version number is lower than 1.0.0 it means\n"
+        << "|| this CLI is still experimental and not fully tested.\n"
+        << "========================================================\n"
+        << "|| Citation : " << k_citation << "\n"
+        << "|| -h       : help explaining the parameters\n"
         << "========================================================\n\n";
 }
 

@@ -11,7 +11,8 @@
 // following the design rule: "write free functions unless you need
 // private data members".
 //
-// Copyright Simon M. Mudd, GPL-3.0
+// Copyright Simon M. Mudd
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "lsdtt_basin_cpu.hpp"
 #include "../core/lsdtt_junction_network_base.hpp"

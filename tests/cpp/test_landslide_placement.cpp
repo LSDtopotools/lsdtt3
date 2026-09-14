@@ -3,7 +3,8 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
 // Phase 1 of the triggered landslide module: placing a scar of a known size on

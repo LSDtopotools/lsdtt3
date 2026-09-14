@@ -1,6 +1,7 @@
 site_name: LSDTopoTools3
 site_description: Topographic analysis tools for geomorphology
 site_author: Simon M. Mudd
+site_url: https://lsdtopotools.github.io/lsdtt3/
 repo_url: https://github.com/LSDtopotools/lsdtt3
 repo_name: LSDtopotools/lsdtt3
 docs_dir: docs
@@ -142,21 +143,27 @@ nav:
       - Fluvial and vector hydrology: python_api/fluvial.md
       - Statistics and utilities: python_api/statistics.md
   - Developer notes:
-    - Developer onboarding: developer_notes/developer_onboarding.md
-    - Parameter naming conventions: developer_notes/cli_parameter_conventions.md
-    - Git from the command line: developer_notes/git_notes.md
-    - Architecture: developer_notes/lsdtt3_architecture.md
-    - Basin object architecture: developer_notes/basin_object_architecture.md
-    - Python bindings architecture: developer_notes/python_bindings_architecture.md
-    - Building from source: developer_notes/building_from_source.md
-    - Building on Windows (WSL2): developer_notes/lsdtt3_in_windows.md
-    - Building on macOS (Multipass): developer_notes/lsdtt3_in_macos.md
-    - Making release packages: developer_notes/making_release_packages.md
-    - Building the docs site: developer_notes/building_the_docs.md
-    - Beta testing and distribution: developer_notes/beta_testing_notes.md
-    - Debian packaging: developer_notes/debian_packaging.md
-    - Backend abstraction rules: developer_notes/backend_abstraction_rules.md
-    - GPU compute: developer_notes/gpu_compute.md
-    - Flow routing (D8): developer_notes/using_lsdtt_flowinfo.md
-    - Utilities layer: developer_notes/lsdtt_utils_guide.md
-    - Testing and benchmarking: developer_notes/testing_and_benchmarking.md
+    - Getting started:
+      - Developer onboarding: developer_notes/developer_onboarding.md
+      - Git from the command line: developer_notes/git_notes.md
+      - Parameter naming conventions: developer_notes/cli_parameter_conventions.md
+    - Building:
+      - Building from source: developer_notes/building_from_source.md
+      - Building on Windows: developer_notes/building_on_windows.md
+      - Building on macOS: developer_notes/building_on_macos.md
+      - Building the docs site: developer_notes/building_the_docs.md
+    - Architecture:
+      - Architecture: developer_notes/lsdtt3_architecture.md
+      - Backend abstraction rules: developer_notes/backend_abstraction_rules.md
+      - Basin object architecture: developer_notes/basin_object_architecture.md
+      - Flow routing (D8): developer_notes/using_lsdtt_flowinfo.md
+      - Utilities layer: developer_notes/lsdtt_utils_guide.md
+      - GPU compute: developer_notes/gpu_compute.md
+      - Python bindings architecture: developer_notes/python_bindings_architecture.md
+    - Testing:
+      - Testing and benchmarking: developer_notes/testing_and_benchmarking.md
+    - Packaging and release:
+      - Making release packages: developer_notes/making_release_packages.md
+      - QGIS plugin development: developer_notes/qgis_plugin_development.md
+      - Beta testing and distribution: developer_notes/beta_testing_notes.md
+      - Debian packaging: developer_notes/debian_packaging.md

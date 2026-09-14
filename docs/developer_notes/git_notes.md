@@ -6,9 +6,10 @@ repository — for beta testing, or to build from source.
 GitHub no longer accepts username/password authentication over HTTPS, so you
 need an SSH key. These notes go through it step by step.
 
-> **This is written for a Linux environment.** On Windows use WSL2, and on
-> macOS use an Ubuntu VM; see
-> [`building_from_source.md`](building_from_source.md) for both.
+> **This is written for a Linux environment.** On Windows use WSL2 (see
+> [Building on Windows](building_on_windows.md)); on macOS the same commands
+> work in Terminal or in a Multipass VM (see
+> [Building on macOS](building_on_macos.md)).
 
 ---
 
