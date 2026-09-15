@@ -59,6 +59,7 @@
 #include <string>
 #include <sstream>
 #include <utility>
+#include <unordered_set>
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
@@ -76,6 +77,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_ridgeline_cpu.hpp"
+#include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_binary_array2d_tracing.hpp"
 #include "../src/utils/lsdtt_signal1d.hpp"
@@ -537,6 +539,30 @@ int main(int argc, char* argv[])
         "Write the left and right flow topological distances for internal ridgeline nodes.", 
         "Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node.",
         "Ridgeline CSV Outputs", "switch", ""};
+
+    bool_default_map["write_triple_divides_on_selected_ridgelines"] = false;
+    help_map["write_triple_divides_on_selected_ridgelines"] = {"bool", "false",
+        "Write triple and quadruple divide nodes on selected ridgelines.",
+        "The surrounding-basin test is used.",
+        "Triple divide outputs", "switch", ""};
+
+    bool_default_map["write_zero_order_triple_divides_on_selected_ridglines"] = false;
+    help_map["write_zero_order_triple_divides_on_selected_ridglines"] = {"bool", "false",
+        "Write triple divide join/leave nodes bounding zero-order basins.",
+        "Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network.",
+        "Triple divide outputs", "switch", ""};
+
+    bool_default_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = false;
+    help_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = {"bool", "false",
+        "Write nodes where either flanking flow topological distance exceeds the threshold.",
+        "Results are written with the other selected triple-divide modes in one metadata-compatible layer.",
+        "Triple divide outputs", "switch", ""};
+
+    float_default_map["topological_distance_triple_divide_threshold"] = 0.0f;
+    help_map["topological_distance_triple_divide_threshold"] = {"float", "0.0",
+        "Flow topological distance threshold for topological triple divides.",
+        "A node qualifies when the left OR right distance is greater than this value.",
+        "Triple divide outputs", "param", ""};
 
     // --- Paired flow paths (lengthwise asymmetry, Goren & Shelef 2024) ---
     bool_default_map["write_paired_flowpath_statistics"] = false;
@@ -1428,6 +1454,177 @@ int main(int argc, char* argv[])
     {
         std::cerr << "Fatal Error during extraction: " << e.what() << "\n";
         return 1;
+    }
+
+    // =========================================================================
+    // Phase 5a - Consolidated triple-divide point outputs
+    //
+    // This deliberately runs on the selected/extracted ridgeline geometry,
+    // before profile processing can alter any node positions.
+    // =========================================================================
+    if (bf["write_triple_divides_on_selected_ridgelines"] ||
+        bf["write_zero_order_triple_divides_on_selected_ridglines"] ||
+        bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
+    {
+        std::cout << "\n--- Writing selected-ridgeline triple divides ---\n";
+        struct triple_point
+        {
+            std::size_t ridgeline_index;
+            int node_index;
+            std::string mode;
+        };
+        std::vector<triple_point> points;
+        std::set<std::string> seen;
+
+        auto add_point = [&](std::size_t r, int n, const std::string& mode)
+        {
+            if (n < 0 || static_cast<std::size_t>(n) >= all_ridgelines[r].ridgeline.size()) return;
+            const std::string key = std::to_string(r) + ":" + std::to_string(n) + ":" + mode;
+            if (seen.insert(key).second) points.push_back({r, n, mode});
+        };
+
+        std::unique_ptr<lsdtt::lsdtt_junction_basin_manager_cpu> zero_order_basins;
+        if (bf["write_zero_order_triple_divides_on_selected_ridglines"])
+        {
+            zero_order_basins = std::make_unique<lsdtt::lsdtt_junction_basin_manager_cpu>(
+                *flow, junction_network);
+            zero_order_basins->select_all_junction_basins();
+        }
+
+        for (std::size_t r = 0; r < all_ridgelines.size(); ++r)
+        {
+            const auto& rec = all_ridgelines[r];
+            if (bf["write_triple_divides_on_selected_ridgelines"])
+                for (int n : rec.ridgeline.get_triple_divide_node_indices(*flow, junction_network))
+                    add_point(r, n, "surrounding_basin");
+
+            if (bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
+                for (int n : rec.ridgeline.get_topological_distance_triple_divide_node_indices(
+                         *flow, ff["topological_distance_triple_divide_threshold"]))
+                    add_point(r, n, "topological_distance");
+
+            if (bf["write_zero_order_triple_divides_on_selected_ridglines"])
+            {
+                for (std::size_t bi = 0; bi < zero_order_basins->size(); ++bi)
+                {
+                const auto& basin = zero_order_basins->basin_at(bi);
+                const std::int32_t bounding_junction = basin.get_junction_number();
+                if (junction_network.stream_order_of_junction(bounding_junction) != 1) continue;
+
+                const auto outline = basin.get_basin_outline();
+                const auto& outline_nodes = outline.outline_divide_rc();
+                std::vector<int> contact_ridge_nodes(outline_nodes.size(), -1);
+                for (std::size_t oi = 0; oi < outline_nodes.size(); ++oi)
+                {
+                    for (std::size_t n = 0; n < rec.ridgeline.nodes().size(); ++n)
+                    {
+                        const auto& ridge_node = rec.ridgeline.nodes()[n];
+                        if (ridge_node.row == outline_nodes[oi].row &&
+                            ridge_node.col == outline_nodes[oi].col)
+                        {
+                            contact_ridge_nodes[oi] = static_cast<int>(n);
+                            break;
+                        }
+                    }
+                }
+
+                if (!contact_ridge_nodes.empty())
+                {
+                    const bool closed = outline.outlet_is_diagonal() &&
+                        contact_ridge_nodes.size() > 1 &&
+                        contact_ridge_nodes.front() == contact_ridge_nodes.back();
+                    const std::size_t n_outline = closed
+                        ? contact_ridge_nodes.size() - 1 : contact_ridge_nodes.size();
+                    if (n_outline > 0)
+                    {
+                        for (std::size_t oi = 0; oi < n_outline; ++oi)
+                        {
+                            const bool on_contact = contact_ridge_nodes[oi] >= 0;
+                            const bool previous_contact = oi > 0
+                                ? contact_ridge_nodes[oi - 1] >= 0
+                                : (closed ? contact_ridge_nodes[n_outline - 1] >= 0 : false);
+                            const bool next_contact = oi + 1 < n_outline
+                                ? contact_ridge_nodes[oi + 1] >= 0
+                                : (closed ? contact_ridge_nodes[0] >= 0 : false);
+
+                            if (on_contact && !previous_contact)
+                                add_point(r, contact_ridge_nodes[oi], "zero_order_join");
+                            if (on_contact && !next_contact)
+                                add_point(r, contact_ridge_nodes[oi], "zero_order_leave");
+                        }
+                    }
+                }
+                }
+            }
+        }
+
+        try
+        {
+            const std::vector<std::string> headers = {
+                "ridgeline_number", "ridgeline_type", "triple_divide_mode",
+                "node_index", "distance_along_ridgeline_m", "elevation",
+                "primary_junction", "secondary_junction", "latitude", "longitude"
+            };
+            std::vector<std::vector<std::string>> csv_rows;
+            lsdtt::lsdtt_coordinate_transform to_wgs84;
+            to_wgs84.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
+            lsdtt::lsdtt_vector_schema schema;
+            schema.field_names = {
+                "ridgeline_number", "ridgeline_type", "triple_divide_mode",
+                "node_index", "distance_along_ridgeline_m", "elevation",
+                "primary_junction", "secondary_junction"
+            };
+            schema.field_types = {
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::string_type,
+                lsdtt::lsdtt_vector_field_type::string_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::double_type,
+                lsdtt::lsdtt_vector_field_type::int64_type,
+                lsdtt::lsdtt_vector_field_type::int64_type
+            };
+            lsdtt::lsdtt_data_loader triple_loader;
+            if (!points.empty())
+                triple_loader.begin_vector_write(
+                    pp.make_output_path("_triple_divides", ".fgb"),
+                    "triple_divides", schema, dem.get_meta().crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, true);
+
+            for (const auto& p : points)
+            {
+                const auto& rec = all_ridgelines[p.ridgeline_index];
+                const auto& rl = rec.ridgeline;
+                const auto& xy = rl.positions()[static_cast<std::size_t>(p.node_index)];
+                const auto ll = lsdtt::xy_to_lonlat(xy.x, xy.y, to_wgs84);
+                const std::int64_t rid = rec.ridgeline_number;
+                const float elevation = (static_cast<std::size_t>(p.node_index) < rl.elevations().size())
+                    ? rl.elevations()[static_cast<std::size_t>(p.node_index)] : dem.get_meta().no_data_value;
+                csv_rows.push_back({
+                    std::to_string(rid), rec.feature_type, p.mode,
+                    std::to_string(p.node_index), lsdtt::csv_number(rl.distances()[p.node_index]),
+                    lsdtt::csv_number(elevation), std::to_string(rec.primary_id),
+                    std::to_string(rec.secondary_id), lsdtt::csv_number(ll.latitude),
+                    lsdtt::csv_number(ll.longitude)
+                });
+                if (!points.empty())
+                    triple_loader.write_point(xy.x, xy.y, {
+                        rid, rec.feature_type, p.mode,
+                        static_cast<std::int64_t>(p.node_index), rl.distances()[p.node_index],
+                        static_cast<double>(elevation), static_cast<std::int64_t>(rec.primary_id),
+                        static_cast<std::int64_t>(rec.secondary_id)
+                    });
+            }
+            if (!points.empty()) triple_loader.finish_vector_write();
+            lsdtt::lsdtt_data_loader csv_loader;
+            csv_loader.write_csv(pp.make_output_path("_triple_divides", ".csv"), headers, csv_rows);
+            std::cout << "Wrote " << points.size() << " triple-divide points.\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Fatal Error writing triple-divide outputs: " << e.what() << "\n";
+            return 1;
+        }
     }
 
     // =========================================================================

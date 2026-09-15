@@ -45,8 +45,16 @@ import getpass
 import os
 import re
 import requests
-import planetary_computer
-from pystac_client import Client
+
+try:
+    import planetary_computer
+except ImportError:
+    planetary_computer = None
+
+try:
+    from pystac_client import Client
+except ImportError:
+    Client = None
 
 CATALOG_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
 CDSE_STAC_URL = "https://stac.dataspace.copernicus.eu/v1"
@@ -730,7 +738,10 @@ def main():
                 out_file=out_file,
             )
         except Exception as e:
-            raise SystemExit(f"OpenTopography download failed: {e}")
+            # Requests can include the full query URL in connection errors;
+            # never allow the API key to reach a pipeline log.
+            detail = str(e).replace(ot_api_key, "***")
+            raise SystemExit(f"OpenTopography download failed: {detail}")
 
         print("\nDone.")
         return
@@ -738,6 +749,10 @@ def main():
 
     # ------------------------------------------------------- CDSE block ----
     if args.cdse_eu_dem:
+        if Client is None:
+            raise SystemExit(
+                "CDSE mode requires pystac-client; install the Python helper dependencies."
+            )
         catalog = Client.open(CDSE_STAC_URL)
 
         print(f"CDSE collection: {args.cdse_collection}")
@@ -831,6 +846,11 @@ def main():
         return
     # --------------------------------------------------- end CDSE block ----
 
+    if Client is None or planetary_computer is None:
+        raise SystemExit(
+            "Planetary Computer mode requires pystac-client and planetary-computer; "
+            "install the Python helper dependencies."
+        )
     catalog = Client.open(CATALOG_URL)
 
     print(f"Collection: {args.collection}")

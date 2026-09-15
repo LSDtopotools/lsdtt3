@@ -638,6 +638,69 @@ float lsdtt_ridgeline_cpu::find_distance_to_closest_tdj(
     return found_tdj ? distance_to_tdj : -9999.0f;
 }
 
+std::vector<int> lsdtt_ridgeline_cpu::get_triple_divide_node_indices(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_junction_network_base& junction_network
+) const
+{
+    std::vector<int> result;
+    for (std::size_t i = 1; i + 1 < nodes_.size(); ++i)
+    {
+        std::set<std::int32_t> basins;
+        const lsdtt_pixel_rc& rc = nodes_[i];
+        for (int r = rc.row - 1; r <= rc.row; ++r)
+            for (int c = rc.col - 1; c <= rc.col; ++c)
+            {
+                if (!flow.in_bounds(r, c)) continue;
+                std::int64_t flat = flow.flat_index_unchecked(r, c);
+                if (!flow.is_valid_cell(flat)) continue;
+                while (!flow.is_outlet_unchecked(flat) &&
+                       !junction_network.is_channel(flat))
+                {
+                    flat = flow.receiver_of_unchecked(flat);
+                    if (flat < 0) break;
+                }
+                if (flat >= 0 && junction_network.is_channel(flat))
+                {
+                    const std::int32_t j =
+                        junction_network.junction_upstream_of_flat(flat);
+                    if (j >= 0) basins.insert(j);
+                }
+            }
+        if (basins.size() > 2) result.push_back(static_cast<int>(i));
+    }
+    return result;
+}
+
+std::vector<int> lsdtt_ridgeline_cpu::get_topological_distance_triple_divide_node_indices(
+    const lsdtt_flow_base& flow,
+    float                  threshold
+) const
+{
+    std::vector<int> result;
+    if (nodes_.size() < 3) return result;
+    for (std::size_t i = 1; i + 1 < nodes_.size(); ++i)
+    {
+        const EdgePixels in_edge = get_edge_pixels(nodes_[i - 1], nodes_[i]);
+        const EdgePixels out_edge = get_edge_pixels(nodes_[i], nodes_[i + 1]);
+        if (!in_edge.valid || !out_edge.valid) continue;
+        auto flat = [&](int r, int c) -> std::int64_t {
+            return flow.in_bounds(r, c) ? flow.flat_index_unchecked(r, c) : -1;
+        };
+        const std::int64_t li = flat(in_edge.left_r, in_edge.left_c);
+        const std::int64_t lo = flat(out_edge.left_r, out_edge.left_c);
+        const std::int64_t ri = flat(in_edge.right_r, in_edge.right_c);
+        const std::int64_t ro = flat(out_edge.right_r, out_edge.right_c);
+        bool qualifies = false;
+        if (li >= 0 && lo >= 0)
+            qualifies = calculate_flow_topological_distance(li, lo, flow).distance > threshold;
+        if (!qualifies && ri >= 0 && ro >= 0)
+            qualifies = calculate_flow_topological_distance(ri, ro, flow).distance > threshold;
+        if (qualifies) result.push_back(static_cast<int>(i));
+    }
+    return result;
+}
+
 
 
 

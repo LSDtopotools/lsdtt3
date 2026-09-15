@@ -142,6 +142,34 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 
 `<mode_prefix>` is `_basin_outline_ridgelines`, `_interfluvial_ridgelines`, or `_range_defined_ridgelines`.
 
+## Selected-ridgeline triple-divide outputs
+
+These opt-in switches run after ridgeline selection and write one combined
+point layer for all enabled triple-divide methods:
+
+| Parameter | Description |
+|---|---|
+| `write_triple_divides_on_selected_ridgelines` | Write triple and quadruple divide nodes identified where three or more surrounding flow basins meet a selected ridgeline. |
+| `write_zero_order_triple_divides_on_selected_ridglines` | Write the join and leave nodes where first-order source-basin outlines bound a selected ridgeline. The parameter spelling is retained exactly as the CLI name. |
+| `write_topological_distance_triple_divides_on_selected_ridgelines` | Write selected-ridgeline nodes where either left or right flow-topological distance exceeds `topological_distance_triple_divide_threshold`. |
+| `topological_distance_triple_divide_threshold` | Strict threshold in metres for the topological-distance method. A node qualifies when `left > threshold OR right > threshold`. |
+
+All enabled methods are written to:
+
+```text
+<write_fname>_triple_divides.csv
+<write_fname>_triple_divides.fgb
+```
+
+The common schema includes ridgeline ID/type, method, node index, distance
+along ridgeline, elevation, selected basin junction IDs, and latitude/longitude
+in the CSV. The FlatGeobuf stores point geometry in the DEM CRS.
+
+Zero-order output uses the all-junction basin view and treats stream-order-1
+source basins as zero-order basins. Their ordered divide-grid outlines are
+matched to each selected ridgeline; each contiguous contact interval contributes
+its join and leave ridgeline nodes.
+
 ---
 
 ## Paired flow path statistics — lengthwise asymmetry (Phase 5b)

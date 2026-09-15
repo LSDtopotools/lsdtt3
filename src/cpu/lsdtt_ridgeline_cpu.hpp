@@ -192,6 +192,19 @@ public:
         const lsdtt_coordinate_transform& transform
     ) const;
 
+    // Return internal divide nodes that are triple/quadruple junctions, either
+    // by the surrounding-basin test or by the left/right flow-topological
+    // distance threshold.
+    [[nodiscard]] std::vector<int> get_triple_divide_node_indices(
+        const lsdtt_flow_base&             flow,
+        const lsdtt_junction_network_base& junction_network
+    ) const;
+
+    [[nodiscard]] std::vector<int> get_topological_distance_triple_divide_node_indices(
+        const lsdtt_flow_base& flow,
+        float                  threshold
+    ) const;
+
 
 
 
