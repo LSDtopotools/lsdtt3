@@ -652,6 +652,7 @@ if(LSDTT_HAS_FFTW)
 endif()
 
 lsdtt_cli(lsdtt-chi-analysis cli/lsdtt-chi-analysis.cpp)
+lsdtt_cli(lsdtt-outlet-matching cli/lsdtt-outlet-matching.cpp)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)

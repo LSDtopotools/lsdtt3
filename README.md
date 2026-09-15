@@ -322,6 +322,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-drainage-analysis` | Drainage area via D8, D-infinity, or MFD routing. Topographic Wetness Index (TWI). | `docs/cli_reference/cli_reference_lsdtt_drainage_analysis.md` |
 | `lsdtt-channel-extraction` | D8 flow routing, contributing-pixel threshold source extraction, junction/channel network construction, network export to CSV / GeoPackage / FlatGeobuf. | `docs/cli_reference/cli_reference_lsdtt_channel_extraction.md` |
 | `lsdtt-basin-extraction` | D8 flow routing, channel/junction network, junction-aware basin extraction. Writes basin outlines, raster labels, and statistics. | `docs/cli_reference/cli_reference_lsdtt_basin_extraction.md` |
+| `lsdtt-outlet-matching` | Matches outlet coordinates from a reference DEM to a target/resampled DEM using spatial overlap of complete D8 upstream masks; independent of channelisation thresholds. | `docs/cli_reference/cli_reference_lsdtt_outlet_matching.md` |
 | `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` |
 | `lsdtt-graphflood` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | — |
 | `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | — |
