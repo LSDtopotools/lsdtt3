@@ -52,6 +52,7 @@
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
+#include "../src/cpu/lsdtt_zero_order_basin_manager_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -457,6 +458,14 @@ int main(int argc, char* argv[])
         "junction and constructs one lsdtt_junction_basin per junction.",
         "Basin selection", "switch", ""};
 
+    bool_default_map["select_all_zero_order_basins"] = false;
+    help_map["select_all_zero_order_basins"] = {"bool", "false",
+        "Select one basin for every channel-head source pixel.",
+        "Zero-order basins are the complete upslope contributing areas of "
+        "source pixels identified by threshold_contributing_pixels. This is "
+        "separate from Strahler stream-order basin selection.",
+        "Basin selection", "switch", ""};
+
     bool_default_map["select_all_basins_of_stream_order"] = false;
     help_map["select_all_basins_of_stream_order"] = {"bool","false",
         "Select all basins whose junction stream order equals selected_stream_order.",
@@ -728,6 +737,8 @@ int main(int argc, char* argv[])
         bf["select_basins_from_outlets_nested"];
     const bool select_all_basins =
         bf["select_all_basins"];
+    const bool select_all_zero_order_basins =
+        bf["select_all_zero_order_basins"];
     const bool select_all_basins_of_stream_order =
         bf["select_all_basins_of_stream_order"];
     const bool select_basins_from_line_crossings =
@@ -737,6 +748,7 @@ int main(int argc, char* argv[])
         static_cast<int>(select_basins_from_outlets) +
         static_cast<int>(select_basins_from_outlets_nested) +
         static_cast<int>(select_all_basins) +
+        static_cast<int>(select_all_zero_order_basins) +
         static_cast<int>(select_all_basins_of_stream_order) +
         static_cast<int>(select_basins_from_line_crossings);
 
@@ -744,6 +756,7 @@ int main(int argc, char* argv[])
     {
         std::cerr << "FATAL: choose only one of: select_basins_from_outlets, "
                   << "select_basins_from_outlets_nested, select_all_basins, "
+                  << "select_all_zero_order_basins, "
                   << "select_all_basins_of_stream_order, "
                   << "select_basins_from_line_crossings.\n";
         return 1;
@@ -843,7 +856,11 @@ int main(int argc, char* argv[])
         }
         else
         {
-            if (select_all_basins_of_stream_order)
+            if (select_all_zero_order_basins)
+            {
+                std::cout << "select_all_zero_order_basins\n";
+            }
+            else if (select_all_basins_of_stream_order)
             {
                 std::cout << "select_all_basins_of_stream_order\n";
             }
@@ -1344,6 +1361,35 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     if (do_basin_selection)
     {
+        if (select_all_zero_order_basins)
+        {
+            std::cout << "\n--- Zero-order basin selection ---\n";
+            lsdtt::lsdtt_zero_order_basin_manager_cpu zero_order_manager(*flow);
+            zero_order_manager.select_all_zero_order_basins(source_flats);
+            std::cout << "Selected zero-order basins: "
+                      << zero_order_manager.size() << "\n";
+
+            if (!bf["write_basin_outlines"] ||
+                bf["write_basin_outlines_as_polygon"])
+            {
+                std::cerr << "FATAL: zero-order basin selection currently "
+                          << "requires write_basin_outlines: true and "
+                          << "write_basin_outlines_as_polygon: false.\n";
+                return 1;
+            }
+
+            const std::string output_file =
+                pp.make_output_path("_zero_order_basin_outlines",
+                                    lsdtt::output_extension(basin_outline_lines_format));
+            zero_order_manager.write_basins_to_vector_lines(
+                output_file, basin_outline_lines_format,
+                "zero_order_basin_outlines", bf["calculate_spatial_index"]);
+            std::cout << "Writing: " << output_file << "\n";
+            pp.print_help(help_map, pp.get_write_fname() + "_README",
+                          k_version, k_citation);
+            return 0;
+        }
+
         std::cout << "\n--- Basin selection ---\n";
 
         // Timed: this is the phase the reference implementations DO have an

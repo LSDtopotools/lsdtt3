@@ -390,6 +390,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp
+    src/cpu/lsdtt_zero_order_basin_manager_cpu.cpp
     src/cpu/lsdtt_basin_outline_cpu.cpp
     src/cpu/lsdtt_basin_outline_metrics_cpu.cpp
     src/cpu/lsdtt_basin_stats_cpu.cpp

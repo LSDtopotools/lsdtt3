@@ -692,10 +692,14 @@ std::vector<int> lsdtt_ridgeline_cpu::get_topological_distance_triple_divide_nod
         const std::int64_t ri = flat(in_edge.right_r, in_edge.right_c);
         const std::int64_t ro = flat(out_edge.right_r, out_edge.right_c);
         bool qualifies = false;
-        if (li >= 0 && lo >= 0)
-            qualifies = calculate_flow_topological_distance(li, lo, flow).distance > threshold;
-        if (!qualifies && ri >= 0 && ro >= 0)
-            qualifies = calculate_flow_topological_distance(ri, ro, flow).distance > threshold;
+        if (li >= 0 && lo >= 0 && ri >= 0 && ro >= 0)
+        {
+            const float left_distance =
+                calculate_flow_topological_distance(li, lo, flow).distance;
+            const float right_distance =
+                calculate_flow_topological_distance(ri, ro, flow).distance;
+            qualifies = std::min(left_distance, right_distance) > threshold;
+        }
         if (qualifies) result.push_back(static_cast<int>(i));
     }
     return result;
