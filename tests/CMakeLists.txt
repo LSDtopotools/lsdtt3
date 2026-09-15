@@ -1377,6 +1377,19 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum lemdefaults5_initial_topography.tif:10290
 )
 
+# Time-stepping snaps the initial surface to the fluvial steady state by default,
+# so a run does not spend R/U building its relief from a flat start. Asserts the
+# snap runs with no parameter asking for it, and actually produces relief.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_snap_default
+    lsdtt-lem
+    lem_snap_default.param.in
+    lemsnapdefault_initial_topography.tif
+    --stdout-contains "--- Snap initial surface to fluvial steady state ---"
+    --stdout-contains "Snapped relief"
+)
+set_tests_properties(smoke_lem_snap_default PROPERTIES LABELS "smoke;cli;lem")
+
 add_lsdtt_cli_smoke_test(
     smoke_lem_roering_implicit_strip
     lsdtt-lem

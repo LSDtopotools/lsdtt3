@@ -981,6 +981,25 @@ int main(int argc, char* argv[])
         "Ignored when stop_at_steady_state is true.",
         "Timestepping", "param", ""};
 
+    bool_default_map["snap_initial_surface_to_steady_state"] = true;
+    help_map["snap_initial_surface_to_steady_state"] = {"bool","true",
+        "Before time-stepping, snap the initial surface to the analytical fluvial "
+        "steady state (chi-based, K-mode).",
+        "A near-flat start cannot reach steady state sooner than R/U, the time "
+        "uplift needs to build the final relief R, so a run from noise spends at "
+        "least that long just gaining height (0.8 Myr for 165 m at 0.2 mm/yr, and "
+        "~3 Myr in practice). The snap sets z = baselevel + (U/K)^(1/n) chi on the "
+        "pit-filled initial surface, routed with the same flow method as the "
+        "fluvial step (D-infinity when enable_dinf_fluvial_erosion, else D8), so "
+        "time-stepping starts from the right relief and only has to equilibrate "
+        "hillslopes and divides. Uses uplift_rate, erodibility, m_exponent, "
+        "n_exponent, baselevel_elevation and divide_area_by_dx; with a forcing "
+        "history the uplift rate at t = 0 is used. Skipped, with a message, when "
+        "no fluvial process is enabled or the uplift rate is not positive. Set "
+        "false to keep the initial surface as given -- REQUIRED for a transient "
+        "experiment on a loaded DEM, whose topography this replaces.",
+        "Timestepping", "switch", ""};
+
     bool_default_map["stop_at_steady_state"] = false;
     help_map["stop_at_steady_state"] = {"bool","false",
         "Stop when mean erosion rate is within 1% of uplift rate for 100 consecutive steps.",
@@ -2714,6 +2733,102 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Snap the initial surface to the analytical fluvial steady state.
+    //
+    // A run that has to build its relief from a near-flat start cannot equilibrate
+    // sooner than R/U. Snapping first puts the relief in place, so time-stepping
+    // only has to adjust hillslopes and divides to the coupled balance.
+    // -------------------------------------------------------------------------
+    if (bf["snap_initial_surface_to_steady_state"])
+    {
+        const bool fluvial_on =
+            opts.enable_d8_fluvial_erosion || opts.enable_dinf_fluvial_erosion;
+
+        float snap_U = opts.enable_uplift ? ff["uplift_rate"] : 0.0f;
+        if (opts.enable_uplift && !sf["forcing_history_fname"].empty())
+        {
+            try
+            {
+                snap_U = lsdtt::load_lem_forcing_history(
+                    pp.get_read_path() + sf["forcing_history_fname"]).at(0.0f).uplift_rate;
+            }
+            catch (const std::exception&)
+            {
+                // Reported properly where the forcing history is loaded below.
+            }
+        }
+
+        std::cout << "\n--- Snap initial surface to fluvial steady state ---\n";
+        if (!fluvial_on)
+            std::cout << "  Skipped: no fluvial process is enabled, so there is no "
+                         "fluvial steady state to snap to.\n";
+        else if (!(snap_U > 0.0f))
+            std::cout << "  Skipped: uplift rate is not positive, so the steady "
+                         "state is flat.\n";
+        else
+        {
+            if (bf["read_initial_dem"])
+                std::cout << "  NOTE: this REPLACES the loaded DEM's topography. Set "
+                             "snap_initial_surface_to_steady_state: false to evolve "
+                             "the loaded surface as given.\n";
+
+            lsdtt::lsdtt_fluvial_steady_state_options snap_opts;
+            snap_opts.U                   = snap_U;
+            snap_opts.K                   = ff["erodibility"];
+            snap_opts.m                   = ff["m_exponent"];
+            snap_opts.n                   = ff["n_exponent"];
+            snap_opts.relief_mode         = false;
+            snap_opts.baselevel_elevation = ff["baselevel_elevation"];
+            snap_opts.divide_area_by_dx   = bf["divide_area_by_dx"];
+            snap_opts.n_threads           = ifs["n_threads"];
+
+            try
+            {
+                const lsdtt::lsdtt_raster_cpu filled = lsdtt::fill_pits(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    ifs["n_threads"]);
+
+                lsdtt::lsdtt_fluvial_steady_state_result snap;
+                if (opts.enable_dinf_fluvial_erosion)
+                {
+                    lsdtt::lsdtt_flowgraph_options snap_fg;
+                    snap_fg.method              = lsdtt::lsdtt_flowgraph_method::d_infinity;
+                    snap_fg.boundary_conditions = sf["boundary_conditions"];
+                    snap_fg.n_threads           = ifs["n_threads"];
+                    lsdtt::lsdtt_flowgraph_cpu snap_flow(
+                        filled.get_data_array(), filled.get_mask_array(),
+                        filled.get_meta(), snap_fg);
+                    snap = lsdtt::compute_dinf_fluvial_steady_state(snap_flow, snap_opts);
+                }
+                else
+                {
+                    lsdtt::lsdtt_flowinfo_options snap_fi;
+                    snap_fi.boundary_conditions = sf["boundary_conditions"];
+                    snap_fi.build_s_vector      = false;
+                    snap_fi.n_threads           = ifs["n_threads"];
+                    lsdtt::lsdtt_flowinfo snap_flow(
+                        filled.get_data_array(), filled.get_mask_array(),
+                        filled.get_meta(), snap_fi);
+                    snap = lsdtt::compute_d8_fluvial_steady_state(snap_flow, snap_opts);
+                }
+
+                dem = std::move(snap.elevation);
+                std::cout << "  Routing        : "
+                          << (opts.enable_dinf_fluvial_erosion ? "d_infinity" : "d8")
+                          << "\n  U=" << snap_opts.U << "  K=" << snap_opts.K
+                          << "  m=" << snap_opts.m << "  n=" << snap_opts.n
+                          << "\n  Snapped relief : " << snap.computed_relief << " m\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: snapping the initial surface failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Write initial topography
     // -------------------------------------------------------------------------
     {
@@ -2890,8 +3005,20 @@ int main(int argc, char* argv[])
     cv_opts.stall_window     = ifs["stall_window"];
     cv_opts.stop_on_stall    = bf["stop_on_stall"];
     lsdtt::lsdtt_lem_convergence_monitor cmon(static_cast<double>(dt), cv_opts);
-    const bool watch_steady = (ff["steady_state_dz_tolerance"] > 0.0f);
+    // Either tolerance switches the early stop on. This used to test only the
+    // per-step tolerance, so a run configured with steady_state_rate_tolerance
+    // alone (steady_state_dz_tolerance: 0) had its convergence detected by the
+    // monitor -- which stall detection keeps running -- and then ignored: it ran
+    // on to run_until_time, 2 Myr past steady state on the run that found this.
+    const bool watch_steady = (ff["steady_state_dz_tolerance"] > 0.0f) ||
+                              (ff["steady_state_rate_tolerance"] > 0.0f);
     bool stop_early = false;
+
+    // When and where convergence was FIRST declared. The end-of-run report used
+    // to print the time the run ended, which is not the same thing whenever the
+    // run does not stop at convergence.
+    double converged_at_time = -1.0;
+    int    converged_at_iter = -1;
 
     auto do_step = [&]()
     {
@@ -2933,6 +3060,12 @@ int main(int argc, char* argv[])
                 {
                     const lsdtt::lem_convergence_state st =
                         cmon.update(dz_step, static_cast<double>(dt));
+                    if (st == lsdtt::lem_convergence_state::converged &&
+                        converged_at_iter < 0)
+                    {
+                        converged_at_time = static_cast<double>(total_time);
+                        converged_at_iter = iter;
+                    }
                     if (st == lsdtt::lem_convergence_state::converged && watch_steady)
                         stop_early = true;
                     else if (st == lsdtt::lem_convergence_state::stalled &&
@@ -3131,8 +3264,14 @@ int main(int argc, char* argv[])
     if (cmon.n_steps() > 0 && !cmon.message().empty())
     {
         if (cmon.state() == lsdtt::lem_convergence_state::converged)
-            std::cout << "\n[steady state] " << cmon.message() << " at t = "
-                      << total_time << " yr (" << iter << " steps)\n";
+        {
+            std::cout << "\n[steady state] " << cmon.message() << ", first reached at t = "
+                      << converged_at_time << " yr (step " << converged_at_iter << ")";
+            if (converged_at_iter >= 0 && converged_at_iter != iter)
+                std::cout << "; the run continued to t = " << total_time
+                          << " yr (" << iter << " steps)";
+            std::cout << "\n";
+        }
         else
             std::cerr << "\n[NOT CONVERGED] " << cmon.message()
                       << ". p99.9|dz| = " << cmon.last_dz() << " m at t = "
