@@ -1,7 +1,7 @@
 # Flow Routing in lsdtt3
 
 This page explains how flow routing is implemented in `lsdtt3`, what each
-method is for, and where `lsdtt3` deliberately differs from common references.
+method is for, and where `lsdtt3` deliberately differs from similar software packages.
 
 ---
 

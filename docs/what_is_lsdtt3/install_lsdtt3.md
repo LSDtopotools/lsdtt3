@@ -6,7 +6,7 @@ Linux you do not need `sudo` — the package carries the command-line tools and
 every library they depend on.
 
 > **Want the very latest code instead of a release?**
-> Then you need to compile it yourself. That is a developer activity and is
+> Then you need to compile it yourself. If you are not a developer do not do this. That activity and is
 > documented separately in
 > [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md).
 
@@ -39,7 +39,7 @@ Both of these hold the same files. Use whichever you can reach.
 | Source | Notes |
 |---|---|
 | [GitHub Releases](https://github.com/LSDtopotools/lsdtt3/releases/latest) | The canonical location. While the repository is in private beta you need to be a collaborator to see it. |
-| <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. |
+| <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. It is annoying for Simon to upload these so they go out of date.  |
 
 File names look like this:
 
@@ -54,8 +54,8 @@ subset the QGIS plugin drives.
 
 > **The version numbers on this page are examples and will go stale.** Every
 > command below spells out a version because a bare filename would not work,
-> but do not assume it is the current one. The authoritative version is line 2
-> of `CMakeLists.txt` in the repository — `project(lsdtt3 VERSION ...)` — and
+> but don't assume it is the current one. The authoritative version is line 2
+> of `CMakeLists.txt` in the repository — `project(lsdtt3 VERSION ...)` (we do not recommend reading beyond this line or you will get a headache) and
 > release tags and package filenames are derived from it directly (`VERSION
 > 0.4.0` → tag `v0.4.0` → `...-v0.4.0.tar.gz`). If you cannot see the
 > repository, take the newest file from one of the two download locations
@@ -65,7 +65,7 @@ subset the QGIS plugin drives.
 
 ## Linux package
 
-This is the main route, and the one every other route below ends up using.
+This is the main way to install, and in other operating systems you just end up emulating Linux, so it works for all the pathways. 
 
 ### 1. Download and unpack
 
@@ -95,7 +95,7 @@ A list of parameters means you are done.
 ### 4. Make it permanent (optional)
 
 `setenv.sh` applies to the current terminal only. To have the tools available
-in every new terminal, append the same line — with the **full** path — to the
+in every new terminal, append the same line, with the **full** path, to the
 end of your `~/.bashrc`:
 
 ```bash
@@ -104,7 +104,7 @@ echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.4.0/setenv.sh" >> ~/.bash
 
 ### What you need
 
-Almost nothing: a 64-bit x86 Linux system. The package is built on Ubuntu
+Very little: a 64-bit x86 Linux system. The package is built on Ubuntu
 22.04, which sets the oldest glibc it will run against — anything that age or
 newer works. It does **not** bundle glibc itself, so a distribution older than
 Ubuntu 22.04 may refuse to start it.
@@ -119,17 +119,17 @@ which gives you a real Ubuntu terminal inside Windows. You then use the
 
 This is the recommended Windows route: you get every tool, and in our testing
 the Linux build running under WSL2 is *faster* than a native Windows build on
-the same machine.
+the same machine. We don't understand how that can be the case but friends, strange things happen. 
 
 ### 1. Install WSL2 and Ubuntu
 
 1. Open PowerShell **as administrator** (right-click the Start menu →
-   Terminal (Admin)).
+   Terminal (Admin)). You may need to become friendly with your IT team to be able to do this. 
 2. Run `wsl --install`.
 3. Restart when prompted.
 4. Open the Microsoft Store, search for **Ubuntu 22.04 LTS**, install it.
 5. Launch Ubuntu from the Start menu. The first launch asks you to create a
-   username and password — the password is what `sudo` will ask for later.
+   username and password (don't forget your password!) the password is what `sudo` will ask for later.
 
 ### 2. Install the Linux package
 
@@ -143,6 +143,8 @@ disk, which WSL2 mounts under `/mnt/`. A file at
 /mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
 ```
 
+You will need to update this path unless your username is Alice.
+
 ### 3. Working with your Windows files
 
 The same `/mnt/` mapping lets the tools read and write DEMs that live on your
@@ -155,6 +157,8 @@ lsdtt-raster-preprocessing /mnt/c/Users/Alice/data/ my_analysis.driver
 Note that reading and writing across `/mnt/c` is noticeably slower than
 working inside the Linux filesystem (`~/`). For large DEMs, copy the data into
 your Linux home directory first.
+
+(The develpers of `lsdtt3` try to avoid using a GIS since it takes forever to start, so they use `lsdviztools3` instead).
 
 ### WSL2 troubleshooting
 
@@ -246,6 +250,8 @@ Download and unpack in a code cell (`!` runs a shell command):
 !tar -xzf lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
 ```
 
+**Or get the URL from https://www.geos.ed.ac.uk/~smudd/lsdtt_packages** 
+
 **Do not use `!source setenv.sh`.** Every `!` line runs in its own throwaway
 shell, so nothing it sets survives to the next cell. Set the environment from
 Python instead, once per session:
@@ -316,7 +322,7 @@ against. Use a newer distribution, or build from source.
 > **This is software built by academics for academic use within a research
 > group.** It is not supported commercial software. The developers are happy to
 > help with questions, comments and bug reports, but they may be teaching or
-> doing research — please adjust expectations of response times accordingly.
+> doing research, or sitting in administrative meetings, or filling in tedious paperwork, or reviewing your grant or paper.  Please adjust expectations of response times accordingly.
 
 Please include:
 

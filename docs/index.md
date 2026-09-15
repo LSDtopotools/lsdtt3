@@ -4,7 +4,7 @@
   <img src="LSD-logo.png" alt="LSDTopoTools3 logo" width="220">
 </p>
 
-**LSDTopoTools3** (lsdtt3) is a C++17 library and set of command-line tools for topographic analysis of digital elevation models (DEMs). It is a ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2), retaining the core algorithms while rebuilding the architecture for modern C++, optional GPU support, and easier incremental development.
+**LSDTopoTools3** (lsdtt3) is a C++17 library and set of command-line tools for topographic analysis of digital elevation models (DEMs). It also includes some a basic landscape evolution model (lem), tools for analysis of cosmogenic radionuclides (CRNs), and a simple flooding model. It is a ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2), with faster algorithms and performance enhancements, built-in handling of a wide range of raster and vector data formats, python bindings and an API, a QGIS plugin, and a rigorous testing regime that includes benchmarking against similar software packages. Basically it improves every component of LSDTopoTools2. We hope you like it!
 
 ---
 
@@ -18,12 +18,12 @@
 | Install on macOS | [macOS](what_is_lsdtt3/install_lsdtt3.md#macos) |
 | Run it in a browser | [Google Colab](what_is_lsdtt3/install_lsdtt3.md#google-colab) |
 | Look up parameters for a tool | [Command-line reference](cli_reference/cli_reference_lsdtt_channel_extraction.md) |
-| Compile the latest code | [Building from source](developer_notes/building_from_source.md) |
+| Compile the latest code (don't do this unless you are a developer) | [Building from source](developer_notes/building_from_source.md) |
 | Contribute or modify the code | [Developer notes](developer_notes/lsdtt3_architecture.md) |
 
 ---
 
-## Capabilities at a glance
+## Some of the capabilities at a glance
 
 **DEM preparation** — reproject, fill, breach depressions, clip to valid extent.
 
