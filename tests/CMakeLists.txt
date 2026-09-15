@@ -2846,6 +2846,14 @@ add_executable(lsdtt-test-lem-channel-coupling cpp/test_lem_channel_coupling.cpp
 target_link_libraries(lsdtt-test-lem-channel-coupling PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_lem_channel_coupling COMMAND lsdtt-test-lem-channel-coupling)
+
+# Forcing history: optional erodibility / hillslope_diffusivity columns, whose
+# absent value must mean "keep the parameter file", never 0.
+add_executable(lsdtt-test-lem-forcing-history cpp/test_lem_forcing_history.cpp)
+target_link_libraries(lsdtt-test-lem-forcing-history PRIVATE lsdtt3_cpu)
+add_test(NAME unit_lem_forcing_history
+         COMMAND lsdtt-test-lem-forcing-history "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(unit_lem_forcing_history PROPERTIES LABELS "unit;lem")
 set_tests_properties(unit_lem_channel_coupling PROPERTIES LABELS "unit;lem;hillslope")
 
 # The Newton solver for the Roering nonlinear hillslope (steady + transient).

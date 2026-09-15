@@ -56,6 +56,7 @@
 #include "../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_particle_io.hpp"
 #include "../src/cpu/lsdtt_hillslope_peclet_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_spacing_cpu.hpp"
 #include "../src/cpu/lsdtt_lem_timestep_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
@@ -670,9 +671,12 @@ int main(int argc, char* argv[])
 
     string_default_map["forcing_history_fname"] = "";
     help_map["forcing_history_fname"] = {"string","",
-        "Optional CSV (in read_path) making uplift_rate and baselevel_fall_rate functions of model time.",
+        "Optional CSV (in read_path) making uplift_rate, baselevel_fall_rate, erodibility and hillslope_diffusivity functions of model time.",
         "Columns: time_yr, uplift_rate, baselevel_fall_rate (the latter two optional, "
-        "default 0; any column order). Applied as a piecewise-constant step function of "
+        "default 0; any column order), plus optional erodibility and "
+        "hillslope_diffusivity, where an absent column or empty cell keeps the "
+        "parameter-file value. Stepping K or D walks the channelization index; "
+        "the applied K, D and CI are written to the stats CSV. Applied as a piecewise-constant step function of "
         "model time -- the row in force is the last one with time_yr <= t -- so a pulse "
         "has sharp on/off edges. Overrides the constant uplift_rate and "
         "baselevel_fall_rate parameters for the whole run. Use it to impose a pulse of "
@@ -2941,7 +2945,12 @@ int main(int argc, char* argv[])
         {
             std::cout << "    t >= " << std::setw(12) << p.time_yr << " yr :"
                       << "  U = " << p.uplift_rate << " m/yr"
-                      << "   baselevel fall = " << p.baselevel_fall_rate << " m/yr\n";
+                      << "   baselevel fall = " << p.baselevel_fall_rate << " m/yr";
+            if (p.erodibility > 0.0f)
+                std::cout << "   K = " << p.erodibility;
+            if (p.hillslope_diffusivity > 0.0f)
+                std::cout << "   D = " << p.hillslope_diffusivity << " m^2/yr";
+            std::cout << "\n";
         }
     }
 
@@ -2955,8 +2964,35 @@ int main(int argc, char* argv[])
         "delta_max_z", "delta_mean_z",
         "max_local_delta_z",
         "mean_erosion_rate", "max_erosion_rate",
-        "uplift_rate", "baselevel_fall_rate"
+        "uplift_rate", "baselevel_fall_rate",
+        "erodibility", "hillslope_diffusivity", "channelization_index"
     };
+
+    // std::to_string writes fixed 6-decimal notation, which reduces K = 6.75e-5
+    // to "0.000067". Small process parameters get significant figures instead.
+    auto sci = [](double v)
+    {
+        std::ostringstream o;
+        o << std::setprecision(7) << v;
+        return o.str();
+    };
+
+    // Length l in the channelization index CI = K l^(m+n) / (D^n U^(1-n))
+    // (Bonetti et al. 2020): the extent between the fixed (outlet) edges, i.e.
+    // along the flow direction. N-S outlets -> the row extent; E-W outlets -> the
+    // column extent; otherwise the longer side.
+    const double ci_length_m = [&]()
+    {
+        const std::string& bc = sf["boundary_conditions"];
+        auto fixed = [&](std::size_t i)
+        { return bc.size() > i && (bc[i] == 'o' || bc[i] == 'b'); };
+        const lsdtt::lsdtt_raster_meta& cm = dem.get_meta();
+        const double ns = static_cast<double>(cm.n_rows) * cm.cell_size;
+        const double ew = static_cast<double>(cm.n_cols) * cm.cell_size;
+        if (fixed(0) && fixed(2) && !(fixed(1) && fixed(3))) return ns;
+        if (fixed(1) && fixed(3) && !(fixed(0) && fixed(2))) return ew;
+        return std::max(ns, ew);
+    }();
 
     // -------------------------------------------------------------------------
     // Time loop
@@ -3031,6 +3067,11 @@ int main(int argc, char* argv[])
                 const lsdtt::lsdtt_lem_forcing_point f = forcing.at(total_time);
                 opts.uplift_rate         = f.uplift_rate;
                 opts.baselevel_fall_rate = f.baselevel_fall_rate;
+                // Negative = not given in the forcing file: keep the current value.
+                if (f.erodibility > 0.0f)
+                    opts.erodibility = f.erodibility;
+                if (f.hillslope_diffusivity > 0.0f)
+                    opts.hillslope_diffusivity = f.hillslope_diffusivity;
             }
 
             auto [next, stats] = lsdtt::run_lem_step(
@@ -3094,7 +3135,15 @@ int main(int argc, char* argv[])
                 std::to_string(stats.mean_erosion_rate),
                 std::to_string(stats.max_erosion_rate),
                 std::to_string(opts.uplift_rate),
-                std::to_string(opts.baselevel_fall_rate)
+                std::to_string(opts.baselevel_fall_rate),
+                sci(opts.erodibility),
+                sci(opts.hillslope_diffusivity),
+                sci(lsdtt::channelization_index(
+                    static_cast<double>(opts.erodibility),
+                    static_cast<double>(opts.hillslope_diffusivity),
+                    static_cast<double>(opts.uplift_rate), ci_length_m,
+                    static_cast<double>(opts.m_exponent),
+                    static_cast<double>(opts.n_exponent)))
             });
 
             // Progress reporting every 10 steps
@@ -3200,7 +3249,9 @@ int main(int argc, char* argv[])
             do_step();
             ++guard;
         }
-        if (total_time < t_end)
+        // Stopping short of t_end is only a problem when it was the CAP that
+        // stopped the run; an early stop at steady state is the intended outcome.
+        if (total_time < t_end && !stop_early)
             std::cerr << "\nWARNING: hit the iteration cap (" << cap
                       << ") at t = " << total_time << " yr, short of the requested "
                       << t_end << " yr. The timestep has collapsed; check the "

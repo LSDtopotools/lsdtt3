@@ -199,11 +199,14 @@ load_lem_forcing_history(const std::string& csv_path)
     // Column order is taken from the header, so columns may appear in any order.
     const std::vector<std::string> header = split(line);
     int col_time = -1, col_uplift = -1, col_fall = -1;
+    int col_K = -1, col_D = -1;
     for (std::size_t i = 0; i < header.size(); ++i)
     {
         if (header[i] == "time_yr")             col_time   = static_cast<int>(i);
         else if (header[i] == "uplift_rate")    col_uplift = static_cast<int>(i);
         else if (header[i] == "baselevel_fall_rate") col_fall = static_cast<int>(i);
+        else if (header[i] == "erodibility")    col_K      = static_cast<int>(i);
+        else if (header[i] == "hillslope_diffusivity") col_D = static_cast<int>(i);
     }
     if (col_time < 0)
         throw std::runtime_error(
@@ -222,10 +225,21 @@ load_lem_forcing_history(const std::string& csv_path)
             return std::stof(cells[static_cast<std::size_t>(col)]);
         };
 
+        // Process parameters: absent column or empty cell = keep the
+        // parameter-file value, which a 0 default would silently override.
+        auto optional_value = [&](int col) -> float
+        {
+            if (col < 0 || col >= static_cast<int>(cells.size())) return -1.0f;
+            if (cells[static_cast<std::size_t>(col)].empty())      return -1.0f;
+            return std::stof(cells[static_cast<std::size_t>(col)]);
+        };
+
         lsdtt_lem_forcing_point p;
         p.time_yr             = cell_value(col_time);
         p.uplift_rate         = cell_value(col_uplift);
         p.baselevel_fall_rate = cell_value(col_fall);
+        p.erodibility           = optional_value(col_K);
+        p.hillslope_diffusivity = optional_value(col_D);
         hist.points.push_back(p);
     }
 
