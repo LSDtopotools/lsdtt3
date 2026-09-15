@@ -1607,8 +1607,15 @@ int main(int argc, char* argv[])
     // Lambda to write the hillslope Dirichlet channel mask of a surface, so a
     // fluvial run can freeze its network for a later hillslopes-only run, and so an
     // animation can show the network migrating.  `descriptor` names the output.
+    // used_mask: the channel set the model actually solved against, when the
+    // caller has it. The equilibration cycle builds its set with D8 routing and
+    // a hysteresis rule (a pixel that was already channel stays channel down to
+    // channel_hysteresis_factor * threshold), neither of which a fresh
+    // area-threshold recomputation reproduces -- so writing a recomputed mask
+    // there produced a file that disagreed with the Dirichlet set of the solve.
     auto write_channel_mask = [&](const lsdtt::lsdtt_raster_cpu& final_dem,
-                                  const std::string& descriptor) {
+                                  const std::string& descriptor,
+                                  const std::vector<std::uint8_t>* used_mask = nullptr) {
         if (!bf["write_channel_mask_raster"]) return;
 
         const std::string mask_path =
@@ -1617,14 +1624,29 @@ int main(int argc, char* argv[])
         try
         {
             // The mask may be defined at its own area threshold, so that a run
-            // eroding fluvially everywhere can still emit a channel network.
-            lsdtt::lsdtt_lem_options mask_opts = opts;
-            if (ff["channel_mask_threshold_specific_area"] > 0.0f)
-                mask_opts.incision_threshold_area =
-                    ff["channel_mask_threshold_specific_area"];
+            // eroding fluvially everywhere can still emit a channel network. An
+            // explicit threshold is a request for a DIFFERENT network, so it
+            // takes precedence over the set the model used.
+            const bool own_threshold =
+                ff["channel_mask_threshold_specific_area"] > 0.0f;
+            const bool write_used =
+                !own_threshold && used_mask != nullptr &&
+                used_mask->size() == final_dem.get_mask().size();
 
-            const std::vector<std::uint8_t> is_channel =
-                lsdtt::compute_lem_channel_mask(final_dem, mask_opts);
+            std::vector<std::uint8_t> is_channel;
+            if (write_used)
+            {
+                is_channel = *used_mask;
+                std::cout << "  (the channel set used by the hillslope solve)\n";
+            }
+            else
+            {
+                lsdtt::lsdtt_lem_options mask_opts = opts;
+                if (own_threshold)
+                    mask_opts.incision_threshold_area =
+                        ff["channel_mask_threshold_specific_area"];
+                is_channel = lsdtt::compute_lem_channel_mask(final_dem, mask_opts);
+            }
 
             const std::vector<std::uint8_t>& valid = final_dem.get_mask();
             const lsdtt::lsdtt_raster_meta&  mm    = final_dem.get_meta();
@@ -2128,6 +2150,10 @@ int main(int argc, char* argv[])
         // so the one-shot post-step below does not solve them a second time.
         bool eq_hillslope_done = false;
 
+        // The channel set of the delivered equilibration cycle (hysteresis
+        // included), kept so the channel mask raster is the set actually used.
+        std::vector<std::uint8_t> eq_channel_mask;
+
         // Working copy of the DEM - updated between cycles.
         lsdtt::lsdtt_raster_cpu cycle_dem = dem;
 
@@ -2275,6 +2301,7 @@ int main(int argc, char* argv[])
 
             ss_result = eq_result.final_snap;
             area_d = std::move(eq_result.drainage_area);
+            eq_channel_mask = eq_result.is_channel;
 
             // _steady_state_elevation keeps meaning the fluvial surface, as in
             // the legacy path; the hillslope-solved surface is written under
@@ -2293,6 +2320,28 @@ int main(int argc, char* argv[])
                     std::cerr << "FATAL: writing hillslope elevation failed: "
                               << e.what() << "\n";
                     return 1;
+                }
+
+                // The delivered surface -- channels AND hillslopes -- gets its own
+                // hillshade, as in the one-shot path. The _steady_state_hillshade
+                // written below is of the fluvial-only snap.
+                if (bf["write_hillshade_png"])
+                {
+                    const std::string eq_hs_png = pp.make_output_path(
+                        "_hillslope_steady_state_hillshade", ".png");
+                    std::cout << "Writing hillslope steady-state hillshade PNG: "
+                              << eq_hs_png << "\n";
+                    try {
+                        write_hillshade_png(loader, eq_result.elevation, eq_hs_png,
+                            static_cast<double>(ff["hillshade_azimuth"]),
+                            static_cast<double>(ff["hillshade_altitude"]),
+                            static_cast<double>(ff["hillshade_z_factor"]));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: hillshade PNG write failed: "
+                                  << e.what() << "\n";
+                    }
                 }
             }
 
@@ -2657,7 +2706,8 @@ int main(int argc, char* argv[])
             }
         }
 
-        write_channel_mask(ss_result.elevation, "_channel_mask");
+        write_channel_mask(ss_result.elevation, "_channel_mask",
+                           eq_channel_mask.empty() ? nullptr : &eq_channel_mask);
 
         pp.print_parameters();
         return 0;

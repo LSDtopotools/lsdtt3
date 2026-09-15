@@ -2826,6 +2826,15 @@ target_link_libraries(lsdtt-test-lem-timestep PRIVATE lsdtt3_cpu)
 add_test(NAME unit_lem_timestep COMMAND lsdtt-test-lem-timestep)
 set_tests_properties(unit_lem_timestep PROPERTIES LABELS "unit;lem")
 
+# Process-domain coupling: every hillslope model must hold the channel pixels at
+# their fluvial elevations and relax the hillslopes toward them, not toward the
+# outlet. adi and cidre used to miss the channel set.
+add_executable(lsdtt-test-lem-channel-coupling cpp/test_lem_channel_coupling.cpp)
+target_link_libraries(lsdtt-test-lem-channel-coupling PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_lem_channel_coupling COMMAND lsdtt-test-lem-channel-coupling)
+set_tests_properties(unit_lem_channel_coupling PROPERTIES LABELS "unit;lem;hillslope")
+
 # The Newton solver for the Roering nonlinear hillslope (steady + transient).
 add_executable(lsdtt-test-hillslope-newton cpp/test_hillslope_newton.cpp)
 target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)

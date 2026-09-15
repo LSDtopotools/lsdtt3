@@ -347,24 +347,14 @@ run_lem_step(
     // -------------------------------------------------------------------------
     if (opts.enable_hillslope_transport)
     {
-
-        if (opts.hillslope_transport_model == "adi") 
-        {
-            // Alternating directions implicit does not need to build a flow graph
-            current = compute_adi_hillslope_transport(
-                current,
-                opts.hillslope_diffusivity,
-                opts.timestep,
-                opts.boundary_conditions
-            );
-        }
-        else
         {
             // Cidre routes sediment on the flow graph, so it always needs one.
-            // The explicit-FD models (linear / roering / roering_implicit) use the
-            // flow graph only to identify channels - which an explicit channel mask
-            // already does - so skip the rebuild in that case.  It is otherwise
-            // rebuilt every step, and on a long fixed-network run that dominates.
+            // The grid models (adi / cellular / linear / roering /
+            // roering_implicit) use the flow graph only to identify channels -
+            // which an explicit channel mask already does, and which the coupled
+            // regime does not want at all - so skip the rebuild in those cases.
+            // It is otherwise rebuilt every step, and on a long fixed-network run
+            // that dominates.
             const bool have_explicit_mask =
                 opts.explicit_channel_mask.size() == n_cells;
             const bool is_cidre = (opts.hillslope_transport_model == "cidre");
@@ -375,19 +365,36 @@ run_lem_step(
                 have_explicit_mask) == hillslope_coupling_regime::coupled;
 
             std::optional<lsdtt_flowgraph_cpu> flow_hillslope;
-            if (is_cidre || (!have_explicit_mask && !(is_cellular && coupled)))
+            if (is_cidre || (!have_explicit_mask && !coupled))
                 flow_hillslope.emplace(build_hillslope_flowgraph(current, opts));
 
-            // Build the Dirichlet channel mask once for the channel-using explicit
-            // FD models: prefer an explicit channel mask when supplied (Sec8), else
-            // derive it from the drainage-area threshold.
+            // The Dirichlet channel set, ONE definition for every model: the
+            // explicit channel mask when supplied (Sec8), else the drainage-area
+            // threshold, and empty in the coupled regime. Every model below must
+            // take its channels from here, so that the channel elevations left by
+            // the fluvial step are what the hillslopes relax toward.
             auto build_is_channel = [&]() -> std::vector<uint8_t>
             {
                 return build_channel_mask(
                     flow_hillslope ? &*flow_hillslope : nullptr, meta, opts);
             };
 
-            if (is_cellular)
+            if (opts.hillslope_transport_model == "adi")
+            {
+                // Linear Crank-Nicolson ADI. Channels are identity rows, so they
+                // hold their fluvial elevations. This model used to be called
+                // with no channel set at all, which diffused the channels away and
+                // left the domain edges as the only base level.
+                const std::vector<uint8_t> is_channel = build_is_channel();
+                current = compute_adi_hillslope_transport(
+                    current,
+                    opts.hillslope_diffusivity,
+                    opts.timestep,
+                    opts.boundary_conditions,
+                    is_channel
+                );
+            }
+            else if (is_cellular)
             {
                 std::vector<uint8_t> is_channel = build_is_channel();
                 lsdtt_hillslope_cellular_options cellular_options;
@@ -525,6 +532,10 @@ run_lem_step(
             }
             else if (opts.hillslope_transport_model == "cidre")
             {
+                // Pass the shared channel set so an explicit channel mask and the
+                // coupled regime reach Cidre. For a threshold-derived set on this
+                // same flow graph it is the set Cidre would have built itself.
+                const std::vector<uint8_t> is_channel = build_is_channel();
                 current = compute_cidre_hillslope_transport(
                     current, *flow_hillslope,
                     opts.hillslope_diffusivity,
@@ -534,7 +545,8 @@ run_lem_step(
                     opts.incision_threshold_area,
                     opts.divide_area_by_dx,
                     opts.deposit_on_hillslope_baselevels,
-                    opts.n_threads
+                    opts.n_threads,
+                    &is_channel
                 );
             }
             else
