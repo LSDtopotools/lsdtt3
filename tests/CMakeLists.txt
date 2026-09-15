@@ -1977,31 +1977,21 @@ endif()
 # fixtures only: no network and no committed DEM, so it runs in the default
 # suite.
 #
-# Image-filter primitives and splitmix64 (OpenCV removal, Phase 1): border
-# mapping, OpenCV-rounding box mean, Gaussian kernels, separable filter, Otsu,
-# Sobel, Bresenham. No OpenCV needed.
+# Image-filter primitives and splitmix64: border mapping, box mean with
+# OpenCV's rounding rules, Gaussian kernels, separable and fixed-point filters,
+# Otsu, Sobel, Bresenham.
 add_executable(lsdtt-test-image-filters cpp/test_image_filters.cpp)
 target_link_libraries(lsdtt-test-image-filters PRIVATE lsdtt3_utils)
 add_test(NAME unit_image_filters COMMAND lsdtt-test-image-filters)
 set_tests_properties(unit_image_filters PROPERTIES LABELS "unit;image_ops")
 
-# Native raster image operations vs the frozen OpenCV oracle, plus invariants
-# (OpenCV removal, Phase 2). No OpenCV needed.
+# Native raster image operations vs outputs frozen from OpenCV 4.13 before the
+# OpenCV dependency was removed (tests/expected/image_ops/), plus invariants.
 add_executable(lsdtt-test-image-ops cpp/test_image_ops.cpp)
 target_link_libraries(lsdtt-test-image-ops PRIVATE lsdtt3_cpu)
 add_test(NAME unit_image_ops
          COMMAND lsdtt-test-image-ops ${CMAKE_CURRENT_SOURCE_DIR}/expected/image_ops)
 set_tests_properties(unit_image_ops PROPERTIES LABELS "unit;image_ops")
-
-# Image-ops oracle capture (docs: OpenCV removal, Phase 0). Freezes the
-# behaviour of lsdtt::opencv_cpu into tests/expected/image_ops/ so the native
-# replacements can be checked without OpenCV. Run by hand, never by CTest:
-#   lsdtt-test-image-ops-oracle-capture <repo>/tests/expected/image_ops
-# Named lsdtt-test-* so the "all" packaging profile excludes it.
-if(LSDTT_HAS_OPENCV)
-    add_executable(lsdtt-test-image-ops-oracle-capture cpp/image_ops_oracle_capture.cpp)
-    target_link_libraries(lsdtt-test-image-ops-oracle-capture PRIVATE lsdtt3_cpu)
-endif()
 
 # NOTE: two MADk2 checks are KNOWN FAILURES (the anisotropy/DMC estimator treats
 # axial directions as vectors).  They are reported as KNOWN-FAIL and do not fail
@@ -4966,8 +4956,8 @@ set(LSDTT_DOMAIN_RULES
     "sediment_routing"       "network"
     "linear_stats"           "network"
     "basin_surface_metrics"  "surface_metrics"
-    # Added 2026-09-14 for the OpenCV removal: the native image-filter
-    # primitives and raster image operations that replace lsdtt::opencv_cpu.
+    # Added 2026-09-14: the native image-filter primitives and raster image
+    # operations (Otsu, adaptive threshold, Canny, Hough) that replaced OpenCV.
     "image_filters|image_ops" "image_ops"
 )
 

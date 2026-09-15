@@ -5,7 +5,7 @@ There are two ways to build lsdtt3 on a Windows machine:
 | Route | Tool set | Use it for |
 |---|---|---|
 | [WSL2](#wsl2-recommended) | **Full** — identical to Linux | Development, analysis, everything |
-| [Native Windows](#native-windows-qgis-backend-only) (Visual Studio + vcpkg) | **Reduced** — no OpenMP, Eigen or OpenCV | Producing `.exe` files for the QGIS plugin backend |
+| [Native Windows](#native-windows-qgis-backend-only) (Visual Studio + vcpkg) | **Reduced** — no OpenMP or Eigen | Producing `.exe` files for the QGIS plugin backend |
 
 Use WSL2 unless you specifically need native `.exe` files. Benchmarking
 suggests the Linux build under WSL2 is also *faster* than a native Windows
@@ -75,7 +75,7 @@ drives. It is **not** a development route.
 Limitations, up front:
 
 - Full lsdtt3 functionality exists only on Linux (including WSL2).
-- Native Windows is a reduced-feature profile: OpenMP, Eigen and OpenCV are
+- Native Windows is a reduced-feature profile: OpenMP and Eigen are
   off. FFTW3 *is* included via vcpkg, so spectral analysis and Wiener channel
   extraction work.
 - These builds exist for the QGIS plugin backend, not for performance.
@@ -147,7 +147,6 @@ cmake -S . -B build\windows-qgis -G "Ninja" `
   -DBUILD_TESTING=OFF `
   -DLSDTT_OPENMP=OFF `
   -DLSDTT_EIGEN=OFF `
-  -DLSDTT_OPENCV=OFF `
   -DLSDTT_GPU=OFF `
   -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
 ```

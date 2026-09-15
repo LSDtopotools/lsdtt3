@@ -103,9 +103,6 @@ inline std::vector<std::string> lsdtt_compiled_features()
 #ifdef LSDTT_HAS_EIGEN
     features.push_back("eigen");
 #endif
-#ifdef LSDTT_HAS_OPENCV
-    features.push_back("opencv");
-#endif
 #ifdef LSDTT_HAS_NETCDF
     features.push_back("netcdf");
 #endif

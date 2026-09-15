@@ -31,10 +31,10 @@ key: value
 | 3b. Surface shape classification (SMAP) | `write_shape_classification_raster: true` |
 | 4. MADk2 roughness | `write_madk2_rasters: true` |
 | 5. Frangi filter | `write_frangi_raster: true` or `write_frangi_scale_raster: true` |
-| 6. Otsu threshold segmentation *(requires OpenCV)* | `write_otsu_raster: true` |
-| 7. Hough line extraction *(requires OpenCV)* | `write_hough_lines_raster: true` |
+| 6. Otsu threshold segmentation | `write_otsu_raster: true` |
+| 7. Hough line extraction | `write_hough_lines_raster: true` |
 | 8. Curvature skeletons | `write_curvature_skeleton_rasters: true` |
-| 9. VEC adaptive thresholding *(requires OpenCV)* | `write_vec_adaptive_threshold_rasters: true` |
+| 9. VEC adaptive thresholding | `write_vec_adaptive_threshold_rasters: true` |
 
 ---
 
@@ -54,7 +54,7 @@ key: value
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `n_threads` | int | `0` | Number of OpenMP threads. `0` uses all hardware threads (default); `1` is serial. Applies to wavelet/direct polynomial fits, the polyfit metric engine, Frangi, and OpenCV normalisation passes. Set an explicit limit no greater than your physical-core allocation in shared environments. |
+| `n_threads` | int | `0` | Number of OpenMP threads. `0` uses all hardware threads (default); `1` is serial. Applies to wavelet/direct polynomial fits, the polyfit metric engine, Frangi, and the 8-bit image-operation passes. Set an explicit limit no greater than your physical-core allocation in shared environments. |
 
 ---
 
@@ -276,27 +276,31 @@ Outputs: `<write_fname>_frangi.tif`, `<write_fname>_frangi_scale.tif`
 
 ---
 
-## Step 6: Otsu threshold segmentation *(requires OpenCV)*
+## Step 6: Otsu threshold segmentation
 
 Output: `<write_fname>_otsu.tif`
 
 Normalises the DEM to 8-bit and applies Otsu's method to select the threshold that minimises intra-class greyscale variance. Output is a binary raster: 1.0 = foreground (above threshold), 0.0 = background.
 
+The 8-bit scaling uses the minimum and maximum of the **valid** pixels only, and the Otsu histogram counts valid pixels only, so nodata does not affect the threshold. (Before these operations were reimplemented natively, nodata entered both as zeros; on a DEM with a nodata border that made every valid pixel foreground.)
+
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_otsu_raster` | bool | `false` | Enable Otsu segmentation. Silently skipped if OpenCV was not compiled in. |
+| `write_otsu_raster` | bool | `false` | Enable Otsu segmentation. |
 
 ---
 
-## Step 7: Hough line extraction *(requires OpenCV)*
+## Step 7: Hough line extraction
 
 Output: `<write_fname>_hough_lines.tif`
 
-Applies probabilistic Hough transform (HoughLinesP) to a Canny edge image derived from the DEM. Output is a binary raster marking detected line pixels.
+Applies the progressive probabilistic Hough transform (Matas et al. 2000) to a Canny edge image derived from the DEM, and draws the detected segments 1 pixel wide. Output is a binary raster marking detected line pixels.
+
+The algorithm and parameters are those of OpenCV's `HoughLinesP`. The order in which edge points are visited is random; lsdtt3 uses its own fixed-seed generator, so the result is identical on every run and platform, but the exact segments differ from OpenCV's.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_hough_lines_raster` | bool | `false` | Enable Hough line extraction. Silently skipped if OpenCV was not compiled in. |
+| `write_hough_lines_raster` | bool | `false` | Enable Hough line extraction. |
 | `hough_rho` | float | `1.0` | Distance resolution of the Hough accumulator in pixels. |
 | `hough_theta_degrees` | float | `1.0` | Angle resolution of the accumulator in degrees. |
 | `hough_threshold` | int | `50` | Minimum accumulator votes required to accept a line. Increase to suppress short or faint lines. |
@@ -339,7 +343,7 @@ Outputs:
 
 ---
 
-## Step 9: VEC adaptive thresholding *(requires OpenCV)*
+## Step 9: VEC adaptive thresholding
 
 Applies adaptive mean and Gaussian thresholding to the vertical excess curvature. Each pixel is compared to the local neighbourhood mean (or Gaussian-weighted mean) minus the constant `vec_adaptive_C`.
 
@@ -347,7 +351,7 @@ Outputs: `<write_fname>_vec_adaptive_curvature.tif`, `_vec_adaptive_mean.tif`, `
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_vec_adaptive_threshold_rasters` | bool | `false` | Enable VEC adaptive thresholding. Silently skipped if OpenCV was not compiled in. Uses `curvature_skeleton_lambda_metres` for the polyfit scale. |
+| `write_vec_adaptive_threshold_rasters` | bool | `false` | Enable VEC adaptive thresholding. Uses `curvature_skeleton_lambda_metres` for the polyfit scale. |
 | `vec_adaptive_block_size_pixels` | int | `51` | Neighbourhood block size in pixels. Must be odd and ≥ 3. Should exceed the typical feature width but be smaller than the between-feature spacing. |
 | `vec_adaptive_C` | float | `0.0` | Constant subtracted from the local mean before thresholding. `0` = threshold at the local mean. Negative (e.g. `-5`) = stricter; positive = looser. |
 | `vec_adaptive_gaussian_sigma` | float | `0.0` | Sigma for optional Gaussian pre-blur before thresholding. `0` = no blur. |

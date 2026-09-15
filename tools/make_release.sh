@@ -10,7 +10,7 @@
 #   1. Resolve the release version (--version flag, else exact git tag).
 #   2. Check it against project(lsdtt3 VERSION ...) in CMakeLists.txt.
 #      Pre-release versions (e.g. 0.3.0-rc1) compare only the X.Y.Z stem.
-#   3. Configure and build (Release; OpenCV + Eigen on).
+#   3. Configure and build (Release; Eigen on).
 #   4. Smoke-check every packaged CLI (runs each with -v).
 #   5. Package the Linux backend bundle (tools/package_linux_backend.sh).
 #   6. Optionally publish to a GitHub release with gh (--publish).
@@ -126,7 +126,6 @@ else
     info "configuring $BUILD_DIR"
     cmake -B "$BUILD_DIR" \
         -DCMAKE_BUILD_TYPE=Release \
-        -DLSDTT_OPENCV=ON \
         -DLSDTT_EIGEN=ON
     n_jobs="$(nproc 2>/dev/null || echo 4)"
     info "building with $n_jobs jobs"

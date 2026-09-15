@@ -122,7 +122,6 @@ every library they need. This section is for building from source.
 | OpenMP | No | Multi-core parallelism across most routines |
 | FFTW3 (double precision) | No | `lsdtt-spectral-analysis`; wavelet quadratic polyfit in other tools |
 | Eigen3 | No | `lsdtt-chi-analysis`; chi k_sn / u* inversion |
-| OpenCV (core + imgproc) | No | Frangi filter, Otsu segmentation, Hough line extraction, adaptive thresholding in `lsdtt-surface-metrics` |
 | NetCDF | No | ERA40 atmospheric / palaeomagnetic corrections in `lsdtt-cosmo-tool` and `lsdtt-cosmo-prediction` |
 | CUDA toolkit | No | GPU compute backend (not yet implemented) |
 
@@ -136,7 +135,6 @@ sudo apt install cmake build-essential libgdal-dev
 # Optional — install whichever you need
 sudo apt install libfftw3-dev        # spectral analysis, wavelet polyfit
 sudo apt install libeigen3-dev       # chi analysis and k_sn inversion
-sudo apt install libopencv-dev       # image analysis in surface metrics
 sudo apt install libnetcdf-dev       # CRN palaeomagnetic corrections
 ```
 
@@ -146,7 +144,7 @@ OpenMP is included with GCC and needs no separate install.
 
 Build inside a WSL2 Ubuntu environment and use the Ubuntu instructions above.
 A native Windows build is possible with Visual Studio and vcpkg but is a
-deliberately reduced profile (no Eigen, no OpenCV, no OpenMP) intended as the
+deliberately reduced profile (no Eigen, no OpenMP) intended as the
 QGIS plugin backend. Both are in `docs/developer_notes/building_on_windows.md`.
 
 ### macOS
@@ -156,7 +154,7 @@ Ubuntu VM managed by Multipass — see `docs/developer_notes/building_on_macos.m
 
 ### Apptainer container
 
-A pre-configured Apptainer definition is provided that includes all dependencies (GDAL, FFTW3, Eigen3, OpenCV, OpenMP) on Ubuntu 22.04. See `apptainer_def/apptainer_setup.md` for setup on Linux, macOS, and Windows (WSL2).
+A pre-configured Apptainer definition is provided that includes all dependencies (GDAL, FFTW3, Eigen3, NetCDF, OpenMP) on Ubuntu 22.04. See `apptainer_def/apptainer_setup.md` for setup on Linux, macOS, and Windows (WSL2).
 
 ### Debian packaging
 
@@ -188,7 +186,6 @@ Full instructions for every platform, including the CMake option reference:
 |---|---|---|
 | `CMAKE_BUILD_TYPE` | `Release` | `Release`, `Debug`, or `RelWithDebInfo` |
 | `LSDTT_GPU` | `OFF` | Enable GPU compute backend (requires CUDA toolkit) |
-| `LSDTT_OPENCV` | `ON` | Build OpenCV-dependent routines (auto-disabled if OpenCV not found) |
 | `LSDTT_EIGEN` | `ON` | Build Eigen3-dependent routines (auto-disabled if Eigen3 not found) |
 | `LSDTT_ENABLE_BENCHMARKS` | `OFF` | Register the RichDEM comparison benchmarks (needs network + pixi) |
 | `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Register tests that download data |

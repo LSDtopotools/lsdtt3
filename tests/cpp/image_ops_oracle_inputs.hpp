@@ -10,9 +10,10 @@
 // -----------------------------------------------------------------------------
 // Deterministic synthetic rasters for the image-ops oracle.
 //
-// Shared by the OpenCV oracle capture tool (image_ops_oracle_capture.cpp) and
-// by the native image-ops tests that compare against the captured fixtures, so
-// both sides are guaranteed to use identical inputs. The capture manifest also
+// These generated the inputs from which OpenCV 4.13's outputs were captured
+// (2026-09-14, before OpenCV was removed; the capture tool was deleted with
+// it), and the native image-ops tests regenerate them to compare against those
+// fixtures, so both sides use identical inputs. The capture manifest also
 // records a hash of every input; a test that finds a different hash knows the
 // generators here have drifted and the fixtures are stale.
 //

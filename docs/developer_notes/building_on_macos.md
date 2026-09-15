@@ -37,7 +37,7 @@ clang --version     # verify
 Install Homebrew from [brew.sh](https://brew.sh) if you don't have it, then:
 
 ```bash
-brew install cmake gdal fftw libomp netcdf opencv eigen
+brew install cmake gdal fftw libomp netcdf eigen
 ```
 
 | Package | Required? | Role |
@@ -47,7 +47,6 @@ brew install cmake gdal fftw libomp netcdf opencv eigen
 | `libomp` | for multithreading | OpenMP runtime (see below) |
 | `fftw` | no | Spectral analysis, wavelet polyfit |
 | `netcdf` | no | ERA40 / palaeomagnetic corrections in cosmo tools |
-| `opencv` | no | Image analysis in surface metrics |
 | `eigen` | no | k_sn / u\* inversion in chi analysis |
 
 These are the Homebrew names for the same libraries listed in

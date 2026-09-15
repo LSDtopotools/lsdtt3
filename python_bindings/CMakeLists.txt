@@ -20,7 +20,6 @@ set(LSDTT3_SRC_DIR "${LSDTT3_SOURCE_DIR}/src")
 option(LSDTT_PYTHON_OPENMP "Enable OpenMP in the bundled LSDTT runtime" ON)
 option(LSDTT_PYTHON_FFTW "Enable FFTW spectral routines when available" ON)
 option(LSDTT_PYTHON_NETCDF "Enable netCDF routines when available" ON)
-option(LSDTT_PYTHON_OPENCV "Enable OpenCV image-analysis routines when available" ON)
 option(LSDTT_PYTHON_EIGEN "Enable Eigen inversion routines when available" ON)
 option(LSDTT_PYTHON_RELEASE_WHEEL
     "Stage GDAL and PROJ runtime data for a self-contained release wheel" OFF)
@@ -83,27 +82,19 @@ if(LSDTT_PYTHON_NETCDF)
     find_library(NETCDF_LIBRARY NAMES netcdf)
 endif()
 
-if(LSDTT_PYTHON_OPENCV)
-    find_package(OpenCV QUIET COMPONENTS core imgproc)
-endif()
-
 if(LSDTT_PYTHON_EIGEN)
     find_package(Eigen3 QUIET NO_MODULE)
 endif()
 
-# Keep this source selection aligned with the root CMake build. The two
-# conditional implementations are only compiled after their dependency has
+# Keep this source selection aligned with the root CMake build. The
+# conditional implementation is only compiled after its dependency has
 # been found; all other core, utility, and CPU sources belong to the runtime.
 file(GLOB LSDTT3_CORE_SOURCES CONFIGURE_DEPENDS "${LSDTT3_SRC_DIR}/core/*.cpp")
 file(GLOB LSDTT3_UTILS_SOURCES CONFIGURE_DEPENDS "${LSDTT3_SRC_DIR}/utils/*.cpp")
 file(GLOB LSDTT3_CPU_SOURCES CONFIGURE_DEPENDS "${LSDTT3_SRC_DIR}/cpu/*.cpp")
 list(REMOVE_ITEM LSDTT3_CPU_SOURCES
-    "${LSDTT3_SRC_DIR}/cpu/lsdtt_raster_opencv_cpu.cpp"
     "${LSDTT3_SRC_DIR}/cpu/lsdtt_chi_ksn_inversion_cpu.cpp"
 )
-if(OpenCV_FOUND)
-    list(APPEND LSDTT3_CPU_SOURCES "${LSDTT3_SRC_DIR}/cpu/lsdtt_raster_opencv_cpu.cpp")
-endif()
 if(Eigen3_FOUND)
     list(APPEND LSDTT3_CPU_SOURCES "${LSDTT3_SRC_DIR}/cpu/lsdtt_chi_ksn_inversion_cpu.cpp")
 endif()
@@ -159,11 +150,6 @@ if(NETCDF_INCLUDE_DIR AND NETCDF_LIBRARY)
     target_include_directories(lsdtt3_runtime PUBLIC ${NETCDF_INCLUDE_DIR})
     target_link_libraries(lsdtt3_runtime PUBLIC ${NETCDF_LIBRARY})
     target_compile_definitions(lsdtt3_runtime PUBLIC LSDTT_HAS_NETCDF=1)
-endif()
-
-if(OpenCV_FOUND)
-    target_link_libraries(lsdtt3_runtime PUBLIC ${OpenCV_LIBS})
-    target_compile_definitions(lsdtt3_runtime PUBLIC LSDTT_HAS_OPENCV=1)
 endif()
 
 if(Eigen3_FOUND)

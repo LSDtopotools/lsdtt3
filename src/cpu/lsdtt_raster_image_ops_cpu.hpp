@@ -11,9 +11,12 @@
 // lsdtt_raster_image_ops_cpu
 //
 // Native image-processing operations on lsdtt_raster_cpu: Otsu and adaptive
-// thresholding, Canny edges, and probabilistic Hough line extraction. These replace the OpenCV-based lsdtt::opencv_cpu functions of
-// the same names. On rasters without nodata they reproduce OpenCV's output bit
-// for bit (checked against frozen OpenCV outputs in tests/expected/image_ops/);
+// thresholding, Canny edges, and probabilistic Hough line extraction. They
+// replaced an OpenCV-based implementation with the same function names
+// (removed 2026-09-14). On rasters without nodata they reproduce OpenCV 4.13's
+// output bit for bit (checked against outputs frozen from OpenCV in
+// tests/expected/image_ops/), except that Hough visits edge points in a
+// different random order;
 // on rasters with nodata they deliberately differ (see 8-bit normalisation).
 // Built on the primitives in src/utils/lsdtt_image_filters.hpp.
 //

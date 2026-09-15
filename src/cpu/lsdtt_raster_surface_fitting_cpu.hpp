@@ -160,8 +160,8 @@ lsdtt_raster_cpu residual_from_fitted_plane(
 // Returns a map from integer label to fit result.  Labels for which the fit
 // was degenerate (too few pixels, collinear geometry) have valid = false.
 //
-// Typical input: an Otsu-thresholded or k-means label raster produced by
-// the OpenCV routines in lsdtt_raster_opencv_cpu.
+// Typical input: an Otsu-thresholded (lsdtt_raster_image_ops_cpu) or k-means
+// label raster.
 // -----------------------------------------------------------------------------
 std::map<int, lsdtt_plane_fit_result> fit_planes_to_labels(
     const lsdtt_raster_cpu& dem,

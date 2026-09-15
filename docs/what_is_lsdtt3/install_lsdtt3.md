@@ -187,7 +187,7 @@ A native Windows build exists, distributed as a `.zip`. **It is a reduced
 build** and exists mainly as the backend for the QGIS plugin:
 
 - it ships the `qgis` profile, not the full tool set;
-- OpenCV- and Eigen-dependent routines are disabled, so some analyses are
+- Eigen-dependent routines are disabled, so some analyses are
   missing or skip their optional steps;
 - it is generally *slower* than the same machine running the Linux package
   under WSL2.

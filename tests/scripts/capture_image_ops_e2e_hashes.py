@@ -7,28 +7,33 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # -----------------------------------------------------------------------------
-# End-to-end half of the image-ops oracle (OpenCV removal, Phase 0).
+# End-to-end check of the image operations (Otsu, adaptive thresholds, Canny,
+# Hough) through the two CLIs that use them, on the fluvial-surfaces fixture DEM:
 #
-# Runs the two CLIs whose outputs depend on the OpenCV image operations, on the
-# fluvial-surfaces fixture DEM, and records a SHA-256 of every file they write:
-#
-#   lsdtt-flat-surface-finder  slope-break outputs (always run; OpenCV adaptive
-#                              threshold inside find_vec_skeleton)
+#   lsdtt-flat-surface-finder  slope-break outputs (adaptive threshold inside
+#                              find_vec_skeleton; always run)
 #   lsdtt-surface-metrics      Otsu, Hough lines, VEC adaptive threshold and
 #                              VEC adaptive skeleton rasters
 #
-# Each CLI is run in two OpenCV modes, each twice (to detect files that are not
-# byte-deterministic, e.g. embedded timestamps):
+# tests/expected/image_ops/e2e_hashes.csv holds a SHA-256 of every output file.
+# It was captured on 2026-09-14 from the OpenCV 4.13-based implementation, and
+# the native implementation reproduced all 14 files byte for byte (including
+# after the valid-pixel normalisation change, which does not affect this
+# fixture). The Hough raster is empty on this fixture, so Hough is exercised by
+# tests/cpp/test_image_ops.cpp, not here.
 #
-#   default    OpenCV as built (IPP + dispatched SIMD)
-#   reference  OPENCV_IPP=disabled and OPENCV_CPU_DISABLE=<all dispatched
-#              features>; baseline SIMD cannot be disabled at run time
+# Check the current build against it:
 #
-# NOT part of CTest: run by hand while OpenCV is linked.
-#
-#   python3 tests/scripts/capture_image_ops_e2e_hashes.py \
+#   python3 tests/scripts/capture_image_ops_e2e_hashes.py --check \
 #       --bin-dir build --fixture-dir build/tests/fluvial_surfaces_fixture \
 #       --work-dir <scratch> --out tests/expected/image_ops/e2e_hashes.csv
+#
+# File hashes include GeoTIFF metadata, so a different GDAL version can change
+# them without any pixel changing; this is why the check is not a CTest.
+#
+# Without --check the script re-captures the CSV, running each CLI twice under
+# two environments (the second sets OPENCV_IPP / OPENCV_CPU_DISABLE, which were
+# meaningful only while OpenCV was linked) to confirm byte-determinism.
 # -----------------------------------------------------------------------------
 
 import argparse

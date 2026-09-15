@@ -40,7 +40,7 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 | 5 | Combine the two tests | `admission_mode` |
 | 6 | Morphological opening / closing | `flat_opening_radius_metres`, `flat_closing_radius_metres`, `open_then_close` |
 | 7 | Optional directional closing of the non-flat mask | `directional_close_line_length_pixels` |
-| 8 | Optional VEC break-of-slope skeleton *(requires OpenCV)* | `vec_adaptive_*`, `slope_break_*` |
+| 8 | Optional VEC break-of-slope skeleton | `vec_adaptive_*`, `slope_break_*` |
 | 9 | Component filtering and labelling | `min_component_pixels` |
 | 10 | Optional plane fitting per label | `run_plane_analysis` |
 | 11 | Write masks, rasters and CSVs | the `write_*` switches |
@@ -127,7 +127,7 @@ Note that `min_component_pixels` filters components of the **whole mask** here.
 
 ---
 
-## Slope-break skeleton (VEC) — diagnostic, requires OpenCV
+## Slope-break skeleton (VEC) — diagnostic
 
 A break-of-slope skeleton derived by adaptive thresholding of vertical excess
 curvature. It is a morphometric product worth having in its own right; it is

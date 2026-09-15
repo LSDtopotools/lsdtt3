@@ -8,9 +8,10 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Tests for src/cpu/lsdtt_raster_image_ops_cpu (OpenCV removal plan, Phase 2).
-// No OpenCV needed: OpenCV's behaviour is read from the frozen oracle in
-// tests/expected/image_ops/ (written by lsdtt-test-image-ops-oracle-capture).
+// Tests for src/cpu/lsdtt_raster_image_ops_cpu and the image primitives it uses.
+// OpenCV is no longer a dependency: its behaviour is read from outputs frozen
+// from OpenCV 4.13 on 2026-09-14 (tests/expected/image_ops/; see
+// capture_info.txt) by a capture tool that was deleted with the dependency.
 //
 //   lsdtt-test-image-ops <path to tests/expected/image_ops> [--record-hough]
 //

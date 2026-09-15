@@ -100,19 +100,19 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             arch: x86_64
-            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF"
+            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"
           - name: macOS ARM64
             os: macos-15
             arch: arm64
-            environment: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF"
+            environment: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"
           - name: macOS Intel
             os: macos-15-intel
             arch: x86_64
-            environment: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF"
+            environment: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"
           - name: Windows x86_64
             os: windows-2025
             arch: AMD64
-            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENCV=OFF -DLSDTT_PYTHON_OPENMP=OFF -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENMP=OFF -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
     runs-on: ${{ matrix.os }}
 

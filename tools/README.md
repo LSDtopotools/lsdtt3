@@ -192,7 +192,7 @@ unedited:
 
 The build directory is separate per platform on purpose: the Windows tree is
 configured with a different, deliberately minimal option set (no OpenMP, no
-Eigen, no OpenCV), so reusing one `build/` for two profiles would silently ship
+Eigen), so reusing one `build/` for two profiles would silently ship
 the wrong binaries.
 
 #### Windows
@@ -209,7 +209,7 @@ cmake -S . -B build\windows-qgis -G "Ninja" `
   -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\tools\vcpkg\scripts\buildsystems\vcpkg.cmake" `
   -DVCPKG_TARGET_TRIPLET=x64-windows `
   -DBUILD_TESTING=OFF -DLSDTT_OPENMP=OFF -DLSDTT_EIGEN=OFF `
-  -DLSDTT_OPENCV=OFF -DLSDTT_GPU=OFF `
+  -DLSDTT_GPU=OFF `
   -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
 
 # build just the CLIs the qgis profile ships
@@ -337,7 +337,7 @@ by GitHub Actions. In order it:
 2. **Checks it against `project(lsdtt3 VERSION ...)`** in CMakeLists.txt and
    aborts on a mismatch. A pre-release (`0.3.0-rc1`) compares only the `0.3.0`
    stem and warns instead of failing.
-3. **Configures and builds** `build/release` (Release, OpenCV + Eigen on),
+3. **Configures and builds** `build/release` (Release, Eigen on),
    unless `--skip-build`.
 4. **Smoke-checks every CLI in the profile** by running it with `-v`; a
    non-zero exit fails the release.
