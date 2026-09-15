@@ -39,7 +39,6 @@ jobs:
             cmake build-essential pkg-config \
             libgdal-dev \
             libfftw3-dev \
-            libopencv-dev \
             libeigen3-dev \
             libnetcdf-dev \
             libgomp1 \

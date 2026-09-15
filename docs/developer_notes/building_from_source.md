@@ -33,7 +33,6 @@ sudo apt install -y \
     build-essential cmake pkg-config \
     libgdal-dev \
     libfftw3-dev \
-    libopencv-dev \
     libeigen3-dev \
     libnetcdf-dev
 ```
@@ -45,7 +44,6 @@ sudo apt install -y \
 | `pkg-config` | **yes** | Lets CMake locate FFTW3 and others |
 | `libgdal-dev` (≥ 3.0) | **yes** | Raster and vector I/O, CRS handling |
 | `libfftw3-dev` | no | `lsdtt-spectral-analysis`, wavelet quadratic polyfit |
-| `libopencv-dev` | no | Frangi filter, Otsu segmentation, Hough lines in `lsdtt-surface-metrics` |
 | `libeigen3-dev` | no | k_sn / u\* inversion in `lsdtt-chi-analysis` |
 | `libnetcdf-dev` | no | ERA40 / palaeomagnetic corrections in the cosmo tools |
 
@@ -76,7 +74,6 @@ CMake prints a summary of which optional libraries it found:
   GDAL        : <version>
   OpenMP      : TRUE
   FFTW3       : TRUE
-  OpenCV      : TRUE
   GPU (CUDA)  : FALSE
   Eigen3      : TRUE
 ===================================
@@ -116,7 +113,6 @@ These apply on every platform.
 | Option | Default | Effect |
 |---|---|---|
 | `CMAKE_BUILD_TYPE` | `Release` | `Debug` for development, `RelWithDebInfo` for profiling |
-| `LSDTT_OPENCV` | `ON` | OpenCV-dependent routines (auto-off if OpenCV is absent) |
 | `LSDTT_EIGEN` | `ON` | Eigen3-dependent routines (auto-off if Eigen3 is absent) |
 | `LSDTT_OPENMP` | `ON` | OpenMP parallelism. **Must be `OFF` on MSVC** — see [Building on Windows](building_on_windows.md#why-openmp-must-be-off-on-msvc) |
 | `LSDTT_GPU` | `OFF` | GPU compute backend (needs the CUDA toolkit) |

@@ -11,7 +11,6 @@ cmake ${CMAKE_ARGS} -S . -B build -G Ninja \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DBUILD_TESTING=OFF \
     -DLSDTT_OPENMP=ON \
-    -DLSDTT_OPENCV=ON \
     -DLSDTT_EIGEN=ON
 
 cmake --build build -j"${CPU_COUNT:-2}"

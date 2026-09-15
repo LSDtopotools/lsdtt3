@@ -15,15 +15,14 @@
 // row,column referencing (at least Simon thinks it is easier).
 // So this little helper object is made to facilitate that. 
 // Any time heavy matrix compuation is required you should pass to 
-// the Eigen linear algebra library, and if you want to do things 
-// with image processing you pass to OpenCV.
+// the Eigen linear algebra library.
 //
 // Or, more succinctly (in AI speak):
 // Lightweight 2D array wrapper over a contiguous std::vector<T>.
 // Provides row/column indexing via operator()(row, col) with the same
 // memory layout as GDAL (row-major, origin top-left).
 //
-// All conversion helpers (OpenCV, Eigen, FFTW) produce zero-copy views
+// All conversion helpers (Eigen, FFTW) produce zero-copy views
 // over the same underlying buffer. No data is duplicated.
 //
 // Storage convention:
@@ -37,7 +36,6 @@
 //   int32_t - integer classifications, flow direction grids
 //
 // Conversion helpers are conditionally compiled:
-//   OpenCV  - include <opencv2/core.hpp> before this header
 //   Eigen   - include <Eigen/Core> before this header
 //   FFTW    - no special include needed; use data() directly
 //
@@ -54,9 +52,6 @@
 //
 //   // If you want to check bounds use
 //   float z = dem.at(row,col)
-//
-//   // Pass to OpenCV (zero copy)
-//   cv::Mat cv_dem = dem.to_cv_mat();
 //
 //   // Pass to Eigen (zero copy, row-major)
 //   auto eig = dem.to_eigen_map();
@@ -75,10 +70,6 @@
 #include <algorithm>
 
 // Conditionally include conversion targets if already available
-#ifdef CV_VERSION
-#include <opencv2/core.hpp>
-#endif
-
 #ifdef EIGEN_WORLD_VERSION
 #include <Eigen/Core>
 #endif
@@ -285,51 +276,11 @@ public:
     }
 
     // -------------------------------------------------------------------------
-    // OpenCV zero-copy view
-    // Requires <opencv2/core.hpp> to be included before this header.
-    // The returned cv::Mat shares memory with this array - do not let the
-    // lsdtt_array2d go out of scope while the cv::Mat is in use.
-    // -------------------------------------------------------------------------
-
-#ifdef CV_VERSION
-    cv::Mat to_cv_mat()
-    {
-        return cv::Mat(n_rows_, n_cols_, cv_type(), data_.data());
-    }
-
-    cv::Mat to_cv_mat() const
-    {
-        // const_cast is safe here - cv::Mat is used read-only
-        return cv::Mat(n_rows_, n_cols_, cv_type(),
-                       const_cast<T*>(data_.data()));
-    }
-
-private:
-    // Map T to the corresponding OpenCV type code
-    static int cv_type()
-    {
-        if constexpr (std::is_same_v<T, float>)   return CV_32F;
-        if constexpr (std::is_same_v<T, double>)  return CV_64F;
-        if constexpr (std::is_same_v<T, uint8_t>) return CV_8U;
-        if constexpr (std::is_same_v<T, int32_t>) return CV_32S;
-        if constexpr (std::is_same_v<T, int16_t>) return CV_16S;
-        static_assert(
-            std::is_same_v<T, float> || std::is_same_v<T, double> ||
-            std::is_same_v<T, uint8_t> || std::is_same_v<T, int32_t> ||
-            std::is_same_v<T, int16_t>,
-            "lsdtt_array2d::to_cv_mat() - unsupported type T"
-        );
-        return CV_32F;  // unreachable but suppresses warnings
-    }
-public:
-#endif
-
-    // -------------------------------------------------------------------------
     // Eigen zero-copy view (row-major)
     // Requires <Eigen/Core> to be included before this header.
     //
     // IMPORTANT: Eigen defaults to column-major storage. This map explicitly
-    // uses row-major to match GDAL and OpenCV conventions. Always use the
+    // uses row-major to match GDAL conventions. Always use the
     // returned map type rather than a plain Eigen::MatrixXf to avoid
     // accidentally re-interpreting the memory as column-major.
     //

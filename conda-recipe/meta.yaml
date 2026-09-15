@@ -54,7 +54,6 @@ requirements:
     # Python bindings, and would make this package depend on Python.
     - libgdal-core >=3.0
     - fftw
-    - libopencv
     - eigen
     - libnetcdf
     # Apple Clang ships no OpenMP runtime; Linux gets libgomp from the compiler.
@@ -64,7 +63,6 @@ requirements:
     # Eigen3 is header-only - no runtime dependency.
     - libgdal-core
     - fftw
-    - libopencv
     - libnetcdf
     - llvm-openmp         # [osx]
 
@@ -80,7 +78,6 @@ test:
     # when FFTW3 was found.
     - lsdtt-spectral-analysis --help
     - lsdtt-chi-analysis --help-json | grep -q '"eigen"'        # [unix]
-    - lsdtt-surface-metrics --help-json | grep -q '"opencv"'    # [unix]
     - lsdtt-cosmo-tool --help-json | grep -q '"netcdf"'         # [unix]
     # Bundled cosmogenic data, found relative to the installed executables.
     - test -f "${PREFIX}/share/lsdtt3/crn_parameters.nc"   # [unix]

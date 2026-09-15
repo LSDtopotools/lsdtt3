@@ -65,7 +65,6 @@ Build-Depends: debhelper-compat (= 13),
                libgdal-dev,
                libfftw3-dev,
                libeigen3-dev,
-               libopencv-dev,
                libgomp1
 Standards-Version: 4.6.0
 Homepage: https://github.com/LSDtopotools/lsdtt3

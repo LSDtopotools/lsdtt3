@@ -99,7 +99,7 @@ object.
 
 lsdtt3 is organised as a set of free functions grouped by task, compiled into a shared library and linked into individual command-line executables. Because each analysis file is independent, editing one routine does not trigger a full rebuild.
 
-The build system is CMake. Optional dependencies (FFTW3, Eigen3, OpenCV, NetCDF) are detected automatically; tools that need a missing library are skipped rather than failing the build.
+The build system is CMake. Optional dependencies (FFTW3, Eigen3, NetCDF) are detected automatically; tools that need a missing library are skipped rather than failing the build.
 
 See [Architecture](../developer_notes/lsdtt3_architecture.md) for the full layer design and naming conventions.
 

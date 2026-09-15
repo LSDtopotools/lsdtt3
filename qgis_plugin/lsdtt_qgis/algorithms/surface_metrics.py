@@ -563,11 +563,9 @@ class SurfaceMetricsAlgorithm(QgsProcessingAlgorithm):
             "derived polynomial-fit metrics (slope, aspect, the curvature "
             "family) from a direct quadratic fit at a chosen lengthscale, "
             "the SMAP surface-shape classification, MADk2 roughness, and the "
-            "cloth-drape envelope/incision/crest rasters. The OpenCV-gated "
-            "image-analysis outputs (Frangi, Otsu, Hough, adaptive "
-            "thresholding, skeletons) are not exposed here because the "
-            "Windows backend bundle is built without OpenCV. Backend path is "
-            "managed in plugin settings."
+            "cloth-drape envelope/incision/crest rasters. The image-analysis "
+            "outputs (Frangi, Otsu, Hough, adaptive thresholding, skeletons) "
+            "are not exposed here. Backend path is managed in plugin settings."
         )
 
     def createInstance(self):

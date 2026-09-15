@@ -136,7 +136,7 @@ lsdtt3/
 │   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp      — fill, breach, nodata
 │   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp          — interior void filling
 │   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp                — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
-│   │   ├── lsdtt_raster_opencv_cpu.hpp/.cpp                  — OpenCV-based raster processing
+│   │   ├── lsdtt_raster_image_ops_cpu.hpp/.cpp               — Otsu, adaptive threshold, Canny, probabilistic Hough (native; replaced OpenCV)
 │   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp          — feature-specific raster workflows
 │   │   ├── lsdtt_raster_linear_features_cpu.hpp/.cpp         — curvilinear primitives; path opening, feature_type classification
 │   │   ├── lsdtt_raster_binary_mask_cpu.hpp/.cpp             — binary mask morphology (dilation, erosion, opening, closing, labelling)
@@ -228,6 +228,8 @@ lsdtt3/
 │       ├── lsdtt_polygon_geometry.hpp       — header-only: polygon area/perimeter/moments, convex hull, min-area rect, Feret, basin shape metrics
 │       ├── lsdtt_linear_algebra.hpp         — header-only: sym3x3/sym2x2 eigenvalues, 3×3 inversion, 2D geometry helpers
 │       ├── lsdtt_thread_utils.hpp           — header-only: resolve_thread_count() (OpenMP / hardware fallback)
+│       ├── lsdtt_random.hpp                 — header-only: splitmix64 generator, bounded(), shuffle (identical on every platform)
+│       ├── lsdtt_image_filters.hpp/.cpp     — 8-bit/float image primitives: box mean, Gaussian, Sobel, Otsu, Canny, probabilistic Hough, line drawing
 │       ├── lsdtt_binary_array2d_tracing.hpp/.cpp — binary array tracing utilities
 │       ├── lsdtt_distributions.hpp/.cpp     — parametric distribution fitting: normal, exponential, Weibull, Pareto (MLE + KS)
 │       ├── lsdtt_statistics.hpp/.cpp        — descriptive statistics (median, MAD, stddev, etc.)
@@ -333,18 +335,17 @@ the utility-layer numerical functions.
 - `lsdtt_cosmo_raster_cpu.cpp`
 - `lsdtt_crn_parameters.cpp`
 - `lsdtt_crn_column.cpp`
-- `lsdtt_raster_opencv_cpu.cpp` *(when OpenCV is available)*
+- `lsdtt_raster_image_ops_cpu.cpp`
 - `lsdtt_chi_ksn_inversion_cpu.cpp` *(when Eigen3 is available)*
 
 `lsdtt3_cpu` depends on `lsdtt3_core` and `lsdtt3_utils`. All CLI executables
-link against `lsdtt3_cpu` and `lsdtt3_core`. OpenMP, FFTW, OpenCV, and Eigen3
+link against `lsdtt3_cpu` and `lsdtt3_core`. OpenMP, FFTW, NetCDF, and Eigen3
 link to `lsdtt3_cpu`.
 
 **Dependencies:**
 - GDAL — required
 - OpenMP — optional
 - FFTW3 — optional (enables `lsdtt-spectral-analysis`)
-- OpenCV — optional
 - Eigen3 — optional (enables `lsdtt-chi-analysis` and `lsdtt_chi_ksn_inversion_cpu`)
 - CUDA — optional
 
