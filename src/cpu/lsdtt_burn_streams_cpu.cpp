@@ -4285,7 +4285,7 @@ std::vector<JunctionRepairRecord>
 repair_diverged_reaches(
     lsdtt_raster_cpu&                             dem,
     const lsdtt_vector_to_junction_network&       vector_network,
-    const std::string&                            vector_path,
+    const std::string&                            /*vector_path*/,
     const std::vector<ReachDivergenceRecord>&     reaches,
     const std::vector<std::int64_t>&              source_flats,
     std::unique_ptr<lsdtt_flow_base>&             flow,

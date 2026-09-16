@@ -30,7 +30,7 @@
 //   Row 0 is the northernmost row, consistent with GDAL's convention.
 //
 // Type parameter T:
-//   float   - standard raster storage, matches GDAL GDT_Float32
+//   float   - standard raster storage, matches GDAL Float32
 //   double  - high-precision intermediate calculations
 //   uint8_t - nodata masks, binary rasters
 //   int32_t - integer classifications, flow direction grids

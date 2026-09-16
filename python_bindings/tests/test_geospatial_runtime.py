@@ -1,0 +1,178 @@
+"""Tests for the GDAL/PROJ runtime-data pinning in the Python bindings.
+
+These cover a defect specific to being a Python module rather than a
+command-line tool.
+
+``lsdtt::gdal_init()`` pins the PROJ and GDAL data directories by probing
+relative to the *running executable*. For a CLI that is the tool, and
+``<exe>/../share/proj`` is exactly what the release bundles stage. Inside a
+Python process the running executable is the **interpreter**, so the probe
+lands on ``<python>/../share/proj`` -- which in a conda, pixi or system Python
+is that environment's PROJ data, not the wheel's. Every interpreter checked had
+such a directory.
+
+Because ``OSRSetPROJSearchPaths()`` outranks ``PROJ_DATA``, a wheel bundling its
+own PROJ would have linked one PROJ and read another's database: the "plausible
+but wrong coordinates" failure the pinning exists to prevent, reintroduced in
+the one place nobody was looking.
+
+``lsdtt3/__init__`` now calls ``_core.set_bundled_data_root()`` with the package
+directory at import time. These tests pin that wiring.
+
+Each case runs in its own **subprocess**: ``gdal_init()`` is guarded by
+``std::call_once``, and ``set_bundled_data_root()`` only takes effect before the
+first initialisation, so the behaviour is a property of a fresh process.
+
+Authors
+-------
+Simon M. Mudd
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
+
+
+def _run(code: str, env_overrides: dict | None = None) -> str:
+    """Run `code` in a fresh interpreter and return its stdout.
+
+    Parameters
+    ----------
+    code : str
+        Python source to execute.
+    env_overrides : dict or None
+        Environment variables to set for the child process.
+
+    Returns
+    -------
+    str
+        Captured stdout, stripped.
+    """
+    env = dict(os.environ)
+    if env_overrides:
+        env.update(env_overrides)
+
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(code)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"subprocess failed ({result.returncode}):\n"
+            f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+        )
+    return result.stdout.strip()
+
+
+def test_runtime_helpers_are_exposed():
+    """The data-reporting helpers exist and return strings."""
+    out = _run(
+        """
+        import lsdtt3
+        from lsdtt3 import _core
+        print(_core.proj_data_description())
+        print(_core.gdal_data_description())
+        print(_core.gdal_version())
+        """
+    )
+    lines = out.splitlines()
+    assert len(lines) == 3, out
+    assert lines[0], "proj_data_description() returned an empty string"
+    assert lines[1], "gdal_data_description() returned an empty string"
+    assert lines[2], "gdal_version() returned an empty string"
+
+
+def test_set_bundled_data_root_refuses_after_init():
+    """Once GDAL is initialised the override is a no-op and says so.
+
+    Silently accepting a call that cannot take effect would be the worst
+    outcome: the caller would believe their data directory was in force.
+    """
+    out = _run(
+        """
+        from lsdtt3 import _core
+        _core.proj_data_description()          # forces initialisation
+        print(_core.set_bundled_data_root("/nonexistent"))
+        """
+    )
+    assert out == "False", out
+
+
+def test_import_pins_the_package_directory_when_data_is_bundled(tmp_path):
+    """A wheel layout (``lsdtt3/share/proj``) wins over a poisoned PROJ_DATA.
+
+    This is the regression test for the defect described in the module
+    docstring. It builds the wheel's data layout inside a copy of the installed
+    package, so it exercises the real ``__init__`` path rather than calling the
+    override by hand.
+
+    Skipped when no system ``proj.db`` can be found to stage -- there is then
+    nothing to prove, and asserting anyway would only produce a confusing
+    failure on a machine without PROJ data.
+    """
+    import lsdtt3
+
+    package_dir = Path(lsdtt3.__file__).resolve().parent
+
+    # Find a proj.db to stage. Anything real will do; the test is about which
+    # one gets used, not what is in it.
+    candidates = [
+        Path(os.environ.get("PROJ_DATA", "")) / "proj.db",
+        Path(os.environ.get("PROJ_LIB", "")) / "proj.db",
+        Path(sys.prefix) / "share" / "proj" / "proj.db",
+        Path("/usr/share/proj/proj.db"),
+    ]
+    source_db = next((c for c in candidates if c.is_file()), None)
+    if source_db is None:
+        pytest.skip("no system proj.db available to stage")
+
+    # A copy of the package with share/proj populated, on sys.path ahead of the
+    # real one.
+    staged_root = tmp_path / "site"
+    staged_pkg = staged_root / "lsdtt3"
+    shutil.copytree(package_dir, staged_pkg)
+    staged_proj = staged_pkg / "share" / "proj"
+    staged_proj.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_db, staged_proj / "proj.db")
+
+    poisoned = tmp_path / "not_a_proj_dir"
+    poisoned.mkdir()
+
+    out = _run(
+        f"""
+        import sys
+        sys.path.insert(0, {str(staged_root)!r})
+        import lsdtt3
+        from lsdtt3 import _core
+        print(lsdtt3.__file__)
+        print(_core.proj_data_description())
+        """,
+        env_overrides={
+            "PROJ_DATA": str(poisoned),
+            "PROJ_LIB": str(poisoned),
+        },
+    )
+
+    loaded_from, description = out.splitlines()[:2]
+    assert str(staged_pkg) in loaded_from, (
+        f"the staged package was not the one imported: {loaded_from}"
+    )
+
+    assert description.startswith("bundled:"), (
+        "import did not pin the package's own PROJ data.\n"
+        f"  reported: {description}\n"
+        "If this says PROJ_DATA=<the poisoned dir> the override is not being "
+        "applied at import. If it names the interpreter's environment, the "
+        "probe is still resolving against the interpreter rather than the "
+        "package -- which is the original defect."
+    )
+    assert str(staged_proj) in description, (
+        f"pinned a different directory than the staged one: {description}"
+    )

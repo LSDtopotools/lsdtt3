@@ -56,9 +56,8 @@
 #include <cmath>
 #include <limits>
 
-#include <gdal.h>
-#include <ogr_spatialref.h>
 
+#include "../src/core/lsdtt_gdal_init.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_dem_grouping.hpp"
 #include "../src/core/lsdtt_outlet_bounds_discovery.hpp"
@@ -141,7 +140,7 @@ int main(int argc, char* argv[])
     // Register drivers up front, not just before the fetch: reading bounds from
     // a vector file needs the OGR drivers, and that happens during parameter
     // resolution.
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);
@@ -1396,31 +1395,28 @@ int main(int argc, char* argv[])
             return out;
         }
 
-        OGRSpatialReference src_srs;
-        src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-        src_srs.importFromEPSG(4326);
-
-        OGRSpatialReference dst_srs;
-        dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-        if (meta.crs_wkt.empty() || dst_srs.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE)
+        // lsdtt_coordinate_transform owns the OGR handles and hides them behind
+        // a pimpl, so this CLI needs no GDAL header. It throws where the raw
+        // OGR calls returned null or false, hence the try/catch here and at
+        // each transform below -- the control flow is unchanged.
+        if (meta.crs_wkt.empty())
         {
             out.message = "could not parse DEM projection for verification";
             return out;
         }
 
-        OGRCoordinateTransformation* tx =
-            OGRCreateCoordinateTransformation(&src_srs, &dst_srs);
-        if (tx == nullptr)
+        lsdtt::lsdtt_coordinate_transform tx;
+        lsdtt::lsdtt_coordinate_transform tx_to_wgs84;
+        try
         {
-            out.message = "could not create EPSG:4326->DEM transform for verification";
-            return out;
+            tx = lsdtt::lsdtt_coordinate_transform::from_source_epsg(
+                4326, meta.crs_wkt);
+            tx_to_wgs84 = lsdtt::lsdtt_coordinate_transform::from_epsg(
+                meta.crs_wkt, 4326);
         }
-        OGRCoordinateTransformation* tx_to_wgs84 =
-            OGRCreateCoordinateTransformation(&dst_srs, &src_srs);
-        if (tx_to_wgs84 == nullptr)
+        catch (const std::exception&)
         {
-            OCTDestroyCoordinateTransformation(tx);
-            out.message = "could not create DEM->EPSG:4326 transform for tight basin bounds";
+            out.message = "could not create EPSG:4326<->DEM transforms for verification";
             return out;
         }
 
@@ -1453,7 +1449,11 @@ int main(int argc, char* argv[])
             const auto& rec = outlet_discovery_result.records[rec_idx];
             double x = rec.longitude;
             double y = rec.latitude;
-            if (!tx->Transform(1, &x, &y))
+            try
+            {
+                tx.transform_in_place(x, y);
+            }
+            catch (const std::exception&)
             {
                 all_ok = false;
                 fail_message = "outlet transform failed on final DEM";
@@ -1579,7 +1579,16 @@ int main(int argc, char* argv[])
 
             double x[4] = {x_min, x_min, x_max, x_max};
             double y[4] = {y_min, y_max, y_min, y_max};
-            if (tx_to_wgs84->Transform(4, x, y))
+            bool corners_ok = true;
+            try
+            {
+                for (int k = 0; k < 4; ++k) tx_to_wgs84.transform_in_place(x[k], y[k]);
+            }
+            catch (const std::exception&)
+            {
+                corners_ok = false;
+            }
+            if (corners_ok)
             {
                 out.tight_west = std::min(std::min(x[0], x[1]), std::min(x[2], x[3]));
                 out.tight_east = std::max(std::max(x[0], x[1]), std::max(x[2], x[3]));
@@ -1593,9 +1602,6 @@ int main(int argc, char* argv[])
                     out.tight_west < out.tight_east && out.tight_south < out.tight_north;
             }
         }
-
-        OCTDestroyCoordinateTransformation(tx);
-        OCTDestroyCoordinateTransformation(tx_to_wgs84);
 
         if (out.min_edge_margin_px == std::numeric_limits<double>::infinity())
         {
@@ -1660,24 +1666,19 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_flowinfo flow;
             flow.create(dem.get_data_array(), mask, meta, flow_options);
 
-            OGRSpatialReference src_srs;
-            src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            src_srs.importFromEPSG(4326);
-
-            OGRSpatialReference dst_srs;
-            dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            if (meta.crs_wkt.empty() ||
-                dst_srs.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE)
+            if (meta.crs_wkt.empty())
             {
                 error_message = "could not parse DEM projection for basin outlines";
                 return false;
             }
 
-            std::unique_ptr<OGRCoordinateTransformation,
-                            decltype(&OCTDestroyCoordinateTransformation)> tx(
-                OGRCreateCoordinateTransformation(&src_srs, &dst_srs),
-                &OCTDestroyCoordinateTransformation);
-            if (tx == nullptr)
+            lsdtt::lsdtt_coordinate_transform tx;
+            try
+            {
+                tx = lsdtt::lsdtt_coordinate_transform::from_source_epsg(
+                    4326, meta.crs_wkt);
+            }
+            catch (const std::exception&)
             {
                 error_message = "could not create EPSG:4326->DEM transform for basin outlines";
                 return false;
@@ -1697,7 +1698,8 @@ int main(int argc, char* argv[])
 
                 double x = rec.longitude;
                 double y = rec.latitude;
-                if (!tx->Transform(1, &x, &y)) continue;
+                try { tx.transform_in_place(x, y); }
+                catch (const std::exception&) { continue; }
 
                 int col = -1;
                 int row = -1;

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_rasterise_cpu.hpp"
+#include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -89,7 +90,7 @@ GDALDataset* make_mem_byte_raster(int nrows, int ncols, const double gt[6])
 // Throws on failure.
 OGRLayer* open_first_layer(const std::string& vector_path, GDALDataset*& ds_out)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     ds_out = static_cast<GDALDataset*>(
         GDALOpenEx(vector_path.c_str(),
@@ -123,7 +124,7 @@ OGRLayer* open_named_layer(
     const std::string& layer_name,
     GDALDataset*&      ds_out)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     ds_out = static_cast<GDALDataset*>(
         GDALOpenEx(vector_path.c_str(),

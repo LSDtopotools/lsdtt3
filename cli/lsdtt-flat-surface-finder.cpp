@@ -1280,7 +1280,7 @@ int main(int argc, char* argv[])
             std::cout << "Writing labelled flat mask (UInt32): " << p << "\n";
             loader.write_full(labelled_flat_mask.get_data(),
                               labelled_flat_mask.get_meta(), p, out_format,
-                              GDT_UInt32);
+                              lsdtt::lsdtt_pixel_type::uint32);
         }
     }
 
@@ -1510,7 +1510,7 @@ int main(int argc, char* argv[])
                                   << p << "\n";
                         loader.write_full(resid_labelled.get_data(),
                                           resid_labelled.get_meta(), p, out_format,
-                                          GDT_UInt32);
+                                          lsdtt::lsdtt_pixel_type::uint32);
                     }
 
                     // ---------------------------------------------------------
@@ -1605,7 +1605,7 @@ int main(int argc, char* argv[])
                                          "(UInt32): " << p << "\n";
                             loader.write_full(merged.get_data(),
                                               merged.get_meta(), p, out_format,
-                                              GDT_UInt32);
+                                              lsdtt::lsdtt_pixel_type::uint32);
                         }
                     }
                     catch (const std::exception& e)

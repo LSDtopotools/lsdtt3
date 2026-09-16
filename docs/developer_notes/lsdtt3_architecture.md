@@ -102,6 +102,9 @@ lsdtt3/
 │   │   ├── lsdtt_raster_meta.hpp            — metadata struct + CRS validation
 │   │   ├── lsdtt_raster_base.hpp/.cpp       — abstract raster dispatch interface
 │   │   ├── lsdtt_raster_result.hpp          — plain data-transfer struct for rasters returned by core-layer engines
+│   │   ├── lsdtt_gdal_init.hpp/.cpp         — one-time GDAL/PROJ init and data pinning
+│   │   ├── lsdtt_pixel_type.hpp/.cpp        — GDAL-free sample-type enum
+│   │   ├── lsdtt_pixel_type_gdal.hpp        — the GDAL bridge (.cpp only)
 │   │   ├── lsdtt_data_loader.hpp/.cpp       — GDAL/OGR I/O, RAII, COG output
 │   │   ├── lsdtt_backend_factory.hpp/.cpp   — make_raster_engine(), gpu_available()
 │   │   ├── lsdtt_param_parser.hpp/.cpp      — parameter file parser
@@ -109,6 +112,7 @@ lsdtt3/
 │   │   ├── lsdtt_junction_network_base.hpp  — abstract channel network interface + lsdtt_junction_network_options
 │   │   ├── lsdtt_flow_base.hpp              — abstract D8 flow interface + lsdtt_flowinfo_options
 │   │   ├── lsdtt_hydraulic_base.hpp         — abstract graph-based hydraulic routing interface + lsdtt_hydraulic_options
+│   │   ├── lsdtt_raster_meta.hpp/.cpp       — raster metadata; CRS methods in the .cpp
 │   │   ├── lsdtt_crs_suggest.hpp/.cpp       — CRS inspection and projection recommendation
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
 │   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
@@ -259,6 +263,9 @@ the utility-layer numerical functions.
 
 
 **`lsdtt3_core` sources** (`src/core/`):
+- `lsdtt_gdal_init.cpp`
+- `lsdtt_pixel_type.cpp`
+- `lsdtt_raster_meta.cpp`
 - `lsdtt_raster_base.cpp`
 - `lsdtt_data_loader.cpp`
 - `lsdtt_backend_factory.cpp`
@@ -576,13 +583,91 @@ in the `data` array. `lsdtt_data_loader::write_full` does not consult the mask.
 
 ---
 
+## The GDAL boundary
+
+GDAL, OGR and CPL headers appear **only in `.cpp` files under `src/`**. They are
+not reachable from any lsdtt3 header, and not from `cli/` at all.
+
+`unit_gdal_init_boundary` (`tests/scripts/check_gdal_boundary.py`) enforces this.
+It must be a source check rather than a runtime one: a violation compiles
+perfectly well and simply undoes the arrangement silently.
+
+**Why it matters.** `lsdtt_raster_meta.hpp` is included by essentially every
+compute object, so when it included `<ogr_spatialref.h>` the OGR headers reached
+several hundred translation units. That cost compile time, and it meant any file
+could reach for GDAL without declaring that it had.
+
+**Three ways a header can refer to a GDAL type without including one**, all
+demonstrated in `lsdtt_data_loader.hpp`:
+
+1. **An lsdtt-native equivalent** — `lsdtt_pixel_type` in place of
+   `GDALDataType`.
+2. **A forward declaration** — `class GDALDataset;`. A `unique_ptr` needs the
+   complete type only where the deleter runs, so defining
+   `gdal_dataset_deleter::operator()` in the `.cpp` is sufficient. No pimpl is
+   required as long as the destructor and move operations are also out of line.
+3. **An opaque pointer** — `write_record_to_layer(..., void* ogr_layer)`.
+
+**If a CLI needs GDAL, a library function is missing.** Add it to `src/core/`
+and call that instead. `lsdtt-fetch-raster` used to build
+`OGRCoordinateTransformation` objects by hand; it now uses
+`lsdtt_coordinate_transform`, which already existed.
+
+---
+
+## lsdtt_gdal_init
+
+File: `src/core/lsdtt_gdal_init.hpp/.cpp`.
+
+`lsdtt::gdal_init()` is the **only** caller of `GDALAllRegister()` in the tree.
+It is `std::call_once`-guarded, so it is cheap to call defensively at the top of
+any function that touches GDAL — and every such function does, instead of
+calling `GDALAllRegister()` itself.
+
+Beyond registering drivers it pins the runtime data directories:
+
+- Probes `<exe>/../share/proj`, `<exe>/share/proj`, `<exe>/../../share/proj`
+  for `proj.db`, and pins the first hit with `OSRSetPROJSearchPaths()`.
+- Does the same for `<exe>/../share/gdal` (sentinel `gdalvrt.xsd`) via
+  `CPLSetConfigOption("GDAL_DATA", …)`.
+- **A bundled copy always wins**, including over `PROJ_DATA` / `PROJ_LIB` /
+  `GDAL_DATA`. Only when nothing is bundled next to the binary does it fall
+  through to GDAL's own search — which is the correct behaviour for a
+  conda-forge install, where sharing one GDAL is the point.
+
+**Why this exists.** A mismatched `proj.db` does not always fail loudly. It can
+resolve a datum differently and return coordinates that are plausible and wrong.
+`-v` therefore reports the GDAL and PROJ versions and which data directories are
+in force; that is the first thing to ask for in a projection bug report.
+
+`set_bundled_data_root()` overrides the probe root before first init, for hosts
+where `executable_path()` is not the right anchor — the Python extension module
+being the case that needs it.
+
+The executable-path resolution itself is in `src/core/lsdtt_exe_path.hpp`,
+shared with the cosmo tools' `crn_parameters.nc` lookup.
+
+---
+
 ## lsdtt_raster_meta
 
 Plain struct in `src/core/lsdtt_raster_meta.hpp`.
-Requires: `<cmath>`, `<stdexcept>`, `<string>`, `<gdal.h>`, `<ogr_spatialref.h>`
+Requires: `<cmath>`, `<stdexcept>`, `<string>`, `lsdtt_pixel_type.hpp`.
+
+**No GDAL header.** Every compute object in the tree carries an
+`lsdtt_raster_meta`, so a GDAL include here would reach most of the codebase.
+The CRS methods below are declared in the header and defined in
+`lsdtt_raster_meta.cpp`, which is where `<ogr_spatialref.h>` lives.
 
 Key fields: `n_rows`, `n_cols`, `x_min`, `y_min`, `cell_size`, `no_data_value`,
 `crs_wkt`, `epsg_code`, `data_type`.
+
+`data_type` is an `lsdtt_pixel_type` (`src/core/lsdtt_pixel_type.hpp`), not a
+`GDALDataType`: `unknown`, `uint8`, `int8`, `uint16`, `int16`, `uint32`,
+`int32`, `float32`, `float64`. The GDAL mapping lives in
+`lsdtt_pixel_type_gdal.hpp`, which only `.cpp` files at the GDAL boundary may
+include. `tiff_predictor_for()` also lives with the enum, since the right
+TIFF predictor is a property of the sample type.
 
 **CRS / georeferencing methods:**
 - `set_crs_from_epsg(epsg)` — sets `crs_wkt` + `epsg_code` from an EPSG code (via OGR)
@@ -1381,6 +1466,11 @@ emptied**, or they become a permanent second spelling for every parameter.
 File: `src/core/lsdtt_data_loader.hpp/.cpp`
 
 `lsdtt_data_loader` handles both raster and vector I/O through GDAL/OGR.
+
+Its header includes no GDAL header: `GDALDataset` is forward declared, the
+dataset handles sit behind a deleter defined in the `.cpp`, and the OGR layer
+argument of `write_record_to_layer` is an opaque `void*`. See **The GDAL
+boundary** below.
 
 ### Raster output
 

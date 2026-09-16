@@ -1131,7 +1131,7 @@ lsdtt_raster_cpu label_binary_components_by_size(
 
     // Output is UInt32: labels are positive integers, nodata = 0.
     lsdtt_raster_meta out_meta   = meta;
-    out_meta.data_type           = GDT_UInt32;
+    out_meta.data_type           = lsdtt::lsdtt_pixel_type::uint32;
     out_meta.no_data_value       = 0.0;
     const float nodata           = 0.0f;
 

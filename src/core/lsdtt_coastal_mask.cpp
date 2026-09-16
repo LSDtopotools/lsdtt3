@@ -1,6 +1,7 @@
 // lsdtt_coastal_mask.cpp
 
 #include "lsdtt_coastal_mask.hpp"
+#include "lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -102,7 +103,7 @@ bool dataset_is_readable_polygon_mask(const std::string& path,
                                       std::string& resolved_layer,
                                       std::string& error)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     GDALDataset* raw = static_cast<GDALDataset*>(
         GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
@@ -412,7 +413,7 @@ lsdtt_coastal_bbox_clip_result clip_bbox_edges_to_land(
         return out;
     }
 
-    GDALAllRegister();
+    lsdtt::gdal_init();
     GDALDataset* raw = static_cast<GDALDataset*>(
         GDALOpenEx(mask_path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                    nullptr, nullptr, nullptr));

@@ -21,6 +21,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_point_input.hpp"
+#include "lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -58,7 +59,7 @@ void ensure_gdal_init()
 
     if (!initialised)
     {
-        GDALAllRegister();
+        lsdtt::gdal_init();
         initialised = true;
     }
 }

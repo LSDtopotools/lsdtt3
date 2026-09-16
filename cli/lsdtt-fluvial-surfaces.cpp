@@ -1983,7 +1983,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing band index (Int16): " << p << "\n";
         loader.write_full(ladder.band_index.get_data(),
                           ladder.band_index.get_meta(), p, out_format,
-                          GDT_Int16);
+                          lsdtt::lsdtt_pixel_type::int16);
     }
 
     if (bf["write_banded_labels_raster"] && !banded.labels.get_data().empty())
@@ -1991,7 +1991,7 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_banded_labels.tif";
         std::cout << "Writing banded labels (UInt32): " << p << "\n";
         loader.write_full(banded.labels.get_data(), banded.labels.get_meta(),
-                          p, out_format, GDT_UInt32);
+                          p, out_format, lsdtt::lsdtt_pixel_type::uint32);
     }
 
     if (bf["write_valley_mask_raster"] && !ladder.band_index.get_data().empty())
@@ -2216,7 +2216,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing valley mask (band 0, " << n_valley
                   << " cell(s)): " << p << "\n";
         loader.write_full(valley_raster.get_data(), meta, p, out_format,
-                          GDT_Byte);
+                          lsdtt::lsdtt_pixel_type::uint8);
     }
 
     if (use_hand && bf["write_surface_class_raster"] &&
@@ -2225,7 +2225,7 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_surface_class.tif";
         std::cout << "Writing surface class raster: " << p << "\n";
         loader.write_full(class_raster.get_data(), class_raster.get_meta(),
-                          p, out_format, GDT_Byte);
+                          p, out_format, lsdtt::lsdtt_pixel_type::uint8);
     }
 
     if (use_hand && bf["write_floodplain_mask_raster"] &&
@@ -2234,7 +2234,7 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_floodplain_mask.tif";
         std::cout << "Writing floodplain mask: " << p << "\n";
         loader.write_full(floodplain_mask.get_data(),
-                          floodplain_mask.get_meta(), p, out_format, GDT_Byte);
+                          floodplain_mask.get_meta(), p, out_format, lsdtt::lsdtt_pixel_type::uint8);
     }
 
     if (bf["write_surface_patches_csv"])
@@ -2280,7 +2280,7 @@ int main(int argc, char* argv[])
             }
             const std::string p = stem + "_nearest_source_id.tif";
             std::cout << "Writing nearest source id (Int32): " << p << "\n";
-            loader.write_full(sid, meta, p, out_format, GDT_Int32);
+            loader.write_full(sid, meta, p, out_format, lsdtt::lsdtt_pixel_type::int32);
         }
     }
 
@@ -2291,7 +2291,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing ladder window id (Int16): " << p << "\n";
         loader.write_full(ladder.window_index.get_data(),
                           ladder.window_index.get_meta(), p, out_format,
-                          GDT_Int16);
+                          lsdtt::lsdtt_pixel_type::int16);
     }
 
     if (bf["write_ladder_break_metric_csv"])

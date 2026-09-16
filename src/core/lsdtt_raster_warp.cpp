@@ -10,6 +10,8 @@
 // See lsdtt_raster_warp.hpp for full documentation.
 
 #include "lsdtt_raster_warp.hpp"
+#include "lsdtt_pixel_type_gdal.hpp"
+#include "lsdtt_gdal_init.hpp"
 
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -291,11 +293,12 @@ char** build_gdalwarp_options(
     opts = CSLAddString(opts, "-of");
     opts = CSLAddString(opts, driver_name.c_str());
 
-    // See tiff_predictor_for() in lsdtt_data_loader.hpp: the predictor depends
+    // See tiff_predictor_for() in lsdtt_pixel_type.hpp: the predictor depends
     // on the band type, and 2 on float data is spec-invalid and reads as NaN in
     // strict TIFF readers even though GDAL round-trips it happily.
     const std::string predictor_co =
-        "PREDICTOR=" + std::to_string(tiff_predictor_for(source_type));
+        "PREDICTOR=" + std::to_string(
+            tiff_predictor_for(pixel_type_from_gdal(source_type)));
 
     // Creation options
     if (driver_name == "COG")
@@ -348,7 +351,7 @@ void run_gdalwarp(
     const std::string& out_path,
     const warp_request& req)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     GDALDatasetH src_ds = GDALOpen(in_path.c_str(), GA_ReadOnly);
     if (!src_ds)

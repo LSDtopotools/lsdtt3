@@ -157,7 +157,7 @@ void reset_dh(lsdtt_depression_hierarchy& deps)
 // Phase 2: move_water_into_pits  (= MoveWaterIntoPits in the original)
 // ---------------------------------------------------------------------------
 void move_water_into_pits(
-    const std::vector<float>&        topo,
+    const std::vector<float>&        /*topo*/,  // routing uses flowdir, not z
     const std::vector<uint8_t>&      dem_mask,
     const std::vector<dep_label_t>&  label,
     const std::vector<uint8_t>&      flowdir,

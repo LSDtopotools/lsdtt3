@@ -56,7 +56,6 @@ else()
         -Wall
         -Wextra
         -Wpedantic
-        -Wno-unused-parameter   # OGR headers trigger this; suppress globally
     )
 endif()
 
@@ -258,6 +257,9 @@ endif()
 # Depends only on GDAL.  No CPU arrays.  No CUDA.
 # =============================================================================
 set(LSDTT3_CORE_SOURCES
+    src/core/lsdtt_gdal_init.cpp
+    src/core/lsdtt_pixel_type.cpp
+    src/core/lsdtt_raster_meta.cpp
     src/core/lsdtt_raster_base.cpp
     src/core/lsdtt_data_loader.cpp
     src/core/lsdtt_backend_factory.cpp

@@ -50,3 +50,4 @@ verification commands.
 ## Authors
 
 Boris Gailleton — boris.gailleton@univ-rennes.fr
+Simon Mudd

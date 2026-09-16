@@ -151,7 +151,11 @@ std::vector<double> make_initial_water_depth(const lsdtt::lsdtt_flowgraph_cpu& f
     return depth;
 }
 
-lsdtt::lsdtt_hydraulic_options make_options(double rainfall_rate_m_per_s,
+// The rainfall rate is NOT applied here -- forcing goes on the solver via
+// set_forcing() below, and every caller pairs the two with the same value. The
+// parameter is kept so the two calls read as a pair at each call site; if you
+// add a case, remember that make_options() alone applies no rainfall.
+lsdtt::lsdtt_hydraulic_options make_options(double /*rainfall_rate_m_per_s*/,
                                             double dt)
 {
     lsdtt::lsdtt_hydraulic_options options;

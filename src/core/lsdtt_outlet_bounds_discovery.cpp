@@ -1,6 +1,7 @@
 // lsdtt_outlet_bounds_discovery.cpp
 
 #include "lsdtt_outlet_bounds_discovery.hpp"
+#include "lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -85,7 +86,7 @@ void ensure_gdal_init()
     static bool initialised = false;
     if (!initialised)
     {
-        GDALAllRegister();
+        lsdtt::gdal_init();
         initialised = true;
     }
 }

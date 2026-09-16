@@ -16,6 +16,8 @@
 // lines with hash at beginning are treated as comments
 #include "lsdtt_param_parser.hpp"
 
+#include "lsdtt_gdal_init.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cctype>
@@ -1226,6 +1228,18 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
         {
             std::cout << tool_name << " version " << version
                       << " (lsdtt3 " << LSDTT3_VERSION << ")\n";
+
+            // Report the geospatial runtime as well. A mismatched proj.db can
+            // return coordinates that are plausible and wrong rather than
+            // failing, so naming the one actually in use is what makes such a
+            // report diagnosable. See src/core/lsdtt_gdal_init.hpp.
+            const std::string proj_ver = proj_version();
+            std::cout << "GDAL " << gdal_version();
+            if (!proj_ver.empty())
+                std::cout << ", PROJ " << proj_ver;
+            std::cout << "\n"
+                      << "  proj data: " << proj_data_description() << "\n"
+                      << "  GDAL data: " << gdal_data_description() << "\n";
             std::exit(0);
         }
         if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))

@@ -180,6 +180,49 @@ export PATH=/path/to/lsdtt3/build:$PATH
 Full instructions for every platform, including the CMake option reference:
 [`docs/developer_notes/building_from_source.md`](docs/developer_notes/building_from_source.md).
 
+### Gotcha: more than one GDAL or PROJ on your machine
+
+If you have QGIS, conda, `rasterio` or `geopandas` installed — and most people
+doing serious analysis do — then you have several GDALs and several PROJs. Two
+things go wrong, and neither announces itself clearly.
+
+**At build time, with a conda environment active**, CMake can find GDAL's
+*headers* in `/usr/include/gdal` and GDAL's *library* in the conda environment.
+Everything compiles and the link fails with undefined references to functions
+whose signatures changed between versions. lsdtt3 detects this and repairs it by
+preferring the library next to the headers, but if you see it, the fix is to
+point both at one installation:
+
+```sh
+cmake -S . -B build \
+  -DGDAL_INCLUDE_DIR=<prefix>/include \
+  -DGDAL_LIBRARY=<prefix>/lib/libgdal.so
+```
+
+The simplest cure is to build with the conda environment **deactivated**, unless
+you are deliberately building against conda's GDAL.
+
+**At run time**, PROJ finds its coordinate database through `PROJ_DATA` or
+`PROJ_LIB`. If one of those is exported and points at a `proj.db` from a
+different PROJ generation, reprojection can return coordinates that are
+plausible and wrong rather than failing. Every lsdtt3 tool reports what it is
+actually using:
+
+```sh
+lsdtt-raster-preprocessing -v
+```
+
+```
+GDAL 3.8.4, PROJ 9.3.1
+  proj data: PROJ built-in search
+  GDAL data: GDAL built-in search
+```
+
+A release package says `bundled:` there and ignores your environment entirely. A
+source build uses whatever your system provides, which is normally correct —
+but if coordinates look subtly off, this is the first thing to check, and the
+first thing to put in a bug report.
+
 ### CMake options
 
 | Option | Default | Description |
