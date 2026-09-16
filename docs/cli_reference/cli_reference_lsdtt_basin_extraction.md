@@ -25,6 +25,28 @@ all 3rd-order basins) instead of a stream-order range filter.
 Example parameter file:
 
 ```
+
+## Selecting zero-order basins
+
+Zero-order basins are selected separately from junction basins. They are the
+complete upslope contributing areas of the channel-head source pixels returned
+by `threshold_contributing_pixels`; they are not Strahler-order-1 junction
+basins.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `select_all_zero_order_basins` | bool | `false` | Select one zero-order basin for every channel-head source pixel. |
+
+Example:
+
+```
+select_all_zero_order_basins: true
+write_basin_outlines: true
+basin_outlines_write_vector_format: flatgeobuf
+```
+
+The output is `<write_fname>_zero_order_basin_outlines.fgb` with `zero_order_id`
+and `source_flat` attributes.
 read_path:   /data/nujang/
 write_path:  /data/nujang/
 read_fname:  nujang_COP30_fill.tif
