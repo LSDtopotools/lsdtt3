@@ -154,9 +154,9 @@ point layer for all enabled triple-divide methods:
 |---|---|
 | `write_triple_divides_on_selected_ridgelines` | Write triple and quadruple divide nodes identified where three or more surrounding flow basins meet a selected ridgeline. |
 | `write_zero_order_triple_divides_on_selected_ridglines` | Write the join and leave nodes where first-order source-basin outlines bound a selected ridgeline. The parameter spelling is retained exactly as the CLI name. |
-| `write_topological_distance_triple_divides_on_selected_ridgelines` | Write selected-ridgeline nodes where the smaller of the left and right flow-topological distances exceeds a supplied threshold. |
+| `write_topological_distance_triple_divides_on_selected_ridgelines` | Write selected-ridgeline nodes where either left or right flow-topological distance exceeds a supplied threshold. |
 | `topological_distance_triple_divide_threshold` | Backward-compatible single threshold in metres. |
-| `topological_distance_triple_divide_thresholds` | Comma-separated thresholds in metres. A node qualifies when `min(left, right) > threshold`; one output pair is written per threshold. |
+| `topological_distance_triple_divide_thresholds` | Comma-separated thresholds in metres. A node qualifies when `left > threshold OR right > threshold`; one output pair is written per threshold. |
 
 The native surrounding-basin and zero-order methods are written to separate
 outputs so they can be loaded and compared independently. Enabled topological
@@ -169,13 +169,20 @@ distance points are also written separately:
 <write_fname>_zero_order_triple_divides.fgb
 <write_fname>_topological_distance_triple_divides_XXXm.csv
 <write_fname>_topological_distance_triple_divides_XXXm.fgb
+<write_fname>_topological_distance_paired_flowpaths_XXXm.fgb
 ```
 
 Each non-empty layer uses the common schema containing ridgeline ID/type,
 method, node index, distance along ridgeline, elevation, selected basin
 junction IDs, and latitude/longitude in the CSV. The FlatGeobuf stores point
 geometry in the DEM CRS. CSV files are written even when a selected method
-finds no points; an empty FlatGeobuf is not created.
+finds no points. Threshold-specific topological FlatGeobufs are also created
+when empty so threshold cases remain explicit.
+
+For each topological-distance threshold, the paired-flowpath FlatGeobuf stores
+the incoming and outgoing branches on every qualifying side of every TDJ. Its
+attributes include ridgeline/node IDs, side, branch, threshold, pair distance,
+and the common junction flat index.
 
 Zero-order output uses the dedicated source-pixel basin view. Each source pixel
 identified by `threshold_contributing_pixels` defines one zero-order basin from

@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <array>
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "../core/lsdtt_junction_network_base.hpp"
@@ -41,6 +42,15 @@ struct lsdtt_ridgeline_extremum
     double      distance_to_next;
     double      relief_to_next;
     double      distance_to_tdj;
+};
+
+struct lsdtt_ridgeline_topological_flowpath
+{
+    std::string side;
+    std::string branch;
+    std::vector<lsdtt_xy> positions;
+    float pair_distance = -9999.0f;
+    std::int64_t junction_flat = -1;
 };
 
 // =============================================================================
@@ -203,6 +213,12 @@ public:
     [[nodiscard]] std::vector<int> get_topological_distance_triple_divide_node_indices(
         const lsdtt_flow_base& flow,
         float                  threshold
+    ) const;
+
+    [[nodiscard]] std::vector<lsdtt_ridgeline_topological_flowpath>
+    get_topological_distance_flowpaths(
+        const lsdtt_flow_base& flow,
+        int                    node_index
     ) const;
 
 

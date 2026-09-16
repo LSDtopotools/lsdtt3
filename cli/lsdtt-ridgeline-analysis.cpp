@@ -557,7 +557,7 @@ int main(int argc, char* argv[])
 
     bool_default_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = false;
     help_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = {"bool", "false",
-        "Write nodes where the smaller of the flanking flow topological distances exceeds the threshold.",
+        "Write nodes where either flanking flow topological distance exceeds the threshold.",
         "Results are written with the other selected triple-divide modes in one metadata-compatible layer.",
         "Triple divide outputs", "switch", ""};
 
@@ -1523,6 +1523,14 @@ int main(int argc, char* argv[])
             float threshold = std::numeric_limits<float>::quiet_NaN();
         };
         std::vector<triple_point> points;
+        struct topological_flowpath_point
+        {
+            std::size_t ridgeline_index;
+            int node_index;
+            float threshold;
+            lsdtt::lsdtt_ridgeline_topological_flowpath flowpath;
+        };
+        std::vector<topological_flowpath_point> topological_flowpaths;
         std::set<std::string> seen;
 
         auto add_point = [&](std::size_t r, int n, const std::string& mode,
@@ -1552,9 +1560,26 @@ int main(int argc, char* argv[])
             if (bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
             {
                 for (const float threshold : topological_distance_thresholds)
-                    for (int n : rec.ridgeline.get_topological_distance_triple_divide_node_indices(
-                             *flow, threshold))
-                        add_point(r, n, "topological_distance", threshold);
+                {
+                    for (int n = 1; n + 1 < static_cast<int>(rec.ridgeline.size()); ++n)
+                    {
+                        const auto flowpaths = rec.ridgeline
+                            .get_topological_distance_flowpaths(*flow, n);
+                        std::set<std::string> qualifying_sides;
+                        for (const auto& flowpath : flowpaths)
+                        {
+                            if (flowpath.pair_distance > threshold)
+                                qualifying_sides.insert(flowpath.side);
+                        }
+                        for (const auto& side : qualifying_sides)
+                        {
+                            add_point(r, n, "topological_distance_" + side, threshold);
+                            for (const auto& flowpath : flowpaths)
+                                if (flowpath.side == side)
+                                    topological_flowpaths.push_back({r, n, threshold, flowpath});
+                        }
+                    }
+                }
             }
 
             if (bf["write_zero_order_triple_divides_on_selected_ridglines"])
@@ -1695,12 +1720,55 @@ int main(int argc, char* argv[])
                 if (!value.empty() && value.back() == '.') value.pop_back();
                 return value;
             };
+            auto write_flowpaths = [&](float threshold)
+            {
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {
+                    "ridgeline_number", "ridgeline_type", "node_index",
+                    "threshold_m", "side", "branch",
+                    "topological_distance_m", "junction_flat"};
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::string_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::string_type,
+                    lsdtt::lsdtt_vector_field_type::string_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type};
+                lsdtt::lsdtt_data_loader loader;
+                loader.begin_vector_write(
+                    pp.make_output_path(
+                        "_topological_distance_paired_flowpaths_" +
+                        threshold_label(threshold) + "m", ".fgb"),
+                    "paired_flowpaths", schema, dem.get_meta().crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, true);
+                for (const auto& record : topological_flowpaths)
+                {
+                    if (record.threshold != threshold) continue;
+                    const auto& ridge = all_ridgelines[record.ridgeline_index];
+                    if (record.flowpath.positions.size() < 2) continue;
+                    loader.write_line(record.flowpath.positions, {
+                        static_cast<std::int64_t>(ridge.ridgeline_number),
+                        ridge.feature_type,
+                        static_cast<std::int64_t>(record.node_index),
+                        static_cast<double>(threshold),
+                        record.flowpath.side,
+                        record.flowpath.branch,
+                        static_cast<double>(record.flowpath.pair_distance),
+                        record.flowpath.junction_flat});
+                }
+                loader.finish_vector_write();
+            };
             if (bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
                 for (const float threshold : topological_distance_thresholds)
+                {
                     write_points(
                         "_topological_distance_triple_divides_" +
                             threshold_label(threshold) + "m",
-                        {"topological_distance"}, threshold);
+                        {"topological_distance_left", "topological_distance_right"}, threshold);
+                    write_flowpaths(threshold);
+                }
         }
         catch (const std::exception& e)
         {

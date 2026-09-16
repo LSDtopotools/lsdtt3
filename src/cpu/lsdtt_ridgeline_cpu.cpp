@@ -692,16 +692,70 @@ std::vector<int> lsdtt_ridgeline_cpu::get_topological_distance_triple_divide_nod
         const std::int64_t ri = flat(in_edge.right_r, in_edge.right_c);
         const std::int64_t ro = flat(out_edge.right_r, out_edge.right_c);
         bool qualifies = false;
-        if (li >= 0 && lo >= 0 && ri >= 0 && ro >= 0)
-        {
-            const float left_distance =
-                calculate_flow_topological_distance(li, lo, flow).distance;
-            const float right_distance =
-                calculate_flow_topological_distance(ri, ro, flow).distance;
-            qualifies = std::min(left_distance, right_distance) > threshold;
-        }
+        if (li >= 0 && lo >= 0)
+            qualifies = calculate_flow_topological_distance(li, lo, flow).distance > threshold;
+        if (!qualifies && ri >= 0 && ro >= 0)
+            qualifies = calculate_flow_topological_distance(ri, ro, flow).distance > threshold;
         if (qualifies) result.push_back(static_cast<int>(i));
     }
+    return result;
+}
+
+std::vector<lsdtt_ridgeline_topological_flowpath>
+lsdtt_ridgeline_cpu::get_topological_distance_flowpaths(
+    const lsdtt_flow_base& flow,
+    int                    node_index
+) const
+{
+    std::vector<lsdtt_ridgeline_topological_flowpath> result;
+    if (node_index <= 0 || static_cast<std::size_t>(node_index + 1) >= nodes_.size())
+        return result;
+
+    const EdgePixels in_edge = get_edge_pixels(nodes_[node_index - 1], nodes_[node_index]);
+    const EdgePixels out_edge = get_edge_pixels(nodes_[node_index], nodes_[node_index + 1]);
+    if (!in_edge.valid || !out_edge.valid) return result;
+
+    auto flat = [&](int r, int c) -> std::int64_t {
+        return flow.in_bounds(r, c) ? flow.flat_index_unchecked(r, c) : -1;
+    };
+    const std::int64_t left_in = flat(in_edge.left_r, in_edge.left_c);
+    const std::int64_t left_out = flat(out_edge.left_r, out_edge.left_c);
+    const std::int64_t right_in = flat(in_edge.right_r, in_edge.right_c);
+    const std::int64_t right_out = flat(out_edge.right_r, out_edge.right_c);
+
+    auto trace_to_junction = [&](std::int64_t start, std::int64_t junction) {
+        std::vector<lsdtt_xy> path;
+        if (start < 0 || junction < 0 || !flow.is_valid_cell(start)) return path;
+        std::int64_t current = start;
+        for (std::size_t step = 0; step <= nodes_.size() * 4; ++step)
+        {
+            path.push_back(cell_center_from_row_col(
+                flow.meta(), flow.row_from_flat_unchecked(current),
+                flow.col_from_flat_unchecked(current)));
+            if (current == junction) return path;
+            if (flow.is_outlet_unchecked(current)) break;
+            current = flow.receiver_of_unchecked(current);
+            if (current < 0 || !flow.is_valid_cell(current)) break;
+        }
+        path.clear();
+        return path;
+    };
+
+    auto add_side = [&](const std::string& side, std::int64_t first,
+                        std::int64_t second) {
+        if (first < 0 || second < 0) return;
+        const lsdtt_flow_topology_metrics metrics =
+            calculate_flow_topological_distance(first, second, flow);
+        if (metrics.junction_flat < 0) return;
+        const auto first_path = trace_to_junction(first, metrics.junction_flat);
+        const auto second_path = trace_to_junction(second, metrics.junction_flat);
+        if (first_path.empty() || second_path.empty()) return;
+        result.push_back({side, "incoming", first_path, metrics.distance, metrics.junction_flat});
+        result.push_back({side, "outgoing", second_path, metrics.distance, metrics.junction_flat});
+    };
+
+    add_side("left", left_in, left_out);
+    add_side("right", right_in, right_out);
     return result;
 }
 
