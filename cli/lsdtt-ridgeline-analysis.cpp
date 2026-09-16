@@ -555,6 +555,12 @@ int main(int argc, char* argv[])
         "Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network.",
         "Triple divide outputs", "switch", ""};
 
+    bool_default_map["write_zero_order_basins_touching_selected_ridgelines"] = false;
+    help_map["write_zero_order_basins_touching_selected_ridgelines"] = {"bool", "false",
+        "Write source-based zero-order basin outlines that touch selected ridgelines.",
+        "Uses the same exact ridgeline-grid contact test as zero-order TDJ detection.",
+        "Triple divide outputs", "switch", ""};
+
     bool_default_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = false;
     help_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = {"bool", "false",
         "Write nodes where either flanking flow topological distance exceeds the threshold.",
@@ -1512,6 +1518,7 @@ int main(int argc, char* argv[])
     // =========================================================================
     if (bf["write_triple_divides_on_selected_ridgelines"] ||
         bf["write_zero_order_triple_divides_on_selected_ridglines"] ||
+        bf["write_zero_order_basins_touching_selected_ridgelines"] ||
         bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
     {
         std::cout << "\n--- Writing selected-ridgeline triple divides ---\n";
@@ -1523,6 +1530,7 @@ int main(int argc, char* argv[])
             float threshold = std::numeric_limits<float>::quiet_NaN();
         };
         std::vector<triple_point> points;
+        std::set<std::size_t> touching_zero_order_basin_indices;
         struct topological_flowpath_point
         {
             std::size_t ridgeline_index;
@@ -1543,7 +1551,8 @@ int main(int argc, char* argv[])
         };
 
         std::unique_ptr<lsdtt::lsdtt_zero_order_basin_manager_cpu> zero_order_basins;
-        if (bf["write_zero_order_triple_divides_on_selected_ridglines"])
+        if (bf["write_zero_order_triple_divides_on_selected_ridglines"] ||
+            bf["write_zero_order_basins_touching_selected_ridgelines"])
         {
             zero_order_basins = std::make_unique<lsdtt::lsdtt_zero_order_basin_manager_cpu>(
                 *flow);
@@ -1623,9 +1632,15 @@ int main(int argc, char* argv[])
                                 ? contact_ridge_nodes[oi + 1] >= 0
                                 : (closed ? contact_ridge_nodes[0] >= 0 : false);
 
-                            if (on_contact && !previous_contact)
+                            if (on_contact &&
+                                (bf["write_zero_order_basins_touching_selected_ridgelines"] ||
+                                 !previous_contact))
+                                touching_zero_order_basin_indices.insert(bi);
+                            if (on_contact && !previous_contact &&
+                                bf["write_zero_order_triple_divides_on_selected_ridglines"])
                                 add_point(r, contact_ridge_nodes[oi], "zero_order_join");
-                            if (on_contact && !next_contact)
+                            if (on_contact && !next_contact &&
+                                bf["write_zero_order_triple_divides_on_selected_ridglines"])
                                 add_point(r, contact_ridge_nodes[oi], "zero_order_leave");
                         }
                     }
@@ -1636,6 +1651,36 @@ int main(int argc, char* argv[])
 
         try
         {
+            if (bf["write_zero_order_basins_touching_selected_ridgelines"])
+            {
+                lsdtt::lsdtt_vector_schema basin_schema;
+                basin_schema.field_names = {"zero_order_id", "source_flat"};
+                basin_schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type};
+                lsdtt::lsdtt_data_loader basin_loader;
+                basin_loader.begin_vector_write(
+                    pp.make_output_path("_zero_order_basins_touching_ridgelines", ".fgb"),
+                    "zero_order_basins_touching_ridgelines", basin_schema,
+                    dem.get_meta().crs_wkt, lsdtt::vector_output_format::flatgeobuf, true);
+                for (const std::size_t basin_index : touching_zero_order_basin_indices)
+                {
+                    const auto& basin = zero_order_basins->basin_at(basin_index);
+                    const auto outline = basin.get_basin_outline();
+                    const auto record = outline.get_outline_as_line_record(
+                        static_cast<std::int32_t>(basin_index));
+                    if (std::holds_alternative<std::monostate>(record.geometry)) continue;
+                    const auto& line = std::get<lsdtt::lsdtt_line_geom>(record.geometry);
+                    if (line.points.size() < 2) continue;
+                    basin_loader.write_line(line.points, {
+                        static_cast<std::int64_t>(basin_index),
+                        basin.get_basin_outlet_flat_index()});
+                }
+                basin_loader.finish_vector_write();
+                std::cout << "Wrote " << touching_zero_order_basin_indices.size()
+                          << " zero-order basin outlines touching selected ridgelines.\n";
+            }
+
             const std::vector<std::string> headers = {
                 "ridgeline_number", "ridgeline_type", "triple_divide_mode",
                 "node_index", "distance_along_ridgeline_m", "elevation",
