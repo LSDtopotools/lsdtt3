@@ -1,11 +1,11 @@
 # Building lsdtt3 from source
 
-This is the developer route. If you only want to *use* lsdtt3, install a
+You really only need to do this if you are a developer. If you only want to *use* lsdtt3, install a
 release package instead — see [Installation](../what_is_lsdtt3/install_lsdtt3.md).
 Build from source when you need code that has not been released yet, or when
-you are modifying lsdtt3.
+you are modifying `lsdtt3`.
 
-lsdtt3 is a Linux-native C++17 codebase. **Linux is the reference platform**:
+`lsdtt3` is a Linux-native C++17 codebase. **Linux is the reference platform**:
 every tool builds there, CI builds there, and the test suite is run there. This
 page is the reference build; the platform pages only cover what is different on
 their platform, and link back here for everything else.

@@ -70,7 +70,7 @@ repository, use `git update-index --chmod=+x <file>`.
 ## Native Windows (QGIS backend only)
 
 This path produces native `.exe` files for the subset of tools the QGIS plugin
-drives. It is **not** a development route.
+drives. It is **not** a development route. If you are working on Windows it is still probably better for you to do a WSL2 window and then run lsdtt3 from Ubuntu. So this section is really just notes for the developers who are compiling the backend for QGIS. 
 
 Limitations, up front:
 

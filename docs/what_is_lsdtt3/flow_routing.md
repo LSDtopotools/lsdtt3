@@ -7,7 +7,7 @@ method is for, and where `lsdtt3` deliberately differs from similar software pac
 
 ## Graph vocabulary used on this page
 
-Flow routing is graph work (in the mathematical sense) work, and to read this section you will need to know what some terms mean. 
+Flow routing is graph (in the mathematical sense) work, and to read this section you will need to know what some terms mean. 
 They are defined once here.
 
 - **Node and edge.** Each valid DEM cell is a **node**. An **edge** points from a
@@ -53,7 +53,7 @@ They are defined once here.
   node, emit it, and decrement its receiver's count; if that receiver's count
   reaches zero it is now ready, so push it. Repeat until the queue empties. If
   nodes remain unemitted, the graph had a cycle - which is a useful built-in
-  check on a routing graph that should not have one. Another algorithm that has been
+  check on a routing graph that should not have one. This is another algorithm that has been
   around in computer science for a long time but has only recently been injected into 
   flow routing routines. 
 
@@ -83,7 +83,7 @@ In practice:
 The three routing schemes in `lsdtt3` are not variants of one idea. They are
 three answers to the question of how much a grid cell
 is allowed to know about where its water goes. Each was a response to a specific
-failure of the one before.
+failure of the one before. Please indulge us in a bit of pedantic history telling. 
 
 ### D8 - O'Callaghan and Mark (1984)
 
