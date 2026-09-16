@@ -64,16 +64,6 @@ endif()
 # =============================================================================
 option(LSDTT_GPU "Build GPU backends (requires CUDA)" OFF)
 
-# Vendoring: build PROJ (and, from chunk 2c, GDAL) from source and link them
-# statically, so lsdtt3 does not share a libgdal/libproj with whatever the user
-# already has installed. OFF by default -- a conda-forge install genuinely wants
-# to share one GDAL across the stack. See cmake/LsdttVendorGdal.cmake.
-option(LSDTT_VENDOR_GDAL
-    "Build and statically link our own PROJ/GDAL instead of the system one" OFF)
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
-include(LsdttVendorGdal)
-
 # =============================================================================
 # Required: GDAL
 # =============================================================================
