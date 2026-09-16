@@ -62,8 +62,18 @@ std::vector<fs::path> candidate_roots()
 {
     std::vector<fs::path> roots;
 
+    // An explicit root REPLACES the executable-relative probe, it does not
+    // precede it. A caller that sets one is telling us where its data is; if it
+    // is not there, there is none. Falling through to the executable would be
+    // actively wrong for the caller this exists for -- a Python extension
+    // module, whose "executable" is the interpreter, so <exe>/../share/proj is
+    // whatever conda or pixi environment happens to be running it. Pinning that
+    // is the mismatch this module exists to prevent, not a fallback.
     if (!g_data_root_override.empty())
+    {
         roots.emplace_back(g_data_root_override);
+        return roots;
+    }
 
     const fs::path exe_dir = executable_dir();
     if (!exe_dir.empty())

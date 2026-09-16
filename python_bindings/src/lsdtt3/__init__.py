@@ -281,6 +281,18 @@ from ._core import (
     crn_invert_basin_erosion,
     crn_pair_diagnostics,
     crn_transient_history,
+    # GDAL/PROJ runtime diagnostics. Public because they are what a user pastes
+    # into a bug report about coordinates that look subtly wrong -- a mismatched
+    # proj.db returns plausible values rather than failing.
+    #
+    # set_bundled_data_root is deliberately NOT re-exported: it only has an
+    # effect before the first GDAL call, which for a user is always in the past
+    # by the time they could reach for it. It stays available as
+    # lsdtt3._core.set_bundled_data_root for the import-time wiring above.
+    gdal_data_description,
+    gdal_version,
+    proj_data_description,
+    proj_version,
 )
 
 from ._graphflood_accelerators import (
@@ -291,6 +303,10 @@ from ._graphflood_accelerators import (
 )
 
 __all__ = [
+    "gdal_data_description",
+    "gdal_version",
+    "proj_data_description",
+    "proj_version",
     "Raster",
     "RasterHierarchy",
     "RasterMeta",

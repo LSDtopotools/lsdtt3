@@ -59,6 +59,10 @@ void gdal_init();
 // and `share/gdal`. Must be called BEFORE the first gdal_init() to have any
 // effect; returns false if initialisation has already happened.
 //
+// Setting a root REPLACES the executable-relative probe rather than preceding
+// it: you are stating where your data is, so if it is not there, there is none
+// and PROJ's own search applies.
+//
 // This exists for the Python extension module, where executable_path() resolves
 // to the Python interpreter rather than to the module, so the default probe
 // would look in the wrong place (or, worse, in a conda prefix belonging to a
