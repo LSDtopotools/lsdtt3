@@ -136,11 +136,59 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 
 | Parameter | Type | Default | Output file |
 |---|---|---|---|
-| `write_ridgelines` | bool | `false` | `<write_fname><mode_prefix>.csv` — per‑point ridgeline data: lat/long, distance, elevation, fitted/detrended/smoothed elevation, smoothed detrended slope. |
+| `write_ridgelines` | bool | `false` | Write `<write_fname><mode_prefix>.csv` point data and a matching FlatGeobuf line layer. |
 | `write_ridgeline_stats` | bool | `false` | `<write_fname><mode_prefix>_stats.csv` — per‑ridgeline statistics: fitted slope, linear‑fit R², normalised steepness, polynomial R² and coefficients. |
 | `write_ridgeline_extrema` | bool | `false` | `<write_fname><mode_prefix>_extrema.csv` — ridgeline extrema with distance/relief to the next extremum and distance to the triple divide. |
 
 `<mode_prefix>` is `_basin_outline_ridgelines`, `_interfluvial_ridgelines`, or `_range_defined_ridgelines`.
+
+The FlatGeobuf line layer is written to `<write_fname><mode_prefix>.fgb` and
+contains ridgeline IDs, basin IDs, node counts, and total lengths.
+
+## Selected-ridgeline triple-divide outputs
+
+These opt-in switches run after ridgeline selection and write one combined
+point layer for all enabled triple-divide methods:
+
+| Parameter | Description |
+|---|---|
+| `write_triple_divides_on_selected_ridgelines` | Write triple and quadruple divide nodes identified where three or more surrounding flow basins meet a selected ridgeline. |
+| `write_zero_order_triple_divides_on_selected_ridglines` | Write the join and leave nodes where first-order source-basin outlines bound a selected ridgeline. The parameter spelling is retained exactly as the CLI name. |
+| `write_topological_distance_triple_divides_on_selected_ridgelines` | Write selected-ridgeline nodes where either left or right flow-topological distance exceeds a supplied threshold. |
+| `topological_distance_triple_divide_threshold` | Backward-compatible single threshold in metres. |
+| `topological_distance_triple_divide_thresholds` | Comma-separated thresholds in metres. A node qualifies when `left > threshold OR right > threshold`; one output pair is written per threshold. |
+
+The native surrounding-basin and zero-order methods are written to separate
+outputs so they can be loaded and compared independently. Enabled topological
+distance points are also written separately:
+
+```text
+<write_fname>_native_triple_divides.csv
+<write_fname>_native_triple_divides.fgb
+<write_fname>_zero_order_triple_divides.csv
+<write_fname>_zero_order_triple_divides.fgb
+<write_fname>_topological_distance_triple_divides_XXXm.csv
+<write_fname>_topological_distance_triple_divides_XXXm.fgb
+<write_fname>_topological_distance_paired_flowpaths_XXXm.fgb
+```
+
+Each non-empty layer uses the common schema containing ridgeline ID/type,
+method, node index, distance along ridgeline, elevation, selected basin
+junction IDs, and latitude/longitude in the CSV. The FlatGeobuf stores point
+geometry in the DEM CRS. CSV files are written even when a selected method
+finds no points. Threshold-specific topological FlatGeobufs are also created
+when empty so threshold cases remain explicit.
+
+For each topological-distance threshold, the paired-flowpath FlatGeobuf stores
+the incoming and outgoing branches on every qualifying side of every TDJ. Its
+attributes include ridgeline/node IDs, side, branch, threshold, pair distance,
+and the common junction flat index.
+
+Zero-order output uses the dedicated source-pixel basin view. Each source pixel
+identified by `threshold_contributing_pixels` defines one zero-order basin from
+the complete upslope contributing area. Its ordered divide-grid outline is
+matched to each selected ridgeline; each contiguous contact interval contributes
+its join and leave ridgeline nodes.
 
 ---
 
@@ -350,7 +398,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_ridgelines` | `bool` | `false` | `switch` | - | This triggers ridgeline printing to csv. | NOTE for any ridgeline to print, you must select an analysis mode. |
+| `write_ridgelines` | `bool` | `false` | `switch` | - | Write selected ridgelines to CSV and FlatGeobuf. | NOTE for any ridgeline to print, you must select an analysis mode. |
 | `write_ridgeline_stats` | `bool` | `false` | `switch` | - | This triggers printing of ridgeline statistics (including ridgeline steepness) to csv. | Includes slope, R2, normalized steepness, and polynomial coeffs. |
 | `write_ridgeline_extrema` | `bool` | `false` | `switch` | - | This triggers printing of ridgeline extrema to csv. | Includes distance to next extremum, relief, and distance to TDJ. |
 | `write_ridgeline_flow_topological_distance` | `bool` | `false` | `switch` | - | Write the left and right flow topological distances for internal ridgeline nodes. | Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node. |
