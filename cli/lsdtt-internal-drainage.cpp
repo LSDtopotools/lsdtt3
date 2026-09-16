@@ -2,7 +2,8 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // Detect, review, route, tag, and analyse internally drained basins.
 // Usage: lsdtt-internal-drainage <path> <parameter_file>
@@ -40,7 +41,7 @@
 #include "../src/utils/lsdtt_string_utils.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
 
-static const std::string k_version = "0.1.0";
+static const std::string k_version = "1.0.0";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-internal-drainage";
 
@@ -56,10 +57,13 @@ static void print_banner()
         << "|| moulins. However will be generally useful in karst  ||\n"
         << "|| arid environments, extensional tectonic settings,etc||\n"
         << "=========================================================\n"
-        << "|| CLI version: " << k_version << "\n"
-        << "|| Citation   : " << k_citation << "\n"
-        << "|| -v or --version : full lsdtt3 release version\n"
-        << "|| -h              : help explaining the parameters\n"
+        << "|| -v or --version    : full lsdtt3 release version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| If CLI version number is lower than 1.0.0 it means\n"
+        << "|| this CLI is still experimental and not fully tested.\n"
+        << "=========================================================\n"
+        << "|| Citation : " << k_citation << "\n"
+        << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n\n";
 }
 

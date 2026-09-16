@@ -164,7 +164,7 @@ apptainer test lsdtt3.sif
 ```
 
 This runs the `%test` section of the definition file and reports the versions
-of GCC, CMake, GDAL, FFTW3, Eigen3, and OpenCV.
+of GCC, CMake, GDAL, FFTW3, Eigen3, and NetCDF.
 
 ---
 

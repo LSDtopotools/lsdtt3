@@ -3,7 +3,8 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
 // Standalone validation driver for the cosmogenic-nuclide (CRN) physics core.
@@ -6607,7 +6608,9 @@ void phase7_L5_degenerate(const lsdtt::CrnNcData& nc,
 }
 
 // L6 - physics invariants.
-void phase7_L6_invariants(const lsdtt::CrnNcData& nc, const std::string& out_dir)
+// out_dir is unused: this phase asserts invariants and writes no artefacts.
+// Kept in the signature so every phase7_* function is called the same way.
+void phase7_L6_invariants(const lsdtt::CrnNcData& nc, const std::string& /*out_dir*/)
 {
     lsdtt::lsdtt_crn_parameters cp;
     if (!nc.lsdn_loaded) return;

@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // Plane fitting to masked or labelled raster regions.
@@ -159,8 +160,8 @@ lsdtt_raster_cpu residual_from_fitted_plane(
 // Returns a map from integer label to fit result.  Labels for which the fit
 // was degenerate (too few pixels, collinear geometry) have valid = false.
 //
-// Typical input: an Otsu-thresholded or k-means label raster produced by
-// the OpenCV routines in lsdtt_raster_opencv_cpu.
+// Typical input: an Otsu-thresholded (lsdtt_raster_image_ops_cpu) or k-means
+// label raster.
 // -----------------------------------------------------------------------------
 std::map<int, lsdtt_plane_fit_result> fit_planes_to_labels(
     const lsdtt_raster_cpu& dem,

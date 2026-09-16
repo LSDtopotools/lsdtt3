@@ -1,5 +1,6 @@
 nanobind_add_module(_core
     module.cpp
+    geospatial_runtime.cpp
     raster_types.cpp
     raster_basic_ops.cpp
     raster_resampling.cpp

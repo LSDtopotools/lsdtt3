@@ -2,6 +2,12 @@
 
 Utilities and source for the `lsdtt_qgis` QGIS plugin.
 
+Developers: how the plugin, its backend bundle and their version checks fit
+together, and the loop for changing them, is in
+`docs/developer_notes/qgis_plugin_development.md` (Developer notes → QGIS
+plugin development on the documentation site). Packaging commands are in
+`tools/README.md`.
+
 ## Versioning (plugin vs backend)
 
 The plugin and backend use separate version numbers.

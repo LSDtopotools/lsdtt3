@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // General flat surface identification from a DEM.
@@ -247,7 +248,7 @@ struct flat_surface_result
     // Labelled flat components (UInt32)
     //
     // Components of combined_flat_mask that have >= min_component_pixels are
-    // assigned a unique integer label (1, 2, 3, ...).  meta.data_type = GDT_UInt32,
+    // assigned a unique integer label (1, 2, 3, ...).  meta.data_type = lsdtt_pixel_type::uint32,
     // meta.no_data_value = 0.
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu labelled_flat_mask;

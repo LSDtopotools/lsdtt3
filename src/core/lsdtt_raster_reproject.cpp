@@ -3,12 +3,14 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // See lsdtt_raster_reproject.hpp for full documentation.
 
 #include "lsdtt_raster_reproject.hpp"
+#include "lsdtt_gdal_init.hpp"
 #include "lsdtt_crs_suggest.hpp"
 
 #include <algorithm>
@@ -80,7 +82,7 @@ static GDALResampleAlg resample_algo(const std::string& s)
 // -----------------------------------------------------------------------------
 static double estimate_projected_pixel_size(
     const lsdtt_raster_meta& meta,
-    const lsdtt_crs_suggestion& sug,
+    const lsdtt_crs_suggestion& /*sug*/,   // target_wkt already carries the choice
     const std::string& target_wkt)
 {
     // Parse source and target SRS
@@ -165,7 +167,7 @@ static void run_gdalwarp(
     int                n_threads  = 0,   // 0 = ALL_CPUS
     int                warp_mem_mb = 512) // working memory per thread in MB
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     // Build WKT as a single-line string safe to pass as a command option
     // (replace embedded newlines just in case)

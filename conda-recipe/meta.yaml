@@ -18,6 +18,8 @@
 #
 # -------------------------------------------------------------------------
 
+# Keep in step with project(lsdtt3 VERSION ...) on line 2 of CMakeLists.txt,
+# which is the single source of truth for the version.
 {% set version = "0.4.0" %}
 
 package:
@@ -25,6 +27,11 @@ package:
   version: {{ version }}
 
 source:
+  # Local test builds use the working tree. conda-build copies the whole
+  # directory, so the local build/, dist/ and site/ trees are copied too, and
+  # the binaries report a -dev/-dirty version because .git comes along.
+  # For submission, switch to the tagged tarball: it has no .git, so the
+  # binaries report the plain release version.
   path: ..
   #url: https://github.com/LSDtopotools/lsdtt3/archive/refs/tags/v{{ version }}.tar.gz
   # sha256: fill_this_in_before_submitting
@@ -38,31 +45,48 @@ build:
 requirements:
   build:
     - {{ compiler('cxx') }}
+    - {{ stdlib('c') }}
     - cmake >=3.15
-    - make                # [unix]
+    - ninja
     - pkg-config          # [unix]
   host:
-    - gdal
+    # libgdal-core is the GDAL C/C++ library. The "gdal" package is the
+    # Python bindings, and would make this package depend on Python.
+    - libgdal-core >=3.0
     - fftw
-    - libopencv
     - eigen
     - libnetcdf
+    # Apple Clang ships no OpenMP runtime; Linux gets libgomp from the compiler.
+    - llvm-openmp         # [osx]
   run:
+    # Runtime pins for these also come from the host packages' run_exports.
     # Eigen3 is header-only - no runtime dependency.
-    - gdal
+    - libgdal-core
     - fftw
-    - libopencv
     - libnetcdf
+    - llvm-openmp         # [osx]
 
 test:
   commands:
     - lsdtt-channel-extraction --help
     - lsdtt-basin-extraction --help
     - lsdtt-drainage-analysis --help
+    - lsdtt-channel-extraction -v
+    # Optional dependencies are skipped silently when CMake cannot find them.
+    # Fail here rather than ship a package missing them: --help-json lists the
+    # features a CLI was compiled with, and spectral-analysis only exists
+    # when FFTW3 was found.
+    - lsdtt-spectral-analysis --help
+    - lsdtt-chi-analysis --help-json | grep -q '"eigen"'        # [unix]
+    - lsdtt-cosmo-tool --help-json | grep -q '"netcdf"'         # [unix]
+    # Bundled cosmogenic data, found relative to the installed executables.
+    - test -f "${PREFIX}/share/lsdtt3/crn_parameters.nc"   # [unix]
+    # Only the tools and their data are packaged.
+    - test ! -d "${PREFIX}/include/lsdtt3"                  # [unix]
 
 about:
   home: https://github.com/LSDtopotools/lsdtt3
-  license: GPL-3.0-only
+  license: AGPL-3.0-or-later
   license_file: LICENSE
   summary: LSDTopoTools3 - topographic analysis for geomorphology
   description: |
@@ -70,7 +94,7 @@ about:
     tools for topographic analysis in geomorphology. It provides routines for
     channel extraction, basin delineation, chi analysis, cosmogenic nuclide
     analysis, hillslope metrics, spectral analysis, and more.
-  doc_url: https://github.com/LSDtopotools/lsdtt3/tree/main/docs
+  doc_url: https://lsdtopotools.github.io/lsdtt3/
 
 extra:
   recipe-maintainers:

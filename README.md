@@ -5,7 +5,7 @@
 A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) with a modern C++ architecture.
 
 **Copyright:** Simon M. Mudd  
-**Licence:** GPL-3.0  
+**Licence:** AGPL-3.0-or-later  
 **Additional developers:** Rutger Vervoordeldonk, Boris Gailleton
 
 **Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Martin Hurst, Declan Valters 
@@ -122,7 +122,6 @@ every library they need. This section is for building from source.
 | OpenMP | No | Multi-core parallelism across most routines |
 | FFTW3 (double precision) | No | `lsdtt-spectral-analysis`; wavelet quadratic polyfit in other tools |
 | Eigen3 | No | `lsdtt-chi-analysis`; chi k_sn / u* inversion |
-| OpenCV (core + imgproc) | No | Frangi filter, Otsu segmentation, Hough line extraction, adaptive thresholding in `lsdtt-surface-metrics` |
 | NetCDF | No | ERA40 atmospheric / palaeomagnetic corrections in `lsdtt-cosmo-tool` and `lsdtt-cosmo-prediction` |
 | CUDA toolkit | No | GPU compute backend (not yet implemented) |
 
@@ -136,7 +135,6 @@ sudo apt install cmake build-essential libgdal-dev
 # Optional — install whichever you need
 sudo apt install libfftw3-dev        # spectral analysis, wavelet polyfit
 sudo apt install libeigen3-dev       # chi analysis and k_sn inversion
-sudo apt install libopencv-dev       # image analysis in surface metrics
 sudo apt install libnetcdf-dev       # CRN palaeomagnetic corrections
 ```
 
@@ -145,19 +143,18 @@ OpenMP is included with GCC and needs no separate install.
 ### Windows (WSL2)
 
 Build inside a WSL2 Ubuntu environment and use the Ubuntu instructions above.
-`docs/developer_notes/lsdtt3_in_windows.md` has the full walkthrough. A native
-Windows build is possible with Visual Studio and vcpkg but is a deliberately
-reduced profile (no Eigen, no OpenCV, no OpenMP) intended as the QGIS plugin
-backend — see `docs/developer_notes/building_from_source.md`.
+A native Windows build is possible with Visual Studio and vcpkg but is a
+deliberately reduced profile (no Eigen, no OpenMP) intended as the
+QGIS plugin backend. Both are in `docs/developer_notes/building_on_windows.md`.
 
 ### macOS
 
-lsdtt3 does not build with Apple Clang. Build inside an Ubuntu VM managed by
-Multipass — see `docs/developer_notes/lsdtt3_in_macos.md`.
+Build natively with Homebrew and the Xcode Command Line Tools, or inside an
+Ubuntu VM managed by Multipass — see `docs/developer_notes/building_on_macos.md`.
 
 ### Apptainer container
 
-A pre-configured Apptainer definition is provided that includes all dependencies (GDAL, FFTW3, Eigen3, OpenCV, OpenMP) on Ubuntu 22.04. See `apptainer_def/apptainer_setup.md` for setup on Linux, macOS, and Windows (WSL2).
+A pre-configured Apptainer definition is provided that includes all dependencies (GDAL, FFTW3, Eigen3, NetCDF, OpenMP) on Ubuntu 22.04. See `apptainer_def/apptainer_setup.md` for setup on Linux, macOS, and Windows (WSL2).
 
 ### Debian packaging
 
@@ -183,13 +180,55 @@ export PATH=/path/to/lsdtt3/build:$PATH
 Full instructions for every platform, including the CMake option reference:
 [`docs/developer_notes/building_from_source.md`](docs/developer_notes/building_from_source.md).
 
+### Gotcha: more than one GDAL or PROJ on your machine
+
+If you have QGIS, conda, `rasterio` or `geopandas` installed — and most people
+doing serious analysis do — then you have several GDALs and several PROJs. Two
+things go wrong, and neither announces itself clearly.
+
+**At build time, with a conda environment active**, CMake can find GDAL's
+*headers* in `/usr/include/gdal` and GDAL's *library* in the conda environment.
+Everything compiles and the link fails with undefined references to functions
+whose signatures changed between versions. lsdtt3 detects this and repairs it by
+preferring the library next to the headers, but if you see it, the fix is to
+point both at one installation:
+
+```sh
+cmake -S . -B build \
+  -DGDAL_INCLUDE_DIR=<prefix>/include \
+  -DGDAL_LIBRARY=<prefix>/lib/libgdal.so
+```
+
+The simplest cure is to build with the conda environment **deactivated**, unless
+you are deliberately building against conda's GDAL.
+
+**At run time**, PROJ finds its coordinate database through `PROJ_DATA` or
+`PROJ_LIB`. If one of those is exported and points at a `proj.db` from a
+different PROJ generation, reprojection can return coordinates that are
+plausible and wrong rather than failing. Every lsdtt3 tool reports what it is
+actually using:
+
+```sh
+lsdtt-raster-preprocessing -v
+```
+
+```
+GDAL 3.8.4, PROJ 9.3.1
+  proj data: PROJ built-in search
+  GDAL data: GDAL built-in search
+```
+
+A release package says `bundled:` there and ignores your environment entirely. A
+source build uses whatever your system provides, which is normally correct —
+but if coordinates look subtly off, this is the first thing to check, and the
+first thing to put in a bug report.
+
 ### CMake options
 
 | Option | Default | Description |
 |---|---|---|
 | `CMAKE_BUILD_TYPE` | `Release` | `Release`, `Debug`, or `RelWithDebInfo` |
 | `LSDTT_GPU` | `OFF` | Enable GPU compute backend (requires CUDA toolkit) |
-| `LSDTT_OPENCV` | `ON` | Build OpenCV-dependent routines (auto-disabled if OpenCV not found) |
 | `LSDTT_EIGEN` | `ON` | Build Eigen3-dependent routines (auto-disabled if Eigen3 not found) |
 | `LSDTT_ENABLE_BENCHMARKS` | `OFF` | Register the RichDEM comparison benchmarks (needs network + pixi) |
 | `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Register tests that download data |
@@ -392,7 +431,10 @@ The `docs/` tree is organised by audience:
 | `docs/developer_notes/lsdtt3_architecture.md` | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
 | `docs/developer_notes/developer_onboarding.md` | Getting-started guide for new contributors. |
 | `docs/developer_notes/git_notes.md` | Setting up an SSH key and cloning, for people new to git. |
-| `docs/developer_notes/building_from_source.md` | Compiling on Linux, Windows (WSL2 and native) and macOS; CMake options. |
+| `docs/developer_notes/building_from_source.md` | Start here for compiling: the reference Linux build, CMake options, and which page covers your platform. |
+| `docs/developer_notes/building_on_windows.md` | Windows: WSL2 (full build) and native Visual Studio + vcpkg (QGIS backend). |
+| `docs/developer_notes/building_on_macos.md` | macOS: native Homebrew build, and a Multipass Ubuntu VM. |
+| `docs/developer_notes/qgis_plugin_development.md` | The QGIS plugin and its backend bundle: version checks and the development loop. |
 | `docs/developer_notes/making_release_packages.md` | How the release packages are built and published. |
 | `docs/developer_notes/building_the_docs.md` | Building the documentation site with MkDocs, and publishing it. |
 | `docs/developer_notes/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |
@@ -400,8 +442,6 @@ The `docs/` tree is organised by audience:
 | `docs/developer_notes/lsdtt_utils_guide.md` | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
 | `docs/developer_notes/gpu_compute.md` | GPU backend design and the compute-dispatch mechanism. |
 | `docs/developer_notes/beta_testing_notes.md` | Getting bundles to beta testers, the release pipeline, and the future conda-forge plan. |
-| `docs/developer_notes/lsdtt3_in_windows.md` | Windows (WSL2) development setup. |
-| `docs/developer_notes/lsdtt3_in_macos.md` | macOS development setup via a Multipass Ubuntu VM. |
 | `docs/developer_notes/debian_packaging.md` | Building a Debian package. |
 | `docs/developer_notes/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
 | `tools/README.md` | Building redistributable bundles, and the git/gh commands for cutting a tagged release. |

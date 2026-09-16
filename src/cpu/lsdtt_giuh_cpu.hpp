@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // Geomorphic Instantaneous Unit Hydrograph (GIUH)
@@ -132,8 +133,18 @@ lsdtt_giuh_result compute_giuh(
 // dt_rainfall_s       - duration of each rainfall timestep [s]
 //
 // Returns Q[t] [m^3/s] at the network outlet for each rainfall timestep.
-// The output vector has the same length as rainfall_m_per_s plus
-// (giuh.n_bins - 1) tail steps so the complete recession is captured.
+// The output vector has the same length as rainfall_m_per_s plus the IUH tail,
+// so the complete recession is captured. That tail is (n_bins - 1) steps when
+// dt_rainfall_s equals giuh.dt_bin_s, and correspondingly more or fewer steps
+// when it does not.
+//
+// dt_rainfall_s need NOT equal giuh.dt_bin_s: the IUH is re-binned onto the
+// rainfall timestep first, conserving its integral. Both timesteps come from
+// independent parameters (lsdtt-sediment-routing sets the IUH bin width with
+// giuh_dt_bin_s and the rainfall step from its own model timestep), so they
+// routinely differ.
+//
+// Throws std::runtime_error if dt_rainfall_s or giuh.dt_bin_s is <= 0.
 // ---------------------------------------------------------------------------
 [[nodiscard]]
 std::vector<double> giuh_discharge(

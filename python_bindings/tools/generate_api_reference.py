@@ -31,8 +31,21 @@ DOMAIN_GUIDANCE = {
 }
 
 
+# GDAL/PROJ runtime diagnostics. Matched by exact name rather than by substring:
+# a "proj" substring rule would also capture reproject / reproject_to_grid, which
+# belong with the raster operations.
+GEOSPATIAL_RUNTIME = {
+    "gdal_data_description",
+    "gdal_version",
+    "proj_data_description",
+    "proj_version",
+}
+
+
 def domain(name):
     lower = name.lower()
+    if name in GEOSPATIAL_RUNTIME:
+        return "fetch"
     if "synthetic" in lower:
         return "synthetic"
     if "graphflood" in lower or "hydraulic" in lower:

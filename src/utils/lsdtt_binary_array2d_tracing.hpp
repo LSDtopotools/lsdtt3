@@ -28,7 +28,8 @@
 // If no foreground pixel exists, returns an empty vector.
 //
 // Copyright (C) 2026 Rutger Vervoordeldonk
-// Released under the GNU General Public Licence v3 (GPL-3.0)
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 
 #include <cstdint>
 #include <array>

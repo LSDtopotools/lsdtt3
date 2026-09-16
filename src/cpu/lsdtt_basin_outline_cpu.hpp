@@ -21,7 +21,7 @@
 //  - The basin is represented by a zero-copy slice into the flow s_vector.
 //
 // Copyright (C) 2026
-// GPL-3.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include <string>
 #include <vector>

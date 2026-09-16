@@ -325,6 +325,72 @@ def fetch_dem_for_outlets(outlets: object, source: str = 'cop30_aws', target_eps
 
 ---
 
+## `gdal_data_description`
+
+gdal_data_description() -> str
+
+    Parameters
+    ----------
+    *args
+        Positional arguments described by the generated binding signature.
+    **kwargs
+        Keyword arguments described by the generated binding signature.
+
+    Returns
+    -------
+    object
+        Result described by the generated binding signature.
+
+    Notes
+    -----
+    gdal_data_description() -> str
+
+As proj_data_description(), for GDAL's own data directory.
+
+    Authors
+    -------
+    B. Gailleton
+
+
+```python
+def gdal_data_description() -> str
+```
+
+---
+
+## `gdal_version`
+
+gdal_version() -> str
+
+    Parameters
+    ----------
+    *args
+        Positional arguments described by the generated binding signature.
+    **kwargs
+        Keyword arguments described by the generated binding signature.
+
+    Returns
+    -------
+    object
+        Result described by the generated binding signature.
+
+    Notes
+    -----
+    gdal_version() -> str
+
+GDAL release name of the library actually loaded, e.g. "3.8.4".
+
+    Authors
+    -------
+    B. Gailleton
+
+
+```python
+def gdal_version() -> str
+```
+
+---
+
 ## `http_available`
 
 http_available() -> bool
@@ -354,6 +420,82 @@ Return whether the bundled GDAL has HTTP support.
 
 ```python
 def http_available() -> bool
+```
+
+---
+
+## `proj_data_description`
+
+proj_data_description() -> str
+
+    Parameters
+    ----------
+    *args
+        Positional arguments described by the generated binding signature.
+    **kwargs
+        Keyword arguments described by the generated binding signature.
+
+    Returns
+    -------
+    object
+        Result described by the generated binding signature.
+
+    Notes
+    -----
+    proj_data_description() -> str
+
+Where PROJ is getting proj.db, as a human-readable string.
+
+One of ``"bundled: <dir>"`` (lsdtt3 pinned it), ``"PROJ_DATA=<dir>"``,
+``"PROJ_LIB=<dir>"``, or ``"PROJ built-in search"``.
+
+Put this in any bug report about projections or coordinates that look subtly
+wrong -- a mismatched proj.db usually returns plausible values rather than
+failing.
+
+    Authors
+    -------
+    B. Gailleton
+
+
+```python
+def proj_data_description() -> str
+```
+
+---
+
+## `proj_version`
+
+proj_version() -> str
+
+    Parameters
+    ----------
+    *args
+        Positional arguments described by the generated binding signature.
+    **kwargs
+        Keyword arguments described by the generated binding signature.
+
+    Returns
+    -------
+    object
+        Result described by the generated binding signature.
+
+    Notes
+    -----
+    proj_version() -> str
+
+PROJ version actually in use at runtime, e.g. "9.3.1".
+
+Reported by the loaded library rather than by the headers this was compiled
+against -- that distinction is the whole point.
+
+    Authors
+    -------
+    B. Gailleton
+
+
+```python
+def proj_version() -> str
 ```
 
 ---

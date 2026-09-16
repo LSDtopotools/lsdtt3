@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // Original LSDTopoTools implementation by Simon M. Mudd and contributors.
 // Redesigned for lsdtt3: removed extension logic, removed hardcoded file
@@ -14,6 +15,8 @@
 // parameter_name: value
 // lines with hash at beginning are treated as comments
 #include "lsdtt_param_parser.hpp"
+
+#include "lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1225,6 +1228,18 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
         {
             std::cout << tool_name << " version " << version
                       << " (lsdtt3 " << LSDTT3_VERSION << ")\n";
+
+            // Report the geospatial runtime as well. A mismatched proj.db can
+            // return coordinates that are plausible and wrong rather than
+            // failing, so naming the one actually in use is what makes such a
+            // report diagnosable. See src/core/lsdtt_gdal_init.hpp.
+            const std::string proj_ver = proj_version();
+            std::cout << "GDAL " << gdal_version();
+            if (!proj_ver.empty())
+                std::cout << ", PROJ " << proj_ver;
+            std::cout << "\n"
+                      << "  proj data: " << proj_data_description() << "\n"
+                      << "  GDAL data: " << gdal_data_description() << "\n";
             std::exit(0);
         }
         if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))

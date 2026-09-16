@@ -1,6 +1,6 @@
 # Python Bindings Architecture And API Contracts
 
-The lsdtt3 Python package exposes native terrain-analysis operations as an
+The `lsdtt3` Python package exposes native terrain-analysis operations as an
 in-memory API. It is intended for Python workflows, notebooks, tests, and
 higher-level applications that need to compose several operations without
 writing a parameter file and intermediate raster after every step.
@@ -114,7 +114,6 @@ One verified development configuration is:
 pixi run -e docs cmake -S python_bindings -B build/python-api \
   -DCMAKE_BUILD_TYPE=Release \
   -DLSDTT_PYTHON_CLI=OFF \
-  -DLSDTT_PYTHON_OPENCV=OFF \
   -DGDAL_INCLUDE_DIR=/usr/include/gdal \
   -DGDAL_LIBRARY=/usr/lib/libgdal.so
 pixi run -e docs cmake --build build/python-api -j2
@@ -148,8 +147,6 @@ configure time:
   stable, but installed-wheel checks allow the native driver to be absent only
   when `spectral_available()` reports false.
 - **Eigen** enables chi/ksn inversion functionality.
-- **OpenCV** enables image-analysis routines and is deliberately disabled in
-  current release-wheel builds unless that policy changes.
 - **netCDF** enables atmospheric/palaeomagnetic cosmogenic support where the
   corresponding native data are available.
 - **OpenMP** enables native parallel execution; it may be disabled on platforms

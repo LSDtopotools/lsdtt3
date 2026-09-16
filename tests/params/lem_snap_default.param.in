@@ -1,0 +1,6 @@
+# Time-stepping from the LEM defaults with no snap parameter: the snap must run by default.
+write_path: __WRITE_PATH__
+write_fname: lemsnapdefault
+noise_type: red_noise
+number_of_iterations: 1
+write_output_format: gtiff

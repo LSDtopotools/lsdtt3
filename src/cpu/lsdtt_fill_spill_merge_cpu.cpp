@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2025 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // Implementation of fill_spill_merge() and fsm_filled_dem().
@@ -156,7 +157,7 @@ void reset_dh(lsdtt_depression_hierarchy& deps)
 // Phase 2: move_water_into_pits  (= MoveWaterIntoPits in the original)
 // ---------------------------------------------------------------------------
 void move_water_into_pits(
-    const std::vector<float>&        topo,
+    const std::vector<float>&        /*topo*/,  // routing uses flowdir, not z
     const std::vector<uint8_t>&      dem_mask,
     const std::vector<dep_label_t>&  label,
     const std::vector<uint8_t>&      flowdir,

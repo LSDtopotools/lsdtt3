@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_landscape_equilibration_cpu.hpp"
 
@@ -923,7 +924,11 @@ lsdtt_equilibration_result equilibrate_landscape(
     {
         const auto t0 = std::chrono::steady_clock::now();
 
-        cycle_dem = fill_pits(cycle_dem, opts.fill_min_slope, opts.n_threads);
+        // The boundary-aware fill: the router below honours periodic edges, so
+        // a fill that seeded them as spill points left cells with no downhill
+        // neighbour across the seam and routing failed on any 'p' domain.
+        cycle_dem = fill_pits(cycle_dem, opts.fill_min_slope,
+                              opts.boundary_conditions, opts.n_threads);
 
         // TODO(dinf): add D-infinity route/accumulate/snap path.
         // Milestone scaffold intentionally runs D8 only.
@@ -1376,6 +1381,7 @@ lsdtt_equilibration_result equilibrate_landscape(
                 lsdtt_raster_cpu replay_dem = fill_pits(
                     surface_history[static_cast<std::size_t>(best_cycle) - 1],
                     opts.fill_min_slope,
+                    opts.boundary_conditions,
                     opts.n_threads);
 
                 lsdtt_flowinfo replay_flow(

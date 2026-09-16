@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(lsdtt3 VERSION 0.4.0 LANGUAGES CXX)
+project(lsdtt3 VERSION 0.5.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -56,7 +56,6 @@ else()
         -Wall
         -Wextra
         -Wpedantic
-        -Wno-unused-parameter   # OGR headers trigger this; suppress globally
     )
 endif()
 
@@ -223,28 +222,6 @@ else()
 endif()
 
 # =============================================================================
-# Optional: OpenCV (core + imgproc - required by lsdtt_raster_opencv_cpu)
-# =============================================================================
-option(LSDTT_OPENCV "Build OpenCV image-analysis routines" ON)
-set(LSDTT_HAS_OPENCV OFF)
-if(LSDTT_OPENCV)
-    # Search /usr/local first (locally-built OpenCV), then system paths.
-    # Not QUIET so cmake prints the reason when it cannot find OpenCV.
-    find_package(OpenCV
-        COMPONENTS core imgproc
-        HINTS /usr/local/lib/cmake/opencv4
-              /usr/lib/x86_64-linux-gnu/cmake/opencv4
-    )
-    if(OpenCV_FOUND)
-        set(LSDTT_HAS_OPENCV ON)
-        message(STATUS "OpenCV found (${OpenCV_VERSION}) - image analysis enabled")
-    else()
-        message(STATUS "OpenCV not found - lsdtt_raster_opencv_cpu will not be built "
-                       "(install libopencv-dev or pass -DLSDTT_OPENCV=OFF to silence)")
-    endif()
-endif()
-
-# =============================================================================
 # Optional: Eigen3 (required by lsdtt_chi_ksn_inversion_cpu)
 # =============================================================================
 option(LSDTT_EIGEN "Build Eigen-based inversion and sparse linear-algebra routines" ON)
@@ -280,6 +257,9 @@ endif()
 # Depends only on GDAL.  No CPU arrays.  No CUDA.
 # =============================================================================
 set(LSDTT3_CORE_SOURCES
+    src/core/lsdtt_gdal_init.cpp
+    src/core/lsdtt_pixel_type.cpp
+    src/core/lsdtt_raster_meta.cpp
     src/core/lsdtt_raster_base.cpp
     src/core/lsdtt_data_loader.cpp
     src/core/lsdtt_backend_factory.cpp
@@ -337,9 +317,20 @@ set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_binary_array2d_tracing.cpp
     src/utils/lsdtt_signal1d.cpp
     src/utils/lsdtt_natural_breaks.cpp
+    src/utils/lsdtt_image_filters.cpp
 )
 
 add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
+
+# The image-filter primitives reproduce OpenCV's float32 accumulation order bit
+# for bit. Compilers that target hardware with FMA (e.g. Apple Silicon) may
+# otherwise fuse a*b+c into one instruction and change the rounding.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(
+        src/utils/lsdtt_image_filters.cpp
+        src/cpu/lsdtt_raster_image_ops_cpu.cpp
+        PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 
 target_include_directories(lsdtt3_utils
     PUBLIC
@@ -420,6 +411,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_binary_mask_vectorise_cpu.cpp
     src/cpu/lsdtt_raster_binary_mask_cpu.cpp
     src/cpu/lsdtt_raster_linear_features_cpu.cpp
+    src/cpu/lsdtt_raster_image_ops_cpu.cpp
     src/cpu/lsdtt_burn_streams_cpu.cpp
     src/cpu/lsdtt_least_cost_path.cpp
     src/cpu/lsdtt_terrace_edge_tracer_cpu.cpp
@@ -475,10 +467,6 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_landscape_equilibration_cpu.cpp
 )
 
-if(LSDTT_HAS_OPENCV)
-    list(APPEND LSDTT3_CPU_SOURCES src/cpu/lsdtt_raster_opencv_cpu.cpp)
-endif()
-
 if(LSDTT_HAS_EIGEN)
     list(APPEND LSDTT3_CPU_SOURCES
         src/cpu/lsdtt_chi_ksn_inversion_cpu.cpp
@@ -527,13 +515,6 @@ if(LSDTT_HAS_NETCDF)
     target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_NETCDF=1)
     target_include_directories(lsdtt3_cpu PUBLIC ${NETCDF_INCLUDE_DIR})
     target_link_libraries(lsdtt3_cpu PUBLIC ${NETCDF_LIBRARY})
-endif()
-
-if(LSDTT_HAS_OPENCV)
-    # OpenCV's CMake targets propagate their own include directories, so no
-    # manual target_include_directories call is needed here.
-    target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_OPENCV=1)
-    target_link_libraries(lsdtt3_cpu PUBLIC ${OpenCV_LIBS})
 endif()
 
 if(LSDTT_HAS_EIGEN)
@@ -699,7 +680,6 @@ message(STATUS "  C++ std     : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  GDAL        : ${GDAL_VERSION}")
 message(STATUS "  OpenMP      : ${LSDTT_HAS_OPENMP}")
 message(STATUS "  FFTW3       : ${LSDTT_HAS_FFTW}")
-message(STATUS "  OpenCV      : ${LSDTT_HAS_OPENCV}")
 message(STATUS "  GPU (CUDA)  : ${LSDTT_GPU}")
 message(STATUS "  Eigen3      : ${LSDTT_HAS_EIGEN}")
 message(STATUS "===================================")

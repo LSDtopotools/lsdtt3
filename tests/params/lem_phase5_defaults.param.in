@@ -4,3 +4,6 @@ write_fname: lemdefaults5
 noise_type: red_noise
 number_of_iterations: 0
 write_output_format: gtiff
+# The initial surface is what this test pins, so keep the default time-stepping
+# snap from replacing it with the fluvial steady state.
+snap_initial_surface_to_steady_state: false

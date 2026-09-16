@@ -58,12 +58,6 @@ From: ubuntu:22.04
         libnetcdf-dev
 
     # -------------------------------------------------------------------------
-    # OpenCV - development headers
-    # -------------------------------------------------------------------------
-    apt-get install -y \
-        libopencv-dev
-
-    # -------------------------------------------------------------------------
     # OpenMP - provided by GCC, but make explicit
     # -------------------------------------------------------------------------
     apt-get install -y \
@@ -125,8 +119,5 @@ From: ubuntu:22.04
 
     echo "--- Checking NetCDF ---"
     pkg-config --modversion netcdf
-
-    echo "--- Checking OpenCV ---"
-    pkg-config --modversion opencv4 || pkg-config --modversion opencv
 
     echo "--- All checks passed ---"

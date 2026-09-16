@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt-fluvial-surfaces
@@ -100,10 +101,13 @@ static void print_banner()
         << "|| each band.                                           ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                      ||\n"
         << "=========================================================\n"
-        << "|| CLI version: " << k_version  << "\n"
-        << "|| Citation   : " << k_citation << "\n"
-        << "|| -v or --version : full lsdtt3 release version\n"
-        << "|| -h              : help explaining the parameters\n"
+        << "|| -v or --version    : full lsdtt3 release version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| If CLI version number is lower than 1.0.0 it means\n"
+        << "|| this CLI is still experimental and not fully tested.\n"
+        << "=========================================================\n"
+        << "|| Citation : " << k_citation << "\n"
+        << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n\n";
 }
 
@@ -1979,7 +1983,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing band index (Int16): " << p << "\n";
         loader.write_full(ladder.band_index.get_data(),
                           ladder.band_index.get_meta(), p, out_format,
-                          GDT_Int16);
+                          lsdtt::lsdtt_pixel_type::int16);
     }
 
     if (bf["write_banded_labels_raster"] && !banded.labels.get_data().empty())
@@ -1987,7 +1991,7 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_banded_labels.tif";
         std::cout << "Writing banded labels (UInt32): " << p << "\n";
         loader.write_full(banded.labels.get_data(), banded.labels.get_meta(),
-                          p, out_format, GDT_UInt32);
+                          p, out_format, lsdtt::lsdtt_pixel_type::uint32);
     }
 
     if (bf["write_valley_mask_raster"] && !ladder.band_index.get_data().empty())
@@ -2212,7 +2216,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing valley mask (band 0, " << n_valley
                   << " cell(s)): " << p << "\n";
         loader.write_full(valley_raster.get_data(), meta, p, out_format,
-                          GDT_Byte);
+                          lsdtt::lsdtt_pixel_type::uint8);
     }
 
     if (use_hand && bf["write_surface_class_raster"] &&
@@ -2221,7 +2225,7 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_surface_class.tif";
         std::cout << "Writing surface class raster: " << p << "\n";
         loader.write_full(class_raster.get_data(), class_raster.get_meta(),
-                          p, out_format, GDT_Byte);
+                          p, out_format, lsdtt::lsdtt_pixel_type::uint8);
     }
 
     if (use_hand && bf["write_floodplain_mask_raster"] &&
@@ -2230,7 +2234,7 @@ int main(int argc, char* argv[])
         const std::string p = stem + "_floodplain_mask.tif";
         std::cout << "Writing floodplain mask: " << p << "\n";
         loader.write_full(floodplain_mask.get_data(),
-                          floodplain_mask.get_meta(), p, out_format, GDT_Byte);
+                          floodplain_mask.get_meta(), p, out_format, lsdtt::lsdtt_pixel_type::uint8);
     }
 
     if (bf["write_surface_patches_csv"])
@@ -2276,7 +2280,7 @@ int main(int argc, char* argv[])
             }
             const std::string p = stem + "_nearest_source_id.tif";
             std::cout << "Writing nearest source id (Int32): " << p << "\n";
-            loader.write_full(sid, meta, p, out_format, GDT_Int32);
+            loader.write_full(sid, meta, p, out_format, lsdtt::lsdtt_pixel_type::int32);
         }
     }
 
@@ -2287,7 +2291,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing ladder window id (Int16): " << p << "\n";
         loader.write_full(ladder.window_index.get_data(),
                           ladder.window_index.get_meta(), p, out_format,
-                          GDT_Int16);
+                          lsdtt::lsdtt_pixel_type::int16);
     }
 
     if (bf["write_ladder_break_metric_csv"])
