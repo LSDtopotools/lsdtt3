@@ -40,7 +40,7 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 | 5 | Combine the two tests | `admission_mode` |
 | 6 | Morphological opening / closing | `flat_opening_radius_metres`, `flat_closing_radius_metres`, `open_then_close` |
 | 7 | Optional directional closing of the non-flat mask | `directional_close_line_length_pixels` |
-| 8 | Optional VEC break-of-slope skeleton *(requires OpenCV)* | `vec_adaptive_*`, `slope_break_*` |
+| 8 | Optional VEC break-of-slope skeleton | `vec_adaptive_*`, `slope_break_*` |
 | 9 | Component filtering and labelling | `min_component_pixels` |
 | 10 | Optional plane fitting per label | `run_plane_analysis` |
 | 11 | Write masks, rasters and CSVs | the `write_*` switches |
@@ -127,7 +127,7 @@ Note that `min_component_pixels` filters components of the **whole mask** here.
 
 ---
 
-## Slope-break skeleton (VEC) — diagnostic, requires OpenCV
+## Slope-break skeleton (VEC) — diagnostic
 
 A break-of-slope skeleton derived by adaptive thresholding of vertical excess
 curvature. It is a morphometric product worth having in its own right; it is
@@ -312,7 +312,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `flat_opening_radius_metres` | `float` | `0` | `param` | - | Radius (m) for morphological opening of the relief flat mask. | Opening (erosion then dilation) removes thin connections between blobs that should be separate flat surfaces, while restoring the size of the surviving blobs. 0 or negative = disabled. |
 | `open_then_close` | `bool` | `false` | `param` | - | Apply opening before closing instead of closing before opening. | false (default): closing first, then opening. true: opening first, then closing. Has no effect when either radius is 0. |
 
-### Slope break finder (VEC adaptive threshold skeleton, requires OpenCV)
+### Slope break finder (VEC adaptive threshold skeleton)
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|

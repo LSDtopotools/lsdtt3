@@ -3,10 +3,12 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_contours_cpu.hpp"
+#include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -35,7 +37,7 @@ void ensure_gdal_init()
     static bool initialised = false;
     if (!initialised)
     {
-        GDALAllRegister();
+        lsdtt::gdal_init();
         initialised = true;
     }
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 207,
+  "export_count": 211,
   "exports": [
     {
       "name": "BasinCollection",
@@ -5846,6 +5846,30 @@
       ]
     },
     {
+      "name": "gdal_data_description",
+      "kind": "function",
+      "doc": "gdal_data_description() -> str\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    gdal_data_description() -> str\n\nAs proj_data_description(), for GDAL's own data directory.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def gdal_data_description() -> str",
+          "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "gdal_version",
+      "kind": "function",
+      "doc": "gdal_version() -> str\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    gdal_version() -> str\n\nGDAL release name of the library actually loaded, e.g. \"3.8.4\".\n\n    Authors\n    -------\n    B. Gailleton\n    ",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def gdal_version() -> str",
+          "defaults": []
+        }
+      ]
+    },
+    {
       "name": "halve_raster",
       "kind": "function",
       "doc": "halve_raster(source: lsdtt3.Raster, method: str = 'conservative_mean') -> lsdtt3.Raster\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    halve_raster(source: lsdtt3.Raster, method: str = 'conservative_mean') -> lsdtt3.Raster\n\nHalve both even raster dimensions over the same extent using the optimized path.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
@@ -6418,6 +6442,30 @@
             0,
             1e-12
           ]
+        }
+      ]
+    },
+    {
+      "name": "proj_data_description",
+      "kind": "function",
+      "doc": "proj_data_description() -> str\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    proj_data_description() -> str\n\nWhere PROJ is getting proj.db, as a human-readable string.\n\nOne of ``\"bundled: <dir>\"`` (lsdtt3 pinned it), ``\"PROJ_DATA=<dir>\"``,\n``\"PROJ_LIB=<dir>\"``, or ``\"PROJ built-in search\"``.\n\nPut this in any bug report about projections or coordinates that look subtly\nwrong -- a mismatched proj.db usually returns plausible values rather than\nfailing.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def proj_data_description() -> str",
+          "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "proj_version",
+      "kind": "function",
+      "doc": "proj_version() -> str\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    proj_version() -> str\n\nPROJ version actually in use at runtime, e.g. \"9.3.1\".\n\nReported by the loaded library rather than by the headers this was compiled\nagainst -- that distinction is the whole point.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def proj_version() -> str",
+          "defaults": []
         }
       ]
     },

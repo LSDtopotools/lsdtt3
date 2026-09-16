@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 
 #include <algorithm>
@@ -78,14 +79,14 @@ static std::vector<lsdtt_xy> filter_odd_odd_to_xy(
 // -----------------------------------------------------------------------------
 static std::vector<std::vector<lsdtt_xy>> find_hole_rings(
     const std::vector<std::size_t>& component_pixels, // pixel_indices for this component
-    int                             nrows_raster,
+    int                             /*nrows_raster*/,
     int                             ncols_raster,
     int                             box_min_r,
     int                             box_max_r,
     int                             box_min_c,
     int                             box_max_c,
     const lsdtt_raster_meta&        div_meta,
-    double                          cell_size)
+    double                          /*cell_size*/)
 {
     // Work on the original-resolution pixel grid, cropped to the component
     // bounding box (already expanded by 1 on each side).
@@ -259,6 +260,25 @@ binary_components_to_polygon_records(
     const lsdtt_raster_cpu*    scalar_raster,
     const lsdtt_vector_schema& schema)
 {
+    // The records below fill field_values POSITIONALLY, against the field order
+    // the header documents. Nothing previously checked that the caller's schema
+    // actually had that shape, so a mismatched schema would have paired the
+    // right values with the wrong names -- values that look entirely plausible
+    // in the output. Enforce the contract instead of documenting it only.
+    {
+        const std::size_t expected = (scalar_raster != nullptr) ? 3u : 2u;
+        if (schema.size() != expected)
+        {
+            throw std::runtime_error(
+                "binary_components_to_polygon_records: schema has " +
+                std::to_string(schema.size()) + " fields but this record layout "
+                "needs " + std::to_string(expected) +
+                (scalar_raster != nullptr
+                     ? " (label_id, area_m2, scalar_sum)"
+                     : " (label_id, area_m2)"));
+        }
+    }
+
     const lsdtt_raster_meta& meta  = label_raster.get_meta();
     const int nrows                = meta.n_rows;
     const int ncols                = meta.n_cols;
@@ -439,6 +459,26 @@ binary_components_to_polygon_records_with_holes(
     const lsdtt_raster_cpu*    scalar_raster,
     const lsdtt_vector_schema& schema)
 {
+    // The records below fill field_values POSITIONALLY, against the field order
+    // the header documents. Nothing previously checked that the caller's schema
+    // actually had that shape, so a mismatched schema would have paired the
+    // right values with the wrong names -- values that look entirely plausible
+    // in the output. Enforce the contract instead of documenting it only.
+    {
+        const std::size_t expected = (scalar_raster != nullptr) ? 3u : 2u;
+        if (schema.size() != expected)
+        {
+            throw std::runtime_error(
+                "binary_components_to_polygon_records_with_holes: schema has " +
+                std::to_string(schema.size()) + " fields but this record layout "
+                "needs " + std::to_string(expected) +
+                (scalar_raster != nullptr
+                     ? " (label_id, area_m2, scalar_sum)"
+                     : " (label_id, area_m2)"));
+        }
+    }
+
+
     label_raster.get_meta().check_projected_metres();
 
     const lsdtt_raster_meta& meta  = label_raster.get_meta();

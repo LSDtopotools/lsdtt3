@@ -60,6 +60,8 @@ exclude_docs: |
   plan_docs/
   tex_technical/
   test_scripts/
+  cli_helper_function_audit.md
+  cli_parameter_consistency_audit.md
 ```
 
 Those directories live under `docs/` for convenience but are **not** part of the
@@ -77,10 +79,53 @@ web server that resolves directory indexes.
 
 ## Publishing
 
-### Option 1 — copy `site/` to the Edinburgh web space (works today)
+The build output is a plain static site, so it can be served from anywhere
+that serves files. Two routes are set up.
 
-This is the route that matches how the release packages are already
-distributed, and it does not care that the repository is private.
+### GitHub Pages (once the repository is public)
+
+`.github/workflows/docs.yml` builds the site with `--strict` and deploys it to
+<https://lsdtopotools.github.io/lsdtt3/> on every push to `main` that touches
+`docs/`, `mkdocs.yml` or `qgis_plugin/README.md` (which the QGIS page
+includes), and on manual dispatch from the Actions tab.
+
+**While the repository is private, the workflow does nothing.** Both jobs are
+guarded by `if: !github.event.repository.private`, so they are skipped, and a
+skipped job uses no Actions minutes. This matters because Pages from a private
+repository needs a paid plan, and CI minutes on a private repository are
+metered (see [Making release packages](making_release_packages.md)). Public
+repositories get standard runners free, so per-push deploys cost nothing once
+it is public.
+
+When the repository goes public, do this once:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+2. Actions → *Documentation site* → **Run workflow**, to publish without waiting
+   for a docs change.
+3. Check <https://lsdtopotools.github.io/lsdtt3/>.
+
+Why the site works on Pages without changes:
+
+- `site_url` in `mkdocs.yml` is set to the Pages URL, so canonical links and
+  the sitemap are correct even though the site lives under `/lsdtt3/`.
+- `use_directory_urls: false` emits `page.html` rather than `page/index.html`.
+  All links are relative, so the site works under a sub-path, from the
+  Edinburgh web space, or opened as local files.
+- The deploy uses the Pages artifact actions, so GitHub does not run Jekyll
+  over the output and no `.nojekyll` file is needed.
+- The QGIS page is built from `qgis_plugin/README.md` with
+  `pymdownx.snippets`, which reads files from the checkout at build time.
+
+A deployed Pages site is **public**, including the install pages and the
+download URLs they contain. That is the intent once the code is public.
+
+Do not also use `mkdocs gh-deploy`. It force-pushes a `gh-pages` branch, which
+is a different Pages source from the one the workflow uses.
+
+### Edinburgh web space (works today)
+
+This route matches how the release packages are distributed, and works while
+the repository is private.
 
 ```bash
 pixi run docs-build
@@ -91,50 +136,16 @@ rsync -avz --delete site/ smudd@<host>:~/public_html/lsdtt3_docs/
 or deleted pages do not linger as stale URLs. Check the target path before the
 first run — `--delete` against the wrong directory is destructive.
 
-The site is then at roughly
-`https://www.geos.ed.ac.uk/~smudd/lsdtt3_docs/`, alongside
-`~smudd/lsdtt_packages/` which serves the tarballs.
-
-### Option 2 — GitHub Pages
-
-```bash
-pixi run -e docs mkdocs gh-deploy
-```
-
-This builds the site and **force-pushes** it to a `gh-pages` branch, which
-GitHub Pages then serves at `https://lsdtopotools.github.io/lsdtt3/`.
-
-Two things to check before relying on it:
-
-1. **The repository is private.** GitHub Pages from a private repository
-   requires a paid plan (Pro, Team, or Enterprise). On a Free plan, Pages only
-   publishes from public repositories, so `gh-deploy` will push the branch and
-   nothing will be served.
-2. **A published Pages site is public**, even when the code is not (private
-   Pages sites need Enterprise). That is probably what you want during a
-   private beta — documentation visible, source not — but it does mean the
-   install pages and their download URLs become publicly indexable. Decide
-   that deliberately rather than discovering it.
-
-`gh-deploy` force-pushes, so never keep anything by hand on `gh-pages`.
-
-### Should it be automated?
-
-Not yet, and not for free. CI minutes are metered on this private repository and
-the release workflow is deliberately restricted to version tags for that reason
-(see [`making_release_packages.md`](making_release_packages.md)). A docs build
-on every push to `main` would spend more minutes than the releases do.
-
-If it becomes worth automating, the cheapest shape is a job on the **existing
-release workflow** — the docs are rebuilt when a version ships, which is when
-they change meaningfully — rather than a second workflow with its own triggers.
+The site is then at roughly `https://www.geos.ed.ac.uk/~smudd/lsdtt3_docs/`,
+alongside `~smudd/lsdtt_packages/`, which serves the tarballs.
 
 ---
 
 ## Checklist when adding a page
 
-1. Put it in the right directory: `docs/` top level and `docs/cli_reference/`
-   are user-facing; `docs/developer_notes/` is not.
+1. Put it in the right directory: `docs/what_is_lsdtt3/`,
+   `docs/design_and_algorithms/` and `docs/cli_reference/` are for users;
+   `docs/developer_notes/` is for contributors. Both are published.
 2. Add it to the `nav:` block in `mkdocs.yml`. A page absent from the nav is
    reachable only by search or a direct link, and `--strict` will warn.
 3. Run `pixi run docs-build` and fix anything it reports.

@@ -9,7 +9,8 @@
 // junction-network interfaces so that it works against base classes in the
 // same way as lsdtt_junction_basin_cpu.
 //
-// Copyright Simon M. Mudd, GPL-3.0
+// Copyright Simon M. Mudd
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "lsdtt_junction_basin_cpu.hpp"
 #include "../core/lsdtt_data_loader.hpp"   

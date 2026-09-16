@@ -1,7 +1,7 @@
 """Backend capability probing via the lsdtt --help-json interface.
 
 Backends from 2026-07-15 onwards report their compiled optional
-dependencies (fftw, eigen, opencv, netcdf, gpu_kernels) and full parameter
+dependencies (fftw, eigen, netcdf, gpu_kernels) and full parameter
 metadata through `<tool> --help-json`. Wrappers use this to fail fast with
 a clear message when a requested option needs a feature the backend lacks.
 

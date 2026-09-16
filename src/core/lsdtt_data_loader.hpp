@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt_data_loader
@@ -35,15 +36,20 @@
 #include <unordered_map>
 #include <variant>
 
-#include <gdal.h>
-#include <gdal_priv.h>
-#include <ogrsf_frmts.h>
-
+#include "lsdtt_pixel_type.hpp"
 #include "lsdtt_raster_meta.hpp"
 #include "lsdtt_raster_result.hpp"
 #include "../utils/lsdtt_string_utils.hpp"
 #include "lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
+
+// Forward declaration only. GDALDataset is named in this header solely as the
+// pointee of a unique_ptr and as an opaque argument; both are fine with an
+// incomplete type so long as the deleter's operator() and this class's
+// destructor and move operations are defined out of line, which they are.
+// Including <gdal_priv.h> here instead would pull GDAL into every translation
+// unit that does any file I/O.
+class GDALDataset;
 
 namespace lsdtt {
 
@@ -375,62 +381,10 @@ inline std::string output_extension(
 }
 
 
-// -----------------------------------------------------------------------------
-// tiff_predictor_for
-//
-// TIFF compression predictor for a band type. NOT a free choice -- the TIFF 6.0
-// spec ties it to the data:
-//
-//   1  none
-//   2  horizontal differencing   -- INTEGER data only
-//   3  floating-point predictor  -- float data
-//
-// lsdtt3 writes Float32 almost everywhere, and every raster it wrote used to
-// carry PREDICTOR=2. GDAL accepts that pairing and reads it back without
-// complaint, so nothing inside this project ever noticed.
-//
-// Measured on alpine_1000 (1000x1000 Float32, 3.81 MB raw), tiled DEFLATE:
-//
-//     PREDICTOR=2    2.68 MB     spec-invalid on float data
-//     PREDICTOR=3    2.19 MB     correct, and 18% smaller
-//     no predictor   3.14 MB
-//
-// So this is not a trade-off: 3 is both the conforming choice and the smaller
-// one. There is no reason a float raster should ever carry predictor 2.
-//
-// WHAT THIS DOES *NOT* FIX, because it is easy to assume otherwise: Whitebox
-// Workflows cannot read a DEFLATE-predictor TIFF AT ALL -- it returns all-NaN
-// for predictor 2 and predictor 3 alike, tiled or striped (measured; a
-// predictor-free file of the same data reads correctly). That is a limitation
-// of its TIFF reader, not a consequence of the wrong predictor, and changing
-// the predictor here does not address it. Making lsdtt3 predictor-free to suit
-// one third-party reader would cost every user 43% on every float raster, so
-// the benchmark stages a predictor-free copy for Whitebox instead -- see
-// tests/scripts/whitebox_reference.py.
-//
-// Every place that sets a DEFLATE/LZW/ZSTD predictor on a GTiff or COG must use
-// this rather than a literal.
-// -----------------------------------------------------------------------------
-inline int tiff_predictor_for(GDALDataType type)
-{
-    switch (type)
-    {
-        case GDT_Float32:
-        case GDT_Float64:
-            return 3;
-        case GDT_Byte:
-        case GDT_UInt16:
-        case GDT_Int16:
-        case GDT_UInt32:
-        case GDT_Int32:
-            return 2;
-        default:
-            // Complex types, and anything a future GDAL adds: no predictor is
-            // the only safe answer, because a wrong one corrupts rather than
-            // merely compressing worse.
-            return 1;
-    }
-}
+// tiff_predictor_for() moved to lsdtt_pixel_type.hpp when the GDAL headers
+// were taken out of this file: it is a property of the sample type, needs no
+// GDAL symbol now that it takes lsdtt_pixel_type, and several callers outside
+// this class want it.
 
 
 // Minimum pixel count for COG overhead to be worthwhile.
@@ -529,11 +483,11 @@ public:
     //   meta       - metadata to embed (typically from get_meta())
     //   format     - output format (default cog; see raster_output_format)
     //   n_bands    - number of bands to create (default 1)
-    //   out_type   - GDAL data type for the output band (default GDT_Float32).
+    //   out_type   - sample type for the output band (default float32).
     //                Pass meta.data_type only when you explicitly want to match
     //                the source type. Analysis results are float32 regardless
     //                of the source type; only use a different type when the
-    //                data is genuinely of that type (e.g. GDT_UInt32 for
+    //                data is genuinely of that type (e.g. uint32 for
     //                integer labels produced by label_binary_components_by_size).
     //
     // For cog and gtiff, out_path should end in .tif.
@@ -543,7 +497,7 @@ public:
         const lsdtt_raster_meta& meta,
         raster_output_format     format   = raster_output_format::cog,
         int                      n_bands  = 1,
-        GDALDataType             out_type = GDT_Float32
+        lsdtt_pixel_type         out_type = lsdtt_pixel_type::float32
     );
 
     // Write a result tile to a previously created output raster.
@@ -568,7 +522,7 @@ public:
     // For cog format: automatically falls back to gtiff for rasters smaller
     // than k_cog_min_pixels pixels (COG overhead not worthwhile below this).
     //
-    //   out_type   - GDAL data type for the output band (default GDT_Float32).
+    //   out_type   - sample type for the output band (default float32).
     //                Use meta.data_type when the raster carries an explicit
     //                output type (e.g. the UInt32 label raster from
     //                label_binary_components_by_size). For all standard analysis
@@ -578,7 +532,7 @@ public:
         const lsdtt_raster_meta&  meta,
         const std::string&        out_path,
         raster_output_format      format   = raster_output_format::cog,
-        GDALDataType              out_type = GDT_Float32
+        lsdtt_pixel_type          out_type = lsdtt_pixel_type::float32
     );
 
     // Convenience overload for raster results returned by core-layer engines.
@@ -767,13 +721,11 @@ public:
 
 private:
 
-    // RAII wrapper for GDALDataset* using a custom deleter
+    // RAII wrapper for GDALDataset*. operator() is defined in the .cpp so that
+    // GDALClose -- and therefore <gdal.h> -- is not needed here.
     struct gdal_dataset_deleter
     {
-        void operator()(GDALDataset* ds) const
-        {
-            if (ds) GDALClose(ds);
-        }
+        void operator()(GDALDataset* ds) const;
     };
     using gdal_dataset_ptr = std::unique_ptr<GDALDataset, gdal_dataset_deleter>;
 

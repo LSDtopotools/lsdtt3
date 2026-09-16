@@ -3,13 +3,15 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
 
 #include "../utils/lsdtt_linear_algebra.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
+#include "../utils/lsdtt_image_filters.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -442,55 +444,6 @@ static void validate_skeleton_bridge_rasterise_request(
 {
     (void)request;
 }
-
-// -----------------------------------------------------------------------------
-// rasterise_line_bresenham_
-//
-// Returns all raster pixels on the integer line from (r0,c0) to (r1,c1),
-// including both endpoints.
-// -----------------------------------------------------------------------------
-static std::vector<std::pair<int,int>> rasterise_line_bresenham_(
-    int r0, int c0, int r1, int c1)
-{
-    std::vector<std::pair<int,int>> pixels;
-
-    int x0 = c0;
-    int y0 = r0;
-    int x1 = c1;
-    int y1 = r1;
-
-    const int dx = std::abs(x1 - x0);
-    const int sx = (x0 < x1) ? 1 : -1;
-    const int dy = -std::abs(y1 - y0);
-    const int sy = (y0 < y1) ? 1 : -1;
-    int err = dx + dy;
-
-    while (true)
-    {
-        pixels.emplace_back(y0, x0);
-
-        if (x0 == x1 && y0 == y1)
-            break;
-
-        const int e2 = 2 * err;
-
-        if (e2 >= dy)
-        {
-            err += dy;
-            x0  += sx;
-        }
-
-        if (e2 <= dx)
-        {
-            err += dx;
-            y0  += sy;
-        }
-    }
-
-    return pixels;
-}
-
-
 
 // -----------------------------------------------------------------------------
 // validate_skeleton_bridge_route_request
@@ -3380,7 +3333,7 @@ rasterise_skeleton_endpoint_bridges(
         ++n_requested;
 
         const std::vector<std::pair<int,int>> line_pixels =
-            rasterise_line_bresenham_(
+            image::bresenham_line(
                 cand.row_a, cand.col_a,
                 cand.row_b, cand.col_b
             );

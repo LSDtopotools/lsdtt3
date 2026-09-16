@@ -3,7 +3,8 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
 // Offline validation driver for the lsdtt-surface-metrics compute core
@@ -76,9 +77,7 @@
 #include <omp.h>
 #endif
 
-#ifdef LSDTT_HAS_OPENCV
-#include "lsdtt_raster_opencv_cpu.hpp"
-#endif
+#include "lsdtt_raster_image_ops_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_feature_finder_cpu.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
@@ -1397,14 +1396,12 @@ void test_thread_determinism()
           spectral_equal);
 #endif
 
-#ifdef LSDTT_HAS_OPENCV
-    const auto otsu_ref = lsdtt::opencv_cpu::threshold_otsu(surf.dem, 1, 0);
-    const auto otsu_mt = lsdtt::opencv_cpu::threshold_otsu(surf.dem, 8, 0);
+    const auto otsu_ref = lsdtt::image_ops_cpu::threshold_otsu(surf.dem, 1);
+    const auto otsu_mt = lsdtt::image_ops_cpu::threshold_otsu(surf.dem, 8);
     long otsu_diff = 0;
     bitwise_identical(otsu_ref, otsu_mt, otsu_diff);
-    check("C4 OpenCV Otsu path is bit-identical across thread counts",
+    check("C4 native Otsu path is bit-identical across thread counts",
           otsu_diff == 0, std::to_string(otsu_diff) + " differing pixels");
-#endif
 }
 
 

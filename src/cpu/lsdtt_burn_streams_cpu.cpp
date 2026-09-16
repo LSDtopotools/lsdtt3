@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_burn_streams_cpu.hpp"
 
@@ -4284,7 +4285,7 @@ std::vector<JunctionRepairRecord>
 repair_diverged_reaches(
     lsdtt_raster_cpu&                             dem,
     const lsdtt_vector_to_junction_network&       vector_network,
-    const std::string&                            vector_path,
+    const std::string&                            /*vector_path*/,
     const std::vector<ReachDivergenceRecord>&     reaches,
     const std::vector<std::int64_t>&              source_flats,
     std::unique_ptr<lsdtt_flow_base>&             flow,

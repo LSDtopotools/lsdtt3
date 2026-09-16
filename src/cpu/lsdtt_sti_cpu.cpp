@@ -1,4 +1,5 @@
 #include "lsdtt_sti_cpu.hpp"
+#include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -595,7 +596,7 @@ sti_polygon_string_rasterise_result rasterise_polygon_string_field(
         throw std::runtime_error("rasterise_polygon_string_field: reference raster metadata is invalid");
     }
 
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     GDALDataset* vec_ds = static_cast<GDALDataset*>(
         GDALOpenEx(vector_path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));

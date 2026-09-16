@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // Cidre finite-volume hillslope transport (Carretier et al. 2016).
@@ -34,7 +35,8 @@
 //
 // Baselevel/boundary handling:
 //   - Flow-graph outlet nodes (no receivers) are sinks: all flux deposits.
-//   - Channel pixels (area >= incision_threshold_area) are hillslope sinks.
+//   - Channel pixels (area >= incision_threshold_area, or channel_override
+//     when supplied) are hillslope sinks.
 //   - If deposit_on_hillslope_baselevels is false, channel pixels skip the
 //     deposit step (detachment-limited coupling).
 //
@@ -48,6 +50,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -80,7 +83,12 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
     float incision_threshold_area,
     bool  divide_area_by_dx,
     bool  deposit_on_hillslope_baselevels,
-    int   n_threads = 0
+    int   n_threads = 0,
+    // Optional channel set (1 = channel sink), full-grid sized. When supplied it
+    // REPLACES the drainage-area threshold above, so the caller's channel set --
+    // an explicit channel mask, or the empty set of the coupled regime -- is the
+    // one this sweep uses. nullptr (default) keeps the area-threshold behaviour.
+    const std::vector<std::uint8_t>* channel_override = nullptr
 );
 
 // -----------------------------------------------------------------------------
@@ -141,12 +149,18 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
 //
 // Iterates uncoupled linear hillslope diffusion using the Crank-Nicolson method 
 // and Alternating Direction Implicit (ADI) sweeps via the Thomas algorithm.
+//
+// is_channel (optional, full-grid sized, 1 = channel): channel cells are
+// Dirichlet nodes held at their input elevation, exactly like an 'o' edge, so
+// the hillslopes relax toward the CHANNEL elevations rather than only toward
+// the domain edges. Empty (default) = no channel set.
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu compute_adi_hillslope_transport(
     const lsdtt_raster_cpu& dem,
     float kappa,
     float dt,
-    const std::string& boundary_conditions
+    const std::string& boundary_conditions,
+    const std::vector<std::uint8_t>& is_channel = {}
 );
 
 

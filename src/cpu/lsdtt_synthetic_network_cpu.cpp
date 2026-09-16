@@ -3,7 +3,8 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // See lsdtt_synthetic_network_cpu.hpp for the algorithm description.
 // -----------------------------------------------------------------------------
@@ -68,7 +69,7 @@ lsdtt_raster_meta lsdtt_synthetic_network_cpu::build_meta_() const
     meta.n_cols        = ncols_;
     meta.cell_size     = opts_.cell_size;
     meta.no_data_value = -9999.0;
-    meta.data_type     = GDT_Float32;
+    meta.data_type     = lsdtt_pixel_type::float32;
     if (opts_.use_geographic_anchor)
     {
         meta.set_synthetic_georeference(opts_.centre_latitude_deg,

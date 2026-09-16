@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // Landscape Evolution Model (LEM) orchestrator.
@@ -239,6 +240,13 @@ struct lsdtt_lem_forcing_point
     float time_yr             = 0.0f;
     float uplift_rate         = 0.0f;   // m/yr
     float baselevel_fall_rate = 0.0f;   // m/yr, positive = base level falls
+
+    // Optional process parameters. NEGATIVE means "not given in this row": the
+    // run keeps the value from its parameter file. Stepping either one through
+    // time is how a run walks the channelization index CI = K l^(m+n) / D^n
+    // (Bonetti et al. 2020) and so drives a network from simple to branched.
+    float erodibility           = -1.0f;   // K
+    float hillslope_diffusivity = -1.0f;   // D, m^2/yr
 };
 
 struct lsdtt_lem_forcing_history
@@ -254,7 +262,9 @@ struct lsdtt_lem_forcing_history
 // Read a forcing history from a CSV.  Throws std::runtime_error if the file
 // cannot be opened or the required columns are missing.  Column order is taken
 // from the header, so the columns may appear in any order; uplift_rate and
-// baselevel_fall_rate are each optional and default to 0.
+// baselevel_fall_rate are each optional and default to 0.  erodibility and
+// hillslope_diffusivity are optional too, but an absent column or an empty cell
+// means "keep the parameter-file value" (stored as a negative number), not 0.
 lsdtt_lem_forcing_history
 load_lem_forcing_history(const std::string& csv_path);
 

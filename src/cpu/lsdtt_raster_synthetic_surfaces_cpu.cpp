@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2025 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 
@@ -91,7 +92,7 @@ static lsdtt_raster_meta build_meta(
     meta.n_cols        = n_cols;
     meta.cell_size     = cell_size;
     meta.no_data_value = -9999.0;
-    meta.data_type     = GDT_Float32;
+    meta.data_type     = lsdtt_pixel_type::float32;
 
     // Synthetic surfaces have no input raster, so default to a sensible
     // projected georeference centred on "Watopia" (Teanu Island, UTM zone 58S).

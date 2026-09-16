@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt-synthetic-networks
@@ -49,7 +50,7 @@
 #include "../src/cpu/lsdtt_synthetic_domain_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 
-static const std::string k_version   = "0.1.0";
+static const std::string k_version   = "1.0.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-synthetic-networks";
 
@@ -62,10 +63,13 @@ static void print_banner()
         << "|| Optimal Channel Networks with tunable branching     ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
-        << "|| CLI version: " << k_version  << "\n"
-        << "|| Citation   : " << k_citation << "\n"
-        << "|| -v or --version : full lsdtt3 release version\n"
-        << "|| -h              : help explaining the parameters\n"
+        << "|| -v or --version    : full lsdtt3 release version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| If CLI version number is lower than 1.0.0 it means\n"
+        << "|| this CLI is still experimental and not fully tested.\n"
+        << "=========================================================\n"
+        << "|| Citation : " << k_citation << "\n"
+        << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n"
         << "Creates optimised drainage networks and chi-based topography.\n"
         << "For one-shot surfaces and ground-truth fixtures use\n"
@@ -735,7 +739,7 @@ int main(int argc, char* argv[])
                 pmeta.x_min         = ta.x_min;
                 pmeta.y_min         = ta.y_min;
                 pmeta.no_data_value = -9999.0;
-                pmeta.data_type     = GDT_Float32;
+                pmeta.data_type     = lsdtt::lsdtt_pixel_type::float32;
                 pmeta.crs_wkt       = vloader.get_vector_layer_crs_wkt(names[0]);
                 opts.use_supplied_meta = true;
                 opts.supplied_meta     = pmeta;

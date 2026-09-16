@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // Proximity and distance-transform routines.
@@ -59,7 +60,7 @@ namespace lsdtt {
 //   mask = 1, data <= 0.5  -> valid non-source (distance computed)
 //   mask = 0               -> nodata (distance = nodata in output)
 //
-// Output meta is identical to input except data_type remains GDT_Float32.
+// Output meta is identical to input except data_type remains lsdtt_pixel_type::float32.
 // Output no_data_value is inherited from the input meta.
 //
 // Throws:

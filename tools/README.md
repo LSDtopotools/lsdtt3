@@ -192,7 +192,7 @@ unedited:
 
 The build directory is separate per platform on purpose: the Windows tree is
 configured with a different, deliberately minimal option set (no OpenMP, no
-Eigen, no OpenCV), so reusing one `build/` for two profiles would silently ship
+Eigen), so reusing one `build/` for two profiles would silently ship
 the wrong binaries.
 
 #### Windows
@@ -200,7 +200,7 @@ the wrong binaries.
 In an **x64 Visual Studio Developer PowerShell**, from the repository root. Full
 walkthrough (vcpkg, GDAL, the mandatory `-DLSDTT_OPENMP=OFF`, troubleshooting)
 is in
-[`docs/developer_notes/building_from_source.md`](../docs/developer_notes/building_from_source.md#windows-native-qgis-backend-only):
+[`docs/developer_notes/building_on_windows.md`](../docs/developer_notes/building_on_windows.md#native-windows-qgis-backend-only):
 
 ```powershell
 # configure once per checkout
@@ -209,7 +209,7 @@ cmake -S . -B build\windows-qgis -G "Ninja" `
   -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\tools\vcpkg\scripts\buildsystems\vcpkg.cmake" `
   -DVCPKG_TARGET_TRIPLET=x64-windows `
   -DBUILD_TESTING=OFF -DLSDTT_OPENMP=OFF -DLSDTT_EIGEN=OFF `
-  -DLSDTT_OPENCV=OFF -DLSDTT_GPU=OFF `
+  -DLSDTT_GPU=OFF `
   -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
 
 # build just the CLIs the qgis profile ships
@@ -231,34 +231,31 @@ The script also expects vcpkg at `%USERPROFILE%/tools/vcpkg`; override with
 ##### Packaging current code when your tree is dirty
 
 If you just want a backend zip from your **current checkout** (including
-uncommitted changes), use the CMake project version as a base and append a
-local suffix.
-
-Example in PowerShell:
+uncommitted changes), package it with the CMake project version:
 
 ```powershell
 # read project version from CMakeLists.txt: project(lsdtt3 VERSION X.Y.Z ...)
-$base = (Select-String -Path .\CMakeLists.txt -Pattern 'project\(lsdtt3 VERSION ([^ ]+)' ).Matches[0].Groups[1].Value
-
-# choose a local label for a dirty build
-$ver = "$base-local-dirty"
+$ver = (Select-String -Path .\CMakeLists.txt -Pattern 'project\(lsdtt3 VERSION ([0-9.]+)' ).Matches[0].Groups[1].Value
 
 .\tools\package_windows_backend.ps1 -Version $ver
 ```
 
-This produces:
+This produces `dist\lsdtt3-backend-win64-qgis-v<version>.zip`, with
+`backend_version: <version>` in `manifest.json`.
 
-- `dist\lsdtt3-backend-win64-qgis-v<version>.zip`
-- `manifest.json` with `backend_version: <version>`
-
-So if `$ver` is `0.2.2-local-dirty`, the artifact is
-`dist\lsdtt3-backend-win64-qgis-v0.2.2-local-dirty.zip`.
+**Do not add a suffix** such as `-local-dirty` or `-rc1` to a bundle meant for
+QGIS. The script accepts it, but the plugin only accepts a plain `X.Y.Z`
+`backend_version` and refuses the bundle. The version must also be at least the
+plugin's `MINIMUM_BACKEND_VERSION`. See
+[`docs/developer_notes/qgis_plugin_development.md`](../docs/developer_notes/qgis_plugin_development.md)
+for both checks. The binaries themselves still report a `-dirty` git
+description with `-v`, so a dirty build remains identifiable.
 
 #### macOS
 
 Native macOS building and bundling are supported but **not yet integrated into CI** —
 each release requires a manual native build on a Mac. See
-[`docs/developer_notes/lsdtt3_in_macos.md`](../docs/developer_notes/lsdtt3_in_macos.md)
+[`docs/developer_notes/building_on_macos.md`](../docs/developer_notes/building_on_macos.md)
 for the full walkthrough (Xcode CLT, Homebrew, CMake configuration, and bundling).
 
 The `package_macos_backend.sh` script was written on a Linux machine and has not yet
@@ -340,7 +337,7 @@ by GitHub Actions. In order it:
 2. **Checks it against `project(lsdtt3 VERSION ...)`** in CMakeLists.txt and
    aborts on a mismatch. A pre-release (`0.3.0-rc1`) compares only the `0.3.0`
    stem and warns instead of failing.
-3. **Configures and builds** `build/release` (Release, OpenCV + Eigen on),
+3. **Configures and builds** `build/release` (Release, Eigen on),
    unless `--skip-build`.
 4. **Smoke-checks every CLI in the profile** by running it with `-v`; a
    non-zero exit fails the release.
@@ -501,7 +498,7 @@ later cell.
 - x64 Visual Studio developer shell (for `dumpbin.exe` and
   `$env:VCToolsRedistDir`)
 - completed Windows build (default: `build/windows-qgis`) — see
-  `docs/developer_notes/building_from_source.md` for the configure/build commands, and note
+  `docs/developer_notes/building_on_windows.md` for the configure/build commands, and note
   `-DLSDTT_OPENMP=OFF` is required on MSVC
 - vcpkg install with GDAL/PROJ runtime files (default:
   `%USERPROFILE%/tools/vcpkg`)

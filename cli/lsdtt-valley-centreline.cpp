@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt-valley-centreline
@@ -84,10 +85,13 @@ static void print_banner()
         << "|| I find each channel's valley and its centreline     ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
-        << "|| CLI version: " << k_version  << "\n"
-        << "|| Citation   : " << k_citation << "\n"
-        << "|| -v or --version : full lsdtt3 release version\n"
-        << "|| -h              : help explaining the parameters\n"
+        << "|| -v or --version    : full lsdtt3 release version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| If CLI version number is lower than 1.0.0 it means\n"
+        << "|| this CLI is still experimental and not fully tested.\n"
+        << "=========================================================\n"
+        << "|| Citation : " << k_citation << "\n"
+        << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n\n";
 }
 
@@ -828,7 +832,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing valley mask (UInt32): " << p << "\n";
         loader.write_full(vres.valley_mask.get_data(),
                           vres.valley_mask.get_meta(), p, out_format,
-                          GDT_UInt32);
+                          lsdtt::lsdtt_pixel_type::uint32);
 
         // Per-channel masks: the combined raster is first-claim, so a
         // downstream channel's shared pixels display under the first channel
@@ -841,7 +845,7 @@ int main(int argc, char* argv[])
             std::cout << "Writing channel valley mask (Byte): " << pc << "\n";
             loader.write_full(ch.valley_mask.get_data(),
                               ch.valley_mask.get_meta(), pc, out_format,
-                              GDT_Byte);
+                              lsdtt::lsdtt_pixel_type::uint8);
         }
     }
 
@@ -867,7 +871,7 @@ int main(int argc, char* argv[])
             for (std::size_t i = 0; i < rd.size(); ++i)
                 if (rm[i]) out[i] = rd[i];
             loader.write_full(out, ch.reach_id.get_meta(), pc, out_format,
-                              GDT_Int16);
+                              lsdtt::lsdtt_pixel_type::int16);
         }
     }
 
@@ -1564,7 +1568,7 @@ int main(int argc, char* argv[])
                       << p << "\n";
             loader.write_full(cim.valley_mask.get_data(),
                               cim.valley_mask.get_meta(), p, out_format,
-                              GDT_Byte);
+                              lsdtt::lsdtt_pixel_type::uint8);
 
             for (std::size_t i = 0; i < cim.channel_source_ids.size(); ++i)
             {
@@ -1576,7 +1580,7 @@ int main(int argc, char* argv[])
                              "mask (Byte): " << pc << "\n";
                 loader.write_full(cim.channel_masks[i].get_data(),
                                   cim.channel_masks[i].get_meta(), pc,
-                                  out_format, GDT_Byte);
+                                  out_format, lsdtt::lsdtt_pixel_type::uint8);
             }
         }
     }

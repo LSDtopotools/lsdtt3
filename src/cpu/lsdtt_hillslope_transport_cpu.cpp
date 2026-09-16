@@ -3,8 +3,9 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hillslope_transport_cpu.hpp"
 #include "lsdtt_hillslope_operator_cpu.hpp"
@@ -34,7 +35,8 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
     float incision_threshold_area,
     bool  divide_area_by_dx,
     bool  deposit_on_hillslope_baselevels,
-    int   n_threads)
+    int   n_threads,
+    const std::vector<std::uint8_t>* channel_override)
 {
 #ifdef _OPENMP
     if (n_threads > 0)
@@ -57,18 +59,28 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
     // D-inf slopes from the flow graph
     const std::vector<float>& slopes = flow.dinf_slopes_raw();
 
-    // Drainage area (for channel-pixel identification)
-    std::vector<double> area_d;
-    if (incision_threshold_area > 0.0f)
-        area_d = flow.accumulate();
-
     const float Sc2              = S_c * S_c;
     const float kappa_dt_over_dx = kappa * dt / dx;
 
+    // A caller-supplied channel set replaces the area threshold. Without this the
+    // LEM's explicit channel mask and its coupling regime never reached Cidre:
+    // the sweep re-derived its own sinks from the threshold regardless.
+    const bool use_override =
+        channel_override != nullptr &&
+        channel_override->size() == static_cast<std::size_t>(n_cells);
+
     // Per-cell channel flag (channel pixels are hillslope baselevels)
     std::vector<bool> is_channel(static_cast<std::size_t>(n_cells), false);
-    if (incision_threshold_area > 0.0f)
+    if (use_override)
     {
+        for (std::int64_t flat = 0; flat < n_cells; ++flat)
+            is_channel[static_cast<std::size_t>(flat)] =
+                (*channel_override)[static_cast<std::size_t>(flat)] != 0;
+    }
+    else if (incision_threshold_area > 0.0f)
+    {
+        // Drainage area (for channel-pixel identification)
+        const std::vector<double> area_d = flow.accumulate();
         for (std::int64_t flat = 0; flat < n_cells; ++flat)
         {
             if (!flow.is_valid_flat(flat))
@@ -353,7 +365,8 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
     const lsdtt_raster_cpu& dem,
     float kappa,
     float dt,
-    const std::string& boundary_conditions)
+    const std::string& boundary_conditions,
+    const std::vector<std::uint8_t>& is_channel)
 {
     const lsdtt_raster_meta& meta = dem.get_meta();
     const int nrows = meta.n_rows;
@@ -361,6 +374,19 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
     const float h   = static_cast<float>(meta.cell_size);
 
     const std::vector<uint8_t>& mask = dem.get_mask();
+
+    // Channel cells are Dirichlet nodes, treated exactly like an 'o' edge: an
+    // identity row in both sweeps, so they keep their (fluvial) elevation and
+    // the neighbouring hillslope cells diffuse toward it. This solver used to
+    // take no channel set at all, so in the channels-as-boundaries regime the
+    // channels were diffused along with everything else and the only fixed
+    // elevations the hillslopes could relax toward were the domain edges.
+    const bool have_channels =
+        is_channel.size() == static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
+    auto is_ch = [&](std::size_t idx) -> bool
+    {
+        return have_channels && is_channel[idx] != 0;
+    };
 
     std::vector<float> z_old = dem.get_data();
     std::vector<float> z_half(z_old.size(), 0.0f);
@@ -496,7 +522,7 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
         for (int c = 0; c < ncols; ++c)
         {
             std::size_t idx = static_cast<std::size_t>(r * ncols + c);
-            if (!mask[idx] || is_o_edge(r, c))
+            if (!mask[idx] || is_o_edge(r, c) || is_ch(idx))
             {
                 A[c] = 0.0f; B[c] = 1.0f; C_arr[c] = 0.0f; D[c] = z_old[idx];
             }
@@ -536,7 +562,7 @@ lsdtt_raster_cpu compute_adi_hillslope_transport(
         for (int r = 0; r < nrows; ++r)
         {
             std::size_t idx = static_cast<std::size_t>(r * ncols + c);
-            if (!mask[idx] || is_o_edge(r, c))
+            if (!mask[idx] || is_o_edge(r, c) || is_ch(idx))
             {
                 A[r] = 0.0f; B[r] = 1.0f; C_arr[r] = 0.0f; D[r] = z_half[idx];
             }
