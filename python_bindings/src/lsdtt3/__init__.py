@@ -32,9 +32,32 @@ def _configure_bundled_geospatial_data() -> None:
     B. Gailleton
     """
     package_dir = Path(__file__).resolve().parent
-    gdal_data = package_dir / "gdal_data"
-    proj_data = package_dir / "proj_data"
+    gdal_data = package_dir / "share" / "gdal"
+    proj_data = package_dir / "share" / "proj"
 
+    # The authoritative mechanism. lsdtt::gdal_init() probes <root>/share/proj
+    # and <root>/share/gdal and pins what it finds, in preference to the
+    # environment. Left to itself it probes relative to the RUNNING EXECUTABLE,
+    # which in a Python process is the interpreter -- so it would pin the conda
+    # or system environment's PROJ data rather than the wheel's. Pointing the
+    # probe at this package directory is what stops that.
+    #
+    # This must happen before anything touches GDAL, which is why it is here and
+    # not somewhere more convenient. Importing _core does not itself initialise
+    # GDAL; the first call that needs it does.
+    try:
+        from . import _core
+
+        _core.set_bundled_data_root(str(package_dir))
+    except Exception:
+        # A source tree or a partially built package: fall through to the
+        # environment variables below, which is the pre-existing behaviour.
+        pass
+
+    # Belt and braces, and still useful for any OTHER library in this process
+    # (rasterio, pyproj) that reads these variables. setdefault, so a user who
+    # has deliberately set them keeps their choice for those libraries; lsdtt3
+    # itself is already pinned above regardless.
     if gdal_data.is_dir():
         os.environ.setdefault("GDAL_DATA", str(gdal_data))
     if proj_data.is_dir():

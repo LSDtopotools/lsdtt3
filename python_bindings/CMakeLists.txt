@@ -314,8 +314,13 @@ if(LSDTT_PYTHON_RELEASE_WHEEL)
         endif()
     endforeach()
 
+    # share/gdal and share/proj, NOT gdal_data/proj_data: lsdtt::gdal_init()
+    # probes <root>/share/gdal and <root>/share/proj, and lsdtt3/__init__ points
+    # that probe at this package directory. Matching the layout is what lets the
+    # wheel's own data win over whatever PROJ data the interpreter's environment
+    # happens to have -- see bindings/geospatial_runtime.cpp.
     install(DIRECTORY "${LSDTT_PYTHON_GDAL_DATA_DIR}/"
-        DESTINATION lsdtt3/gdal_data)
+        DESTINATION lsdtt3/share/gdal)
     install(DIRECTORY "${LSDTT_PYTHON_PROJ_DATA_DIR}/"
-        DESTINATION lsdtt3/proj_data)
+        DESTINATION lsdtt3/share/proj)
 endif()
