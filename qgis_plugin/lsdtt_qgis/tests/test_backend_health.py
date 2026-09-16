@@ -31,7 +31,7 @@ def test_manifest_rejects_malformed_version_ranges(version_range):
 
 
 def test_current_plugin_version_comes_from_metadata():
-    assert current_plugin_version() == "0.2.0"
+    assert current_plugin_version() == "0.3.0"
 
 
 def test_current_wrappers_require_versioned_phase_4_backend():
