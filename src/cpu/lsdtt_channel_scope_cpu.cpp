@@ -490,7 +490,7 @@ void write_channel_scope_diagnostics(
             const std::string path = output_stem + "_channel_scope.tif";
             std::cout << "Writing channel scope raster (UInt32): " << path << "\n";
             loader.write_full(scope_vals, meta, path, request.raster_format,
-                              GDT_UInt32);
+                              lsdtt_pixel_type::uint32);
         }
         catch (const std::exception& e)
         {

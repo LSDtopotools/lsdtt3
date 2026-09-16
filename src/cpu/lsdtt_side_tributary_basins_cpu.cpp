@@ -899,7 +899,7 @@ void write_side_tributary_basin_outlines(
     // encountered, the first basin written wins.
     // -------------------------------------------------------------------------
     lsdtt_raster_meta label_meta = flow.meta();
-    label_meta.data_type = GDT_UInt32;
+    label_meta.data_type = lsdtt::lsdtt_pixel_type::uint32;
     label_meta.no_data_value = 0.0;
 
     std::vector<float> label_data(n, 0.0f);

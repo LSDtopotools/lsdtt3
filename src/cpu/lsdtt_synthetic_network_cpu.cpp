@@ -69,7 +69,7 @@ lsdtt_raster_meta lsdtt_synthetic_network_cpu::build_meta_() const
     meta.n_cols        = ncols_;
     meta.cell_size     = opts_.cell_size;
     meta.no_data_value = -9999.0;
-    meta.data_type     = GDT_Float32;
+    meta.data_type     = lsdtt_pixel_type::float32;
     if (opts_.use_geographic_anchor)
     {
         meta.set_synthetic_georeference(opts_.centre_latitude_deg,

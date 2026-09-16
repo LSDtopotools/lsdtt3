@@ -477,7 +477,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing mountain component labels: " << p << "\n";
         const lsdtt::lsdtt_raster_cpu labels =
             lsdtt::label_binary_components_by_size(mountain_mask, std::max(1, min_comp));
-        loader.write_full(labels.get_data(), labels.get_meta(), p, out_format, GDT_UInt32);
+        loader.write_full(labels.get_data(), labels.get_meta(), p, out_format, lsdtt::lsdtt_pixel_type::uint32);
     }
 
     // -------------------------------------------------------------------------

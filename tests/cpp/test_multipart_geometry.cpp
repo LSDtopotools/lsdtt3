@@ -55,6 +55,15 @@
 
 #include "../../src/core/lsdtt_data_loader.hpp"
 
+// This test builds its vector fixtures with the OGR API directly, so it needs
+// the GDAL headers in its own right. It used to get them transitively through
+// lsdtt_data_loader.hpp; that header no longer includes them, which is the
+// point of the change -- a file that uses GDAL now has to say so.
+#include <gdal.h>
+#include <gdal_priv.h>
+#include <ogrsf_frmts.h>
+#include <ogr_spatialref.h>
+
 namespace
 {
 

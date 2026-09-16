@@ -832,7 +832,7 @@ int main(int argc, char* argv[])
         std::cout << "Writing valley mask (UInt32): " << p << "\n";
         loader.write_full(vres.valley_mask.get_data(),
                           vres.valley_mask.get_meta(), p, out_format,
-                          GDT_UInt32);
+                          lsdtt::lsdtt_pixel_type::uint32);
 
         // Per-channel masks: the combined raster is first-claim, so a
         // downstream channel's shared pixels display under the first channel
@@ -845,7 +845,7 @@ int main(int argc, char* argv[])
             std::cout << "Writing channel valley mask (Byte): " << pc << "\n";
             loader.write_full(ch.valley_mask.get_data(),
                               ch.valley_mask.get_meta(), pc, out_format,
-                              GDT_Byte);
+                              lsdtt::lsdtt_pixel_type::uint8);
         }
     }
 
@@ -871,7 +871,7 @@ int main(int argc, char* argv[])
             for (std::size_t i = 0; i < rd.size(); ++i)
                 if (rm[i]) out[i] = rd[i];
             loader.write_full(out, ch.reach_id.get_meta(), pc, out_format,
-                              GDT_Int16);
+                              lsdtt::lsdtt_pixel_type::int16);
         }
     }
 
@@ -1568,7 +1568,7 @@ int main(int argc, char* argv[])
                       << p << "\n";
             loader.write_full(cim.valley_mask.get_data(),
                               cim.valley_mask.get_meta(), p, out_format,
-                              GDT_Byte);
+                              lsdtt::lsdtt_pixel_type::uint8);
 
             for (std::size_t i = 0; i < cim.channel_source_ids.size(); ++i)
             {
@@ -1580,7 +1580,7 @@ int main(int argc, char* argv[])
                              "mask (Byte): " << pc << "\n";
                 loader.write_full(cim.channel_masks[i].get_data(),
                                   cim.channel_masks[i].get_meta(), pc,
-                                  out_format, GDT_Byte);
+                                  out_format, lsdtt::lsdtt_pixel_type::uint8);
             }
         }
     }

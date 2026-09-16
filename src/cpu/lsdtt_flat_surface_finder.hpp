@@ -248,7 +248,7 @@ struct flat_surface_result
     // Labelled flat components (UInt32)
     //
     // Components of combined_flat_mask that have >= min_component_pixels are
-    // assigned a unique integer label (1, 2, 3, ...).  meta.data_type = GDT_UInt32,
+    // assigned a unique integer label (1, 2, 3, ...).  meta.data_type = lsdtt_pixel_type::uint32,
     // meta.no_data_value = 0.
     // -------------------------------------------------------------------------
     lsdtt_raster_cpu labelled_flat_mask;

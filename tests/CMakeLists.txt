@@ -2079,6 +2079,16 @@ add_test(NAME unit_gdal_init_fallthrough
          COMMAND lsdtt-test-gdal-init fallthrough)
 set_tests_properties(unit_gdal_init_fallthrough PROPERTIES LABELS "unit;gdal")
 
+# Phase 1 of the GDAL/PROJ friction work: GDAL, OGR and CPL headers are confined
+# to .cpp files under src/. This is a source check, not a runtime one -- a
+# violation compiles perfectly well, it just quietly undoes the facade, so
+# nothing but an explicit check will catch it.
+add_test(NAME unit_gdal_init_boundary
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_gdal_boundary.py")
+set_tests_properties(unit_gdal_init_boundary PROPERTIES
+    LABELS "unit;gdal;conventions")
+
 # -----------------------------------------------------------------------------
 # Phase 2 of the CLI consistency remediation plan
 # (docs/plan_docs/cli_consistency_remediation_plan.md §4 Phase 2).

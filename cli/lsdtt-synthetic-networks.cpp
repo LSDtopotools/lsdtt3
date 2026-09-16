@@ -739,7 +739,7 @@ int main(int argc, char* argv[])
                 pmeta.x_min         = ta.x_min;
                 pmeta.y_min         = ta.y_min;
                 pmeta.no_data_value = -9999.0;
-                pmeta.data_type     = GDT_Float32;
+                pmeta.data_type     = lsdtt::lsdtt_pixel_type::float32;
                 pmeta.crs_wkt       = vloader.get_vector_layer_crs_wkt(names[0]);
                 opts.use_supplied_meta = true;
                 opts.supplied_meta     = pmeta;

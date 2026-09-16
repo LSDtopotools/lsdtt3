@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_data_loader.hpp"
+#include "lsdtt_pixel_type_gdal.hpp"
 #include "lsdtt_gdal_init.hpp"
 
 #include <algorithm>
@@ -31,6 +32,14 @@
 #include <ogrsf_frmts.h>
 
 namespace lsdtt {
+
+// Out of line so that lsdtt_data_loader.hpp needs no GDAL header: GDALClose and
+// the complete GDALDataset type are only required here.
+void lsdtt_data_loader::gdal_dataset_deleter::operator()(GDALDataset* ds) const
+{
+    if (ds) GDALClose(ds);
+}
+
 
 // -----------------------------------------------------------------------------
 // GDAL initialisation helper - called once via static local
@@ -755,7 +764,7 @@ void lsdtt_data_loader::create_output_raster(
     const lsdtt_raster_meta& meta,
     raster_output_format     format,
     int                      n_bands,
-    GDALDataType             out_type
+    lsdtt_pixel_type         out_type
 )
 {
     // Resolve effective format - COG falls back to GTiff for small rasters
@@ -815,12 +824,19 @@ void lsdtt_data_loader::create_output_raster(
             std::to_string(tiff_predictor_for(out_type)).c_str());
     }
 
+    // unknown has no GDAL equivalent Create() will accept, so it becomes
+    // float32 here rather than letting GDT_Unknown reach the driver.
+    const GDALDataType gdal_out_type =
+        (out_type == lsdtt_pixel_type::unknown)
+            ? GDT_Float32
+            : pixel_type_to_gdal(out_type);
+
     GDALDataset* raw = driver->Create(
         out_path.c_str(),
         meta.n_cols,
         meta.n_rows,
         n_bands,
-        out_type,
+        gdal_out_type,
         options
     );
     CSLDestroy(options);
@@ -1037,7 +1053,7 @@ void lsdtt_data_loader::write_full(
     const lsdtt_raster_meta&  meta,
     const std::string&        out_path,
     raster_output_format      format,
-    GDALDataType              out_type
+    lsdtt_pixel_type          out_type
 )
 {
     if (format == raster_output_format::png)
@@ -1119,7 +1135,8 @@ void lsdtt_data_loader::finalise_output(const std::string& out_path)
                     : GDT_Float32;
             options = CSLSetNameValue(
                 options, "PREDICTOR",
-                std::to_string(tiff_predictor_for(copy_type)).c_str());
+                std::to_string(tiff_predictor_for(
+                    pixel_type_from_gdal(copy_type))).c_str());
 
             GDALDataset* cog = cog_driver->CreateCopy(
                 tmp_path.c_str(), src, FALSE, options, nullptr, nullptr
@@ -1678,7 +1695,7 @@ void lsdtt_data_loader::print_raster_info() const
               << "  Cell size  : " << meta_.cell_size << "\n"
               << "  Origin     : (" << meta_.x_min << ", " << meta_.y_min << ")\n"
               << "  NoData     : " << meta_.no_data_value << "\n"
-              << "  Data type  : " << GDALGetDataTypeName(meta_.data_type) << "\n"
+              << "  Data type  : " << pixel_type_name(meta_.data_type) << "\n"
               << "  CRS (WKT)  : " << meta_.crs_wkt.substr(0, 80)
               << (meta_.crs_wkt.size() > 80 ? "..." : "") << "\n";
 }
@@ -1724,12 +1741,12 @@ void lsdtt_data_loader::read_meta_from_dataset()
         int    has_nodata = 0;
         double nd         = band->GetNoDataValue(&has_nodata);
         meta_.no_data_value = has_nodata ? nd : -9999.0;
-        meta_.data_type     = band->GetRasterDataType();
+        meta_.data_type     = pixel_type_from_gdal(band->GetRasterDataType());
     }
     else
     {
         meta_.no_data_value = -9999.0;
-        meta_.data_type     = GDT_Float32;
+        meta_.data_type     = lsdtt_pixel_type::float32;
     }
 }
 

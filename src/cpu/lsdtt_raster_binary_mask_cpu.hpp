@@ -252,7 +252,7 @@ lsdtt_raster_cpu filter_binary_components_by_size(
 //   mask = 1 only where a label was assigned
 //
 // Metadata:
-//   meta.data_type = GDT_UInt32
+//   meta.data_type = lsdtt_pixel_type::uint32
 //   meta.no_data_value = 0
 //
 // Throws:

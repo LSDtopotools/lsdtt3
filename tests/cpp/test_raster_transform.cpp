@@ -69,7 +69,7 @@ int main()
     meta.no_data_value = -9999.0;
     meta.crs_wkt = "fixture-wkt";
     meta.epsg_code = 32630;
-    meta.data_type = GDT_Float64;
+    meta.data_type = lsdtt::lsdtt_pixel_type::float64;
 
     lsdtt::lsdtt_array2d_f data(2, 4, 0.0f);
     lsdtt::lsdtt_array2d_u8 mask(2, 4, 1u);

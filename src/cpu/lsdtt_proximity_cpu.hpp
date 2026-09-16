@@ -60,7 +60,7 @@ namespace lsdtt {
 //   mask = 1, data <= 0.5  -> valid non-source (distance computed)
 //   mask = 0               -> nodata (distance = nodata in output)
 //
-// Output meta is identical to input except data_type remains GDT_Float32.
+// Output meta is identical to input except data_type remains lsdtt_pixel_type::float32.
 // Output no_data_value is inherited from the input meta.
 //
 // Throws:
