@@ -192,4 +192,4 @@ scripts resolve the runtime closure themselves and fail if anything is missing.
 - [`building_from_source.md`](building_from_source.md) — the builds these package
 - [`qgis_plugin_development.md`](qgis_plugin_development.md) — the QGIS plugin, and the version checks a backend bundle must pass
 - [`beta_testing_notes.md`](beta_testing_notes.md) — getting bundles to beta testers, conda-forge plan
-- `docs/plan_docs/release_ci_plan.md` — design rationale and open questions
+
