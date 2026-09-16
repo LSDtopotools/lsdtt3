@@ -1,6 +1,6 @@
 # Python Bindings Architecture And API Contracts
 
-The lsdtt3 Python package exposes native terrain-analysis operations as an
+The `lsdtt3` Python package exposes native terrain-analysis operations as an
 in-memory API. It is intended for Python workflows, notebooks, tests, and
 higher-level applications that need to compose several operations without
 writing a parameter file and intermediate raster after every step.

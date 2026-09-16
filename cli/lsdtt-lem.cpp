@@ -56,6 +56,7 @@
 #include "../src/cpu/lsdtt_hillslope_newton_cpu.hpp"
 #include "../src/cpu/lsdtt_hillslope_particle_io.hpp"
 #include "../src/cpu/lsdtt_hillslope_peclet_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_spacing_cpu.hpp"
 #include "../src/cpu/lsdtt_lem_timestep_cpu.hpp"
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
@@ -670,9 +671,12 @@ int main(int argc, char* argv[])
 
     string_default_map["forcing_history_fname"] = "";
     help_map["forcing_history_fname"] = {"string","",
-        "Optional CSV (in read_path) making uplift_rate and baselevel_fall_rate functions of model time.",
+        "Optional CSV (in read_path) making uplift_rate, baselevel_fall_rate, erodibility and hillslope_diffusivity functions of model time.",
         "Columns: time_yr, uplift_rate, baselevel_fall_rate (the latter two optional, "
-        "default 0; any column order). Applied as a piecewise-constant step function of "
+        "default 0; any column order), plus optional erodibility and "
+        "hillslope_diffusivity, where an absent column or empty cell keeps the "
+        "parameter-file value. Stepping K or D walks the channelization index; "
+        "the applied K, D and CI are written to the stats CSV. Applied as a piecewise-constant step function of "
         "model time -- the row in force is the last one with time_yr <= t -- so a pulse "
         "has sharp on/off edges. Overrides the constant uplift_rate and "
         "baselevel_fall_rate parameters for the whole run. Use it to impose a pulse of "
@@ -980,6 +984,25 @@ int main(int argc, char* argv[])
         "Number of timesteps to run.",
         "Ignored when stop_at_steady_state is true.",
         "Timestepping", "param", ""};
+
+    bool_default_map["snap_initial_surface_to_steady_state"] = true;
+    help_map["snap_initial_surface_to_steady_state"] = {"bool","true",
+        "Before time-stepping, snap the initial surface to the analytical fluvial "
+        "steady state (chi-based, K-mode).",
+        "A near-flat start cannot reach steady state sooner than R/U, the time "
+        "uplift needs to build the final relief R, so a run from noise spends at "
+        "least that long just gaining height (0.8 Myr for 165 m at 0.2 mm/yr, and "
+        "~3 Myr in practice). The snap sets z = baselevel + (U/K)^(1/n) chi on the "
+        "pit-filled initial surface, routed with the same flow method as the "
+        "fluvial step (D-infinity when enable_dinf_fluvial_erosion, else D8), so "
+        "time-stepping starts from the right relief and only has to equilibrate "
+        "hillslopes and divides. Uses uplift_rate, erodibility, m_exponent, "
+        "n_exponent, baselevel_elevation and divide_area_by_dx; with a forcing "
+        "history the uplift rate at t = 0 is used. Skipped, with a message, when "
+        "no fluvial process is enabled or the uplift rate is not positive. Set "
+        "false to keep the initial surface as given -- REQUIRED for a transient "
+        "experiment on a loaded DEM, whose topography this replaces.",
+        "Timestepping", "switch", ""};
 
     bool_default_map["stop_at_steady_state"] = false;
     help_map["stop_at_steady_state"] = {"bool","false",
@@ -1607,8 +1630,15 @@ int main(int argc, char* argv[])
     // Lambda to write the hillslope Dirichlet channel mask of a surface, so a
     // fluvial run can freeze its network for a later hillslopes-only run, and so an
     // animation can show the network migrating.  `descriptor` names the output.
+    // used_mask: the channel set the model actually solved against, when the
+    // caller has it. The equilibration cycle builds its set with D8 routing and
+    // a hysteresis rule (a pixel that was already channel stays channel down to
+    // channel_hysteresis_factor * threshold), neither of which a fresh
+    // area-threshold recomputation reproduces -- so writing a recomputed mask
+    // there produced a file that disagreed with the Dirichlet set of the solve.
     auto write_channel_mask = [&](const lsdtt::lsdtt_raster_cpu& final_dem,
-                                  const std::string& descriptor) {
+                                  const std::string& descriptor,
+                                  const std::vector<std::uint8_t>* used_mask = nullptr) {
         if (!bf["write_channel_mask_raster"]) return;
 
         const std::string mask_path =
@@ -1617,14 +1647,29 @@ int main(int argc, char* argv[])
         try
         {
             // The mask may be defined at its own area threshold, so that a run
-            // eroding fluvially everywhere can still emit a channel network.
-            lsdtt::lsdtt_lem_options mask_opts = opts;
-            if (ff["channel_mask_threshold_specific_area"] > 0.0f)
-                mask_opts.incision_threshold_area =
-                    ff["channel_mask_threshold_specific_area"];
+            // eroding fluvially everywhere can still emit a channel network. An
+            // explicit threshold is a request for a DIFFERENT network, so it
+            // takes precedence over the set the model used.
+            const bool own_threshold =
+                ff["channel_mask_threshold_specific_area"] > 0.0f;
+            const bool write_used =
+                !own_threshold && used_mask != nullptr &&
+                used_mask->size() == final_dem.get_mask().size();
 
-            const std::vector<std::uint8_t> is_channel =
-                lsdtt::compute_lem_channel_mask(final_dem, mask_opts);
+            std::vector<std::uint8_t> is_channel;
+            if (write_used)
+            {
+                is_channel = *used_mask;
+                std::cout << "  (the channel set used by the hillslope solve)\n";
+            }
+            else
+            {
+                lsdtt::lsdtt_lem_options mask_opts = opts;
+                if (own_threshold)
+                    mask_opts.incision_threshold_area =
+                        ff["channel_mask_threshold_specific_area"];
+                is_channel = lsdtt::compute_lem_channel_mask(final_dem, mask_opts);
+            }
 
             const std::vector<std::uint8_t>& valid = final_dem.get_mask();
             const lsdtt::lsdtt_raster_meta&  mm    = final_dem.get_meta();
@@ -2128,6 +2173,10 @@ int main(int argc, char* argv[])
         // so the one-shot post-step below does not solve them a second time.
         bool eq_hillslope_done = false;
 
+        // The channel set of the delivered equilibration cycle (hysteresis
+        // included), kept so the channel mask raster is the set actually used.
+        std::vector<std::uint8_t> eq_channel_mask;
+
         // Working copy of the DEM - updated between cycles.
         lsdtt::lsdtt_raster_cpu cycle_dem = dem;
 
@@ -2275,6 +2324,7 @@ int main(int argc, char* argv[])
 
             ss_result = eq_result.final_snap;
             area_d = std::move(eq_result.drainage_area);
+            eq_channel_mask = eq_result.is_channel;
 
             // _steady_state_elevation keeps meaning the fluvial surface, as in
             // the legacy path; the hillslope-solved surface is written under
@@ -2293,6 +2343,28 @@ int main(int argc, char* argv[])
                     std::cerr << "FATAL: writing hillslope elevation failed: "
                               << e.what() << "\n";
                     return 1;
+                }
+
+                // The delivered surface -- channels AND hillslopes -- gets its own
+                // hillshade, as in the one-shot path. The _steady_state_hillshade
+                // written below is of the fluvial-only snap.
+                if (bf["write_hillshade_png"])
+                {
+                    const std::string eq_hs_png = pp.make_output_path(
+                        "_hillslope_steady_state_hillshade", ".png");
+                    std::cout << "Writing hillslope steady-state hillshade PNG: "
+                              << eq_hs_png << "\n";
+                    try {
+                        write_hillshade_png(loader, eq_result.elevation, eq_hs_png,
+                            static_cast<double>(ff["hillshade_azimuth"]),
+                            static_cast<double>(ff["hillshade_altitude"]),
+                            static_cast<double>(ff["hillshade_z_factor"]));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: hillshade PNG write failed: "
+                                  << e.what() << "\n";
+                    }
                 }
             }
 
@@ -2657,10 +2729,107 @@ int main(int argc, char* argv[])
             }
         }
 
-        write_channel_mask(ss_result.elevation, "_channel_mask");
+        write_channel_mask(ss_result.elevation, "_channel_mask",
+                           eq_channel_mask.empty() ? nullptr : &eq_channel_mask);
 
         pp.print_parameters();
         return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Snap the initial surface to the analytical fluvial steady state.
+    //
+    // A run that has to build its relief from a near-flat start cannot equilibrate
+    // sooner than R/U. Snapping first puts the relief in place, so time-stepping
+    // only has to adjust hillslopes and divides to the coupled balance.
+    // -------------------------------------------------------------------------
+    if (bf["snap_initial_surface_to_steady_state"])
+    {
+        const bool fluvial_on =
+            opts.enable_d8_fluvial_erosion || opts.enable_dinf_fluvial_erosion;
+
+        float snap_U = opts.enable_uplift ? ff["uplift_rate"] : 0.0f;
+        if (opts.enable_uplift && !sf["forcing_history_fname"].empty())
+        {
+            try
+            {
+                snap_U = lsdtt::load_lem_forcing_history(
+                    pp.get_read_path() + sf["forcing_history_fname"]).at(0.0f).uplift_rate;
+            }
+            catch (const std::exception&)
+            {
+                // Reported properly where the forcing history is loaded below.
+            }
+        }
+
+        std::cout << "\n--- Snap initial surface to fluvial steady state ---\n";
+        if (!fluvial_on)
+            std::cout << "  Skipped: no fluvial process is enabled, so there is no "
+                         "fluvial steady state to snap to.\n";
+        else if (!(snap_U > 0.0f))
+            std::cout << "  Skipped: uplift rate is not positive, so the steady "
+                         "state is flat.\n";
+        else
+        {
+            if (bf["read_initial_dem"])
+                std::cout << "  NOTE: this REPLACES the loaded DEM's topography. Set "
+                             "snap_initial_surface_to_steady_state: false to evolve "
+                             "the loaded surface as given.\n";
+
+            lsdtt::lsdtt_fluvial_steady_state_options snap_opts;
+            snap_opts.U                   = snap_U;
+            snap_opts.K                   = ff["erodibility"];
+            snap_opts.m                   = ff["m_exponent"];
+            snap_opts.n                   = ff["n_exponent"];
+            snap_opts.relief_mode         = false;
+            snap_opts.baselevel_elevation = ff["baselevel_elevation"];
+            snap_opts.divide_area_by_dx   = bf["divide_area_by_dx"];
+            snap_opts.n_threads           = ifs["n_threads"];
+
+            try
+            {
+                const lsdtt::lsdtt_raster_cpu filled = lsdtt::fill_pits(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    ifs["n_threads"]);
+
+                lsdtt::lsdtt_fluvial_steady_state_result snap;
+                if (opts.enable_dinf_fluvial_erosion)
+                {
+                    lsdtt::lsdtt_flowgraph_options snap_fg;
+                    snap_fg.method              = lsdtt::lsdtt_flowgraph_method::d_infinity;
+                    snap_fg.boundary_conditions = sf["boundary_conditions"];
+                    snap_fg.n_threads           = ifs["n_threads"];
+                    lsdtt::lsdtt_flowgraph_cpu snap_flow(
+                        filled.get_data_array(), filled.get_mask_array(),
+                        filled.get_meta(), snap_fg);
+                    snap = lsdtt::compute_dinf_fluvial_steady_state(snap_flow, snap_opts);
+                }
+                else
+                {
+                    lsdtt::lsdtt_flowinfo_options snap_fi;
+                    snap_fi.boundary_conditions = sf["boundary_conditions"];
+                    snap_fi.build_s_vector      = false;
+                    snap_fi.n_threads           = ifs["n_threads"];
+                    lsdtt::lsdtt_flowinfo snap_flow(
+                        filled.get_data_array(), filled.get_mask_array(),
+                        filled.get_meta(), snap_fi);
+                    snap = lsdtt::compute_d8_fluvial_steady_state(snap_flow, snap_opts);
+                }
+
+                dem = std::move(snap.elevation);
+                std::cout << "  Routing        : "
+                          << (opts.enable_dinf_fluvial_erosion ? "d_infinity" : "d8")
+                          << "\n  U=" << snap_opts.U << "  K=" << snap_opts.K
+                          << "  m=" << snap_opts.m << "  n=" << snap_opts.n
+                          << "\n  Snapped relief : " << snap.computed_relief << " m\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: snapping the initial surface failed: "
+                          << e.what() << "\n";
+                return 1;
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -2776,7 +2945,12 @@ int main(int argc, char* argv[])
         {
             std::cout << "    t >= " << std::setw(12) << p.time_yr << " yr :"
                       << "  U = " << p.uplift_rate << " m/yr"
-                      << "   baselevel fall = " << p.baselevel_fall_rate << " m/yr\n";
+                      << "   baselevel fall = " << p.baselevel_fall_rate << " m/yr";
+            if (p.erodibility > 0.0f)
+                std::cout << "   K = " << p.erodibility;
+            if (p.hillslope_diffusivity > 0.0f)
+                std::cout << "   D = " << p.hillslope_diffusivity << " m^2/yr";
+            std::cout << "\n";
         }
     }
 
@@ -2790,8 +2964,35 @@ int main(int argc, char* argv[])
         "delta_max_z", "delta_mean_z",
         "max_local_delta_z",
         "mean_erosion_rate", "max_erosion_rate",
-        "uplift_rate", "baselevel_fall_rate"
+        "uplift_rate", "baselevel_fall_rate",
+        "erodibility", "hillslope_diffusivity", "channelization_index"
     };
+
+    // std::to_string writes fixed 6-decimal notation, which reduces K = 6.75e-5
+    // to "0.000067". Small process parameters get significant figures instead.
+    auto sci = [](double v)
+    {
+        std::ostringstream o;
+        o << std::setprecision(7) << v;
+        return o.str();
+    };
+
+    // Length l in the channelization index CI = K l^(m+n) / (D^n U^(1-n))
+    // (Bonetti et al. 2020): the extent between the fixed (outlet) edges, i.e.
+    // along the flow direction. N-S outlets -> the row extent; E-W outlets -> the
+    // column extent; otherwise the longer side.
+    const double ci_length_m = [&]()
+    {
+        const std::string& bc = sf["boundary_conditions"];
+        auto fixed = [&](std::size_t i)
+        { return bc.size() > i && (bc[i] == 'o' || bc[i] == 'b'); };
+        const lsdtt::lsdtt_raster_meta& cm = dem.get_meta();
+        const double ns = static_cast<double>(cm.n_rows) * cm.cell_size;
+        const double ew = static_cast<double>(cm.n_cols) * cm.cell_size;
+        if (fixed(0) && fixed(2) && !(fixed(1) && fixed(3))) return ns;
+        if (fixed(1) && fixed(3) && !(fixed(0) && fixed(2))) return ew;
+        return std::max(ns, ew);
+    }();
 
     // -------------------------------------------------------------------------
     // Time loop
@@ -2840,8 +3041,20 @@ int main(int argc, char* argv[])
     cv_opts.stall_window     = ifs["stall_window"];
     cv_opts.stop_on_stall    = bf["stop_on_stall"];
     lsdtt::lsdtt_lem_convergence_monitor cmon(static_cast<double>(dt), cv_opts);
-    const bool watch_steady = (ff["steady_state_dz_tolerance"] > 0.0f);
+    // Either tolerance switches the early stop on. This used to test only the
+    // per-step tolerance, so a run configured with steady_state_rate_tolerance
+    // alone (steady_state_dz_tolerance: 0) had its convergence detected by the
+    // monitor -- which stall detection keeps running -- and then ignored: it ran
+    // on to run_until_time, 2 Myr past steady state on the run that found this.
+    const bool watch_steady = (ff["steady_state_dz_tolerance"] > 0.0f) ||
+                              (ff["steady_state_rate_tolerance"] > 0.0f);
     bool stop_early = false;
+
+    // When and where convergence was FIRST declared. The end-of-run report used
+    // to print the time the run ended, which is not the same thing whenever the
+    // run does not stop at convergence.
+    double converged_at_time = -1.0;
+    int    converged_at_iter = -1;
 
     auto do_step = [&]()
     {
@@ -2854,6 +3067,11 @@ int main(int argc, char* argv[])
                 const lsdtt::lsdtt_lem_forcing_point f = forcing.at(total_time);
                 opts.uplift_rate         = f.uplift_rate;
                 opts.baselevel_fall_rate = f.baselevel_fall_rate;
+                // Negative = not given in the forcing file: keep the current value.
+                if (f.erodibility > 0.0f)
+                    opts.erodibility = f.erodibility;
+                if (f.hillslope_diffusivity > 0.0f)
+                    opts.hillslope_diffusivity = f.hillslope_diffusivity;
             }
 
             auto [next, stats] = lsdtt::run_lem_step(
@@ -2883,6 +3101,12 @@ int main(int argc, char* argv[])
                 {
                     const lsdtt::lem_convergence_state st =
                         cmon.update(dz_step, static_cast<double>(dt));
+                    if (st == lsdtt::lem_convergence_state::converged &&
+                        converged_at_iter < 0)
+                    {
+                        converged_at_time = static_cast<double>(total_time);
+                        converged_at_iter = iter;
+                    }
                     if (st == lsdtt::lem_convergence_state::converged && watch_steady)
                         stop_early = true;
                     else if (st == lsdtt::lem_convergence_state::stalled &&
@@ -2911,7 +3135,15 @@ int main(int argc, char* argv[])
                 std::to_string(stats.mean_erosion_rate),
                 std::to_string(stats.max_erosion_rate),
                 std::to_string(opts.uplift_rate),
-                std::to_string(opts.baselevel_fall_rate)
+                std::to_string(opts.baselevel_fall_rate),
+                sci(opts.erodibility),
+                sci(opts.hillslope_diffusivity),
+                sci(lsdtt::channelization_index(
+                    static_cast<double>(opts.erodibility),
+                    static_cast<double>(opts.hillslope_diffusivity),
+                    static_cast<double>(opts.uplift_rate), ci_length_m,
+                    static_cast<double>(opts.m_exponent),
+                    static_cast<double>(opts.n_exponent)))
             });
 
             // Progress reporting every 10 steps
@@ -3017,7 +3249,9 @@ int main(int argc, char* argv[])
             do_step();
             ++guard;
         }
-        if (total_time < t_end)
+        // Stopping short of t_end is only a problem when it was the CAP that
+        // stopped the run; an early stop at steady state is the intended outcome.
+        if (total_time < t_end && !stop_early)
             std::cerr << "\nWARNING: hit the iteration cap (" << cap
                       << ") at t = " << total_time << " yr, short of the requested "
                       << t_end << " yr. The timestep has collapsed; check the "
@@ -3081,8 +3315,14 @@ int main(int argc, char* argv[])
     if (cmon.n_steps() > 0 && !cmon.message().empty())
     {
         if (cmon.state() == lsdtt::lem_convergence_state::converged)
-            std::cout << "\n[steady state] " << cmon.message() << " at t = "
-                      << total_time << " yr (" << iter << " steps)\n";
+        {
+            std::cout << "\n[steady state] " << cmon.message() << ", first reached at t = "
+                      << converged_at_time << " yr (step " << converged_at_iter << ")";
+            if (converged_at_iter >= 0 && converged_at_iter != iter)
+                std::cout << "; the run continued to t = " << total_time
+                          << " yr (" << iter << " steps)";
+            std::cout << "\n";
+        }
         else
             std::cerr << "\n[NOT CONVERGED] " << cmon.message()
                       << ". p99.9|dz| = " << cmon.last_dz() << " m at t = "

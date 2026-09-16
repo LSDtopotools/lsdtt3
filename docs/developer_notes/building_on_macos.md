@@ -11,6 +11,8 @@ Linux is the reference platform and the native macOS build is less exercised
 (see [Known gaps](#known-gaps)). If the native build gives you trouble, the VM
 route always works.
 
+**WARNING** None of this has been tested as of September 2026
+
 ---
 
 ## Native build

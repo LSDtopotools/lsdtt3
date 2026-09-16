@@ -5,12 +5,12 @@ tells users to install are actually produced.
 
 > **The operational cheat sheet is `tools/README.md` in the repository.**
 > It has the exact commands, the two release routes, the `gh` invocations, and
-> how to undo a mistake. This page is the map: what exists, what runs where,
-> and why. Do not duplicate command sequences here — they drift.
+> how to undo a mistake. This page give details: what exists, what runs where,
+> and why. If you are reading this in code and thinking of making edits: don't change the command sequences or record them here, that stays in `tools/README.md`
 
 ---
 
-## The shape of it
+## The basics
 
 One bundle per platform, each built **on that platform**. There is no
 cross-compilation path: every packaging script interrogates the native loader

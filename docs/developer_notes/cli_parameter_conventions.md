@@ -1,7 +1,7 @@
 # CLI Parameter Naming Conventions
 
-This document establishes the standard naming conventions for CLI parameters in lsdtt3.
-It is the durable record of the decisions taken in the CLI consistency remediation plan.
+This document establishes the standard naming conventions for CLI parameters in `lsdtt3`.
+If you are a developer and make a pull request failing to follow these instructions the lead developer will wag his finger at you and say "bad!". 
 
 ---
 
@@ -15,8 +15,8 @@ standard below ensures that:
   deprecated-alias mechanism.
 - New contributors follow the existing patterns rather than inventing new ones.
 
-The standard applies to all parameters. The conformance baseline is zero and a
-CTest guard checks every help-registered parameter in all 38 CLIs, so new
+The standard applies to all parameters. 
+A CTest guard checks every help-registered parameter in all 38 CLIs, so new
 violations fail the test rather than entering an allow-list.
 
 ---

@@ -1377,6 +1377,19 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum lemdefaults5_initial_topography.tif:10290
 )
 
+# Time-stepping snaps the initial surface to the fluvial steady state by default,
+# so a run does not spend R/U building its relief from a flat start. Asserts the
+# snap runs with no parameter asking for it, and actually produces relief.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_snap_default
+    lsdtt-lem
+    lem_snap_default.param.in
+    lemsnapdefault_initial_topography.tif
+    --stdout-contains "--- Snap initial surface to fluvial steady state ---"
+    --stdout-contains "Snapped relief"
+)
+set_tests_properties(smoke_lem_snap_default PROPERTIES LABELS "smoke;cli;lem")
+
 add_lsdtt_cli_smoke_test(
     smoke_lem_roering_implicit_strip
     lsdtt-lem
@@ -2825,6 +2838,23 @@ target_link_libraries(lsdtt-test-lem-timestep PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_lem_timestep COMMAND lsdtt-test-lem-timestep)
 set_tests_properties(unit_lem_timestep PROPERTIES LABELS "unit;lem")
+
+# Process-domain coupling: every hillslope model must hold the channel pixels at
+# their fluvial elevations and relax the hillslopes toward them, not toward the
+# outlet. adi and cidre used to miss the channel set.
+add_executable(lsdtt-test-lem-channel-coupling cpp/test_lem_channel_coupling.cpp)
+target_link_libraries(lsdtt-test-lem-channel-coupling PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_lem_channel_coupling COMMAND lsdtt-test-lem-channel-coupling)
+
+# Forcing history: optional erodibility / hillslope_diffusivity columns, whose
+# absent value must mean "keep the parameter file", never 0.
+add_executable(lsdtt-test-lem-forcing-history cpp/test_lem_forcing_history.cpp)
+target_link_libraries(lsdtt-test-lem-forcing-history PRIVATE lsdtt3_cpu)
+add_test(NAME unit_lem_forcing_history
+         COMMAND lsdtt-test-lem-forcing-history "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(unit_lem_forcing_history PROPERTIES LABELS "unit;lem")
+set_tests_properties(unit_lem_channel_coupling PROPERTIES LABELS "unit;lem;hillslope")
 
 # The Newton solver for the Roering nonlinear hillslope (steady + transient).
 add_executable(lsdtt-test-hillslope-newton cpp/test_hillslope_newton.cpp)
