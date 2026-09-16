@@ -17,7 +17,12 @@ def load_generator():
 def test_public_api_manifest_matches_runtime():
     root = Path(__file__).parents[1]
     expected = json.loads((root / "api" / "public_api.json").read_text(encoding="utf-8"))
-    assert load_generator().build_manifest() == expected
+    actual = load_generator().build_manifest()
+    if actual != expected:
+        raise AssertionError(
+            "public API manifest differs from the installed runtime; "
+            "run generate_public_api_manifest.py --update after reviewing the change"
+        )
 
 
 def test_api_decision_manifest_has_release_gate():

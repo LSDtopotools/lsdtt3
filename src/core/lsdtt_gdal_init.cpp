@@ -106,15 +106,11 @@ std::string find_bundled_share_dir(const std::string& subdir,
 
 void do_init()
 {
-    // The one place that calls GDALAllRegister() directly. Everywhere else in
-    // lsdtt3 calls gdal_init(); calling it from here would re-enter
-    // std::call_once and deadlock.
-    GDALAllRegister();
-
     // ---------------------------------------------------------------------
     // PROJ. A bundled proj.db always wins, including over PROJ_DATA /
     // PROJ_LIB: paths set through OSRSetPROJSearchPaths take precedence over
-    // PROJ's environment-variable search.
+    // PROJ's environment-variable search. This must precede GDAL driver
+    // registration: registration can initialize CRS state.
     // ---------------------------------------------------------------------
     g_pinned_proj_dir = find_bundled_share_dir("proj", "proj.db");
     if (!g_pinned_proj_dir.empty())
@@ -135,6 +131,11 @@ void do_init()
     g_pinned_gdal_dir = find_bundled_share_dir("gdal", "gdalvrt.xsd");
     if (!g_pinned_gdal_dir.empty())
         CPLSetConfigOption("GDAL_DATA", g_pinned_gdal_dir.c_str());
+
+    // The one place that calls GDALAllRegister() directly. Everywhere else in
+    // lsdtt3 calls gdal_init(); calling it from here would re-enter
+    // std::call_once and deadlock.
+    GDALAllRegister();
 
     g_initialised = true;
 }
