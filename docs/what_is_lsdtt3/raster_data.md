@@ -11,6 +11,37 @@ format, including Cloud Optimized GeoTIFF (COG). Input filenames are supplied
 with the parameters `read_path` and `read_fname`; individual tools document any additional
 raster inputs they require.
 
+In practice "supported by GDAL" is a big claim, so these are the raster formats
+we actually test that lsdtt3 can open. The test is
+`unit_gdal_format_support`, and it writes a small raster in each format and
+checks that lsdtt3 reads the geometry, the CRS and the pixel values back:
+
+| Format | Extension | Notes |
+|---|---|---|
+| GeoTIFF | `.tif` | what you should be using |
+| Cloud Optimized GeoTIFF | `.tif` | also what you should be using |
+| VRT | `.vrt` | GDAL virtual raster; handy for mosaics |
+| ERDAS Imagine | `.img` | including the 1/9 arc-second USGS 3DEP DEM, which is still distributed this way |
+| ENVI | `.bil` / `.bsq` / `.bip` | the old LSDTopoTools workhorse |
+| ESRI `.hdr`-labelled | `.bil` | the other old workhorse |
+| ESRI ASCII grid | `.asc` | slow and enormous, but everyone has one |
+| SRTM / NASADEM tiles | `.hgt` | raw `.hgt` as distributed |
+| netCDF | `.nc` | |
+| HDF5 | `.h5` | |
+| Zarr | `.zarr` | cloud-native chunked arrays |
+| PDS4 | `.xml` | planetary: MOLA, HiRISE, CTX |
+| ISIS3 | `.cub` | planetary: USGS ISIS cubes |
+| PNG | `.png` | readable, but see the output section — it is not for analysis |
+
+Yes, planetary formats. If you want to do geomorphology on Mars, the reading
+side will not stop you.
+
+Some things we deliberately do **not** read: JPEG 2000 (that way lies
+multispectral analysis, which is not what this software is for), KML (convert it
+first), and the various legacy elevation formats that nobody distributes any
+more. If your data is in something exotic, `gdal_translate` it to GeoTIFF and
+get on with your life.
+
 ## Coordinate Reference Systems
 
 Most geomorphic analyses measure lengths, areas, gradients, or search radii and
@@ -45,3 +76,9 @@ Most raster-producing CLIs use `write_output_format`:
 Output filenames use `write_path` and `write_fname`, followed by a descriptor
 specific to the result. The generated CLI reference gives the exact outputs and
 format support for each executable.
+
+Note that the output list is much shorter than the input list, and that is on
+purpose. lsdtt3 writes GeoTIFF because it is the format everything else can
+read. PNG is there so you can look at what you made without opening a GIS; it is
+an 8-bit stretch with the georeferencing in a sidecar, so do not feed it back in
+and expect your elevations to still be elevations.

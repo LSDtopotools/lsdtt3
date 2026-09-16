@@ -317,6 +317,60 @@ against. Use a newer distribution, or build from source.
 
 ---
 
+### If you already have GDAL or PROJ installed
+
+This is the most common source of confusing behaviour, and it gets more likely
+the more serious your GIS setup is. If you have QGIS, conda, `rasterio`,
+`geopandas` or a system `libgdal` — and anyone doing large-scale analysis
+does — then there is more than one GDAL and more than one PROJ on your machine.
+
+**The good news:** lsdtt3 pins its own data directories at startup. A `proj.db`
+bundled next to the binary always wins over `PROJ_DATA`, `PROJ_LIB` or
+`GDAL_DATA` in your environment. You do not have to unset anything, and you do
+not have to source `setenv.sh` for the tools to find their own data — that
+matters in places like Google Colab where each `!` line is a separate shell.
+
+**Check what is actually in use** with any tool's `-v`:
+
+```bash
+lsdtt-raster-preprocessing -v
+```
+
+```
+lsdtt-raster-preprocessing version 1.0.0 (lsdtt3 0.4.0)
+GDAL 3.8.4, PROJ 9.3.1
+  proj data: bundled: /home/you/lsdtt3/share/proj
+  GDAL data: bundled: /home/you/lsdtt3/share/gdal
+```
+
+`bundled:` means lsdtt3 is using its own copy and your environment is being
+ignored, which is what you want from a package. If it says `PROJ_DATA=…` or
+`PROJ built-in search` instead, it is using something else — expected for a
+source build or a conda install, worth knowing about for a package.
+
+**Why we care so much about this.** A mismatched `proj.db` does not usually
+produce an error. It produces *coordinates*. They will be the right shape, in
+the right part of the world, and wrong by tens of metres, because the datum
+transformation your CRS needs was resolved differently or not at all. That is
+much worse than a crash, and it is why the version banner reports the data
+directories at all.
+
+**Please include the whole `-v` output in any bug report** that involves
+projections, reprojection, or coordinates that look subtly off. It is the first
+thing we will ask for.
+
+**Symptoms that point here:**
+
+| What you see | What it usually means |
+|---|---|
+| `Cannot find proj.db` | `PROJ_DATA` or `PROJ_LIB` points somewhere without one, and nothing is bundled |
+| `Cannot find proj.db` *from a conda environment* | conda's PROJ and a system PROJ disagree; activate the environment, or use a release package instead |
+| Coordinates off by ~100 m in a national grid | a datum shift was not applied — a wrong `proj.db`, not a bug in the analysis |
+| `undefined symbol: GDAL…` when building | headers from one GDAL, library from another — see the build-from-source notes |
+| GeoPackage writes fail under WSL2 on `/mnt/c` | SQLite on an NTFS mount; write FlatGeobuf instead |
+
+---
+
 ## Reporting bugs
 
 > **This is software built by academics for academic use within a research

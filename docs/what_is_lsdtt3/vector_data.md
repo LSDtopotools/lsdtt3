@@ -6,6 +6,37 @@
 preferred formats for `lsdtt3`; Shapefile remains supported where its field-name and data-
 type limitations are acceptable.
 
+## Which formats, exactly
+
+Read and write are not the same list, and it is worth knowing which is which
+before you write a parameter file expecting an output you cannot have.
+
+| Format | Extension | Read | Write |
+|---|---|:---:|:---:|
+| [FlatGeobuf](https://flatgeobuf.org/) | `.fgb` | yes | yes |
+| [GeoPackage](https://en.wikipedia.org/wiki/GeoPackage) | `.gpkg` | yes | yes |
+| GeoJSON | `.geojson` | yes | **no** |
+| Shapefile | `.shp` | yes | **no** |
+| CSV | `.csv` | yes | yes |
+
+Two things that surprise people:
+
+**GeoJSON and Shapefile are read-only.** lsdtt3 will happily take your basin
+outlines or channel heads in either, but it writes FlatGeobuf or GeoPackage. If
+you need a Shapefile at the end, `ogr2ogr` it — we are not going to add an
+output format whose field names are capped at ten characters.
+
+**CSV is deliberately plain.** It carries no CRS and gets no `.prj` sidecar. It
+is the simple output: coordinates and attributes, nothing else. If you want
+georeferencing that survives the trip into a GIS, write FlatGeobuf or
+GeoPackage, both of which carry the CRS properly. The point-writing path emits
+latitude and longitude in WGS84 so a bare CSV is at least unambiguous.
+
+One practical note on GeoPackage: it is SQLite underneath, and SQLite does not
+always behave on network or Windows-mounted filesystems. If you are working
+under WSL2 on a `/mnt/c` path and a GeoPackage write fails, that is why —
+lsdtt3 warns you when it spots this. Use FlatGeobuf instead.
+
 ## Multipart Geometry
 
 CLI parameters that accept lines or points also accept their multipart

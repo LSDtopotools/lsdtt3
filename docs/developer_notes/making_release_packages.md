@@ -95,6 +95,69 @@ the bundle survives any filesystem or archiver.
 
 ---
 
+## GDAL and PROJ runtime data
+
+A bundle stages more than shared libraries. GDAL and PROJ both read **data
+files** at run time, and a bundle that ships the libraries without the data is
+broken in a way the self-containment check above cannot see — `ldd` is satisfied
+and the tools still fail, or worse, silently use someone else's data.
+
+| Staged path | Comes from | Why |
+|---|---|---|
+| `share/proj/` | `proj.db` and the transformation grids | every CRS lookup and datum shift |
+| `share/gdal/` | `gdal-config --datadir` | driver support files (`gdalvrt.xsd` and friends) |
+
+### The binaries find these themselves
+
+Since the `lsdtt_gdal_init()` change, every tool pins these directories at
+startup from its own location — `<exe>/../share/proj` and
+`<exe>/../share/gdal`, which is exactly the layout the packaging scripts stage.
+**A bundled `proj.db` takes precedence over `PROJ_DATA`, `PROJ_LIB` and
+`GDAL_DATA` in the user's environment.**
+
+Two consequences for packaging:
+
+1. **`setenv.sh` is no longer load-bearing for data.** It still sets `PATH` and
+   `LD_LIBRARY_PATH`, which the binaries cannot pin for themselves, but its
+   `GDAL_DATA` / `PROJ_DATA` exports are now belt-and-braces. The practical gain
+   is that the tools work when it has *not* been sourced — the Google Colab case,
+   where each `!` line is a separate shell and the exports never persist.
+2. **The staged layout is now a contract, not a convention.** If a future
+   packaging change moves `share/proj` relative to `bin/`, the binaries will stop
+   finding it and fall back to the user's environment — silently. Keep
+   `bin/../share/proj`.
+
+### Verifying it worked
+
+The self-containment check does not cover data files, so check by hand on the
+staged bundle:
+
+```bash
+./bin/lsdtt-raster-preprocessing -v
+```
+
+```
+GDAL 3.8.4, PROJ 9.3.1
+  proj data: bundled: /path/to/bundle/share/proj
+  GDAL data: bundled: /path/to/bundle/share/gdal
+```
+
+**Both lines must say `bundled:`.** If either says `PROJ_DATA=…`,
+`PROJ built-in search` or `GDAL built-in search`, the data did not stage where
+the binaries look, and the bundle will use whatever the user happens to have.
+Run this before publishing, with `PROJ_DATA` and `GDAL_DATA` deliberately set to
+junk in your shell — that is the condition a user's machine simulates.
+
+### Why this matters more than it sounds
+
+A mismatched `proj.db` does not usually error. It resolves a datum differently
+and returns coordinates that are plausible and wrong — right shape, right part
+of the world, tens of metres out. That is why `-v` reports the data directories
+at all, and why it is the first thing to ask a user for in a projection bug
+report.
+
+---
+
 ## After adding a dependency
 
 When a new library becomes a build dependency in `CMakeLists.txt`:
