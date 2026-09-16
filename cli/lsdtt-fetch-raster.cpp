@@ -59,6 +59,7 @@
 #include <gdal.h>
 #include <ogr_spatialref.h>
 
+#include "../src/core/lsdtt_gdal_init.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_dem_grouping.hpp"
 #include "../src/core/lsdtt_outlet_bounds_discovery.hpp"
@@ -141,7 +142,7 @@ int main(int argc, char* argv[])
     // Register drivers up front, not just before the fetch: reading bounds from
     // a vector file needs the OGR drivers, and that happens during parameter
     // resolution.
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_version, k_citation);

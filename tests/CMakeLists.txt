@@ -4,6 +4,27 @@ set(LSDTT_TEST_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cli_smoke.py")
 set(LSDTT_TEST_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data")
 set(LSDTT_TEST_PARAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/params")
 
+# A real proj.db for unit_gdal_init_pinned to stage into a fake bundle. Taken
+# from the environment when the build host exports it, otherwise searched in the
+# usual prefixes. The test skips (exit 77) when this stays empty, so a host
+# without PROJ data does not fail the suite.
+if(DEFINED ENV{PROJ_DATA} AND EXISTS "$ENV{PROJ_DATA}/proj.db")
+    set(LSDTT_TEST_PROJ_DB "$ENV{PROJ_DATA}/proj.db")
+elseif(DEFINED ENV{PROJ_LIB} AND EXISTS "$ENV{PROJ_LIB}/proj.db")
+    set(LSDTT_TEST_PROJ_DB "$ENV{PROJ_LIB}/proj.db")
+else()
+    find_file(LSDTT_TEST_PROJ_DB_FOUND proj.db
+        PATHS /usr/share/proj /usr/local/share/proj /opt/homebrew/share/proj
+              "${CMAKE_PREFIX_PATH}/share/proj"
+        NO_DEFAULT_PATH)
+    if(LSDTT_TEST_PROJ_DB_FOUND)
+        set(LSDTT_TEST_PROJ_DB "${LSDTT_TEST_PROJ_DB_FOUND}")
+    else()
+        set(LSDTT_TEST_PROJ_DB "")
+    endif()
+endif()
+message(STATUS "Test proj.db  : ${LSDTT_TEST_PROJ_DB}")
+
 # Written by lsdtt-test-divide-migration (the unit_divide_migration CTest
 # fixture) and read by the divide-migration CLI tests.
 set(LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR
@@ -2026,6 +2047,37 @@ target_link_libraries(lsdtt-test-vertical-units PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_vertical_units COMMAND lsdtt-test-vertical-units)
 set_tests_properties(unit_vertical_units PROPERTIES LABELS "unit;raster")
+
+# -----------------------------------------------------------------------------
+# lsdtt::gdal_init() -- PROJ/GDAL runtime data pinning.
+#
+# set_bundled_data_root() only bites before the first gdal_init(), and
+# gdal_init() runs once per process, so each scenario is its own invocation.
+# See tests/cpp/test_gdal_init.cpp for what each mode asserts.
+# -----------------------------------------------------------------------------
+add_executable(lsdtt-test-gdal-init cpp/test_gdal_init.cpp)
+target_link_libraries(lsdtt-test-gdal-init PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-gdal-init PRIVATE ${GDAL_INCLUDE_DIRS})
+
+add_test(NAME unit_gdal_init_idempotent
+         COMMAND lsdtt-test-gdal-init idempotent)
+set_tests_properties(unit_gdal_init_idempotent PROPERTIES LABELS "unit;gdal")
+
+# The case the module exists for: a poisoned PROJ_DATA must be ignored when a
+# bundled proj.db is present. Needs a real proj.db to stage; skips without one.
+add_test(NAME unit_gdal_init_pinned
+         COMMAND lsdtt-test-gdal-init pinned
+                 "${CMAKE_CURRENT_BINARY_DIR}/gdal_init_staging")
+set_tests_properties(unit_gdal_init_pinned PROPERTIES
+    LABELS "unit;gdal"
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "LSDTT_TEST_PROJ_DB=${LSDTT_TEST_PROJ_DB}")
+
+# The conda-forge case: nothing bundled, so the user's environment must still
+# be honoured. This is the half that a naive "always override" would break.
+add_test(NAME unit_gdal_init_fallthrough
+         COMMAND lsdtt-test-gdal-init fallthrough)
+set_tests_properties(unit_gdal_init_fallthrough PROPERTIES LABELS "unit;gdal")
 
 # -----------------------------------------------------------------------------
 # Phase 2 of the CLI consistency remediation plan
@@ -4989,6 +5041,12 @@ set(LSDTT_DOMAIN_RULES
     # Added 2026-09-14: the native image-filter primitives and raster image
     # operations (Otsu, adaptive threshold, Canny, Hough) that replaced OpenCV.
     "image_filters|image_ops" "image_ops"
+    # Added 2026-09-16 with Phase 0 of the GDAL/PROJ friction work: pinning the
+    # PROJ and GDAL runtime data directories so a stale PROJ_DATA in the user's
+    # environment cannot silently change a datum transformation. Its own
+    # compartment rather than "core" because it is the geospatial runtime
+    # boundary, and anyone touching lsdtt_gdal_init.cpp wants exactly these.
+    "gdal_init"              "gdal_init"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. Measured

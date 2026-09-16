@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_data_loader.hpp"
+#include "lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -39,7 +40,7 @@ static void ensure_gdal_init()
     static bool initialised = false;
     if (!initialised)
     {
-        GDALAllRegister();
+        lsdtt::gdal_init();
         initialised = true;
     }
 }
@@ -1928,7 +1929,7 @@ void lsdtt_data_loader::clip_vector_to_raster_bbox(
 int lsdtt_data_loader::count_features_in_first_layer(
     const std::string& vector_path)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     GDALDataset* raw = static_cast<GDALDataset*>(
         GDALOpenEx(vector_path.c_str(),

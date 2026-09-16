@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_to_junction_network.hpp"
+#include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -416,7 +417,7 @@ std::vector<raw_polyline> load_clipped_stream_polylines(
     double                  point_tol,
     double                  clip_inset_metres)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     std::unique_ptr<GDALDataset, gdal_dataset_closer> ds(
         static_cast<GDALDataset*>(

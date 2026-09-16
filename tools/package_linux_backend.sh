@@ -378,6 +378,16 @@ fi
     find "$STAGE_LIB" -maxdepth 1 -type f -name '*.so*' -printf '%f\n' | sort | sed 's/^/- /'
 } > "$STAGE_DIR/THIRD_PARTY_NOTICES.txt"
 
+# GDAL_DATA / PROJ_DATA / PROJ_LIB here are now belt-and-braces. Since the
+# lsdtt_gdal_init() change, every binary pins bin/../share/proj and
+# bin/../share/gdal for itself at startup and a bundled proj.db takes precedence
+# over these variables anyway (src/core/lsdtt_gdal_init.hpp). They are kept
+# because setenv.sh is still needed for PATH and LD_LIBRARY_PATH, and because
+# they make the bundle's layout self-documenting.
+#
+# The practical gain: the tools now work when setenv.sh has NOT been sourced,
+# which is the Google Colab case described in the README below -- each `!` line
+# is a separate shell there, so the exports never persist.
 cat > "$STAGE_DIR/setenv.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

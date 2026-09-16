@@ -10,6 +10,7 @@
 // See lsdtt_raster_reproject.hpp for full documentation.
 
 #include "lsdtt_raster_reproject.hpp"
+#include "lsdtt_gdal_init.hpp"
 #include "lsdtt_crs_suggest.hpp"
 
 #include <algorithm>
@@ -166,7 +167,7 @@ static void run_gdalwarp(
     int                n_threads  = 0,   // 0 = ALL_CPUS
     int                warp_mem_mb = 512) // working memory per thread in MB
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     // Build WKT as a single-line string safe to pass as a command option
     // (replace embedded newlines just in case)

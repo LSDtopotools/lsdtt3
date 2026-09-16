@@ -10,6 +10,7 @@
 // See lsdtt_raster_warp.hpp for full documentation.
 
 #include "lsdtt_raster_warp.hpp"
+#include "lsdtt_gdal_init.hpp"
 
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -348,7 +349,7 @@ void run_gdalwarp(
     const std::string& out_path,
     const warp_request& req)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
 
     GDALDatasetH src_ds = GDALOpen(in_path.c_str(), GA_ReadOnly);
     if (!src_ds)
