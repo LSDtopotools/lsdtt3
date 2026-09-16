@@ -2083,6 +2083,19 @@ set_tests_properties(unit_gdal_init_fallthrough PROPERTIES LABELS "unit;gdal")
 # to .cpp files under src/. This is a source check, not a runtime one -- a
 # violation compiles perfectly well, it just quietly undoes the facade, so
 # nothing but an explicit check will catch it.
+# Chunk 2a of the GDAL/PROJ friction work: the format contract. Asserts every
+# driver in the plan's §5.2 set is registered and that lsdtt3 can read a raster
+# written by each. Written against the system GDAL; re-run unchanged against the
+# vendored GDAL in Phase 2, where it is the acceptance gate for the trimmed
+# driver set.
+add_executable(lsdtt-test-format-support cpp/test_format_support.cpp)
+target_link_libraries(lsdtt-test-format-support PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-format-support PRIVATE ${GDAL_INCLUDE_DIRS})
+add_test(NAME unit_gdal_format_support
+         COMMAND lsdtt-test-format-support
+                 "${CMAKE_CURRENT_BINARY_DIR}/format_support_work")
+set_tests_properties(unit_gdal_format_support PROPERTIES LABELS "unit;gdal")
+
 # giuh_discharge: volume conservation and timestep invariance. Added 2026-09-16
 # with the fix for the unused dt_rainfall_s defect; the GIUH code had no tests
 # at all before this, which is how the defect survived.
@@ -5060,12 +5073,11 @@ set(LSDTT_DOMAIN_RULES
     # Added 2026-09-14: the native image-filter primitives and raster image
     # operations (Otsu, adaptive threshold, Canny, Hough) that replaced OpenCV.
     "image_filters|image_ops" "image_ops"
-    # Added 2026-09-16 with Phase 0 of the GDAL/PROJ friction work: pinning the
-    # PROJ and GDAL runtime data directories so a stale PROJ_DATA in the user's
-    # environment cannot silently change a datum transformation. Its own
-    # compartment rather than "core" because it is the geospatial runtime
-    # boundary, and anyone touching lsdtt_gdal_init.cpp wants exactly these.
-    "gdal_init"              "gdal_init"
+    # Added 2026-09-16 with the GDAL/PROJ friction work. Its own compartment
+    # rather than "core" because it is the geospatial runtime boundary: PROJ/GDAL
+    # data pinning (Phase 0), the header facade (Phase 1) and the format contract
+    # (Phase 2 chunk 2a). Anyone touching that boundary wants `ctest -L gdal`.
+    "gdal_"                  "gdal"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. Measured
