@@ -398,10 +398,20 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_ridgelines` | `bool` | `false` | `switch` | - | Write selected ridgelines to CSV and FlatGeobuf. | NOTE for any ridgeline to print, you must select an analysis mode. |
+| `write_ridgelines` | `bool` | `false` | `switch` | - | This triggers ridgeline printing to csv. | NOTE for any ridgeline to print, you must select an analysis mode. |
 | `write_ridgeline_stats` | `bool` | `false` | `switch` | - | This triggers printing of ridgeline statistics (including ridgeline steepness) to csv. | Includes slope, R2, normalized steepness, and polynomial coeffs. |
 | `write_ridgeline_extrema` | `bool` | `false` | `switch` | - | This triggers printing of ridgeline extrema to csv. | Includes distance to next extremum, relief, and distance to TDJ. |
 | `write_ridgeline_flow_topological_distance` | `bool` | `false` | `switch` | - | Write the left and right flow topological distances for internal ridgeline nodes. | Outputs a csv capturing the topological flow distance through a common junction between adjacent DEM pixels on each side of the divide node. |
+
+### Triple divide outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write triple and quadruple divide nodes on selected ridgelines. | The surrounding-basin test is used. |
+| `write_zero_order_triple_divides_on_selected_ridglines` | `bool` | `false` | `switch` | - | Write triple divide join/leave nodes bounding zero-order basins. | Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network. |
+| `write_topological_distance_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write nodes where either flanking flow topological distance exceeds the threshold. | Results are written with the other selected triple-divide modes in one metadata-compatible layer. |
+| `topological_distance_triple_divide_threshold` | `float` | `0.0` | `param` | - | Flow topological distance threshold for topological triple divides. | A node qualifies when the left OR right distance is greater than this value. |
+| `topological_distance_triple_divide_thresholds` | `string` | - | `param` | - | Comma-separated flow topological distance thresholds in metres. | When supplied, one topological triple-divide CSV and FlatGeobuf is written for each value. An empty value falls back to the singular topological_distance_triple_divide_threshold parameter. |
 
 ### Paired flow paths
 

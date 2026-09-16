@@ -96,6 +96,7 @@ nav:
       - Fluvial surfaces: cli_reference/cli_reference_lsdtt_fluvial_surfaces.md
       - Valley centreline: cli_reference/cli_reference_lsdtt_valley_centreline.md
       - Basin extraction: cli_reference/cli_reference_lsdtt_basin_extraction.md
+      - Outlet matching: cli_reference/cli_reference_lsdtt_outlet_matching.md
       - Basin statistics: cli_reference/cli_reference_lsdtt_basin_stats.md
       - Internal drainage: cli_reference/cli_reference_lsdtt_internal_drainage.md
     - Channel network analysis:
