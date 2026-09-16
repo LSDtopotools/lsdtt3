@@ -56,7 +56,6 @@ else()
         -Wall
         -Wextra
         -Wpedantic
-        -Wno-unused-parameter   # OGR headers trigger this; suppress globally
     )
 endif()
 

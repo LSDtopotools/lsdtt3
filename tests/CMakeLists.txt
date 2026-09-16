@@ -2083,6 +2083,14 @@ set_tests_properties(unit_gdal_init_fallthrough PROPERTIES LABELS "unit;gdal")
 # to .cpp files under src/. This is a source check, not a runtime one -- a
 # violation compiles perfectly well, it just quietly undoes the facade, so
 # nothing but an explicit check will catch it.
+# giuh_discharge: volume conservation and timestep invariance. Added 2026-09-16
+# with the fix for the unused dt_rainfall_s defect; the GIUH code had no tests
+# at all before this, which is how the defect survived.
+add_executable(lsdtt-test-giuh-discharge cpp/test_giuh_discharge.cpp)
+target_link_libraries(lsdtt-test-giuh-discharge PRIVATE lsdtt3_cpu)
+add_test(NAME unit_giuh_discharge COMMAND lsdtt-test-giuh-discharge)
+set_tests_properties(unit_giuh_discharge PROPERTIES LABELS "unit;giuh")
+
 add_test(NAME unit_gdal_init_boundary
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_gdal_boundary.py")
@@ -5021,6 +5029,7 @@ set(LSDTT_DOMAIN_RULES
     "divide_migration"       "divide_migration"
     "fetch"                  "fetch"
     "hydraulic"              "hydraulic"
+    "giuh"                   "giuh"
     "surface_metrics"        "surface_metrics"
     "spectral_analysis"      "surface_metrics"
     "hillslope"              "hillslope"

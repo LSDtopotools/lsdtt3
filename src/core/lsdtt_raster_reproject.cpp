@@ -82,7 +82,7 @@ static GDALResampleAlg resample_algo(const std::string& s)
 // -----------------------------------------------------------------------------
 static double estimate_projected_pixel_size(
     const lsdtt_raster_meta& meta,
-    const lsdtt_crs_suggestion& sug,
+    const lsdtt_crs_suggestion& /*sug*/,   // target_wkt already carries the choice
     const std::string& target_wkt)
 {
     // Parse source and target SRS

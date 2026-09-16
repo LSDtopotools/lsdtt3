@@ -157,6 +157,59 @@ lsdtt_giuh_result compute_giuh(
 // =============================================================================
 // giuh_discharge
 // =============================================================================
+// ---------------------------------------------------------------------------
+// resample_iuh_density
+//
+// Re-bins a piecewise-constant IUH density from bins of width src_dt to bins of
+// width dst_dt, conserving the integral exactly.
+//
+// The IUH is a density in [s^-1] normalised so that sum(iuh[k]) * src_dt == 1.
+// Each source bin therefore carries a dimensionless mass iuh[k] * src_dt. That
+// mass is split across the destination bins it overlaps, in proportion to the
+// overlap, and each destination bin's accumulated mass is divided by dst_dt to
+// return a density. The result satisfies sum(out[j]) * dst_dt == 1 to within
+// rounding, whatever the ratio of the two bin widths.
+// ---------------------------------------------------------------------------
+static std::vector<double> resample_iuh_density(
+    const std::vector<double>& iuh,
+    double                     src_dt,
+    double                     dst_dt)
+{
+    const int n_src = static_cast<int>(iuh.size());
+    if (n_src == 0 || src_dt <= 0.0 || dst_dt <= 0.0) return {};
+
+    const double total_s = static_cast<double>(n_src) * src_dt;
+    const int    n_dst   = std::max(1, static_cast<int>(std::ceil(total_s / dst_dt)));
+
+    std::vector<double> mass(static_cast<std::size_t>(n_dst), 0.0);
+
+    for (int k = 0; k < n_src; ++k)
+    {
+        const double src_lo = static_cast<double>(k) * src_dt;
+        const double src_hi = src_lo + src_dt;
+        const double density = iuh[static_cast<std::size_t>(k)];
+        if (density == 0.0) continue;
+
+        int j_lo = static_cast<int>(std::floor(src_lo / dst_dt));
+        int j_hi = static_cast<int>(std::ceil (src_hi / dst_dt));
+        if (j_lo < 0) j_lo = 0;
+        if (j_hi > n_dst) j_hi = n_dst;
+
+        for (int j = j_lo; j < j_hi; ++j)
+        {
+            const double dst_lo = static_cast<double>(j) * dst_dt;
+            const double dst_hi = dst_lo + dst_dt;
+            const double overlap =
+                std::min(src_hi, dst_hi) - std::max(src_lo, dst_lo);
+            if (overlap > 0.0)
+                mass[static_cast<std::size_t>(j)] += density * overlap;
+        }
+    }
+
+    for (double& m : mass) m /= dst_dt;
+    return mass;
+}
+
 std::vector<double> giuh_discharge(
     const lsdtt_giuh_result&   giuh,
     const std::vector<double>& rainfall_m_per_s,
@@ -165,53 +218,65 @@ std::vector<double> giuh_discharge(
 {
     if (giuh.iuh.empty())
         throw std::runtime_error("giuh_discharge: IUH is empty");
+    if (dt_rainfall_s <= 0.0)
+        throw std::runtime_error("giuh_discharge: dt_rainfall_s must be > 0");
+    if (giuh.dt_bin_s <= 0.0)
+        throw std::runtime_error("giuh_discharge: giuh.dt_bin_s must be > 0");
     if (rainfall_m_per_s.empty())
         return {};
 
-    const int n_rain  = static_cast<int>(rainfall_m_per_s.size());
-    const int n_iuh   = static_cast<int>(giuh.iuh.size());
-    const int n_out   = n_rain + n_iuh - 1;
-
     const double A = giuh.catchment_area_m2;
 
-    // Resample IUH to rainfall timestep using trapezoidal quadrature
-    // IUH is in [s^-^1]; multiply by A [m^2] * R [m/s] * C * dt_rain [s] -> m^3/s
-    // If dt_rainfall_s matches dt_bin_s, no resampling needed.
-    // For simplicity: we directly use the IUH bins and assume dt_rain ~ dt_bin.
-    // The user should set dt_bin_s ~= dt_rainfall_s for accuracy.
+    // The convolution indexes rainfall by dt_rainfall_s and the IUH by
+    // giuh.dt_bin_s. Summing Q[t + k] across the two is only coherent when they
+    // are the same width, so the IUH is re-binned onto the rainfall timestep
+    // first. Before 2026-09-16 this resampling was described in a comment but
+    // never performed, and the convolution additionally scaled by dt_bin_s
+    // where it should have scaled by dt_rainfall_s.
+    //
+    // The two errors compensated in the integral, so total runoff volume came
+    // out right and no mass-balance check could see the defect. What was wrong
+    // was the hydrograph SHAPE, whenever the two timesteps differed: peak
+    // discharge was out by a factor of dt_bin_s/dt_rainfall_s and time-to-peak
+    // by its reciprocal. giuh_pulse_discharge() passes the caller's own dt
+    // straight through, and lsdtt-sediment-routing passes its model timestep
+    // while binning the IUH with the independent giuh_dt_bin_s parameter, so
+    // the mismatch was reachable from the CLI.
+    // tests/cpp/test_giuh_discharge.cpp pins both halves.
+    const std::vector<double>& iuh_binned = giuh.iuh;
+    std::vector<double> iuh_resampled;
+    if (std::abs(dt_rainfall_s - giuh.dt_bin_s) > 1.0e-9 * giuh.dt_bin_s)
+    {
+        iuh_resampled = resample_iuh_density(
+            iuh_binned, giuh.dt_bin_s, dt_rainfall_s);
+    }
+    const std::vector<double>& iuh =
+        iuh_resampled.empty() ? iuh_binned : iuh_resampled;
 
-    std::vector<double> Q(n_out, 0.0);
-    const double bin_width_s = giuh.dt_bin_s;
+    const int n_rain = static_cast<int>(rainfall_m_per_s.size());
+    const int n_iuh  = static_cast<int>(iuh.size());
+    const int n_out  = n_rain + n_iuh - 1;
+
+    std::vector<double> Q(static_cast<std::size_t>(n_out), 0.0);
 
     for (int t = 0; t < n_rain; ++t)
     {
-        double r_eff = rainfall_m_per_s[t] * runoff_coefficient;
+        const double r_eff =
+            rainfall_m_per_s[static_cast<std::size_t>(t)] * runoff_coefficient;
         if (r_eff <= 0.0) continue;
 
-        // How many IUH bins does one rainfall step cover?
-        // Simple approach: spread rainfall pulse over the IUH.
-        // Q contribution at output step t + k:
-        //   A [m^2] * r_eff [m/s] * dt_rain [s] * IUH[k] [s^-^1] * bin_width_s
-        // = A * r_eff * dt_rain * IUH[k] * bin_width_s
-        // But IUH[k] [s^-^1] * bin_width_s is dimensionless fraction.
-        // Output Q has units m^3/s, so divide by dt_rainfall_s at output step.
-        // Equivalently: Q[t+k] += A * r_eff * IUH[k] * bin_width_s
-        //                           (volume in m^3 spread over dt_rain, giving m^3/s
-        //                            when IUH is per-second rate)
-        // The convolution:
-        //   Q[t_out] = A * sum_k R[t_out - k] * C * iuh[k] * bin_width_s * dt_rain
-        // Here dt_rain is absorbed into R (R already in m/s, so rainfall depth
-        // per step = R * dt_rain). The IUH is [s^-^1], and integrating over
-        // bin_width_s [s] gives a fraction. The result is in m^3/s.
+        // Effective rainfall volume produced by this step, in m^3:
+        //     A [m^2] * r_eff [m/s] * dt_rainfall_s [s]
+        // The IUH is a density in [s^-1], so multiplying that volume by
+        // iuh[k] gives m^3/s -- a discharge -- at lag k.
+        const double step_volume_m3 = A * r_eff * dt_rainfall_s;
 
         for (int k = 0; k < n_iuh; ++k)
         {
-            int out_idx = t + k;
+            const int out_idx = t + k;
             if (out_idx >= n_out) break;
-            // Volume of runoff from this rain step: A * r_eff * dt_rain_s [m^3]
-            // Distributed over output step k: multiply by IUH[k] * bin_width_s (fraction)
-            // Divide by dt_rainfall_s to get m^3/s
-            Q[out_idx] += A * r_eff * giuh.iuh[k] * bin_width_s;
+            Q[static_cast<std::size_t>(out_idx)] +=
+                step_volume_m3 * iuh[static_cast<std::size_t>(k)];
         }
     }
 
