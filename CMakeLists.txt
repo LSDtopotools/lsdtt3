@@ -393,6 +393,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_vector_rasterise_cpu.cpp
     src/cpu/lsdtt_sti_cpu.cpp
     src/cpu/lsdtt_wetness_index_cpu.cpp
+    src/cpu/lsdtt_hydro_velocity_field_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp
     src/cpu/lsdtt_swath_cpu.cpp
     src/cpu/lsdtt_streamlines_cpu.cpp

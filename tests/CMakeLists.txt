@@ -2048,6 +2048,14 @@ endif()
 # Image-filter primitives and splitmix64: border mapping, box mean with
 # OpenCV's rounding rules, Gaussian kernels, separable and fixed-point filters,
 # Otsu, Sobel, Bresenham.
+# Phase 1 of plan_raster_topmodel.md: velocity field, travel time, width
+# function. "hydro" is claimed by the wetness_index -> network domain rule
+# below, so this stays in the network compartment with its Phase 0 sibling.
+add_executable(lsdtt-test-hydro-velocity-field cpp/test_hydro_velocity_field.cpp)
+target_link_libraries(lsdtt-test-hydro-velocity-field PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_velocity_field COMMAND lsdtt-test-hydro-velocity-field)
+set_tests_properties(unit_hydro_velocity_field PROPERTIES LABELS "unit;network")
+
 # Phase 0 of plan_raster_topmodel.md: the shared TWI. Guards the core function
 # directly, including the float precision contract that the CLI checksum test
 # was MEASURED not to discriminate -- see the header of test_wetness_index.cpp.
@@ -5100,7 +5108,7 @@ set(LSDTT_DOMAIN_RULES
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index"          "network"
+    "wetness_index|hydro_velocity"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
