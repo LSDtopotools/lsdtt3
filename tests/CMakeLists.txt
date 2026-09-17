@@ -2085,6 +2085,12 @@ target_link_libraries(lsdtt-test-hydro-roughness PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_roughness COMMAND lsdtt-test-hydro-roughness)
 set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "unit;network")
 
+# Phase 9 of plan_raster_topmodel.md: land-cover scenarios.
+add_executable(lsdtt-test-landcover-scenario cpp/test_landcover_scenario.cpp)
+target_link_libraries(lsdtt-test-landcover-scenario PRIVATE lsdtt3_cpu)
+add_test(NAME unit_landcover_scenario COMMAND lsdtt-test-landcover-scenario)
+set_tests_properties(unit_landcover_scenario PROPERTIES LABELS "unit;network")
+
 # Phase 8 of plan_raster_topmodel.md: infiltration excess (exp-K Green-Ampt).
 #
 # The oracle is tests/data/expinf_95_02_reference.csv -- a FROZEN trace of
@@ -5176,7 +5182,7 @@ set(LSDTT_DOMAIN_RULES
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration"          "network"
+    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"

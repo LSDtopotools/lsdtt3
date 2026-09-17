@@ -397,6 +397,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_topmodel_cpu.cpp
     src/cpu/lsdtt_topmodel_dynamic_cpu.cpp
     src/cpu/lsdtt_infiltration_excess_cpu.cpp
+    src/cpu/lsdtt_landcover_scenario_cpu.cpp
     src/cpu/lsdtt_hydro_roughness_cpu.cpp
     src/cpu/lsdtt_canopy_interception_cpu.cpp
     src/cpu/lsdtt_hydro_routing_cpu.cpp
