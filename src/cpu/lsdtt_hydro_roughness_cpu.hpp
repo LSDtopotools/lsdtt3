@@ -154,8 +154,13 @@ struct roughness_field_inputs
     // Manning n from the land-cover table. Used on hillslope AND floodplain.
     const lsdtt_raster_cpu* landcover_roughness = nullptr;
 
-    // Non-zero marks a channel cell.
-    const lsdtt_raster_cpu* channel_mask = nullptr;
+    // Non-zero marks a channel cell. Named `channel_extent`, NOT
+    // `channel_mask`: lsdtt-lem already uses "channel mask" for a completely
+    // different thing -- the Dirichlet set of FIXED-ELEVATION cells in the
+    // hillslope solve. Both identify channel pixels; one sets a boundary
+    // condition on elevation, this one selects a resistance closure. See
+    // lsdtt_channel_extent_cpu.hpp.
+    const lsdtt_raster_cpu* channel_extent = nullptr;
 
     // Optional; from lsdtt-fluvial-surfaces. Cells equal to
     // roughness_partition_options::floodplain_class are counted as floodplain.

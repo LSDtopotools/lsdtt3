@@ -180,11 +180,11 @@ lsdtt_raster_cpu compute_channel_roughness(
     const lsdtt_raster_cpu* grids[] = {
         inputs.drainage_area, inputs.slope, inputs.hydraulic_radius,
         inputs.d50, inputs.d84, inputs.ksn, inputs.landcover_roughness,
-        inputs.channel_mask, inputs.surface_class
+        inputs.channel_extent, inputs.surface_class
     };
     const char* names[] = {
         "drainage_area", "slope", "hydraulic_radius", "d50", "d84", "ksn",
-        "landcover_roughness", "channel_mask", "surface_class"
+        "landcover_roughness", "channel_extent", "surface_class"
     };
     for (std::size_t i = 0; i < sizeof(grids) / sizeof(grids[0]); ++i)
         if (grids[i]) require_same_grid(*grids[i], meta, names[i], who);
@@ -194,9 +194,9 @@ lsdtt_raster_cpu compute_channel_roughness(
     const float ndv    = static_cast<float>(meta.no_data_value);
 
     auto is_channel = [&](int row, int col) {
-        if (inputs.channel_mask == nullptr) return true;
-        if (inputs.channel_mask->get_mask_array()(row, col) == 0) return false;
-        return cell_value(inputs.channel_mask, row, col) != 0.0;
+        if (inputs.channel_extent == nullptr) return true;
+        if (inputs.channel_extent->get_mask_array()(row, col) == 0) return false;
+        return cell_value(inputs.channel_extent, row, col) != 0.0;
     };
 
     // Reference ksn: the median over channel cells unless one was given.

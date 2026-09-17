@@ -427,7 +427,7 @@ void test_partition()
 
     lsdtt::roughness_field_inputs in;
     in.drainage_area = &area;
-    in.channel_mask  = &chan;
+    in.channel_extent  = &chan;
     in.surface_class = &surf;
 
     in.landcover_roughness = &lc_a;
@@ -509,7 +509,7 @@ void test_roughness_drives_velocity()
 
     lsdtt::roughness_field_inputs ri;
     ri.drainage_area = &area;
-    ri.channel_mask  = &chan;
+    ri.channel_extent  = &chan;
 
     lsdtt::hydro_velocity_options vo;
     vo.hydraulic_radius_coeff = 0.5;

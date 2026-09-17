@@ -1,4 +1,4 @@
-// test_channel_mask.cpp
+// test_channel_extent.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Unit tests for src/cpu/lsdtt_channel_mask_cpu -- Phase 6 (plan section 8).
+// Unit tests for src/cpu/lsdtt_channel_extent_cpu -- Phase 6 (plan section 8).
 //
 // What is under test
 // ------------------
@@ -41,7 +41,7 @@
 #include <string>
 #include <vector>
 
-#include "lsdtt_channel_mask_cpu.hpp"
+#include "lsdtt_channel_extent_cpu.hpp"
 #include "lsdtt_hydro_roughness_cpu.hpp"
 #include "lsdtt_hydro_velocity_field_cpu.hpp"
 
@@ -106,7 +106,7 @@ lsdtt::lsdtt_raster_cpu uniform(const lsdtt::lsdtt_raster_meta& meta, float v)
 // =============================================================================
 void test_emergent()
 {
-    lsdtt::channel_mask_options o;
+    lsdtt::channel_extent_options o;
     o.hydraulic_radius_coeff      = 0.5;
     o.hydraulic_radius_exponent   = 0.4;
     o.reference_area_m2           = 1.0e6;
@@ -172,13 +172,13 @@ void test_ladder()
     const auto area = make_raster(meta, {1e2f, 1e3f, 1e4f, 1e5f, 1e6f, 1e7f, 1e8f});
     const auto slope = make_raster(meta, {0.5f, 0.3f, 0.2f, 0.1f, 0.05f, 0.02f, 0.01f});
 
-    lsdtt::channel_mask_options o;
+    lsdtt::channel_extent_options o;
 
     // none
-    o.mode = lsdtt::channel_mask_mode::none;
+    o.mode = lsdtt::channel_extent_mode::none;
     o.hydraulic_radius_coeff = 0.5; o.sheet_flow_min_depth_metres = 0.01;
     {
-        const auto r = lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o);
+        const auto r = lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o);
         const double head = lsdtt::emergent_channel_area_m2(o);
         bool right = true;
         for (int i = 0; i < n; ++i)
@@ -192,10 +192,10 @@ void test_ladder()
     }
 
     // area_threshold
-    o.mode = lsdtt::channel_mask_mode::area_threshold;
+    o.mode = lsdtt::channel_extent_mode::area_threshold;
     o.channel_area_threshold_m2 = 1.0e5;
     {
-        const auto r = lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o);
+        const auto r = lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o);
         check("ladder: `area_threshold` is a clean cut at the threshold",
               r.n_channel == 4 &&
               r.mask.get_data_array()(0, 2) == 0.0f &&
@@ -207,11 +207,11 @@ void test_ladder()
 
     // area_slope_threshold: steeper cells become channel at SMALLER area, which
     // is the whole point of Montgomery & Dietrich over a plain area cut.
-    o.mode = lsdtt::channel_mask_mode::area_slope_threshold;
+    o.mode = lsdtt::channel_extent_mode::area_slope_threshold;
     o.area_slope_theta = 2.0;
     o.area_slope_threshold = 1.0e2;
     {
-        const auto r = lsdtt::compute_channel_mask(area, &slope, nullptr, meta, o);
+        const auto r = lsdtt::compute_channel_extent(area, &slope, nullptr, meta, o);
         bool right = true;
         for (int i = 0; i < n; ++i)
         {
@@ -227,7 +227,7 @@ void test_ladder()
         // area does not.
         const auto a2 = make_raster(make_meta(1, 2), {1e3f, 1e3f});
         const auto s2 = make_raster(make_meta(1, 2), {0.5f, 0.01f});
-        const auto r2 = lsdtt::compute_channel_mask(a2, &s2, nullptr,
+        const auto r2 = lsdtt::compute_channel_extent(a2, &s2, nullptr,
                                                     make_meta(1, 2), o);
         check("ladder: at equal area, the steeper cell channelises and the gentle one does not",
               r2.mask.get_data_array()(0, 0) == 1.0f &&
@@ -235,10 +235,10 @@ void test_ladder()
     }
 
     // extraction: any non-zero value in the supplied raster counts
-    o.mode = lsdtt::channel_mask_mode::extraction;
+    o.mode = lsdtt::channel_extent_mode::extraction;
     {
         const auto sup = make_raster(meta, {0.f, 1.f, 0.f, 3.f, 0.f, 1.f, 0.f});
-        const auto r = lsdtt::compute_channel_mask(area, nullptr, &sup, meta, o);
+        const auto r = lsdtt::compute_channel_extent(area, nullptr, &sup, meta, o);
         check("ladder: `extraction` takes any non-zero value as channel",
               r.n_channel == 3 &&
               r.mask.get_data_array()(0, 3) == 1.0f &&
@@ -288,14 +288,14 @@ void test_mask_is_a_refinement()
 
     // Now supply three different masks. The GEOMETRY must not move at all: the
     // mask is wired to roughness, never to the hydraulic radius.
-    lsdtt::channel_mask_options mo;
+    lsdtt::channel_extent_options mo;
     mo.hydraulic_radius_coeff      = vo.hydraulic_radius_coeff;
     mo.sheet_flow_min_depth_metres = vo.sheet_flow_min_depth_metres;
 
-    auto velocity_with_mask = [&](lsdtt::channel_mask_mode mode, double thresh) {
+    auto velocity_with_mask = [&](lsdtt::channel_extent_mode mode, double thresh) {
         mo.mode = mode;
         mo.channel_area_threshold_m2 = thresh;
-        const auto cm = lsdtt::compute_channel_mask(area, &slope, nullptr, meta, mo);
+        const auto cm = lsdtt::compute_channel_extent(area, &slope, nullptr, meta, mo);
 
         lsdtt::roughness_partition_options po;
         po.channel.mode = lsdtt::channel_roughness_mode::constant;
@@ -305,7 +305,7 @@ void test_mask_is_a_refinement()
 
         lsdtt::roughness_field_inputs ri;
         ri.drainage_area = &area;
-        ri.channel_mask  = &cm.mask;
+        ri.channel_extent  = &cm.mask;
         const auto rf = lsdtt::compute_roughness_field(ri, meta, po);
 
         lsdtt::hydro_velocity_inputs vi2 = vi;
@@ -313,9 +313,9 @@ void test_mask_is_a_refinement()
         return lsdtt::compute_velocity_field(vi2, meta, vo);
     };
 
-    const auto v_a = velocity_with_mask(lsdtt::channel_mask_mode::none, 0.0);
-    const auto v_b = velocity_with_mask(lsdtt::channel_mask_mode::area_threshold, 1e4);
-    const auto v_c = velocity_with_mask(lsdtt::channel_mask_mode::area_threshold, 1e6);
+    const auto v_a = velocity_with_mask(lsdtt::channel_extent_mode::none, 0.0);
+    const auto v_b = velocity_with_mask(lsdtt::channel_extent_mode::area_threshold, 1e4);
+    const auto v_c = velocity_with_mask(lsdtt::channel_extent_mode::area_threshold, 1e6);
 
     bool identical = true;
     double worst = 0.0;
@@ -338,9 +338,9 @@ void test_mask_is_a_refinement()
     // the previous check would be vacuous -- it would pass for a mask that was
     // simply ignored everywhere.
     {
-        mo.mode = lsdtt::channel_mask_mode::area_threshold;
+        mo.mode = lsdtt::channel_extent_mode::area_threshold;
         mo.channel_area_threshold_m2 = 1e5;
-        const auto cm = lsdtt::compute_channel_mask(area, &slope, nullptr, meta, mo);
+        const auto cm = lsdtt::compute_channel_extent(area, &slope, nullptr, meta, mo);
 
         lsdtt::roughness_partition_options po;
         po.channel.mode = lsdtt::channel_roughness_mode::constant;
@@ -350,7 +350,7 @@ void test_mask_is_a_refinement()
 
         lsdtt::roughness_field_inputs ri;
         ri.drainage_area = &area;
-        ri.channel_mask  = &cm.mask;
+        ri.channel_extent  = &cm.mask;
         const auto rf = lsdtt::compute_roughness_field(ri, meta, po);
 
         lsdtt::hydro_velocity_inputs vi2 = vi;
@@ -407,14 +407,14 @@ void test_vector_mode(const std::string& out_dir)
         f << "]}}]}";
     }
 
-    lsdtt::channel_mask_options o;
-    o.mode = lsdtt::channel_mask_mode::vector;
+    lsdtt::channel_extent_options o;
+    o.mode = lsdtt::channel_extent_mode::vector;
     o.channel_vector_fname = path;
 
     // No snapping: the mask sits on the top row, where the line was drawn.
     o.snap_search_radius_pixels = 0;
     {
-        const auto r = lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o);
+        const auto r = lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o);
         check("vector: the line burns in where it was drawn",
               r.n_burned > 0 && r.n_snapped == 0,
               std::to_string(r.n_burned) + " burned, " +
@@ -434,7 +434,7 @@ void test_vector_mode(const std::string& out_dir)
     // With snapping: it must move onto the valley, where the water is.
     o.snap_search_radius_pixels = 2;
     {
-        const auto r = lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o);
+        const auto r = lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o);
         int on_mid = 0;
         for (int c = 0; c < n; ++c)
             if (r.mask.get_data_array()(1, c) != 0.0f) ++on_mid;
@@ -448,7 +448,7 @@ void test_vector_mode(const std::string& out_dir)
     {
         auto o2 = o;
         o2.snap_min_area_m2 = 1.0e12;    // nothing can satisfy this
-        const auto r = lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o2);
+        const auto r = lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o2);
         check("vector: snap_min_area_m2 rejects burns with no channel nearby",
               r.n_channel == 0 && r.n_rejected_by_area == r.n_burned,
               std::to_string(r.n_rejected_by_area) + " of " +
@@ -460,7 +460,7 @@ void test_vector_mode(const std::string& out_dir)
         auto o3 = o;
         o3.channel_vector_fname = out_dir + "/does_not_exist.geojson";
         bool threw = false;
-        try { (void)lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o3); }
+        try { (void)lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o3); }
         catch (const std::exception&) { threw = true; }
         check("vector: a missing vector file throws rather than silently emptying",
               threw);
@@ -481,28 +481,28 @@ void test_validation()
         return false;
     };
 
-    lsdtt::channel_mask_options o;
-    o.mode = lsdtt::channel_mask_mode::area_slope_threshold;
+    lsdtt::channel_extent_options o;
+    o.mode = lsdtt::channel_extent_mode::area_slope_threshold;
     check("validation: area_slope_threshold without slope throws",
-          throws([&]{ (void)lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o); }));
+          throws([&]{ (void)lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o); }));
 
-    o.mode = lsdtt::channel_mask_mode::extraction;
+    o.mode = lsdtt::channel_extent_mode::extraction;
     check("validation: extraction without a supplied mask throws",
-          throws([&]{ (void)lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o); }));
+          throws([&]{ (void)lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o); }));
 
-    o.mode = lsdtt::channel_mask_mode::vector;
+    o.mode = lsdtt::channel_extent_mode::vector;
     check("validation: vector mode without a filename throws",
-          throws([&]{ (void)lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o); }));
+          throws([&]{ (void)lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o); }));
 
-    o.mode = lsdtt::channel_mask_mode::area_threshold;
+    o.mode = lsdtt::channel_extent_mode::area_threshold;
     o.channel_area_threshold_m2 = 0.0;
     check("validation: a non-positive area threshold throws",
-          throws([&]{ (void)lsdtt::compute_channel_mask(area, nullptr, nullptr, meta, o); }));
+          throws([&]{ (void)lsdtt::compute_channel_extent(area, nullptr, nullptr, meta, o); }));
 
     o.channel_area_threshold_m2 = 1e5;
     const auto wrong = uniform(make_meta(4, 4), 1.0f);
     check("validation: a raster on the wrong grid throws",
-          throws([&]{ (void)lsdtt::compute_channel_mask(wrong, nullptr, nullptr, meta, o); }));
+          throws([&]{ (void)lsdtt::compute_channel_extent(wrong, nullptr, nullptr, meta, o); }));
 }
 
 } // namespace

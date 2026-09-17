@@ -1,4 +1,4 @@
-// lsdtt_channel_mask_cpu.hpp
+// lsdtt_channel_extent_cpu.hpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -8,13 +8,34 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Where the channels are -- and why that is a refinement, not a prerequisite
+// Channel extent: where the channels are, and why that is a refinement
+// rather than a prerequisite
 //
 // Phase 6. Five ways to say which cells are channel, from "do not say at all"
 // to "here is the Ordnance Survey river network".
 //
-// WHAT THE MASK IS ACTUALLY FOR
-// -----------------------------
+// NOT THE SAME THING AS lsdtt-lem's "CHANNEL MASK"
+// -------------------------------------------------
+// This file is `channel_extent`, not `channel_mask`, and the distinction is
+// deliberate. lsdtt-lem already has `channel_mask_fname` and
+// `compute_lem_channel_mask()`, and they mean something entirely different:
+// the DIRICHLET SET of cells whose ELEVATION is held fixed during a hillslope
+// step, so that uplift does not lift the channel network away from the
+// hillslopes relaxing toward it.
+//
+//     lsdtt-lem channel mask   a boundary condition on elevation
+//     channel extent (here)    a selector for which resistance law applies
+//
+// The two overlap only in that both identify "channel pixels". Nothing else
+// about them is shared: one is a constraint on a PDE solve, the other decides
+// whether Manning's n comes from the bed or from the vegetation. Reusing the
+// name would have put two unrelated meanings behind one word in the same
+// toolkit -- and `channel_mask_fname` is already a published lsdtt-lem
+// parameter, so a distributed-hydrology parameter of that name would mean
+// different things in two CLIs.
+//
+// WHAT THE CHANNEL EXTENT IS ACTUALLY FOR
+// ---------------------------------------
 // Not for deciding where water goes. Saturation excess is generated on ANY
 // cell, the saturated area expands and contracts through a storm, and the
 // water routes over everything. The mask exists to choose WHICH RESISTANCE
@@ -79,7 +100,7 @@
 namespace lsdtt
 {
 
-enum class channel_mask_mode
+enum class channel_extent_mode
 {
     none,
     area_threshold,
@@ -88,9 +109,9 @@ enum class channel_mask_mode
     vector
 };
 
-struct channel_mask_options
+struct channel_extent_options
 {
-    channel_mask_mode mode = channel_mask_mode::none;
+    channel_extent_mode mode = channel_extent_mode::none;
 
     // --- mode none: the SAME geometry the velocity closure uses ---
     // These must match hydro_velocity_options or the emergent mask describes a
@@ -121,7 +142,7 @@ struct channel_mask_options
     double snap_min_area_m2 = 0.0;
 };
 
-struct channel_mask_result
+struct channel_extent_result
 {
     lsdtt_raster_cpu mask;            // 1 = channel, 0 = not, nodata = no data
 
@@ -149,7 +170,7 @@ struct channel_mask_result
 //
 // Throws std::invalid_argument for a non-positive coefficient or exponent.
 // ---------------------------------------------------------------------------
-[[nodiscard]] double emergent_channel_area_m2(const channel_mask_options& opts);
+[[nodiscard]] double emergent_channel_area_m2(const channel_extent_options& opts);
 
 // ---------------------------------------------------------------------------
 // Build the mask.
@@ -162,12 +183,12 @@ struct channel_mask_result
 // read.
 // ---------------------------------------------------------------------------
 [[nodiscard]]
-channel_mask_result compute_channel_mask(
+channel_extent_result compute_channel_extent(
     const lsdtt_raster_cpu&      drainage_area,
     const lsdtt_raster_cpu*      slope,
     const lsdtt_raster_cpu*      supplied_mask,
     const lsdtt_raster_meta&     meta,
-    const channel_mask_options&  opts
+    const channel_extent_options&  opts
 );
 
 } // namespace lsdtt

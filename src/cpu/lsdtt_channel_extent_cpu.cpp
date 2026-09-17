@@ -1,4 +1,4 @@
-// lsdtt_channel_mask_cpu.cpp
+// lsdtt_channel_extent_cpu.cpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
-#include "lsdtt_channel_mask_cpu.hpp"
+#include "lsdtt_channel_extent_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -46,7 +46,7 @@ void require_same_grid(const lsdtt_raster_cpu& r, const lsdtt_raster_meta& meta,
 
 } // namespace
 
-double emergent_channel_area_m2(const channel_mask_options& opts)
+double emergent_channel_area_m2(const channel_extent_options& opts)
 {
     const char* who = "emergent_channel_area_m2";
     require_positive(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
@@ -60,14 +60,14 @@ double emergent_channel_area_m2(const channel_mask_options& opts)
                     1.0 / opts.hydraulic_radius_exponent);
 }
 
-channel_mask_result compute_channel_mask(
+channel_extent_result compute_channel_extent(
     const lsdtt_raster_cpu&     drainage_area,
     const lsdtt_raster_cpu*     slope,
     const lsdtt_raster_cpu*     supplied_mask,
     const lsdtt_raster_meta&    meta,
-    const channel_mask_options& opts)
+    const channel_extent_options& opts)
 {
-    const char* who = "compute_channel_mask";
+    const char* who = "compute_channel_extent";
 
     require_same_grid(drainage_area, meta, "drainage_area", who);
     if (slope)        require_same_grid(*slope, meta, "slope", who);
@@ -75,14 +75,14 @@ channel_mask_result compute_channel_mask(
 
     switch (opts.mode)
     {
-        case channel_mask_mode::none:
+        case channel_extent_mode::none:
             // Validated inside emergent_channel_area_m2().
             break;
-        case channel_mask_mode::area_threshold:
+        case channel_extent_mode::area_threshold:
             require_positive(opts.channel_area_threshold_m2,
                              "channel_area_threshold_m2", who);
             break;
-        case channel_mask_mode::area_slope_threshold:
+        case channel_extent_mode::area_slope_threshold:
             if (slope == nullptr)
                 throw std::invalid_argument(
                     std::string(who) + ": slope is required in "
@@ -90,13 +90,13 @@ channel_mask_result compute_channel_mask(
             require_positive(opts.area_slope_threshold, "area_slope_threshold", who);
             require_positive(opts.min_slope, "min_slope", who);
             break;
-        case channel_mask_mode::extraction:
+        case channel_extent_mode::extraction:
             if (supplied_mask == nullptr)
                 throw std::invalid_argument(
                     std::string(who) + ": supplied_mask is required in "
                     "extraction mode");
             break;
-        case channel_mask_mode::vector:
+        case channel_extent_mode::vector:
             if (opts.channel_vector_fname.empty())
                 throw std::invalid_argument(
                     std::string(who) + ": channel_vector_fname is required in "
@@ -117,14 +117,14 @@ channel_mask_result compute_channel_mask(
     lsdtt_array2d_f  m_data(n_rows, n_cols, ndv);
     lsdtt_array2d_u8 m_mask(n_rows, n_cols, std::uint8_t(0));
 
-    channel_mask_result out;
+    channel_extent_result out;
 
     const double emergent_area =
-        (opts.mode == channel_mask_mode::none) ? emergent_channel_area_m2(opts) : 0.0;
+        (opts.mode == channel_extent_mode::none) ? emergent_channel_area_m2(opts) : 0.0;
 
     // --- vector mode: burn the lines first, then snap ---
     std::vector<std::uint8_t> burned;
-    if (opts.mode == channel_mask_mode::vector)
+    if (opts.mode == channel_extent_mode::vector)
     {
         lsdtt_raster_cpu lines;
         try
@@ -195,7 +195,7 @@ channel_mask_result compute_channel_mask(
 
             switch (opts.mode)
             {
-                case channel_mask_mode::none:
+                case channel_extent_mode::none:
                     // Where hydraulic-geometry depth has overtaken sheet-flow
                     // depth. This is a DIAGNOSTIC of the geometry, not an input
                     // to it -- the velocity closure already transitions here
@@ -203,11 +203,11 @@ channel_mask_result compute_channel_mask(
                     is_channel = (A >= emergent_area);
                     break;
 
-                case channel_mask_mode::area_threshold:
+                case channel_extent_mode::area_threshold:
                     is_channel = (A >= opts.channel_area_threshold_m2);
                     break;
 
-                case channel_mask_mode::area_slope_threshold:
+                case channel_extent_mode::area_slope_threshold:
                 {
                     if (slope->get_mask_array()(row, col) == 0) break;
                     const double S = std::max(
@@ -218,7 +218,7 @@ channel_mask_result compute_channel_mask(
                     break;
                 }
 
-                case channel_mask_mode::extraction:
+                case channel_extent_mode::extraction:
                 {
                     if (supplied_mask->get_mask_array()(row, col) == 0) break;
                     is_channel =
@@ -226,7 +226,7 @@ channel_mask_result compute_channel_mask(
                     break;
                 }
 
-                case channel_mask_mode::vector:
+                case channel_extent_mode::vector:
                     is_channel =
                         burned[static_cast<std::size_t>(row) * n_cols + col] != 0;
                     break;
