@@ -2048,6 +2048,25 @@ endif()
 # Image-filter primitives and splitmix64: border mapping, box mean with
 # OpenCV's rounding rules, Gaussian kernels, separable and fixed-point filters,
 # Otsu, Sobel, Bresenham.
+# Phase 2 of plan_raster_topmodel.md: TOPMODEL column physics, index mode.
+# NOTE: the 95.02 oracle test named in the plan is NOT here -- the ../topmodel
+# reference clone is absent from this machine. See the test file header.
+add_executable(lsdtt-test-topmodel-column cpp/test_topmodel_column.cpp)
+target_link_libraries(lsdtt-test-topmodel-column PRIVATE lsdtt3_cpu)
+add_test(NAME unit_topmodel_column COMMAND lsdtt-test-topmodel-column)
+set_tests_properties(unit_topmodel_column PROPERTIES LABELS "unit;network")
+
+# THE PHASE 2 GATE: the column against TOPMODEL 95.02 itself. The reference is
+# a third-party clone outside this repo, so the test SKIPS (exit 77) rather than
+# passing vacuously when it is absent -- a skip shows in the CTest summary.
+add_executable(lsdtt-test-topmodel-oracle cpp/test_topmodel_oracle.cpp)
+target_link_libraries(lsdtt-test-topmodel-oracle PRIVATE lsdtt3_cpu)
+add_test(NAME rigorous_topmodel_oracle_95_02
+         COMMAND lsdtt-test-topmodel-oracle
+                 "${CMAKE_SOURCE_DIR}/../topmodel/refs/original_code_c")
+set_tests_properties(rigorous_topmodel_oracle_95_02 PROPERTIES
+                     LABELS "rigorous;network" SKIP_RETURN_CODE 77)
+
 # Phase 1 of plan_raster_topmodel.md: velocity field, travel time, width
 # function. "hydro" is claimed by the wetness_index -> network domain rule
 # below, so this stays in the network compartment with its Phase 0 sibling.
@@ -5108,7 +5127,7 @@ set(LSDTT_DOMAIN_RULES
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index|hydro_velocity"          "network"
+    "wetness_index|hydro_velocity|topmodel"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
