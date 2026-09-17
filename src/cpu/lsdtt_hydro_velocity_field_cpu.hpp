@@ -159,6 +159,33 @@ struct hydro_velocity_options
 };
 
 // ---------------------------------------------------------------------------
+// Hydraulic radius from downstream hydraulic geometry:
+//
+//     R = max( h_sheet , a_R * (A / A_ref)^c_R )
+//
+// Exposed because the roughness ladder needs the SAME R that the velocity
+// closure uses: Jarrett's equation and Ferguson's variable power equation are
+// both depth-dependent, so a second, subtly different R would put the two
+// modules quietly out of step.
+//
+// The max() is the smooth channel transition -- a channel is simply where
+// hydraulic-geometry depth has overtaken sheet-flow depth.
+// ---------------------------------------------------------------------------
+[[nodiscard]]
+double hydraulic_radius_from_area(
+    double drainage_area_m2,
+    const hydro_velocity_options& opts
+) noexcept;
+
+// Per-cell hydraulic radius raster, for callers that need R as a field.
+[[nodiscard]]
+lsdtt_raster_cpu compute_hydraulic_radius_field(
+    const lsdtt_raster_cpu&       drainage_area,
+    const lsdtt_raster_meta&      meta,
+    const hydro_velocity_options& opts
+);
+
+// ---------------------------------------------------------------------------
 // Per-cell velocity [m/s].
 //
 // Invalid where any required input is masked off. Values are clamped into

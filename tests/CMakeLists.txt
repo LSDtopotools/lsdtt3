@@ -2056,6 +2056,13 @@ target_link_libraries(lsdtt-test-topmodel-column PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_column COMMAND lsdtt-test-topmodel-column)
 set_tests_properties(unit_topmodel_column PROPERTIES LABELS "unit;network")
 
+# Phase 3 of plan_raster_topmodel.md: the roughness partition and the channel-n
+# ladder.
+add_executable(lsdtt-test-hydro-roughness cpp/test_hydro_roughness.cpp)
+target_link_libraries(lsdtt-test-hydro-roughness PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_roughness COMMAND lsdtt-test-hydro-roughness)
+set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "unit;network")
+
 # THE PHASE 2 GATE: the column against TOPMODEL 95.02 itself. The reference is
 # a third-party clone outside this repo, so the test SKIPS (exit 77) rather than
 # passing vacuously when it is absent -- a skip shows in the CTest summary.
@@ -5127,7 +5134,7 @@ set(LSDTT_DOMAIN_RULES
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index|hydro_velocity|topmodel"          "network"
+    "wetness_index|hydro_velocity|hydro_roughness|topmodel"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"

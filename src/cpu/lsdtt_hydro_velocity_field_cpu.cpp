@@ -61,6 +61,50 @@ double manning_velocity(double roughness, double hydraulic_radius, double slope)
 
 } // namespace
 
+double hydraulic_radius_from_area(double drainage_area_m2,
+                                  const hydro_velocity_options& opts) noexcept
+{
+    const double r_geom = opts.hydraulic_radius_coeff *
+        std::pow(drainage_area_m2 / opts.reference_area_m2,
+                 opts.hydraulic_radius_exponent);
+    return std::max(opts.sheet_flow_min_depth_metres, r_geom);
+}
+
+lsdtt_raster_cpu compute_hydraulic_radius_field(
+    const lsdtt_raster_cpu&       drainage_area,
+    const lsdtt_raster_meta&      meta,
+    const hydro_velocity_options& opts)
+{
+    const char* who = "compute_hydraulic_radius_field";
+    require_positive(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
+    require_positive(opts.reference_area_m2, "reference_area_m2", who);
+    require_positive(opts.sheet_flow_min_depth_metres,
+                     "sheet_flow_min_depth_metres", who);
+    require_same_grid(drainage_area, meta, "drainage_area", who);
+
+    const int   n_rows = meta.n_rows;
+    const int   n_cols = meta.n_cols;
+    const float ndv    = static_cast<float>(meta.no_data_value);
+
+    const lsdtt_array2d_f&  a_d = drainage_area.get_data_array();
+    const lsdtt_array2d_u8& a_m = drainage_area.get_mask_array();
+
+    lsdtt_array2d_f  r_data(n_rows, n_cols, ndv);
+    lsdtt_array2d_u8 r_mask(n_rows, n_cols, std::uint8_t(0));
+
+    for (int row = 0; row < n_rows; ++row)
+        for (int col = 0; col < n_cols; ++col)
+        {
+            if (a_m(row, col) == 0) continue;
+            const double a = static_cast<double>(a_d(row, col));
+            if (!(a > 0.0)) continue;
+            r_data(row, col) = static_cast<float>(hydraulic_radius_from_area(a, opts));
+            r_mask(row, col) = std::uint8_t(1);
+        }
+
+    return lsdtt_raster_cpu(std::move(r_data), std::move(r_mask), meta);
+}
+
 lsdtt_raster_cpu compute_velocity_field(
     const hydro_velocity_inputs&  inputs,
     const lsdtt_raster_meta&      meta,
@@ -169,13 +213,9 @@ lsdtt_raster_cpu compute_velocity_field(
                         if (n_cell > 0.0) n = n_cell;
                     }
 
-                    // The max() is the smooth channel transition: a channel is
-                    // simply where hydraulic-geometry depth has overtaken
-                    // sheet-flow depth. No threshold, no discontinuity.
-                    const double r_geom = opts.hydraulic_radius_coeff *
-                        std::pow(area / opts.reference_area_m2,
-                                 opts.hydraulic_radius_exponent);
-                    const double R = std::max(opts.sheet_flow_min_depth_metres, r_geom);
+                    // Shared with the roughness ladder; see
+                    // hydraulic_radius_from_area() for why the max() is there.
+                    const double R = hydraulic_radius_from_area(area, opts);
 
                     v = manning_velocity(n, R, slope);
                     break;
