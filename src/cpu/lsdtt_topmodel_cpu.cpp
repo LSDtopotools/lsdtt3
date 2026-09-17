@@ -141,14 +141,42 @@ std::vector<double> lsdtt_topmodel_index_cpu::local_deficits() const
 topmodel_step_result lsdtt_topmodel_index_cpu::step(double rainfall_metres,
                                                     double potential_et_metres)
 {
-    const double p  = std::max(0.0, rainfall_metres);
-    const double ep = std::max(0.0, potential_et_metres);
+    return step_impl(&rainfall_metres, &potential_et_metres, 0);
+}
 
+topmodel_step_result lsdtt_topmodel_index_cpu::step(
+    const std::vector<double>& rainfall_per_unit,
+    const std::vector<double>& potential_et_per_unit)
+{
+    const char* who = "lsdtt_topmodel_index_cpu::step";
+    if (rainfall_per_unit.size() != units_.size() ||
+        potential_et_per_unit.size() != units_.size())
+        throw std::invalid_argument(
+            std::string(who) + ": per-unit forcing must have " +
+            std::to_string(units_.size()) + " entries (got " +
+            std::to_string(rainfall_per_unit.size()) + " rainfall and " +
+            std::to_string(potential_et_per_unit.size()) + " PET)");
+    return step_impl(rainfall_per_unit.data(), potential_et_per_unit.data(), 1);
+}
+
+topmodel_step_result lsdtt_topmodel_index_cpu::step_impl(
+    const double* rainfall, const double* potential_et, std::ptrdiff_t stride)
+{
     const std::size_t n = units_.size();
 
     topmodel_step_result out;
-    out.rainfall     = p;
-    out.potential_et = ep;
+
+    // With per-unit forcing the reported rainfall and PET are area-weighted
+    // means, so the water balance still closes on domain totals.
+    double p_mean = 0.0, ep_mean = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const std::ptrdiff_t k = static_cast<std::ptrdiff_t>(i) * stride;
+        p_mean  += units_[i].area_fraction * std::max(0.0, rainfall[k]);
+        ep_mean += units_[i].area_fraction * std::max(0.0, potential_et[k]);
+    }
+    out.rainfall     = p_mean;
+    out.potential_et = ep_mean;
 
     double quz       = 0.0;
     double qof       = 0.0;
@@ -161,6 +189,10 @@ topmodel_step_result lsdtt_topmodel_index_cpu::step(double rainfall_metres,
     for (std::size_t i = 0; i < n; ++i)
     {
         const double acf = units_[i].area_fraction;
+
+        const std::ptrdiff_t k = static_cast<std::ptrdiff_t>(i) * stride;
+        const double p  = std::max(0.0, rainfall[k]);
+        const double ep = std::max(0.0, potential_et[k]);
 
         // Local deficit from the CURRENT S_bar -- start-of-step, as 95.02 does.
         double d_local = sbar_ +
@@ -259,7 +291,7 @@ topmodel_step_result lsdtt_topmodel_index_cpu::step(double rainfall_metres,
     out.mean_deficit         = sbar_;
     out.contributing_area    = acm;
 
-    balance_.total_rainfall   += p;
+    balance_.total_rainfall   += p_mean;
     balance_.total_actual_et  += sae;
     balance_.total_runoff     += out.total_runoff;
     balance_.truncation_loss  += truncated;

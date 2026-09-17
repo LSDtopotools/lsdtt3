@@ -79,6 +79,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -266,8 +267,19 @@ public:
                              const topmodel_parameters& params,
                              topmodel_excess_rule rule = topmodel_excess_rule::per_unit);
 
-    // Advance one step. rainfall and potential_et are depths for the step [m].
+    // Advance one step with UNIFORM forcing. Depths for the step [m].
     topmodel_step_result step(double rainfall_metres, double potential_et_metres);
+
+    // Advance one step with PER-UNIT forcing, which is what the canopy produces:
+    // interception capacity varies with land cover, so throughfall and residual
+    // PET vary from unit to unit even when the rain falling on the catchment
+    // does not.
+    //
+    // Both vectors must have exactly n_units() entries, in the SAME order as the
+    // unit list. Throws std::invalid_argument otherwise -- a length mismatch
+    // here would silently apply one unit's forcing to another.
+    topmodel_step_result step(const std::vector<double>& rainfall_per_unit,
+                              const std::vector<double>& potential_et_per_unit);
 
     [[nodiscard]] double mean_deficit() const noexcept { return sbar_; }
     [[nodiscard]] double lambda() const noexcept { return lambda_; }
@@ -295,6 +307,11 @@ public:
     [[nodiscard]] std::size_t n_units() const noexcept { return units_.size(); }
 
 private:
+    // stride 0 reads a single scalar for every unit; stride 1 reads per-unit.
+    topmodel_step_result step_impl(const double* rainfall,
+                                   const double* potential_et,
+                                   std::ptrdiff_t stride);
+
     std::vector<topmodel_unit> units_;
     topmodel_parameters        params_;
     topmodel_excess_rule       rule_;
