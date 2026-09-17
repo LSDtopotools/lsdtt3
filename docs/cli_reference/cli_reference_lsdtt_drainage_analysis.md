@@ -6,6 +6,13 @@ At least one `write_*_raster` flag must be set to `true` or the CLI exits withou
 
 The DEM must be in a projected CRS (e.g. UTM).
 
+This CLI reports **static** catchment metrics. To turn rainfall and PET into a
+time-evolving hydrograph using the same TWI implementation, use
+[`lsdtt-distributed-hydrology`](cli_reference_lsdtt_distributed_hydrology.md).
+For the distinction between static indices, rainfall-runoff modelling, and
+hydraulic inundation routing, see [Hydrological modelling in
+lsdtt3](../design_and_algorithms/hydrological_modelling.md).
+
 ## Usage
 
 ```
@@ -365,6 +372,20 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_sti_p95_jenks_rasters` | `bool` | `false` | `switch` | - | Write Jenks-classified STI category rasters from STI P95 outputs. | Runs Jenks natural breaks on valid values in each P95 raster and writes class rasters with IDs 1..K. Requires write_sti_95th_percentile_rasters=true. |
 | `sti_p95_jenks_n_classes` | `int` | `5` | `param` | `write_sti_p95_jenks_rasters` | Number of Jenks classes for STI P95 categorisation. | Used when write_sti_p95_jenks_rasters is true. If there are fewer distinct occupied histogram bins than requested classes, the effective number of classes is reduced automatically. |
 | `sti_p95_jenks_max_histogram_bins` | `int` | `2048` | `param` | `write_sti_p95_jenks_rasters` | Maximum histogram bins used by Jenks fitting on P95 rasters. | Higher values better preserve fine value structure but increase fit time. Used when write_sti_p95_jenks_rasters is true. |
+| `sti_soil_fname` | `string` | `data/scotland_soils/hutton_series_code_min.fgb` | `param` | `write_sti_raster` | Soil series polygon vector used to key the STI lookup. | Polygon layer whose series-code field is rasterised and joined to the ksat table. Required when write_sti_raster or write_sti_proxy_raster is true. The default names a Scottish dataset and must be replaced for any other area. |
+| `sti_soil_layer_name` | `string` | `hutton_series_code_min` | `param` | `write_sti_raster` | Layer name within sti_soil_fname carrying the series code. | Names the layer to read from the soil vector file. Must be non-empty when STI is requested. |
+| `sti_landuse_fname` | `string` | `data/scotland_soils/sg_land_use_min.fgb` | `param` | `write_sti_raster` | Land-use polygon vector used to key the STI lookup. | The ksat table is keyed on (series code, land use), so this is a co-equal key with sti_soil_fname rather than an optional refinement. |
+| `sti_landuse_layer_name` | `string` | `sg_land_use_min` | `param` | `write_sti_raster` | Layer name within sti_landuse_fname carrying the land-use class. | Names the layer to read from the land-use vector file. Must be non-empty when STI is requested. |
+| `sti_ksat_fname` | `string` | `data/scotland_soils/SSKIB_C_MED_KSAT.csv` | `param` | `write_sti_raster` | CSV of measured saturated conductivity profiles. | Horizon-level conductivity by soil series and land use. Conductivity is integrated over depth to give ln(Ks*D), the transmissivity term of the ksd mode. Required when sti_term_mode is ksd. |
+| `sti_spr_fname` | `string` | `data/scotland_soils/SERIES_SPR.csv` | `param` | `write_sti_proxy_raster` | CSV of standard percentage runoff by soil series. | Supplies the runoff-based denominator used by the proxy term. Required when sti_term_mode is spr or when write_sti_proxy_raster is true. |
+| `sti_sskib_fname` | `string` | `data/scotland_soils/SSKIB_OCT18_V1.2.xlsx` | `param` | `write_sti_raster` | Optional SSKIB workbook checked for availability only. | Presence is reported for provenance; the run does not read values from it and does not fail when it is absent. |
+| `sti_drainage_area_method` | `string` | `Dinf` | `param` | `write_sti_raster` | Flow routing method used for the drainage area term in STI. | Dinf (default) or MFD. D8 is not offered: it sends all of a cell's area to one neighbour and stripes the index. |
+| `sti_term_mode` | `string` | `ksd` | `param` | `write_sti_raster` | Which soil term forms the STI denominator. | ksd uses ln(Ks*D) from sti_ksat_fname. spr uses the standard percentage runoff from sti_spr_fname. |
+| `sti_spr_transform` | `string` | `ln_1_minus_spr` | `param` | `write_sti_proxy_raster` | Transform applied to the SPR fraction before use. | ln_1_minus_spr (default) or ln_spr. Only used in spr term mode or for the proxy raster. |
+| `sti_window_radius_metres` | `float` | `100.0` | `param` | `write_sti_raster` | Polyfit window radius (metres) for the slope used by STI. | Independent of twi_window_radius_metres so the two indices can be fitted at different scales. Must be greater than zero. |
+| `sti_depth_cap_centimetres` | `float` | `100.0` | `param` | `write_sti_raster` | Profile depth (cm) beyond which horizons are ignored. | Conductivity is integrated from the surface down to this depth, so it sets the depth over which transmissivity is accumulated. |
+| `sti_min_valid_depth_centimetres` | `float` | `30.0` | `param` | `write_sti_raster` | Shortest profile (cm) accepted into the lookup table. | Profiles whose horizons sum to less than this are dropped, so a series described only by a thin topsoil does not set the value for a whole polygon. |
+| `sti_ks_unit_scale_to_metres_per_day` | `float` | `1.0` | `param` | `write_sti_raster` | Multiplier converting the CSV conductivity column to metres per day. | Set this to match the units of the conductivity column in sti_ksat_fname. It scales the transmissivity term, so a wrong value shifts every STI value by a constant in log space. |
 
 ### Connectivity index (Cavalli et al. 2013)
 

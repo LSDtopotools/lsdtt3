@@ -16,7 +16,15 @@ lsdtt3 offers three hydrological tools that approach the problem from different 
 
 3. **lsdtt-graphflood**: A **stationary graph-based hydraulic routing** solver with Manning friction. Routes a supplied discharge over an evolving water surface (z + h, where z is bed elevation and h is water depth). This is where the water *goes and how deep* it is.
 
-**Critical distinction: hyperdrological routing vs hydraulic routing.** The second tool *generates* discharge from rainfall and routes it; the third tool *takes* a discharge as input and routes it while computing depths. They are complementary, not alternatives. A reader choosing between them is likely trying to do both — simulate the rainfall-runoff response (distributed-hydrology) and then map flood inundation (graphflood), feeding the one into the other.
+**Critical distinction: hydrological versus hydraulic routing.** The second tool *generates* discharge from rainfall and routes it; the third tool *takes* a discharge as input and routes it while computing depths. They are complementary, not alternatives.
+
+| Question | `lsdtt-drainage-analysis` | `lsdtt-distributed-hydrology` | `lsdtt-graphflood` |
+|---|---|---|---|
+| What is supplied? | DEM and optional soil data | DEM, rainfall, PET, and optional soil/land-cover data | DEM, roughness, and prescribed discharge or inflow |
+| What is computed? | Static drainage and wetness metrics | Rainfall-runoff response and outlet hydrograph | Flow depth and inundation for the supplied water |
+| Does it have time? | No | Yes | Yes |
+| Does it generate discharge? | No | Yes | No |
+| Best first question | Where is the catchment prone to wetness? | How does this storm produce runoff? | Where does this discharge inundate? |
 
 ---
 
@@ -37,16 +45,16 @@ This tool computes **metrics of the catchment's structure**, using only the DEM 
 
 This tool simulates **what happens to water during a rainfall event**, hour by hour (or at whatever timestep you choose). It is a raster implementation of TOPMODEL (Beven & Kirkby 1979), extended with:
 
-- **Five vertical stores per cell**: canopy interception → root zone (plant-available water) → unsaturated zone (capillary fringe) → saturated zone → surface routing store.
+- **Stores per cell**: optional canopy interception, root zone, unsaturated zone, saturated zone, and surface-routing storage.
 - **Optional infiltration-excess routing**: where rainfall intensity exceeds the soil's ability to accept water, excess runs overland immediately.
 - **Saturation-excess runoff**: when the saturated zone fills (deficit reaches zero), water spills as overland flow.
 - **Dynamic velocity field**: flow speed depends on water depth, slope, and surface roughness (Manning's equation). Low-order channels are slower than high-order ones because they are shallower and have coarser bed material.
-- **Three saturated-zone modes**: a quasi-steady "index" mode (cheap, what published TOPMODEL parameter sets assume), a fully prognostic "dynamic" mode (one saturated-zone store per cell), or a simple "constant" mode.
-- **Scenario-driven land-cover change**: the tool reads measured soil profiles keyed on (soil series, land use), so converting a pixel from grazing to woodland re-keys the lookup to the *measured* transmissivity and roughness of that soil under woodland, not a simple multiplier.
+- **Two saturated-zone modes**: a quasi-steady `index` mode (the TOPMODEL-compatible validation mode) and a fully prognostic `dynamic` mode (one saturated-zone store per cell).
+- **Scenario-driven land-cover change**: the tool reads measured soil profiles keyed on `(soil series, land use)`, so converting a pixel from grazing to woodland re-keys the lookup to the measured transmissivity for that soil and cover, rather than applying a universal multiplier.
 
 **Input**: DEM, rainfall time series, PET time series, soil data table, optional LAI (Leaf Area Index) scenarios, optional vector channel network.
 
-**Output**: time series of streamflow at nominated outlets, rasters of saturation, water-table depth, cumulative runoff, infiltration, etc. Requires calibration of the transmissivity parameter `ln_t0` and the delay parameter `td` (time delay per unit deficit).
+**Output**: outlet streamflow time series plus rasters of saturation deficit, saturation, velocity, travel time, and TWI. Uniform-transmissivity runs require calibration of `ln_t0` and the delay parameter `td`; STI-table runs instead derive spatial transmissivity from the supplied measured profiles.
 
 ### lsdtt-graphflood: graph-based hydraulic routing
 
@@ -81,7 +89,7 @@ The implementation is conceptually inspired by the graph-based hydraulic-routing
 - You need to model **interception** (canopy storage of rainfall), which matters for NFM (Natural Flood Management) studies with newly planted woodland.
 - You want a physically grounded model with **measured soil data** rather than a black-box emulator.
 
-**Limitations**: The tool is expensive (many stores, many timesteps). In "dynamic" saturated-zone mode, it computes one saturated-zone store per cell, but only the areal-mean transmissivity is used — the model is not truly 2D groundwater. In "index" mode, the transmissivity is genuinely distributed but the quasi-steady-state assumption (water table parallel to a steady-recharge solution) breaks down during rapid transients. The dynamic routers (linear reservoir, Muskingum-Cunge, kinematic wave) are inset from the DEM margin by the slope-fitting window, so a catchment outlet on the edge can lose discharge.
+**Limitations**: The tool has not yet been calibrated against observed catchments. It is an event-scale, grid-based hydrological model, not a full 2D groundwater model. In `index` mode, the quasi-steady topographic-index assumption can break down during rapid transients; use `dynamic` mode and timestep-sensitivity checks when that assumption is unsuitable.
 
 ### Use lsdtt-graphflood if:
 
@@ -106,7 +114,7 @@ Understanding where each model comes from matters for knowing how far to trust i
 
 The core is **TOPMODEL**, introduced by Beven & Kirkby (1979) as a semi-distributed rainfall-runoff model built around the Topographic Wetness Index. The index itself — `ln(a/tanβ)` — predicts which parts of a catchment will saturate during a storm, and Beven & Kirkby showed that the model could reproduce observed hydrographs using this structure plus a simple subsurface-routing assumption (water table parallel to a recharge-steady solution).
 
-lsdtt-distributed-hydrology is validated against **TOPMODEL 95.02**, the published Fortran implementation (Beven et al. 1995). The column physics (the five vertical stores) is validated to a relative error of ~5×10⁻⁵ compared to 95.02's own output. The infiltration-excess routine (Green-Ampt with exponential-decline conductivity) is validated to machine precision (8.5×10⁻¹⁷ m) against the original FORTRAN `EXPINF` subroutine.
+lsdtt-distributed-hydrology is validated against **TOPMODEL 95.02**, the published Fortran implementation (Beven et al. 1995). Its column physics is tested against the reference output, and its infiltration-excess routine is tested against a frozen trace of the original `EXPINF` subroutine. These implementation checks do not replace calibration and evaluation against observed catchment data.
 
 The distributed form is informed by:
 
@@ -114,7 +122,7 @@ The distributed form is informed by:
 - **SD-TOPMODEL** (Gao, Holden & Kirkby 2015): spatially distributed roughness and velocity fields built on Darcy-Weisbach resistance, where velocity is dynamic (depth-dependent). Zhu et al. (2025) report calibrations of this approach on UK sites.
 - **Routing numerics** from Li, Simons & Stevens (1975) (implicit kinematic wave), Cunge (1969) and Ponce & Yevjevich (1978) (Muskingum-Cunge matching diffusion), and Ponce, Li & Simons (1978) on when kinematic routing is valid.
 
-**Why this matters for your model**: a TOPMODEL parameter set published for a different river basin may port reasonably well to yours *if the soils and climate are similar*. But parameters like `ln_t0` (transmissivity) and `m` (the exponential store depth) are catchment-specific; you will need to calibrate them against observed streamflow or groundwater levels. The index mode is a **validation mode** that reproduces TOPMODEL's published test cases exactly, as a tripwire: if your calibration diverges from TOPMODEL's on a synthetic test, something is wrong with your setup.
+**Why this matters for your model**: a TOPMODEL parameter set published for a different river basin is not a substitute for calibration. Parameters such as uniform `ln_t0` and `m` are catchment-specific. The index mode is a **validation mode** that reproduces the TOPMODEL reference case as a tripwire; it does not establish predictive skill for a new site.
 
 ### lsdtt-graphflood: Gailleton et al. (2024)
 
@@ -169,11 +177,7 @@ A philosophical difference worth understanding, because it affects how you param
 
 The **index mode** computes the saturation deficit at each cell from a single catchment-mean value plus the TWI. This is cheap and reproduces TOPMODEL's published parameter sets exactly, but it assumes the water table is everywhere parallel to a steady-recharge solution. During rapid transients (sudden heavy rain or snowmelt), different parts of the catchment dry at different rates, and the assumption breaks down.
 
-The **dynamic mode** makes the saturation deficit prognostic (a state variable) at every cell. It is more faithful to physics but more expensive and requires additional parameterization. In dynamic mode, only the *areal-mean* transmissivity is used — the model computes one lateral subsurface flux per cell, not a full 2D Dupuit-Boussinesq groundwater model.
-
-### Margin offset (distributed-hydrology)
-
-The dynamic routers (linear reservoir, Muskingum-Cunge, kinematic wave) fit the slope within a moving window for local derivatives. This window has a radius (the slope-fitting scale), and the routers are inset from the DEM margin by that radius. **If your catchment outlet is on the DEM edge, that cell may lose discharge.** Either move the outlet inward or use a wider slope-fitting window.
+The **dynamic mode** makes the saturation deficit prognostic (a state variable) at every cell. It is more expensive and should be checked for timestep sensitivity. Its lateral flux follows the flow graph; it is not a full 2D Dupuit-Boussinesq groundwater solution.
 
 ### Manning's assumptions (graphflood)
 
