@@ -1,0 +1,38 @@
+# Smoke test for lsdtt-distributed-hydrology (plan_raster_topmodel.md Phase 10).
+#
+# tiny_dem.asc is 5x5 with 1 m cells, so the slope window radius is 2 m: that
+# is what leaves the interior 3x3 valid, which is the same nine pixels the TWI
+# refactor guard uses.
+#
+# routing_method is left at its default (width_function). The dynamic routers
+# are only active where there is a polyfit slope, and on a 5x5 grid that region
+# does not reach the edge, so no water would ever reach an outlet. The CLI
+# reports that as a routing balance failure rather than hiding it; it is not a
+# useful thing to assert on a fixture this small.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tinyhyd
+
+raster_is_filled: false
+write_output_format: gtiff
+twi_window_radius_metres: 2.0
+
+saturated_zone_mode: index
+flow_method: dinf
+channel_extent_mode: none
+velocity_mode: hydraulic_geometry
+channel_roughness_mode: constant
+
+dt_seconds: 3600
+rainfall_fname: tiny_rainfall.csv
+pet_fname: tiny_pet.csv
+
+write_discharge_csv: true
+write_water_balance_csv: true
+write_iuh_csv: true
+write_twi_raster: true
+write_velocity_raster: true
+write_traveltime_raster: true
+write_saturation_raster: true
+write_water_table_raster: true

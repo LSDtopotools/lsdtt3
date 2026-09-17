@@ -138,37 +138,6 @@ std::vector<std::string> fallback_land_use_order(const std::string& requested)
     return {requested, "CULT", "SEMI", "OTHER"};
 }
 
-bool lookup_ln_kd_with_fallback(
-    const sti_lnkd_table& table,
-    const std::string& series_code,
-    const std::string& land_use,
-    double& out_ln_kd,
-    std::string& out_source,
-    int& out_profile_count)
-{
-    out_ln_kd = 0.0;
-    out_profile_count = 0;
-    out_source = "missing";
-
-    if (series_code.empty() || land_use.empty()) return false;
-
-    const auto try_land_uses = fallback_land_use_order(land_use);
-    for (std::size_t i = 0; i < try_land_uses.size(); ++i)
-    {
-        const std::string key = make_pair_key(series_code, try_land_uses[i]);
-        auto it = table.ln_kd_by_key.find(key);
-        if (it == table.ln_kd_by_key.end()) continue;
-
-        out_ln_kd = it->second;
-        auto nit = table.n_profiles_by_key.find(key);
-        out_profile_count = (nit == table.n_profiles_by_key.end()) ? 0 : nit->second;
-        out_source = (i == 0) ? "direct" : "fallback_other_landuse";
-        return true;
-    }
-
-    return false;
-}
-
 double compute_spr_term(double spr_fraction, sti_spr_transform transform, double eps, bool& clamped)
 {
     clamped = false;
@@ -374,6 +343,39 @@ std::string fetch_cell(const std::vector<std::string>& row,
 }
 
 } // namespace
+
+// Public: see the header for why this is exported.
+bool lookup_ln_kd_with_fallback(
+    const sti_lnkd_table& table,
+    const std::string& series_code,
+    const std::string& land_use,
+    double& out_ln_kd,
+    std::string& out_source,
+    int& out_profile_count)
+{
+    out_ln_kd = 0.0;
+    out_profile_count = 0;
+    out_source = "missing";
+
+    if (series_code.empty() || land_use.empty()) return false;
+
+    const auto try_land_uses = fallback_land_use_order(land_use);
+    for (std::size_t i = 0; i < try_land_uses.size(); ++i)
+    {
+        const std::string key = make_pair_key(series_code, try_land_uses[i]);
+        auto it = table.ln_kd_by_key.find(key);
+        if (it == table.ln_kd_by_key.end()) continue;
+
+        out_ln_kd = it->second;
+        auto nit = table.n_profiles_by_key.find(key);
+        out_profile_count = (nit == table.n_profiles_by_key.end()) ? 0 : nit->second;
+        out_source = (i == 0) ? "direct" : "fallback_other_landuse";
+        return true;
+    }
+
+    return false;
+}
+
 
 std::string normalize_sti_series_code(const std::string& raw_code)
 {

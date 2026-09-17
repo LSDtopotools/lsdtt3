@@ -528,6 +528,40 @@ set_tests_properties(rigorous_drainage_analysis_threshold_equivalence PROPERTIES
 # C9 extraction guard: unlike drainage_analysis_smoke.param.in, this reaches
 # both STI P95 Jenks call sites. The raster and diagnostic oracles were frozen
 # against the original CLI-local classify_jenks_categories implementation.
+# Pins the TWI raster byte-for-byte across the lift of the TWI computation out
+# of cli/lsdtt-drainage-analysis.cpp and into lsdtt_wetness_index_cpu
+# (plan_raster_topmodel.md Phase 0). The checksum was captured from the
+# pre-refactor CLI; the move is a pure refactor and must not change it.
+#
+# rigorous_drainage_sti_jenks below guards the same computation indirectly,
+# since STI consumes TWI, but it pins derived Jenks breaks rather than the TWI
+# raster itself. This test is the direct guard.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_twi_refactor_identical
+    lsdtt-drainage-analysis
+    drainage_analysis_twi_pin.param.in
+    tiny_twi.tif
+    --expect-raster-checksum tiny_twi.tif:65360
+    --expect-raster-stat tiny_twi.tif:min:-0.9906:-0.9904
+    --expect-raster-stat tiny_twi.tif:max:-0.2974:-0.2973
+)
+
+# The STI parameter names were migrated to the documented <what>_fname form and
+# to spelled-out units. This asserts the old names still work, still warn, and
+# still produce the SAME classified output as the canonical sibling below --
+# which is the whole promise of set_deprecated_aliases().
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_sti_deprecated_names
+    lsdtt-drainage-analysis
+    drainage_analysis_sti_deprecated_names.param.in
+    drainage_sti_sti_p95_jenks5.tif
+    --expect-raster-values drainage_sti_sti_p95_jenks5.tif:1
+    --stderr-contains "'sti_soil_vector_path' is deprecated"
+    --stderr-contains "'sti_ksat_csv_path' is deprecated"
+    --stderr-contains "use 'sti_soil_fname'"
+    --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
+)
+
 add_lsdtt_cli_smoke_test(
     rigorous_drainage_sti_jenks
     lsdtt-drainage-analysis
@@ -544,6 +578,97 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "STI proxy Jenks classified pixels          : 1 / 1"
     --stdout-contains "STI proxy Jenks GVF                        : 1"
     --stdout-contains "STI proxy Jenks upper breaks               : 0.906619"
+)
+
+# =============================================================================
+# lsdtt-distributed-hydrology (plan_raster_topmodel.md Phase 10)
+#
+# The physics is all in the modules and is tested by the C++ drivers
+# (unit_topmodel_column, unit_hydro_velocity_field, unit_hydro_routing,
+# unit_canopy_interception, unit_infiltration_excess, unit_channel_extent,
+# unit_hydro_roughness, unit_landcover_scenario, unit_topmodel_dynamic, and the
+# 95.02 oracle). These CLI tests carry only what is genuinely CLI: that the
+# pipeline assembles, that the outputs appear, and that the failure paths fail
+# with a message that says what to do.
+#
+# tiny_dem.asc is 5x5 with 1 m cells, so twi_window_radius_metres is 2.0
+# everywhere here: that leaves the interior 3x3 valid, the same nine pixels the
+# TWI refactor guard uses.
+# =============================================================================
+
+# The parameter declarations must all render; -h needs no parameter file.
+add_test(NAME smoke_distributed_hydrology_help
+         COMMAND lsdtt-distributed-hydrology -h)
+set_tests_properties(smoke_distributed_hydrology_help PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    PASS_REGULAR_EXPRESSION "saturated_zone_mode")
+
+# The end-to-end run.
+#
+# The TWI checksum is the point of the test, not decoration: it is the same
+# 65360 that rigorous_drainage_twi_refactor_identical pins for
+# lsdtt-drainage-analysis on the same DEM at the same window radius. The two
+# CLIs share one TWI implementation (lsdtt_wetness_index_cpu), and a second,
+# divergent TWI would be a defect rather than a variant -- so this asserts they
+# really do produce the same raster, which is the only mechanical check that
+# the sharing has not quietly come apart.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_run
+    lsdtt-distributed-hydrology
+    distributed_hydrology_smoke.param.in
+    tinyhyd_discharge.csv
+    --expect tinyhyd_water_balance.csv
+    --expect tinyhyd_iuh.csv
+    --expect tinyhyd_twi.tif
+    --expect tinyhyd_velocity.tif
+    --expect tinyhyd_traveltime.tif
+    --expect tinyhyd_saturation.tif
+    --expect tinyhyd_water_table.tif
+    --expect-raster-checksum tinyhyd_twi.tif:65360
+    --expect-raster-size tinyhyd_velocity.tif:5x5
+    --expect-file-contains "tinyhyd_discharge.csv:timestep,time_seconds,rainfall_metres,pet_metres,canopy_evaporation_metres,actual_et_metres,hortonian_runoff_metres,saturation_excess_metres,baseflow_metres,total_runoff_metres,mean_deficit_metres,contributing_area_fraction,discharge_m3_per_second"
+    --expect-file-contains "tinyhyd_water_balance.csv:closure_error"
+    # No not-contains guard for "inf": the substring lives inside "rainfall",
+    # so the check can never pass. "nan" has no such clash and is the one that
+    # matters anyway -- a nodata sentinel reaching a data column prints as nan.
+    --expect-file-not-contains "tinyhyd_discharge.csv:nan"
+    --stdout-contains "TOPMODEL (index)"
+    --stdout-contains "Pure translation through the travel-time distribution"
+    --stdout-contains "DERIVED from the geometry, not chosen"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_distributed_hydrology_bad_routing_method
+    lsdtt-distributed-hydrology
+    distributed_hydrology_bad_routing.param.in
+    badrouting_discharge.csv
+    --expect-failure
+    --stderr-contains "FATAL: routing_method must be 'width_function'"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_distributed_hydrology_missing_rainfall
+    lsdtt-distributed-hydrology
+    distributed_hydrology_missing_rainfall.param.in
+    norain_discharge.csv
+    --expect-failure
+    --stderr-contains "FATAL: rainfall_fname is required"
+)
+
+# The message is the substance of this one, not the throw. A table with an
+# unknown field throws too, so a bare "it failed" check would still pass with
+# the dedicated branch deleted -- and the branch exists precisely to tell
+# someone arriving from SD-TOPMODEL's parameterisation where conductivity
+# actually comes from.
+add_lsdtt_cli_smoke_test(
+    failure_distributed_hydrology_landcover_table_ks
+    lsdtt-distributed-hydrology
+    distributed_hydrology_landcover_ks.param.in
+    lcks_discharge.csv
+    --expect-failure
+    --stderr-contains "FATAL: landcover_table is malformed"
+    --stderr-contains "Conductivity is NOT a land-cover property here"
+    --stderr-contains "set 'soil=' instead"
 )
 
 # lsdtt-mountain-front and lsdtt-feature-finder had NO tests at all until
@@ -2014,6 +2139,96 @@ endif()
 # Image-filter primitives and splitmix64: border mapping, box mean with
 # OpenCV's rounding rules, Gaussian kernels, separable and fixed-point filters,
 # Otsu, Sobel, Bresenham.
+# Phase 2 of plan_raster_topmodel.md: TOPMODEL column physics, index mode.
+# NOTE: the 95.02 oracle test named in the plan is NOT here -- the ../topmodel
+# reference clone is absent from this machine. See the test file header.
+add_executable(lsdtt-test-topmodel-column cpp/test_topmodel_column.cpp)
+target_link_libraries(lsdtt-test-topmodel-column PRIVATE lsdtt3_cpu)
+add_test(NAME unit_topmodel_column COMMAND lsdtt-test-topmodel-column)
+set_tests_properties(unit_topmodel_column PROPERTIES LABELS "unit;network")
+
+# Phase 6 of plan_raster_topmodel.md: the channel mask ladder. Takes an output
+# directory for the small GeoJSON fixture it writes at run time, so nothing is
+# committed to tests/data.
+add_executable(lsdtt-test-channel-extent cpp/test_channel_extent.cpp)
+target_link_libraries(lsdtt-test-channel-extent PRIVATE lsdtt3_cpu)
+add_test(NAME unit_channel_extent
+         COMMAND lsdtt-test-channel-extent "${CMAKE_CURRENT_BINARY_DIR}/channel_extent_output")
+set_tests_properties(unit_channel_extent PROPERTIES LABELS "unit;network")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/channel_extent_output")
+
+# Phase 5 of plan_raster_topmodel.md: the routing ladder.
+add_executable(lsdtt-test-hydro-routing cpp/test_hydro_routing.cpp)
+target_link_libraries(lsdtt-test-hydro-routing PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_routing COMMAND lsdtt-test-hydro-routing)
+set_tests_properties(unit_hydro_routing PROPERTIES LABELS "unit;network")
+
+# Phase 4 of plan_raster_topmodel.md: canopy interception.
+add_executable(lsdtt-test-canopy-interception cpp/test_canopy_interception.cpp)
+target_link_libraries(lsdtt-test-canopy-interception PRIVATE lsdtt3_cpu)
+add_test(NAME unit_canopy_interception COMMAND lsdtt-test-canopy-interception)
+set_tests_properties(unit_canopy_interception PROPERTIES LABELS "unit;network")
+
+# Phase 3 of plan_raster_topmodel.md: the roughness partition and the channel-n
+# ladder.
+add_executable(lsdtt-test-hydro-roughness cpp/test_hydro_roughness.cpp)
+target_link_libraries(lsdtt-test-hydro-roughness PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_roughness COMMAND lsdtt-test-hydro-roughness)
+set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "unit;network")
+
+# Phase 9 of plan_raster_topmodel.md: land-cover scenarios.
+add_executable(lsdtt-test-landcover-scenario cpp/test_landcover_scenario.cpp)
+target_link_libraries(lsdtt-test-landcover-scenario PRIVATE lsdtt3_cpu)
+add_test(NAME unit_landcover_scenario COMMAND lsdtt-test-landcover-scenario)
+set_tests_properties(unit_landcover_scenario PROPERTIES LABELS "unit;network")
+
+# Phase 8 of plan_raster_topmodel.md: infiltration excess (exp-K Green-Ampt).
+#
+# The oracle is tests/data/expinf_95_02_reference.csv -- a FROZEN trace of
+# TOPMODEL 95.02's own EXPINF. lsdtt3 has NO FORTRAN DEPENDENCY: the test reads
+# a committed file, so every machine gets identical coverage and nothing here
+# ever invokes a compiler. tests/scripts/regenerate_expinf_fixture.py carries
+# the subroutine verbatim and is the maintainer tool for remaking the fixture.
+add_executable(lsdtt-test-infiltration-excess cpp/test_infiltration_excess.cpp)
+target_link_libraries(lsdtt-test-infiltration-excess PRIVATE lsdtt3_cpu)
+add_test(NAME unit_infiltration_excess
+         COMMAND lsdtt-test-infiltration-excess
+                 "${CMAKE_CURRENT_SOURCE_DIR}/data/expinf_95_02_reference.csv")
+set_tests_properties(unit_infiltration_excess PROPERTIES LABELS "unit;network")
+
+# Phase 7 of plan_raster_topmodel.md: the dynamic (prognostic) saturated zone.
+add_executable(lsdtt-test-topmodel-dynamic cpp/test_topmodel_dynamic.cpp)
+target_link_libraries(lsdtt-test-topmodel-dynamic PRIVATE lsdtt3_cpu)
+add_test(NAME unit_topmodel_dynamic COMMAND lsdtt-test-topmodel-dynamic)
+set_tests_properties(unit_topmodel_dynamic PROPERTIES LABELS "unit;network")
+
+# THE PHASE 2 GATE: the column against TOPMODEL 95.02 itself. The reference is
+# a third-party clone outside this repo, so the test SKIPS (exit 77) rather than
+# passing vacuously when it is absent -- a skip shows in the CTest summary.
+add_executable(lsdtt-test-topmodel-oracle cpp/test_topmodel_oracle.cpp)
+target_link_libraries(lsdtt-test-topmodel-oracle PRIVATE lsdtt3_cpu)
+add_test(NAME rigorous_topmodel_oracle_95_02
+         COMMAND lsdtt-test-topmodel-oracle
+                 "${CMAKE_SOURCE_DIR}/../topmodel/refs/original_code_c")
+set_tests_properties(rigorous_topmodel_oracle_95_02 PROPERTIES
+                     LABELS "rigorous;network" SKIP_RETURN_CODE 77)
+
+# Phase 1 of plan_raster_topmodel.md: velocity field, travel time, width
+# function. "hydro" is claimed by the wetness_index -> network domain rule
+# below, so this stays in the network compartment with its Phase 0 sibling.
+add_executable(lsdtt-test-hydro-velocity-field cpp/test_hydro_velocity_field.cpp)
+target_link_libraries(lsdtt-test-hydro-velocity-field PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_velocity_field COMMAND lsdtt-test-hydro-velocity-field)
+set_tests_properties(unit_hydro_velocity_field PROPERTIES LABELS "unit;network")
+
+# Phase 0 of plan_raster_topmodel.md: the shared TWI. Guards the core function
+# directly, including the float precision contract that the CLI checksum test
+# was MEASURED not to discriminate -- see the header of test_wetness_index.cpp.
+add_executable(lsdtt-test-wetness-index cpp/test_wetness_index.cpp)
+target_link_libraries(lsdtt-test-wetness-index PRIVATE lsdtt3_cpu)
+add_test(NAME unit_wetness_index COMMAND lsdtt-test-wetness-index)
+set_tests_properties(unit_wetness_index PROPERTIES LABELS "unit;network")
+
 add_executable(lsdtt-test-image-filters cpp/test_image_filters.cpp)
 target_link_libraries(lsdtt-test-image-filters PRIVATE lsdtt3_utils)
 add_test(NAME unit_image_filters COMMAND lsdtt-test-image-filters)
@@ -5051,6 +5266,14 @@ set(LSDTT_DOMAIN_RULES
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
     "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
+    # The shared Topographic Wetness Index (plan_raster_topmodel.md Phase 0),
+    # pointed at "network" ON PURPOSE rather than given its own domain: the
+    # existing TWI/STI tests already live in the network compartment, and
+    # splitting them off now would quietly remove them from `ctest -L network`
+    # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
+    # there is a real cluster of tests on this module, flip this one line to
+    # "wetness_index" and move the STI tests with it, deliberately.
+    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover|distributed_hydrology"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
