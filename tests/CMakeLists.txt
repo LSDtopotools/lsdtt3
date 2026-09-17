@@ -528,6 +528,40 @@ set_tests_properties(rigorous_drainage_analysis_threshold_equivalence PROPERTIES
 # C9 extraction guard: unlike drainage_analysis_smoke.param.in, this reaches
 # both STI P95 Jenks call sites. The raster and diagnostic oracles were frozen
 # against the original CLI-local classify_jenks_categories implementation.
+# Pins the TWI raster byte-for-byte across the lift of the TWI computation out
+# of cli/lsdtt-drainage-analysis.cpp and into lsdtt_wetness_index_cpu
+# (plan_raster_topmodel.md Phase 0). The checksum was captured from the
+# pre-refactor CLI; the move is a pure refactor and must not change it.
+#
+# rigorous_drainage_sti_jenks below guards the same computation indirectly,
+# since STI consumes TWI, but it pins derived Jenks breaks rather than the TWI
+# raster itself. This test is the direct guard.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_twi_refactor_identical
+    lsdtt-drainage-analysis
+    drainage_analysis_twi_pin.param.in
+    tiny_twi.tif
+    --expect-raster-checksum tiny_twi.tif:65360
+    --expect-raster-stat tiny_twi.tif:min:-0.9906:-0.9904
+    --expect-raster-stat tiny_twi.tif:max:-0.2974:-0.2973
+)
+
+# The STI parameter names were migrated to the documented <what>_fname form and
+# to spelled-out units. This asserts the old names still work, still warn, and
+# still produce the SAME classified output as the canonical sibling below --
+# which is the whole promise of set_deprecated_aliases().
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_sti_deprecated_names
+    lsdtt-drainage-analysis
+    drainage_analysis_sti_deprecated_names.param.in
+    drainage_sti_sti_p95_jenks5.tif
+    --expect-raster-values drainage_sti_sti_p95_jenks5.tif:1
+    --stderr-contains "'sti_soil_vector_path' is deprecated"
+    --stderr-contains "'sti_ksat_csv_path' is deprecated"
+    --stderr-contains "use 'sti_soil_fname'"
+    --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
+)
+
 add_lsdtt_cli_smoke_test(
     rigorous_drainage_sti_jenks
     lsdtt-drainage-analysis
@@ -2014,6 +2048,14 @@ endif()
 # Image-filter primitives and splitmix64: border mapping, box mean with
 # OpenCV's rounding rules, Gaussian kernels, separable and fixed-point filters,
 # Otsu, Sobel, Bresenham.
+# Phase 0 of plan_raster_topmodel.md: the shared TWI. Guards the core function
+# directly, including the float precision contract that the CLI checksum test
+# was MEASURED not to discriminate -- see the header of test_wetness_index.cpp.
+add_executable(lsdtt-test-wetness-index cpp/test_wetness_index.cpp)
+target_link_libraries(lsdtt-test-wetness-index PRIVATE lsdtt3_cpu)
+add_test(NAME unit_wetness_index COMMAND lsdtt-test-wetness-index)
+set_tests_properties(unit_wetness_index PROPERTIES LABELS "unit;network")
+
 add_executable(lsdtt-test-image-filters cpp/test_image_filters.cpp)
 target_link_libraries(lsdtt-test-image-filters PRIVATE lsdtt3_utils)
 add_test(NAME unit_image_filters COMMAND lsdtt-test-image-filters)
@@ -5051,6 +5093,14 @@ set(LSDTT_DOMAIN_RULES
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
     "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
+    # The shared Topographic Wetness Index (plan_raster_topmodel.md Phase 0),
+    # pointed at "network" ON PURPOSE rather than given its own domain: the
+    # existing TWI/STI tests already live in the network compartment, and
+    # splitting them off now would quietly remove them from `ctest -L network`
+    # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
+    # there is a real cluster of tests on this module, flip this one line to
+    # "wetness_index" and move the STI tests with it, deliberately.
+    "wetness_index"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"

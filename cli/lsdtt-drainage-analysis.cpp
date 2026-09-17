@@ -55,6 +55,7 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_sti_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_texture_cpu.hpp"
+#include "../src/cpu/lsdtt_wetness_index_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
@@ -73,7 +74,7 @@ static void print_banner()
         << "|| I am going to compute drainage rasters for you      ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "|| This CLI is for looking at various runoff metrics   ||\n"
-        << "|| such as TWI, SWI and connectivity                   ||\n"
+        << "|| such as TWI, STI and connectivity                   ||\n"
         << "=========================================================\n"
         << "|| -v or --version    : full lsdtt3 release version\n"
         << "|| This CLI's version : " << k_version << "\n"
@@ -390,26 +391,117 @@ int main(int argc, char* argv[])
         "Used when write_sti_p95_jenks_rasters is true.",
         "Soil Topographic Index (STI)", "param", "write_sti_p95_jenks_rasters"};
 
-    string_default_map["sti_soil_vector_path"] =
+    // The STI soil inputs. These defaults name a Scottish soils dataset because
+    // that is what the index was developed against; they are NOT generic, and a
+    // run with write_sti_raster true and these left untouched will fail on a
+    // missing file rather than compute anything meaningful.
+    string_default_map["sti_soil_fname"] =
         "data/scotland_soils/hutton_series_code_min.fgb";
+    help_map["sti_soil_fname"] = {"string","data/scotland_soils/hutton_series_code_min.fgb",
+        "Soil series polygon vector used to key the STI lookup.",
+        "Polygon layer whose series-code field is rasterised and joined to the "
+        "ksat table. Required when write_sti_raster or write_sti_proxy_raster "
+        "is true. The default names a Scottish dataset and must be replaced for "
+        "any other area.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
     string_default_map["sti_soil_layer_name"] = "hutton_series_code_min";
-    string_default_map["sti_landuse_vector_path"] =
+    help_map["sti_soil_layer_name"] = {"string","hutton_series_code_min",
+        "Layer name within sti_soil_fname carrying the series code.",
+        "Names the layer to read from the soil vector file. Must be non-empty "
+        "when STI is requested.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
+    string_default_map["sti_landuse_fname"] =
         "data/scotland_soils/sg_land_use_min.fgb";
+    help_map["sti_landuse_fname"] = {"string","data/scotland_soils/sg_land_use_min.fgb",
+        "Land-use polygon vector used to key the STI lookup.",
+        "The ksat table is keyed on (series code, land use), so this is a "
+        "co-equal key with sti_soil_fname rather than an optional refinement.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
     string_default_map["sti_landuse_layer_name"] = "sg_land_use_min";
-    string_default_map["sti_ksat_csv_path"] =
+    help_map["sti_landuse_layer_name"] = {"string","sg_land_use_min",
+        "Layer name within sti_landuse_fname carrying the land-use class.",
+        "Names the layer to read from the land-use vector file. Must be "
+        "non-empty when STI is requested.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
+    string_default_map["sti_ksat_fname"] =
         "data/scotland_soils/SSKIB_C_MED_KSAT.csv";
-    string_default_map["sti_spr_csv_path"] =
+    help_map["sti_ksat_fname"] = {"string","data/scotland_soils/SSKIB_C_MED_KSAT.csv",
+        "CSV of measured saturated conductivity profiles.",
+        "Horizon-level conductivity by soil series and land use. Conductivity is "
+        "integrated over depth to give ln(Ks*D), the transmissivity term of the "
+        "ksd mode. Required when sti_term_mode is ksd.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
+    string_default_map["sti_spr_fname"] =
         "data/scotland_soils/SERIES_SPR.csv";
-    string_default_map["sti_xlsx_path"] =
+    help_map["sti_spr_fname"] = {"string","data/scotland_soils/SERIES_SPR.csv",
+        "CSV of standard percentage runoff by soil series.",
+        "Supplies the runoff-based denominator used by the proxy term. Required "
+        "when sti_term_mode is spr or when write_sti_proxy_raster is true.",
+        "Soil Topographic Index (STI)", "param", "write_sti_proxy_raster"};
+
+    string_default_map["sti_sskib_fname"] =
         "data/scotland_soils/SSKIB_OCT18_V1.2.xlsx";
+    help_map["sti_sskib_fname"] = {"string","data/scotland_soils/SSKIB_OCT18_V1.2.xlsx",
+        "Optional SSKIB workbook checked for availability only.",
+        "Presence is reported for provenance; the run does not read values from "
+        "it and does not fail when it is absent.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
     string_default_map["sti_drainage_area_method"] = "Dinf";
+    help_map["sti_drainage_area_method"] = {"string","Dinf",
+        "Flow routing method used for the drainage area term in STI.",
+        "Dinf (default) or MFD. D8 is not offered: it sends all of a cell's "
+        "area to one neighbour and stripes the index.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
     string_default_map["sti_term_mode"] = "ksd";
+    help_map["sti_term_mode"] = {"string","ksd",
+        "Which soil term forms the STI denominator.",
+        "ksd uses ln(Ks*D) from sti_ksat_fname. spr uses the standard "
+        "percentage runoff from sti_spr_fname.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
     string_default_map["sti_spr_transform"] = "ln_1_minus_spr";
+    help_map["sti_spr_transform"] = {"string","ln_1_minus_spr",
+        "Transform applied to the SPR fraction before use.",
+        "ln_1_minus_spr (default) or ln_spr. Only used in spr term mode or for "
+        "the proxy raster.",
+        "Soil Topographic Index (STI)", "param", "write_sti_proxy_raster"};
 
     float_default_map["sti_window_radius_metres"] = 100.0f;
-    float_default_map["sti_depth_cap_cm"] = 100.0f;
-    float_default_map["sti_min_valid_depth_cm"] = 30.0f;
-    float_default_map["sti_ks_unit_scale_to_m_per_day"] = 1.0f;
+    help_map["sti_window_radius_metres"] = {"float","100.0",
+        "Polyfit window radius (metres) for the slope used by STI.",
+        "Independent of twi_window_radius_metres so the two indices can be fitted "
+        "at different scales. Must be greater than zero.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
+    float_default_map["sti_depth_cap_centimetres"] = 100.0f;
+    help_map["sti_depth_cap_centimetres"] = {"float","100.0",
+        "Profile depth (cm) beyond which horizons are ignored.",
+        "Conductivity is integrated from the surface down to this depth, so it "
+        "sets the depth over which transmissivity is accumulated.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
+    float_default_map["sti_min_valid_depth_centimetres"] = 30.0f;
+    help_map["sti_min_valid_depth_centimetres"] = {"float","30.0",
+        "Shortest profile (cm) accepted into the lookup table.",
+        "Profiles whose horizons sum to less than this are dropped, so a series "
+        "described only by a thin topsoil does not set the value for a whole "
+        "polygon.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
+
+    float_default_map["sti_ks_unit_scale_to_metres_per_day"] = 1.0f;
+    help_map["sti_ks_unit_scale_to_metres_per_day"] = {"float","1.0",
+        "Multiplier converting the CSV conductivity column to metres per day.",
+        "Set this to match the units of the conductivity column in "
+        "sti_ksat_fname. It scales the transmissivity term, so a wrong value "
+        "shifts every STI value by a constant in log space.",
+        "Soil Topographic Index (STI)", "param", "write_sti_raster"};
 
     // --- Connectivity index (Cavalli et al. 2013) ---
     bool_default_map["write_connectivity_raster"] = false;
@@ -508,7 +600,21 @@ int main(int argc, char* argv[])
          "threshold_contributing_pixels"},
         {"twi_window_radius", "twi_window_radius_metres"},
         {"sti_window_radius", "sti_window_radius_metres"},
-        {"connectivity_window_radius", "connectivity_window_radius_metres"} });
+        {"connectivity_window_radius", "connectivity_window_radius_metres"},
+        // STI inputs renamed to the documented <what>_fname form and to
+        // spelled-out units (docs/developer_notes/cli_parameter_conventions.md).
+        // These fourteen were also declared without help_map entries, so they
+        // were invisible to -h, to the generated README and to the conventions
+        // guard, which reads -h json. Both are fixed together.
+        {"sti_soil_vector_path", "sti_soil_fname"},
+        {"sti_landuse_vector_path", "sti_landuse_fname"},
+        {"sti_ksat_csv_path", "sti_ksat_fname"},
+        {"sti_spr_csv_path", "sti_spr_fname"},
+        {"sti_xlsx_path", "sti_sskib_fname"},
+        {"sti_depth_cap_cm", "sti_depth_cap_centimetres"},
+        {"sti_min_valid_depth_cm", "sti_min_valid_depth_centimetres"},
+        {"sti_ks_unit_scale_to_m_per_day",
+         "sti_ks_unit_scale_to_metres_per_day"} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -645,26 +751,26 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        if (ff["sti_depth_cap_cm"] <= 0.0f)
+        if (ff["sti_depth_cap_centimetres"] <= 0.0f)
         {
-            std::cerr << "FATAL: sti_depth_cap_cm must be > 0. "
-                      << "Got: " << ff["sti_depth_cap_cm"] << "\n";
+            std::cerr << "FATAL: sti_depth_cap_centimetres must be > 0. "
+                      << "Got: " << ff["sti_depth_cap_centimetres"] << "\n";
             return 1;
         }
 
-        if (ff["sti_min_valid_depth_cm"] <= 0.0f)
+        if (ff["sti_min_valid_depth_centimetres"] <= 0.0f)
         {
-            std::cerr << "FATAL: sti_min_valid_depth_cm must be > 0. "
-                      << "Got: " << ff["sti_min_valid_depth_cm"] << "\n";
+            std::cerr << "FATAL: sti_min_valid_depth_centimetres must be > 0. "
+                      << "Got: " << ff["sti_min_valid_depth_centimetres"] << "\n";
             return 1;
         }
 
-        if (ff["sti_min_valid_depth_cm"] > ff["sti_depth_cap_cm"])
+        if (ff["sti_min_valid_depth_centimetres"] > ff["sti_depth_cap_centimetres"])
         {
-            std::cerr << "FATAL: sti_min_valid_depth_cm cannot exceed "
-                      << "sti_depth_cap_cm. Got min_valid_depth_cm="
-                      << ff["sti_min_valid_depth_cm"] << ", depth_cap_cm="
-                      << ff["sti_depth_cap_cm"] << "\n";
+            std::cerr << "FATAL: sti_min_valid_depth_centimetres cannot exceed "
+                      << "sti_depth_cap_centimetres. Got min_valid_depth_centimetres="
+                      << ff["sti_min_valid_depth_centimetres"] << ", depth_cap_cm="
+                      << ff["sti_depth_cap_centimetres"] << "\n";
             return 1;
         }
 
@@ -675,51 +781,51 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        if (ff["sti_ks_unit_scale_to_m_per_day"] <= 0.0f)
+        if (ff["sti_ks_unit_scale_to_metres_per_day"] <= 0.0f)
         {
-            std::cerr << "FATAL: sti_ks_unit_scale_to_m_per_day must be > 0. "
-                      << "Got: " << ff["sti_ks_unit_scale_to_m_per_day"] << "\n";
+            std::cerr << "FATAL: sti_ks_unit_scale_to_metres_per_day must be > 0. "
+                      << "Got: " << ff["sti_ks_unit_scale_to_metres_per_day"] << "\n";
             return 1;
         }
 
         if (write_sti)
         {
-            if (sf["sti_soil_vector_path"].empty() || sf["sti_soil_layer_name"].empty())
+            if (sf["sti_soil_fname"].empty() || sf["sti_soil_layer_name"].empty())
             {
-                std::cerr << "FATAL: STI requires non-empty sti_soil_vector_path "
+                std::cerr << "FATAL: STI requires non-empty sti_soil_fname "
                           << "and sti_soil_layer_name when write_sti_raster is true.\n";
                 return 1;
             }
-            if (sf["sti_landuse_vector_path"].empty() || sf["sti_landuse_layer_name"].empty())
+            if (sf["sti_landuse_fname"].empty() || sf["sti_landuse_layer_name"].empty())
             {
-                std::cerr << "FATAL: STI requires non-empty sti_landuse_vector_path "
+                std::cerr << "FATAL: STI requires non-empty sti_landuse_fname "
                           << "and sti_landuse_layer_name when write_sti_raster is true.\n";
                 return 1;
             }
-            if (sf["sti_ksat_csv_path"].empty())
+            if (sf["sti_ksat_fname"].empty())
             {
-                std::cerr << "FATAL: STI ksd mode requires sti_ksat_csv_path.\n";
+                std::cerr << "FATAL: STI ksd mode requires sti_ksat_fname.\n";
                 return 1;
             }
         }
 
         if (write_sti_proxy)
         {
-            if (sf["sti_soil_vector_path"].empty() || sf["sti_soil_layer_name"].empty())
+            if (sf["sti_soil_fname"].empty() || sf["sti_soil_layer_name"].empty())
             {
-                std::cerr << "FATAL: STI proxy requires non-empty sti_soil_vector_path "
+                std::cerr << "FATAL: STI proxy requires non-empty sti_soil_fname "
                           << "and sti_soil_layer_name when write_sti_proxy_raster is true.\n";
                 return 1;
             }
-            if (sf["sti_landuse_vector_path"].empty() || sf["sti_landuse_layer_name"].empty())
+            if (sf["sti_landuse_fname"].empty() || sf["sti_landuse_layer_name"].empty())
             {
-                std::cerr << "FATAL: STI proxy requires non-empty sti_landuse_vector_path "
+                std::cerr << "FATAL: STI proxy requires non-empty sti_landuse_fname "
                           << "and sti_landuse_layer_name when write_sti_proxy_raster is true.\n";
                 return 1;
             }
-            if (sf["sti_spr_csv_path"].empty())
+            if (sf["sti_spr_fname"].empty())
             {
-                std::cerr << "FATAL: STI proxy mode requires sti_spr_csv_path.\n";
+                std::cerr << "FATAL: STI proxy mode requires sti_spr_fname.\n";
                 return 1;
             }
         }
@@ -1029,99 +1135,29 @@ int main(int argc, char* argv[])
         std::cout << "\n--- " << context_label << " TWI computation ---\n";
         std::cout << "Drainage area method : " << area_method << "\n";
         std::cout << "Slope window radius  : " << window_radius << " m\n";
-
-        lsdtt::poly_fit_coeffs coeffs;
-        try
-        {
-            std::cout << "Computing slope via direct polyfit...\n";
-            coeffs = lsdtt::direct_polyfit(
-                routed_dem,
-                window_radius,
-                ifs["n_threads"]
-            );
-        }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error(
-                context_label + " polyfit for slope failed: " + std::string(e.what()));
-        }
-
-        lsdtt::polyfit_metric_request slope_req;
-        slope_req.metrics   = { lsdtt::polyfit_metric::slope };
-        slope_req.n_threads = ifs["n_threads"];
-
-        lsdtt::polyfit_metric_result slope_res;
-        try
-        {
-            slope_res = lsdtt::compute_polyfit_metrics(coeffs, slope_req);
-        }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error(
-                context_label + " slope metric computation failed: " + std::string(e.what()));
-        }
-
-        const lsdtt::lsdtt_raster_cpu& slope_raster =
-            slope_res.at(lsdtt::polyfit_metric::slope);
+        std::cout << "Computing slope via direct polyfit...\n";
 
         std::string method_lc = area_method;
         method_lc = lsdtt::to_lower_ascii(method_lc);
 
-        lsdtt::lsdtt_raster_result area_result;
+        lsdtt::twi_options twi_opts;
+        twi_opts.slope_window_radius_metres = window_radius;
+        twi_opts.n_threads                  = ifs["n_threads"];
+
+        // One implementation, shared with anything else that needs TWI; see
+        // lsdtt_wetness_index_cpu.hpp for why this is not inlined here.
         try
         {
-            if (method_lc == "dinf")
-            {
-                area_result = dinf_graph->accumulate_raster();
-            }
-            else
-            {
-                area_result = mfd_graph->accumulate_raster();
-            }
+            return lsdtt::compute_twi(
+                routed_dem,
+                (method_lc == "dinf") ? *dinf_graph : *mfd_graph,
+                twi_opts
+            );
         }
         catch (const std::exception& e)
         {
-            throw std::runtime_error(
-                context_label + " drainage area accumulation failed: " +
-                std::string(e.what()));
+            throw std::runtime_error(context_label + " " + std::string(e.what()));
         }
-
-        lsdtt::lsdtt_raster_cpu area_raster(std::move(area_result));
-
-        const int    n_rows     = dem_meta.n_rows;
-        const int    n_cols     = dem_meta.n_cols;
-        const double pixel_area = dem_meta.cell_size * dem_meta.cell_size;
-        const float  nodata_val = static_cast<float>(dem_meta.no_data_value);
-
-        lsdtt::lsdtt_array2d_f  twi_data(n_rows, n_cols, nodata_val);
-        lsdtt::lsdtt_array2d_u8 twi_mask(n_rows, n_cols, uint8_t(0));
-
-        const lsdtt::lsdtt_array2d_f&  area_arr  = area_raster.get_data_array();
-        const lsdtt::lsdtt_array2d_u8& area_msk  = area_raster.get_mask_array();
-        const lsdtt::lsdtt_array2d_f&  slope_arr = slope_raster.get_data_array();
-        const lsdtt::lsdtt_array2d_u8& slope_msk = slope_raster.get_mask_array();
-
-        for (int row = 0; row < n_rows; ++row)
-        {
-            for (int col = 0; col < n_cols; ++col)
-            {
-                if (area_msk(row, col) == 0) continue;
-                if (slope_msk(row, col) == 0) continue;
-
-                const float area_val  = area_arr(row, col);
-                const float slope_val = slope_arr(row, col);
-
-                if (area_val > 0.0f && slope_val > 0.0f)
-                {
-                    twi_data(row, col) = std::log(
-                        (area_val / static_cast<float>(pixel_area)) / slope_val
-                    );
-                    twi_mask(row, col) = uint8_t(1);
-                }
-            }
-        }
-
-        return lsdtt::lsdtt_raster_cpu(std::move(twi_data), std::move(twi_mask), dem_meta);
     };
 
     // -------------------------------------------------------------------------
@@ -1288,11 +1324,11 @@ int main(int argc, char* argv[])
         std::cout << "STI SPR transform       : " << sf["sti_spr_transform"] << "\n";
         std::cout << "\nWARNING: STI unit assumptions are not yet validated automatically.\n";
         std::cout << "WARNING: assuming HORZ_TOP/HORZ_BOTTOM are in cm and using "
-                  << "sti_depth_cap_cm=" << ff["sti_depth_cap_cm"] << ".\n";
+                  << "sti_depth_cap_centimetres=" << ff["sti_depth_cap_centimetres"] << ".\n";
         std::cout << "WARNING: assuming COND_0_HYPRES is compatible with Ks proxy use.\n";
         std::cout << "WARNING: STI magnitudes should be treated as relative/proxy until units are verified.\n";
-        std::cout << "WARNING: applying sti_ks_unit_scale_to_m_per_day="
-                  << ff["sti_ks_unit_scale_to_m_per_day"] << " to COND_0_HYPRES before ln(Ks*D).\n";
+        std::cout << "WARNING: applying sti_ks_unit_scale_to_metres_per_day="
+                  << ff["sti_ks_unit_scale_to_metres_per_day"] << " to COND_0_HYPRES before ln(Ks*D).\n";
 
         const std::string soil_clip_path = pp.make_output_path("_sti_soil_clip", ".fgb");
         const std::string land_clip_path = pp.make_output_path("_sti_landuse_clip", ".fgb");
@@ -1301,7 +1337,7 @@ int main(int argc, char* argv[])
         {
             std::cout << "Clipping soil vector to DEM extent...\n";
             lsdtt::lsdtt_data_loader::clip_vector_to_raster_bbox(
-                sf["sti_soil_vector_path"],
+                sf["sti_soil_fname"],
                 soil_clip_path,
                 dem_meta,
                 lsdtt::vector_output_format::flatgeobuf
@@ -1309,7 +1345,7 @@ int main(int argc, char* argv[])
 
             std::cout << "Clipping land-use vector to DEM extent...\n";
             lsdtt::lsdtt_data_loader::clip_vector_to_raster_bbox(
-                sf["sti_landuse_vector_path"],
+                sf["sti_landuse_fname"],
                 land_clip_path,
                 dem_meta,
                 lsdtt::vector_output_format::flatgeobuf
@@ -1337,13 +1373,13 @@ int main(int argc, char* argv[])
         if (soil_clip_count <= 0)
         {
             std::cerr << "FATAL: clipped STI soil vector has zero features over DEM extent.\n"
-                      << "Check sti_soil_vector_path/layer and DEM overlap.\n";
+                      << "Check sti_soil_fname/layer and DEM overlap.\n";
             return 1;
         }
         if (land_clip_count <= 0)
         {
             std::cerr << "FATAL: clipped STI land-use vector has zero features over DEM extent.\n"
-                      << "Check sti_landuse_vector_path/layer and DEM overlap.\n";
+                      << "Check sti_landuse_fname/layer and DEM overlap.\n";
             return 1;
         }
 
@@ -1403,15 +1439,15 @@ int main(int argc, char* argv[])
         std::cout << "STI soil categories rasterized   : " << series_codes.lookup.size() << "\n";
         std::cout << "STI land-use categories rasterized: " << land_use_codes.lookup.size() << "\n";
 
-        const bool xlsx_ok = lsdtt::sti_check_xlsx_available(sf["sti_xlsx_path"]);
+        const bool xlsx_ok = lsdtt::sti_check_xlsx_available(sf["sti_sskib_fname"]);
         if (!xlsx_ok)
         {
-            std::cout << "WARNING: sti_xlsx_path not found/readable: " << sf["sti_xlsx_path"]
+            std::cout << "WARNING: sti_sskib_fname not found/readable: " << sf["sti_sskib_fname"]
                       << " (continuing; xlsx consistency checks are lightweight in this first pass).\n";
         }
         else
         {
-            std::cout << "STI xlsx consistency source found: " << sf["sti_xlsx_path"] << "\n";
+            std::cout << "STI xlsx consistency source found: " << sf["sti_sskib_fname"] << "\n";
         }
 
         lsdtt::sti_lnkd_table lnkd_table;
@@ -1422,12 +1458,12 @@ int main(int argc, char* argv[])
             try
             {
                 lsdtt::sti_lnkd_options lnkd_opts;
-                lnkd_opts.depth_cap_cm = ff["sti_depth_cap_cm"];
-                lnkd_opts.min_valid_depth_cm = ff["sti_min_valid_depth_cm"];
-                lnkd_opts.ks_unit_scale_to_m_per_day = ff["sti_ks_unit_scale_to_m_per_day"];
+                lnkd_opts.depth_cap_cm = ff["sti_depth_cap_centimetres"];
+                lnkd_opts.min_valid_depth_cm = ff["sti_min_valid_depth_centimetres"];
+                lnkd_opts.ks_unit_scale_to_m_per_day = ff["sti_ks_unit_scale_to_metres_per_day"];
 
                 const lsdtt::sti_lnkd_build_result lnkd =
-                    lsdtt::build_sti_lnkd_table_from_csv(sf["sti_ksat_csv_path"], lnkd_opts);
+                    lsdtt::build_sti_lnkd_table_from_csv(sf["sti_ksat_fname"], lnkd_opts);
                 lnkd_table = lnkd.table;
 
                 std::cout << "STI ksat rows read/used        : " << lnkd.rows_read
@@ -1448,7 +1484,7 @@ int main(int argc, char* argv[])
             try
             {
                 const lsdtt::sti_spr_parse_result spr =
-                    lsdtt::load_sti_spr_table_from_csv(sf["sti_spr_csv_path"]);
+                    lsdtt::load_sti_spr_table_from_csv(sf["sti_spr_fname"]);
                 spr_table = spr.table;
                 std::cout << "STI SPR rows read/used         : " << spr.rows_read
                           << " / " << spr.rows_used << "\n";
