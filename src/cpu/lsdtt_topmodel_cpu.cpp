@@ -44,6 +44,54 @@ double sti_ln_kd_to_ln_t0_m2_per_hour(double sti_ln_kd) noexcept
     return sti_ln_kd - k_ln_100 - k_ln_24;
 }
 
+topmodel_column_fluxes topmodel_column_step(
+    double rainfall, double potential_et, double local_deficit,
+    const topmodel_parameters& params,
+    double& s_rz, double& s_uz, double& truncated)
+{
+    const double p  = std::max(0.0, rainfall);
+    const double ep = std::max(0.0, potential_et);
+    const double d_local = std::max(0.0, local_deficit);
+
+    topmodel_column_fluxes out;
+
+    // Root zone: rainfall fills the deficit, any surplus passes down.
+    s_rz -= p;
+    if (s_rz < 0.0) { s_uz -= s_rz; s_rz = 0.0; }
+
+    // The unsaturated store cannot exceed the local deficit; the surplus is
+    // saturation excess.
+    if (s_uz > d_local)
+    {
+        out.saturation_excess = s_uz - d_local;
+        s_uz = d_local;
+    }
+
+    // Gravity drainage to the saturated zone.
+    if (d_local > 0.0)
+    {
+        double uz = s_uz / (d_local * params.td_hours_per_metre * params.dt_hours);
+        if (uz > s_uz) uz = s_uz;
+        s_uz -= uz;
+        // 95.02's truncation deletes water rather than routing it, so the
+        // deleted volume is handed back to the caller to account for.
+        if (s_uz < 1.0e-7) { truncated += s_uz; s_uz = 0.0; }
+        out.drainage = uz;
+    }
+
+    // Evapotranspiration from the root zone, linear in how wet it is.
+    if (ep > 0.0)
+    {
+        double ea = ep * (1.0 - s_rz / params.srmax_metres);
+        if (ea > params.srmax_metres - s_rz) ea = params.srmax_metres - s_rz;
+        if (ea < 0.0) ea = 0.0;
+        s_rz += ea;
+        out.actual_et = ea;
+    }
+
+    return out;
+}
+
 lsdtt_topmodel_index_cpu::lsdtt_topmodel_index_cpu(
     std::vector<topmodel_unit> units,
     const topmodel_parameters& params,
@@ -195,55 +243,17 @@ topmodel_step_result lsdtt_topmodel_index_cpu::step_impl(
         const double ep = std::max(0.0, potential_et[k]);
 
         // Local deficit from the CURRENT S_bar -- start-of-step, as 95.02 does.
-        double d_local = sbar_ +
-            params_.szm_metres * (lambda_ - units_[i].topographic_index);
-        if (d_local < 0.0) d_local = 0.0;
+        const double d_local = std::max(0.0,
+            sbar_ + params_.szm_metres * (lambda_ - units_[i].topographic_index));
 
-        // Root zone: rainfall fills the deficit, any surplus passes down.
-        s_rz_[i] -= p;
-        if (s_rz_[i] < 0.0)
-        {
-            s_uz_[i] -= s_rz_[i];
-            s_rz_[i]  = 0.0;
-        }
+        double trunc_here = 0.0;
+        const topmodel_column_fluxes cf = topmodel_column_step(
+            p, ep, d_local, params_, s_rz_[i], s_uz_[i], trunc_here);
 
-        // Unsaturated store cannot exceed the local deficit; the surplus is
-        // saturation excess.
-        if (s_uz_[i] > d_local)
-        {
-            ex[i]    = s_uz_[i] - d_local;
-            s_uz_[i] = d_local;
-        }
-
-        // Gravity drainage to the saturated zone.
-        if (d_local > 0.0)
-        {
-            double uz = s_uz_[i] /
-                (d_local * params_.td_hours_per_metre * params_.dt_hours);
-            if (uz > s_uz_[i]) uz = s_uz_[i];
-            s_uz_[i] -= uz;
-            // 95.02's truncation. It deletes water rather than routing it, so
-            // the deleted volume is accumulated into the balance as a sink --
-            // see topmodel_water_balance::truncation_loss.
-            if (s_uz_[i] < 1.0e-7)
-            {
-                truncated += s_uz_[i] * acf;
-                s_uz_[i] = 0.0;
-            }
-            quz += uz * acf;
-        }
-
-        // Evapotranspiration from the root zone, linear in how wet it is.
-        double ea = 0.0;
-        if (ep > 0.0)
-        {
-            ea = ep * (1.0 - s_rz_[i] / params_.srmax_metres);
-            if (ea > params_.srmax_metres - s_rz_[i])
-                ea = params_.srmax_metres - s_rz_[i];
-            if (ea < 0.0) ea = 0.0;
-            s_rz_[i] += ea;
-        }
-        sae += ea * acf;
+        truncated += trunc_here * acf;
+        ex[i] = cf.saturation_excess;
+        if (d_local > 0.0) quz += cf.drainage * acf;
+        sae += cf.actual_et * acf;
 
         // --- saturation excess ---
         if (rule_ == topmodel_excess_rule::per_unit)

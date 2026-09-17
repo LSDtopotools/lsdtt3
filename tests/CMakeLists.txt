@@ -2085,6 +2085,12 @@ target_link_libraries(lsdtt-test-hydro-roughness PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_roughness COMMAND lsdtt-test-hydro-roughness)
 set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "unit;network")
 
+# Phase 7 of plan_raster_topmodel.md: the dynamic (prognostic) saturated zone.
+add_executable(lsdtt-test-topmodel-dynamic cpp/test_topmodel_dynamic.cpp)
+target_link_libraries(lsdtt-test-topmodel-dynamic PRIVATE lsdtt3_cpu)
+add_test(NAME unit_topmodel_dynamic COMMAND lsdtt-test-topmodel-dynamic)
+set_tests_properties(unit_topmodel_dynamic PROPERTIES LABELS "unit;network")
+
 # THE PHASE 2 GATE: the column against TOPMODEL 95.02 itself. The reference is
 # a third-party clone outside this repo, so the test SKIPS (exit 77) rather than
 # passing vacuously when it is absent -- a skip shows in the CTest summary.

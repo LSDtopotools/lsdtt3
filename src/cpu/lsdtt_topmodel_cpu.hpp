@@ -197,6 +197,38 @@ enum class topmodel_excess_rule
 };
 
 // ---------------------------------------------------------------------------
+// One unit's vertical column, for ONE timestep.
+//
+// Extracted so that `index` mode and `dynamic` mode run the SAME column and
+// differ only in where the local deficit comes from -- derived from the
+// topographic index in one, a prognostic state in the other. That matters for
+// more than tidiness: the 95.02 oracle exercises this function, so the column
+// physics of the dynamic mode is covered by the external reference even though
+// the dynamic mode itself has none.
+//
+// `s_rz` (root zone DEFICIT) and `s_uz` (unsaturated STORAGE) are updated in
+// place. `truncated` accumulates water deleted by 95.02's small-value
+// truncation, so the caller can account for it rather than leak it.
+// ---------------------------------------------------------------------------
+struct topmodel_column_fluxes
+{
+    double saturation_excess = 0.0;   // S_uz above the local deficit [m]
+    double drainage          = 0.0;   // gravity drainage to the saturated zone [m]
+    double actual_et         = 0.0;   // from the root zone [m]
+};
+
+[[nodiscard]]
+topmodel_column_fluxes topmodel_column_step(
+    double rainfall,
+    double potential_et,
+    double local_deficit,
+    const topmodel_parameters& params,
+    double& s_rz,
+    double& s_uz,
+    double& truncated
+);
+
+// ---------------------------------------------------------------------------
 // Per-timestep diagnostics. All depths are metres per timestep, averaged over
 // the whole domain, so they add up as a water balance directly.
 // ---------------------------------------------------------------------------
