@@ -1552,13 +1552,14 @@ banded_label_result label_components_within_bands(
                 terrain_aspect_degrees->get_data().size() == n)
             {
                 const std::vector<float>&   ad = terrain_aspect_degrees->get_data();
-                const std::vector<uint8_t>& am = terrain_aspect_degrees->get_mask();
+                const std::vector<uint8_t>& aspect_mask =
+                    terrain_aspect_degrees->get_mask();
                 constexpr double deg_to_rad = 3.14159265358979323846 / 180.0;
                 double sn = 0.0, cs = 0.0;
                 std::int64_t na = 0;
                 for (const std::size_t m : members)
                 {
-                    if (!am[m] || !std::isfinite(ad[m])) continue;
+                    if (!aspect_mask[m] || !std::isfinite(ad[m])) continue;
                     const double a_rad = static_cast<double>(ad[m]) * deg_to_rad;
                     sn += std::sin(a_rad);
                     cs += std::cos(a_rad);

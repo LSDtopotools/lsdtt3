@@ -46,11 +46,23 @@ std::string         g_pinned_gdal_dir;   // "" if nothing was pinned
 std::atomic<bool>   g_initialised{false};
 
 // Read an environment variable, returning "" when unset or empty.
+//
+// MSVC deprecates getenv in favour of _dupenv_s. The warning is about the
+// returned pointer being invalidated by a later setenv/putenv from another
+// thread; gdal_init() is documented as startup-only, single-threaded, and the
+// value is copied into a std::string before returning, so it does not apply.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
 std::string env_or_empty(const char* name)
 {
     const char* v = std::getenv(name);
     return (v && *v) ? std::string(v) : std::string();
 }
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 // Directories to probe for bundled runtime data, in priority order.
 //

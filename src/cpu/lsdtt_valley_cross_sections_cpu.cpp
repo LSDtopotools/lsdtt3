@@ -1002,8 +1002,8 @@ valley_cross_section_result extract_curved_impl(
             auto add = [&](std::size_t i)
             { if (i < nst && !seen[i]) { seen[i] = 1; order.push_back(i); } };
             for (std::size_t i = 0; i < nst; i += C) add(i);   // coarse backbone
-            for (std::size_t step = C; step > 1; step /= 2)    // fill midpoints
-                for (std::size_t i = step / 2; i < nst; i += step) add(i);
+            for (std::size_t stride = C; stride > 1; stride /= 2) // fill midpoints
+                for (std::size_t i = stride / 2; i < nst; i += stride) add(i);
             for (std::size_t i = 0; i < nst; ++i) add(i);      // any stragglers
         }
 
@@ -1447,9 +1447,9 @@ valley_cross_section_result extract_valley_cross_sections(
                 int run_lo = -1;
                 for (int j = 0; j <= ns; ++j)
                 {
-                    const bool ch = (j < ns) && xs.samples[j].is_channel;
-                    if (ch && run_lo < 0) run_lo = j;
-                    else if (!ch && run_lo >= 0)
+                    const bool in_channel = (j < ns) && xs.samples[j].is_channel;
+                    if (in_channel && run_lo < 0) run_lo = j;
+                    else if (!in_channel && run_lo >= 0)
                     {
                         const int mid = (run_lo + j - 1) / 2;
                         xs.channel_crossing_offsets.push_back(

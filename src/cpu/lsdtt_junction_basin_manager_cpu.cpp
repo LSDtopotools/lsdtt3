@@ -1416,7 +1416,7 @@ void lsdtt_junction_basin_manager_cpu::write_basin_outlines_to_csv(
     const double max_dy = std::abs(dem.get_meta().cell_size) * dem.get_meta().n_rows * 0.5;
     const auto& d_data = dem.get_data_array();
     const auto& d_mask = dem.get_mask_array();
-    const float ndv = dem.get_meta().no_data_value;
+    const float ndv = static_cast<float>(dem.get_meta().no_data_value);
 
     for (const lsdtt_junction_basin_cpu& basin : basins_)
     {
