@@ -1,0 +1,9 @@
+# routing_method must be rejected before any work is done.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: badrouting
+
+twi_window_radius_metres: 2.0
+rainfall_fname: tiny_rainfall.csv
+routing_method: muskingum

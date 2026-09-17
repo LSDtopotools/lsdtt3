@@ -580,6 +580,97 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "STI proxy Jenks upper breaks               : 0.906619"
 )
 
+# =============================================================================
+# lsdtt-distributed-hydrology (plan_raster_topmodel.md Phase 10)
+#
+# The physics is all in the modules and is tested by the C++ drivers
+# (unit_topmodel_column, unit_hydro_velocity_field, unit_hydro_routing,
+# unit_canopy_interception, unit_infiltration_excess, unit_channel_extent,
+# unit_hydro_roughness, unit_landcover_scenario, unit_topmodel_dynamic, and the
+# 95.02 oracle). These CLI tests carry only what is genuinely CLI: that the
+# pipeline assembles, that the outputs appear, and that the failure paths fail
+# with a message that says what to do.
+#
+# tiny_dem.asc is 5x5 with 1 m cells, so twi_window_radius_metres is 2.0
+# everywhere here: that leaves the interior 3x3 valid, the same nine pixels the
+# TWI refactor guard uses.
+# =============================================================================
+
+# The parameter declarations must all render; -h needs no parameter file.
+add_test(NAME smoke_distributed_hydrology_help
+         COMMAND lsdtt-distributed-hydrology -h)
+set_tests_properties(smoke_distributed_hydrology_help PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    PASS_REGULAR_EXPRESSION "saturated_zone_mode")
+
+# The end-to-end run.
+#
+# The TWI checksum is the point of the test, not decoration: it is the same
+# 65360 that rigorous_drainage_twi_refactor_identical pins for
+# lsdtt-drainage-analysis on the same DEM at the same window radius. The two
+# CLIs share one TWI implementation (lsdtt_wetness_index_cpu), and a second,
+# divergent TWI would be a defect rather than a variant -- so this asserts they
+# really do produce the same raster, which is the only mechanical check that
+# the sharing has not quietly come apart.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_run
+    lsdtt-distributed-hydrology
+    distributed_hydrology_smoke.param.in
+    tinyhyd_discharge.csv
+    --expect tinyhyd_water_balance.csv
+    --expect tinyhyd_iuh.csv
+    --expect tinyhyd_twi.tif
+    --expect tinyhyd_velocity.tif
+    --expect tinyhyd_traveltime.tif
+    --expect tinyhyd_saturation.tif
+    --expect tinyhyd_water_table.tif
+    --expect-raster-checksum tinyhyd_twi.tif:65360
+    --expect-raster-size tinyhyd_velocity.tif:5x5
+    --expect-file-contains "tinyhyd_discharge.csv:timestep,time_seconds,rainfall_metres,pet_metres,canopy_evaporation_metres,actual_et_metres,hortonian_runoff_metres,saturation_excess_metres,baseflow_metres,total_runoff_metres,mean_deficit_metres,contributing_area_fraction,discharge_m3_per_second"
+    --expect-file-contains "tinyhyd_water_balance.csv:closure_error"
+    # No not-contains guard for "inf": the substring lives inside "rainfall",
+    # so the check can never pass. "nan" has no such clash and is the one that
+    # matters anyway -- a nodata sentinel reaching a data column prints as nan.
+    --expect-file-not-contains "tinyhyd_discharge.csv:nan"
+    --stdout-contains "TOPMODEL (index)"
+    --stdout-contains "Pure translation through the travel-time distribution"
+    --stdout-contains "DERIVED from the geometry, not chosen"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_distributed_hydrology_bad_routing_method
+    lsdtt-distributed-hydrology
+    distributed_hydrology_bad_routing.param.in
+    badrouting_discharge.csv
+    --expect-failure
+    --stderr-contains "FATAL: routing_method must be 'width_function'"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_distributed_hydrology_missing_rainfall
+    lsdtt-distributed-hydrology
+    distributed_hydrology_missing_rainfall.param.in
+    norain_discharge.csv
+    --expect-failure
+    --stderr-contains "FATAL: rainfall_fname is required"
+)
+
+# The message is the substance of this one, not the throw. A table with an
+# unknown field throws too, so a bare "it failed" check would still pass with
+# the dedicated branch deleted -- and the branch exists precisely to tell
+# someone arriving from SD-TOPMODEL's parameterisation where conductivity
+# actually comes from.
+add_lsdtt_cli_smoke_test(
+    failure_distributed_hydrology_landcover_table_ks
+    lsdtt-distributed-hydrology
+    distributed_hydrology_landcover_ks.param.in
+    lcks_discharge.csv
+    --expect-failure
+    --stderr-contains "FATAL: landcover_table is malformed"
+    --stderr-contains "Conductivity is NOT a land-cover property here"
+    --stderr-contains "set 'soil=' instead"
+)
+
 # lsdtt-mountain-front and lsdtt-feature-finder had NO tests at all until
 # 2026-09-10. That was found when the B7 extraction (write_masked_pixels_as_points)
 # refactored the outlet writer of one and both point writers of the other, and
@@ -5182,7 +5273,7 @@ set(LSDTT_DOMAIN_RULES
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover"          "network"
+    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover|distributed_hydrology"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
