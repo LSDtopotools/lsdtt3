@@ -2056,6 +2056,16 @@ target_link_libraries(lsdtt-test-topmodel-column PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_column COMMAND lsdtt-test-topmodel-column)
 set_tests_properties(unit_topmodel_column PROPERTIES LABELS "unit;network")
 
+# Phase 6 of plan_raster_topmodel.md: the channel mask ladder. Takes an output
+# directory for the small GeoJSON fixture it writes at run time, so nothing is
+# committed to tests/data.
+add_executable(lsdtt-test-channel-mask cpp/test_channel_mask.cpp)
+target_link_libraries(lsdtt-test-channel-mask PRIVATE lsdtt3_cpu)
+add_test(NAME unit_channel_mask
+         COMMAND lsdtt-test-channel-mask "${CMAKE_CURRENT_BINARY_DIR}/channel_mask_output")
+set_tests_properties(unit_channel_mask PROPERTIES LABELS "unit;network")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/channel_mask_output")
+
 # Phase 5 of plan_raster_topmodel.md: the routing ladder.
 add_executable(lsdtt-test-hydro-routing cpp/test_hydro_routing.cpp)
 target_link_libraries(lsdtt-test-hydro-routing PRIVATE lsdtt3_cpu)
@@ -5146,7 +5156,7 @@ set(LSDTT_DOMAIN_RULES
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy"          "network"
+    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_mask"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
