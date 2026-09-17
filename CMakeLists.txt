@@ -397,6 +397,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_topmodel_cpu.cpp
     src/cpu/lsdtt_hydro_roughness_cpu.cpp
     src/cpu/lsdtt_canopy_interception_cpu.cpp
+    src/cpu/lsdtt_hydro_routing_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp
     src/cpu/lsdtt_swath_cpu.cpp
     src/cpu/lsdtt_streamlines_cpu.cpp
