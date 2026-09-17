@@ -2085,6 +2085,20 @@ target_link_libraries(lsdtt-test-hydro-roughness PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_roughness COMMAND lsdtt-test-hydro-roughness)
 set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "unit;network")
 
+# Phase 8 of plan_raster_topmodel.md: infiltration excess (exp-K Green-Ampt).
+#
+# The oracle is tests/data/expinf_95_02_reference.csv -- a FROZEN trace of
+# TOPMODEL 95.02's own EXPINF. lsdtt3 has NO FORTRAN DEPENDENCY: the test reads
+# a committed file, so every machine gets identical coverage and nothing here
+# ever invokes a compiler. tests/scripts/regenerate_expinf_fixture.py carries
+# the subroutine verbatim and is the maintainer tool for remaking the fixture.
+add_executable(lsdtt-test-infiltration-excess cpp/test_infiltration_excess.cpp)
+target_link_libraries(lsdtt-test-infiltration-excess PRIVATE lsdtt3_cpu)
+add_test(NAME unit_infiltration_excess
+         COMMAND lsdtt-test-infiltration-excess
+                 "${CMAKE_CURRENT_SOURCE_DIR}/data/expinf_95_02_reference.csv")
+set_tests_properties(unit_infiltration_excess PROPERTIES LABELS "unit;network")
+
 # Phase 7 of plan_raster_topmodel.md: the dynamic (prognostic) saturated zone.
 add_executable(lsdtt-test-topmodel-dynamic cpp/test_topmodel_dynamic.cpp)
 target_link_libraries(lsdtt-test-topmodel-dynamic PRIVATE lsdtt3_cpu)
@@ -5162,7 +5176,7 @@ set(LSDTT_DOMAIN_RULES
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent"          "network"
+    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
