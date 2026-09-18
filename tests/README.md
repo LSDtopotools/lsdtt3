@@ -22,27 +22,27 @@ CTest-driven test suite, selected by label:
 | `performance` | nothing | in-process timings of the flow routines (opt-in, reported not asserted) |
 
 Everything except `benchmark` and `cosmo_realworld` runs offline with committed
-fixtures. `benchmark` is off unless configured with
-`-DLSDTT_ENABLE_BENCHMARKS=ON`, and skips rather than fails when its
-dependencies are absent.
+fixtures. Both are registered only when asked for: `benchmark` with
+`-DLSDTT_ENABLE_BENCHMARKS=ON`, and `cosmo_realworld` (like the other tests
+that download) with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`. Both skip rather than
+fail when their dependencies are absent.
 
 ## Running the suite
 
-**Use `ctest -LE cosmo_realworld` for a normal run.**
-
 ```bash
-ctest -LE cosmo_realworld     # 2-5 minutes -- everything offline
-ctest                         # ~15 minutes -- adds the networked cosmo tier
+ctest                         # everything registered; offline unless the network option is ON
 ctest -L cosmo_realworld      # the cosmo real-landscape validation on its own
+                              # (needs -DLSDTT_ENABLE_NETWORK_TESTS=ON)
 ```
 
 The offline run is dominated by `unit_hillslope_implicit`, whose wall time swings
 widely under WSL2 host load (68 s to 219 s observed on the same machine). If that
 becomes a nuisance, gate it by label rather than loosening its tolerances.
 
-Bare `ctest` ignores labels and so pulls in `cosmo_realworld`, which downloads
-real DEMs and dominates the wall time (~745 s of ~865 s, one test alone ~540 s).
-Those tests are validation against published erosion rates, not smoke tests: each
+`cosmo_realworld` is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`
+(since 2026-09-18; before that a bare `ctest` pulled it in). It downloads real
+DEMs and dominated the wall time when it ran by default (~745 s of ~865 s, one
+test alone ~540 s). Those tests are validation against published erosion rates, not smoke tests: each
 one's DEM extent is tied to the study area of its samples, so they cannot be made
 faster by shrinking the DEM without destroying what they measure. Run them when
 touching cosmogenic code, not on every iteration.
@@ -191,18 +191,19 @@ workdir, no network), that `--keep` is honoured, that the manifest/sample-table
 schema guards trip, and that summary-append leaves the frozen skeleton
 byte-unchanged.
 
-`cosmo_realworld_dethier2014` (label `cosmo_realworld`, **not** in the default
-suite) is the real thing: it fetches a DEM **keyless** via `lsdtt-fetch-raster`
+`cosmo_realworld_dethier2014` (label `cosmo_realworld`, registered only with
+`-DLSDTT_ENABLE_NETWORK_TESTS=ON`) is the real thing: it fetches a DEM **keyless** via `lsdtt-fetch-raster`
 (Copernicus GLO-30 / Planetary Computer, no API key), clips it, runs
 `lsdtt-cosmo-tool`, compares to the tracked published rates, appends the frozen
 summary CSV, then deletes the temporary workdir including on failure. It needs
-network and is invoked manually (`ctest -L cosmo_realworld`); it exits 77 (skip)
+network and is run on request (`ctest -L cosmo_realworld` in a build configured
+with the network option); it exits 77 (skip)
 when the network/DEM source is unavailable or the sample table is still a
 template, so it never turns CI red. **No DEM is ever committed** — only the small
 manifest, sample table, and frozen summary under `tests/expected/cosmo/published/`.
 
-`cosmo_realworld_lsdn_pixel_vs_lumped` (label `cosmo_realworld`, **not** in the
-default suite) is the **generation** half of the per-pixel-vs-lumped LSDn result.
+`cosmo_realworld_lsdn_pixel_vs_lumped` (label `cosmo_realworld`, registered only
+with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`) is the **generation** half of the per-pixel-vs-lumped LSDn result.
 It fetches all three published datasets' DEMs keyless, runs `lsdtt-cosmo-tool`
 under `scaling_scheme: lsdn` at three sample ages plus `stone`, and records each
 basin's mean production scaling over the exact upslope node set the inversion

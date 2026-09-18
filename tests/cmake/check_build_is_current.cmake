@@ -51,7 +51,7 @@
 # manifest is missing or malformed. (cmake_language(EXIT) would allow distinct
 # codes but needs CMake 3.29.)
 
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION 3.15)
 
 if(NOT DEFINED MANIFEST OR NOT EXISTS "${MANIFEST}")
     message(FATAL_ERROR "manifest not found: ${MANIFEST}")

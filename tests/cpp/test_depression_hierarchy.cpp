@@ -424,7 +424,9 @@ void test_scaling_is_not_quadratic()
     // back, still failed once in 7 runs, because a burst can cover all three
     // runs of one size. Interleaving exposes both sizes to the same load, and
     // the minimum is the estimate closest to the true cost, since contention
-    // only ever adds time.
+    // only ever adds time. It is not enough on its own: contention slows the
+    // larger grid more than the smaller one, so CTest also runs this driver
+    // RUN_SERIAL (tests/CMakeLists.txt).
     double best[2] = {0.0, 0.0};
     for (int rep = 0; rep < 5; ++rep)
     {

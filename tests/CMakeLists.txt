@@ -14,15 +14,13 @@
 #
 # Python is looked for ONLY when LSDTT_ENABLE_PYTHON_TESTS is ON.
 # -----------------------------------------------------------------------------
-if(CMAKE_VERSION VERSION_LESS 3.19)
-    message(FATAL_ERROR
-        "BUILD_TESTING=ON needs CMake 3.19 or newer for the test tooling (this is "
-        "${CMAKE_VERSION}). Upgrade CMake, or configure with -DBUILD_TESTING=OFF "
-        "for a production-only build.")
-endif()
-
 option(LSDTT_ENABLE_PYTHON_TESTS "Register Python-driven CTest tests" OFF)
 option(LSDTT_ENABLE_PYTHON_GEO_TESTS "Register Python tests needing geospatial packages" OFF)
+
+# Tests that download data: network_*, and the cosmo_realworld_* tier (each
+# fetches a Copernicus DEM and runs a full basin inversion, one minute to half
+# an hour apiece). Declared here, before its first use below.
+option(LSDTT_ENABLE_NETWORK_TESTS "Enable tests that download data" OFF)
 
 if(LSDTT_ENABLE_PYTHON_GEO_TESTS AND NOT LSDTT_ENABLE_PYTHON_TESTS)
     message(FATAL_ERROR
@@ -2738,10 +2736,16 @@ lsdtt_set_tests_properties(unit_mountain_front_outlet_pruning PROPERTIES
 add_executable(lsdtt-test-depression-hierarchy cpp/test_depression_hierarchy.cpp)
 target_link_libraries(lsdtt-test-depression-hierarchy PRIVATE lsdtt3_cpu)
 
+# RUN_SERIAL because the driver's complexity guard times two grid sizes against
+# each other. Under `ctest -j4` the larger grid slows far more than the smaller
+# one (memory contention from neighbouring tests), so the exponent drifted to
+# the 1.6 bound: 1.609 on 2026-09-18 even with interleaved best-of-five timing,
+# against 1.04 alone. The whole driver takes about a second.
 add_test(NAME unit_depression_hierarchy
          COMMAND lsdtt-test-depression-hierarchy)
 lsdtt_set_tests_properties(unit_depression_hierarchy PROPERTIES
-    LABELS "unit;depression_hierarchy")
+    LABELS "unit;depression_hierarchy"
+    RUN_SERIAL TRUE)
 
 # Oracle comparison against the upstream Barnes implementation
 # (docs/plan_docs/depression_hierarchy_fix_plan.md phase 3). The expected files
@@ -4010,10 +4014,9 @@ add_test(NAME unit_coastal_mask
          COMMAND lsdtt-test-coastal-mask "${CMAKE_CURRENT_BINARY_DIR}/coastal_mask_output")
 lsdtt_set_tests_properties(unit_coastal_mask PROPERTIES LABELS "unit;fetch")
 
-# The network half actually downloads. Off by default; skips (77) rather than
-# failing when the source is unreachable.
-option(LSDTT_ENABLE_NETWORK_TESTS "Enable tests that download data" OFF)
-
+# The network half actually downloads. Off by default (LSDTT_ENABLE_NETWORK_TESTS,
+# declared at the top of this file); skips (77) rather than failing when the
+# source is unreachable.
 if(LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME network_raster_fetch
              COMMAND lsdtt-test-raster-fetch --network
@@ -4783,12 +4786,14 @@ lsdtt_set_tests_properties(unit_cosmo_riversand_harness PROPERTIES LABELS "unit;
 
 # Real download -> run -> delete for the pilot dataset, in --check (regression)
 # mode: it reproduces the fresh inverted rates and compares them to the FROZEN
-# tracked summary without modifying it. NEEDS NETWORK and time; deliberately kept
-# OUT of the default unit;cosmo CI suite (label cosmo_realworld, invoked manually
-# via `ctest -L cosmo_realworld`). Skips (exit 77) when the network/DEM source is
+# tracked summary without modifying it. NEEDS NETWORK and time, so every
+# cosmo_realworld_* test is registered only with LSDTT_ENABLE_NETWORK_TESTS=ON
+# (and the Python tests); run them with `ctest -L cosmo_realworld`. Until
+# 2026-09-18 they were registered unconditionally, so a plain `ctest` downloaded
+# DEMs for all eight. Skips (exit 77) when the network/DEM source is
 # unavailable OR the manifest/sample table is still a template, so it can never
 # turn CI red.
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_dethier2014
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
@@ -4796,6 +4801,8 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_dethier2014)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_dethier2014)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_dethier2014)
 endif()
@@ -4808,7 +4815,7 @@ lsdtt_set_tests_properties(cosmo_realworld_dethier2014 PROPERTIES
 # dibiase2010 = San Gabriel STEEP / HIGH-relief (OCTOPUS S055). Each is fully
 # manifest-driven (bbox, target UTM, run knobs) and frozen from its own accepted
 # networked run. Same --check regression mode, same skip-77 / out-of-CI wiring.
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_clapp2002
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
@@ -4816,13 +4823,15 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_clapp2002)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_clapp2002)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_clapp2002)
 endif()
 lsdtt_set_tests_properties(cosmo_realworld_clapp2002 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_dibiase2010
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
@@ -4830,6 +4839,8 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_dibiase2010)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_dibiase2010)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_dibiase2010)
 endif()
@@ -4849,7 +4860,7 @@ lsdtt_set_tests_properties(cosmo_realworld_dibiase2010 PROPERTIES
 # it with L12/L13 (see each summary header); never tune anything to shrink it.
 # Same --check regression mode, same skip-77 / out-of-CI wiring as the St tier: these
 # compare the fresh lsdtt3 rates against the frozen rows and must NOT rewrite them.
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_dethier2014_lsdn
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
@@ -4857,13 +4868,15 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_dethier2014_lsdn)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_dethier2014_lsdn)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_dethier2014_lsdn)
 endif()
 lsdtt_set_tests_properties(cosmo_realworld_dethier2014_lsdn PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_clapp2002_lsdn
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
@@ -4871,13 +4884,15 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_clapp2002_lsdn)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_clapp2002_lsdn)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_clapp2002_lsdn)
 endif()
 lsdtt_set_tests_properties(cosmo_realworld_clapp2002_lsdn PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_dibiase2010_lsdn
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
@@ -4885,6 +4900,8 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_dibiase2010_lsdn)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_dibiase2010_lsdn)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_dibiase2010_lsdn)
 endif()
@@ -4897,18 +4914,20 @@ lsdtt_set_tests_properties(cosmo_realworld_dibiase2010_lsdn PROPERTIES
 # (Braucher / NCEP / paleomag-off) with the reporting-only basin-production CSV, and
 # compares lsdtt's basin-mean Stone-2000 production scaling to OCTOPUS BEPROD/BETOTS
 # and its basin-mean elevation to ELEV_AVE (harvested live from the OCTOPUS WFS).
-# NEEDS NETWORK; kept OUT of the default unit;cosmo suite (label cosmo_realworld,
-# `ctest -L cosmo_realworld`). Skips (exit 77) when the network is unavailable.
+# NEEDS NETWORK; registered only with LSDTT_ENABLE_NETWORK_TESTS=ON (label
+# cosmo_realworld, `ctest -L cosmo_realworld`). Skips (exit 77) when the network is unavailable.
 # Runs in check-only mode: it compares against the tracked frozen artefact and must
 # NOT rewrite it. Re-freezing is a deliberate act -- run the script with --freeze by
 # hand and review the diff.
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_production_isolation
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_production_isolation.py"
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_production_isolation)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_production_isolation)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_production_isolation)
 endif()
@@ -4927,11 +4946,11 @@ lsdtt_set_tests_properties(cosmo_realworld_production_isolation PROPERTIES
 # unit_cosmo_physics (default unit;cosmo suite), which is where the assertions and
 # the lsdn_pixel_vs_lumped.csv product live.
 #
-# NEEDS NETWORK; kept OUT of the default suite (label cosmo_realworld). Skips
+# NEEDS NETWORK; registered only with LSDTT_ENABLE_NETWORK_TESTS=ON (label cosmo_realworld). Skips
 # (exit 77) when the DEM source is unreachable. Runs check-only: it compares
 # against the tracked frozen artefact and must NOT rewrite it. Re-freezing is a
 # deliberate act -- run the script with --freeze by hand and review the diff.
-if(LSDTT_ENABLE_PYTHON_TESTS)
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
     add_test(NAME cosmo_realworld_lsdn_pixel_vs_lumped
              COMMAND ${Python3_EXECUTABLE}
                      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_lsdn_pixel_vs_lumped.py"
@@ -4939,6 +4958,8 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                      --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
     lsdtt_mark_test_runtime(python cosmo_realworld_lsdn_pixel_vs_lumped)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network cosmo_realworld_lsdn_pixel_vs_lumped)
 else()
     lsdtt_mark_test_unregistered(python cosmo_realworld_lsdn_pixel_vs_lumped)
 endif()
@@ -5840,6 +5861,38 @@ set_tests_properties(unit_build_is_current PROPERTIES
     TIMEOUT 300)
 
 # =============================================================================
+# TEST INVENTORY AUDIT
+#
+# Checks every registered test's tier / flag / component labels and its
+# environment and timeout against the command it actually runs, and that every
+# test script launches processes through lsdtt_test_env.py. The rules are in
+# cmake/audit_test_inventory.cmake. It reads the generated CTestTestfile.cmake
+# rather than calling `ctest --show-only`, because any ctest run inside a
+# running suite empties that suite's LastTest.log.
+#
+# The self-test runs the same audit over a canned test file with one planted
+# violation per check (cmake/audit_selftest/) and passes only if exactly those
+# are reported, so a broken audit cannot pass silently.
+# =============================================================================
+add_test(NAME unit_test_inventory_audit
+    COMMAND ${CMAKE_COMMAND}
+        -DTESTFILE=${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake
+        -DSCRIPTS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/scripts
+        -DCTEST_CONFIGURATION_TYPE=$<CONFIG>
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/audit_test_inventory.cmake")
+set_tests_properties(unit_test_inventory_audit PROPERTIES
+    LABELS "unit;core;conventions"
+    TIMEOUT 120)
+
+add_test(NAME unit_test_inventory_audit_selftest
+    COMMAND ${CMAKE_COMMAND}
+        -DSELFTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/audit_selftest
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/audit_test_inventory.cmake")
+set_tests_properties(unit_test_inventory_audit_selftest PROPERTIES
+    LABELS "unit;core;conventions"
+    TIMEOUT 60)
+
+# =============================================================================
 # DEPENDENCY TIERS, ENVIRONMENT FLAGS AND THE LEM COMPONENT
 #
 # Every test gets exactly one RUNTIME TIER label, saying what it needs to start:
@@ -6116,6 +6169,13 @@ endif()
 if(_n_off_geo GREATER 0)
     message(STATUS "Test tiers    : ${_n_off_geo} geospatial Python tests not "
                    "registered (LSDTT_ENABLE_PYTHON_GEO_TESTS=OFF)")
+endif()
+get_property(_lsdtt_off_net GLOBAL PROPERTY LSDTT_UNREGISTERED_network_TESTS)
+list(LENGTH _lsdtt_off_net _n_off_net)
+if(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    message(STATUS "Test tiers    : tests that download data not registered "
+                   "(LSDTT_ENABLE_NETWORK_TESTS=OFF), including the "
+                   "${_n_off_net} cosmo_realworld_* tests")
 endif()
 
 # =============================================================================
