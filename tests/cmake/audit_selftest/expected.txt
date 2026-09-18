@@ -1,0 +1,13 @@
+# One line per planted violation: "<check>: <test name or script file>".
+A: sel_a_two_tiers
+B: sel_b_pixi_wrong
+C: sel_c_native_with_py
+D: sel_d_hermetic_skip
+E: sel_e_no_env
+E: sel_e_no_timeout
+F: sel_f_lem
+G: sel_g_harness
+G: sel_g_script
+H: sel_h_stdlib_imports
+H: sel_h_geo_no_imports
+I: bad_launch.py

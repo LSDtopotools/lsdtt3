@@ -5,44 +5,133 @@ the documented differences between lsdtt3 and RichDEM**, see
 `docs/testing_and_benchmarking.md` — read that before concluding a mismatch
 against another tool is a bug.
 
-CTest-driven test suite, selected by label:
+CTest-driven test suite. Every test carries labels on four independent axes;
+select with `-L` / `-LE`, which take **regular expressions**, so anchor them
+(`-L '^hermetic$'`): `-L network` also matches `synthetic_networks`.
 
-| Label | Needs | What it covers |
+**1. Runtime tier — exactly one per test: what it needs to start.**
+
+| Label | Registered | Needs |
 |---|---|---|
-| `smoke` | nothing | each CLI runs end to end on a tiny fixture |
-| `rigorous` | nothing | exact output checks — checksums, sizes, feature counts, hashes |
-| `failure` | nothing | bad parameters are rejected with the expected message |
-| `unit` | nothing | C++ unit tests (parameter parser, cosmogenic physics, flow properties) |
-| `divide_diagnostics` | nothing | divide-diagnostics compute-layer unit tests |
-| `landscape_equilibration` | nothing | landscape equilibration cycle unit test |
-| `cosmo` | nothing | cosmogenic-nuclide physics vs frozen CRONUS + numerics sentinel |
-| `flow` | nothing | flow routing and depression-handling properties |
-| `cosmo_realworld` | network | inverted erosion rates vs frozen published/OCTOPUS rates on real DEMs (opt-in) |
-| `benchmark` | network + RichDEM | comparison against RichDEM on fetched real DEMs (opt-in) |
-| `performance` | nothing | in-process timings of the flow routines (opt-in, reported not asserted) |
+| `tier_native` | always (with `BUILD_TESTING`) | the C++ build only |
+| `tier_python_stdlib` | `-DLSDTT_ENABLE_PYTHON_TESTS=ON` | Python ≥ 3.10, standard library only; the `needs_gdal_tools` ones also need GDAL's command-line programs |
+| `tier_python_geo` | also `-DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON` | Python plus the GDAL bindings, NumPy, Rasterio, GeoPandas, Shapely |
+| `tier_pixi` | `-DLSDTT_ENABLE_BENCHMARKS=ON` | `pixi run` into the `benchmark` environment |
 
-Everything except `benchmark` and `cosmo_realworld` runs offline with committed
-fixtures. `benchmark` is off unless configured with
-`-DLSDTT_ENABLE_BENCHMARKS=ON`, and skips rather than fails when its
-dependencies are absent.
+**2. Environment flags — zero or more.**
+
+| Label | Meaning |
+|---|---|
+| `hermetic` | native, no skip path, no network, no host data: the reproducible floor |
+| `needs_network` | downloads data (registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`; skips when offline) |
+| `needs_gdal_tools` | runs `gdalinfo` / `ogrinfo` / `gdal_translate` (Ubuntu: `gdal-bin`, which `libgdal-dev` does not install) |
+
+**3. Component.** `lem_component`: every `lsdtt-lem` CLI test and the unit
+tests of the engines it drives.
+
+**4. Cost.** `heavy`: too slow for the inner loop.
+
+**Kind and domain** labels say what is tested and where:
+
+| Label | What it covers |
+|---|---|
+| `smoke` | each CLI runs end to end on a tiny fixture |
+| `rigorous` | exact output checks — checksums, sizes, feature counts, hashes |
+| `failure` | bad parameters are rejected with the expected message |
+| `unit` | C++ unit tests (parameter parser, cosmogenic physics, flow properties) |
+| `divide_diagnostics` | divide-diagnostics compute-layer unit tests |
+| `landscape_equilibration` | landscape equilibration cycle unit test |
+| `cosmo` | cosmogenic-nuclide physics vs frozen CRONUS + numerics sentinel |
+| `flow` | flow routing and depression-handling properties |
+| `cosmo_realworld` | inverted erosion rates vs frozen published/OCTOPUS rates on real DEMs (network) |
+| `benchmark` | comparison against RichDEM, TopoToolbox, Whitebox on fetched real DEMs (opt-in) |
+| `performance` | in-process timings (opt-in, reported not asserted) |
+| `configure_contract` | configure the whole project in a scratch directory and check what it reports for a disabled or missing tier |
+
+Configure prints what it registered, per tier, and which options left tests
+out and how many.
+
+### What each tier needs installed
+
+- **Native**: the C++ build dependencies only.
+- **Python**: Python ≥ 3.10; GDAL's command-line programs for the
+  `needs_gdal_tools` tests (`sudo apt install gdal-bin`).
+- **Python geospatial**: easiest from the Pixi `test` environment — configure
+  *outside* Pixi and pass its interpreter (see `pixi.toml`):
+
+  ```bash
+  pixi install -e test
+  cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON \
+        -DPython3_EXECUTABLE="$(pixi run -e test python -c 'import sys; print(sys.executable)')"
+  pixi run -e test ctest --test-dir build --output-on-failure
+  ```
+
+- **Network**: `-DLSDTT_ENABLE_NETWORK_TESTS=ON` and a connection.
+- **Benchmarks**: `-DLSDTT_ENABLE_BENCHMARKS=ON` and the Pixi `benchmark`
+  environment.
+
+A missing interpreter, program or package is a configure error that names it.
+
+### Execution contract
+
+- **No test reads the terminal.** CTest passes the terminal it was started
+  from to every test as stdin, so anything that prompts would hang an
+  interactive run while passing in CI. Every test runs with
+  `LSDTT_NONINTERACTIVE=1` (the credential lookup then never prompts), and the
+  Python scripts start every program through `tests/scripts/lsdtt_test_env.py`,
+  which gives it `/dev/null` as stdin.
+- **Every test has a timeout.** Unless a test sets its own: `failure_*` 60 s,
+  `heavy` 3600 s, the rest 300 s; benchmarks and performance tests are left to
+  their options.
+- **OpenMP tests do not fight under `-j`.** Every test except the serial,
+  benchmark and performance ones runs with `OMP_WAIT_POLICY=passive`.
+- **Pixi isolation.** Run inside a Pixi environment, the launcher strips that
+  environment's GDAL/PROJ data and library variables from lsdtt3 programs built
+  against a different GDAL (`unit_test_env_isolation` checks it).
+- **The audit.** `unit_test_inventory_audit` checks every test's labels,
+  environment and timeout against the command it actually runs, and that test
+  scripts launch programs only through `lsdtt_test_env`.
 
 ## Running the suite
 
-**Use `ctest -LE cosmo_realworld` for a normal run.**
+```bash
+ctest --test-dir build -L '^hermetic$' --output-on-failure   # native, offline, reproducible
+ctest --test-dir build -LE '^heavy$'                          # everything registered except the slow tests
+ctest --test-dir build -L '^cosmo$' -LE '^heavy$'             # one domain
+ctest --test-dir build -LE '^lem_component$'                  # everything except the LEM
+ctest --test-dir build -L '^lem_component$' -LE '^heavy$'     # the LEM, cheap part
+ctest --test-dir build -L '^cosmo_realworld$'                 # real-landscape cosmo validation
+                                                              # (needs -DLSDTT_ENABLE_NETWORK_TESTS=ON)
+```
+
+For long runs, the logging wrapper keeps a complete log in `build/test-logs/`
+even when a run is killed (CTest's own `LastTest.log.tmp` is overwritten by the
+next `ctest` call of any kind):
 
 ```bash
-ctest -LE cosmo_realworld     # 2-5 minutes -- everything offline
-ctest                         # ~15 minutes -- adds the networked cosmo tier
-ctest -L cosmo_realworld      # the cosmo real-landscape validation on its own
+cmake -P build/run_tests.cmake -LE '^heavy$' -j4
 ```
+
+**When tests fail**, build the report and send it with the bug report:
+
+```bash
+cmake --build build --target test_report
+```
+
+It writes one plain-text file in `build/test-logs/`: build options and
+versions, the machine, the GDAL/PROJ actually loaded, the Python environment,
+the run's arguments and counts, and each failing test's output and logs. The
+home directory appears as `~` and only a short fixed list of environment
+variables is included; read it before sending it.
 
 The offline run is dominated by `unit_hillslope_implicit`, whose wall time swings
 widely under WSL2 host load (68 s to 219 s observed on the same machine). If that
 becomes a nuisance, gate it by label rather than loosening its tolerances.
 
-Bare `ctest` ignores labels and so pulls in `cosmo_realworld`, which downloads
-real DEMs and dominates the wall time (~745 s of ~865 s, one test alone ~540 s).
-Those tests are validation against published erosion rates, not smoke tests: each
+`cosmo_realworld` is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`
+(since 2026-09-18; before that a bare `ctest` pulled it in). It downloads real
+DEMs and dominated the wall time when it ran by default (~745 s of ~865 s, one
+test alone ~540 s). Those tests are validation against published erosion rates, not smoke tests: each
 one's DEM extent is tied to the study area of its samples, so they cannot be made
 faster by shrinking the DEM without destroying what they measure. Run them when
 touching cosmogenic code, not on every iteration.
@@ -191,18 +280,19 @@ workdir, no network), that `--keep` is honoured, that the manifest/sample-table
 schema guards trip, and that summary-append leaves the frozen skeleton
 byte-unchanged.
 
-`cosmo_realworld_dethier2014` (label `cosmo_realworld`, **not** in the default
-suite) is the real thing: it fetches a DEM **keyless** via `lsdtt-fetch-raster`
+`cosmo_realworld_dethier2014` (label `cosmo_realworld`, registered only with
+`-DLSDTT_ENABLE_NETWORK_TESTS=ON`) is the real thing: it fetches a DEM **keyless** via `lsdtt-fetch-raster`
 (Copernicus GLO-30 / Planetary Computer, no API key), clips it, runs
 `lsdtt-cosmo-tool`, compares to the tracked published rates, appends the frozen
 summary CSV, then deletes the temporary workdir including on failure. It needs
-network and is invoked manually (`ctest -L cosmo_realworld`); it exits 77 (skip)
+network and is run on request (`ctest -L '^cosmo_realworld$'` in a build configured
+with the network option); it exits 77 (skip)
 when the network/DEM source is unavailable or the sample table is still a
 template, so it never turns CI red. **No DEM is ever committed** — only the small
 manifest, sample table, and frozen summary under `tests/expected/cosmo/published/`.
 
-`cosmo_realworld_lsdn_pixel_vs_lumped` (label `cosmo_realworld`, **not** in the
-default suite) is the **generation** half of the per-pixel-vs-lumped LSDn result.
+`cosmo_realworld_lsdn_pixel_vs_lumped` (label `cosmo_realworld`, registered only
+with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`) is the **generation** half of the per-pixel-vs-lumped LSDn result.
 It fetches all three published datasets' DEMs keyless, runs `lsdtt-cosmo-tool`
 under `scaling_scheme: lsdn` at three sample ages plus `stone`, and records each
 basin's mean production scaling over the exact upslope node set the inversion
@@ -247,7 +337,7 @@ network. Plan: `docs/testing_and_benchmarking.md` Phase 1.
 
 ```bash
 cmake -S . -B build -DLSDTT_ENABLE_NETWORK_TESTS=ON
-ctest --test-dir build -L fetch --output-on-failure
+ctest --test-dir build -L '^fetch$' --output-on-failure
 ```
 
 It fetches a 128² window, checks the crop, EPSG, nodata and that the elevations
@@ -317,7 +407,7 @@ thresholds in CI are flaky on shared runners — and every row of
 
 ```bash
 cmake -S . -B build -DLSDTT_ENABLE_PERF_TESTS=ON
-ctest --test-dir build -L performance --output-on-failure
+ctest --test-dir build -L '^performance$' --output-on-failure
 
 # or directly, including a real raster for a like-for-like RichDEM comparison
 build/tests/lsdtt-test-flow-performance out_dir --full \
@@ -360,7 +450,7 @@ between fill algorithms) into its output directory. That table is reported, not
 asserted.
 
 ```bash
-ctest --test-dir build -L flow --output-on-failure
+ctest --test-dir build -L '^flow$' --output-on-failure
 ```
 
 ## Flow-routing benchmark vs RichDEM (opt-in)
@@ -384,7 +474,7 @@ pixi run -e benchmark python tests/scripts/run_flow_benchmark.py \
 
 # via CTest
 cmake -S . -B build -DLSDTT_ENABLE_BENCHMARKS=ON
-ctest --test-dir build -L benchmark --output-on-failure
+ctest --test-dir build -L '^benchmark$' --output-on-failure
 ```
 
 Comparisons run against **two** external references: RichDEM for depression
@@ -419,17 +509,18 @@ wrong in the same way.
 ## Run locally
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Run by label:
+Without the two Python options only the native tests are registered; most
+`smoke`, `rigorous` and `failure` tests are Python-driven. Run by label:
 
 ```bash
-ctest --test-dir build -L smoke --output-on-failure
-ctest --test-dir build -L rigorous --output-on-failure
-ctest --test-dir build -L failure --output-on-failure
+ctest --test-dir build -L '^smoke$' --output-on-failure
+ctest --test-dir build -L '^rigorous$' --output-on-failure
+ctest --test-dir build -L '^failure$' --output-on-failure
 ```
 
 Label conventions:
@@ -442,7 +533,18 @@ Label conventions:
 
 1. Add a param template in `tests/params/`.
 2. Add expected output filename(s).
-3. Register it in `tests/CMakeLists.txt` with `add_lsdtt_cli_smoke_test(...)`.
+3. Register it in `tests/CMakeLists.txt` with `add_lsdtt_cli_smoke_test(...)`,
+   **above** the DEPENDENCY TIERS block near the end of the file (a test
+   registered after it gets no tier label, which the audit reports). The
+   helper registers it only when `LSDTT_ENABLE_PYTHON_TESTS` is ON and marks
+   it as a Python test; set its properties with `lsdtt_set_tests_properties`,
+   which skips a test that is switched off.
+4. A test registered with `add_test` and Python directly must call
+   `lsdtt_mark_test_runtime(python <name>)` right after it, inside
+   `if(LSDTT_ENABLE_PYTHON_TESTS)`; one whose script imports third-party
+   packages also goes in `LSDTT_PYTHON_GEO_TESTS`.
+5. Scripts start programs through `tests/scripts/lsdtt_test_env.py`
+   (`lsdtt_test_env.run(...)`), never `subprocess` directly.
 
 The runner script is `tests/scripts/run_cli_smoke.py`.
 

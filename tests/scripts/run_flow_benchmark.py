@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import time
+import lsdtt_test_env
 
 SKIP_EXIT = 77
 
@@ -159,7 +160,7 @@ def ensure_fixture(fixture_key: str, fetch_exe: pathlib.Path) -> pathlib.Path:
     )
 
     print(f"fetching fixture {fixture_key} ({FIXTURES[name]['description']})")
-    proc = subprocess.run([str(fetch_exe), str(param_dir), param_path.name],
+    proc = lsdtt_test_env.run([str(fetch_exe), str(param_dir), param_path.name],
                           capture_output=True, text=True, env=system_env())
 
     if proc.returncode != 0:
@@ -530,12 +531,7 @@ def system_env():
     of which libraries each happens to pull in -- so it is worth removing for
     all of them rather than waiting for the next one to trip over it.
     """
-    import os
-    env = dict(os.environ)
-    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GDAL_DATA",
-                "GDAL_DRIVER_PATH", "PROJ_DATA", "PROJ_LIB", "CONDA_PREFIX"):
-        env.pop(key, None)
-    return env
+    return lsdtt_test_env.system_env()
 
 
 def cell_area_of(path: pathlib.Path) -> float:
@@ -711,7 +707,7 @@ def run_lsdtt(exe: pathlib.Path, fixture: pathlib.Path, out_dir: pathlib.Path,
     # The CLI takes the parameter file as <directory> <filename>, not a single
     # path (see tests/scripts/run_cli_smoke.py).
     t0 = time.perf_counter()
-    proc = subprocess.run([str(exe), str(out_dir), param_path.name],
+    proc = lsdtt_test_env.run([str(exe), str(out_dir), param_path.name],
                           capture_output=True, text=True, env=system_env())
     elapsed = time.perf_counter() - t0
 
@@ -733,7 +729,7 @@ def run_reference(reference: str, routine: str, fixture: pathlib.Path,
             return json.loads(meta_path.read_text())["seconds"], True
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         [sys.executable, str(SCRIPT_DIR / REFERENCE_SCRIPTS[reference]),
          "--routine", routine, "--in", str(fixture), "--out", str(out_path)]
         + list(extra_args or []),

@@ -29,10 +29,17 @@ bool nearly_equal(double a, double b, double tol = 1.0e-8)
     return std::fabs(a - b) <= tol;
 }
 
+// Where the test writes its scratch files. Passed by CTest as argv[1] (a
+// directory under the build tree); falls back to <system temp>/lsdtt3_test_*.
+// This used to be a hard-coded /tmp/opencode, which only existed because some
+// other tool had created it on one workstation: on a clean machine every write
+// failed (found 2026-09-18 by the minimal Apptainer image gate).
+std::string g_work_dir;
+
 std::string write_geojson_polygon_file(const std::string& basename,
                                        const std::string& features_json)
 {
-    const std::string path = "/tmp/opencode/" + basename + ".geojson";
+    const std::string path = g_work_dir + "/" + basename + ".geojson";
     std::ofstream out(path);
     out << "{\n"
         << "  \"type\": \"FeatureCollection\",\n"
@@ -147,7 +154,7 @@ void test_clip_dateline_clamps_to_valid_longitudes()
 
 void test_resolve_default_dataset_lookup()
 {
-    const std::string root = "/tmp/opencode/coastal_mask_lookup";
+    const std::string root = g_work_dir + "/coastal_mask_lookup";
     const std::string masks_dir = root + "/masks";
     std::filesystem::create_directories(masks_dir);
 
@@ -195,8 +202,13 @@ void test_resolve_default_dataset_lookup()
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    g_work_dir = (argc > 1)
+        ? std::string(argv[1])
+        : (std::filesystem::temp_directory_path() / "lsdtt3_test_coastal_mask").string();
+    std::filesystem::create_directories(g_work_dir);
+
     test_clip_no_land_intersection_keeps_bbox();
     test_clip_intersection_clips_to_land_envelope();
     test_clip_island_chain_uses_union_envelope();

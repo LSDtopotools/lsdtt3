@@ -17,6 +17,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import lsdtt_test_env
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,7 +46,7 @@ def run_stage(exe: pathlib.Path, work_dir: pathlib.Path, out_dir: pathlib.Path,
     param_name = f"{tag}.param"
     (work_dir / param_name).write_text(rendered, encoding="utf-8")
 
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         [str(exe), str(work_dir), param_name],
         cwd=str(work_dir), capture_output=True, text=True, check=False)
     (work_dir / f"stdout_{tag}.log").write_text(result.stdout, encoding="utf-8")

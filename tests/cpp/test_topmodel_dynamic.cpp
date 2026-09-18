@@ -11,9 +11,7 @@
 //
 // THE CENTREPIECE: AN ORACLE THAT IS DERIVED, NOT MEASURED
 // --------------------------------------------------------
-// The plan expected this phase to have no external validation, because the
-// 95.02 reference only covers `index` mode, leaving water balance and grid
-// convergence as the only guards. Those are weak: a balance check passes for
+// Water balance and grid convergence alone are weak guards: a balance check passes for
 // ANY conservative scheme, however wrong its physics.
 //
 // There is a stronger one, and it is analytic. TOPMODEL's index relation is not
@@ -39,9 +37,9 @@
 //   sub-step convergence, saturation clipping, and validation
 //
 // Note that the COLUMN physics here is shared with `index` mode through
-// topmodel_column_step(), which the 95.02 oracle does exercise. The only part
-// of this mode outside external validation is the saturated-zone routing --
-// which is exactly what the equilibrium test covers.
+// topmodel_column_step(), which test_topmodel_column.cpp covers. The part
+// specific to this mode is the saturated-zone routing -- which is exactly what
+// the equilibrium test covers.
 //
 // Usage: lsdtt-test-topmodel-dynamic
 // -----------------------------------------------------------------------------

@@ -41,7 +41,15 @@
 //
 //   1. Environment variable          e.g. OT_API_KEY
 //   2. Key file named by an env var  e.g. OT_API_KEY_FILE
-//   3. Interactive prompt            only when stdin is a terminal
+//   3. Interactive prompt            only when stdin is a terminal and
+//                                    LSDTT_NONINTERACTIVE is not set
+//
+// LSDTT_NONINTERACTIVE: set to any value other than "" or "0" to forbid the
+// prompt, for batch jobs and tests. CTest sets it on every registered test,
+// because CTest passes the invoking terminal through as the test's stdin, so
+// the terminal check alone does not stop a prompt inside an interactive
+// `ctest` run. It only removes the prompt; the environment variable and key
+// file routes work as before.
 //
 // The plan originally proposed a --api-key-file command-line flag. That was
 // dropped: lsdtt_param_parser::parse_args_deferred() interprets extra argv
@@ -72,8 +80,9 @@ struct lsdtt_secret_request
     // being asked for.
     std::string prompt;
 
-    // Prompting is skipped when stdin is not a terminal regardless of this
-    // flag; set false to suppress it even on a terminal (e.g. in tests).
+    // Prompting is skipped when stdin is not a terminal, or when
+    // LSDTT_NONINTERACTIVE is set, regardless of this flag; set false to
+    // suppress it even on a terminal (e.g. in tests).
     bool allow_prompt = true;
 };
 
@@ -101,6 +110,17 @@ struct lsdtt_secret_result
     // Why resolution failed, with actionable guidance. Safe to log.
     std::string message;
 };
+
+
+// -----------------------------------------------------------------------------
+// Non-interactive switch
+//
+// The environment variable that forbids prompting (see the resolution order
+// above), and whether it is set: any value other than "" or "0".
+// -----------------------------------------------------------------------------
+inline constexpr const char* noninteractive_env_var = "LSDTT_NONINTERACTIVE";
+
+bool noninteractive_requested();
 
 
 // -----------------------------------------------------------------------------

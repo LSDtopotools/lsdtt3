@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import lsdtt_test_env
 
 
 def parse_args() -> argparse.Namespace:
@@ -222,7 +223,7 @@ def assert_file_not_contains(file_path: pathlib.Path, needle: str) -> None:
 
 def assert_valid_percent_100(raster_path: pathlib.Path) -> None:
     cmd = ["gdalinfo", "-stats", str(raster_path)]
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         cmd,
         capture_output=True,
         text=True,
@@ -250,7 +251,7 @@ def assert_raster_min(raster_path: pathlib.Path, minimum: float) -> None:
     quietly drop out of the minimum.
     """
     cmd = ["gdalinfo", "-stats", str(raster_path)]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = lsdtt_test_env.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"gdalinfo -stats failed for {raster_path} (exit {result.returncode})."
@@ -289,7 +290,7 @@ def assert_raster_stat(
         raise AssertionError(f"Unknown raster stat {stat!r}; use min, max or mean.")
 
     cmd = ["gdalinfo", "-stats", str(raster_path)]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = lsdtt_test_env.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"gdalinfo -stats failed for {raster_path} (exit {result.returncode})."
@@ -309,7 +310,7 @@ def assert_raster_stat(
 
 def read_valid_percent(raster_path: pathlib.Path) -> str:
     cmd = ["gdalinfo", "-stats", str(raster_path)]
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         cmd,
         capture_output=True,
         text=True,
@@ -330,7 +331,7 @@ def read_valid_percent(raster_path: pathlib.Path) -> str:
 
 def assert_raster_size(raster_path: pathlib.Path, width: int, height: int) -> None:
     cmd = ["gdalinfo", str(raster_path)]
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         cmd,
         capture_output=True,
         text=True,
@@ -356,7 +357,7 @@ def assert_raster_size(raster_path: pathlib.Path, width: int, height: int) -> No
 
 def assert_vector_feature_min(vector_path: pathlib.Path, minimum: int) -> None:
     cmd = ["ogrinfo", "-so", "-al", str(vector_path)]
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         cmd,
         capture_output=True,
         text=True,
@@ -383,7 +384,7 @@ def assert_vector_feature_min(vector_path: pathlib.Path, minimum: int) -> None:
 
 def assert_raster_checksum(raster_path: pathlib.Path, expected: int) -> None:
     cmd = ["gdalinfo", "-checksum", str(raster_path)]
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         cmd,
         capture_output=True,
         text=True,
@@ -407,7 +408,7 @@ def assert_raster_checksum(raster_path: pathlib.Path, expected: int) -> None:
 
 def assert_raster_values(raster_path: pathlib.Path, expected: set[float]) -> None:
     cmd = ["gdal_translate", "-q", "-of", "XYZ", str(raster_path), "/vsistdout/"]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = lsdtt_test_env.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"gdal_translate failed for {raster_path} (exit {result.returncode})."
@@ -471,17 +472,10 @@ def main() -> int:
     param_file = work_dir / param_name
     param_file.write_text(rendered, encoding="utf-8")
 
+    # Streamed to stdout.log / stderr.log while the CLI runs, with command.txt
+    # written first, so a hung or killed test leaves its evidence on disk.
     cmd = [str(exe), str(work_dir), param_name]
-    result = subprocess.run(
-        cmd,
-        cwd=str(work_dir),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    (work_dir / "stdout.log").write_text(result.stdout, encoding="utf-8")
-    (work_dir / "stderr.log").write_text(result.stderr, encoding="utf-8")
+    result = lsdtt_test_env.run_logged(cmd, work_dir, cwd=work_dir)
 
     if args.expect_failure:
         if result.returncode == 0:

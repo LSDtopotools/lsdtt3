@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import lsdtt_test_env
 
 EXIT_OK, EXIT_FAIL, EXIT_SKIP = 0, 1, 77
 
@@ -64,7 +65,7 @@ def run(exe, workdir, params, tag, numeric=True):
     lines = [f"write_path: {workdir}", f"output_file: {tag}.csv"]
     lines += [f"{k}: {v}" for k, v in params.items()]
     param.write_text("\n".join(lines) + "\n")
-    proc = subprocess.run([str(exe), str(workdir), param.name],
+    proc = lsdtt_test_env.run([str(exe), str(workdir), param.name],
                           cwd=str(workdir), capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"{tag} failed (exit {proc.returncode})\n"
@@ -456,7 +457,7 @@ def main():
         # --- 12. an unknown mode is a clean failure, not a silent no-op ------
         param = workdir / "badmode.param"
         param.write_text(f"write_path: {workdir}\ncolumn_mode: not_a_mode\n")
-        proc = subprocess.run([str(exe), str(workdir), param.name],
+        proc = lsdtt_test_env.run([str(exe), str(workdir), param.name],
                               cwd=str(workdir), capture_output=True, text=True)
         check("an unknown column_mode exits non-zero and lists the valid modes",
               proc.returncode != 0 and "steady_state" in proc.stderr,

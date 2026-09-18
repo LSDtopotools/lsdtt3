@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import lsdtt_test_env
 
 EXIT_OK, EXIT_FAIL, EXIT_SKIP = 0, 1, 77
 
@@ -70,7 +71,7 @@ def q(v):
 
 
 def run_cli(exe, workdir, param_name, label):
-    proc = subprocess.run([str(exe), str(workdir), param_name],
+    proc = lsdtt_test_env.run([str(exe), str(workdir), param_name],
                           cwd=str(workdir), capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(

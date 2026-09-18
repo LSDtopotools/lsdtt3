@@ -47,6 +47,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import lsdtt_test_env
 
 # Exit codes: 0 pass, 1 real failure, 77 skip (network/key/dep unavailable),
 # matching the CTest SKIP_RETURN_CODE convention used elsewhere in the suite.
@@ -67,7 +68,7 @@ def default_published_dir() -> Path:
 
 def git_sha() -> str:
     try:
-        out = subprocess.check_output(
+        out = lsdtt_test_env.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=str(repo_root()),
             stderr=subprocess.DEVNULL,
@@ -261,7 +262,7 @@ def fetch_dem(fetch_exe: Path, manifest: dict, workdir: Path) -> Path:
     network by design."""
     param = write_fetch_param(manifest, workdir)
     try:
-        subprocess.run([str(fetch_exe), str(workdir), param.name],
+        lsdtt_test_env.run([str(fetch_exe), str(workdir), param.name],
                        check=True, cwd=str(workdir))
     except subprocess.CalledProcessError as exc:
         raise SkipError(
@@ -346,7 +347,7 @@ def run_cosmo_tool(exe: Path, dem_path: Path, samples: list,
             continue
         lines.append(f"{key}: {val}")
     param.write_text("\n".join(lines) + "\n")
-    subprocess.run([str(exe), str(workdir), param.name], check=True, cwd=str(workdir))
+    lsdtt_test_env.run([str(exe), str(workdir), param.name], check=True, cwd=str(workdir))
     out = workdir / f"{write_base}_CN_ERATE.csv"
     if not out.is_file():
         raise RuntimeError(f"cosmo-tool produced no output: {out}")

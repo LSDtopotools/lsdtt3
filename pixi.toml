@@ -20,6 +20,11 @@ platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
 #   pixi install                 # default environment
 #   pixi run python python_helpers/download_dem_tiles.py --help
 #   pixi shell                   # interactive
+#   pixi install -e test         # the CTest Python tiers; see [feature.test]
+#
+# Do not configure the C++ build inside Pixi (no `pixi run cmake`, no
+# activated shell): it would pick up Pixi's GDAL.  Configure outside and pass
+# the test environment's interpreter with -DPython3_EXECUTABLE.
 # -----------------------------------------------------------------------------
 
 [dependencies]
@@ -55,6 +60,33 @@ pytest = "*"
 # Kept out of the default environment because they are heavy, optional, or only
 # needed to score lsdtt3 rather than to build or run it.
 # -----------------------------------------------------------------------------
+
+# The CTest Python tiers (tests/CMakeLists.txt, LSDTT_ENABLE_PYTHON_TESTS and
+# LSDTT_ENABLE_PYTHON_GEO_TESTS).  EXACTLY what they need, as a separate
+# environment (no default feature) so the test contract does not drift with the
+# helpers' dependencies:
+#   python >= 3.10   the scripts use `X | None` annotations and `match`
+#   gdal             the osgeo bindings AND gdalinfo / ogrinfo / gdal_translate,
+#                    which about a quarter of the harness tests run
+#   numpy rasterio geopandas shapely   the four tier_python_geo tests
+#
+# Configure the C++ build OUTSIDE Pixi (so it uses the system GDAL) and hand
+# CMake this interpreter; run ctest inside the environment:
+#
+#   pixi install -e test
+#   cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON \
+#         -DPython3_EXECUTABLE="$(pixi run -e test python -c 'import sys; print(sys.executable)')"
+#   pixi run -e test ctest --test-dir build --output-on-failure
+#
+# `pixi install` alone does not change the interpreter an existing build tree
+# was configured with; re-run cmake with -DPython3_EXECUTABLE to switch.
+[feature.test.dependencies]
+python = ">=3.10"
+gdal = "*"
+numpy = "*"
+rasterio = "*"
+geopandas = "*"
+shapely = "*"
 
 # OSM feature download (python_helpers/osm_*.py).  osmnx pulls a large solve.
 [feature.osm.dependencies]
@@ -185,6 +217,8 @@ benchmark = ["reference", "whitebox"]
 benchmark-lite = ["reference"]
 docs = ["docs"]
 workflows = ["workflows"]
+# The CTest Python tiers; see [feature.test.dependencies].
+test = { features = ["test"], no-default-feature = true }
 
 [tasks]
 # Generic entry points only -- individual test suites are invoked through CTest

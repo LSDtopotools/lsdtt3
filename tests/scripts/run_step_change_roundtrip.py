@@ -39,13 +39,14 @@ import re
 import shutil
 import subprocess
 import sys
+import lsdtt_test_env
 
 
 def run_cli(exe: pathlib.Path, work: pathlib.Path, param_text: str,
             name: str) -> None:
     param_path = work / f"{name}.param"
     param_path.write_text(param_text)
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         [str(exe), str(param_path.name)],
         cwd=str(work),
         capture_output=True,
@@ -61,7 +62,7 @@ def run_cli(exe: pathlib.Path, work: pathlib.Path, param_text: str,
 
 def raster_signature(raster: pathlib.Path) -> dict:
     """Band checksum plus statistics, as a comparable dict."""
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         ["gdalinfo", "-checksum", "-stats", str(raster)],
         capture_output=True,
         text=True,
