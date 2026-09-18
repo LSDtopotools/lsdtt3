@@ -13,7 +13,7 @@ their platform, and link back here for everything else.
 | Your machine | Route | Page |
 |---|---|---|
 | Linux | Native build — full tool set | this page, [Linux](#linux) |
-| Windows | WSL2 (Ubuntu) — full tool set, **recommended** | [Building on Windows](building_on_windows.md#wsl2-recommended) |
+| Windows | WSL2 (Ubuntu) — full tool set, if you have windows we suggest you use this | [Building on Windows](building_on_windows.md#wsl2-recommended) |
 | Windows, native `.exe` needed | Visual Studio + vcpkg — reduced, QGIS backend only | [Building on Windows](building_on_windows.md#native-windows-qgis-backend-only) |
 | macOS | Native (Homebrew) or a Multipass Ubuntu VM | [Building on macOS](building_on_macos.md) |
 
