@@ -170,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         0 on success, 1 on a failed assertion.
     """
+    lsdtt_test_env.require_modules(["osgeo.gdal"])
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", required=True)
     ap.add_argument("--work-dir", required=True)

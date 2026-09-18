@@ -42,7 +42,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
     get_filename_component(_lsdtt_py_bindir "${Python3_EXECUTABLE}" DIRECTORY)
     set(_lsdtt_missing_tools "")
     set(_lsdtt_tools_beside_python FALSE)
-    foreach(_tool gdalinfo ogrinfo gdal_translate)
+    # Overridable ONLY so a configure-contract test can make them "missing".
+    if(NOT DEFINED LSDTT_TEST_GDAL_PROGRAMS)
+        set(LSDTT_TEST_GDAL_PROGRAMS gdalinfo ogrinfo gdal_translate)
+    endif()
+    foreach(_tool IN LISTS LSDTT_TEST_GDAL_PROGRAMS)
         unset(_lsdtt_tool_path CACHE)
         find_program(_lsdtt_tool_path ${_tool})
         if(NOT _lsdtt_tool_path)
@@ -4097,6 +4101,39 @@ else()
 endif()
 lsdtt_set_tests_properties(unit_test_env_isolation PROPERTIES LABELS "unit;core")
 
+# CONFIGURE CONTRACTS: each disabled or missing test tier must say so at
+# configure time (a warning, or an error naming what to install), never leave a
+# silently partial suite. Each case configures the whole project afresh in a
+# scratch directory (cmake/configure_contract.cmake), about 20 s apiece, hence
+# the configure_contract label. The two that need a Python interpreter are
+# Python-tier tests.
+set(_lsdtt_contract_args
+    -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+    "-DGENERATOR=${CMAKE_GENERATOR}"
+    -DCXX_COMPILER=${CMAKE_CXX_COMPILER})
+foreach(_case native_default geo_without_python)
+    add_test(NAME configure_contract_${_case}
+             COMMAND ${CMAKE_COMMAND} -DCASE=${_case} ${_lsdtt_contract_args}
+                     -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/configure_contract/${_case}
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/configure_contract.cmake")
+    lsdtt_set_tests_properties(configure_contract_${_case} PROPERTIES
+        LABELS "unit;configure_contract")
+endforeach()
+foreach(_case geo_missing_modules gdal_programs_missing)
+    if(LSDTT_ENABLE_PYTHON_TESTS)
+        add_test(NAME configure_contract_${_case}
+                 COMMAND ${CMAKE_COMMAND} -DCASE=${_case} ${_lsdtt_contract_args}
+                         -DPYTHON=${Python3_EXECUTABLE}
+                         -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/configure_contract/${_case}
+                         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/configure_contract.cmake")
+        lsdtt_mark_test_runtime(python configure_contract_${_case})
+    else()
+        lsdtt_mark_test_unregistered(python configure_contract_${_case})
+    endif()
+    lsdtt_set_tests_properties(configure_contract_${_case} PROPERTIES
+        LABELS "unit;configure_contract")
+endforeach()
+
 # Native DEM fetching (docs/testing_and_benchmarking.md).
 #
 # The offline half needs no network and runs in the default suite: it covers UTM
@@ -5792,7 +5829,7 @@ set(LSDTT_DOMAIN_RULES
     # as the benchmark rule at the top, hidden by the option's OFF default.
     "flow_routines"          "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
-    "param|secret|cli_reference|test_env" "core"
+    "param|secret|cli_reference|test_env|configure_contract" "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
     # Phase 2 of the CLI consistency remediation: the shared helper homes
@@ -6003,6 +6040,82 @@ add_test(NAME unit_test_inventory_audit_selftest
 set_tests_properties(unit_test_inventory_audit_selftest PROPERTIES
     LABELS "unit;core;conventions"
     TIMEOUT 60)
+
+# =============================================================================
+# TEST REPORT AND LOGGED RUNS
+#
+#   cmake -P <build>/run_tests.cmake [ctest args]
+#       ctest through `tee` into <build>/test-logs/ctest_<timestamp>.log, with
+#       the arguments recorded in test-logs/last_run.txt; a killed run still
+#       leaves the log of every test that finished.
+#
+#   cmake --build <build> --target test_report
+#       one plain-text file for a user to send when tests fail: build, machine,
+#       geospatial run time, test environment, run summary and the failing
+#       tests' output, with the home directory and user name masked and no
+#       environment dump (cmake/make_test_report.cmake).
+#
+# Both are CMake scripts, so they need no Python. The run-time GDAL/PROJ facts
+# come from an existing CLI's --version; no program is written for the report.
+# =============================================================================
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_tests.cmake.in"
+               "${CMAKE_BINARY_DIR}/run_tests.cmake" @ONLY)
+
+set(_lsdtt_report_options "")
+foreach(_opt BUILD_TESTING LSDTT_ENABLE_PYTHON_TESTS LSDTT_ENABLE_PYTHON_GEO_TESTS
+             LSDTT_ENABLE_NETWORK_TESTS LSDTT_ENABLE_BENCHMARKS
+             LSDTT_ENABLE_PERF_TESTS LSDTT_GPU)
+    if(NOT DEFINED ${_opt})
+        set(_v OFF)
+    else()
+        set(_v "${${_opt}}")
+    endif()
+    string(APPEND _lsdtt_report_options "${_opt}=${_v} ")
+endforeach()
+set(_lsdtt_report_python "")
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    set(_lsdtt_report_python "${Python3_EXECUTABLE}")
+endif()
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/lsdtt3_build_info.cmake" CONTENT
+"# Generated at CMake generate time; read by tests/cmake/make_test_report.cmake.
+set(LSDTT_REPORT_VERSION [==[${LSDTT3_FULL_VERSION}]==])
+set(LSDTT_REPORT_BUILD_TYPE [==[${CMAKE_BUILD_TYPE}]==])
+set(LSDTT_REPORT_CXX_ID [==[${CMAKE_CXX_COMPILER_ID}]==])
+set(LSDTT_REPORT_CXX_VERSION [==[${CMAKE_CXX_COMPILER_VERSION}]==])
+set(LSDTT_REPORT_CXX_STANDARD [==[${CMAKE_CXX_STANDARD}]==])
+set(LSDTT_REPORT_GENERATOR [==[${CMAKE_GENERATOR}]==])
+set(LSDTT_REPORT_CMAKE_VERSION [==[${CMAKE_VERSION}]==])
+set(LSDTT_REPORT_OPTIONS [==[${_lsdtt_report_options}]==])
+set(LSDTT_REPORT_HAS_OPENMP [==[${LSDTT_HAS_OPENMP}]==])
+set(LSDTT_REPORT_HAS_FFTW [==[${LSDTT_HAS_FFTW}]==])
+set(LSDTT_REPORT_HAS_EIGEN [==[${LSDTT_HAS_EIGEN}]==])
+set(LSDTT_REPORT_HAS_NETCDF [==[${LSDTT_HAS_NETCDF}]==])
+set(LSDTT_REPORT_GDAL_VERSION [==[${GDAL_VERSION}]==])
+set(LSDTT_REPORT_GDAL_LIBRARY [==[${GDAL_LIBRARY}]==])
+set(LSDTT_REPORT_CLI [==[$<TARGET_FILE:lsdtt-channel-extraction>]==])
+set(LSDTT_REPORT_CTEST [==[${CMAKE_CTEST_COMMAND}]==])
+set(LSDTT_REPORT_PYTHON [==[${_lsdtt_report_python}]==])
+set(LSDTT_REPORT_GEO_TESTS [==[${LSDTT_ENABLE_PYTHON_GEO_TESTS}]==])
+")
+
+add_custom_target(test_report
+    COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/make_test_report.cmake"
+    USES_TERMINAL
+    COMMENT "Writing the lsdtt3 test report")
+
+# The report built from a canned build tree (cmake/report_selftest/), with an
+# API key planted in the environment: every section, the failure and timeout
+# entries, the harness logs, home-directory masking, and the key's absence.
+add_test(NAME unit_test_report_selftest
+    COMMAND ${CMAKE_COMMAND} -E env OT_API_KEY=planted-secret-8d3f
+            ${CMAKE_COMMAND}
+            -DSELFTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/report_selftest
+            -DSELFTEST_WORK=${CMAKE_CURRENT_BINARY_DIR}/test_report_selftest
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/make_test_report.cmake")
+set_tests_properties(unit_test_report_selftest PROPERTIES
+    LABELS "unit;core;conventions"
+    TIMEOUT 120)
 
 # =============================================================================
 # DEPENDENCY TIERS, ENVIRONMENT FLAGS AND THE LEM COMPONENT
@@ -6360,3 +6473,79 @@ foreach(_test IN LISTS _lsdtt_all_tests)
         set_tests_properties(${_test} PROPERTIES TIMEOUT 300)
     endif()
 endforeach()
+
+# =============================================================================
+# CONFIGURE SUMMARY
+#
+# What is registered, what is not and why, and the commands to run it -- with
+# counts taken from the final labels, never typed in.
+# =============================================================================
+get_property(_lsdtt_sum_tests DIRECTORY PROPERTY TESTS)
+set(_lsdtt_sum_native 0)
+set(_lsdtt_sum_hermetic 0)
+set(_lsdtt_sum_stdlib 0)
+set(_lsdtt_sum_geo 0)
+set(_lsdtt_sum_pixi 0)
+set(_lsdtt_sum_lem 0)
+set(_lsdtt_sum_lem_heavy 0)
+set(_lsdtt_sum_net 0)
+set(_lsdtt_sum_heavy 0)
+foreach(_test IN LISTS _lsdtt_sum_tests)
+    get_test_property(${_test} LABELS _l)
+    foreach(_pair "tier_native;native" "hermetic;hermetic" "tier_python_stdlib;stdlib"
+                  "tier_python_geo;geo" "tier_pixi;pixi" "lem_component;lem"
+                  "needs_network;net" "heavy;heavy")
+        list(GET _pair 0 _label)
+        list(GET _pair 1 _key)
+        if("${_label}" IN_LIST _l)
+            math(EXPR _lsdtt_sum_${_key} "${_lsdtt_sum_${_key}} + 1")
+        endif()
+    endforeach()
+    if("lem_component" IN_LIST _l AND "heavy" IN_LIST _l)
+        math(EXPR _lsdtt_sum_lem_heavy "${_lsdtt_sum_lem_heavy} + 1")
+    endif()
+endforeach()
+list(LENGTH _lsdtt_sum_tests _lsdtt_sum_total)
+
+macro(_lsdtt_tier_line _name _count _option _n_off)
+    if(${_option})
+        message(STATUS "  ${_name}${_count} tests")
+    else()
+        message(STATUS "  ${_name}disabled (${_option}=OFF; ${_n_off} not registered)")
+    endif()
+endmacro()
+
+set(_b "${CMAKE_BINARY_DIR}")
+message(STATUS "")
+message(STATUS "=== lsdtt3 test configuration (${_lsdtt_sum_total} tests) ===")
+message(STATUS "  tier_native        : ${_lsdtt_sum_native} tests (hermetic ${_lsdtt_sum_hermetic})")
+_lsdtt_tier_line("tier_python_stdlib : " "${_lsdtt_sum_stdlib}" LSDTT_ENABLE_PYTHON_TESTS "${_n_off_py}")
+_lsdtt_tier_line("tier_python_geo    : " "${_lsdtt_sum_geo}" LSDTT_ENABLE_PYTHON_GEO_TESTS "${_n_off_geo}")
+if(LSDTT_ENABLE_BENCHMARKS)
+    message(STATUS "  tier_pixi          : ${_lsdtt_sum_pixi} tests (benchmarks)")
+else()
+    message(STATUS "  tier_pixi          : disabled (LSDTT_ENABLE_BENCHMARKS=OFF)")
+endif()
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    message(STATUS "  needs_network      : ${_lsdtt_sum_net} tests (downloads; skip when offline)")
+else()
+    message(STATUS "  needs_network      : disabled (LSDTT_ENABLE_NETWORK_TESTS=OFF; includes ${_n_off_net} cosmo_realworld_*)")
+endif()
+message(STATUS "  lem_component      : ${_lsdtt_sum_lem} tests (heavy ${_lsdtt_sum_lem_heavy})")
+message(STATUS "  heavy              : ${_lsdtt_sum_heavy} tests")
+if(LSDTT_ENABLE_PERF_TESTS)
+    message(STATUS "  performance        : ON")
+else()
+    message(STATUS "  performance        : OFF (LSDTT_ENABLE_PERF_TESTS)")
+endif()
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    message(STATUS "  Python             : ${Python3_EXECUTABLE} (${Python3_VERSION})")
+else()
+    message(STATUS "  Python             : not used")
+endif()
+message(STATUS "Quick    : ctest --test-dir ${_b} -L '^hermetic$' -LE '^heavy$' --output-on-failure")
+message(STATUS "Logged   : cmake -P ${_b}/run_tests.cmake -LE '^heavy$' -j4")
+message(STATUS "No LEM   : ctest --test-dir ${_b} -LE '^lem_component$' --output-on-failure")
+message(STATUS "LEM only : ctest --test-dir ${_b} -L '^lem_component$' --output-on-failure")
+message(STATUS "Report   : cmake --build ${_b} --target test_report   (after a failing run)")
+message(STATUS "================================================")

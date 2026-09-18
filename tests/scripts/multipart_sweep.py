@@ -23,13 +23,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import lsdtt_test_env
+
+# Before the third-party imports, so a missing package is a clear message.
+lsdtt_test_env.require_modules(["geopandas", "numpy", "rasterio", "shapely"])
+
 import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import (LineString, MultiLineString, MultiPoint,
                               MultiPolygon, Point, Polygon)
-import lsdtt_test_env
 
 NR = NC = 80
 CELL = 10.0

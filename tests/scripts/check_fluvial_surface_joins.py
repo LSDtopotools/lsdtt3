@@ -35,8 +35,12 @@ import struct
 import subprocess
 import sys
 
-from osgeo import gdal
 import lsdtt_test_env
+
+# Before the osgeo import, so a missing package is a clear message.
+lsdtt_test_env.require_modules(["osgeo.gdal"])
+
+from osgeo import gdal
 
 
 def parse_args() -> argparse.Namespace:

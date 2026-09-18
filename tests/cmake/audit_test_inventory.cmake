@@ -31,7 +31,9 @@
 #      tier_python_stdlib, tier_python_geo, tier_pixi)
 #   B  the tier matches the command: a python* argv[0] is a Python tier, pixi
 #      is tier_pixi; a native command may carry a Python/Pixi tier only by
-#      requiring a fixture whose setup test has that tier (propagation)
+#      requiring a fixture whose setup test has that tier (propagation), or
+#      by passing a Python interpreter as an argument (e.g. -DPYTHON=... to a
+#      cmake -P driver that creates a venv from it)
 #   C  no tier_native test passes a .py file anywhere in its command
 #   D  hermetic implies tier_native, no SKIP_RETURN_CODE, not needs_network
 #   E  every test has LSDTT_NONINTERACTIVE=1 in ENVIRONMENT, and a TIMEOUT
@@ -205,6 +207,15 @@ foreach(_t IN LISTS _tests)
         endif()
     elseif(NOT _tier STREQUAL "tier_native")
         set(_inherited FALSE)
+        if(_tier MATCHES "^tier_python_")
+            foreach(_a IN LISTS _argv)
+                string(REGEX REPLACE "^-D[A-Za-z0-9_]+=" "" _av "${_a}")
+                get_filename_component(_avn "${_av}" NAME)
+                if(_avn MATCHES "^python[0-9.]*(\\.exe)?$")
+                    set(_inherited TRUE)
+                endif()
+            endforeach()
+        endif()
         foreach(_fx IN LISTS _required)
             foreach(_s IN LISTS _setup_of_${_fx})
                 if("${_tier_of_${_s}}" STREQUAL "${_tier}"

@@ -49,10 +49,13 @@ such as the environment's own gdalinfo, keep the environment they need.
 
 from __future__ import annotations
 
+import importlib
 import os
 import pathlib
+import re
 import shlex
 import subprocess
+import sys
 from typing import Any, Mapping, Sequence
 
 NONINTERACTIVE_ENV = "LSDTT_NONINTERACTIVE"
@@ -105,19 +108,87 @@ def _prepare(cmd: Sequence[Any] | str, kwargs: dict[str, Any]) -> dict[str, Any]
     return kwargs
 
 
+# ---------------------------------------------------------------------------
+# Diagnostics: say what is missing and how to get it, instead of a traceback.
+# ---------------------------------------------------------------------------
+GDAL_PROGRAMS = ("gdalinfo", "ogrinfo", "gdal_translate")
+PIXI_TEST_HINT = ("pixi install -e test, configure with -DPython3_EXECUTABLE="
+                  "$(pixi run -e test python -c 'import sys; print(sys.executable)'), "
+                  "and run: pixi run -e test ctest --test-dir <build> ...")
+
+
+def _program_of(cmd: Sequence[Any] | str) -> str:
+    first = cmd if isinstance(cmd, str) else (cmd[0] if cmd else "")
+    return os.path.basename(str(first).split()[0]) if first else ""
+
+
+def _missing_program(cmd: Sequence[Any] | str, exc: FileNotFoundError) -> FileNotFoundError:
+    prog = _program_of(cmd)
+    if prog in GDAL_PROGRAMS:
+        msg = (f"{prog} was not found on PATH. This test runs GDAL's command-line "
+               f"programs (label needs_gdal_tools). Install them (Ubuntu: sudo apt "
+               f"install gdal-bin), or use the Pixi test environment: {PIXI_TEST_HINT}")
+    else:
+        msg = f"{prog or cmd!r} could not be started: {exc}"
+    return FileNotFoundError(msg)
+
+
+_LOADER_FAILURE = re.compile(
+    r"(CXXABI|GLIBCXX)_[0-9.]+' not found|error while loading shared libraries")
+
+
+def explain_failure(stderr: str) -> str:
+    """A remediation line for a child that failed to LOAD rather than to run:
+    the Pixi-versus-system library mix-up. Empty when the failure is anything
+    else."""
+    if not _LOADER_FAILURE.search(stderr or ""):
+        return ""
+    return ("The program failed to load its shared libraries, not to run. This is "
+            "usually a binary built against the system GDAL picking up a Pixi/conda "
+            "environment's libraries (LD_LIBRARY_PATH), or the reverse. Configure the "
+            "C++ build OUTSIDE Pixi and run the tests with: pixi run -e test ctest ... "
+            "(the launcher then isolates lsdtt3 binaries), or rebuild inside the "
+            "environment the tests run in.")
+
+
+def require_modules(modules: Sequence[str], tier: str = "tier_python_geo") -> None:
+    """Exit with a clear message if any module cannot be imported. Call before
+    the script's own third-party imports."""
+    missing = []
+    for name in modules:
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            missing.append(name)
+    if missing:
+        print(f"FAIL  this test is {tier} and needs Python packages that "
+              f"{sys.executable} cannot import: {', '.join(missing)}. "
+              f"Use the Pixi test environment: {PIXI_TEST_HINT}", file=sys.stderr)
+        sys.exit(1)
+
+
 def run(cmd: Sequence[Any] | str, **kwargs: Any) -> subprocess.CompletedProcess:
     """subprocess.run, non-interactive. Same arguments and return value."""
-    return subprocess.run(cmd, **_prepare(cmd, kwargs))
+    try:
+        return subprocess.run(cmd, **_prepare(cmd, kwargs))
+    except FileNotFoundError as exc:
+        raise _missing_program(cmd, exc) from None
 
 
 def popen(cmd: Sequence[Any] | str, **kwargs: Any) -> subprocess.Popen:
     """subprocess.Popen, non-interactive. Same arguments and return value."""
-    return subprocess.Popen(cmd, **_prepare(cmd, kwargs))
+    try:
+        return subprocess.Popen(cmd, **_prepare(cmd, kwargs))
+    except FileNotFoundError as exc:
+        raise _missing_program(cmd, exc) from None
 
 
 def check_output(cmd: Sequence[Any] | str, **kwargs: Any) -> Any:
     """subprocess.check_output, non-interactive. Same arguments and return value."""
-    return subprocess.check_output(cmd, **_prepare(cmd, kwargs))
+    try:
+        return subprocess.check_output(cmd, **_prepare(cmd, kwargs))
+    except FileNotFoundError as exc:
+        raise _missing_program(cmd, exc) from None
 
 
 def run_logged(cmd: Sequence[Any],
@@ -151,4 +222,8 @@ def run_logged(cmd: Sequence[Any],
 
     stdout = out_path.read_text(encoding="utf-8", errors="replace")
     stderr = err_path.read_text(encoding="utf-8", errors="replace")
+    if result.returncode != 0:
+        hint = explain_failure(stderr)
+        if hint:
+            print(f"NOTE  {hint}", file=sys.stderr)
     return subprocess.CompletedProcess(argv, result.returncode, stdout, stderr)
