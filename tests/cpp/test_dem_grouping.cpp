@@ -1,5 +1,6 @@
 // test_dem_grouping.cpp
 
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -74,9 +75,16 @@ void test_max_basins_split_and_overlap()
     }
 }
 
+// Where the test writes its scratch files. Passed by CTest as argv[1] (a
+// directory under the build tree); falls back to <system temp>/lsdtt3_test_*.
+// This used to be a hard-coded /tmp/opencode, which only existed because some
+// other tool had created it on one workstation: on a clean machine every write
+// failed (found 2026-09-18 by the minimal Apptainer image gate).
+std::string g_work_dir;
+
 void test_outlet_discovery_csv_single_group()
 {
-    const std::string csv_path = "/tmp/opencode/test_outlet_points_e5.csv";
+    const std::string csv_path = g_work_dir + "/test_outlet_points_e5.csv";
     {
         std::ofstream out(csv_path);
         out << "latitude,longitude\n";
@@ -101,7 +109,7 @@ void test_outlet_discovery_csv_single_group()
     const auto groups = lsdtt::group_outlet_bounds(discovered.records, gopt);
     check("nearby outlets produce one group", groups.size() == 1);
 
-    const std::string status_csv = "/tmp/opencode/test_outlet_status_e5.csv";
+    const std::string status_csv = g_work_dir + "/test_outlet_status_e5.csv";
     std::string error;
     const bool wrote = lsdtt::write_outlet_bounds_status_csv(status_csv, discovered, error);
     check("status csv write ok", wrote && error.empty());
@@ -109,8 +117,13 @@ void test_outlet_discovery_csv_single_group()
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    g_work_dir = (argc > 1)
+        ? std::string(argv[1])
+        : (std::filesystem::temp_directory_path() / "lsdtt3_test_dem_grouping").string();
+    std::filesystem::create_directories(g_work_dir);
+
     test_disconnect_split();
     test_max_basins_split_and_overlap();
     test_outlet_discovery_csv_single_group();

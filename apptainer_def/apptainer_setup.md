@@ -182,7 +182,20 @@ apptainer exec lsdtt3.sif bash -c "
 "
 ```
 
-Compiled binaries are written to `bin/` in the source directory.
+Compiled binaries are written to the build directory, not the source tree:
+
+| What | Location |
+|---|---|
+| CLI programs (`lsdtt-*`) | `build/` — e.g. `build/lsdtt-raster-preprocessing` |
+| C++ test drivers (`lsdtt-test-*`) | `build/tests/` |
+
+To collect the CLIs somewhere else, install them. `cmake --install` copies each
+CLI into `<prefix>/bin`:
+
+```bash
+apptainer exec lsdtt3.sif cmake --install build --prefix "$HOME/lsdtt3_install"
+# CLIs are then in $HOME/lsdtt3_install/bin
+```
 
 ### Build options
 
@@ -205,12 +218,13 @@ make -j4
 
 ## Running lsdtt3 programs
 
-All CLI programs are in `bin/` after compilation. Run them through the
-container so they have access to the correct GDAL and library versions:
+All CLI programs are in `build/` after compilation (or `<prefix>/bin` if you
+ran `cmake --install`, above). Run them through the container so they have
+access to the correct GDAL and library versions:
 
 ```bash
-apptainer exec lsdtt3.sif ./bin/lsdtt-raster-preprocessing my_params.driver
-apptainer exec lsdtt3.sif ./bin/lsdtt-test-flowinfo my_params.driver
+apptainer exec lsdtt3.sif ./build/lsdtt-raster-preprocessing my_params.driver
+apptainer exec lsdtt3.sif ./build/lsdtt-channel-extraction my_params.driver
 ```
 
 Or open an interactive shell in the container:
@@ -230,7 +244,7 @@ explicitly:
 
 ```bash
 apptainer exec --bind /data/dems:/data/dems lsdtt3.sif \
-    ./bin/lsdtt-raster-preprocessing my_params.driver
+    ./build/lsdtt-raster-preprocessing my_params.driver
 ```
 
 ---
@@ -270,7 +284,7 @@ If you get GDAL errors when running on a system that also has GDAL installed
 natively, the system GDAL may be interfering. Force the container's libraries:
 
 ```bash
-apptainer exec --no-home lsdtt3.sif ./bin/lsdtt-raster-preprocessing my_params.driver
+apptainer exec --no-home lsdtt3.sif ./build/lsdtt-raster-preprocessing my_params.driver
 ```
 
 **Lima VM runs out of disk space**
