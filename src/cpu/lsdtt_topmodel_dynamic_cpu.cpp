@@ -272,8 +272,7 @@ topmodel_dynamic_step_result lsdtt_topmodel_dynamic_cpu::step(
     {
         if (!active_[i]) continue;
         double trunc_here = 0.0;
-        // The SAME column as index mode, and therefore the same column the
-        // 95.02 oracle exercises.
+        // The SAME column as index mode.
         const topmodel_column_fluxes cf = topmodel_column_step(
             p, ep, deficit_[i], params_, s_rz_[i], s_uz_[i], trunc_here);
         recharge[i]         = cf.drainage;

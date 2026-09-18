@@ -114,7 +114,7 @@ Understanding where each model comes from matters for knowing how far to trust i
 
 The core is **TOPMODEL**, introduced by Beven & Kirkby (1979) as a semi-distributed rainfall-runoff model built around the Topographic Wetness Index. The index itself — `ln(a/tanβ)` — predicts which parts of a catchment will saturate during a storm, and Beven & Kirkby showed that the model could reproduce observed hydrographs using this structure plus a simple subsurface-routing assumption (water table parallel to a recharge-steady solution).
 
-lsdtt-distributed-hydrology is validated against **TOPMODEL 95.02**, the published Fortran implementation (Beven et al. 1995). Its column physics is tested against the reference output, and its infiltration-excess routine is tested against a frozen trace of the original `EXPINF` subroutine. These implementation checks do not replace calibration and evaluation against observed catchment data.
+The column equations follow **TOPMODEL 95.02** (Beven et al. 1995). The implementation is tested with lsdtt3's own checks: mass conservation, closed-form solutions (the exponential baseflow recession, the Green-Ampt infiltration capacity, the index relation as the steady state of the dynamic saturated zone), limiting behaviours and convergence. These implementation checks do not replace calibration and evaluation against observed catchment data.
 
 The distributed form is informed by:
 
@@ -122,7 +122,7 @@ The distributed form is informed by:
 - **SD-TOPMODEL** (Gao, Holden & Kirkby 2015): spatially distributed roughness and velocity fields built on Darcy-Weisbach resistance, where velocity is dynamic (depth-dependent). Zhu et al. (2025) report calibrations of this approach on UK sites.
 - **Routing numerics** from Li, Simons & Stevens (1975) (implicit kinematic wave), Cunge (1969) and Ponce & Yevjevich (1978) (Muskingum-Cunge matching diffusion), and Ponce, Li & Simons (1978) on when kinematic routing is valid.
 
-**Why this matters for your model**: a TOPMODEL parameter set published for a different river basin is not a substitute for calibration. Parameters such as uniform `ln_t0` and `m` are catchment-specific. The index mode is a **validation mode** that reproduces the TOPMODEL reference case as a tripwire; it does not establish predictive skill for a new site.
+**Why this matters for your model**: a TOPMODEL parameter set published for a different river basin is not a substitute for calibration. Parameters such as uniform `ln_t0` and `m` are catchment-specific. The index mode reproduces the classic TOPMODEL formulation; it does not establish predictive skill for a new site.
 
 ### lsdtt-graphflood: Gailleton et al. (2024)
 

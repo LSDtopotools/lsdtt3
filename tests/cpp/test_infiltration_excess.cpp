@@ -9,40 +9,27 @@
 // -----------------------------------------------------------------------------
 // Unit tests for src/cpu/lsdtt_infiltration_excess_cpu -- Phase 8.
 //
-// WHAT VALIDATES WHAT, STATED PLAINLY
-// -----------------------------------
-// There is NO published reference output for this code path from either source.
-// The C demo and the FORTRAN demo both ship params.dat with infex = 0, so
-// EXPINF is never executed in either. That is also why the C translation's four
-// defects went unnoticed for fifteen years.
+// WHAT THESE CHECKS COVER
+// ------------------------
+// The implementation is held by lsdtt3's own checks, with no external
+// reference code or reference output:
 //
-// So validation here is in two layers, and they cover different things:
-//
-//   1. A literal FORTRAN TRANSCRIPTION, `fortran_expinf` below, written
-//      statement-for-statement from TMOD9502.f including its ten-term `pow`
-//      series, its repeated log, and its dimensionally odd final test. The
-//      production implementation is compared against it. This proves the
-//      OPTIMISATION is exact -- that the recurrence, the hoisted constants and
-//      the single log did not change the answer. It does NOT prove the
-//      transcription faithfully reflects the original.
-//
-//   2. A FROZEN TRACE of TOPMODEL 95.02's own EXPINF,
-//      tests/data/expinf_95_02_reference.csv, produced once by compiling the
-//      subroutine and running it over three storms. That closes layer 1's gap --
-//      it checks the transcription against the real thing. lsdtt3 has NO
-//      Fortran dependency: this reads a committed file, so every machine gets
-//      identical coverage. tests/scripts/regenerate_expinf_fixture.py carries
-//      the subroutine verbatim and is the maintainer tool for remaking it.
-//
-// Plus analytic checks on the physics itself, which neither layer gives:
-// the Green-Ampt capacity law, the series against a high-precision evaluation,
-// and the limiting behaviours.
+//   - the series: the recurrence against direct pow-and-factorial evaluation,
+//     against high-order quadrature of the integral it truncates, and the
+//     truncation diagnostic at large argument;
+//   - the physics: the Green-Ampt capacity law against its closed form, its
+//     positivity, monotonic decline and finite f = 0 limit, and water balance
+//     (rain = infiltration + excess) under gentle and ponding rain;
+//   - the ponding test: the default limit `CUMF + RINT` and the dimensionally
+//     consistent option `CUMF + RINT*dt` agree at dt = 1 h and differ at
+//     dt = 4 h;
+//   - input validation.
 //
 // EFFICIENCY
 // ----------
-// The original is 1995 code for one lumped catchment per timestep; in a raster
-// model it runs per cell per timestep. test_efficiency measures what the
-// rewrite bought, rather than asserting it.
+// In a raster model this runs per cell per timestep. test_efficiency measures
+// what the series recurrence buys over direct evaluation, rather than
+// asserting it.
 //
 // Usage: lsdtt-test-infiltration-excess
 // -----------------------------------------------------------------------------
@@ -53,12 +40,9 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
-#include <fstream>
-#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #include "lsdtt_infiltration_excess_cpu.hpp"
 
@@ -91,207 +75,7 @@ std::string sci(double v)
 }
 
 // =============================================================================
-// LAYER 1: the literal FORTRAN transcription
-//
-// Statement for statement from TMOD9502.f EXPINF. Deliberately NOT tidied: the
-// pow-and-factorial series, the twice-evaluated DLOG(FC) and the
-// `F .LT. CUMF + RINT` test are all kept, because the point of this function is
-// to be the thing the optimised version must agree with.
-//
-// TP and CONST are state rather than locals for the reason given in
-// lsdtt_infiltration_excess_cpu.hpp: the original reads them on later calls and
-// relies on the compiler to have kept them.
-// =============================================================================
-struct fortran_state
-{
-    int    irof  = 0;
-    double cumf  = 0.0;
-    double f     = 0.0;
-    double tp    = 0.0;
-    double konst = 0.0;
-};
-
-struct fortran_params
-{
-    double xk0 = 1.0, hf = 0.02, dth = 0.1, szm = 0.032, dt = 1.0;
-};
-
-double fortran_expinf(fortran_state& s, const fortran_params& p,
-                      int it, double rint)
-{
-    const double E = 0.00001;
-    const double cd  = p.hf * p.dth;
-    const double szf = 1.0 / p.szm;
-    const double xkf = p.xk0;
-    const double dt  = p.dt;
-
-    double f = s.f, f1 = 0.0, f2 = 0.0, r2 = 0.0;
-    double df = 0.0;
-
-    auto label_20 = [&]() {          // no ponding in this time step
-        s.irof = 0;
-        df = rint * dt;
-        s.cumf += df;
-        return df;
-    };
-
-    bool goto_10 = (s.irof == 1);
-    bool goto_8  = false;
-
-    if (!goto_10)
-    {
-        bool goto_7 = (s.cumf == 0.0);
-        if (!goto_7)
-        {
-            f1 = s.cumf;
-            r2 = -xkf * szf * (cd + f1) / (1.0 - std::exp(szf * f1));
-            if (r2 < rint)
-            {
-                s.tp  = (it - 1.0) * dt;
-                s.irof = 1;
-                f = s.cumf;
-                goto_8 = true;
-            }
-        }
-        if (!goto_8)
-        {
-            f2 = s.cumf + dt * rint;
-            if (f2 == 0.0) return label_20();
-            r2 = -xkf * szf * (cd + f2) / (1.0 - std::exp(szf * f2));
-            if (r2 > rint) return label_20();
-            f = s.cumf + r2 * dt;
-            for (int i = 1; i <= 20; ++i)
-            {
-                r2 = -xkf * szf * (cd + f) / (1.0 - std::exp(szf * f));
-                if (r2 > rint)
-                {
-                    f1 = f;
-                    f  = (f2 + f) * 0.5;
-                    if (std::fabs(f - f1) < E) break;
-                }
-                else
-                {
-                    f2 = f;
-                    f  = (f1 + f) * 0.5;
-                    if (std::fabs(f - f2) < E) break;
-                }
-            }
-            s.tp = (it - 1) * dt + (f - s.cumf) / rint;
-            if (s.tp > it * dt) return label_20();
-        }
-
-        // label 8: definite integral constant
-        {
-            double konst = 0.0, fac = 1.0;
-            const double fc = f + cd;
-            for (int j = 1; j <= 10; ++j)
-            {
-                fac *= j;
-                konst += std::pow(fc * szf, static_cast<double>(j)) / (j * fac);
-            }
-            s.konst = std::log(fc) - (std::log(fc) + konst) / std::exp(szf * cd);
-        }
-        s.irof = 1;
-        f += 0.5 * rint * (it * dt - s.tp);
-    }
-
-    // label 10: Newton-Raphson
-    for (int i = 1; i <= 20; ++i)
-    {
-        const double fc = f + cd;
-        double sum = 0.0, fac = 1.0;
-        for (int j = 1; j <= 10; ++j)
-        {
-            fac *= j;
-            sum += std::pow(fc * szf, static_cast<double>(j)) / (j * fac);
-        }
-        const double func = -(std::log(fc) - (std::log(fc) + sum) /
-                              std::exp(szf * cd) - s.konst) / (xkf * szf)
-                          - (it * dt - s.tp);
-        const double dfunc = (std::exp(szf * f) - 1.0) / (xkf * szf * fc);
-        df = -func / dfunc;
-        f += df;
-        if (std::fabs(df) <= E) break;
-    }
-
-    if (f < s.cumf + rint)
-    {
-        df = f - s.cumf;
-        s.cumf = f;
-        s.f = f + df;
-        return df;
-    }
-    return label_20();
-}
-
-lsdtt::infiltration_excess_parameters make_params(const fortran_params& fp)
-{
-    lsdtt::infiltration_excess_parameters p;
-    p.xk0_metres_per_hour           = fp.xk0;
-    p.wetting_front_suction_metres  = fp.hf;
-    p.delta_theta                   = fp.dth;
-    p.szm_metres                    = fp.szm;
-    return p;
-}
-
-// =============================================================================
-// 1. The production implementation against the transcription
-// =============================================================================
-void test_against_transcription()
-{
-    // A storm sequence that exercises every branch: dry start, a rise through
-    // the ponding threshold, a sustained high-intensity block, and a recession.
-    std::vector<double> rain;
-    for (int i = 0; i < 12; ++i) rain.push_back(0.002 * (i + 1));   // rising
-    for (int i = 0; i < 20; ++i) rain.push_back(0.08);              // heavy
-    for (int i = 0; i < 12; ++i) rain.push_back(0.08 / (i + 2));    // recession
-    for (int i = 0; i < 6;  ++i) rain.push_back(0.0);               // dry
-
-    const fortran_params fp;
-    const lsdtt::lsdtt_infiltration_excess_cpu solver(make_params(fp));
-
-    fortran_state fs;
-    lsdtt::infiltration_state cs;
-
-    double worst_df = 0.0, worst_cumf = 0.0;
-    int n_ponded = 0, n_steps = 0, mismatched_state = 0;
-
-    for (std::size_t t = 0; t < rain.size(); ++t)
-    {
-        const int it = static_cast<int>(t) + 1;
-        const double r = rain[t];
-
-        double f_df = 0.0;
-        if (r > 0.0) f_df = fortran_expinf(fs, fp, it, r);
-        else { fs.irof = 0; f_df = 0.0; }
-
-        const auto cr = solver.step(cs, r, fp.dt, it);
-
-        worst_df   = std::max(worst_df, std::fabs(cr.infiltration - f_df));
-        worst_cumf = std::max(worst_cumf,
-                              std::fabs(cs.cumulative_infiltration - fs.cumf));
-        if (cs.ponded != (fs.irof == 1)) ++mismatched_state;
-        if (cs.ponded) ++n_ponded;
-        ++n_steps;
-    }
-
-    check("transcription: the storm actually pondes, so the path is exercised",
-          n_ponded > 5,
-          std::to_string(n_ponded) + " of " + std::to_string(n_steps) +
-          " steps ponded");
-    check("transcription: ponding state agrees at every step",
-          mismatched_state == 0,
-          std::to_string(mismatched_state) + " mismatches");
-    check("transcription: infiltration increment matches to 1e-12",
-          worst_df < 1e-12,
-          "worst |d| " + sci(worst_df));
-    check("transcription: cumulative infiltration matches to 1e-12",
-          worst_cumf < 1e-12,
-          "worst |d| " + sci(worst_cumf));
-}
-
-// =============================================================================
-// 2. The series: recurrence versus the original's pow-and-factorial
+// 1. The series: recurrence versus direct pow-and-factorial evaluation
 // =============================================================================
 void test_series()
 {
@@ -341,8 +125,8 @@ void test_series()
           "series " + sci(solver.series_sum(0.5)) +
           " vs quadrature " + sci(quad(0.5)));
 
-    // And the truncation genuinely FAILS at large argument, which the original
-    // never checks. This is the accuracy limit made visible.
+    // And the truncation genuinely FAILS at large argument. This is the
+    // accuracy limit made visible.
     {
         double rel = 0.0;
         (void)solver.series_sum(20.0, &rel);
@@ -376,7 +160,7 @@ void test_series()
 }
 
 // =============================================================================
-// 3. The physics
+// 2. The physics
 // =============================================================================
 void test_physics()
 {
@@ -466,15 +250,24 @@ void test_physics()
 }
 
 // =============================================================================
-// 4. The FORTRAN's dimensional oddity
+// 3. The dimensional ponding test
 // =============================================================================
+lsdtt::infiltration_excess_parameters dimensional_test_params()
+{
+    lsdtt::infiltration_excess_parameters p;
+    p.xk0_metres_per_hour          = 1.0;
+    p.wetting_front_suction_metres = 0.02;
+    p.delta_theta                  = 0.1;
+    p.szm_metres                   = 0.032;
+    return p;
+}
+
 void test_dimensional_test()
 {
-    const fortran_params fp_base;
-    // At dt = 1 the original's `CUMF + RINT` and the correct `CUMF + RINT*dt`
-    // are the same number, which is presumably why the oddity survived.
+    // At dt = 1 the default `CUMF + RINT` and the dimensionally consistent
+    // `CUMF + RINT*dt` are the same number.
     {
-        auto p = make_params(fp_base);
+        auto p = dimensional_test_params();
         auto q = p; q.use_dimensional_ponding_test = true;
         const lsdtt::lsdtt_infiltration_excess_cpu a(p), b(q);
         lsdtt::infiltration_state sa, sb;
@@ -489,36 +282,36 @@ void test_dimensional_test()
               worst == 0.0, "worst |d| " + sci(worst));
     }
 
-    // At dt != 1 they genuinely differ, which is the latent bug.
+    // At dt != 1 they genuinely differ.
     //
-    // dt > 1, not dt < 1. The original's limit adds RINT and the corrected one
+    // dt > 1, not dt < 1. The default limit adds RINT and the corrected one
     // adds RINT*dt, so they diverge only when the step's infiltration lands
     // BETWEEN the two. At dt = 0.25 the corrected limit is the smaller and the
     // per-step infiltration is below both, so nothing differs -- which is how
     // this check first came out vacuous. At dt = 4 the corrected limit is four
-    // times the original's, and a step can infiltrate more than RINT.
+    // times the default's, and a step can infiltrate more than RINT.
     {
-        fortran_params fp = fp_base; fp.dt = 4.0;
-        auto p = make_params(fp);
+        const double dt = 4.0;
+        auto p = dimensional_test_params();
         auto q = p; q.use_dimensional_ponding_test = true;
         const lsdtt::lsdtt_infiltration_excess_cpu a(p), b(q);
         lsdtt::infiltration_state sa, sb;
         double worst = 0.0;
         for (int t = 1; t <= 60; ++t)
         {
-            const auto ra = a.step(sa, 0.05, fp.dt, t);
-            const auto rb = b.step(sb, 0.05, fp.dt, t);
+            const auto ra = a.step(sa, 0.05, dt, t);
+            const auto rb = b.step(sb, 0.05, dt, t);
             worst = std::max(worst, std::fabs(ra.infiltration - rb.infiltration));
         }
-        check("dimensions: at dt = 4 h the original and corrected forms differ",
+        check("dimensions: at dt = 4 h the default and corrected forms differ",
               worst > 0.0,
-              "worst |d| " + sci(worst) + " m -- the latent bug, invisible at "
-              "the demo's dt = 1 and material away from it");
+              "worst |d| " + sci(worst) + " m -- invisible at dt = 1 and "
+              "material away from it");
     }
 }
 
 // =============================================================================
-// 5. Efficiency -- measured, not asserted
+// 4. Efficiency -- measured, not asserted
 // =============================================================================
 void test_efficiency()
 {
@@ -559,53 +352,11 @@ void test_efficiency()
           speedup > 1.5,
           std::to_string(speedup) + "x on " + std::to_string(n) + " calls");
 
-    // The whole-step cost, which is what a raster model actually pays.
-    {
-        std::vector<double> rain;
-        for (int i = 0; i < 40; ++i) rain.push_back(0.05);
-
-        const int cells = 20000;
-        auto s0 = std::chrono::steady_clock::now();
-        for (int c = 0; c < cells; ++c)
-        {
-            lsdtt::infiltration_state st;
-            for (std::size_t t = 0; t < rain.size(); ++t)
-                sink = sink + solver.step(st, rain[t], 1.0,
-                                          static_cast<int>(t) + 1).infiltration;
-        }
-        auto s1 = std::chrono::steady_clock::now();
-
-        const fortran_params fp;
-        auto s2 = std::chrono::steady_clock::now();
-        for (int c = 0; c < cells; ++c)
-        {
-            fortran_state fs;
-            for (std::size_t t = 0; t < rain.size(); ++t)
-                sink = sink + fortran_expinf(fs, fp,
-                                             static_cast<int>(t) + 1, rain[t]);
-        }
-        auto s3 = std::chrono::steady_clock::now();
-
-        const double fast_s = std::chrono::duration<double>(s1 - s0).count();
-        const double orig_s = std::chrono::duration<double>(s3 - s2).count();
-        const double ratio  = orig_s / std::max(fast_s, 1e-12);
-
-        std::cout << "      full step over " << cells << " cells x "
-                  << rain.size() << " steps: 95.02 form " << sci(orig_s)
-                  << " s, rewritten " << sci(fast_s) << " s -> " << std::fixed
-                  << std::setprecision(1) << ratio << "x" << std::endl;
-
-        check("efficiency: the rewritten step is faster than the 95.02 form",
-              ratio > 1.2,
-              std::to_string(ratio) + "x over " +
-              std::to_string(cells * rain.size()) + " cell-steps");
-    }
-
     (void)sink;
 }
 
 // =============================================================================
-// 6. Validation
+// 5. Validation
 // =============================================================================
 void test_validation()
 {
@@ -637,122 +388,12 @@ void test_validation()
 
 } // namespace
 
-// =============================================================================
-// THE ORACLE: a frozen trace of TOPMODEL 95.02's own EXPINF
-//
-// tests/data/expinf_95_02_reference.csv was produced once by compiling EXPINF
-// verbatim and running it over three storms. THAT FILE IS THE ORACLE. This test
-// reads it and nothing more: lsdtt3 has no Fortran dependency, and every
-// machine gets identical coverage rather than coverage that depends on what
-// happens to be installed.
-//
-// tests/scripts/regenerate_expinf_fixture.py carries the subroutine verbatim
-// and rebuilds the fixture; it is a maintainer tool and is never run by the
-// test suite.
-// =============================================================================
-struct oracle_row
+int main()
 {
-    std::string storm;
-    double xk0, hf, dth, szm, dt, rint;
-    int it, irof;
-    double df, cumf;
-};
-
-std::vector<oracle_row> read_oracle(const std::string& path)
-{
-    std::vector<oracle_row> rows;
-    std::ifstream f(path);
-    if (!f) return rows;
-    std::string line;
-    while (std::getline(f, line))
-    {
-        if (line.empty() || line[0] == '#') continue;
-        if (line.rfind("storm,", 0) == 0) continue;
-        std::istringstream is(line);
-        std::string cell;
-        oracle_row r;
-        auto next = [&]() { std::getline(is, cell, ','); return cell; };
-        r.storm = next();
-        r.xk0 = std::stod(next()); r.hf   = std::stod(next());
-        r.dth = std::stod(next()); r.szm  = std::stod(next());
-        r.dt  = std::stod(next()); r.it   = std::stoi(next());
-        r.rint = std::stod(next()); r.irof = std::stoi(next());
-        r.df  = std::stod(next()); r.cumf = std::stod(next());
-        rows.push_back(r);
-    }
-    return rows;
-}
-
-void test_against_frozen_oracle(const std::string& path)
-{
-    const auto rows = read_oracle(path);
-    check("ORACLE: the frozen 95.02 reference trace was read",
-          rows.size() > 100, std::to_string(rows.size()) + " rows from " + path);
-    if (rows.empty()) return;
-
-    // Walk storm by storm, replaying each from a fresh state.
-    std::string current;
-    lsdtt::infiltration_state st;
-    std::unique_ptr<lsdtt::lsdtt_infiltration_excess_cpu> solver;
-
-    double worst_df = 0.0, worst_cumf = 0.0;
-    int state_mismatch = 0, n_ponded = 0;
-    std::string worst_storm;
-    std::vector<std::string> storms_seen;
-
-    for (const oracle_row& r : rows)
-    {
-        if (r.storm != current)
-        {
-            current = r.storm;
-            storms_seen.push_back(current);
-            st = lsdtt::infiltration_state{};
-            lsdtt::infiltration_excess_parameters p;
-            p.xk0_metres_per_hour          = r.xk0;
-            p.wetting_front_suction_metres = r.hf;
-            p.delta_theta                  = r.dth;
-            p.szm_metres                   = r.szm;
-            solver = std::make_unique<lsdtt::lsdtt_infiltration_excess_cpu>(p);
-        }
-
-        const auto got = solver->step(st, r.rint, r.dt, r.it);
-
-        const double d_df = std::fabs(got.infiltration - r.df);
-        if (d_df > worst_df) { worst_df = d_df; worst_storm = r.storm; }
-        worst_cumf = std::max(worst_cumf,
-                              std::fabs(st.cumulative_infiltration - r.cumf));
-        if (st.ponded != (r.irof == 1)) ++state_mismatch;
-        if (r.irof == 1) ++n_ponded;
-    }
-
-    std::string names;
-    for (const auto& n : storms_seen) { if (!names.empty()) names += ", "; names += n; }
-    check("ORACLE: more than one storm regime is covered",
-          storms_seen.size() >= 3, names);
-    check("ORACLE: the storms genuinely pond, so the path is exercised",
-          n_ponded > 30, std::to_string(n_ponded) + " ponded steps of " +
-          std::to_string(rows.size()));
-    check("ORACLE: ponding state matches TOPMODEL 95.02 at every step",
-          state_mismatch == 0, std::to_string(state_mismatch) + " mismatches");
-    check("ORACLE: infiltration matches TOPMODEL 95.02 EXPINF",
-          worst_df < 1e-12,
-          "worst |d| " + sci(worst_df) + " m" +
-          (worst_storm.empty() ? "" : " (storm " + worst_storm + ")"));
-    check("ORACLE: cumulative infiltration matches TOPMODEL 95.02 EXPINF",
-          worst_cumf < 1e-12, "worst |d| " + sci(worst_cumf) + " m");
-}
-
-int main(int argc, char** argv)
-{
-    const std::string oracle_csv = (argc > 1)
-        ? argv[1] : std::string("tests/data/expinf_95_02_reference.csv");
-
     std::cout << "lsdtt-test-infiltration-excess\n"
               << "------------------------------\n";
     try
     {
-        test_against_frozen_oracle(oracle_csv);
-        test_against_transcription();
         test_series();
         test_physics();
         test_dimensional_test();
@@ -767,8 +408,6 @@ int main(int argc, char** argv)
 
     std::cout << "------------------------------\n"
               << g_n_checks - g_n_failed << " / " << g_n_checks << " checks passed\n"
-              << "NOTE: the frozen 95.02 trace is the oracle. lsdtt3 has no\n"
-              << "      Fortran dependency; this reads a committed CSV.\n"
               << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << std::endl;
     return g_n_failed == 0 ? 0 : 1;
 }

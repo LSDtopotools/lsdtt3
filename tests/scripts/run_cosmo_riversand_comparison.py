@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import lsdtt_test_env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_cosmo_validation as rcv
@@ -229,7 +230,7 @@ def run_basin_extraction_for_sample(
         )
         + "\n"
     )
-    subprocess.run([str(basin_exe), str(sdir), pfile.name], check=True, cwd=str(sdir))
+    lsdtt_test_env.run([str(basin_exe), str(sdir), pfile.name], check=True, cwd=str(sdir))
 
     poly = sdir / "basin_junction_basin_polygons.gpkg"
     if not poly.is_file():
@@ -365,7 +366,7 @@ def run_mode(args) -> int:
                 outcsv=str(rs_csv),
                 points=str(points_csv),
             )
-            subprocess.run(shlex.split(cmd), check=True, cwd=str(workdir))
+            lsdtt_test_env.run(shlex.split(cmd), check=True, cwd=str(workdir))
         else:
             if not riversand_available():
                 print("SKIP: riversand is not installed; provide --riversand-csv or install riversand")

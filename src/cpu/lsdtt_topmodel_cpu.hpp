@@ -202,9 +202,8 @@ enum class topmodel_excess_rule
 // Extracted so that `index` mode and `dynamic` mode run the SAME column and
 // differ only in where the local deficit comes from -- derived from the
 // topographic index in one, a prognostic state in the other. That matters for
-// more than tidiness: the 95.02 oracle exercises this function, so the column
-// physics of the dynamic mode is covered by the external reference even though
-// the dynamic mode itself has none.
+// more than tidiness: the column tests exercise this function, so they cover
+// the column physics of both modes.
 //
 // `s_rz` (root zone DEFICIT) and `s_uz` (unsaturated STORAGE) are updated in
 // place. `truncated` accumulates water deleted by 95.02's small-value
@@ -373,32 +372,6 @@ private:
 std::vector<topmodel_unit> make_units_from_histogram(
     const std::vector<double>& area_fractions,
     const std::vector<double>& topographic_index_values
-);
-
-// ---------------------------------------------------------------------------
-// Histogram bins using TOPMODEL 95.02's own area convention.
-//
-// 95.02 does NOT weight bin i by its own area. TREAD/TOPMOD weight it by
-//
-//     acf_i = 0.5 * ( a_i + a_{i+1} )        with a_{n+1} = 0
-//
-// i.e. the mean of this bin's area and the next one's, because a bin edge sits
-// between two areas. The weights therefore sum to 1 - 0.5*a_1 - 0.5*a_n rather
-// than to 1, and 95.02 does not renormalise. For the published demo catchment
-// that shortfall is 5e-7, which is why the difference is easy to miss and why
-// it is spelled out here.
-//
-// Use this when reproducing 95.02. Use make_units_from_histogram() otherwise.
-//
-// `renormalise` divides through so the weights sum to 1 exactly. That is the
-// defensible choice for new work and the wrong one for bit-matching the
-// original, so it is a parameter rather than a decision made here.
-// ---------------------------------------------------------------------------
-[[nodiscard]]
-std::vector<topmodel_unit> make_units_from_histogram_95_02(
-    const std::vector<double>& area_fractions,
-    const std::vector<double>& topographic_index_values,
-    bool renormalise = true
 );
 
 // ---------------------------------------------------------------------------

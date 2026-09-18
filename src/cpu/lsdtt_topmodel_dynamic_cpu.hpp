@@ -51,9 +51,9 @@
 // than a balance check, which passes for any conservative scheme however wrong.
 //
 // Because the column physics is shared with `index` mode through
-// topmodel_column_step(), and that function IS exercised by the 95.02 oracle,
-// the only part of this mode outside external validation is the saturated-zone
-// routing -- which is exactly what the equilibrium test covers.
+// topmodel_column_step(), which the column tests exercise, the part specific
+// to this mode is the saturated-zone routing -- which is exactly what the
+// equilibrium test covers.
 //
 // NUMERICS
 // --------

@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import hashlib
+import lsdtt_test_env
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -174,7 +175,7 @@ def resolve_fixture(fixture_arg: str, fetch_exe_arg: str | None) -> tuple[pathli
 
 def short_git_sha(path: pathlib.Path) -> str:
     try:
-        proc = subprocess.run(
+        proc = lsdtt_test_env.run(
             ["git", "-C", str(path), "rev-parse", "--short", "HEAD"],
             capture_output=True,
             text=True,
@@ -316,7 +317,7 @@ def run_lsdtt(
 
     cmd = [str(exe), str(out_dir), param_name]
     t0 = time.perf_counter()
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         cmd,
         cwd=str(out_dir),
         capture_output=True,
@@ -388,7 +389,7 @@ def run_dagger_reference(
 
     t0 = time.perf_counter()
     try:
-        proc = subprocess.run(
+        proc = lsdtt_test_env.run(
             cmd,
             cwd=str(out_dir),
             capture_output=True,

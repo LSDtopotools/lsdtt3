@@ -369,52 +369,6 @@ double topmodel_lambda_from_histogram(
     return lambda;
 }
 
-std::vector<topmodel_unit> make_units_from_histogram_95_02(
-    const std::vector<double>& area_fractions,
-    const std::vector<double>& topographic_index_values,
-    bool                       renormalise)
-{
-    const char* who = "make_units_from_histogram_95_02";
-
-    if (area_fractions.size() != topographic_index_values.size())
-        throw std::invalid_argument(
-            std::string(who) + ": area_fractions and index values differ in length");
-    if (area_fractions.size() < 2)
-        throw std::invalid_argument(
-            std::string(who) + ": need at least two bins");
-
-    double total = 0.0;
-    for (double a : area_fractions)
-    {
-        if (!(a >= 0.0) || !std::isfinite(a))
-            throw std::invalid_argument(
-                std::string(who) + ": a bin has a negative or non-finite area");
-        total += a;
-    }
-    if (!(total > 0.0))
-        throw std::invalid_argument(std::string(who) + ": bin areas sum to zero");
-
-    const std::size_t n = area_fractions.size();
-
-    // acf_i = 0.5 (a_i + a_{i+1}), a_{n+1} = 0, on areas already normalised by
-    // their own total -- which is the order TREAD does it in.
-    std::vector<topmodel_unit> units(n);
-    double acf_sum = 0.0;
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        const double a_i   = area_fractions[i] / total;
-        const double a_next = (i + 1 < n) ? area_fractions[i + 1] / total : 0.0;
-        units[i].area_fraction     = 0.5 * (a_i + a_next);
-        units[i].topographic_index = topographic_index_values[i];
-        acf_sum += units[i].area_fraction;
-    }
-
-    if (renormalise && acf_sum > 0.0)
-        for (topmodel_unit& u : units) u.area_fraction /= acf_sum;
-
-    return units;
-}
-
 std::vector<topmodel_unit> make_units_from_twi(
     const std::vector<float>&        twi_values,
     const std::vector<std::uint8_t>& twi_mask)

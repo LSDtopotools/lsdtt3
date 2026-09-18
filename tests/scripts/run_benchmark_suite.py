@@ -144,6 +144,7 @@ import subprocess
 import sys
 import time
 from typing import Any
+import lsdtt_test_env
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
@@ -840,7 +841,7 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
     if not hasattr(os, "wait4"):
         t0 = time.perf_counter()
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True,
+            proc = lsdtt_test_env.run(cmd, capture_output=True, text=True,
                                   env=env, cwd=str(cwd) if cwd else None,
                                   timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -868,7 +869,7 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
             # timeout can kill the launcher AND the command it is waiting on.
             # Killing the launcher alone would orphan the measured command and
             # leave it running for the rest of the campaign.
-            proc = subprocess.Popen(launcher + list(cmd), stdout=subprocess.PIPE,
+            proc = lsdtt_test_env.popen(launcher + list(cmd), stdout=subprocess.PIPE,
                                     stderr=errf, text=True, env=env,
                                     cwd=str(cwd) if cwd else None,
                                     start_new_session=True)
@@ -1077,7 +1078,7 @@ def ensure_source_raster(region: str, source_px: int,
           f"{source_px * source_px * 4 / 1e6:.0f} MB; every ladder rung is "
           f"cropped from it")
 
-    proc = subprocess.run([str(fetch_exe), str(param_dir), param_path.name],
+    proc = lsdtt_test_env.run([str(fetch_exe), str(param_dir), param_path.name],
                           capture_output=True, text=True, env=system_env(1))
     if proc.returncode != 0:
         print(f"    fetch failed:\n{proc.stdout[-1200:]}\n{proc.stderr[-1200:]}",
@@ -1285,7 +1286,7 @@ def filesystem_type(path: pathlib.Path) -> str:
     mount for the path directly, including bind mounts, and it works on macOS.
     """
     try:
-        r = subprocess.run(["stat", "-f", "-c", "%T", str(path)],
+        r = lsdtt_test_env.run(["stat", "-f", "-c", "%T", str(path)],
                            capture_output=True, text=True, check=False)
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
@@ -1741,7 +1742,7 @@ def calibrate_rss_floor() -> dict[str, Any]:
             floors.append(r["peak_rss_mb"])
 
     # The old, broken route, kept only to show whether the trap is live here.
-    proc = subprocess.Popen([true_exe])
+    proc = lsdtt_test_env.popen([true_exe])
     _, _, ru = os.wait4(proc.pid, 0)
     proc.returncode = 0
 
@@ -1836,7 +1837,7 @@ def calibrate_overheads(build_dir: pathlib.Path, fixture: pathlib.Path,
 # -----------------------------------------------------------------------------
 def run_capture(cmd: list[str]) -> dict[str, Any]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = lsdtt_test_env.run(cmd, capture_output=True, text=True, check=False)
     except (FileNotFoundError, PermissionError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": proc.returncode == 0, "stdout": proc.stdout,
@@ -2788,7 +2789,7 @@ def main() -> int:
     print("reference implementations importable by it:")
     _available = []
     for _mod in ("richdem", "topotoolbox", "whitebox_workflows"):
-        _probe = subprocess.run(
+        _probe = lsdtt_test_env.run(
             [args.python_exe, "-c", f"import {_mod}"],
             capture_output=True, text=True)
         _ok = _probe.returncode == 0

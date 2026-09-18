@@ -29,6 +29,7 @@ import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import (LineString, MultiLineString, MultiPoint,
                               MultiPolygon, Point, Polygon)
+import lsdtt_test_env
 
 NR = NC = 80
 CELL = 10.0
@@ -86,7 +87,7 @@ def build_fixtures(work: Path) -> None:
 def run(build: Path, work: Path, tool: str, params: str, tag: str) -> int:
     (work / f"{tag}.param").write_text(params)
     with open(work / f"{tag}.log", "w") as log:
-        return subprocess.run([str(build / tool), "./", f"{tag}.param"],
+        return lsdtt_test_env.run([str(build / tool), "./", f"{tag}.param"],
                               cwd=work, stdout=log, stderr=subprocess.STDOUT).returncode
 
 

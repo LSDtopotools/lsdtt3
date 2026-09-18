@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pyproj import Transformer
+import lsdtt_test_env
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -148,7 +149,7 @@ def default_expected_dir() -> Path:
 
 def git_sha() -> str:
     try:
-        out = subprocess.check_output(
+        out = lsdtt_test_env.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=str(repo_root()),
             stderr=subprocess.DEVNULL,
@@ -261,7 +262,7 @@ def compare_csv_rows(new_rows: list[dict], old_rows: list[dict], key: str) -> tu
 
 
 def run_cli(exe: Path, workdir: Path, param_file: Path, label: str) -> None:
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         [str(exe), str(workdir), param_file.name],
         cwd=str(workdir),
         capture_output=True,
@@ -303,7 +304,7 @@ def write_point_and_dem(workdir: Path, point: GridPoint) -> tuple[Path, Path]:
     )
 
     dem_tif = workdir / f"dem_{point.run_id}.tif"
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         [
             "gdal_translate",
             "-of",

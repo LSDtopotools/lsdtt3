@@ -3,6 +3,9 @@ write_path: __WRITE_PATH__
 write_fname: fetch_ot_missing_key_fallback
 
 # Invalid bbox (west > east) ensures deterministic failure without network.
+# The OpenTopography key is resolved BEFORE the bbox is checked, so this also
+# relies on the credential lookup not prompting: CTest sets
+# LSDTT_NONINTERACTIVE=1 and the harness gives the CLI /dev/null as stdin.
 west: 10.5
 south: 46.4
 east: 10.3

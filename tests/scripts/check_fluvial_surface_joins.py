@@ -36,6 +36,7 @@ import subprocess
 import sys
 
 from osgeo import gdal
+import lsdtt_test_env
 
 
 def parse_args() -> argparse.Namespace:
@@ -124,7 +125,7 @@ def run_cli(args) -> pathlib.Path:
     param_name = "run_params.txt"
     (work_dir / param_name).write_text(rendered, encoding="utf-8")
 
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         [str(exe), str(work_dir), param_name],
         cwd=str(work_dir), capture_output=True, text=True, check=False)
 

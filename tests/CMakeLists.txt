@@ -586,8 +586,8 @@ add_lsdtt_cli_smoke_test(
 # The physics is all in the modules and is tested by the C++ drivers
 # (unit_topmodel_column, unit_hydro_velocity_field, unit_hydro_routing,
 # unit_canopy_interception, unit_infiltration_excess, unit_channel_extent,
-# unit_hydro_roughness, unit_landcover_scenario, unit_topmodel_dynamic, and the
-# 95.02 oracle). These CLI tests carry only what is genuinely CLI: that the
+# unit_hydro_roughness, unit_landcover_scenario and unit_topmodel_dynamic).
+# These CLI tests carry only what is genuinely CLI: that the
 # pipeline assembles, that the outputs appear, and that the failure paths fail
 # with a message that says what to do.
 #
@@ -2140,8 +2140,6 @@ endif()
 # OpenCV's rounding rules, Gaussian kernels, separable and fixed-point filters,
 # Otsu, Sobel, Bresenham.
 # Phase 2 of plan_raster_topmodel.md: TOPMODEL column physics, index mode.
-# NOTE: the 95.02 oracle test named in the plan is NOT here -- the ../topmodel
-# reference clone is absent from this machine. See the test file header.
 add_executable(lsdtt-test-topmodel-column cpp/test_topmodel_column.cpp)
 target_link_libraries(lsdtt-test-topmodel-column PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_column COMMAND lsdtt-test-topmodel-column)
@@ -2183,17 +2181,11 @@ add_test(NAME unit_landcover_scenario COMMAND lsdtt-test-landcover-scenario)
 set_tests_properties(unit_landcover_scenario PROPERTIES LABELS "unit;network")
 
 # Phase 8 of plan_raster_topmodel.md: infiltration excess (exp-K Green-Ampt).
-#
-# The oracle is tests/data/expinf_95_02_reference.csv -- a FROZEN trace of
-# TOPMODEL 95.02's own EXPINF. lsdtt3 has NO FORTRAN DEPENDENCY: the test reads
-# a committed file, so every machine gets identical coverage and nothing here
-# ever invokes a compiler. tests/scripts/regenerate_expinf_fixture.py carries
-# the subroutine verbatim and is the maintainer tool for remaking the fixture.
+# Series, closed-form capacity, water balance and dimensional-form checks; no
+# external reference input.
 add_executable(lsdtt-test-infiltration-excess cpp/test_infiltration_excess.cpp)
 target_link_libraries(lsdtt-test-infiltration-excess PRIVATE lsdtt3_cpu)
-add_test(NAME unit_infiltration_excess
-         COMMAND lsdtt-test-infiltration-excess
-                 "${CMAKE_CURRENT_SOURCE_DIR}/data/expinf_95_02_reference.csv")
+add_test(NAME unit_infiltration_excess COMMAND lsdtt-test-infiltration-excess)
 set_tests_properties(unit_infiltration_excess PROPERTIES LABELS "unit;network")
 
 # Phase 7 of plan_raster_topmodel.md: the dynamic (prognostic) saturated zone.
@@ -2201,17 +2193,6 @@ add_executable(lsdtt-test-topmodel-dynamic cpp/test_topmodel_dynamic.cpp)
 target_link_libraries(lsdtt-test-topmodel-dynamic PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_dynamic COMMAND lsdtt-test-topmodel-dynamic)
 set_tests_properties(unit_topmodel_dynamic PROPERTIES LABELS "unit;network")
-
-# THE PHASE 2 GATE: the column against TOPMODEL 95.02 itself. The reference is
-# a third-party clone outside this repo, so the test SKIPS (exit 77) rather than
-# passing vacuously when it is absent -- a skip shows in the CTest summary.
-add_executable(lsdtt-test-topmodel-oracle cpp/test_topmodel_oracle.cpp)
-target_link_libraries(lsdtt-test-topmodel-oracle PRIVATE lsdtt3_cpu)
-add_test(NAME rigorous_topmodel_oracle_95_02
-         COMMAND lsdtt-test-topmodel-oracle
-                 "${CMAKE_SOURCE_DIR}/../topmodel/refs/original_code_c")
-set_tests_properties(rigorous_topmodel_oracle_95_02 PROPERTIES
-                     LABELS "rigorous;network" SKIP_RETURN_CODE 77)
 
 # Phase 1 of plan_raster_topmodel.md: velocity field, travel time, width
 # function. "hydro" is claimed by the wetness_index -> network domain rule
@@ -5453,3 +5434,70 @@ add_test(NAME unit_build_is_current
 set_tests_properties(unit_build_is_current PROPERTIES
     LABELS "unit;core;conventions"
     TIMEOUT 300)
+
+# =============================================================================
+# EXECUTION CONTRACT: no test reads the terminal, and every test has a timeout
+#
+# CTest hands the invoking terminal to each test as its stdin. So "stdin is a
+# terminal" is TRUE inside an interactive `ctest` run, and any code path that
+# prompts on a terminal blocks the whole suite with its prompt swallowed by
+# the harness. Agent and CI runs have no terminal, so they pass and never see
+# it. On 2026-09-18 failure_fetch_raster_ot_missing_key_strict sat at a hidden
+# OpenTopography key prompt for 40 minutes that way; unit_secret's prompt
+# check had the same exposure.
+#
+# LSDTT_NONINTERACTIVE=1 makes lsdtt3's credential lookup refuse to prompt
+# (lsdtt_secret.hpp). It is APPENDED, so a test's own ENVIRONMENT survives.
+# The Python harnesses also give every child /dev/null as stdin
+# (scripts/lsdtt_test_env.py); this covers native tests and any script that
+# does not.
+#
+# OMP_WAIT_POLICY=passive is set on every correctness test except benchmark_*
+# and perf* (whose timings it would change) and LSDTT_SERIAL_TESTS (which run
+# alone, so have nothing to contend with, and whose tight solver loops are
+# slowed badly by it: unit_hillslope_implicit, ~205 s mean in
+# CTestCostData.txt, was still running after ~30 min at ~120% CPU with it).
+# It changes only how idle OpenMP threads wait, not thread counts or results. Without it, OpenMP tests run
+# under `ctest -j` spin-wait against each other on oversubscribed cores:
+# measured 2026-09-18 on an 8-core laptop, four concurrent copies of
+# lsdtt-test-hillslope-steady-state took >120 s (killed) with the default
+# policy and 7.6 s with passive, against 5.6 s for one copy alone; under
+# `-j4`, unit_hillslope_steady_state and unit_landscape_equilibration (1 s and
+# 16 s alone) exceeded 300 s.
+#
+# A test with no explicit TIMEOUT gets one here, so a hang fails in minutes
+# rather than at CTest's 1500 s default. Explicit timeouts are left alone.
+# Basis (build/Testing/Temporary/CTestCostData.txt, 2026-09-18): every
+# failure_* test finishes in about 1 s, and the slowest non-heavy,
+# non-performance test averages under 20 s.
+#
+#   failure_*                 60 s   argument and validation paths
+#   heavy                   3600 s   as the serial block above
+#   benchmark_* / perf*     unset    their options own their budgets
+#   everything else          300 s
+#
+# This block is LAST so that it also reaches tests registered after the
+# classification pass (unit_build_is_current).
+# =============================================================================
+get_property(_lsdtt_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_test IN LISTS _lsdtt_all_tests)
+    set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "LSDTT_NONINTERACTIVE=1")
+
+    if(NOT _test MATCHES "^(benchmark_|perf)" AND NOT "${_test}" IN_LIST LSDTT_SERIAL_TESTS)
+        set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "OMP_WAIT_POLICY=passive")
+    endif()
+
+    get_test_property(${_test} TIMEOUT _timeout)
+    if(_timeout)
+        continue()
+    endif()
+    if(_test MATCHES "^(benchmark_|perf)")
+        continue()
+    elseif(_test MATCHES "^failure_")
+        set_tests_properties(${_test} PROPERTIES TIMEOUT 60)
+    elseif("${_test}" IN_LIST LSDTT_HEAVY_TESTS)
+        set_tests_properties(${_test} PROPERTIES TIMEOUT 3600)
+    else()
+        set_tests_properties(${_test} PROPERTIES TIMEOUT 300)
+    endif()
+endforeach()

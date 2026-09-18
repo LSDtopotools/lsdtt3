@@ -94,6 +94,7 @@ import shutil
 import subprocess
 import sys
 import time
+import lsdtt_test_env
 
 SKIP_EXIT = 77
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -123,7 +124,7 @@ def run_cli(exe: pathlib.Path, work: pathlib.Path, param_name: str,
     path = work / param_name
     path.write_text("".join(f"{k}: {v}\n" for k, v in params.items()))
     t0 = time.perf_counter()
-    proc = subprocess.run([str(exe), str(work), param_name],
+    proc = lsdtt_test_env.run([str(exe), str(work), param_name],
                           capture_output=True, text=True)
     wall = time.perf_counter() - t0
     if proc.returncode != 0:
@@ -294,7 +295,7 @@ def basins_reference(engine: str, filled: pathlib.Path, seeds: pathlib.Path,
                      timeout: float) -> dict:
     script = {"topotoolbox": "topotoolbox_reference.py",
               "whitebox": "whitebox_reference.py"}[engine]
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         [python_exe, str(SCRIPT_DIR / script), "--routine", "basins_from_seeds",
          "--in", str(filled), "--seeds", str(seeds),
          "--levels", str(depth), "--repeats", str(repeats)],
@@ -350,7 +351,7 @@ def chi_lsdtt3(build_dir: pathlib.Path, fixture: pathlib.Path,
 def chi_reference(filled_or_raw: pathlib.Path, threshold: int,
                   m_over_n: float, a0: float, repeats: int,
                   python_exe: str, timeout: float) -> dict:
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         [python_exe, str(SCRIPT_DIR / "topotoolbox_reference.py"),
          "--routine", "chi_network", "--in", str(filled_or_raw),
          "--stream-threshold", str(threshold), "--mn", str(m_over_n),
@@ -579,7 +580,7 @@ def chi_value_compare(build_dir: pathlib.Path, filled: pathlib.Path,
 
     # TopoToolbox: chi as a full grid, same filled DEM, same a0 and m/n.
     ttb_tif = out / "ttb_chi.tif"
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         [python_exe, str(SCRIPT_DIR / "topotoolbox_reference.py"),
          "--routine", "chi_grid", "--in", str(filled), "--out", str(ttb_tif),
          "--stream-threshold", str(threshold), "--mn", str(m_over_n),

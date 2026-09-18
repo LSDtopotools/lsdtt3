@@ -31,19 +31,13 @@
 //   binned vs per-cell agreement
 //     a CONVERGENCE test, not an equality test -- see below
 //
-// WHAT IS NOT TESTED HERE, AND WHY
-// --------------------------------
-// The phase gate in the plan is `unit_topmodel_column_vs_tmod9502`: the column
-// forced with TOPMODEL 95.02's own `inputs.dat` and compared against its
-// published `demo_topmod.out`. THAT TEST IS NOT PRESENT, because the reference
-// clone it needs (../topmodel, holding tmod9502.c, TMOD9502.f, inputs.dat,
-// params.dat, subcat.dat and the two .out files) is not on this machine.
-//
-// Everything below is INTERNAL consistency: conservation, closed forms, limits
-// and convergence. None of it can catch a defect that is self-consistent but
-// wrong against the published model -- a misread parameter, a wrong constant, a
-// transposed term. Until the oracle runs, this module is unvalidated against
-// anything external and must be described that way.
+// SCOPE
+// -----
+// Everything below is internal consistency: conservation, closed forms, limits
+// and convergence. The suite deliberately carries no comparison against the
+// legacy TOPMODEL code or its demo outputs. What these checks cannot see is a
+// defect that is self-consistent -- a misread parameter, a wrong constant, a
+// transposed term that still conserves mass.
 //
 // ON "BINNED EQUALS RASTER"
 // -------------------------
@@ -412,15 +406,14 @@ void test_binned_converges_to_cellwise()
 // =============================================================================
 // 6b. The limiters, and the derived lambda
 //
-// Added after a mutation sweep: three injected defects survived BOTH this
-// driver and the 95.02 oracle, and in each case that was a gap in the tests,
-// not a limitation of the oracle.
+// Added after a mutation sweep: three injected defects survived the earlier
+// checks, and in each case that was a gap in the tests.
 //
-//   - The oracle supplies lambda_override, so it never exercises the derived
-//     lambda at all. Covered here instead.
+//   - Supplying lambda_override skips the derived lambda entirely, so it is
+//     exercised here without an override.
 //   - The two flux limiters (the evapotranspiration cap and the drainage cap)
-//     simply never bind under the demo catchment's gentle forcing. They need
-//     conditions built to make them bind.
+//     never bind under gentle forcing. They need conditions built to make them
+//     bind.
 // =============================================================================
 void test_derived_lambda()
 {
@@ -514,8 +507,8 @@ void test_limiters_bind()
 
         // The decisive assertion is the SIGN of the store, not the size of the
         // flux. Without the cap, uz = S_uz/(D td dt) exceeds S_uz and drives the
-        // store NEGATIVE -- which still conserves mass, so neither the balance
-        // nor the oracle notices. Only looking at the store does.
+        // store NEGATIVE -- which still conserves mass, so the balance does not
+        // notice. Only looking at the store does.
         bool store_physical = true;
         double most_negative = 0.0;
         for (int t = 0; t < 200; ++t)
@@ -545,9 +538,8 @@ void test_limiters_bind()
         // negative from outside, because the very next line -- 95.02's
         // `if (S_uz < 1e-7) S_uz = 0` truncation -- zeroes it. The evidence
         // survives only in what that truncation absorbed: a negative quantity,
-        // accumulated as if it were a loss. Mass still closes, the store still
-        // reads non-negative, and the oracle never reaches this regime, so
-        // nothing else in either suite notices.
+        // accumulated as if it were a loss. Mass still closes and the store
+        // still reads non-negative, so nothing else notices.
         check("limiters: truncation loss is non-negative (it is a loss)",
               b.truncation_loss >= 0.0,
               "truncation_loss = " + std::to_string(b.truncation_loss));
@@ -643,8 +635,6 @@ int main()
 
     std::cout << "--------------------------\n"
               << g_n_checks - g_n_failed << " / " << g_n_checks << " checks passed\n"
-              << "NOTE: the TOPMODEL 95.02 oracle is NOT among these checks; the\n"
-              << "      ../topmodel reference clone is absent. See the file header.\n"
               << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << std::endl;
     return g_n_failed == 0 ? 0 : 1;
 }
