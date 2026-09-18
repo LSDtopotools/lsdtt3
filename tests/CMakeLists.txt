@@ -29,8 +29,101 @@ if(LSDTT_ENABLE_PYTHON_GEO_TESTS AND NOT LSDTT_ENABLE_PYTHON_TESTS)
         "  -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON")
 endif()
 
+# 3.10 because the test scripts use `X | None` annotations without
+# `from __future__ import annotations`, and `match` statements: an older
+# interpreter configures fine and then fails every Python test at import.
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+    message(STATUS "Test Python   : ${Python3_EXECUTABLE} (${Python3_VERSION})")
+
+    # GDAL's command-line programs, which about a quarter of the Python tests
+    # run (label needs_gdal_tools). Looked for on PATH, and then beside the
+    # interpreter, which is where a Pixi or conda environment keeps them.
+    get_filename_component(_lsdtt_py_bindir "${Python3_EXECUTABLE}" DIRECTORY)
+    set(_lsdtt_missing_tools "")
+    set(_lsdtt_tools_beside_python FALSE)
+    foreach(_tool gdalinfo ogrinfo gdal_translate)
+        unset(_lsdtt_tool_path CACHE)
+        find_program(_lsdtt_tool_path ${_tool})
+        if(NOT _lsdtt_tool_path)
+            unset(_lsdtt_tool_path CACHE)
+            find_program(_lsdtt_tool_path ${_tool} HINTS "${_lsdtt_py_bindir}" NO_DEFAULT_PATH)
+            if(_lsdtt_tool_path)
+                set(_lsdtt_tools_beside_python TRUE)
+            else()
+                list(APPEND _lsdtt_missing_tools ${_tool})
+            endif()
+        endif()
+        unset(_lsdtt_tool_path CACHE)
+    endforeach()
+    if(_lsdtt_missing_tools)
+        string(REPLACE ";" ", " _lsdtt_missing_tools "${_lsdtt_missing_tools}")
+        message(FATAL_ERROR
+            "LSDTT_ENABLE_PYTHON_TESTS=ON, but GDAL's command-line programs are "
+            "missing (${_lsdtt_missing_tools}); about a quarter of the Python tests "
+            "run them. Either install them (Ubuntu: sudo apt install gdal-bin), or "
+            "use the Pixi test environment, which provides them:\n"
+            "  pixi install -e test\n"
+            "  cmake ... -DPython3_EXECUTABLE=$(pixi run -e test python -c 'import sys; print(sys.executable)')\n"
+            "  pixi run -e test ctest --test-dir <build> ...")
+    endif()
+    if(_lsdtt_tools_beside_python)
+        message(STATUS "Test Python   : GDAL programs found beside the interpreter, "
+                       "not on PATH -- run ctest inside that environment "
+                       "(e.g. pixi run -e test ctest ...)")
+    endif()
+endif()
+
+# The geospatial Python tests' imports, checked with the interpreter CMake
+# selected, so a missing package is a configure error naming it rather than a
+# ModuleNotFoundError halfway through a run.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
+    set(_lsdtt_missing_modules "")
+    foreach(_mod osgeo.gdal numpy rasterio geopandas shapely)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import ${_mod}"
+                        RESULT_VARIABLE _lsdtt_rc OUTPUT_QUIET ERROR_QUIET)
+        if(NOT _lsdtt_rc EQUAL 0)
+            list(APPEND _lsdtt_missing_modules ${_mod})
+        endif()
+    endforeach()
+    if(_lsdtt_missing_modules)
+        string(REPLACE ";" ", " _lsdtt_missing_modules "${_lsdtt_missing_modules}")
+        message(FATAL_ERROR
+            "LSDTT_ENABLE_PYTHON_GEO_TESTS=ON, but ${Python3_EXECUTABLE} cannot "
+            "import: ${_lsdtt_missing_modules}. Use the Pixi test environment:\n"
+            "  pixi install -e test\n"
+            "  cmake ... -DPython3_EXECUTABLE=$(pixi run -e test python -c 'import sys; print(sys.executable)')\n"
+            "  pixi run -e test ctest --test-dir <build> -L '^tier_python_geo$'\n"
+            "or configure with -DLSDTT_ENABLE_PYTHON_GEO_TESTS=OFF.")
+    endif()
+    message(STATUS "Test Python   : geospatial imports OK (osgeo.gdal, numpy, rasterio, geopandas, shapely)")
+endif()
+
+# Which GDAL the C++ build uses, relative to any active Pixi/conda environment.
+# Built against the SYSTEM GDAL and tested inside Pixi, a CLI would read Pixi's
+# PROJ and GDAL data (GDAL_DATA, PROJ_DATA, GDAL_DRIVER_PATH) for a different
+# GDAL/PROJ version; the test launcher (scripts/lsdtt_test_env.py) strips them
+# for lsdtt3 children using LSDTT_TEST_GDAL_LIBRARY, set on every test below.
+# Building AGAINST a Pixi/conda GDAL is a separate, supported profile -- the
+# CLIs then need that environment's libraries and data -- so it is reported,
+# not refused.
+set(_lsdtt_gdal_in_env FALSE)
+if(GDAL_LIBRARY MATCHES "/\\.pixi/envs/")
+    set(_lsdtt_gdal_in_env TRUE)
+elseif(DEFINED ENV{CONDA_PREFIX} AND NOT "$ENV{CONDA_PREFIX}" STREQUAL "")
+    # A literal prefix test: a regex built from a path breaks on '+' or '.'.
+    string(FIND "${GDAL_LIBRARY}" "$ENV{CONDA_PREFIX}/" _lsdtt_pos)
+    if(_lsdtt_pos EQUAL 0)
+        set(_lsdtt_gdal_in_env TRUE)
+    endif()
+endif()
+if(_lsdtt_gdal_in_env)
+    message(WARNING
+        "The C++ build uses a Pixi/conda GDAL (${GDAL_LIBRARY}). That is the "
+        "Pixi-built profile: run the CLIs and the tests inside that environment. "
+        "For a build against the system GDAL, configure outside Pixi (no "
+        "`pixi run cmake`, no activated shell) and pass the test interpreter "
+        "with -DPython3_EXECUTABLE.")
 endif()
 
 set(LSDTT_TEST_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cli_smoke.py")
@@ -3985,6 +4078,25 @@ add_test(NAME unit_secret
 lsdtt_set_tests_properties(unit_secret PROPERTIES LABELS "unit;fetch")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/secret_test_output)
 
+# The test launcher's isolation from an active Pixi/conda environment
+# (scripts/lsdtt_test_env.py). Runs an existing CLI's --version, which reports
+# the GDAL/PROJ loaded at run time and where their data came from. Outside
+# Pixi it checks only that the run-time GDAL is the compiled one; inside it
+# (`pixi run -e test ctest -R unit_test_env_isolation`) it also checks the CLI
+# does not read the environment's GDAL/PROJ data, with a control showing it
+# would without the launcher.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME unit_test_env_isolation
+             COMMAND ${Python3_EXECUTABLE}
+                     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_test_env_isolation.py"
+                     --exe "$<TARGET_FILE:lsdtt-channel-extraction>"
+                     --expect-gdal "${GDAL_VERSION}")
+    lsdtt_mark_test_runtime(python unit_test_env_isolation)
+else()
+    lsdtt_mark_test_unregistered(python unit_test_env_isolation)
+endif()
+lsdtt_set_tests_properties(unit_test_env_isolation PROPERTIES LABELS "unit;core")
+
 # Native DEM fetching (docs/testing_and_benchmarking.md).
 #
 # The offline half needs no network and runs in the default suite: it covers UTM
@@ -5680,7 +5792,7 @@ set(LSDTT_DOMAIN_RULES
     # as the benchmark rule at the top, hidden by the option's OFF default.
     "flow_routines"          "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
-    "param|secret|cli_reference" "core"
+    "param|secret|cli_reference|test_env" "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
     # Phase 2 of the CLI consistency remediation: the shared helper homes
@@ -6225,6 +6337,10 @@ endif()
 get_property(_lsdtt_all_tests DIRECTORY PROPERTY TESTS)
 foreach(_test IN LISTS _lsdtt_all_tests)
     set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "LSDTT_NONINTERACTIVE=1")
+    # Which GDAL the lsdtt3 binaries were built against, so the test launcher
+    # can tell whether an active Pixi/conda environment's GDAL/PROJ data belong
+    # to them (see the note beside find_package(Python3) at the top).
+    set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "LSDTT_TEST_GDAL_LIBRARY=${GDAL_LIBRARY}")
 
     if(NOT _test MATCHES "^(benchmark_|perf)" AND NOT "${_test}" IN_LIST LSDTT_SERIAL_TESTS)
         set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "OMP_WAIT_POLICY=passive")

@@ -779,18 +779,15 @@ def system_env(threads: int) -> dict[str, str]:
 
            libstdc++.so.6: version `CXXABI_1.3.15' not found
 
-       This is lifted from run_flow_benchmark.py's system_env(), where it was
-       found the hard way.
+       This was found the hard way in run_flow_benchmark.py; the stripping now
+       lives in lsdtt_test_env.system_env(), shared by every driver.
 
     2. Pin the thread count.  OMP_NUM_THREADS is what lsdtt3's OpenMP loops
        read.  OPENBLAS_NUM_THREADS and MKL_NUM_THREADS are set alongside it
        because a BLAS pulled in transitively will otherwise spin up its own
        pool and the "1 thread" row will not be one thread.
     """
-    env = dict(os.environ)
-    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GDAL_DATA",
-                "GDAL_DRIVER_PATH", "PROJ_DATA", "PROJ_LIB", "CONDA_PREFIX"):
-        env.pop(key, None)
+    env = lsdtt_test_env.system_env()
     env["OMP_NUM_THREADS"] = str(threads)
     env["OPENBLAS_NUM_THREADS"] = str(threads)
     env["MKL_NUM_THREADS"] = str(threads)

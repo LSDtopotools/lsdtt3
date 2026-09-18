@@ -531,12 +531,7 @@ def system_env():
     of which libraries each happens to pull in -- so it is worth removing for
     all of them rather than waiting for the next one to trip over it.
     """
-    import os
-    env = dict(os.environ)
-    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GDAL_DATA",
-                "GDAL_DRIVER_PATH", "PROJ_DATA", "PROJ_LIB", "CONDA_PREFIX"):
-        env.pop(key, None)
-    return env
+    return lsdtt_test_env.system_env()
 
 
 def cell_area_of(path: pathlib.Path) -> float:

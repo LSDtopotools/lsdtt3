@@ -123,18 +123,8 @@ def die_skip(msg: str) -> int:
 
 
 def system_env() -> dict[str, str]:
-    env = dict(__import__("os").environ)
-    for key in (
-        "LD_LIBRARY_PATH",
-        "DYLD_LIBRARY_PATH",
-        "GDAL_DATA",
-        "GDAL_DRIVER_PATH",
-        "PROJ_DATA",
-        "PROJ_LIB",
-        "CONDA_PREFIX",
-    ):
-        env.pop(key, None)
-    return env
+    """Environment for the lsdtt3 binaries; see lsdtt_test_env.system_env()."""
+    return lsdtt_test_env.system_env()
 
 
 def fixture_sha12(path: pathlib.Path) -> str:
