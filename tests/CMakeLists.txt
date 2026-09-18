@@ -6033,6 +6033,17 @@ set_tests_properties(unit_test_inventory_audit PROPERTIES
     LABELS "unit;core;conventions"
     TIMEOUT 120)
 
+# The test commands the documentation tells people to type: every -DLSDTT_*
+# option it names exists, every anchored -L/-LE label is one this file can
+# assign, and the test_report target and run_tests.cmake it names exist
+# (cmake/check_doc_test_commands.cmake). Reads source files only.
+add_test(NAME unit_docs_test_commands
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_doc_test_commands.cmake")
+set_tests_properties(unit_docs_test_commands PROPERTIES
+    LABELS "unit;core;docs"
+    TIMEOUT 60)
+
 add_test(NAME unit_test_inventory_audit_selftest
     COMMAND ${CMAKE_COMMAND}
         -DSELFTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/audit_selftest

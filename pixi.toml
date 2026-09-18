@@ -20,6 +20,11 @@ platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
 #   pixi install                 # default environment
 #   pixi run python python_helpers/download_dem_tiles.py --help
 #   pixi shell                   # interactive
+#   pixi install -e test         # the CTest Python tiers; see [feature.test]
+#
+# Do not configure the C++ build inside Pixi (no `pixi run cmake`, no
+# activated shell): it would pick up Pixi's GDAL.  Configure outside and pass
+# the test environment's interpreter with -DPython3_EXECUTABLE.
 # -----------------------------------------------------------------------------
 
 [dependencies]

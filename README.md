@@ -231,28 +231,41 @@ first thing to put in a bug report.
 | `LSDTT_GPU` | `OFF` | Enable GPU compute backend (requires CUDA toolkit) |
 | `LSDTT_EIGEN` | `ON` | Build Eigen3-dependent routines (auto-disabled if Eigen3 not found) |
 | `LSDTT_ENABLE_BENCHMARKS` | `OFF` | Register the RichDEM comparison benchmarks (needs network + pixi) |
-| `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Register tests that download data |
+| `LSDTT_ENABLE_PYTHON_TESTS` | `OFF` | Register the Python-driven tests, most CLI coverage (Python ≥ 3.10, GDAL's command-line programs) |
+| `LSDTT_ENABLE_PYTHON_GEO_TESTS` | `OFF` | Also the Python tests needing geospatial packages |
+| `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Register tests that download data, including `cosmo_realworld` |
 | `LSDTT_ENABLE_PERF_TESTS` | `OFF` | Register flow-routing performance benchmarks |
 
 ---
 
 ## Testing
 
-Tests are driven by CTest. The default suite is self-contained: it needs no
-network, no downloaded data, and no Python packages beyond a plain interpreter.
+Tests are driven by CTest, in tiers by what they need to run:
 
-Short version on Python/pixi:
+- **Native C++ tests** — registered by default, need only the C++ build. The
+  offline, reproducible set:
+  `ctest --test-dir build -L '^hermetic$' --output-on-failure`.
+- **Python-driven tests** — most CLI coverage; opt in with
+  `-DLSDTT_ENABLE_PYTHON_TESTS=ON` (Python ≥ 3.10 and GDAL's command-line
+  programs), plus `-DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON` for the few that need
+  geospatial packages (easiest from the Pixi `test` environment).
+- **Network and benchmark tests** — opt in with
+  `-DLSDTT_ENABLE_NETWORK_TESTS=ON` / `-DLSDTT_ENABLE_BENCHMARKS=ON`.
 
-- Running `lsdtt3` CLIs does **not** need Python.
-- Most tests (smoke, failure, unit, rigorous) do **not** need pixi.
-- Some opt-in benchmark tests do need pixi because their references are Python
-  tools (RichDEM / TopoToolbox and DAGGER adapters).
+Running `lsdtt3` CLIs never needs Python.
 
 ```sh
-cmake -S . -B build
+cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
+
+Configure prints which tiers it registered and what each OFF option left out.
+If tests fail, `cmake --build build --target test_report` writes one file to
+attach to a bug report. See
+[Building from source](docs/developer_notes/building_from_source.md#run-the-tests)
+and `tests/README.md` for the details, including running the Python tests
+from Pixi.
 
 Tests are grouped by label, so you can run just the part you care about:
 
@@ -269,8 +282,8 @@ Tests are grouped by label, so you can run just the part you care about:
 | `benchmark` | Opt-in comparison against external references (RichDEM/TopoToolbox flow, DAGGER hydraulic) on fetched real DEMs |
 
 ```sh
-ctest --test-dir build -L smoke --output-on-failure
-ctest --test-dir build -L unit  --output-on-failure
+ctest --test-dir build -L '^smoke$' --output-on-failure
+ctest --test-dir build -L '^unit$'  --output-on-failure
 ```
 
 `benchmark` tests are **off by default** because they need network access and an
@@ -289,7 +302,7 @@ keep them in a **separate Release build** and leave `build/` fast:
 ```sh
 cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DLSDTT_ENABLE_PERF_TESTS=ON
 cmake --build build-perf -j
-OMP_NUM_THREADS=8 ctest --test-dir build-perf -L performance --output-on-failure
+OMP_NUM_THREADS=8 ctest --test-dir build-perf -L '^performance$' --output-on-failure
 ```
 
 Results land as CSV in `build-perf/tests/perf_output/` (`flow_performance.csv`,

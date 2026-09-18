@@ -94,15 +94,102 @@ Replace `/path/to/lsdtt3` with wherever you cloned the repository.
 
 ### Run the tests
 
+With only the packages above, a default configure registers the **native C++
+tests**, and this runs the ones that need nothing else at all: no
+Python, no network, no data beyond the repository:
+
 ```bash
+ctest --test-dir build -L '^hermetic$' --output-on-failure
+```
+
+CMake prints what it registered at the end of configure, and why anything was
+left out:
+
+```
+=== lsdtt3 test configuration (<n> tests) ===
+  tier_native        : <n> tests (hermetic <n>)
+  tier_python_stdlib : disabled (LSDTT_ENABLE_PYTHON_TESTS=OFF; <n> not registered)
+  tier_python_geo    : disabled (LSDTT_ENABLE_PYTHON_GEO_TESTS=OFF; <n> not registered)
+  ...
+```
+
+The native tests do **not** exercise most of the command-line tools: those
+are driven by Python scripts, which are opt-in (below). A green native run
+says the libraries are sound, not that every CLI is.
+
+#### Adding the Python-driven tests
+
+Most CLI coverage comes from Python scripts that run each tool on small inputs
+and check what it writes. They need Python 3.10 or newer and, for about a
+quarter of them, GDAL's command-line programs (`gdalinfo`, `ogrinfo`,
+`gdal_translate`), which `libgdal-dev` does not install:
+
+```bash
+sudo apt install -y python3 gdal-bin
+cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON
 ctest --test-dir build --output-on-failure
 ```
 
-The default suite needs no network, no downloaded data and no Python packages.
-While developing, run one domain rather than the whole suite, e.g.
-`ctest --test-dir build -L <domain> -LE heavy`. See `tests/README.md` in the
-repository for what each test covers, and
-[Testing and benchmarking](testing_and_benchmarking.md) for methodology.
+Four more tests need Python geospatial packages (the GDAL bindings, NumPy,
+Rasterio, GeoPandas, Shapely). The simplest source is the repository's Pixi
+`test` environment. **Configure outside Pixi** — so the C++ build keeps using
+the system GDAL — and hand CMake Pixi's interpreter; then run the tests inside
+the environment:
+
+```bash
+pixi install -e test
+cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON \
+      -DPython3_EXECUTABLE="$(pixi run -e test python -c 'import sys; print(sys.executable)')"
+pixi run -e test ctest --test-dir build --output-on-failure
+```
+
+Configure checks all of this: a missing interpreter version, GDAL program or
+Python package is a configure error that names it and says how to get it.
+`pixi install` on its own does not change the interpreter an existing build
+tree was configured with; re-run `cmake` with `-DPython3_EXECUTABLE` to switch.
+Running the tests inside Pixi is safe: the test launcher keeps Pixi's GDAL and
+PROJ data away from lsdtt3 programs built against the system GDAL.
+
+Tests that download data (`LSDTT_ENABLE_NETWORK_TESTS`, including the
+`cosmo_realworld` erosion-rate validations) and the external benchmarks
+(`LSDTT_ENABLE_BENCHMARKS`) are off by default.
+
+#### Choosing what to run
+
+CTest labels are regular expressions, so anchor them with `^` and `$`
+(`-L network` would also match `synthetic_networks`):
+
+```bash
+ctest --test-dir build -LE '^heavy$'                    # everything except the long-running tests
+ctest --test-dir build -L '^cosmo$' -LE '^heavy$'       # one domain, e.g. after changing cosmogenic code
+ctest --test-dir build -LE '^lem_component$'            # everything except the landscape evolution model
+ctest --test-dir build -L '^lem_component$'             # only the landscape evolution model
+```
+
+See `tests/README.md` in the repository for the labels and what each test
+covers, and [Testing and benchmarking](testing_and_benchmarking.md) for
+methodology.
+
+#### If tests fail
+
+Run the suite through the logging wrapper, which keeps a complete log in
+`build/test-logs/` even if the run is interrupted, then build a report:
+
+```bash
+cmake -P build/run_tests.cmake -LE '^heavy$' -j4
+cmake --build build --target test_report
+```
+
+The report is one plain-text file in `build/test-logs/` describing your
+machine, toolchain, dependency versions and build options, with the failing
+tests' output. Your home directory appears as `~` and no environment variables
+beyond a short fixed list are included — but read it before sending it with
+your bug report.
+
+#### Building without tests
+
+For a production-only build, `-DBUILD_TESTING=OFF` registers no tests and looks
+for no test-only dependency.
 
 ---
 
@@ -116,10 +203,12 @@ These apply on every platform.
 | `LSDTT_EIGEN` | `ON` | Eigen3-dependent routines (auto-off if Eigen3 is absent) |
 | `LSDTT_OPENMP` | `ON` | OpenMP parallelism. **Must be `OFF` on MSVC** — see [Building on Windows](building_on_windows.md#why-openmp-must-be-off-on-msvc) |
 | `LSDTT_GPU` | `OFF` | GPU compute backend (needs the CUDA toolkit) |
-| `BUILD_TESTING` | `ON` | Build the CTest suite |
-| `LSDTT_ENABLE_BENCHMARKS` | `OFF` | RichDEM comparison benchmarks (needs network + pixi) |
-| `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Tests that download data |
-| `LSDTT_ENABLE_PERF_TESTS` | `OFF` | Flow-routing performance benchmarks |
+| `BUILD_TESTING` | `ON` | Build the CTest suite (the native C++ tests; add the options below for more) |
+| `LSDTT_ENABLE_PYTHON_TESTS` | `OFF` | Python-driven tests, most CLI coverage (needs Python ≥ 3.10 and GDAL's command-line programs) |
+| `LSDTT_ENABLE_PYTHON_GEO_TESTS` | `OFF` | The Python tests that need geospatial packages (needs `LSDTT_ENABLE_PYTHON_TESTS`) |
+| `LSDTT_ENABLE_BENCHMARKS` | `OFF` | External comparison benchmarks (needs network + pixi) |
+| `LSDTT_ENABLE_NETWORK_TESTS` | `OFF` | Tests that download data, including `cosmo_realworld` |
+| `LSDTT_ENABLE_PERF_TESTS` | `OFF` | Performance benchmarks |
 
 ## Build directory conventions
 
