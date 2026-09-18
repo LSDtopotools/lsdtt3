@@ -56,8 +56,18 @@
 cmake_minimum_required(VERSION 3.15)
 
 if(DEFINED SELFTEST_DIR)
-    set(TESTFILE "${SELFTEST_DIR}/CTestTestfile.cmake")
+    # Not named CTestTestfile.cmake: .gitignore ignores that name everywhere,
+    # and under it this fixture was never committed (found 2026-09-18 when the
+    # self-test failed on a fresh clone).
+    set(TESTFILE "${SELFTEST_DIR}/canned_CTestTestfile.cmake.in")
     set(SCRIPTS_DIR "${SELFTEST_DIR}/scripts")
+    foreach(_f "${TESTFILE}" "${SELFTEST_DIR}/expected.txt" "${SCRIPTS_DIR}")
+        if(NOT EXISTS "${_f}")
+            message(FATAL_ERROR "audit self-test fixture missing: ${_f}\n"
+                "If this is a fresh clone, the file was probably never committed: "
+                "check `git check-ignore -v <file>` against .gitignore.")
+        endif()
+    endforeach()
 endif()
 
 foreach(_req TESTFILE SCRIPTS_DIR)

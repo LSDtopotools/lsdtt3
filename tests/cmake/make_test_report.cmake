@@ -34,7 +34,8 @@
 # existing CLI's --version (CLIs exist for analysis only).
 #
 # SELF-TEST: -DSELFTEST_DIR=<tests/cmake/report_selftest> -DSELFTEST_WORK=<dir>
-# copies a canned build tree (placeholders @HOME@ and @BUILD@ substituted),
+# lays out a build tree from the flat canned files in <SELFTEST_DIR>/canned/
+# (placeholders @HOME@ and @BUILD@ substituted),
 # builds a report from it, and checks the sections, the failure and timeout
 # entries, the masking of the home directory, and that the value of a planted
 # OT_API_KEY in the environment appears nowhere.
@@ -45,14 +46,34 @@ cmake_minimum_required(VERSION 3.15)
 # Self-test set-up.
 # -----------------------------------------------------------------------------
 if(DEFINED SELFTEST_DIR)
+    # The canned files are stored FLAT with a .in suffix and laid out here,
+    # because the real names and directories (build/, Testing/,
+    # CTestTestfile.cmake) are all in .gitignore -- stored under those names
+    # the fixture was never committed (found 2026-09-18 on a fresh clone).
+    set(_layout
+        "build_info.cmake.in|lsdtt3_build_info.cmake"
+        "CTestTestfile.cmake.in|tests/CTestTestfile.cmake"
+        "LastTest.log.in|Testing/Temporary/LastTest.log"
+        "ctest_selftest.log.in|test-logs/ctest_selftest.log"
+        "last_run.txt.in|test-logs/last_run.txt"
+        "sel_fail_command.txt.in|tests/sel_fail/command.txt"
+        "sel_fail_stdout.log.in|tests/sel_fail/stdout.log"
+        "sel_fail_stderr.log.in|tests/sel_fail/stderr.log")
     file(REMOVE_RECURSE "${SELFTEST_WORK}")
-    file(COPY "${SELFTEST_DIR}/build/" DESTINATION "${SELFTEST_WORK}")
-    file(GLOB_RECURSE _canned LIST_DIRECTORIES FALSE "${SELFTEST_WORK}/*")
-    foreach(_f IN LISTS _canned)
-        file(READ "${_f}" _c)
+    foreach(_pair IN LISTS _layout)
+        string(REPLACE "|" ";" _pair "${_pair}")
+        list(GET _pair 0 _src)
+        list(GET _pair 1 _dst)
+        set(_src "${SELFTEST_DIR}/canned/${_src}")
+        if(NOT EXISTS "${_src}")
+            message(FATAL_ERROR "report self-test fixture missing: ${_src}\n"
+                "If this is a fresh clone, the file was probably never committed: "
+                "check `git check-ignore -v <file>` against .gitignore.")
+        endif()
+        file(READ "${_src}" _c)
         string(REPLACE "@HOME@" "$ENV{HOME}" _c "${_c}")
         string(REPLACE "@BUILD@" "${SELFTEST_WORK}" _c "${_c}")
-        file(WRITE "${_f}" "${_c}")
+        file(WRITE "${SELFTEST_WORK}/${_dst}" "${_c}")
     endforeach()
     set(BUILD_DIR "${SELFTEST_WORK}")
     set(OUT "${SELFTEST_WORK}/report.txt")
