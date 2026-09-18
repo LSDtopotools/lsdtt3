@@ -1,6 +1,53 @@
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(LSDTT_TEST_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cli_smoke.py")
+
+# -----------------------------------------------------------------------------
+# Runtime bookkeeping for the dependency tiers (tier_native / tier_python_stdlib
+# / tier_python_geo / tier_pixi), assigned at the foot of this file.
+#
+# CMake cannot read a test's COMMAND back, so every registration that starts
+# something other than a native executable marks itself right after add_test:
+#
+#   lsdtt_mark_test_runtime(python <test>)   command is ${Python3_EXECUTABLE}
+#   lsdtt_mark_test_runtime(pixi   <test>)   command is `pixi run ...`
+#
+# An unmarked test is classified tier_native. A Python test that forgets to mark
+# itself is therefore mislabelled rather than rejected; the inventory audit
+# (plan Phase 4) is what catches that.
+#
+# lsdtt_mark_test_needs(gdal_tools <test>) records that a test shells out to the
+# GDAL command-line programs (gdalinfo, ogrinfo, gdal_translate). On Ubuntu they
+# come from gdal-bin, which libgdal-dev does not pull in.
+# -----------------------------------------------------------------------------
+function(lsdtt_mark_test_runtime RUNTIME TEST_NAME)
+    if(NOT RUNTIME MATCHES "^(python|pixi)$")
+        message(FATAL_ERROR "lsdtt_mark_test_runtime: unknown runtime '${RUNTIME}'")
+    endif()
+    set_property(GLOBAL APPEND PROPERTY LSDTT_RUNTIME_${RUNTIME}_TESTS "${TEST_NAME}")
+endfunction()
+
+function(lsdtt_mark_test_needs NEED TEST_NAME)
+    set_property(GLOBAL APPEND PROPERTY LSDTT_NEEDS_${NEED}_TESTS "${TEST_NAME}")
+endfunction()
+
+# The run_cli_smoke.py assertions that shell out to GDAL's command-line tools.
+set(LSDTT_HARNESS_GDAL_TOOL_ARGS
+    --expect-valid-percent-100 --expect-valid-percent --expect-raster-size
+    --expect-raster-min --expect-raster-stat --expect-raster-checksum
+    --expect-raster-values --expect-vector-feature-min)
+
+# Marks a run_cli_smoke.py registration: Python runtime, plus gdal_tools when
+# its arguments use one of the assertions above.
+function(lsdtt_mark_harness_test TEST_NAME)
+    lsdtt_mark_test_runtime(python ${TEST_NAME})
+    foreach(_arg IN LISTS ARGN)
+        if("${_arg}" IN_LIST LSDTT_HARNESS_GDAL_TOOL_ARGS)
+            lsdtt_mark_test_needs(gdal_tools ${TEST_NAME})
+            break()
+        endif()
+    endforeach()
+endfunction()
 set(LSDTT_TEST_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data")
 set(LSDTT_TEST_PARAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/params")
 
@@ -77,6 +124,7 @@ function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_
             --expect "${EXPECTED_OUTPUT}"
             ${ARGN}
     )
+    lsdtt_mark_harness_test(${TEST_NAME} ${ARGN})
 
     set(test_labels "cli")
     if(TEST_NAME MATCHES "^rigorous_")
@@ -201,6 +249,8 @@ add_test(
     --stdout-contains "Domain: polygon - 144 land pixels of 196"
     --stderr-contains "'polygon_file' is deprecated"
 )
+lsdtt_mark_test_runtime(python smoke_synthetic_networks_polygon_area)
+lsdtt_mark_test_needs(gdal_tools smoke_synthetic_networks_polygon_area)
 set_tests_properties(smoke_synthetic_networks_polygon_area PROPERTIES
     LABELS "smoke;cli;synthetic_networks"
     FIXTURES_REQUIRED synthetic_networks_fixture)
@@ -718,6 +768,8 @@ add_test(NAME smoke_basin_surface_metrics
         # out of main(). Re-freeze deliberately if a change is intended.
         --expect-sha256 bsm_outline_curvature_flips.csv:994b77c5706e32d20ba4a9f7f1eba1c0516d9ad9d489113d3155151ec74f791f
         --expect-sha256 bsm_slope_area_stats.csv:2abfaff6b6482336c50a141f5d3aad70e974f52b25441028b474cc498bdaf949)
+lsdtt_mark_test_runtime(python smoke_basin_surface_metrics)
+lsdtt_mark_test_needs(gdal_tools smoke_basin_surface_metrics)
 set_tests_properties(smoke_basin_surface_metrics PROPERTIES
     LABELS "smoke;cli;basin_surface_metrics"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -735,6 +787,8 @@ add_test(NAME smoke_basin_surface_metrics_polyfit
         # One raster per requested metric, named for the lambda: that naming is
         # what a caller depends on to find the output of a multi-scale run.
         --expect-raster-size bsmp_slope_lambda60.tif:200x200)
+lsdtt_mark_test_runtime(python smoke_basin_surface_metrics_polyfit)
+lsdtt_mark_test_needs(gdal_tools smoke_basin_surface_metrics_polyfit)
 set_tests_properties(smoke_basin_surface_metrics_polyfit PROPERTIES
     LABELS "smoke;cli;basin_surface_metrics"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -747,6 +801,7 @@ add_test(NAME smoke_basin_surface_metrics_expanding_square
         --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_basin_surface_metrics_expanding_square"
         --expect bsm_square_outline_curvature_flips.csv)
+lsdtt_mark_test_runtime(python smoke_basin_surface_metrics_expanding_square)
 set_tests_properties(smoke_basin_surface_metrics_expanding_square PROPERTIES
     LABELS "smoke;cli;basin_surface_metrics;snapping"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -764,6 +819,7 @@ add_test(NAME rigorous_basin_surface_metrics_legacy_threshold
         --stderr-contains "use 'threshold_contributing_pixels'"
         --stderr-contains "'basin_outlet_csv' is deprecated"
         --stderr-contains "use 'basin_outlet_fname'")
+lsdtt_mark_test_runtime(python rigorous_basin_surface_metrics_legacy_threshold)
 set_tests_properties(rigorous_basin_surface_metrics_legacy_threshold PROPERTIES
     LABELS "rigorous;cli;basin_surface_metrics;compatibility"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -803,6 +859,8 @@ add_test(NAME smoke_ridgeline_range_open
         --expect-file-contains "../stdout.log:Boundary segment corner 3 assigned"
         # ORACLE for C2+C3 under open boundaries.
         --expect-sha256 rg_oooo_raw_dem_3x3_polyfit_slope.tif:c6a0d7322aa1d1f510db0fac8a2544c052238e1782d74bd68805e04a37b8b9c4)
+lsdtt_mark_test_runtime(python smoke_ridgeline_range_open)
+lsdtt_mark_test_needs(gdal_tools smoke_ridgeline_range_open)
 set_tests_properties(smoke_ridgeline_range_open PROPERTIES
     LABELS "smoke;cli;ridgeline"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -822,6 +880,8 @@ add_test(NAME smoke_ridgeline_range_periodic
         # padding in run_raw_dem_3x3_polyfit_with_bcs actually does something --
         # if a refactor made the two equal, both oracles could not hold.
         --expect-sha256 rg_opop_raw_dem_3x3_polyfit_slope.tif:f7beffb5d95fb65e7ca6108624baac5f8c7ae60399622c2f235acb94a2bd9eae)
+lsdtt_mark_test_runtime(python smoke_ridgeline_range_periodic)
+lsdtt_mark_test_needs(gdal_tools smoke_ridgeline_range_periodic)
 set_tests_properties(smoke_ridgeline_range_periodic PROPERTIES
     LABELS "smoke;cli;ridgeline"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -848,6 +908,7 @@ add_test(NAME smoke_chi_analysis_outlet_file
         # resolve_outlet_flats exists to produce. Checked deterministic before
         # freezing.
         --expect-sha256 chi_chi_basin_outlets.csv:f2a980bf03e6870a6dc754386822b4ce6731017bacc97ff23ffa9be202f29621)
+lsdtt_mark_test_runtime(python smoke_chi_analysis_outlet_file)
 set_tests_properties(smoke_chi_analysis_outlet_file PROPERTIES
     LABELS "smoke;cli;chi"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -873,6 +934,8 @@ add_test(NAME smoke_linear_stats
         --expect ls_linear_stats.fgb
         --expect-vector-feature-min ls_linear_stats.fgb:2
         --expect-sha256 ls_linear_stats.fgb:5089ab341d0a212acc0fee3cba76c3e414aaa89bcbf7e017aabd93fa3988224a)
+lsdtt_mark_test_runtime(python smoke_linear_stats)
+lsdtt_mark_test_needs(gdal_tools smoke_linear_stats)
 set_tests_properties(smoke_linear_stats PROPERTIES
     LABELS "smoke;cli;linear_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -899,6 +962,7 @@ add_test(NAME fixture_stream_burning_dem
         --read-path "${LSDTT_TEST_DATA_DIR}"
         --work-dir "${LSDTT_STREAM_BURNING_FIXTURE_DIR}"
         --expect sb_diamond_square.tif)
+lsdtt_mark_test_runtime(python fixture_stream_burning_dem)
 set_tests_properties(fixture_stream_burning_dem PROPERTIES
     LABELS "fixture;stream_burning"
     FIXTURES_SETUP stream_burning_fixture)
@@ -935,6 +999,7 @@ add_test(NAME smoke_stream_burning
         # runs before freezing.
         --expect-sha256 burn_burned.tif:f63a442d8b42bbb6a6a4c857b0c046bda2bb889bc8c319f4cc105a8ad4b8648b
         --expect-sha256 burn_dem_network_lines.fgb:b675ef0fe65bd863eff7ee81fac93d45595366fe4b76926f051bc85788ed05a2)
+lsdtt_mark_test_runtime(python smoke_stream_burning)
 set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "smoke;cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
@@ -979,6 +1044,7 @@ add_test(NAME fixture_basin_stats_dem
         --read-path "${LSDTT_TEST_DATA_DIR}"
         --work-dir "${LSDTT_BASIN_STATS_FIXTURE_DIR}"
         --expect basin_stats_diamond_square.tif)
+lsdtt_mark_test_runtime(python fixture_basin_stats_dem)
 set_tests_properties(fixture_basin_stats_dem PROPERTIES
     LABELS "fixture;basin_stats"
     FIXTURES_SETUP basin_stats_fixture)
@@ -1015,6 +1081,8 @@ add_test(NAME smoke_basin_stats
         # from the fixture, so this pins the shared default and its behaviour.
         --stdout-contains "threshold = 1000 px"
         --stderr-contains "'basin_outlet_csv' is deprecated and 'basin_outlet_fname' was also supplied")
+lsdtt_mark_test_runtime(python smoke_basin_stats)
+lsdtt_mark_test_needs(gdal_tools smoke_basin_stats)
 set_tests_properties(smoke_basin_stats PROPERTIES
     LABELS "smoke;cli;basin_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -1633,6 +1701,7 @@ add_test(
             --expect cellularrestart_cellular_particles.csv
             --stdout-contains "Loading cellular particles:"
 )
+lsdtt_mark_test_runtime(python smoke_lem_cellular_particles_restart)
 set_tests_properties(smoke_lem_cellular_particles_restart PROPERTIES
     LABELS "smoke;cli;hillslope;cellular"
     FIXTURES_REQUIRED cellular_particle_fixture)
@@ -2014,6 +2083,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
                         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flow_benchmark"
                         --check
             )
+            lsdtt_mark_test_runtime(pixi benchmark_${bench_case}_${bench_fixture})
             set_tests_properties(benchmark_${bench_case}_${bench_fixture}
                 PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77)
         endforeach()
@@ -2043,6 +2113,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
                         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/surface_benchmark"
                         --check
             )
+            lsdtt_mark_test_runtime(pixi benchmark_surface_${surf_case}_${surf_fixture})
             set_tests_properties(benchmark_surface_${surf_case}_${surf_fixture}
                 PROPERTIES LABELS "benchmark;surface_metrics" SKIP_RETURN_CODE 77
                            TIMEOUT 1800)
@@ -2083,6 +2154,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
                 --out-dir "${CMAKE_CURRENT_BINARY_DIR}/svector_benchmark"
                 --check
     )
+    lsdtt_mark_test_runtime(pixi benchmark_chi_value_topotoolbox)
     set_tests_properties(benchmark_chi_value_topotoolbox
         PROPERTIES LABELS "benchmark;chi" SKIP_RETURN_CODE 77 TIMEOUT 1800)
     endif()
@@ -2117,6 +2189,11 @@ if(LSDTT_ENABLE_BENCHMARKS)
                         --write-json
                         --check
             )
+            if(LSDTT_PIXI_EXECUTABLE)
+                lsdtt_mark_test_runtime(pixi benchmark_hydraulic_dagger_${hyd_scenario}_${hyd_fixture})
+            else()
+                lsdtt_mark_test_runtime(python benchmark_hydraulic_dagger_${hyd_scenario}_${hyd_fixture})
+            endif()
             set_tests_properties(
                 benchmark_hydraulic_dagger_${hyd_scenario}_${hyd_fixture}
                 PROPERTIES LABELS "benchmark;hydraulic" SKIP_RETURN_CODE 77
@@ -2303,6 +2380,7 @@ set_tests_properties(unit_giuh_discharge PROPERTIES LABELS "unit;giuh")
 add_test(NAME unit_gdal_init_boundary
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_gdal_boundary.py")
+lsdtt_mark_test_runtime(python unit_gdal_init_boundary)
 set_tests_properties(unit_gdal_init_boundary PROPERTIES
     LABELS "unit;gdal;conventions")
 
@@ -2544,6 +2622,7 @@ function(add_internal_drainage_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT
                 --work-dir "${work_dir}"
                 --expect "${EXPECTED_OUTPUT}"
                 ${ARGN})
+    lsdtt_mark_harness_test(${TEST_NAME} ${ARGN})
     set_tests_properties(${TEST_NAME} PROPERTIES
         LABELS "smoke;cli;internal_drainage"
         FIXTURES_REQUIRED internal_drainage_cli_fixture)
@@ -2952,6 +3031,7 @@ function(add_hilltop_coupling_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
                 --work-dir "${work_dir}"
                 --expect "${EXPECTED_OUTPUT}"
                 ${ARGN})
+    lsdtt_mark_harness_test(${TEST_NAME} ${ARGN})
     set(lbl "cli;hilltop_flow_routing")
     if(TEST_NAME MATCHES "^failure_")
         list(APPEND lbl "failure")
@@ -3054,6 +3134,7 @@ if(Python3_Interpreter_FOUND)
                      ${CMAKE_CURRENT_SOURCE_DIR}/scripts/multipart_sweep.py
                      $<TARGET_FILE_DIR:lsdtt-linear-stats>
                      ${CMAKE_CURRENT_BINARY_DIR}/multipart_sweep_output)
+    lsdtt_mark_test_runtime(python smoke_multipart_cli_sweep)
     set_tests_properties(smoke_multipart_cli_sweep PROPERTIES
         LABELS "smoke;cli;raster" TIMEOUT 1200)
 endif()
@@ -3537,6 +3618,7 @@ add_test(NAME unit_synthetic_surfaces_help_defaults_exact
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_synthetic_surfaces_help_defaults.py"
         --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>")
+lsdtt_mark_test_runtime(python unit_synthetic_surfaces_help_defaults_exact)
 set_tests_properties(unit_synthetic_surfaces_help_defaults_exact PROPERTIES
     LABELS "unit;cli;parameters")
 
@@ -3546,6 +3628,7 @@ add_test(NAME unit_synthetic_cli_banners
         --surfaces "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
         --networks "$<TARGET_FILE:lsdtt-synthetic-networks>"
         --lem "$<TARGET_FILE:lsdtt-lem>")
+lsdtt_mark_test_runtime(python unit_synthetic_cli_banners)
 set_tests_properties(unit_synthetic_cli_banners PROPERTIES
     LABELS "unit;cli;synthetic_networks;lem")
 
@@ -3678,6 +3761,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
                     --repeats 5
                     --work-dir "${CMAKE_CURRENT_BINARY_DIR}/surface_benchmark"
         )
+        lsdtt_mark_test_runtime(pixi performance_surface_metrics)
         set_tests_properties(performance_surface_metrics
             PROPERTIES LABELS "performance;surface_metrics" SKIP_RETURN_CODE 77
                        TIMEOUT 3600)
@@ -3981,6 +4065,7 @@ add_test(NAME rigorous_cosmo_cli_bridge
                  --pred-exe "$<TARGET_FILE:lsdtt-cosmo-prediction>"
                  --tool-exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --data-dir "${LSDTT_TEST_DATA_DIR}")
+lsdtt_mark_test_runtime(python rigorous_cosmo_cli_bridge)
 set_tests_properties(rigorous_cosmo_cli_bridge PROPERTIES
     LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
 
@@ -3992,6 +4077,7 @@ add_test(NAME rigorous_cosmo_multi_accum_ratio
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_multi_accum_ratio_check.py"
                  --pred-exe "$<TARGET_FILE:lsdtt-cosmo-prediction>"
                  --data-dir "${LSDTT_TEST_DATA_DIR}")
+lsdtt_mark_test_runtime(python rigorous_cosmo_multi_accum_ratio)
 set_tests_properties(rigorous_cosmo_multi_accum_ratio PROPERTIES
     LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
 
@@ -4301,6 +4387,7 @@ add_test(NAME regression_step_change_disk_roundtrip
                  --exe $<TARGET_FILE:lsdtt-cosmo-prediction>
                  --data-dir ${LSDTT_TEST_DATA_DIR}
                  --work-dir ${CMAKE_CURRENT_BINARY_DIR}/step_change_roundtrip)
+lsdtt_mark_test_runtime(python regression_step_change_disk_roundtrip)
 set_tests_properties(regression_step_change_disk_roundtrip PROPERTIES
     LABELS "cli;cosmo;step_change")
 
@@ -4315,6 +4402,7 @@ add_test(NAME regression_landslide_scar_coupling
                  --prediction-exe $<TARGET_FILE:lsdtt-cosmo-prediction>
                  --data-dir ${LSDTT_TEST_DATA_DIR}
                  --work-dir ${CMAKE_CURRENT_BINARY_DIR}/landslide_scar_coupling)
+lsdtt_mark_test_runtime(python regression_landslide_scar_coupling)
 set_tests_properties(regression_landslide_scar_coupling PROPERTIES
     LABELS "cli;cosmo;landslide;step_change")
 
@@ -4327,6 +4415,7 @@ add_test(NAME regression_cosmo_multi_landslide_coupling
                  --prediction-exe $<TARGET_FILE:lsdtt-cosmo-prediction>
                  --data-dir ${LSDTT_TEST_DATA_DIR}
                  --work-dir ${CMAKE_CURRENT_BINARY_DIR}/cosmo_multi_landslide_coupling)
+lsdtt_mark_test_runtime(python regression_cosmo_multi_landslide_coupling)
 set_tests_properties(regression_cosmo_multi_landslide_coupling PROPERTIES
     LABELS "cli;cosmo;landslide;step_change")
 
@@ -4362,6 +4451,7 @@ add_test(NAME regression_cosmo_oracle
                  --oracle ${LSDTT_TEST_DATA_DIR}/cosmo_oracle.csv
                  --work-dir ${CMAKE_CURRENT_BINARY_DIR}/cosmo_oracle
                  --tier cheap)
+lsdtt_mark_test_runtime(python regression_cosmo_oracle)
 set_tests_properties(regression_cosmo_oracle PROPERTIES
     LABELS "cli;cosmo;regression")
 
@@ -4380,6 +4470,7 @@ add_test(NAME regression_cosmo_oracle_heavy
                  --oracle ${LSDTT_TEST_DATA_DIR}/cosmo_oracle.csv
                  --work-dir ${CMAKE_CURRENT_BINARY_DIR}/cosmo_oracle_heavy
                  --tier all)
+lsdtt_mark_test_runtime(python regression_cosmo_oracle_heavy)
 set_tests_properties(regression_cosmo_oracle_heavy PROPERTIES
     LABELS "cli;cosmo;regression;heavy")
 
@@ -4423,6 +4514,7 @@ add_test(NAME rigorous_cosmo_column_tool
          COMMAND ${Python3_EXECUTABLE}
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_column_test.py"
                  --exe "$<TARGET_FILE:lsdtt-cosmo-column-tool>")
+lsdtt_mark_test_runtime(python rigorous_cosmo_column_tool)
 set_tests_properties(rigorous_cosmo_column_tool PROPERTIES
     LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 600)
 
@@ -4453,6 +4545,7 @@ add_test(NAME unit_cosmo_validation_harness
          COMMAND ${Python3_EXECUTABLE}
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_validation.py"
                  --self-test)
+lsdtt_mark_test_runtime(python unit_cosmo_validation_harness)
 set_tests_properties(unit_cosmo_validation_harness PROPERTIES LABELS "unit;cosmo")
 
 # Riversand-comparison harness self-test (Phase 5 carried-forward item §6c(B)).
@@ -4461,6 +4554,7 @@ add_test(NAME unit_cosmo_riversand_harness
          COMMAND ${Python3_EXECUTABLE}
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_riversand_comparison.py"
                  --self-test)
+lsdtt_mark_test_runtime(python unit_cosmo_riversand_harness)
 set_tests_properties(unit_cosmo_riversand_harness PROPERTIES LABELS "unit;cosmo")
 
 # Real download -> run -> delete for the pilot dataset, in --check (regression)
@@ -4476,6 +4570,7 @@ add_test(NAME cosmo_realworld_dethier2014
                  dethier2014 --check
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_dethier2014)
 set_tests_properties(cosmo_realworld_dethier2014 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
@@ -4491,6 +4586,7 @@ add_test(NAME cosmo_realworld_clapp2002
                  clapp2002 --check
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_clapp2002)
 set_tests_properties(cosmo_realworld_clapp2002 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
@@ -4500,6 +4596,7 @@ add_test(NAME cosmo_realworld_dibiase2010
                  dibiase2010 --check
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_dibiase2010)
 set_tests_properties(cosmo_realworld_dibiase2010 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
@@ -4522,6 +4619,7 @@ add_test(NAME cosmo_realworld_dethier2014_lsdn
                  dethier2014_lsdn --check
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_dethier2014_lsdn)
 set_tests_properties(cosmo_realworld_dethier2014_lsdn PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
@@ -4531,6 +4629,7 @@ add_test(NAME cosmo_realworld_clapp2002_lsdn
                  clapp2002_lsdn --check
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_clapp2002_lsdn)
 set_tests_properties(cosmo_realworld_clapp2002_lsdn PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
@@ -4540,6 +4639,7 @@ add_test(NAME cosmo_realworld_dibiase2010_lsdn
                  dibiase2010_lsdn --check
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_dibiase2010_lsdn)
 set_tests_properties(cosmo_realworld_dibiase2010_lsdn PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
@@ -4559,6 +4659,7 @@ add_test(NAME cosmo_realworld_production_isolation
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cosmo_production_isolation.py"
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_production_isolation)
 set_tests_properties(cosmo_realworld_production_isolation PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
@@ -4584,6 +4685,7 @@ add_test(NAME cosmo_realworld_lsdn_pixel_vs_lumped
                  all
                  --exe "$<TARGET_FILE:lsdtt-cosmo-tool>"
                  --fetch-exe "$<TARGET_FILE:lsdtt-fetch-raster>")
+lsdtt_mark_test_runtime(python cosmo_realworld_lsdn_pixel_vs_lumped)
 set_tests_properties(cosmo_realworld_lsdn_pixel_vs_lumped PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 3600)
 
@@ -4824,6 +4926,7 @@ add_test(NAME rigorous_fluvial_surfaces_label_band_identity
         --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_label_band_identity"
         --stem join)
+lsdtt_mark_test_runtime(python rigorous_fluvial_surfaces_label_band_identity)
 set_tests_properties(rigorous_fluvial_surfaces_label_band_identity PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -4839,6 +4942,7 @@ add_test(NAME rigorous_fluvial_surfaces_empty_result
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_empty_result"
         --stem empty
         --expect-empty-tables)
+lsdtt_mark_test_runtime(python rigorous_fluvial_surfaces_empty_result)
 set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -4857,6 +4961,7 @@ add_test(NAME rigorous_flat_surface_finder_admission_modes
         --exe "$<TARGET_FILE:lsdtt-flat-surface-finder>"
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_flat_surface_finder_admission_modes"
         --cap 15.0)
+lsdtt_mark_test_runtime(python rigorous_flat_surface_finder_admission_modes)
 set_tests_properties(rigorous_flat_surface_finder_admission_modes PROPERTIES
     LABELS "rigorous;cli;fluvial_surfaces")
 
@@ -5021,6 +5126,7 @@ add_test(NAME smoke_fluvial_surfaces_hand_input
         --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
         --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fluvial_surfaces_hand_input"
         --stem fsin)
+lsdtt_mark_test_runtime(python smoke_fluvial_surfaces_hand_input)
 set_tests_properties(smoke_fluvial_surfaces_hand_input PROPERTIES
     LABELS "smoke;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -5076,6 +5182,7 @@ add_test(NAME smoke_fluvial_surfaces_pipeline
         --expect vc_valley_mask_channels.tif
         --expect vc_valley_centreline.fgb
         --stage2-stdout-contains "Valley identification is supplied")
+lsdtt_mark_test_runtime(python smoke_fluvial_surfaces_pipeline)
 set_tests_properties(smoke_fluvial_surfaces_pipeline PROPERTIES
     LABELS "smoke;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -5094,6 +5201,7 @@ add_test(NAME rigorous_valley_centreline_legacy_threshold
         --stage2-stdout-contains "Channel threshold: 200 contributing pixels"
         --stage2-stderr-contains "'channel_threshold_contributing_pixels' is deprecated"
         --stage2-stderr-contains "use 'threshold_contributing_pixels'")
+lsdtt_mark_test_runtime(python rigorous_valley_centreline_legacy_threshold)
 set_tests_properties(rigorous_valley_centreline_legacy_threshold PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -5164,6 +5272,7 @@ add_test(NAME unit_cli_parameter_conventions
         --bin-dir "$<TARGET_FILE_DIR:lsdtt-channel-extraction>"
         --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
         --baseline "${LSDTT_TEST_DATA_DIR}/cli_parameter_conventions_baseline.json")
+lsdtt_mark_test_runtime(python unit_cli_parameter_conventions)
 set_tests_properties(unit_cli_parameter_conventions PROPERTIES
     LABELS "unit;cli;conventions"
     TIMEOUT 900)
@@ -5176,6 +5285,7 @@ add_test(NAME unit_cli_reference_is_current
         --check
         --bin-dir "$<TARGET_FILE_DIR:lsdtt-channel-extraction>"
         --repo-root "${CMAKE_SOURCE_DIR}")
+lsdtt_mark_test_runtime(python unit_cli_reference_is_current)
 set_tests_properties(unit_cli_reference_is_current PROPERTIES
     LABELS "unit;cli;docs"
     TIMEOUT 900)
@@ -5256,6 +5366,10 @@ set(LSDTT_DOMAIN_RULES
     # "wetness_index" and move the STI tests with it, deliberately.
     "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover|distributed_hydrology"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
+    # performance_flow_routines (LSDTT_ENABLE_PERF_TESTS) matched no rule, so
+    # configuring with that option ON failed until 2026-09-18 -- the same trap
+    # as the benchmark rule at the top, hidden by the option's OFF default.
+    "flow_routines"          "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference" "core"
     "depression_hierarchy"   "network"
@@ -5284,16 +5398,19 @@ set(LSDTT_DOMAIN_RULES
     "gdal_"                  "gdal"
 )
 
-# COST: tests that are expensive enough to keep out of the inner loop. Measured
-# 2026-08-04 on an 8-core machine; the figure is wall-clock when the test has
-# the machine to itself.
+# COST: tests that are expensive enough to keep out of the inner loop. The
+# figure is wall-clock when the test has the machine to itself.
 #
-#   unit_hillslope_implicit         ~9 min, saturates all 8 cores
-#   smoke_lem_roering_implicit_strip ~5 min, likewise
-#   cosmo_realworld_*                67 s to 30 min, and most need the network
+#   unit_hillslope_implicit    ~9 min (2026-08-04, 8-core machine), saturates
+#                              all 8 cores; 586 s on 2026-09-18 (8-core laptop)
+#   cosmo_realworld_*          67 s to 30 min, and most need the network
+#
+# smoke_lem_roering_implicit_strip was listed here (~5 min on 2026-08-04). It
+# ran in 2 s on 2026-09-18 with its steady-state assertions passing, and
+# CTestCostData.txt records 0.1 s, so it came off this list and the serial list
+# below.
 set(LSDTT_HEAVY_TESTS
     unit_hillslope_implicit
-    smoke_lem_roering_implicit_strip
     cosmo_realworld_clapp2002
     cosmo_realworld_clapp2002_lsdn
     cosmo_realworld_dethier2014
@@ -5310,7 +5427,6 @@ set(LSDTT_HEAVY_TESTS
 # taking 9 minutes when run alone.
 set(LSDTT_SERIAL_TESTS
     unit_hillslope_implicit
-    smoke_lem_roering_implicit_strip
 )
 
 get_property(_lsdtt_tests DIRECTORY PROPERTY TESTS)
@@ -5431,9 +5547,247 @@ add_test(NAME unit_build_is_current
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_build_is_current.py"
         --manifest "${CMAKE_CURRENT_BINARY_DIR}/build_currency_manifest.tsv")
+lsdtt_mark_test_runtime(python unit_build_is_current)
 set_tests_properties(unit_build_is_current PROPERTIES
     LABELS "unit;core;conventions"
     TIMEOUT 300)
+
+# =============================================================================
+# DEPENDENCY TIERS, ENVIRONMENT FLAGS AND THE LEM COMPONENT
+#
+# Every test gets exactly one RUNTIME TIER label, saying what it needs to start:
+#
+#   tier_native         a compiled lsdtt3 executable or `cmake -E`; no Python
+#   tier_python_stdlib  the Python interpreter and its standard library only
+#   tier_python_geo     Python plus third-party geospatial packages
+#   tier_pixi           `pixi run` into the benchmark environment
+#
+# plus zero or more ENVIRONMENT FLAGS:
+#
+#   hermetic            tier_native, no skip path, no network, no host data --
+#                       the reproducible floor: `ctest -L '^hermetic$'`
+#   needs_network       downloads data (skips, exit 77, when offline)
+#   needs_gdal_tools    shells out to gdalinfo / ogrinfo / gdal_translate
+#                       (Ubuntu: gdal-bin, which libgdal-dev does not pull in)
+#
+# and, for the landscape evolution model, the COMPONENT label lem_component
+# (every lsdtt-lem CLI test and the unit tests of the engines it drives).
+#
+# These are ORTHOGONAL to the kind and domain labels above. Select with
+# ANCHORED patterns: ctest -L/-LE take regexes, and `-L network` already
+# matches synthetic_networks as well as network.
+#
+#   ctest -L '^hermetic$'                      native, offline, reproducible
+#   ctest -LE '^lem_component$'                everything except the LEM
+#   ctest -L '^lem_component$' -LE '^heavy$'   the LEM, cheap part
+#
+# The runtime tier comes from lsdtt_mark_test_runtime() at registration (top of
+# this file), and is then PROPAGATED through fixtures: a test that requires a
+# fixture produced by a Python test cannot run without Python, whatever its own
+# command is (rigorous_drainage_analysis_threshold_equivalence is `cmake -E
+# compare_files` on two Python-harness outputs). needs_network and
+# needs_gdal_tools propagate the same way.
+#
+# The lists below come from an inventory of every registered command on
+# 2026-09-18: an AST scan of each test script and the local modules it imports
+# for third-party packages, and a scan for the GDAL programs it runs.
+# =============================================================================
+
+# Python tests whose scripts import third-party packages.
+set(LSDTT_PYTHON_GEO_TESTS
+    smoke_multipart_cli_sweep                       # geopandas numpy rasterio shapely
+    rigorous_fluvial_surfaces_label_band_identity   # osgeo
+    rigorous_fluvial_surfaces_empty_result          # osgeo
+    rigorous_flat_surface_finder_admission_modes    # osgeo, in build_dem()
+)
+
+# Scripts other than run_cli_smoke.py that run GDAL's command-line programs.
+# (run_cli_smoke.py tests are marked from their arguments at registration.)
+set(LSDTT_GDAL_TOOL_SCRIPT_TESTS
+    rigorous_cosmo_multi_accum_ratio                # gdalinfo
+    regression_step_change_disk_roundtrip           # gdalinfo
+    smoke_fluvial_surfaces_hand_input               # gdalinfo
+    regression_landslide_scar_coupling              # gdal_translate
+    regression_cosmo_oracle                         # gdal_translate
+    regression_cosmo_oracle_heavy                   # gdal_translate
+)
+
+# Tests that download. The benchmarks and performance_surface_metrics fetch
+# their DEM fixtures with lsdtt-fetch-raster when they are not cached.
+set(LSDTT_NEEDS_NETWORK_PATTERN "^(network_|cosmo_realworld_|benchmark_)")
+set(LSDTT_NEEDS_NETWORK_TESTS
+    performance_surface_metrics
+)
+
+# Native tests that are nevertheless not hermetic. Tests with a
+# SKIP_RETURN_CODE are excluded automatically; list here only what that rule
+# cannot see.
+set(LSDTT_NONHERMETIC_TESTS
+    unit_gdal_init_pinned       # stages the host's proj.db
+)
+
+# lem_component: every test named <kind>_lem_* (the lsdtt-lem CLI tests), plus
+# the unit tests of the engines lsdtt-lem drives, whose names share no prefix.
+# Deliberately NOT members: unit_hillslope_length_search and
+# unit_hillslope_peclet (hillslope analysis), the hillslope_channel_coupling
+# CLI tests, and unit_synthetic_cli_banners (a cross-CLI banner check that
+# happens to run lsdtt-lem).
+set(LSDTT_LEM_NAME_PATTERN "^(smoke|failure|regression|rigorous)_lem_")
+set(LSDTT_LEM_ENGINE_TESTS
+    # lsdtt_lem_cpu
+    unit_lem_channel_coupling
+    unit_lem_timestep
+    unit_lem_forcing_history
+    # landscape equilibration
+    unit_landscape_equilibration
+    unit_hillslope_length_statistic
+    # hillslope solvers
+    unit_hillslope_implicit
+    unit_hillslope_newton
+    unit_hillslope_steady_state
+    unit_hillslope_transport_bc
+    unit_hillslope_perron_qimp
+    unit_hillslope_ren_modular_implicit
+    unit_hillslope_critical_slope
+    performance_hillslope_implicit
+    # cellular hillslope
+    unit_cellular_hillslope_references
+    unit_cellular_hillslope_constitutive
+    unit_cellular_hillslope_solver
+    unit_cellular_hillslope_common_limit
+    unit_hillslope_particle_io
+    # stream power / steady-state channel pieces of the LEM
+    unit_channel_threshold_units
+    unit_chi_channel_head
+)
+
+get_property(_lsdtt_class_tests DIRECTORY PROPERTY TESTS)
+get_property(_lsdtt_py_tests GLOBAL PROPERTY LSDTT_RUNTIME_python_TESTS)
+get_property(_lsdtt_pixi_tests GLOBAL PROPERTY LSDTT_RUNTIME_pixi_TESTS)
+get_property(_lsdtt_tool_tests GLOBAL PROPERTY LSDTT_NEEDS_gdal_tools_TESTS)
+list(APPEND _lsdtt_tool_tests ${LSDTT_GDAL_TOOL_SCRIPT_TESTS})
+
+# A name in a hand-written list that is not a registered test is a typo, and a
+# typo here silently mislabels a test. Option-gated tests are exempt.
+foreach(_listed IN LISTS LSDTT_PYTHON_GEO_TESTS LSDTT_GDAL_TOOL_SCRIPT_TESTS
+                         LSDTT_NONHERMETIC_TESTS LSDTT_LEM_ENGINE_TESTS
+                         _lsdtt_py_tests _lsdtt_pixi_tests)
+    if(NOT "${_listed}" IN_LIST _lsdtt_class_tests
+       AND NOT _listed MATCHES "^(benchmark_|perf)")
+        message(FATAL_ERROR
+            "Test classification names '${_listed}', which is not a registered "
+            "test. Fix the name in the DEPENDENCY TIERS lists.")
+    endif()
+endforeach()
+
+# Pass 1: each test's own runtime tier and flags; which fixtures it sets up.
+# Ranks let propagation take the most demanding tier: native < stdlib < geo < pixi.
+set(_lsdtt_tier_names tier_native tier_python_stdlib tier_python_geo tier_pixi)
+foreach(_test IN LISTS _lsdtt_class_tests)
+    if("${_test}" IN_LIST _lsdtt_pixi_tests)
+        set(_rank 3)
+    elseif("${_test}" IN_LIST LSDTT_PYTHON_GEO_TESTS)
+        set(_rank 2)
+    elseif("${_test}" IN_LIST _lsdtt_py_tests)
+        set(_rank 1)
+    else()
+        set(_rank 0)
+    endif()
+    set(_lsdtt_rank_${_test} ${_rank})
+
+    set(_net FALSE)
+    if(_test MATCHES "${LSDTT_NEEDS_NETWORK_PATTERN}" OR "${_test}" IN_LIST LSDTT_NEEDS_NETWORK_TESTS)
+        set(_net TRUE)
+    endif()
+    set(_lsdtt_net_${_test} ${_net})
+
+    set(_tools FALSE)
+    if("${_test}" IN_LIST _lsdtt_tool_tests)
+        set(_tools TRUE)
+    endif()
+    set(_lsdtt_tools_${_test} ${_tools})
+
+    get_test_property(${_test} FIXTURES_SETUP _setups)
+    if(_setups)
+        foreach(_fx IN LISTS _setups)
+            list(APPEND _lsdtt_fixture_setup_${_fx} ${_test})
+        endforeach()
+    endif()
+endforeach()
+
+# Pass 2: propagate through FIXTURES_REQUIRED until nothing changes (fixtures
+# can chain, so one sweep is not enough).
+set(_changed TRUE)
+while(_changed)
+    set(_changed FALSE)
+    foreach(_test IN LISTS _lsdtt_class_tests)
+        get_test_property(${_test} FIXTURES_REQUIRED _required)
+        if(NOT _required)
+            continue()
+        endif()
+        foreach(_fx IN LISTS _required)
+            foreach(_setup IN LISTS _lsdtt_fixture_setup_${_fx})
+                if(_lsdtt_rank_${_setup} GREATER _lsdtt_rank_${_test})
+                    set(_lsdtt_rank_${_test} ${_lsdtt_rank_${_setup}})
+                    set(_changed TRUE)
+                endif()
+                if(_lsdtt_net_${_setup} AND NOT _lsdtt_net_${_test})
+                    set(_lsdtt_net_${_test} TRUE)
+                    set(_changed TRUE)
+                endif()
+                if(_lsdtt_tools_${_setup} AND NOT _lsdtt_tools_${_test})
+                    set(_lsdtt_tools_${_test} TRUE)
+                    set(_changed TRUE)
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+endwhile()
+
+# Pass 3: write the labels.
+set(_lsdtt_tier_counts 0 0 0 0)
+set(_lsdtt_n_hermetic 0)
+set(_lsdtt_n_lem 0)
+foreach(_test IN LISTS _lsdtt_class_tests)
+    set(_rank ${_lsdtt_rank_${_test}})
+    list(GET _lsdtt_tier_names ${_rank} _tier)
+    set(_add ${_tier})
+
+    if(_lsdtt_net_${_test})
+        list(APPEND _add needs_network)
+    endif()
+    if(_lsdtt_tools_${_test})
+        list(APPEND _add needs_gdal_tools)
+    endif()
+
+    get_test_property(${_test} SKIP_RETURN_CODE _skip)
+    if(_rank EQUAL 0 AND NOT _skip AND NOT _lsdtt_net_${_test}
+       AND NOT _test MATCHES "^(benchmark_|perf)"
+       AND NOT "${_test}" IN_LIST LSDTT_NONHERMETIC_TESTS)
+        list(APPEND _add hermetic)
+        math(EXPR _lsdtt_n_hermetic "${_lsdtt_n_hermetic} + 1")
+    endif()
+
+    if(_test MATCHES "${LSDTT_LEM_NAME_PATTERN}" OR "${_test}" IN_LIST LSDTT_LEM_ENGINE_TESTS)
+        list(APPEND _add lem_component)
+        math(EXPR _lsdtt_n_lem "${_lsdtt_n_lem} + 1")
+    endif()
+
+    set_property(TEST ${_test} APPEND PROPERTY LABELS ${_add})
+
+    list(GET _lsdtt_tier_counts ${_rank} _c)
+    math(EXPR _c "${_c} + 1")
+    list(REMOVE_AT _lsdtt_tier_counts ${_rank})
+    list(INSERT _lsdtt_tier_counts ${_rank} ${_c})
+endforeach()
+
+list(GET _lsdtt_tier_counts 0 _n0)
+list(GET _lsdtt_tier_counts 1 _n1)
+list(GET _lsdtt_tier_counts 2 _n2)
+list(GET _lsdtt_tier_counts 3 _n3)
+message(STATUS "Test tiers    : native ${_n0} (hermetic ${_lsdtt_n_hermetic}), "
+               "python_stdlib ${_n1}, python_geo ${_n2}, pixi ${_n3}; "
+               "lem_component ${_lsdtt_n_lem}")
 
 # =============================================================================
 # EXECUTION CONTRACT: no test reads the terminal, and every test has a timeout

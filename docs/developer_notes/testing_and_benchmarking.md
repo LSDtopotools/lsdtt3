@@ -122,12 +122,13 @@ suite runs before a commit.
 
 #### What is `heavy`, and why `RUN_SERIAL` matters
 
-`heavy` is `unit_hillslope_implicit`, `smoke_lem_roering_implicit_strip`, and
-the eight `cosmo_realworld_*` tiers. The first two **saturate every core** — the
-implicit hillslope test takes 9 min 24 s wall for 73 min of CPU, a parallelism
-of 7.8 on 8 cores.
+`heavy` is `unit_hillslope_implicit` and the eight `cosmo_realworld_*` tiers.
+The implicit hillslope test **saturates every core**: 9 min 24 s wall for
+73 min of CPU, a parallelism of 7.8 on 8 cores (2026-08-04).
+`smoke_lem_roering_implicit_strip` was also `heavy` until 2026-09-18, when it
+measured 2 s and was taken off the list.
 
-Both are marked `RUN_SERIAL`. This is not a nicety. Under `ctest -j4` a test
+It is marked `RUN_SERIAL`. This is not a nicety. Under `ctest -j4` a test
 that wants 8 threads and gets 2 does not merely run slower, it can be starved
 past its timeout: `unit_hillslope_implicit` "failed" at CTest's default 1500 s
 ceiling while passing in 9 minutes when given the machine to itself. A timeout
