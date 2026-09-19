@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@ --buildsystem=cmake
+
+# BUILD_TESTING is ON by default (the top-level CMakeLists.txt calls
+# include(CTest)), which would compile and run the whole CTest suite as part of
+# every package build. Turn it off: the tests are a developer concern, not a
+# packaging one.
+#
+# Every optional dependency in this tree degrades silently when it is missing —
+# no netCDF removes the ERA40 and palaeomagnetic corrections from the cosmo
+# tools, and no FFTW3 drops lsdtt-spectral-analysis from the build entirely.
+# They are all listed in Build-Depends for that reason; read the
+# "=== lsdtt3 build configuration ===" block in the build log to confirm they
+# were found.
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_TESTING=OFF \
+		-DLSDTT_GPU=OFF
+
+# The install() rules use destinations relative to CMAKE_INSTALL_PREFIX, which
+# debhelper sets to /usr — so the CLIs already land in usr/bin and the bundled
+# crn_parameters.nc in usr/share/lsdtt3, where the cosmo tools look for it
+# (<exe>/../share/lsdtt3). Nothing needs moving. The static libraries and
+# headers are of no use at runtime, so drop them from the binary package.
+override_dh_auto_install:
+	dh_auto_install
+	rm -f  debian/lsdtt3/usr/lib/liblsdtt3_*.a
+	rm -rf debian/lsdtt3/usr/include/lsdtt3
+	rmdir --ignore-fail-on-non-empty \
+		debian/lsdtt3/usr/lib debian/lsdtt3/usr/include 2>/dev/null || true

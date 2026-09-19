@@ -1,8 +1,11 @@
 # Building a Debian package for lsdtt3
 
 This document explains how to build a `.deb` package for distributing lsdtt3
-binaries. The package installs the compiled CLI programs and their runtime
-dependencies, so end users do not need to build from source.
+binaries. The package installs the compiled CLI programs and the bundled
+runtime data, so end users do not need to build from source.
+
+The packaging lives in the repository, in `debian/`. You do not create it —
+you check it is current for the release you are packaging, then build.
 
 ---
 
@@ -21,152 +24,147 @@ sudo apt-get install -y \
 ```
 
 You also need all of lsdtt3's build dependencies installed — see
-`apptainer_def/apptainer_setup.md`, `building_from_source.md`, or the main README for the full list.
+[Building from source](building_from_source.md), `apptainer_def/apptainer_setup.md`,
+or the main README for the full list. `dpkg-buildpackage` will refuse to start
+if anything in `Build-Depends` is missing, so a clean machine tells you what it
+needs.
 
 ---
 
-## Directory structure
-
-Debian packaging expects a `debian/` directory at the root of the source tree
-containing at minimum four files:
+## What is in `debian/`
 
 ```
 lsdtt3/
 ├── debian/
-│   ├── control       — package metadata and dependencies
-│   ├── rules         — build instructions (essentially a Makefile)
-│   ├── changelog     — version history (required by Debian policy)
-│   └── compat        — debhelper compatibility level
+│   ├── control        — package metadata and dependencies
+│   ├── rules          — build instructions (a Makefile, driven by debhelper)
+│   ├── changelog      — version history (required by Debian policy)
+│   └── source/format  — source package format
 ├── src/
 ├── CMakeLists.txt
 └── ...
 ```
 
-Create the directory:
+There is deliberately **no `debian/compat`**. The compatibility level is set
+once, by `debhelper-compat (= 13)` in `Build-Depends`. Specifying it in both
+places is a fatal error — debhelper stops with *"Please specify the compatibility
+level exactly once"*.
 
-```bash
-mkdir debian
-```
-
----
-
-## debian/control
-
-This file describes the package, its dependencies, and what it installs.
-Adjust the version and description as needed.
-
-```
-Source: lsdtt3
-Section: science
-Priority: optional
-Maintainer: Simon M. Mudd <simon.m.mudd@ed.ac.uk>
-Build-Depends: debhelper-compat (= 13),
-               cmake (>= 3.15),
-               libgdal-dev,
-               libfftw3-dev,
-               libeigen3-dev,
-               libgomp1
-Standards-Version: 4.6.0
-Homepage: https://github.com/LSDtopotools/lsdtt3
-
-Package: lsdtt3
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends},
-         gdal-bin,
-         libgdal30 | libgdal-dev,
-         libfftw3-3,
-         libgomp1
-Description: Topographic analysis tools for digital elevation models
- lsdtt3 is a set of command line tools for topographic analysis of digital
- elevation models (DEMs). It is a redesign of LSDTopoTools2 using modern
- C++17. Tools include raster preprocessing (pit filling, depression
- breaching, nodata repair), D8 flow routing, hillshade, and spectral
- surface analysis.
- .
- See https://github.com/LSDtopotools/lsdtt3 for documentation.
-```
-
-**Notes on `Depends`:**
-
-- `${shlibs:Depends}` is automatically expanded by `dpkg-shlibdeps` to the
-  correct shared library versions for your build machine.
-- `libgdal30` is the runtime library name on Ubuntu 22.04. On Ubuntu 24.04 it
-  is `libgdal34`. Check the correct name with `dpkg -l 'libgdal*'` on your
-  build machine and adjust accordingly. The `| libgdal-dev` fallback handles
-  machines where only the dev package is installed.
-- If you build without FFTW support (`LSDTT_HAS_FFTW` not set), remove
-  `libfftw3-3` from `Depends`.
-
----
-
-## debian/rules
-
-The rules file drives the build. This version uses CMake via debhelper's
-`dh` command with the `cmake` buildsystem helper.
-
-```makefile
-#!/usr/bin/make -f
-
-export DH_VERBOSE = 1
-
-%:
-	dh $@ --buildsystem=cmake
-
-override_dh_auto_configure:
-	dh_auto_configure -- \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DLSDTT_GPU=OFF
-
-override_dh_auto_install:
-	dh_auto_install
-	# The CMakeLists install target puts binaries in bin/ — move them to
-	# the standard Debian location /usr/bin
-	mkdir -p debian/lsdtt3/usr/bin
-	cp -a debian/lsdtt3/usr/local/bin/lsdtt-* debian/lsdtt3/usr/bin/ || true
-	rm -rf debian/lsdtt3/usr/local
-```
-
-Make the rules file executable:
+`debian/rules` must be executable. On WSL over NTFS a `chmod +x` is invisible
+to git, so if you have just created or restored the file, tell git about it
+explicitly:
 
 ```bash
 chmod +x debian/rules
+git update-index --chmod=+x debian/rules
 ```
+
+### debian/control
+
+`Build-Depends` lists **every** optional dependency, not just the required
+ones. This matters more here than in a normal package, because this build
+degrades *silently* when a library is absent — see
+[Optional dependencies degrade silently](#optional-dependencies-degrade-silently)
+below.
+
+`Depends` is just `${shlibs:Depends}, ${misc:Depends}`. There is no hand-written
+list of library packages: `dpkg-shlibdeps` reads the linked binaries and works
+out the correct runtime packages and versions for whichever Ubuntu release you
+built on. A hand-written list would have to name `libgdal30` on Ubuntu 22.04,
+`libgdal34t64` on 24.04, and so on; letting `shlibdeps` do it removes a whole
+class of per-release mistakes.
+
+The CLIs are **not** a `gdal-bin` dependency. They call gdalwarp through the
+GDAL C API (`GDALWarpAppOptions` in `src/core/lsdtt_raster_reproject.cpp`), not
+by running the command-line programs. GDAL's command-line tools are a *test*
+requirement only.
+
+### debian/rules
+
+Three things are worth knowing about it.
+
+**The tests are turned off.** The top-level `CMakeLists.txt` calls
+`include(CTest)`, so `BUILD_TESTING` defaults to `ON`. Left alone, every
+package build would compile the entire CTest suite and `dh_auto_test` would
+then run it — including the `heavy` tests — so a slow or environment-sensitive
+test would fail the package build. `override_dh_auto_configure` passes
+`-DBUILD_TESTING=OFF`. Test before you package, not while you package.
+
+**Nothing needs moving after install.** Every `install()` rule in
+`CMakeLists.txt` uses a destination relative to `CMAKE_INSTALL_PREFIX`, and
+debhelper's cmake buildsystem sets that to `/usr`. So `dh_auto_install` already
+puts the CLIs in `debian/lsdtt3/usr/bin` and the bundled `crn_parameters.nc` in
+`debian/lsdtt3/usr/share/lsdtt3` — which is exactly where the cosmo tools look
+for it, since they resolve it as `<exe>/../share/lsdtt3`. Nothing in this build
+installs to `/usr/local`; if you find packaging instructions that shuffle files
+out of `/usr/local`, they predate this layout, and a `rm -rf` of that tree would
+take the bundled cosmo parameter file with it.
+
+**Static libraries and headers are dropped.** `CMakeLists.txt` also installs
+`liblsdtt3_core.a`, `liblsdtt3_utils.a`, `liblsdtt3_cpu.a` and the public
+headers, which are useful for a development package but dead weight in a
+binary one. `override_dh_auto_install` removes them. If you ever want an
+`lsdtt3-dev` package, that is where to start.
 
 ---
 
-## debian/changelog
+## Optional dependencies degrade silently
 
-Debian policy requires a changelog. The format is strict — use `dch` to
-create and maintain it rather than editing by hand.
+This is the failure mode to watch for. None of these stop the build — they
+just quietly produce a smaller package:
 
-Create the initial entry:
+| Missing build dependency | What you lose | What CMake says |
+|---|---|---|
+| `libnetcdf-dev` | ERA40 atmosphere and palaeomagnetic corrections in the cosmo tools; they fall back to the standard atmosphere | `STATUS` line only |
+| `pkg-config` or `libfftw3-dev` | `lsdtt-spectral-analysis` is not built **at all** | `WARNING` |
+| `libeigen3-dev` | chi / k_sn inversion in `lsdtt-chi-analysis` | `WARNING` |
 
-```bash
-dch --create --package lsdtt3 --newversion 3.0.0-1 \
-    "Initial Debian packaging of lsdtt3."
+All three are in `Build-Depends`, so a correctly configured build machine gets
+them. Confirm it anyway by reading the configuration block CMake prints in the
+build log:
+
+```
+=== lsdtt3 build configuration ===
+  Build type  : Release
+  C++ std     : 17
+  GDAL        : 3.4.1
+  OpenMP      : ON
+  FFTW3       : ON
+  GPU (CUDA)  : OFF
+  Eigen3      : ON
+===================================
 ```
 
-This creates `debian/changelog` with the correct format. Future releases:
+A package built with `FFTW3 : FALSE` is missing a tool and will not tell the
+user why.
+
+---
+
+## Versioning
+
+`debian/changelog` is the authoritative version for the package, and it should
+track `project(lsdtt3 VERSION ...)` in `CMakeLists.txt`. Bump both together.
+
+The packaging is **native format** (`debian/source/format` is `3.0 (native)`),
+because it lives in the upstream tree rather than being applied to a separate
+upstream tarball. That means the version has no Debian revision: `0.5.1`, not
+`0.5.1-1`. To re-release the same code with changed packaging, append a
+packaging suffix — `0.5.1+pkg2`.
+
+Add a new entry with `dch` rather than editing the file by hand; the format is
+strict:
 
 ```bash
-dch --newversion 3.0.1-1 "Release 3.0.1."
+dch --newversion 0.5.2 "Release 0.5.2."
 dch --release ""
 ```
 
-The version string has two parts: the upstream version (`3.0.0`) and the
-Debian revision (`1`). Increment the Debian revision when you change the
-packaging without changing the upstream code; reset it to `1` when you bump
-the upstream version.
-
----
-
-## debian/compat
-
-Set the debhelper compatibility level:
-
-```bash
-echo 13 > debian/compat
-```
+One thing to know about what the binaries report: `CMakeLists.txt` captures
+`git describe` at configure time, so `lsdtt-<tool> --version` prints the plain
+version only when it is built from a checkout sitting exactly on the matching
+`v<version>` tag. Any other build reports `<version>-dev, git <describe>`, and
+a build from an exported tarball with no `.git` reports the plain version.
+Build releases from a tagged checkout so the two agree.
 
 ---
 
@@ -175,36 +173,37 @@ echo 13 > debian/compat
 From the root of the lsdtt3 source tree:
 
 ```bash
-dpkg-buildpackage -us -uc -b
+dpkg-buildpackage -us -uc -b -rfakeroot
 ```
 
 Flags:
+
 - `-us` — do not sign the source package
 - `-uc` — do not sign the `.changes` file
 - `-b` — build binary package only (no source package)
+- `-rfakeroot` — use fakeroot rather than requiring `sudo`
 
-The output files appear one directory above the source tree:
+This is a full optimised build of around forty CLI programs; expect it to take
+a while. The output files appear one directory above the source tree:
 
 ```
-../lsdtt3_3.0.0-1_amd64.deb
-../lsdtt3_3.0.0-1_amd64.buildinfo
-../lsdtt3_3.0.0-1_amd64.changes
+../lsdtt3_0.5.1_amd64.deb
+../lsdtt3_0.5.1_amd64.buildinfo
+../lsdtt3_0.5.1_amd64.changes
 ```
 
-### Building with fakeroot (no sudo required)
-
-```bash
-dpkg-buildpackage -us -uc -b -rfakeroot
-```
+To build without re-doing everything after a failure, `dpkg-buildpackage -nc`
+skips the clean step. To start genuinely fresh, `debian/rules clean` (or
+`dh clean`) removes the build tree.
 
 ### Checking the package with lintian
 
 ```bash
-lintian ../lsdtt3_3.0.0-1_amd64.deb
+lintian ../lsdtt3_0.5.1_amd64.deb
 ```
 
-Lintian checks the package against Debian policy. Warnings about missing
-man pages or a non-official maintainer address are expected for a personal
+Lintian checks the package against Debian policy. Warnings about missing man
+pages and a non-official maintainer address are expected for a personal
 distribution — errors should be investigated.
 
 ---
@@ -214,42 +213,51 @@ distribution — errors should be investigated.
 List the files the package will install:
 
 ```bash
-dpkg -c ../lsdtt3_3.0.0-1_amd64.deb
+dpkg -c ../lsdtt3_0.5.1_amd64.deb
 ```
 
-Show package metadata:
+You should see the `lsdtt-*` programs under `usr/bin/` and
+`usr/share/lsdtt3/crn_parameters.nc`, and **no** `usr/lib/*.a` or
+`usr/include/`.
+
+Show package metadata, including the dependencies `shlibdeps` worked out:
 
 ```bash
-dpkg -I ../lsdtt3_3.0.0-1_amd64.deb
+dpkg -I ../lsdtt3_0.5.1_amd64.deb
 ```
 
 Test install locally without a repository:
 
 ```bash
-sudo dpkg -i ../lsdtt3_3.0.0-1_amd64.deb
+sudo dpkg -i ../lsdtt3_0.5.1_amd64.deb
 sudo apt-get install -f    # resolves any missing dependencies
+lsdtt-channel-extraction --version
 ```
+
+`--version` prints the GDAL and PROJ versions the binaries actually loaded,
+which is the quickest check that the package pulled in a working runtime.
 
 ---
 
 ## Building for multiple Ubuntu versions
 
-The package built on Ubuntu 22.04 (Jammy) will not install cleanly on
-Ubuntu 24.04 (Noble) or 20.04 (Focal) because shared library versions differ.
-Build a separate `.deb` on each target Ubuntu version.
+A package built on Ubuntu 22.04 (Jammy) will not install cleanly on 24.04
+(Noble) or 20.04 (Focal), because the shared library versions `shlibdeps`
+recorded differ. Build a separate `.deb` on each target release.
 
-The easiest way to do this without maintaining multiple machines is to use
-the Apptainer container (`lsdtt3.def`) as a base and create variant `.def`
-files for each target Ubuntu version — change the `From:` line to
-`ubuntu:24.04` etc., rebuild the container, and build the package inside it:
+The easiest way to do that without maintaining several machines is to use the
+Apptainer definitions in `apptainer_def/` as a base: copy
+`apptainer_def/lsdtt3.def`, change the `From:` line to the target release,
+rebuild the container, and build the package inside it.
 
 ```bash
-# Build the package inside the Ubuntu 22.04 container
 apptainer exec lsdtt3.sif bash -c "
     cd /path/to/lsdtt3 &&
     dpkg-buildpackage -us -uc -b -rfakeroot
 "
 ```
+
+Do not use Docker for this.
 
 ---
 
@@ -264,7 +272,7 @@ On your web server, create a directory for the packages:
 
 ```bash
 mkdir -p /var/www/html/lsdtt3/dists/jammy/main/binary-amd64
-cp lsdtt3_3.0.0-1_amd64.deb /var/www/html/lsdtt3/dists/jammy/main/binary-amd64/
+cp lsdtt3_0.5.1_amd64.deb /var/www/html/lsdtt3/dists/jammy/main/binary-amd64/
 ```
 
 Generate the `Packages` index:
@@ -288,3 +296,13 @@ sudo apt-get install lsdtt3
 The `[trusted=yes]` flag bypasses GPG signature checking. For a more robust
 setup, sign your repository with a GPG key — see `man apt-secure` for details.
 Repeat the `dpkg-scanpackages` step every time you add a new package version.
+
+Serve each Ubuntu release from its own distribution directory (`dists/jammy`,
+`dists/noble`, …) built on that release.
+
+---
+
+## See also
+
+- [Building from source](building_from_source.md) — the build this packages
+- [Making release packages](making_release_packages.md) — the tarball release route

@@ -67,6 +67,7 @@ lsdtt3/
 │   ├── lsdtt-valley-centreline.cpp
 │   ├── lsdtt-water-centreline.cpp
 │   └── lsdtt-water-line-repair.cpp
+├── debian/                                 — Debian package definition (see debian_packaging.md)
 ├── docs/                                   — MkDocs source, organised by purpose
 │   ├── index.md                            — documentation site root
 │   ├── what_is_lsdtt3/                     — overview, install, data, routing, workflows
