@@ -11,11 +11,15 @@ string in the project — release tags, package filenames, the version the
 binaries print — is derived from it:
 
 ```bash
-sed -n 2p CMakeLists.txt      # project(lsdtt3 VERSION 0.3.0 LANGUAGES CXX)
+sed -n 2p CMakeLists.txt      # project(lsdtt3 VERSION 0.5.1 LANGUAGES CXX)
 ```
 
 Read it before quoting a version anywhere. Documentation that spells out a
 version in an example command is a snapshot and drifts; this line does not.
+
+**Every example on this page uses `0.5.1`, which was current when the page was
+last revised.** Do not copy it — substitute whatever the command above prints.
+If the two disagree, the file is right and this page is stale.
 
 To see what has actually been *published* (which can lag the version in
 `CMakeLists.txt`, if it has been bumped ahead of a release):
@@ -28,7 +32,7 @@ git describe --tags --abbrev=0
 gh release list --limit 1
 ```
 
-For script arguments, use the numeric part without `v` (for example `0.3.0`).
+For script arguments, use the numeric part without `v` (for example `0.5.1`).
 If you are cutting a new release, that value must match
 `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` — `make_release.sh` reads
 that line and refuses to run on a mismatch.
@@ -45,22 +49,22 @@ the version string against git tags or `CMakeLists.txt`: it simply writes your
 > and if the tag does not already exist on GitHub, **gh creates it
 > server-side** from the tip of the default branch. See route 2.
 
-Releasing `0.3.0`, start to finish:
+Releasing `0.5.1`, start to finish:
 
 **1. Bump the version and get it onto main.** 
 *You must first of all increment the version in the CMakeLists.txt file.* This version number will need to match your tag.
 `make_release.sh` refuses to run
 if the version it is releasing does not match `project(lsdtt3 VERSION ...)` in
 `CMakeLists.txt`, so this is step one, not an afterthought. The tag must be
-exactly `v` + that version (`v0.3.0` for `VERSION 0.3.0`); `CMakeLists.txt` uses
+exactly `v` + that version (`v0.5.1` for `VERSION 0.5.1`); `CMakeLists.txt` uses
 the same rule to decide whether a build reports a plain release version or a
 `-dev` one, so a mismatch silently produces `-dev` binaries in what looks like
 a release.
 
 ```bash
-# CMakeLists.txt line 2:  project(lsdtt3 VERSION 0.3.0 LANGUAGES CXX)
+# CMakeLists.txt line 2:  project(lsdtt3 VERSION 0.5.1 LANGUAGES CXX)
 git add CMakeLists.txt
-git commit -m "Bump version to 0.3.0"
+git commit -m "Bump version to 0.5.1"
 git push
 git status                       # release from a clean tree: see step 6
 ```
@@ -69,7 +73,7 @@ git status                       # release from a clean tree: see step 6
 and it catches a version mismatch or a CLI that fails `-v` before a tag exists):
 
 ```bash
-tools/make_release.sh --version 0.3.0        # builds + packages, publishes nothing
+tools/make_release.sh --version 0.5.1        # builds + packages, publishes nothing
 ```
 
 **3. Tag and push — this is what triggers the release.**
@@ -77,8 +81,8 @@ tools/make_release.sh --version 0.3.0        # builds + packages, publishes noth
 ```bash
 # annotated (-a with -m), not lightweight: it carries an author, date and
 # message, and `git describe` prefers it
-git tag -a v0.3.0 -m "lsdtt3 0.3.0"
-git push origin v0.3.0           # pushing the branch does NOT push tags
+git tag -a v0.5.1 -m "lsdtt3 0.5.1"
+git push origin v0.5.1           # pushing the branch does NOT push tags
 ```
 
 **4. Wait for Actions**, which builds and publishes the Linux `core` bundle
@@ -87,7 +91,7 @@ actually runs):
 
 ```bash
 gh run list --workflow "Build and release" --limit 3
-gh release view v0.3.0
+gh release view v0.5.1
 ```
 
 **5. Attach the Windows and macOS bundles**, built by hand on those machines
@@ -98,7 +102,7 @@ gh release view v0.3.0
 ```bash
 git describe --tags --dirty --always   # what CMakeLists.txt will embed; -dirty = uncommitted changes in the build
 git log --oneline $(git describe --tags --abbrev=0)..HEAD   # what is going into this release
-gh release view v0.3.0                 # what ended up attached, and the notes
+gh release view v0.5.1                 # what ended up attached, and the notes
 ```
 
 Went wrong? See [Undoing a mistake](#undoing-a-mistake) — and do not move a
@@ -127,15 +131,15 @@ one-off bundles where you do not want to spend Actions minutes.
 ### Route 1 — tag and push, let Actions build it
 
 ```bash
-git tag -a v0.3.0 -m "lsdtt3 0.3.0"
-git push origin v0.3.0
+git tag -a v0.5.1 -m "lsdtt3 0.5.1"
+git push origin v0.5.1
 ```
 
 That matches the workflow's `on: push: tags: - "v*"` trigger. The workflow then
 installs the build dependencies, runs
 
 ```bash
-tools/make_release.sh --version 0.3.0      # VERSION="${GITHUB_REF_NAME#v}"
+tools/make_release.sh --version 0.5.1      # VERSION="${GITHUB_REF_NAME#v}"
 ```
 
 — i.e. **exactly the command you would run locally**, without `--publish` — and
@@ -160,7 +164,7 @@ branch."* So:
 
 ```bash
 git push                                   # make sure the default branch tip IS the commit you want
-tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
+tools/make_release.sh --version 0.5.1-rc1 --profile all --publish --prerelease
 git fetch --tags origin                    # pull down the tag gh just made
 ```
 
@@ -169,7 +173,7 @@ if the release already exists the script uploads with `--clobber`.
 
 > **Why not tag locally first?** If you create a local *annotated* tag and let
 > gh create the remote one, the two are different objects, and pushing yours
-> afterwards is **rejected** — verified: `! [rejected] v0.3.0 -> v0.3.0
+> afterwards is **rejected** — verified: `! [rejected] v0.5.1 -> v0.5.1
 > (already exists)` — even when both point at the same commit. You are then
 > left with a lightweight remote tag and an unpushable local one. If you want a
 > proper annotated tag on the remote, push the tag first and let route 1 do the
@@ -219,9 +223,9 @@ cmake --build build\windows-qgis --target `
   lsdtt-channel-network-analysis
 
 # package (BuildDir defaults to build/windows-qgis, CliProfile to qgis)
-.\tools\package_windows_backend.ps1 -Version 0.3.0
+.\tools\package_windows_backend.ps1 -Version 0.5.1
 
-gh release upload v0.3.0 dist\lsdtt3-backend-win64-qgis-v0.3.0.zip
+gh release upload v0.5.1 dist\lsdtt3-backend-win64-qgis-v0.5.1.zip
 ```
 
 `-DLSDTT_OPENMP=OFF` is not optional on MSVC — see the building-from-source note.
@@ -268,9 +272,9 @@ cmake -S . -B build/macos-core -DCMAKE_BUILD_TYPE=Release
 cmake --build build/macos-core -j"$(sysctl -n hw.ncpu)"
 
 # BuildDir defaults to build/macos-core, cli-profile to core
-tools/package_macos_backend.sh --version 0.3.0
+tools/package_macos_backend.sh --version 0.5.1
 
-gh release upload v0.3.0 dist/lsdtt3-backend-macos-arm64-core-v0.3.0.tar.gz
+gh release upload v0.5.1 dist/lsdtt3-backend-macos-arm64-core-v0.5.1.tar.gz
 ```
 
 Bundles are architecture-specific: package on Apple Silicon for `arm64` users,
@@ -280,15 +284,15 @@ machines separately and upload both tarballs with `gh release upload --clobber`.
 #### Replacing a bundle already attached
 
 ```bash
-gh release upload v0.3.0 dist/<bundle> --clobber
+gh release upload v0.5.1 dist/<bundle> --clobber
 ```
 
 ### Managing the release itself
 
 ```bash
-gh release view   v0.3.0                  # what is attached, and the notes
+gh release view   v0.5.1                  # what is attached, and the notes
 gh release list                           # all releases
-gh release create v0.3.0 --generate-notes # notes from merged PRs/commits
+gh release create v0.5.1 --generate-notes # notes from merged PRs/commits
 ```
 
 > `gh release edit` — for promoting a draft or an rc in place — **does not exist
@@ -304,15 +308,15 @@ Order matters: delete the release before the tag, or you leave a release
 pointing at a tag that no longer exists.
 
 ```bash
-gh release delete v0.3.0 --yes    # remove the GitHub release
-git tag -d v0.3.0                 # delete locally
-git push origin --delete v0.3.0   # delete on the remote
+gh release delete v0.5.1 --yes    # remove the GitHub release
+git tag -d v0.5.1                 # delete locally
+git push origin --delete v0.5.1   # delete on the remote
 ```
 
 > **Do not move a tag that others may have pulled.** Re-pointing a published tag
 > (`git tag -f` + `git push --force`) means two people can have different code
 > under the same version, and anyone who already fetched it keeps the old commit
-> silently. Cut `v0.3.1` instead. Deleting is only safe in the minutes after a
+> silently. Cut `v0.5.2` instead. Deleting is only safe in the minutes after a
 > mistake, before anyone has fetched.
 
 ### Checking what you are about to release
@@ -335,7 +339,7 @@ by GitHub Actions. In order it:
    exact `v*` tag on HEAD (`git describe --tags --exact-match`). With
    `--version` it does not consult git for the version at all.
 2. **Checks it against `project(lsdtt3 VERSION ...)`** in CMakeLists.txt and
-   aborts on a mismatch. A pre-release (`0.3.0-rc1`) compares only the `0.3.0`
+   aborts on a mismatch. A pre-release (`0.5.1-rc1`) compares only the `0.5.1`
    stem and warns instead of failing.
 3. **Configures and builds** `build/release` (Release, Eigen on),
    unless `--skip-build`.
@@ -350,16 +354,16 @@ version lookup in step 1 and the dirty-tree check (a warning, not an error).
 
 ```bash
 # local test build only (artifact in dist/), default core profile
-tools/make_release.sh --version 0.3.0
+tools/make_release.sh --version 0.5.1
 
 # on an already-tagged commit: version taken from the tag
 tools/make_release.sh
 
 # local prerelease with every CLI, published to GitHub (zero Actions minutes)
-tools/make_release.sh --version 0.3.0-rc1 --profile all --publish --prerelease
+tools/make_release.sh --version 0.5.1-rc1 --profile all --publish --prerelease
 
 # repack an existing build without rebuilding
-tools/make_release.sh --version 0.3.0 --skip-build --build-dir build
+tools/make_release.sh --version 0.5.1 --skip-build --build-dir build
 ```
 
 `tools/make_release.sh --help` lists every flag.
@@ -374,13 +378,25 @@ scripts).
 |---|---|---|
 | `qgis` | small subset wired into the QGIS plugin | Windows bundles |
 | `core` | tested tools for official releases | Linux and macOS bundles, CI |
-| `all` | every `lsdtt-*` executable in the build dir (excl. `lsdtt-test-*`) | local releases only |
+| `all` | every current `lsdtt_cli()` target found in the build dir (excl. `lsdtt-test-*`) | local releases only |
+
+`core` has a rule: a CLI belongs in it when at least one CTest test exercises
+it. That makes "tested tools" checkable rather than a matter of memory —
+cross-tabulate the `lsdtt_cli()` targets in `CMakeLists.txt` against
+`tests/CMakeLists.txt`. Two entries predate the rule and are kept because they
+already ship; `cli_profiles.txt` names them.
+
+`all` resolves against `CMakeLists.txt`, not just the directory listing. A
+build tree that has been around for a while holds binaries for tools since
+renamed or removed, and nothing about the file says so — packaging one ships a
+tool with no source behind it. Anything not a current `lsdtt_cli()` target is
+skipped with a warning naming it.
 
 Select with `--profile` on `make_release.sh`, `--cli-profile` on the bash
 packaging scripts, or `-CliProfile` on the PowerShell script. An explicit
 `--cli` / `-CliNames` list overrides the profile (bundle labelled `custom`).
 The profile appears in the bundle filename, e.g.
-`lsdtt3-backend-linux-x86_64-core-v0.3.0.tar.gz`.
+`lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz`.
 
 Windows and macOS bundles are built by hand on the respective machines
 with the per-platform scripts below, then attached with
@@ -402,6 +418,51 @@ one activation command, and the tools work. Each bundle contains a generated
 covers Google Colab). Every script ends with a **self-containment check**
 that fails the packaging if any staged binary has a dependency that is
 neither bundled nor OS-provided — a broken bundle cannot ship silently.
+
+Three further gates exist because this build degrades quietly when a library
+is absent — a missing optional dependency is a CMake `STATUS` or warning, never
+an error:
+
+- **Version.** All three packaging scripts now check the version they were
+  given against `project(lsdtt3 VERSION ...)`, so a hand-typed `--version` on
+  Windows or macOS cannot mislabel a bundle.
+- **Optional dependencies.** `make_release.sh` reads the CMake configure log
+  and refuses to release without FFTW3, Eigen3 and netCDF. macOS checks what it
+  can from the binaries (`otool -L` for netCDF); Eigen is header-only and
+  leaves no trace, so nothing can see it at packaging time. Windows is exempt:
+  its documented flow configures `-DLSDTT_EIGEN=OFF -DLSDTT_OPENMP=OFF` on
+  purpose for the reduced QGIS bundle.
+- **Bundled cosmo data.** `share/lsdtt3/crn_parameters.nc` missing is a hard
+  error when a `lsdtt-cosmo-*` tool is in the bundle, on all three platforms.
+
+## `generate_cli_reference.py`
+
+Keeps the per-CLI parameter tables in `docs/cli_reference/` identical to what
+the binaries actually accept. Each of the 40 pages carries a block between
+`<!-- BEGIN GENERATED CLI PARAMETERS -->` and `<!-- END ... -->`; the script
+runs every CLI with `-h json` and rewrites that block. Text outside the markers
+is hand-written and is left alone.
+
+**This is checked, not merely available.** Two places run it with `--check`,
+which rewrites nothing and exits non-zero if any page has drifted:
+
+- `.github/workflows/release.yml` — after the build, before anything is
+  uploaded, so a stale page stops a release rather than shipping with it.
+- CTest, as `unit_cli_reference_is_current`, when the build is configured with
+  `-DLSDTT_ENABLE_PYTHON_TESTS=ON`. A default configure does not register it.
+
+So if you add, rename or re-describe a CLI parameter, the docs are now wrong
+and CI will say so. Fix it by regenerating:
+
+```bash
+python3 tools/generate_cli_reference.py --update --bin-dir build
+python3 tools/generate_cli_reference.py --check --bin-dir build   # confirm clean
+```
+
+It needs built binaries — `--bin-dir` points at the build directory holding
+them, and the CLI must already be built for its page to be regenerated.
+
+---
 
 ## `package_linux_backend.sh`
 
@@ -433,8 +494,8 @@ neither bundled nor OS-provided — a broken bundle cannot ship silently.
 ### Usage
 
 ```bash
-tools/package_linux_backend.sh --version 0.2.0
-tools/package_linux_backend.sh --version 0.2.0 --build-dir build/minimal-linux --cli lsdtt-chi-analysis
+tools/package_linux_backend.sh --version 0.5.1
+tools/package_linux_backend.sh --version 0.5.1 --build-dir build/minimal-linux --cli lsdtt-chi-analysis
 ```
 
 ### End-user install (also in the bundle's README.md)
@@ -506,8 +567,8 @@ later cell.
 ### Usage
 
 ```powershell
-.\tools\package_windows_backend.ps1 -Version 0.2.0
-.\tools\package_windows_backend.ps1 -Version 0.2.0 -BuildDir build/windows-qgis -OutDir dist
+.\tools\package_windows_backend.ps1 -Version 0.5.1
+.\tools\package_windows_backend.ps1 -Version 0.5.1 -BuildDir build/windows-qgis -OutDir dist
 ```
 
 ### End-user install (also in the bundle's README.md)
@@ -561,7 +622,7 @@ shipping a broken bundle.
 ### Usage
 
 ```bash
-tools/package_macos_backend.sh --version 0.2.0
+tools/package_macos_backend.sh --version 0.5.1
 ```
 
 ## Design notes (why it is done this way)
@@ -569,7 +630,7 @@ tools/package_macos_backend.sh --version 0.2.0
 - **No symlinks in bundles.** Linux sonames and macOS install names are
   satisfied by staging the real file under the exact name the loader
   searches for. This keeps one workflow across build hosts and avoids the
-  v0.2.0 failure where soname links were lost and users hit
+  v0.5.1 failure where soname links were lost and users hit
   `libgdal.so.30: cannot open shared object file`.
 - **Fail-hard verification.** Each script ends by checking the staged
   closure is complete. Silent gaps (the pre-fix scripts silently skipped
