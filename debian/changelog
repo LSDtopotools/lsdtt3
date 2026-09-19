@@ -1,4 +1,4 @@
-lsdtt3 (0.5.1) unstable; urgency=medium
+lsdtt3 (0.5.1) jammy; urgency=medium
 
   * Initial Debian packaging of lsdtt3.
 

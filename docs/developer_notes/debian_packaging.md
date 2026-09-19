@@ -39,25 +39,58 @@ lsdtt3/
 │   ├── control        — package metadata and dependencies
 │   ├── rules          — build instructions (a Makefile, driven by debhelper)
 │   ├── changelog      — version history (required by Debian policy)
+│   ├── copyright      — DEP-5 copyright and the full AGPL-3 text
+│   ├── smoke-test.sh  — post-build and post-install checks (see below)
 │   └── source/format  — source package format
 ├── src/
 ├── CMakeLists.txt
 └── ...
 ```
 
+Those six files are the whole component, and all six are committed. Everything
+else that appears under `debian/` during a build — `debian/lsdtt3/`,
+`debian/.debhelper/`, `debian/files`, `*.substvars` — is generated and
+gitignored.
+
 There is deliberately **no `debian/compat`**. The compatibility level is set
 once, by `debhelper-compat (= 13)` in `Build-Depends`. Specifying it in both
 places is a fatal error — debhelper stops with *"Please specify the compatibility
 level exactly once"*.
 
-`debian/rules` must be executable. On WSL over NTFS a `chmod +x` is invisible
-to git, so if you have just created or restored the file, tell git about it
-explicitly:
+### Two traps on WSL
+
+**You cannot build the package under `/mnt/c`.** The drive is mounted without
+the `metadata` option, so every file reports mode 777 and `chmod` does nothing.
+`dpkg-deb` refuses a control directory more permissive than 0775 and the build
+dies at the very last step, after the full compile:
+
+```
+dpkg-deb: error: control directory has bad permissions 777 (must be >=0775 and <=0775)
+```
+
+Copy the tree to a Linux-native path and build there. Copy only what git
+tracks, or you will also copy `.pixi/` and `build/`:
 
 ```bash
-chmod +x debian/rules
-git update-index --chmod=+x debian/rules
+mkdir -p ~/lsdtt3-debbuild
+git ls-files -z > /tmp/tracked.z
+rsync -a --from0 --files-from=/tmp/tracked.z . ~/lsdtt3-debbuild/
+cd ~/lsdtt3-debbuild && dpkg-buildpackage -us -uc -b -rfakeroot
 ```
+
+**`debian/rules` and `debian/smoke-test.sh` must be executable**, and for the
+same reason git cannot see the exec bit on this filesystem — `core.filemode` is
+`false`, so git knows only what the index records. Any unstage-and-re-add
+silently drops it back to `100644`, and neither `git status` nor `ls -l` will
+tell you:
+
+```bash
+git update-index --chmod=+x debian/rules debian/smoke-test.sh
+git ls-tree HEAD debian/        # both must read 100755
+```
+
+A `debian/rules` committed non-executable means `dpkg-buildpackage` fails
+immediately for everyone who clones the repository.
 
 ### debian/control
 
@@ -81,7 +114,7 @@ requirement only.
 
 ### debian/rules
 
-Three things are worth knowing about it.
+Four things are worth knowing about it.
 
 **The tests are turned off.** The top-level `CMakeLists.txt` calls
 `include(CTest)`, so `BUILD_TESTING` defaults to `ON`. Left alone, every
@@ -105,6 +138,26 @@ take the bundled cosmo parameter file with it.
 headers, which are useful for a development package but dead weight in a
 binary one. `override_dh_auto_install` removes them. If you ever want an
 `lsdtt3-dev` package, that is where to start.
+
+**Smoke checks run in place of the test suite.** With `BUILD_TESTING=OFF`
+nothing else in the build confirms that a single binary runs, so
+`debian/smoke-test.sh` is called twice:
+
+| Hook | Mode | Checks |
+|---|---|---|
+| `override_dh_auto_test` | `built <build-dir>` | every `lsdtt-*` starts, initialises GDAL and exits 0 on `--version`, and reports a GDAL version; at least 40 programs built; `lsdtt-spectral-analysis` exists (FFTW3 was found); `lsdtt-cosmo-tool` links `libnetcdf` (the cosmo corrections are in) |
+| `override_dh_auto_install` | `staged <destdir>` | ≥40 programs in `usr/bin`; `usr/share/lsdtt3/crn_parameters.nc` present; no static libraries or headers left staged |
+
+These take seconds and catch the packaging-specific failures a unit test
+cannot see: a binary that will not start, a tool missing because an optional
+dependency was absent at configure time, or the bundled cosmo data not reaching
+its installed location. A successful run prints:
+
+```
+smoke-test: 40 programs started, reported GDAL/PROJ and exited 0
+smoke-test: optional dependencies present: FFTW3 (spectral analysis), netCDF (cosmo corrections)
+smoke-test: 40 programs in usr/bin, crn_parameters.nc present, no static libs or headers
+```
 
 ---
 
@@ -155,9 +208,24 @@ Add a new entry with `dch` rather than editing the file by hand; the format is
 strict:
 
 ```bash
-dch --newversion 0.5.2 "Release 0.5.2."
+dch --newversion 0.5.2 --distribution jammy "Release 0.5.2."
 dch --release ""
 ```
+
+**The distribution field must name the Ubuntu series you are building for**, not
+a Debian suite. Leaving it as `unstable` makes lintian report
+`E: bad-distribution-in-changes-file`. Since a separate `.deb` is built on each
+target release anyway (see [Building for multiple Ubuntu
+versions](#building-for-multiple-ubuntu-versions)), set it to match the machine
+you are on — `jammy` on 22.04, `noble` on 24.04:
+
+```bash
+dch --distribution "$(lsb_release -cs)" --release ""
+```
+
+The field only appears in the `.changes` file, which matters for an upload to an
+archive; it does not affect the `.deb` itself or a repository served with
+`dpkg-scanpackages`.
 
 One thing to know about what the binaries report: `CMakeLists.txt` captures
 `git describe` at configure time, so `lsdtt-<tool> --version` prints the plain
@@ -202,9 +270,21 @@ skips the clean step. To start genuinely fresh, `debian/rules clean` (or
 lintian ../lsdtt3_0.5.1_amd64.deb
 ```
 
-Lintian checks the package against Debian policy. Warnings about missing man
-pages and a non-official maintainer address are expected for a personal
-distribution — errors should be investigated.
+Lintian checks the package against Debian policy. A clean run for this package
+looks like this:
+
+- **40 × `W: no-manual-page`** — one per CLI, expected. The tools document
+  themselves through `--help` and the docs site rather than man pages.
+- **Nothing else on the `.deb`.** No `no-copyright-file`, no static-library or
+  embedded-library tags, no permission or ownership tags.
+
+Run it on the `.changes` file instead of the `.deb` and you also get the debug
+package, which adds **`W: elf-error ... Unable to find program interpreter
+name`** once per build-id. That is lintian failing to parse a detached `.debug`
+file as a complete ELF executable — it is a known false positive for every
+`-dbgsym` package, not a defect in this one.
+
+Anything else should be investigated.
 
 ---
 
