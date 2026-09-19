@@ -38,18 +38,56 @@ $ErrorActionPreference = "Stop"
 # lsdtt-*.exe in the build directory (excluding lsdtt-test-*).
 # ---------------------------------------------------------------------------
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRootEarly = (Resolve-Path (Join-Path $scriptDir "..")).Path
+$cmakeLists = Join-Path $repoRootEarly "CMakeLists.txt"
+
+# The version is typed by hand here, unlike the Linux path where
+# make_release.sh derives and checks it. Mislabelling a bundle is silent and
+# permanent once published, so check it against the single source of truth.
+$cmakeVersion = (Select-String -Path $cmakeLists -Pattern '^project\(lsdtt3 VERSION ([0-9.]+)' |
+    Select-Object -First 1).Matches.Groups[1].Value
+if (-not $cmakeVersion) {
+    throw "Could not read project version from $cmakeLists"
+}
+$versionStem = ($Version -split '-')[0]
+if ($Version -eq $versionStem) {
+    if ($Version -ne $cmakeVersion) {
+        throw ("Packaging version $Version but CMakeLists.txt says $cmakeVersion. " +
+               "Bump project(lsdtt3 VERSION ...) or pass the matching -Version.")
+    }
+}
+elseif ($versionStem -ne $cmakeVersion) {
+    Write-Warning "Pre-release stem $versionStem != CMake version $cmakeVersion (continuing)"
+}
+
+# The CLIs that currently exist are declared in CMakeLists.txt. A long-lived
+# build tree also holds binaries for tools since renamed or removed; they look
+# identical by name, so packaging one ships a tool with no source behind it.
+$knownClis = @(Select-String -Path $cmakeLists -Pattern '^\s*lsdtt_cli\((lsdtt-[A-Za-z0-9_-]+)' |
+    ForEach-Object { $_.Matches.Groups[1].Value })
+
 if ($CliNames.Count -gt 0) {
     $CliProfile = "custom"
 }
 elseif ($CliProfile -eq "all") {
+    if ($knownClis.Count -eq 0) {
+        throw "Could not read any lsdtt_cli() targets from $cmakeLists"
+    }
     $exeDirs = @($BuildDir, (Join-Path $BuildDir "bin")) | Where-Object { Test-Path $_ }
-    $CliNames = $exeDirs |
+    $discovered = $exeDirs |
         ForEach-Object { Get-ChildItem -Path $_ -Filter "lsdtt-*.exe" -File -ErrorAction SilentlyContinue } |
         Where-Object { $_.BaseName -notlike "lsdtt-test-*" } |
         ForEach-Object { $_.BaseName } |
         Sort-Object -Unique
+    $stale = @($discovered | Where-Object { $knownClis -notcontains $_ })
+    $CliNames = @($discovered | Where-Object { $knownClis -contains $_ })
+    if ($stale.Count -gt 0) {
+        Write-Warning ("Skipping $($stale.Count) stale binaries in $BuildDir no longer " +
+                       "lsdtt_cli() targets in CMakeLists.txt: " + ($stale -join ", ") +
+                       ". Delete them, or build into a clean directory, to silence this.")
+    }
     if ($CliNames.Count -eq 0) {
-        throw "CliProfile 'all' found no lsdtt-*.exe in $BuildDir"
+        throw "CliProfile 'all' found no current lsdtt-*.exe in $BuildDir"
     }
     Write-Host "Profile 'all': packaging $($CliNames.Count) CLIs discovered in the build directory"
 }
@@ -294,6 +332,28 @@ Assert-SelfContained -TargetBin $stageBin
 Copy-Item -Path $gdalData -Destination (Join-Path $stageShare "gdal") -Recurse -Force
 Copy-Item -Path $projData -Destination (Join-Path $stageShare "proj") -Recurse -Force
 
+# lsdtt3 bundled runtime data. The cosmo tools resolve crn_parameters.nc as
+# <exe>\..\share\lsdtt3, the same bin/../share contract as the GDAL and PROJ
+# data above, so it must be staged here or those tools cannot run without a
+# download. Missing data is an error when a cosmo CLI is in the bundle; for a
+# profile with none (the qgis default) it is only a warning.
+$crnSource = Join-Path $repoRoot "data/crn_parameters.nc"
+$cosmoStaged = @($CliNames | Where-Object { $_ -like "lsdtt-cosmo-*" })
+if (Test-Path $crnSource) {
+    $stageLsdtt = Join-Path $stageShare "lsdtt3"
+    New-Item -ItemType Directory -Path $stageLsdtt -Force | Out-Null
+    Copy-Item -Path $crnSource -Destination $stageLsdtt -Force
+    Write-Host "Staged crn_parameters.nc into share/lsdtt3"
+}
+elseif ($cosmoStaged.Count -gt 0) {
+    throw ("data/crn_parameters.nc not found, but this bundle ships " +
+           ($cosmoStaged -join ", ") +
+           " which need it at bin/../share/lsdtt3")
+}
+else {
+    Write-Warning "data/crn_parameters.nc not found; bundle ships no cosmo CLIs, continuing"
+}
+
 $licensePath = Join-Path $repoRoot "LICENSE"
 if (Test-Path $licensePath) {
     Copy-Item -Path $licensePath -Destination (Join-Path $stage "LICENSE") -Force
@@ -373,6 +433,7 @@ You need to repeat step 4 in every new PowerShell window.
 - `bin\` -- the lsdtt command-line tools and their DLLs:
 @TOOL_LIST@
 - `share\gdal`, `share\proj` -- support data needed at runtime
+- `share\lsdtt3` -- bundled lsdtt3 data (cosmogenic nuclide parameters)
 - `setenv.ps1` -- sets up PATH and data paths for the current session
 - `manifest.json` -- version info and SHA256 checksums
 '@
@@ -402,6 +463,9 @@ $filesForHash += Get-Item (Join-Path $stage "README.md")
 $filesForHash += Get-ChildItem $stageBin -File
 $filesForHash += Get-ChildItem (Join-Path $stageShare "gdal") -Recurse -File
 $filesForHash += Get-ChildItem (Join-Path $stageShare "proj") -Recurse -File
+if (Test-Path (Join-Path $stageShare "lsdtt3")) {
+    $filesForHash += Get-ChildItem (Join-Path $stageShare "lsdtt3") -Recurse -File
+}
 foreach ($f in $filesForHash) {
     $rel = $f.FullName.Substring($stage.Length + 1).Replace('\', '/')
     $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()

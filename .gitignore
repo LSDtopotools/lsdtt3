@@ -173,3 +173,29 @@ point_input_test_output/
 # -----------------------------------------------------------------------------
 .claude/
 src/resume_claude.txt
+
+# -----------------------------------------------------------------------------
+# Debian packaging build output
+#
+# The package definition itself IS committed: debian/control, debian/rules,
+# debian/changelog, debian/source/format and debian/smoke-test.sh. Everything
+# listed below is produced by dpkg-buildpackage - debhelper's out-of-tree CMake
+# build directory, the staged package root, debhelper's own bookkeeping, and
+# the built artefacts. Note that dpkg writes the .deb one level ABOVE the
+# source tree, so the artefact patterns here are belt-and-braces.
+#
+# The package cannot be built on a /mnt/c (NTFS) path: every file reports mode
+# 777 there and dpkg-deb rejects a control directory more permissive than 0775.
+# Build from a Linux-native directory. See docs/developer_notes/debian_packaging.md
+# -----------------------------------------------------------------------------
+obj-*/
+debian/lsdtt3/
+debian/.debhelper/
+debian/files
+debian/*.substvars
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+*.deb
+*.ddeb
+*.buildinfo
+*.changes

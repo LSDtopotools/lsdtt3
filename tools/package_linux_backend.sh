@@ -125,6 +125,13 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The CLIs that currently exist are declared in CMakeLists.txt. A long-lived
+# build tree also holds binaries for tools since renamed or removed; they look
+# identical by name and mode, so packaging one ships a tool with no source.
+current_cli_targets() {
+    sed -n 's/^[[:space:]]*lsdtt_cli(\(lsdtt-[A-Za-z0-9_-]*\).*/\1/p' "$REPO_ROOT/CMakeLists.txt"
+}
+
 if [[ "$BUILD_DIR" = /* ]]; then
     BUILD_ABS="$(realpath "$BUILD_DIR")"
 else
@@ -145,6 +152,12 @@ fi
 # 'all' profile: discover every built lsdtt-* executable (skip test harnesses).
 if [[ "$CLI_PROFILE" == "all" ]]; then
     declare -A seen_cli
+    known="$(current_cli_targets)"
+    if [[ -z "$known" ]]; then
+        echo "ERROR: could not read any lsdtt_cli() targets from CMakeLists.txt" >&2
+        exit 1
+    fi
+    stale=""
     for exe in "$BUILD_ABS"/lsdtt-* "$BUILD_ABS"/bin/lsdtt-*; do
         [[ -f "$exe" && -x "$exe" ]] || continue
         name="$(basename "$exe")"
@@ -152,8 +165,17 @@ if [[ "$CLI_PROFILE" == "all" ]]; then
         [[ "$name" == lsdtt-test-* ]] && continue
         [[ -n "${seen_cli[$name]:-}" ]] && continue
         seen_cli[$name]=1
+        if ! grep -qx "$name" <<<"$known"; then
+            stale="$stale $name"
+            continue
+        fi
         CLI_NAMES+=("$name")
     done
+    if [[ -n "$stale" ]]; then
+        echo "WARNING: skipping stale binaries in $BUILD_ABS that are no longer" >&2
+        echo "lsdtt_cli() targets in CMakeLists.txt:$stale" >&2
+        echo "Delete them, or build into a clean directory, to silence this." >&2
+    fi
     if [[ ${#CLI_NAMES[@]} -eq 0 ]]; then
         echo "ERROR: --cli-profile all found no lsdtt-* executables in $BUILD_ABS" >&2
         exit 1
@@ -353,10 +375,24 @@ fi
 cp -a "$GDAL_DATA_DIR" "$STAGE_SHARE/gdal"
 cp -a "$PROJ_DATA_DIR" "$STAGE_SHARE/proj"
 
-# lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3)
+# lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3).
+# Missing data is fatal when a cosmo CLI is in the bundle: those tools would
+# ship unable to run without a download, and nothing downstream would notice -
+# the self-containment check covers libraries, not data.
 if [[ -f "$REPO_ROOT/data/crn_parameters.nc" ]]; then
     mkdir -p "$STAGE_SHARE/lsdtt3"
     cp -a "$REPO_ROOT/data/crn_parameters.nc" "$STAGE_SHARE/lsdtt3/"
+else
+    cosmo_staged=""
+    for name in "${CLI_NAMES[@]}"; do
+        case "$name" in lsdtt-cosmo-*) cosmo_staged="$cosmo_staged $name" ;; esac
+    done
+    if [[ -n "$cosmo_staged" ]]; then
+        echo "ERROR: $REPO_ROOT/data/crn_parameters.nc not found, but this bundle ships" >&2
+        echo "$cosmo_staged - they need it at bin/../share/lsdtt3" >&2
+        exit 1
+    fi
+    echo "WARNING: data/crn_parameters.nc not found; bundle ships no cosmo CLIs, continuing" >&2
 fi
 
 if [[ -f "$REPO_ROOT/LICENSE" ]]; then

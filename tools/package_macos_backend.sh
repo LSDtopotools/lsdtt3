@@ -143,6 +143,33 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The version is typed by hand here, unlike the Linux path where
+# make_release.sh derives and checks it. Mislabelling a bundle is silent and
+# permanent once published, so check it the same way make_release.sh does:
+# exact match for a release, stem match for a pre-release such as 0.5.1-rc1.
+cmake_version="$(sed -n 's/^project(lsdtt3 VERSION \([0-9.]*\).*/\1/p' "$REPO_ROOT/CMakeLists.txt")"
+if [[ -z "$cmake_version" ]]; then
+    echo "ERROR: could not read project version from $REPO_ROOT/CMakeLists.txt" >&2
+    exit 1
+fi
+version_stem="${VERSION%%-*}"
+if [[ "$VERSION" == "$version_stem" ]]; then
+    if [[ "$VERSION" != "$cmake_version" ]]; then
+        echo "ERROR: packaging version $VERSION but CMakeLists.txt says $cmake_version." >&2
+        echo "Bump project(lsdtt3 VERSION ...) or pass the matching --version." >&2
+        exit 1
+    fi
+elif [[ "$version_stem" != "$cmake_version" ]]; then
+    echo "WARNING: pre-release stem $version_stem != CMake version $cmake_version (continuing)" >&2
+fi
+
+# The CLIs that currently exist are declared in CMakeLists.txt. A long-lived
+# build tree also holds binaries for tools since renamed or removed, and they
+# look identical by name and mode; packaging one ships a tool with no source.
+current_cli_targets() {
+    sed -n 's/^[[:space:]]*lsdtt_cli(\(lsdtt-[A-Za-z0-9_-]*\).*/\1/p' "$REPO_ROOT/CMakeLists.txt"
+}
+
 # macOS ships no realpath on older systems; use python3 everywhere for it.
 realpath_py() {
     python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
@@ -168,13 +195,28 @@ fi
 # 'all' profile: discover every built lsdtt-* executable (skip test
 # harnesses). Portable dedupe - no associative arrays on bash 3.2.
 if [[ "$CLI_PROFILE" == "all" ]]; then
+    known="$(current_cli_targets)"
+    if [[ -z "$known" ]]; then
+        echo "ERROR: could not read any lsdtt_cli() targets from CMakeLists.txt" >&2
+        exit 1
+    fi
+    stale=""
     for exe in "$BUILD_ABS"/lsdtt-* "$BUILD_ABS"/bin/lsdtt-*; do
         [[ -f "$exe" && -x "$exe" ]] || continue
         name="$(basename "$exe")"
         case "$name" in *.*|lsdtt-test-*) continue ;; esac
         case " ${CLI_NAMES[*]:-} " in *" $name "*) continue ;; esac
+        if ! printf '%s\n' "$known" | grep -qx "$name"; then
+            case " $stale " in *" $name "*) ;; *) stale="$stale $name" ;; esac
+            continue
+        fi
         CLI_NAMES+=("$name")
     done
+    if [[ -n "$stale" ]]; then
+        echo "WARNING: skipping stale binaries in $BUILD_ABS that are no longer" >&2
+        echo "lsdtt_cli() targets in CMakeLists.txt:$stale" >&2
+        echo "Delete them, or build into a clean directory, to silence this." >&2
+    fi
     if [[ ${#CLI_NAMES[@]} -eq 0 ]]; then
         echo "ERROR: --cli-profile all found no lsdtt-* executables in $BUILD_ABS" >&2
         exit 1
@@ -398,6 +440,54 @@ if [[ $MISSING -ne 0 ]]; then
     exit 1
 fi
 
+# ---- Optional dependencies and a smoke run -----------------------------------
+# The Linux path gets these from make_release.sh, which reads the CMake
+# configure log; a macOS bundle is packaged by hand from an existing build
+# directory, so the only evidence available is the binaries themselves.
+#
+# This matters because every optional dependency degrades SILENTLY: a missing
+# library is a CMake STATUS or WARNING, never an error, and the affected tools
+# still build, still run, and still exit 0. netCDF is the case with teeth - the
+# cosmo tools then fall back to the standard atmosphere and return plausible,
+# different numbers.
+#
+# Eigen3 is deliberately not checked: it is header-only, so a build without it
+# leaves no trace in the linked binary. Nothing here can see that.
+for name in "${CLI_NAMES[@]}"; do
+    case "$name" in
+        lsdtt-cosmo-*)
+            if ! otool -L "$STAGE_BIN/$name" 2>/dev/null | grep -q netcdf; then
+                echo "ERROR: $name is not linked against libnetcdf - ERA40 atmosphere" >&2
+                echo "and palaeomagnetic corrections were compiled out. The tool still runs," >&2
+                echo "silently using the standard atmosphere. Install netCDF and rebuild." >&2
+                exit 1
+            fi
+            break
+            ;;
+    esac
+done
+
+# Every staged program must start, load its libraries, initialise GDAL and exit
+# cleanly. -v reports the GDAL and PROJ actually loaded, so checking the output
+# and not merely the exit status is what catches a binary that resolved against
+# the wrong GDAL.
+for name in "${CLI_NAMES[@]}"; do
+    if ! v_out="$("$STAGE_BIN/$name" -v 2>&1)"; then
+        echo "ERROR: smoke check failed: $name -v returned nonzero" >&2
+        echo "$v_out" >&2
+        exit 1
+    fi
+    case "$v_out" in
+        *GDAL*) ;;
+        *)
+            echo "ERROR: smoke check failed: $name -v did not report a GDAL version" >&2
+            echo "$v_out" >&2
+            exit 1
+            ;;
+    esac
+done
+echo "Smoke check passed: ${#CLI_NAMES[@]} staged programs started and reported GDAL"
+
 # ---- GDAL / PROJ data --------------------------------------------------------
 find_proj_data_dir() {
     if [[ -n "${PROJ_LIB:-}" && -f "${PROJ_LIB}/proj.db" ]]; then
@@ -445,10 +535,23 @@ fi
 cp -R "$GDAL_DATA_DIR" "$STAGE_SHARE/gdal"
 cp -R "$PROJ_DATA_DIR" "$STAGE_SHARE/proj"
 
-# lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3)
+# lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3).
+# Missing data is fatal when a cosmo CLI is in the bundle: those tools would
+# ship unable to run without a download, and nothing downstream would notice.
 if [[ -f "$REPO_ROOT/data/crn_parameters.nc" ]]; then
     mkdir -p "$STAGE_SHARE/lsdtt3"
     cp -R "$REPO_ROOT/data/crn_parameters.nc" "$STAGE_SHARE/lsdtt3/"
+else
+    cosmo_staged=""
+    for name in "${CLI_NAMES[@]}"; do
+        case "$name" in lsdtt-cosmo-*) cosmo_staged="$cosmo_staged $name" ;; esac
+    done
+    if [[ -n "$cosmo_staged" ]]; then
+        echo "ERROR: $REPO_ROOT/data/crn_parameters.nc not found, but this bundle ships" >&2
+        echo "$cosmo_staged - they need it at bin/../share/lsdtt3" >&2
+        exit 1
+    fi
+    echo "WARNING: data/crn_parameters.nc not found; bundle ships no cosmo CLIs, continuing" >&2
 fi
 
 if [[ -f "$REPO_ROOT/LICENSE" ]]; then

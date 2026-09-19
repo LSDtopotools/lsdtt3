@@ -2,6 +2,8 @@
 
 export DH_VERBOSE = 1
 
+include /usr/share/dpkg/architecture.mk
+
 %:
 	dh $@ --buildsystem=cmake
 
@@ -33,3 +35,13 @@ override_dh_auto_install:
 	rm -rf debian/lsdtt3/usr/include/lsdtt3
 	rmdir --ignore-fail-on-non-empty \
 		debian/lsdtt3/usr/lib debian/lsdtt3/usr/include 2>/dev/null || true
+	debian/smoke-test.sh staged debian/lsdtt3
+
+# The CTest suite is off (see above), so nothing else in this build checks that
+# the binaries actually run. These smoke checks cost seconds and catch the
+# packaging-specific failures a unit test cannot: a binary that will not start,
+# a tool missing because an optional dependency was absent at configure time,
+# or the bundled cosmo data file not reaching its installed location.
+# Run the real suite before packaging, not during it.
+override_dh_auto_test:
+	debian/smoke-test.sh built $(CURDIR)/obj-$(DEB_HOST_GNU_TYPE)

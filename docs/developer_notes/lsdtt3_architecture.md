@@ -87,13 +87,6 @@ lsdtt3/
 │   │   ├── cli_parameter_conventions.md
 │   │   └── testing_and_benchmarking.md
 │   └── tex_technical/                      — LaTeX method write-ups (untracked)
-├── graphflood/                             — third-party graph-based flood routing (Gailleton et al.)
-│   ├── graphflood.hpp
-│   ├── graphflood_v2.hpp
-│   ├── fastflood.hpp
-│   ├── fastflood_recorder.hpp
-│   ├── graphflood_enums.hpp
-│   └── graphflood_parts.hpp
 ├── python_helpers/
 │   ├── dem_downloader_instructions.md
 │   └── download_dem_tiles.py
@@ -2829,9 +2822,21 @@ flag comes from `enable_nonlinear_hillslopes`.
 
 ---
 
-## graphflood/ (third-party)
+## Graph-based hydraulic routing (no vendored code)
 
-The `graphflood/` directory contains third-party header-only graph-based flood routing code by Gailleton et al. It is not a CMake library target — it is included directly by `lsdtt_hydraulic_graph_cpu.cpp`. Do not add it as a CMake target or include it from other lsdtt3 modules.
+There is **no `graphflood/` directory and no vendored third-party code**. An
+earlier version of lsdtt3 carried a clone of the graphflood headers, ported in
+from upstream. That is gone: Boris Gailleton, graphflood's author, is a
+developer of lsdtt3 and wrote a native implementation for it.
+
+The routing now lives in `src/cpu/lsdtt_hydraulic_graph_cpu.hpp/.cpp` as
+first-party AGPL-3.0-or-later code implementing `lsdtt_hydraulic_base`, like any
+other CPU module. It includes nothing outside `src/`. The method is still
+Gailleton et al. (2024) and is cited as such in the CLI and the module header —
+an attribution question, not a licensing one.
+
+This matters for packaging: the whole tree is single-licence, which is why
+`debian/copyright` needs no third-party stanza.
 
 ---
 
@@ -2891,8 +2896,8 @@ The `graphflood/` directory contains third-party header-only graph-based flood r
     such as FlatGeobuf
 23. `lsdtt_chi_ksn_inversion_cpu` requires Eigen3 and is compiled only when
     `LSDTT_HAS_EIGEN=1`. Do not include it in code that does not need inversion.
-24. `graphflood/` headers are consumed only by `lsdtt_hydraulic_graph_cpu.cpp`.
-    Do not include them from other lsdtt3 sources.
+24. Hydraulic routing is first-party code in `lsdtt_hydraulic_graph_cpu`; there
+    is no vendored graphflood directory to include from anywhere.
 25. `src/utils/lsdtt_linear_algebra.hpp` and `lsdtt_thread_utils.hpp` are header-only
     with no lsdtt3 or GDAL dependencies — safe to include anywhere in the project.
 26. GPU compute kernels use selective dispatch, not the raster backend. The
