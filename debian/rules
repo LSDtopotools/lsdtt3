@@ -4,6 +4,30 @@ export DH_VERBOSE = 1
 
 include /usr/share/dpkg/architecture.mk
 
+# Building without root: a dependency from a non-system prefix.
+#
+# On a machine where you cannot apt-install anything, Eigen may come from conda
+# or another user-writable prefix. CMakeLists.txt looks for Eigen in CONFIG mode
+# only (find_package(Eigen3 NO_MODULE)), so it needs the directory holding
+# Eigen3Config.cmake - conda puts it in $CONDA_PREFIX/share/eigen3/cmake:
+#
+#   LSDTT_EIGEN3_DIR="$CONDA_PREFIX/share/eigen3/cmake" \
+#       dpkg-buildpackage -us -uc -b -rfakeroot -d
+#
+# The -d is needed as well: dpkg-checkbuilddeps reads the dpkg database and
+# cannot see a conda package, so it refuses before CMake ever runs.
+#
+# Only Eigen is pointed at that prefix, deliberately. Putting the whole prefix
+# on CMAKE_PREFIX_PATH would also let GDAL, FFTW and netCDF resolve there, and
+# the resulting package would depend on libraries that exist only inside that
+# environment - broken on every other machine, and dpkg-shlibdeps would fail
+# trying to map them to a package. Eigen is header-only, so it leaves no trace
+# in the binaries and is safe to take from anywhere.
+EXTRA_CMAKE_ARGS =
+ifneq ($(LSDTT_EIGEN3_DIR),)
+EXTRA_CMAKE_ARGS += -DEigen3_DIR=$(LSDTT_EIGEN3_DIR)
+endif
+
 %:
 	dh $@ --buildsystem=cmake
 
@@ -22,7 +46,8 @@ override_dh_auto_configure:
 	dh_auto_configure -- \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_TESTING=OFF \
-		-DLSDTT_GPU=OFF
+		-DLSDTT_GPU=OFF \
+		$(EXTRA_CMAKE_ARGS)
 
 # The install() rules use destinations relative to CMAKE_INSTALL_PREFIX, which
 # debhelper sets to /usr — so the CLIs already land in usr/bin and the bundled
@@ -43,5 +68,21 @@ override_dh_auto_install:
 # a tool missing because an optional dependency was absent at configure time,
 # or the bundled cosmo data file not reaching its installed location.
 # Run the real suite before packaging, not during it.
+# dh_clean finishes by running find(1) over the whole source tree looking for
+# editor leftovers (*~, *.orig, *.rej, DEADJOE, __pycache__). This repository
+# produces none of those, and the walk has to descend into build/ and .pixi/ -
+# several gigabytes. On network storage, or a Windows drive mounted into WSL,
+# that single find takes longer than compiling the package, and interrupting it
+# aborts the build before anything is configured.
+#
+# Do the removals dh_clean actually needs and skip the sweep. Nothing here
+# affects the built package: dh_auto_clean has already removed the CMake build
+# directory by the time this runs.
+override_dh_clean:
+	rm -f  debian/debhelper-build-stamp
+	rm -rf debian/.debhelper/ debian/tmp/
+	rm -rf debian/lsdtt3/
+	rm -f  debian/files debian/*.substvars debian/*.debhelper.log
+
 override_dh_auto_test:
 	debian/smoke-test.sh built $(CURDIR)/obj-$(DEB_HOST_GNU_TYPE)

@@ -95,6 +95,29 @@ configure time (is pkg-config installed alongside libfftw3-dev?)"
 palaeomagnetic corrections were compiled out (is libnetcdf-dev installed?)"
     fi
     note "optional dependencies present: FFTW3 (spectral analysis), netCDF (cosmo corrections)"
+
+    # A package must link only libraries that exist on a plain system. On a
+    # machine without root the build may run inside conda or another private
+    # prefix, and if CMake resolves GDAL, FFTW or netCDF there instead of in
+    # /usr, the .deb depends on libraries no other machine has - it installs
+    # cleanly and then fails at run time. dpkg-shlibdeps usually catches this,
+    # but it reports it as an unmappable path rather than as the mistake it is.
+    #
+    # Eigen is exempt by nature: header-only, so it never appears here however
+    # it was found.
+    if command -v ldd >/dev/null 2>&1; then
+        for tool in $tools; do
+            private=$(ldd "$tool" 2>/dev/null |
+                grep -oE '/[^ ]*(conda|/envs/|virtualenv)[^ ]*' || true)
+            [ -z "$private" ] && continue
+            fail "$(basename "$tool") links libraries from a private prefix:
+$private
+A package built this way works only where that environment exists. Configure so
+that GDAL, FFTW and netCDF resolve in /usr - do not put the whole prefix on
+CMAKE_PREFIX_PATH (see the LSDTT_EIGEN3_DIR note in debian/rules)."
+        done
+        note "no binary links against a conda or virtualenv prefix"
+    fi
 }
 
 check_staged() {

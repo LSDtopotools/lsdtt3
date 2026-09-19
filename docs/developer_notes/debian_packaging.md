@@ -114,7 +114,7 @@ requirement only.
 
 ### debian/rules
 
-Four things are worth knowing about it.
+Five things are worth knowing about it.
 
 **The tests are turned off.** The top-level `CMakeLists.txt` calls
 `include(CTest)`, so `BUILD_TESTING` defaults to `ON`. Left alone, every
@@ -132,6 +132,19 @@ for it, since they resolve it as `<exe>/../share/lsdtt3`. Nothing in this build
 installs to `/usr/local`; if you find packaging instructions that shuffle files
 out of `/usr/local`, they predate this layout, and a `rm -rf` of that tree would
 take the bundled cosmo parameter file with it.
+
+**The clean step does not walk your source tree.** `dh_clean` normally finishes
+with a `find` over everything, looking for editor leftovers (`*~`, `*.orig`,
+`*.rej`). This repository produces none of those, but the walk descends into
+`build/` and `.pixi/` — gigabytes — and on network storage or a Windows drive
+mounted into WSL that single `find` takes longer than compiling the whole
+package. `override_dh_clean` does the removals debhelper actually needs and
+skips the sweep: 1.4 seconds instead of minutes. Nothing about the built package
+changes; `dh_auto_clean` has already removed the CMake build directory by then.
+
+If you are on a release of debhelper where that override misbehaves, the escape
+hatch is `dpkg-buildpackage -nc`, which skips the clean step altogether. The
+build is out of tree, so nothing stale is reused.
 
 **Static libraries and headers are dropped.** `CMakeLists.txt` also installs
 `liblsdtt3_core.a`, `liblsdtt3_utils.a`, `liblsdtt3_cpu.a` and the public
@@ -158,6 +171,75 @@ smoke-test: 40 programs started, reported GDAL/PROJ and exited 0
 smoke-test: optional dependencies present: FFTW3 (spectral analysis), netCDF (cosmo corrections)
 smoke-test: 40 programs in usr/bin, crn_parameters.nc present, no static libs or headers
 ```
+
+---
+
+## Building without root
+
+On a shared machine where you cannot `apt-get install` anything, two separate
+things block the build, and only one of them is about the compiler.
+
+**`dpkg-checkbuilddeps` reads the dpkg database.** It has no knowledge of conda,
+Spack, modules or anything else in your home directory, so a dependency
+satisfied that way still aborts the build before CMake runs:
+
+```
+dpkg-checkbuilddeps: error: Unmet build dependencies: libeigen3-dev
+```
+
+That check is metadata only. Skip it with `-d`.
+
+**A fresh configure finds nothing your cache remembers.** `debian/rules` builds
+in a clean `obj-<arch>/` directory, so a `CMakeCache.txt` in your usual `build/`
+proves nothing about what the package build will find — a cached `Eigen3_DIR`
+keeps reporting `Eigen3 found` even after you deactivate the environment that
+provided it. To see what the package build sees, configure into an empty
+directory.
+
+`CMakeLists.txt` looks for Eigen in **config mode only**
+(`find_package(Eigen3 NO_MODULE)`), so it needs the directory containing
+`Eigen3Config.cmake`. In a conda environment that is
+`$CONDA_PREFIX/share/eigen3/cmake`. `debian/rules` takes it from
+`LSDTT_EIGEN3_DIR`:
+
+```bash
+conda activate <env>
+LSDTT_EIGEN3_DIR="$CONDA_PREFIX/share/eigen3/cmake" \
+    dpkg-buildpackage -us -uc -b -rfakeroot -d
+```
+
+Confirm it worked by reading `Eigen3 : ON` in the configure block in the build
+log — with `-d` in play, a silently missing Eigen would otherwise produce a
+package without chi inversion.
+
+### Why only Eigen, and not the whole prefix
+
+It is tempting to pass `-DCMAKE_PREFIX_PATH=$CONDA_PREFIX` instead. Do not.
+That also lets GDAL, FFTW and netCDF resolve inside the environment, and the
+resulting package then depends on libraries that exist on no other machine: it
+installs cleanly and fails at run time. `dpkg-shlibdeps` usually catches it, but
+reports it as an unmappable path rather than as the mistake it is.
+
+Eigen is the exception because it is **header-only** — it is compiled into the
+binaries and leaves no entry in `ldd` output, so taking it from a private prefix
+cannot affect what the package depends on. That is why it is safe to point at
+conda and the others are not.
+
+`debian/smoke-test.sh` enforces this: it fails the build if any binary links a
+library from a path containing `conda`, `/envs/` or `virtualenv`, and prints
+
+```
+smoke-test: no binary links against a conda or virtualenv prefix
+```
+
+when the build is clean.
+
+### The package is still a normal package
+
+Nothing about building this way marks the result. Because only Eigen came from
+the private prefix, the `.deb` depends on the same system libraries as any other
+build, and runs on machines with no conda at all. The environment is needed to
+**build**, not to run.
 
 ---
 
