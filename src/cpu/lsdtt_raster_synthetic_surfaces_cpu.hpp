@@ -655,7 +655,8 @@ lsdtt_mountain_range_surface generate_arc_range_surface(
 // Hillslope-strip test-domain generator
 //
 // Produces the 1-D hillslope-strip domains used to validate the transient
-// Roering hillslope solver (see docs/testing_and_benchmarking.md).  The strip varies along a single cross-axis; the orthogonal axis
+// Roering hillslope solver (see docs/developer_notes/testing_and_benchmarking.md).  
+// The strip varies along a single cross-axis; the orthogonal axis
 // is uniform, so every row (or column) is an identical 1-D hillslope profile.
 //
 // Channels are geometry-defined Dirichlet sinks held at baselevel_elevation

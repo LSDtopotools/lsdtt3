@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Flow-routing benchmark driver: lsdtt3 vs RichDEM.
 
-docs/testing_and_benchmarking.md.
+docs/developer_notes/testing_and_benchmarking.md.
 
 Runs an lsdtt3 CLI and the corresponding RichDEM reference over the same fetched
-fixture, computes the comparison metrics of docs/testing_and_benchmarking.md, and writes one row per
+fixture, computes the comparison metrics of docs/developer_notes/testing_and_benchmarking.md, and writes one row per
 comparison to benchmark_results.csv.
 
 Phase 2 scope is the harness: metrics are computed and REPORTED.  Tolerances are
-deliberately not asserted yet -- docs/testing_and_benchmarking.md requires pinning them just above
+deliberately not asserted yet -- docs/developer_notes/testing_and_benchmarking.md requires pinning them just above
 observed divergence once real numbers exist, otherwise a tolerance asserts
 nothing.  Pass --check to enforce whatever tolerances have been pinned in
 TOLERANCES so far.
@@ -53,7 +53,7 @@ REPORT_ONLY = {
 #                wherever the diagonal is lower but a cardinal is steeper.
 #                (Corrected 2026-08-21: its tie-break prefers CARDINALS, and it
 #                passes a planar-ramp oracle -- the divergence is the selection
-#                rule, not ties. See docs/testing_and_benchmarking.md 5.1.)
+#                rule, not ties. See docs/developer_notes/testing_and_benchmarking.md 5.1.)
 # topotoolbox -- true steepest descent, same rule as lsdtt3.
 # whitebox    -- ALSO true steepest descent. MEASURED, not assumed:
 #                tests/scripts/check_whitebox_d8_rule.py builds a cell sitting
@@ -75,7 +75,7 @@ REPORT_ONLY = {
 # and RichDEM's exclusion is a statement about its selection rule rather than a
 # hole in the comparison.
 #
-# See docs/testing_and_benchmarking.md.
+# See docs/developer_notes/testing_and_benchmarking.md.
 REFERENCE_SCRIPTS = {
     "richdem":     "richdem_reference.py",
     "topotoolbox": "topotoolbox_reference.py",
@@ -92,7 +92,7 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 # Fixtures are fetched by the lsdtt3 CLI itself (`lsdtt-fetch-raster`), not by a
 # Python helper -- the Python fetcher was retired once the C++ path was shown to
 # produce byte-identical output. Two terrain regimes, because they
-# diverge very differently: see docs/testing_and_benchmarking.md
+# diverge very differently: see docs/developer_notes/testing_and_benchmarking.md
 #
 # Each fixture is a centre point plus a pixel count. The bounding box is widened
 # by a margin so the exact centre crop cannot run off the edge onto nodata after
@@ -235,7 +235,7 @@ COMPARISONS = {
     },
 
     # -------------------------------------------------------------------------
-    # Flow accumulation (docs/testing_and_benchmarking.md, Phase 4)
+    # Flow accumulation (docs/developer_notes/testing_and_benchmarking.md, Phase 4)
     #
     # Run on the SAME filled DEM that lsdtt3 produced, with raster_is_filled so
     # the drainage CLI does not fill again. That isolates the accumulation
@@ -296,9 +296,9 @@ COMPARISONS = {
 }
 
 # -----------------------------------------------------------------------------
-# Pinned tolerances (docs/testing_and_benchmarking.md, Phase 3)
+# Pinned tolerances (docs/developer_notes/testing_and_benchmarking.md, Phase 3)
 #
-# Pinned just above OBSERVED divergence, per docs/testing_and_benchmarking.md: a tolerance set to a
+# Pinned just above OBSERVED divergence, per docs/developer_notes/testing_and_benchmarking.md: a tolerance set to a
 # round number far above reality asserts nothing.
 #
 # Keyed by FIXTURE as well as comparison, because breach divergence turned out
@@ -326,7 +326,7 @@ COMPARISONS = {
 # 1.000x. The epsilon schemes are genuinely different operations (lsdtt3 imposes
 # min_slope across every flat; RichDEM adds a minimal float increment) and that
 # only becomes visible where flats dominate. These bounds are pinned to hold the
-# CURRENT behaviour, not to bless it -- see docs/testing_and_benchmarking.md
+# CURRENT behaviour, not to bless it -- see docs/developer_notes/testing_and_benchmarking.md
 # -----------------------------------------------------------------------------
 TOLERANCES = {
     "alpine_small": {
@@ -459,7 +459,7 @@ def elevation_metrics(a_path, b_path, original_path=None, tol=0.01):
     """Plan Sec4.1 metrics for two elevation rasters.
 
     `original_path` is the unmodified input DEM. It is needed for the volume
-    check: docs/testing_and_benchmarking.md asks for a "total fill volume ratio", i.e. how much
+    check: docs/developer_notes/testing_and_benchmarking.md asks for a "total fill volume ratio", i.e. how much
     material each implementation moved. Comparing sums of ELEVATIONS instead
     would be datum-dependent -- adding 1000 m to every cell would change the
     ratio without changing anything about the algorithms -- and in low relief it
@@ -666,7 +666,7 @@ def ensure_filled_dem(exe: pathlib.Path, fixture: pathlib.Path,
 
     -- so a min_slope=0 fill produces a DEM that lsdtt-drainage-analysis
     refuses outright. That is by design: the imposed gradient is what makes
-    flats routable (see docs/testing_and_benchmarking.md).
+    flats routable (see docs/developer_notes/testing_and_benchmarking.md).
 
     Using the epsilon-filled DEM does not weaken the comparison. Both tools
     receive the SAME raster, so the accumulation algorithms are still compared
@@ -1008,7 +1008,7 @@ def main() -> int:
         return 1
 
     if not args.check:
-        print("\n(reporting only -- tolerances not pinned yet, docs/testing_and_benchmarking.md)")
+        print("\n(reporting only -- tolerances not pinned yet, docs/developer_notes/testing_and_benchmarking.md)")
     return 0
 
 

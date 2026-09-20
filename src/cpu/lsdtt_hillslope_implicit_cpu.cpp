@@ -17,7 +17,7 @@
 // subcycling solver and prints a one-line notice, so callers need no #ifdef.
 //
 // Design and derivation: docs/developer_notes/lsdtt3_architecture.md
-// (hillslope transport section); validation: docs/testing_and_benchmarking.md.
+// (hillslope transport section); validation: docs/developer_notes/testing_and_benchmarking.md.
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_hillslope_implicit_cpu.hpp"

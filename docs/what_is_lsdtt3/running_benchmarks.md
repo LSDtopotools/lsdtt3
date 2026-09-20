@@ -242,21 +242,27 @@ Three separate locations, with three different lifetimes:
 | what | default (direct run) | default (via sbatch) | override |
 |---|---|---|---|
 | campaign output | `./benchmark_campaigns/` | `<submit dir>/benchmark_campaigns/` | `--out-dir` / `BENCH_OUT_DIR` |
-| DEM cache | **`<repo>/tests/data/dem_cache/`** | `<submit dir>/benchmark_fixtures/` | `--fixture-dir` / `BENCH_FIXTURE_DIR` |
+| DEM cache | `<out-dir>/benchmark_fixtures/` | `<submit dir>/benchmark_fixtures/` | `--fixture-dir` / `BENCH_FIXTURE_DIR` |
 | working scratch | `$TMPDIR` | `$TMPDIR` | `--scratch-dir` |
 
-!!! warning "The DEM cache and the campaign do not default to the same place"
-    On a **direct run** the campaign follows your current directory but the DEM
-    cache goes **inside the repository**. So after
-    `pixi run bench-laptop --out-dir /my/data` the DEMs are in
-    `<repo>/tests/data/dem_cache/`, not in `/my/data/`. Only the sbatch wrapper
-    puts the two side by side.
+!!! note "The DEM cache follows the campaign"
+    Fixtures default to `<out-dir>/benchmark_fixtures/`, so
+    `pixi run bench-laptop --out-dir /my/data` puts the DEMs in
+    `/my/data/benchmark_fixtures/`, beside the campaign. Because `--out-dir`
+    itself defaults to `benchmark_campaigns`, this holds on every run: the
+    cache never lands inside `tests/data/`.
 
-    The suite prints both paths in its first three lines. If you want them
-    together on a direct run, say so:
-    ```sh
-    pixi run bench-laptop --out-dir /my/data --fixture-dir /my/data/fixtures
-    ```
+    This was not always true. The suite used to default the cache into the
+    repository even when the caller had said where their data should go, while
+    the sbatch wrapper defaulted to `<submit dir>/benchmark_fixtures` — so the
+    two routes disagreed about where ~512 MB of DEMs belonged, and a direct run
+    quietly filled the checkout. On a cluster that was usually a quota'd home
+    filesystem.
+
+    Note that `--out-dir` is the **parent** of the per-run campaign directory,
+    not the campaign directory itself, so successive runs into the same
+    `--out-dir` share one set of fixtures and download nothing after the first.
+    The suite prints both paths in its first three lines.
 
 On a shared machine or a cluster, move the DEM cache off the repository with
 `--fixture-dir` — the `server` profile stores ~300 MB there, and it is reused by

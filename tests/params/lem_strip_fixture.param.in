@@ -1,5 +1,5 @@
 # Generates the hillslope-strip fixture for the in-LEM roering_implicit test
-# (docs/testing_and_benchmarking.md §8.1/§8.4).
+# (docs/developer_notes/testing_and_benchmarking.md §8.1/§8.4).
 #
 # Test domains are generated in C++, never in Python: this is the strip
 # generator in lsdtt_raster_synthetic_surfaces_cpu, driven through

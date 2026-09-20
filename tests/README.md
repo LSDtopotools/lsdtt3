@@ -2,7 +2,7 @@
 
 What each test does and how to run it. For **methodology, benchmark results, and
 the documented differences between lsdtt3 and RichDEM**, see
-`docs/testing_and_benchmarking.md` — read that before concluding a mismatch
+`docs/developer_notes/testing_and_benchmarking.md` — read that before concluding a mismatch
 against another tool is a bug.
 
 CTest-driven test suite. Every test carries labels on four independent axes;
@@ -190,7 +190,7 @@ CSV. Generated in C++, never committed.
 `lsdtt-lem` with `hillslope_model: roering_implicit` on it and asserts the
 **converged steady state** — peak 4.9429 m and mean 3.2719 m, both two-sided.
 
-This is the integration test §8.4 of `docs/testing_and_benchmarking.md` argues
+This is the integration test §8.4 of `docs/developer_notes/testing_and_benchmarking.md` argues
 for. The semi-implicit fast path is only taken when the field is well below `Sc`,
 which is a regime the standalone driver's steady-state tests never *finish* in —
 so the omega bug there biased coupled LEM steady states ~40 % high while every
@@ -202,14 +202,14 @@ nothing" leaves it at 0 m and cannot be mistaken for the answer. ~1.5 s for both
 
 `unit_cosmo_physics` (labels `unit;cosmo`) runs `tests/cpp/test_cosmo_physics.cpp`,
 the validation driver for the CRN physics core (methodology:
-`docs/testing_and_benchmarking.md`). It runs offline against committed reference
+`docs/developer_notes/testing_and_benchmarking.md`). It runs offline against committed reference
 data and prints one PASS/FAIL line per check.
 
 > **The CRN numeric core is locked.** The analytical solutions exercised here
 > encode years of manual verification. Any change to `lsdtt_crn_parameters.*`,
 > `lsdtt_crn_column.*`, `lsdtt_crn_particle.*` or `lsdtt_cosmo_raster_cpu.*`, or
 > to the reference values in `tests/expected/cosmo/`, requires Simon Mudd's
-> explicit review **before** merging. See docs/testing_and_benchmarking.md
+> explicit review **before** merging. See docs/developer_notes/testing_and_benchmarking.md
 
 What it checks:
 
@@ -319,7 +319,7 @@ regenerated CSV should be committed with a note explaining why it moved.
 
 `unit_raster_fetch` (labels `unit;fetch`) runs `tests/cpp/test_raster_fetch.cpp`
 in offline mode: 31 checks over `src/core/lsdtt_raster_fetch.*`, needing no
-network. Plan: `docs/testing_and_benchmarking.md` Phase 1.
+network. Plan: `docs/developer_notes/testing_and_benchmarking.md` Phase 1.
 
 - UTM zone derivation, including zone boundaries and the ±180 antimeridian
   (an off-by-one silently reprojects into the neighbouring zone rather than
@@ -347,7 +347,7 @@ are plausible alpine values, and exits 77 (skip) when the source is unreachable.
 
 `unit_secret` (labels `unit;fetch`) runs `tests/cpp/test_secret.cpp` — 24
 offline checks over `src/core/lsdtt_secret.*`, the only place in lsdtt3 that
-handles secrets. Plan: `docs/testing_and_benchmarking.md` §1.
+handles secrets. Plan: `docs/developer_notes/testing_and_benchmarking.md` §1.
 
 These are security properties, not conveniences:
 
@@ -425,7 +425,7 @@ across every routine (plan §7e).
 
 `unit_flow_properties` (labels `unit;flow`) runs
 `tests/cpp/test_flow_properties.cpp` — Phase 1 of
-`docs/testing_and_benchmarking.md`. It asserts invariants of depression
+`docs/developer_notes/testing_and_benchmarking.md`. It asserts invariants of depression
 handling and flow routing on deterministic synthetic DEMs generated in-process,
 so it needs no network, no downloaded DEM, and no RichDEM:
 
@@ -455,7 +455,7 @@ ctest --test-dir build -L '^flow$' --output-on-failure
 
 ## Flow-routing benchmark vs RichDEM (opt-in)
 
-Phases 0 and 2 of `docs/testing_and_benchmarking.md`. Scores lsdtt3's
+Phases 0 and 2 of `docs/developer_notes/testing_and_benchmarking.md`. Scores lsdtt3's
 depression handling against RichDEM on DEM tiles fetched at test time — **no DEM
 is committed to the repo**.
 

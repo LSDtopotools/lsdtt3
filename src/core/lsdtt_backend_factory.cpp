@@ -10,9 +10,14 @@
 #include "lsdtt_backend_factory.hpp"
 #include "../cpu/lsdtt_raster_cpu.hpp"
 
-// GPU backend is only included when compiled with -DLSDTT_GPU=ON
+// There is no GPU raster backend. src/gpu/ currently holds only
+// lsdtt_surface_gpu; no lsdtt_raster_gpu.hpp has been written, and
+// LSDTT_GPU_ENABLED is not a compile definition CMake ever sets (the GPU
+// kernel library is gated on LSDTT_GPU_KERNELS instead -- see
+// docs/developer_notes/gpu_compute.md). This file therefore has no GPU
+// include: a guarded include of a non-existent header is a landmine for
+// whoever first defines the macro.
 #ifdef LSDTT_GPU_ENABLED
-#include "../gpu/lsdtt_raster_gpu.hpp"
 #include <cuda_runtime.h>
 #endif
 
@@ -102,22 +107,16 @@ std::unique_ptr<lsdtt_raster_base> make_raster_engine(
 
     if (backend == backend_type::gpu)
     {
-#ifdef LSDTT_GPU_ENABLED
-        if (!gpu_available())
-        {
-            throw std::runtime_error(
-                "lsdtt::make_raster_engine: GPU backend requested but no "
-                "usable GPU was detected at runtime"
-            );
-        }
-        return std::make_unique<lsdtt_raster_gpu>(loader);
-#else
+        // Unconditional: there is no GPU raster engine to construct, whatever
+        // the build flags say. Raster analyses that do have a GPU path take it
+        // through selective dispatch (see direct_polyfit and
+        // set_compute_backend), not by swapping the raster engine out.
         throw std::runtime_error(
-            "lsdtt::make_raster_engine: GPU backend requested but lsdtt3 "
-            "was not compiled with GPU support. "
-            "Rebuild with -DLSDTT_GPU=ON."
+            "lsdtt::make_raster_engine: there is no GPU raster backend. "
+            "GPU acceleration is applied per-kernel via the compute-backend "
+            "preference (set_compute_backend), not by selecting a GPU raster "
+            "engine here."
         );
-#endif
     }
 
     // Should never reach here

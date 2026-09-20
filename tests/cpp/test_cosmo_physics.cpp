@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Standalone validation driver for the cosmogenic-nuclide (CRN) physics core.
-// Methodology, reference sources and findings: docs/testing_and_benchmarking.md.
+// Methodology, reference sources and findings: docs/developer_notes/testing_and_benchmarking.md.
 //
 // Covers: reference helpers, the single-basin synthetic fixture, CSV emitters,
 // smoke tests, the parameter pins, the numerics sentinel, and the
@@ -3700,7 +3700,7 @@ void write_sentinel_file(const std::string& path,
 {
     std::ofstream out(path);
     out << std::setprecision(17);
-    out << "# COSMO NUMERICS SENTINEL - see docs/testing_and_benchmarking.md\n"
+    out << "# COSMO NUMERICS SENTINEL - see docs/developer_notes/testing_and_benchmarking.md\n"
         << "# These values encode years of manual verification of the CAIRN\n"
         << "# and step-change analytical solutions.  DO NOT regenerate this\n"
         << "# file to silence a test failure.  Any change requires review\n"
@@ -7565,7 +7565,7 @@ void write_lsdn_sentinel_file(const std::string& path,
 {
     std::ofstream out(path);
     out << std::setprecision(17);
-    out << "# LSDn NUMERICS SENTINEL - see docs/testing_and_benchmarking.md\n"
+    out << "# LSDn NUMERICS SENTINEL - see docs/developer_notes/testing_and_benchmarking.md\n"
         << "# Pinned full-double-precision LSDn (Lifton, Sato & Dunai 2014)\n"
         << "# production scaling values.  These encode the verified behaviour\n"
         << "# of the packed b/m grids, the LSD2014 Eq. 2 cutoff-rigidity path\n"
@@ -7930,7 +7930,7 @@ int main(int argc, char** argv)
 
     std::cout << "=========================================================\n"
               << "|| lsdtt3 cosmogenic physics test driver               ||\n"
-              << "|| Method: docs/testing_and_benchmarking.md            ||\n"
+              << "|| Method: docs/developer_notes/testing_and_benchmarking.md            ||\n"
               << "|| Fixtures, parameter pins, numerics sentinel,        ||\n"
               << "|| and equation fidelity E1-E9                         ||\n"
               << "=========================================================\n";

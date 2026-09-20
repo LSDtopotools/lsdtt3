@@ -2250,9 +2250,14 @@ prints 0.00275 (which would sum to 0.97525) — see the do-not-"fix" note in
 `tests/cpp/test_cosmo_physics.cpp`; ¹⁴C uses P0 = 15.533, F = {0.788, 0.212,
 0, 0} (Lupker 2015) and λ = 121.58e-6 yr⁻¹ under BraucherBorchers (5700 yr
 half-life, IAEA 2024); λ(¹⁰Be) = 500e-9 and λ(²⁶Al) = 980e-9
-yr⁻¹. Schemes without a paper anchor (Granger, Schaller) are frozen as exact
-in-code constants with a comment naming their literature lineage (COSMOCALC,
-Schaller et al. 2009/2016).
+yr⁻¹. Granger is frozen as exact in-code constants with a comment
+naming its literature lineage (COSMOCALC). `Schaller` is NOT an unanchored
+scheme: its ¹⁰Be production combines Braucher et al. (2011) and Borchers et al.
+(2016), transcribed by Mirjam Schaller, so the scheme name identifies the
+transcriber rather than a source. An earlier comment citing "Schaller et al.
+2009/2016" for an updated Gamma[1] was wrong on both counts — no such
+publication was found, and Gamma[1] = 1500 g cm⁻² is shared with Braucher and
+BraucherBorchers rather than being specific to this scheme.
 
 > **Internal cross-checks are not independent oracles.** E7 established that the
 > analytic basin formula and the CRN-column particle path evaluate the *same*

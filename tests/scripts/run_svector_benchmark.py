@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What the s-vector BUYS: nested basin extraction, and chi.
 
-docs/testing_and_benchmarking.md is the durable record; the working plan is the
+docs/developer_notes/testing_and_benchmarking.md is the durable record; the working plan is the
 (uncommitted) benchmarking plan, section 3b.
 
 WHY THIS IS A SEPARATE DRIVER

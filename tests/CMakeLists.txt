@@ -334,7 +334,7 @@ endfunction()
 # CLI: parameter plumbing, output filenames, the failure paths, the polygon /
 # CRS path, and the characterisation ORACLES on the shipped artefacts.
 #
-# Artefact classification (docs/testing_and_benchmarking.md): the GDAL checksum
+# Artefact classification (docs/developer_notes/testing_and_benchmarking.md): the GDAL checksum
 # of *_ocn_drainage_cells.tif and the sha256 of *_ocn_summary.csv are ORACLES
 # (refactor tripwires, re-freezable by a deliberate act). The --expect-raster-stat
 # bands on *_ocn_dem.tif are BANDS, not oracles, because float chi accumulation
@@ -1271,7 +1271,7 @@ lsdtt_set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
 # seed and the fixed synthetic georeference make it byte-reproducible, which is
 # what lets the smoke test below carry a sha256 ORACLE on the stats CSV --
 # a refactor tripwire, re-freezable by a deliberate act, in the sense used in
-# docs/testing_and_benchmarking.md.
+# docs/developer_notes/testing_and_benchmarking.md.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
     add_test(NAME fixture_basin_stats_dem
@@ -1705,7 +1705,7 @@ lsdtt_set_tests_properties(smoke_divide_migration_pair_summary PROPERTIES
 
 # --- lsdtt-lem: the in-LEM coupled hillslope path -----------------------------
 #
-# Why this exists (docs/testing_and_benchmarking.md §8.4): the semi-implicit fast
+# Why this exists (docs/developer_notes/testing_and_benchmarking.md §8.4): the semi-implicit fast
 # path applied the DAMPED Picard omega to its single IMEX solve, under-diffusing
 # every step. The standalone driver (unit_hillslope_implicit) could not see it --
 # its steady-state tests all finish on full Picard -- while coupled LEM steady
@@ -2279,12 +2279,12 @@ add_lsdtt_cli_smoke_test(
     # integrand at the upstream end of every segment, where it is largest.
     # Verified against TopoToolbox before re-pinning: the per-basin regression
     # slope went from 1.00377 to 1.00000. See chi_increment() and
-    # docs/testing_and_benchmarking.md.
+    # docs/developer_notes/testing_and_benchmarking.md.
     --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:b64aa1266abc09369b423534d44ec5ed8a3ceac52d7d31e9f8637c8893c26ad3
 )
 
 # -----------------------------------------------------------------------------
-# Flow-routing benchmark vs RichDEM (docs/testing_and_benchmarking.md)
+# Flow-routing benchmark vs RichDEM (docs/developer_notes/testing_and_benchmarking.md)
 #
 # OFF by default: these tests need network access for the fixtures and an
 # optional RichDEM install, neither of which may turn CI red.  When enabled but
@@ -2319,7 +2319,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
     # accum_d8 is included because it is asserted against TopoToolbox, whose D8
     # uses the same steepest-descent rule as lsdtt3. The RichDEM row for the
     # same comparison is recorded but not asserted -- see REPORT_ONLY in the
-    # driver and docs/testing_and_benchmarking.md.
+    # driver and docs/developer_notes/testing_and_benchmarking.md.
     foreach(bench_fixture alpine_small lakeland_small)
         foreach(bench_case fill fill_epsilon breach accum_d8)
             add_test(
@@ -2569,7 +2569,7 @@ add_test(NAME unit_surface_metrics
 lsdtt_set_tests_properties(unit_surface_metrics PROPERTIES LABELS "unit;surface_metrics")
 
 # Vertical units: the feet/metres trap and the plausibility warning that makes
-# it discoverable (docs/testing_and_benchmarking.md).
+# it discoverable (docs/developer_notes/testing_and_benchmarking.md).
 add_executable(lsdtt-test-vertical-units cpp/test_vertical_units.cpp)
 target_link_libraries(lsdtt-test-vertical-units PRIVATE lsdtt3_cpu)
 
@@ -2700,7 +2700,7 @@ target_link_libraries(lsdtt-test-common-parameters PRIVATE lsdtt3_core)
 add_test(NAME unit_common_parameters COMMAND lsdtt-test-common-parameters)
 lsdtt_set_tests_properties(unit_common_parameters PROPERTIES LABELS "unit;core;parameters")
 
-# Cosmogenic physics driver (docs/testing_and_benchmarking.md).  Writes its
+# Cosmogenic physics driver (docs/developer_notes/testing_and_benchmarking.md).  Writes its
 # plottable CSVs into the test working directory.
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
 target_link_libraries(lsdtt-test-cosmo-physics PRIVATE lsdtt3_cpu)
@@ -2762,7 +2762,7 @@ add_executable(lsdtt-test-landslide-series cpp/test_landslide_series.cpp)
 target_link_libraries(lsdtt-test-landslide-series PRIVATE lsdtt3_cpu)
 
 # Flow routing / depression handling property tests
-# (docs/testing_and_benchmarking.md).  Synthetic fixtures only: no
+# (docs/developer_notes/testing_and_benchmarking.md).  Synthetic fixtures only: no
 # network, no RichDEM, so this runs in the default CTest suite.
 add_executable(lsdtt-test-flow-properties cpp/test_flow_properties.cpp)
 target_link_libraries(lsdtt-test-flow-properties PRIVATE lsdtt3_cpu)
@@ -3102,7 +3102,7 @@ lsdtt_set_tests_properties(unit_raster_active_masks PROPERTIES
 # The same binary writes the synthetic three-valley DEM and outlet layer used by
 # the divide-migration CLI end-to-end tests, so the fixture and the in-memory
 # geometry come from one generator.  Test domains are generated in C++, never in
-# Python (docs/testing_and_benchmarking.md §8).
+# Python (docs/developer_notes/testing_and_benchmarking.md §8).
 add_executable(lsdtt-test-divide-migration cpp/test_divide_migration.cpp)
 target_link_libraries(lsdtt-test-divide-migration PRIVATE lsdtt3_cpu)
 
@@ -3660,7 +3660,7 @@ add_executable(bench-streamlines cpp/bench_streamlines.cpp)
 target_link_libraries(bench-streamlines PRIVATE lsdtt3_cpu)
 
 # Implicit (backward-Euler / TR-BDF2) Roering nonlinear hillslope solver
-# (docs/testing_and_benchmarking.md).  Rectangular-domain validation against the
+# (docs/developer_notes/testing_and_benchmarking.md).  Rectangular-domain validation against the
 # analytic Roering steady profile, the SOR steady-state solver, and the
 # conservation / Sc-enforcement / timestep-independence properties.  Synthetic
 # surfaces only: no network, no committed DEM, so it runs in the default suite.
@@ -3680,7 +3680,7 @@ lsdtt_set_tests_properties(unit_hillslope_implicit PROPERTIES LABELS "unit;hills
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/hillslope_implicit_output)
 
 # -----------------------------------------------------------------------------
-# lsdtt-fetch-raster CLI (docs/testing_and_benchmarking.md)
+# lsdtt-fetch-raster CLI (docs/developer_notes/testing_and_benchmarking.md)
 #
 # These run offline: they exercise the argument handling and validation that
 # happen before any network access is attempted.
@@ -3802,7 +3802,7 @@ lsdtt_set_tests_properties(smoke_fetch_raster_help PROPERTIES
 
 # The CLI must never grow a credential parameter: parameter files get committed
 # and print_parameters() echoes every parameter at the end of a run. This guards
-# the rule stated in docs/testing_and_benchmarking.md and in the CLI's own header.
+# the rule stated in docs/developer_notes/testing_and_benchmarking.md and in the CLI's own header.
 add_test(NAME rigorous_fetch_raster_no_credential_parameters
          COMMAND lsdtt-fetch-raster -h)
 lsdtt_set_tests_properties(rigorous_fetch_raster_no_credential_parameters PROPERTIES
@@ -3996,7 +3996,7 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
     lsdtt_set_tests_properties(network_fetch_raster_outlets_cli PROPERTIES LABELS "network;cli;fetch")
 endif()
 
-# Flow-routing performance (docs/testing_and_benchmarking.md).
+# Flow-routing performance (docs/developer_notes/testing_and_benchmarking.md).
 #
 # Reported, never asserted: wall-clock thresholds in CI are flaky on shared
 # runners. OFF by default because the sweep takes minutes; the value is a
@@ -4069,7 +4069,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/perf_output)
 endif()
 
-# Credential handling (docs/testing_and_benchmarking.md).
+# Credential handling (docs/developer_notes/testing_and_benchmarking.md).
 #
 # lsdtt_secret is the only place in lsdtt3 that touches secrets, so it gets its
 # own driver. Offline and deterministic; always in the default suite.
@@ -4134,7 +4134,7 @@ foreach(_case geo_missing_modules gdal_programs_missing)
         LABELS "unit;configure_contract")
 endforeach()
 
-# Native DEM fetching (docs/testing_and_benchmarking.md).
+# Native DEM fetching (docs/developer_notes/testing_and_benchmarking.md).
 #
 # The offline half needs no network and runs in the default suite: it covers UTM
 # zone derivation, tile naming, option validation, and -- most importantly --
@@ -4283,7 +4283,7 @@ lsdtt_set_tests_properties(unit_cosmo_physics PROPERTIES LABELS "unit;cosmo")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output)
 
 # -----------------------------------------------------------------------------
-# Cosmo CLI integration tests (plan Phase 4; docs/testing_and_benchmarking.md)
+# Cosmo CLI integration tests (plan Phase 4; docs/developer_notes/testing_and_benchmarking.md)
 #
 # Offline: they exercise parameter-file parsing, help rendering, and the
 # projected-CRS guard on the three cosmo CLIs. The help tests also drive the

@@ -146,7 +146,7 @@ void assert_raster_matches_flow_grid(
 // 30 m grid, and the error is O(h) so it grows with cell size. With the rule
 // matched the regression slope is 1.00000 on every basin -- the two
 // implementations agree EXACTLY, and the discrepancy was never about chi.
-// See docs/testing_and_benchmarking.md.
+// See docs/developer_notes/testing_and_benchmarking.md.
 //
 // Both denominators are validated by the caller before this is reached.
 // -----------------------------------------------------------------------------

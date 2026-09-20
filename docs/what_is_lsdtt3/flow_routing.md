@@ -380,7 +380,7 @@ two implementations are close. **Comparing across families is the mistake to
 avoid** — an early version of the benchmark suite ran lsdtt3's default (heap)
 against TopoToolbox's default (reconstruction) and reported lsdtt3 2.9× slower,
 which measured the choice of algorithm rather than the quality of either
-implementation. See `docs/testing_and_benchmarking.md`.
+implementation. See `docs/developer_notes/testing_and_benchmarking.md`.
 
 ---
 
@@ -451,7 +451,7 @@ contiguous interval index is not available in the same form.
 - Trades some per-cell bytes for scalability beyond the practical limits seen in
   older 32-bit-indexed designs.
 
-See `docs/overview.md` (Memory use and Very large DEMs) for measured and derived
+See [`overview.md`](overview.md) (Memory use and Very large DEMs) for measured and derived
 capacity/memory discussion. The use of a 64 bit integer has a memory cost, but `lsdtt3`
 is aimed at processing very large DEMs, so we don't want to run out of indices!! 
 
@@ -539,7 +539,7 @@ From the benchmark and overview documentation:
   reduction when the O(1) upslope index is not needed.
 - **`lsdtt3` vs RichDEM / TopoToolbox (routing behavior)**: comparison is
   strongest on algorithmic agreement/correctness framing (below), with timings
-  reported in `docs/testing_and_benchmarking.md`.
+  reported in `docs/developer_notes/testing_and_benchmarking.md`.
 - **`lsdtt3` vs TopoToolbox (surface-metric benchmark context)**: memory wins
   are documented there too, but those numbers are for surface workflows rather
   than a pure flow-object byte accounting.
@@ -630,7 +630,11 @@ model. There are two ways to say it, and they can be combined:
   that drain off an open grid edge become ocean seeds. This is lsdtt3's native
   convention and matches the rest of the flow-routing layer.
 - **An explicit ocean definition**, for DEMs where the sea is encoded in the data
-  rather than at the edge:
+  rather than at the edge. **These are library options, not `.param` keys** —
+  they are reachable from the Python bindings (see
+  [`drainage`](../python_api/drainage.md)) and from C++, but
+  `lsdtt-internal-drainage` does not declare them, so putting them in a
+  parameter file has no effect:
   - `nodata_is_ocean` — treat NODATA cells as ocean. Common where a coastline or
     ice margin has been masked out.
   - `ocean_level` — treat valid cells at exactly this elevation as ocean. Common
@@ -827,4 +831,4 @@ For implementation specifics, also see:
 
 - `docs/developer_notes/using_lsdtt_flowinfo.md`
 - `docs/cli_reference/cli_reference_lsdtt_drainage_analysis.md`
-- `docs/testing_and_benchmarking.md`
+- `docs/developer_notes/testing_and_benchmarking.md`

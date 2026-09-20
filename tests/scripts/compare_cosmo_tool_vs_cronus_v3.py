@@ -11,7 +11,7 @@ lsdtt-cosmo-tool (e.g. KNSTD -> 07KNSTD, x0.9042).  Passing
 ``--standardisation-col`` sends that normalised value together with the sample's
 standard name, so CRONUS applies the factor a SECOND time.  This is the error
 that inverted the apparent sign of the OCTOPUS-tier residual (clapp2002 read
-+6.6 % rather than -4.09 %); see docs/testing_and_benchmarking.md.
++6.6 % rather than -4.09 %); see docs/developer_notes/testing_and_benchmarking.md.
 
 Omit ``--standardisation-col`` unless every sample is already on the calculator's
 default standard, in which case it is a no-op.  For a correct request built from

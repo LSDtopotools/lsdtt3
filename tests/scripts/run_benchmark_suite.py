@@ -372,7 +372,7 @@ CASES: dict[str, dict[str, Any]] = {
     #     topotoolbox hybrid                22.84 Mcells/s
     #
     # Matched, lsdtt3 is within 2% of TopoToolbox. The 2.9x was the algorithm
-    # choice, not the implementation. See docs/testing_and_benchmarking.md.
+    # choice, not the implementation. See docs/developer_notes/testing_and_benchmarking.md.
     "fill": {
         "sequential": True,
         "suite": "flow",
@@ -482,7 +482,7 @@ CASES: dict[str, dict[str, Any]] = {
                  "like-for-like: lsdtt3 also builds an S-vector the references "
                  "do not build (~57% of its build time), retained by design "
                  "because downstream analyses depend on it -- see the note in "
-                 "CASES and docs/testing_and_benchmarking.md"),
+                 "CASES and docs/developer_notes/testing_and_benchmarking.md"),
         "engines": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
                     "whitebox": "accum_d8"},
         "lsdtt": {"exe": "lsdtt-drainage-analysis",
@@ -1338,7 +1338,7 @@ def prepare_filled_fixture(fixture: pathlib.Path, work_dir: pathlib.Path,
     raster.  lsdtt3's fill is used as that common input, which needs
     justifying since it is one of the tools under test: it is bit-exact against
     both RichDEM's Barnes 2014 fill and TopoToolbox's `fillsinks` (see
-    docs/testing_and_benchmarking.md), so choosing it favours nobody.  It is
+    docs/developer_notes/testing_and_benchmarking.md), so choosing it favours nobody.  It is
     NOT Whitebox's fill, which returns a different surface on the test fixture
     -- see the note in whitebox_reference.py.
 
@@ -2375,7 +2375,7 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
              "rows exist only at 1 thread and are marked `serial_reference`. A "
              "flat scaling curve for them is not a finding.")
     L.append("- Values are not asserted anywhere in this campaign. Correctness "
-             "lives in the CTest suite; see `docs/testing_and_benchmarking.md`.")
+             "lives in the CTest suite; see `docs/developer_notes/testing_and_benchmarking.md`.")
     path.write_text("\n".join(L) + "\n")
 
 
@@ -2538,9 +2538,11 @@ def main() -> int:
                          "absolute path to collect results elsewhere.")
     ap.add_argument("--fixture-dir", default="",
                     help="where the downloaded region sources and their crops "
-                         "live. Defaults to <out-dir>/benchmark_fixtures when "
-                         "--out-dir is given, otherwise tests/data/dem_cache "
-                         "inside the repo. The server profile stores ~300 MB "
+                         "live. Defaults to <out-dir>/benchmark_fixtures. "
+                         "Because --out-dir itself defaults to "
+                         "'benchmark_campaigns', fixtures always land beside "
+                         "the campaign and never inside tests/data/. "
+                         "The server profile stores ~300 MB "
                          "here, so on a cluster keep it off a quota'd home: "
                          "point it at project or scratch storage. Reused "
                          "across campaigns, so it is worth keeping.")

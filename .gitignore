@@ -124,7 +124,7 @@ dist/
 # Benchmark DEM fixtures
 #
 # Fetched at test time from Copernicus GLO-30, never committed
-# (see docs/testing_and_benchmarking.md).
+# (see docs/developer_notes/testing_and_benchmarking.md).
 # -----------------------------------------------------------------------------
 tests/data/dem_cache/
 
@@ -152,11 +152,21 @@ slurm_logs/
 #
 # docs/plan_docs/ holds working plans - they are drafted, revised and abandoned
 # during a piece of work and are not the durable record. What survives a plan
-# goes into docs/ proper (see docs/testing_and_benchmarking.md for the pattern:
+# goes into docs/ proper (see docs/developer_notes/testing_and_benchmarking.md for the pattern:
 # the committed document is the record, the plan is the scaffolding). A
 # committed file must never cite a plan doc, because the plan may not exist.
 # -----------------------------------------------------------------------------
 docs/plan_docs/
+
+# -----------------------------------------------------------------------------
+# LaTeX technical notes
+#
+# docs/tex_technical/ holds standalone LaTeX notes written for papers, not for
+# the mkdocs site (mkdocs.yml already excludes the directory from the build).
+# They are drafts carried alongside the code rather than part of the published
+# documentation, so they are not tracked here.
+# -----------------------------------------------------------------------------
+docs/tex_technical/
 
 # -----------------------------------------------------------------------------
 # Run output written into the repository root

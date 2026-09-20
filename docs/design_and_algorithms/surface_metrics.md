@@ -58,14 +58,71 @@ fitted surface.
 
 `lsdtt3` docs explicitly note this differs from legacy GIS usage that follows
 the Zevenbergen and Thorne (1987) sign choice for some reported curvature
-products. The authors of lsdtt3 (well, Simon) have remained flummoxed why Zeverbergen and Thorne (1987)
+products. The authors of lsdtt3 (well, Simon) have remained flummoxed why Zevenbergen and Thorne (1987)
 flipped the sign of a standard mathematical quantity.
 
 References:
 
 - Florinsky (2017) for derivative/curvature conventions.
 - Zevenbergen, L.W., and Thorne, C.R. (1987). *Quantitative analysis of land
-  surface topography*. Earth Surface Processes and Landforms 12, 47-56.
+  surface topography*. Earth Surface Processes and Landforms 12(1), 47–56.
+  doi:10.1002/esp.3290120107
+
+---
+
+## Surface shape classification (SMAP)
+
+`classify_surface_shape()` reproduces the CurveCalc shape classification (SMAP)
+of the TopoCurve MATLAB code, labelling each pixel by the **signs** of two
+curvature invariants formed from the principal curvatures `k1` (= k_max) and
+`k2` (= k_min):
+
+- Gaussian curvature `KG = k1 · k2`
+- Mean curvature `KM = 0.5 · (k1 + k2)`
+
+Because the classification is driven entirely by these signs, it inherits the
+sign convention above — concave-up positive. A reader importing TopoCurve
+results, or comparing against a GIS that follows Zevenbergen & Thorne, must
+account for that before the class labels will agree.
+
+| Class | Code | `KG` | `KM` | Form |
+|---|---|---|---|---|
+| `perfect_saddle` | −4 | < 0 | = 0 | Saddle |
+| `basin` | −3 | > 0 | > 0 | Concave bowl |
+| `synformal_saddle` | −2 | < 0 | > 0 | Saddle, concave-dominated |
+| `synform` | −1 | = 0 | > 0 | Cylindrical valley |
+| `plane` | 0 | = 0 | = 0 | Planar |
+| `antiform` | 1 | = 0 | < 0 | Cylindrical ridge |
+| `antiformal_saddle` | 2 | < 0 | < 0 | Saddle, convex-dominated |
+| `peak` | 3 | > 0 | < 0 | Convex dome |
+
+The integer codes are the TopoCurve codes and are written as float32 in the
+`shape_class` raster, so they can be read back and compared directly against
+TopoCurve output.
+
+### The `kt` threshold
+
+Exact zeros do not occur in real curvature fields, so a threshold decides what
+counts as zero. `kt` (CLI: `shape_curvature_threshold`, default 0.0, units
+1/m) zeroes any principal curvature with `|k| <= kt` **before** `KG` and `KM`
+are formed.
+
+This is the parameter that controls what the classification is about. With
+`kt = 0`, no curvature is ever exactly zero, so every pixel lands in one of the
+four non-planar classes and the planar and cylindrical classes are empty. Raising
+`kt` collapses weak or long-wavelength structure — a broad background basin, say
+— toward the planar and cylindrical classes, leaving only curvature that exceeds
+the threshold to drive the label. Choosing `kt` is therefore choosing the scale
+of shape you want to see, and it should be set relative to the curvature
+magnitudes your DEM and fitting window actually produce.
+
+The returned `gaussian_curvature` and `mean_curvature` rasters carry the
+**post-threshold** values, so they remain consistent with the labels rather than
+with the raw principal curvatures. A pixel is classified only where both input
+curvature rasters are valid.
+
+Enabled with `write_shape_classification_raster`, writing
+`<write_fname>_<method>_shape_class`.
 
 ---
 
@@ -159,8 +216,9 @@ Wavelet context for hilltop curvature:
 
 References encoded in headers:
 
-- Trevisani, S., Teza, G., and Guth, P.L. (2023). *Morphometric analysis of
-  topographic surface texture*. Geosciences 13(6), 162. (MADk2)
+- Trevisani, S., Teza, G., and Guth, P.L. (2023). *A simplified geostatistical
+  approach for characterizing key aspects of short-range roughness*. CATENA
+  223, 106927. doi:10.1016/j.catena.2023.106927 (MADk2)
 - Trevisani, S., and Guth, P.L. (2025). *Surface Roughness in Geomorphometry:
   From Basic Metrics Toward a Coherent Framework*. Remote Sensing 17(23), 3864.
   doi:10.3390/rs17233864.
@@ -170,7 +228,7 @@ References encoded in headers:
 
 ## Compute cost: what is currently measured
 
-From `docs/testing_and_benchmarking.md` on `alpine_medium` (720x720, 30 m):
+From `docs/developer_notes/testing_and_benchmarking.md` on `alpine_medium` (720x720, 30 m):
 
 ### Direct polyfit scaling properties
 
@@ -255,7 +313,7 @@ Below is the code-derived ordering comparison you requested.
 |---|---|---|
 | LSDTopoTools2 legacy polyfit | Not currently benchmarked in this repo | Not currently benchmarked in this repo |
 | lsdtt3 wavelet polyfit | Not currently a maintained timing table in docs | Not currently a maintained memory table in docs |
-| lsdtt3 direct polyfit | Yes (`docs/testing_and_benchmarking.md`) | Yes (`docs/testing_and_benchmarking.md`) |
+| lsdtt3 direct polyfit | Yes (`docs/developer_notes/testing_and_benchmarking.md`) | Yes (`docs/developer_notes/testing_and_benchmarking.md`) |
 
 So: we now have the operation-order comparison for all three methods from code,
 and measured speed/memory numbers for direct polyfit from the current benchmark
@@ -269,7 +327,8 @@ docs. Fully numeric 3-way speed/memory requires running new benchmark rows.
   geomorphometry*. Progress in Physical Geography 41(6), 723-752.
   doi:10.1177/0309133317733667.
 - Zevenbergen, L.W., and Thorne, C.R. (1987). *Quantitative analysis of land
-  surface topography*. Earth Surface Processes and Landforms 12, 47-56.
+  surface topography*. Earth Surface Processes and Landforms 12(1), 47–56.
+  doi:10.1002/esp.3290120107
 - Hurst, M.D., Mudd, S.M., Walcott, R., Attal, M., and Yoo, K. (2012).
   *Using hilltop curvature to derive the spatial distribution of erosion rates*.
   Journal of Geophysical Research 117, F02017.
@@ -287,8 +346,9 @@ docs. Fully numeric 3-way speed/memory requires running new benchmark rows.
   erosion rate: wavelets enable rapid computation and reveal systematic
   underestimation*. Earth Surface Dynamics 9, 1279-1300.
   doi:10.5194/esurf-9-1279-2021.
-- Trevisani, S., Teza, G., and Guth, P.L. (2023). *Morphometric analysis of
-  topographic surface texture*. Geosciences 13(6), 162.
+- Trevisani, S., Teza, G., and Guth, P.L. (2023). *A simplified geostatistical
+  approach for characterizing key aspects of short-range roughness*. CATENA
+  223, 106927. doi:10.1016/j.catena.2023.106927
 - Trevisani, S., and Guth, P.L. (2025). *Surface Roughness in Geomorphometry:
   From Basic Metrics Toward a Coherent Framework*. Remote Sensing 17(23), 3864.
   doi:10.3390/rs17233864.

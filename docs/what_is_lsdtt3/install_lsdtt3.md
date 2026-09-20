@@ -44,8 +44,8 @@ Both of these hold the same files. Use whichever you can reach.
 File names look like this:
 
 ```
-lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz     Linux
-lsdtt3-backend-win64-qgis-v0.4.0.zip               Windows (native)
+lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz     Linux
+lsdtt3-backend-win64-qgis-v0.5.1.zip               Windows (native)
 ```
 
 `core` and `qgis` are **profiles** — which set of command-line tools the
@@ -57,7 +57,7 @@ subset the QGIS plugin drives.
 > but don't assume it is the current one. The authoritative version is line 2
 > of `CMakeLists.txt` in the repository — `project(lsdtt3 VERSION ...)` (we do not recommend reading beyond this line or you will get a headache) and
 > release tags and package filenames are derived from it directly (`VERSION
-> 0.4.0` → tag `v0.4.0` → `...-v0.4.0.tar.gz`). If you cannot see the
+> 0.5.1` → tag `v0.5.1` → `...-v0.5.1.tar.gz`). If you cannot see the
 > repository, take the newest file from one of the two download locations
 > above instead. Substitute that number throughout.
 
@@ -70,14 +70,14 @@ This is the main way to install, and in other operating systems you just end up 
 ### 1. Download and unpack
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
 ```
 
 ### 2. Activate it
 
 ```bash
-source lsdtt3-backend-linux-x86_64-core-v0.4.0/setenv.sh
+source lsdtt3-backend-linux-x86_64-core-v0.5.1/setenv.sh
 ```
 
 `setenv.sh` must be **`source`d**, not run with `bash`. All it does is export
@@ -99,7 +99,7 @@ in every new terminal, append the same line, with the **full** path, to the
 end of your `~/.bashrc`:
 
 ```bash
-echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.4.0/setenv.sh" >> ~/.bashrc
+echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.5.1/setenv.sh" >> ~/.bashrc
 ```
 
 ### What you need
@@ -137,10 +137,10 @@ Follow [Linux package](#linux-package) inside the Ubuntu terminal.
 
 If you downloaded the tarball with a Windows browser it is on your Windows
 disk, which WSL2 mounts under `/mnt/`. A file at
-`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz` is:
+`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz` is:
 
 ```
-/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
+/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
 ```
 
 You will need to update this path unless your username is Alice.
@@ -202,7 +202,7 @@ WSL2 is unavailable on a managed machine — use [WSL2](#windows-via-wsl2).
 Unzip it, then in PowerShell:
 
 ```powershell
-cd lsdtt3-backend-win64-qgis-v0.4.0
+cd lsdtt3-backend-win64-qgis-v0.5.1
 . .\setenv.ps1
 .\bin\lsdtt-raster-preprocessing.exe --version
 ```
@@ -246,8 +246,8 @@ installed on your own machine at all. Two things differ from a normal terminal.
 Download and unpack in a code cell (`!` runs a shell command):
 
 ```python
-!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
-!tar -xzf lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
+!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
+!tar -xzf lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
 ```
 
 **Or get the URL from https://www.geos.ed.ac.uk/~smudd/lsdtt_packages** 
@@ -259,7 +259,7 @@ Python instead, once per session:
 ```python
 import os
 
-root = "/content/lsdtt3-backend-linux-x86_64-core-v0.4.0"
+root = "/content/lsdtt3-backend-linux-x86_64-core-v0.5.1"
 os.environ["PATH"] = f"{root}/bin:" + os.environ["PATH"]
 os.environ["LD_LIBRARY_PATH"] = f"{root}/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
 os.environ["GDAL_DATA"] = f"{root}/share/gdal"
@@ -337,7 +337,7 @@ lsdtt-raster-preprocessing -v
 ```
 
 ```
-lsdtt-raster-preprocessing version 1.0.0 (lsdtt3 0.4.0)
+lsdtt-raster-preprocessing version 1.0.0 (lsdtt3 0.5.1)
 GDAL 3.8.4, PROJ 9.3.1
   proj data: bundled: /home/you/lsdtt3/share/proj
   GDAL data: bundled: /home/you/lsdtt3/share/gdal

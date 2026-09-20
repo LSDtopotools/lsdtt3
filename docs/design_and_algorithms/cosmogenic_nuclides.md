@@ -205,8 +205,12 @@ Notes on provenance:
   Braucher family.
 - **`newCRONUS`** — the updated ¹⁰Be production curve from the CRONUScalc line
   (Marrero et al., 2016), with the other nuclides left at COSMOCALC values.
-- **`Schaller`** — Schaller et al. (2016), differing from `Braucher` mainly in
-  the negative-muon fraction.
+- **`Schaller`** — ¹⁰Be production combining Braucher et al. (2011) and
+  Borchers et al. (2016), **as transcribed by Mirjam Schaller**. The scheme
+  name identifies the transcriber, not a separate source. It differs from
+  `Braucher` in `P0`(¹⁰Be) (4.01 against 4.30) and in the F values, including
+  the negative-muon fraction (0.0042 against 0.0027). Its muon attenuation
+  lengths are the same 1500 g cm⁻² as the rest of the Braucher family.
 
 ### 2.6 The CRONUS v3 emulator schemes
 
@@ -273,6 +277,16 @@ Three practical constraints:
 `scaling_scheme` selects how spallation production is scaled from SLHL to the
 site. The muon pathways are unaffected by this choice directly; they receive the
 site factor through the Vermeesch redistribution of §2.4.
+
+There is a third value, `uniform`, which is **the default in
+`lsdtt-cosmo-landslides`** (the other cosmogenic tools default to `stone`).
+`uniform` is not a scaling scheme in the sense of the two below: it preserves
+the legacy scalar path, taking `production_scaling` and `total_shielding` as
+given numbers and applying them everywhere, so it needs no `crn_parameters.nc`
+and does no per-pixel work. `stone` and `lsdn` instead build a full cosmogenic
+site from the DEM and use per-pixel production and shielding. If you are
+comparing landslide results against the other tools, check which of these you
+were running — the difference is not a refinement of the same calculation.
 
 ### 3.1 `stone` — Stone (2000) / Lal (1991)
 
@@ -519,7 +533,7 @@ published basin centre: median **−0.525 %**, IQR [−1.590, +0.141]. It is a
 scientific result, not an error term.
 
 That sits on top of an independent published estimate of the same quantity —
-Codilean & Munack (2025, *Geochronology* 7:113) report an LSDn median of −1.0 %
+Codilean & Munack (2025, *Geochronology* 7(1):113–122, doi:10.5194/gchron-7-113-2025) report an LSDn median of −1.0 %
 with IQR −1.8 to −0.1 % over 290 points: same sign, same order of magnitude,
 overlapping IQRs.
 
@@ -1093,10 +1107,12 @@ differ from the defaults of other calculators.
 - Balco, G. (2017). Production rate calculations for cosmic-ray-muon-produced
   ¹⁰Be and ²⁶Al benchmarked against geological calibration data. *Quaternary
   Geochronology*, 39, 150–173.
-- Schaller, M. et al. (2009, 2016). Source of the revised negative-muon
-  attenuation length used by the `Schaller` scheme.
-- Lupker, M. et al. (2015). *Quaternary Geochronology*. Source of the in-situ
-  ¹⁴C spallation production rate used by `BraucherBorchers`.
+- Lupker, M., Hippe, K., Wacker, L., Kober, F., Maden, C., Braucher, R.,
+  Bourlès, D., Romani, J.R.V. & Wieler, R. (2015). *Depth-dependence of the
+  production rate of in situ ¹⁴C in quartz from the Leymon High core, Spain*.
+  *Quaternary Geochronology*, 28, 80–87. doi:10.1016/j.quageo.2015.04.004
+  Source of the in-situ ¹⁴C spallation production rate used by
+  `BraucherBorchers`.
 
 **Shielding**
 
@@ -1131,8 +1147,11 @@ differ from the defaults of other calculators.
 - Royden, L. & Perron, J. T. (2013). Solutions of the stream power equation and
   application to the evolution of river longitudinal profiles. *Journal of
   Geophysical Research: Earth Surface*, 118, 497–518.
-- Mitchell, N. A. & Yanites, B. J. (2019). *Journal of Geophysical Research:
-  Earth Surface*, 124. The abbreviated knickpoint expressions.
+- Mitchell, N. A. & Yanites, B. J. (2019). *Spatially variable increase in rock
+  uplift in the northern U.S. Cordillera recorded in the distribution of river
+  knickpoints and incision depths*. *Journal of Geophysical Research: Earth
+  Surface*, 124(5), 1238–1260. doi:10.1029/2018JF004880 The abbreviated
+  knickpoint expressions.
 - Niemi, N. A., Oskin, M., Burbank, D. W., Heimsath, A. M. & Gabet, E. J.
   (2005). Effects of bedrock landslides on cosmogenically determined erosion
   rates. *Earth and Planetary Science Letters*, 237, 480–498.
