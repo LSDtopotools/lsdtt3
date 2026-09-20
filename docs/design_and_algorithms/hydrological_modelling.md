@@ -395,7 +395,7 @@ For UK upland applications (the design drivers for lsdtt3), Manning is reasonabl
 **Unit hydrograph theory**
 
 - Rodríguez-Iturbe, I., & Valdés, J.B. (1979). *The geomorphologic structure of hydrologic response.* Water Resources Research 15(6):1409–1420. doi:10.1029/WR015i006p01409
-- Mesa, O.J., & Mifflin, E.R. (1986). *On the relative role of hillslope and network geometry in hydrologic response.* In: Gupta, V.K., Rodríguez-Iturbe, I. & Wood, E.F. (eds), Scale Problems in Hydrology. Reidel, Dordrecht. <!-- page range not independently verified -->
+- Mesa, O.J., & Mifflin, E.R. (1986). *On the relative role of hillslope and network geometry in hydrologic response.* In: Gupta, V.K., Rodríguez-Iturbe, I. & Wood, E.F. (eds), Scale Problems in Hydrology: Runoff Generation and Basin Response. Springer Netherlands, Dordrecht, pp. 1–17. doi:10.1007/978-94-009-4678-1_1
 
 **Sediment and hydrological connectivity**
 

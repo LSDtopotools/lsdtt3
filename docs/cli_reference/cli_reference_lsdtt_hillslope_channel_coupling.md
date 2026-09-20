@@ -14,7 +14,7 @@ LSDTopoTools2. The legacy alternatives (`use_legacy_HFR`,
 `complete_hilltop_masking`, the five `HilltopFlowRouting*` variants) are **not**
 ported.
 
-For the streamline tracer underneath it see [Flow routing](../what_is_lsdtt3/flow_routing.md);
+For the streamline tracer underneath it see [Flow routing](../design_and_algorithms/flow_routing.md);
 for the channel network that supplies the sinks see
 [lsdtt-channel-extraction](cli_reference_lsdtt_channel_extraction.md).
 

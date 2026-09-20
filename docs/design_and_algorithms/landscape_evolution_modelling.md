@@ -36,8 +36,8 @@ convention, but the transient is not. The area-slope form comes from
 
 #### The exponents m and n
 
-- **`m`** (the drainage-area exponent, default 0.45) captures how incision scales with catchment size. A larger basin carries more water, so it erodes faster. `m ≈ 0.4–0.5` reflects observations that incision is sub-linear in area: doubling the catchment does not double the erosion rate. This exponent acutually includes exponents about runoff efficiency as well as channel width scaling: see Whipple and Tucker (1999). 
-- **`n`** (the slope exponent, default 1.0) determines how strongly the channel responds to slope. `n = 1` (linear slope dependence) is the simplest choice and is physically motivated by laminar shear stress on the bed. `n ≠ 1` is also observed in real landscapes (in fact much more frequently than n = 1) but requires iterative (Newton–Raphson) solution instead of a closed-form formula, making it numerically (much) more expensive.
+- **`m`** (the drainage-area exponent, default 0.45) captures how incision scales with catchment size. A larger basin carries more water, so it erodes faster. `m ≈ 0.4–0.5` reflects observations that incision is sub-linear in area: doubling the catchment does not double the erosion rate. This exponent actually includes exponents about runoff efficiency as well as channel width scaling: see Whipple and Tucker (1999). 
+- **`n`** (the slope exponent, default 1.0) determines how strongly the channel responds to slope. `n = 1` (linear slope dependence) is the simplest choice. This does have a physical basis (see Whipple and Tucker, 1999) but in reality it is often chosen due to its considerable numerical advantages over n not equal to 1. Empirical observations suggest n > 1 (e.g., Harel et al., 2016) but this is an ongoing debate within the geomorphology community, with many arguments for n = 1 and many against. `n ≠ 1` requires iterative (Newton–Raphson) solution instead of a closed-form formula, making it numerically (much) more expensive.
 
 The combination matters for landscape form: the landscape **Péclet number** `p = m + n` (under the Bonetti convention for specific area, discussed below) sets the ratio of advective (fluvial) to diffusive (hillslope) transport. A hillslope length `L_h` emerges at the crossover where `K A^m S^n ≈ D S^2 / L_h^2`, which gives `L_h ~ (D / K)^(1/p)`. Getting the exponent `p` wrong is an error in an **exponent, not a constant**, so it cannot be calibrated away by adjusting `K` or `D` after the fact.
 
@@ -313,15 +313,12 @@ Setting `1/Δt = 0` recovers steady-state; non-zero `1/Δt` is the transient for
 **Newton is faster than SOR for the LINEAR problem too, which is not obvious.** A linear steady
 solve has no critical-slope difficulty at all, so the natural expectation is that SOR wins. It does
 not: `F` is already linear in `z`, so the Jacobian *is* the operator and Newton reduces to a single
-sparse direct solve. Measured at `tolerance = 1e-6`, single-threaded:
-
-| grid | unknowns | SOR | sweeps | Newton | speed-up |
-|---:|---:|---:|---:|---:|---:|
-| 41² | 1,681 | 8 ms | 234 | 6 ms | 1.3× |
-| 81² | 6,561 | 93 ms | 786 | 17 ms | 5.4× |
-| 161² | 25,921 | 1.22 s | 2,188 | 146 ms | 8.3× |
-| 251² | 63,001 | 8.37 s | 5,281 | 393 ms | 21× |
-| 401² | 160,801 | 49.3 s | 13,322 | 2.12 s | 23× |
+sparse direct solve. The measured grid-by-grid comparison is in
+[testing_and_benchmarking.md §10h](../developer_notes/testing_and_benchmarking.md),
+which is the durable record for it; the numbers are not duplicated here. The
+direction of the result is that Newton's advantage **grows with grid size**,
+from near-parity on the smallest grid to more than an order of magnitude on the
+largest tested.
 
 Two things are going on. First, SOR's sweep count grows as roughly O(n²) here, not the O(n) that
 over-relaxation is supposed to deliver, because the automatic `ω` is capped at 1.95 while the
@@ -333,10 +330,10 @@ step-size criterion understates the true solution error by the usual `1/(1 − �
 about 1000× here.
 
 **Where a direct solve stops paying.** Newton's cost is dominated by sparse-LU fill-in, and the
-time exponent in `N` sits near 1.5 up to a few hundred thousand unknowns before climbing: 4.3 s at
-251k, 9.5 s at 491k, 38 s at 1M. Above `direct_solve_max_unknowns` (default 250,000) the solver
-therefore switches automatically to BiCGSTAB with an incomplete-LU preconditioner, which trades the
-factorisation for iterations and keeps memory bounded.
+time exponent in `N` sits near 1.5 up to a few hundred thousand unknowns before climbing (the
+measured points are in the benchmarking record). Above `direct_solve_max_unknowns` (default
+250,000) the solver therefore switches automatically to BiCGSTAB with an incomplete-LU
+preconditioner, which trades the factorisation for iterations and keeps memory bounded.
 
 **Measurements (41×41 cross-slope fixture):** outer-iteration counts of 10 / 42 / 6 for n = 21 / 41 / 81 — the point being that the count does **not grow with the grid**, unlike SOR's O(n). It is not monotonic in n either: the count depends on how far each initial guess sits above `S_c`, because the restoration phase pays for that (the n = 41 case spends 89 line-search backtracks getting back under `S_c`). Linear mode solves in exactly one iteration and matches SOR to 3.8e-6 m; the transient form relaxes to the steady state in 15 sub-steps (49 Newton iterations) to within 1.9e-6 m.
 
@@ -562,6 +559,10 @@ text names a paper, this is the paper it means.
   Research: Solid Earth*, 104(B8), 17661–17674. doi:10.1029/1999JB900120 —
   what the exponents `m` and `n` absorb, including runoff efficiency and
   channel-width scaling.
+- **Harel, M.-A., Mudd, S. M., & Attal, M. (2016).** Global analysis of the
+  stream power law parameters based on worldwide ¹⁰Be denudation rates.
+  *Geomorphology*, 268, 184–196. doi:10.1016/j.geomorph.2016.05.035 — the
+  empirical case that `n > 1`.
 - **Braun, J., & Willett, S. D. (2013).** A very efficient O(n), implicit and
   parallel method to solve the stream power equation governing fluvial incision
   and landscape evolution. *Geomorphology*, 180–181, 170–179.

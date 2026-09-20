@@ -226,50 +226,40 @@ References encoded in headers:
 
 ---
 
-## Compute cost: what is currently measured
+## Compute cost
 
-From `docs/developer_notes/testing_and_benchmarking.md` on `alpine_medium` (720x720, 30 m):
+Timings, fixtures and memory figures for the surface-metric path are **not
+reproduced here**. They live in the surface-metrics section of
+[Testing and benchmarking](../developer_notes/testing_and_benchmarking.md),
+which is the durable record: it names the machine, the fixture, the timing
+scope and the caveats that go with each number. Copying them into this page
+would create a second set that silently goes stale.
 
-### Direct polyfit scaling properties
+What belongs here is the shape of the cost, which follows from the method
+described above and does not change when a number is re-measured:
 
-| Check | Result |
-|---|---|
-| Window-size scaling (W=1,5,15,40) | 39.8 / 43.3 / 42.5 / 47.5 ms (~1.19x spread across 729x window-cell change) |
-| Multi-metric marginal cost | 4 metrics: 47.9 ms; 27 metrics: 41.7 ms (fit dominates, extra metrics mostly output cost) |
-| Peak memory behavior | ~58 B/pixel measured working-set model in direct polyfit analysis |
+- **The quadratic fit dominates, and it is shared.** Every metric on this page
+  is a different combination of the same six coefficients, so the fit is
+  performed once and the per-metric work is the derivation plus the output
+  raster. Asking for more metrics is therefore much cheaper than asking for the
+  first one.
+- **Window size barely matters.** The fit cost is close to flat in window size
+  across the useful range, because the normal equations are assembled by
+  accumulation rather than by forming and inverting a matrix per window.
+- **There is a crossover against a per-metric implementation.** A tool that
+  computes each curvature independently pays a small fixed cost and a large
+  per-metric cost; lsdtt3 pays a large fixed cost (the fit) and a small
+  per-metric cost. Below the crossover the per-metric tool wins; above it
+  lsdtt3 does. The measured crossover is recorded in the benchmarking document.
 
-### Speed and memory vs TopoToolbox context
+!!! warning "Fit-only timings are not end-to-end timings"
 
-| Comparison | lsdtt3 (1t) | TopoToolbox | Notes |
-|---|---:|---:|---|
-| Slope | 35.4 ms | 40.4 ms | near parity |
-| Profile curvature | 31.5 ms | 27.0 ms | near parity |
-| Mean curvature | 27.4 ms | 28.6 ms | near parity |
-| Plan curvature | 28.1 ms | 27.8 ms | near parity |
-| All four curvatures | 30.2 ms | 159.8 ms | one-fit reuse benefit |
-| Peak RSS (surface workflow) | 83-86 MB | 207-233 MB | documented benchmark fixture |
-
-!!! warning "These are FIT-ONLY timings, on a different fixture"
-    The table above comes from `run_surface_benchmark.py`, whose timer reads
-    the CLI's `Running direct fit... done (X s)` line only. That is the
-    **shared quadratic fit**, and it excludes the per-metric derivation that
-    follows — which on a 1000x1000 tile costs a further 20-44 ms per metric.
-    So the lsdtt3 column understates lsdtt3's end-to-end cost, and the "all
-    four curvatures" row in particular is not four metrics' worth of work.
-    The fixture is also `alpine_medium` (720x720), not the 1000x1000 used
-    elsewhere.
-
-    For end-to-end numbers that include both phases, and for the marginal cost
-    per metric and the crossover against TopoToolbox, see the surface-metrics
-    section of [Testing and benchmarking](../developer_notes/testing_and_benchmarking.md). Summary
-    of the measured position, curvatures only on 1000x1000:
-
-    | | fixed | per metric |
-    |---|---|---|
-    | lsdtt3 | 50.6 ms (the fit) | 24.3 ms |
-    | TopoToolbox | 8.0 ms | 50.2 ms |
-
-    lsdtt3 is cheaper from **two** curvature metrics onward.
+    `run_surface_benchmark.py` times the CLI's shared-fit line only, which
+    excludes the per-metric derivation that follows. Any figure taken from that
+    driver understates lsdtt3's end-to-end cost, and a multi-metric row from it
+    is not that many metrics' worth of work. Check which scope a number was
+    measured at before quoting it — the benchmarking document states the scope
+    for each.
 
 ---
 

@@ -167,5 +167,5 @@ surface or controls not exposed by the LEM.
 
 - [Landscape evolution modelling](landscape_evolution_modelling.md)
 - [Surface metrics](surface_metrics.md)
-- [Flow routing](../what_is_lsdtt3/flow_routing.md)
+- [Flow routing](flow_routing.md)
 - [Testing and benchmarking](../developer_notes/testing_and_benchmarking.md)

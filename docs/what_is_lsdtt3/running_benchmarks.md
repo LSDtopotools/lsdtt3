@@ -215,6 +215,10 @@ A relative `--out-dir` resolves against the **current directory**.
     | `--fixture-dir` | the **current directory** |
     | `--build-dir` | the **repository root**, derived from the script's own path |
 
+    This is about how a *relative* value is resolved. For what each flag
+    defaults to when you do not pass it, see *Where things are written* below —
+    that section is the canonical statement and this one should not restate it.
+
     So the default `--build-dir build` means `<repo>/build` **no matter where
     you run from**. The binaries do *not* need to be on `$PATH`, and you do not
     need to be in the repository — running the script by its full path from
@@ -873,6 +877,10 @@ Both take `--out-dir` and `--fixture-dir` to override that. Pointing them at
 the directory the suite already made keeps one run in one place, and — the part
 that actually matters on a server — makes all three drivers **share one fixture
 cache**, so the DEMs are downloaded once rather than once per driver.
+
+Note the asymmetry in the table above: only `run_benchmark_suite.py` follows
+`--out-dir` for its fixtures. The other two really do default into
+`tests/data/dem_cache` inside the repository, which is why this section exists.
 
 Say your campaign is the one the suite just printed:
 

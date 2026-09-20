@@ -6,7 +6,7 @@ Linux you do not need `sudo` — the package carries the command-line tools and
 every library they depend on.
 
 > **Want the very latest code instead of a release?**
-> Then you need to compile it yourself. If you are not a developer do not do this. That activity and is
+> Then you need to compile it yourself. If you are not a developer do not do this. That activity is
 > documented separately in
 > [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md).
 
@@ -109,6 +109,27 @@ Very little: a 64-bit x86 Linux system. The package is built on Ubuntu
 newer works. It does **not** bundle glibc itself, so a distribution older than
 Ubuntu 22.04 may refuse to start it.
 
+### Debian package (experimental, untested)
+
+The repository also contains a Debian package definition under `debian/`, which
+builds a `.deb` linking the **system** GDAL, PROJ, FFTW and netCDF through
+`Depends:` rather than bundling them. That keeps the package small and lets it
+track your distribution's security updates, which is the opposite trade-off
+from the tarball above.
+
+!!! warning "This route is not tested"
+
+    The `.deb` build has not been through the testing the tarball packages
+    have, and no `.deb` is published. It is included because the definition
+    exists and works for the developers, not because it is ready to rely on.
+    **Use the tarball above unless you specifically want the system-library
+    build and are prepared to debug it.** If you try it and something breaks,
+    a bug report is genuinely useful.
+
+Building it is a developer task rather than an install step — the procedure,
+the dependency list and the smoke test are in
+[`debian_packaging.md`](../developer_notes/debian_packaging.md).
+
 ---
 
 ## Windows, via WSL2
@@ -158,7 +179,7 @@ Note that reading and writing across `/mnt/c` is noticeably slower than
 working inside the Linux filesystem (`~/`). For large DEMs, copy the data into
 your Linux home directory first.
 
-(The develpers of `lsdtt3` try to avoid using a GIS since it takes forever to start, so they use `lsdviztools3` instead).
+(The developers of `lsdtt3` try to avoid using a GIS since it takes forever to start, so they use `lsdviztools3` instead).
 
 ### WSL2 troubleshooting
 

@@ -1197,7 +1197,7 @@ order gives the identical raster (0 differing cells of 1,000,000) for
 **This is deliberately NOT changed**, and the CLI keeps building the S-vector.
 It is what makes `is_upslope_of` an O(1) interval test, and chi analysis, basin
 summaries, source finding and the cosmogenic routines all depend on it. See
-`docs/what_is_lsdtt3/flow_routing.md`.
+`docs/design_and_algorithms/flow_routing.md`.
 
 **Fix:** the `accum_d8` case note now states that lsdtt3 performs work the
 references do not, and quantifies it. The asymmetry is recorded rather than
@@ -6724,6 +6724,46 @@ rows were reading an lsdtt3-written filled DEM and were also routing NaN. The
 fix is shared (both drivers call `whitebox_reference.py`), but **any campaign
 recorded before 2026-09-08 is invalid for Whitebox flow rows and must be
 re-run.**
+
+---
+
+## 10p. Hydrology test coverage — PLACEHOLDER, not yet written up
+
+**Status: placeholder.** The tests below exist and pass. What they measure has
+not been written up here, so this section is a stub naming them rather than a
+record of findings. Treat the hydrology modules as **tested but not
+documented**: the assertions are in the test sources, not in this file.
+
+Context for whoever fills this in: the raster TOPMODEL stack was ported so a
+dissertation student could use it, and it has **not been calibrated against any
+observed catchment**. The tests are implementation checks — mass conservation,
+closed-form limits, convergence — not evidence of predictive skill. Do not let
+this section imply otherwise when it is written.
+
+| Suite | Module | What it covers (to be confirmed and expanded) |
+|---|---|---|
+| `unit_topmodel_column` | `lsdtt_topmodel_cpu` | Column equations after TOPMODEL 95.02; exponential baseflow recession as a closed-form limit |
+| `unit_topmodel_dynamic` | `lsdtt_topmodel_dynamic_cpu` | Prognostic saturated zone; the index relation should appear as its steady state |
+| `unit_infiltration_excess` | `lsdtt_infiltration_excess_cpu` | Green-Ampt with exponentially declining conductivity; Green-Ampt infiltration capacity as a closed form. **Also needs:** whether `use_dimensional_ponding_test` is exercised in both settings, since the default reproduces the original FORTRAN's dimensionally inconsistent ponding test |
+| `unit_canopy_interception` | `lsdtt_canopy_interception_cpu` | Rutter-type store; `C = k_S·LAI` and `p = exp(−κ·LAI)`. **Also needs:** a check that `PET_residual` divides by `evap_factor` rather than subtracting `E_canopy` directly — the header flags this as the easiest thing to get wrong |
+| `unit_hydro_roughness` | `lsdtt_hydro_roughness_cpu` | The three-regime partition; `rigorous_roughness_partition` asserting that a land-cover change leaves channel `n` untouched; `jarrett` and `ferguson_vpe` depth dependence |
+| `unit_hydro_routing` | `lsdtt_hydro_routing_cpu` | Linear reservoir, Muskingum-Cunge, kinematic wave |
+| `unit_hydro_velocity_field` | `lsdtt_hydro_velocity_field_cpu` | Velocity, travel time, width-function IUH |
+| `unit_giuh_discharge` | `lsdtt_giuh_cpu` | Width function; `v_i = v_ref (S_i/S_ref)^β` with β = 0.5 |
+
+**Not covered anywhere, and worth deciding about:**
+
+- **Graphflood has no entry here** beyond the DAGGER parity reference in §4.
+  Its solver is stationary, explicit (forward Euler plus a flux limiter), and
+  rebuilds topology from `z + h`; none of those three properties is pinned by a
+  test recorded in this document.
+- **No mass-conservation figure is quoted anywhere** for the distributed
+  hydrology path. The design doc claims mass conservation is checked; this
+  document does not say to what tolerance.
+- **No cross-implementation reference.** Unlike flow routing (TopoToolbox,
+  RichDEM, Whitebox) and cosmogenics (CRONUS, OCTOPUS), the hydrology stack has
+  no external oracle. Whether one is worth building is an open question given
+  the intended use.
 
 ---
 
