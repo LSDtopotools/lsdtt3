@@ -305,6 +305,12 @@ you are on — `jammy` on 22.04, `noble` on 24.04:
 dch --distribution "$(lsb_release -cs)" --release ""
 ```
 
+The committed `debian/changelog` names whichever series it was last edited on,
+so **check it against the machine you are building on**. Two quick tells that
+you are not on the series the changelog claims: the GDAL version in the CMake
+configure block (3.4.1 on jammy, 3.8.4 on noble), and `-D_FORTIFY_SOURCE=3` in
+the compile lines, which is 23.10 and later.
+
 The field only appears in the `.changes` file, which matters for an upload to an
 archive; it does not affect the `.deb` itself or a repository served with
 `dpkg-scanpackages`.
@@ -345,6 +351,35 @@ a while. The output files appear one directory above the source tree:
 To build without re-doing everything after a failure, `dpkg-buildpackage -nc`
 skips the clean step. To start genuinely fresh, `debian/rules clean` (or
 `dh clean`) removes the build tree.
+
+### If the compiler is killed
+
+```
+c++: fatal error: Killed signal terminated program cc1plus
+```
+
+That is the OOM killer, not an interrupt and not a code problem. debhelper runs
+a parallel build sized by `nproc`, and on a many-core machine that can mean
+dozens of concurrent `cc1plus` processes. Two translation units are far heavier
+than the rest — `lsdtt_chi_ksn_inversion_cpu.cpp` (Eigen template
+instantiation) and `lsdtt_raster_coregistration_cpu.cpp` — and Debian's default
+flags add LTO with fat objects, which roughly doubles peak memory.
+
+Cap the job count:
+
+```bash
+DEB_BUILD_OPTIONS="parallel=4" dpkg-buildpackage -us -uc -b -rfakeroot
+```
+
+Halve it until the build completes; `parallel ≈ available_GB / 2` is a
+reasonable starting point. Dropping LTO sheds the largest single consumer:
+
+```bash
+DEB_BUILD_OPTIONS="parallel=2 optimize=-lto" dpkg-buildpackage -us -uc -b -rfakeroot
+```
+
+On a shared login node with a memory cgroup, the better answer is to build on a
+compute node through the batch system rather than tuning flags.
 
 ### Checking the package with lintian
 
