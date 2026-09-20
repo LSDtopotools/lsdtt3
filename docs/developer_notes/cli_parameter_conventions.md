@@ -16,8 +16,9 @@ standard below ensures that:
 - New contributors follow the existing patterns rather than inventing new ones.
 
 The standard applies to all parameters. 
-A CTest guard checks every help-registered parameter in all 38 CLIs, so new
-violations fail the test rather than entering an allow-list.
+A CTest guard checks every help-registered parameter in all 40 CLIs. It runs
+against a baseline allow-list of pre-existing violations that may only shrink,
+never grow — so a newly introduced violation fails the test.
 
 ---
 
@@ -124,7 +125,8 @@ lsdtt::declare_spatial_index_parameter(bool_defaults, help);
 
 lsdtt::declare_basin_outlet_parameters(...);
     // Declares: basin_outlet_fname, basin_outlet_snapping_method,
-    //           basin_outlet_min/max_search_radius_pixels,
+    //           basin_outlet_snap_min_search_radius_pixels,
+    //           basin_outlet_snap_max_search_radius_pixels,
     //           basin_outlet_contributing_pixels_threshold
 
 lsdtt::declare_surface_fitting_parameters(...);

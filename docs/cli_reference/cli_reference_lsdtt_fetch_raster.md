@@ -3,7 +3,7 @@
 Downloads a DEM for an area and writes it as an analysis-ready projected
 GeoTIFF. No Python environment, and by default no account or API key.
 
-Design notes and rationale: `docs/testing_and_benchmarking.md`.
+Design notes and rationale: `docs/developer_notes/testing_and_benchmarking.md`.
 
 ```sh
 lsdtt-fetch-raster <path> <parameter_file>
@@ -772,7 +772,7 @@ support.
 
 ## See also
 
-- `docs/testing_and_benchmarking.md` — design rationale, credential rules, findings
+- `docs/developer_notes/testing_and_benchmarking.md` — design rationale, credential rules, findings
 - `docs/cli_reference/cli_reference_lsdtt_raster_preprocessing.md` — the usual next step
 - `python_helpers/download_dem_tiles.py` — Python helper covering other providers
 - <https://portal.opentopography.org/apidocs/#/Public/getGlobalDem> — the

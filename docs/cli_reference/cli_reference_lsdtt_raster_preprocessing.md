@@ -274,7 +274,7 @@ you asking for it — this parameter is for pinning the backend explicitly.
 ### Note: `fill_min_slope` is a slope, and differs from RichDEM's "epsilon fill"
 
 lsdtt3 is benchmarked against [RichDEM](https://github.com/r-barnes/richdem)
-(`docs/testing_and_benchmarking.md`). Both tools offer what is loosely called
+(`docs/developer_notes/testing_and_benchmarking.md`). Both tools offer what is loosely called
 an "epsilon fill", but **they are not the same operation**, and comparing their
 outputs without knowing this is misleading.
 

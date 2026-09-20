@@ -1694,7 +1694,7 @@ void run_cross_tool_checks(const std::string& case_name)
 // and asserts the true-area rasterisation geometry EXACTLY (not as a band).
 // The same file is the read-path fixture for smoke_synthetic_networks_polygon.
 // Test domains are generated in C++, never in Python
-// (docs/testing_and_benchmarking.md §8).
+// (docs/developer_notes/testing_and_benchmarking.md §8).
 // -----------------------------------------------------------------------------
 bool project_point(double lat_deg, double lon_deg, int epsg,
                    double& easting, double& northing);   // defined below

@@ -10,7 +10,7 @@
 // -----------------------------------------------------------------------------
 // Credential resolution and masking.
 //
-// Testing and benchmarking notes: docs/testing_and_benchmarking.md
+// Testing and benchmarking notes: docs/developer_notes/testing_and_benchmarking.md
 //
 // This is the ONLY place in lsdtt3 that handles secrets. It is deliberately
 // small so that it is the only thing anyone has to audit.

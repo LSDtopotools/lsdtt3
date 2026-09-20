@@ -240,7 +240,7 @@ COMPARISONS = {
     #
     # This is a by-product of the timing work, not a correctness assertion --
     # but it is exactly the trap a user comparing the two tools would fall
-    # into, so it belongs in docs/testing_and_benchmarking.md.
+    # into, so it belongs in docs/developer_notes/testing_and_benchmarking.md.
     #
     # REPORT-ONLY, and not because of handedness. lsdtt-surface-metrics does
     # not time its hillshade step internally the way it times the polyfit, so

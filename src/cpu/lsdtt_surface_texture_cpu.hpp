@@ -108,8 +108,9 @@ struct madk2_result
 //   parameter values.
 //
 // Reference:
-//   Trevisani, S., Teza, G. and Guth, P.L. (2023) Morphometric analysis of
-//   topographic surface texture. Geosciences, 13(6), 162.
+//   Trevisani, S., Teza, G. and Guth, P.L. (2023) A simplified geostatistical
+//   approach for characterizing key aspects of short-range roughness.
+//   CATENA, 223, 106927. doi:10.1016/j.catena.2023.106927
 // -----------------------------------------------------------------------------
 madk2_result calculate_madk2(
     const lsdtt_raster_cpu& raster,

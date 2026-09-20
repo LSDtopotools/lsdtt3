@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RichDEM reference implementations for the flow-routing benchmark.
 
-docs/testing_and_benchmarking.md.
+docs/developer_notes/testing_and_benchmarking.md.
 
 Runs one RichDEM routine over a GeoTIFF and writes the result as a GeoTIFF.
 Kept as a standalone script, invoked as a subprocess by run_flow_benchmark.py,

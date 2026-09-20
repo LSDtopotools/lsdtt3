@@ -58,13 +58,15 @@ nav:
   - What is lsdtt3:
     - Overview: what_is_lsdtt3/overview.md
     - Installation: what_is_lsdtt3/install_lsdtt3.md
+    - Your first analysis: what_is_lsdtt3/first_analysis.md
+    - The command-line tools: what_is_lsdtt3/lsdtt3_clis.md
     - Data:
       - Vector data: what_is_lsdtt3/vector_data.md
       - Raster data: what_is_lsdtt3/raster_data.md
-    - Flow routing: what_is_lsdtt3/flow_routing.md
     - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
     - Workflows: what_is_lsdtt3/workflows.md
   - Design and algorithms:
+    - Flow routing: design_and_algorithms/flow_routing.md
     - Choosing a synthetic landscape tool: design_and_algorithms/synthetic_cli_cluster.md
     - Surface metrics: design_and_algorithms/surface_metrics.md
     - Floodplains, terraces and valleys: design_and_algorithms/fluvial_surfaces_and_valleys.md
@@ -155,6 +157,7 @@ nav:
       - Building on Windows: developer_notes/building_on_windows.md
       - Building on macOS: developer_notes/building_on_macos.md
       - Building the docs site: developer_notes/building_the_docs.md
+      - Building the Python wheels: developer_notes/building_python_wheels.md
     - Architecture:
       - Architecture: developer_notes/lsdtt3_architecture.md
       - Backend abstraction rules: developer_notes/backend_abstraction_rules.md
@@ -167,6 +170,7 @@ nav:
       - Testing and benchmarking: developer_notes/testing_and_benchmarking.md
     - Packaging and release:
       - Making release packages: developer_notes/making_release_packages.md
+      - Publishing to PyPI: developer_notes/publishing_to_pypi.md
       - QGIS plugin development: developer_notes/qgis_plugin_development.md
       - Beta testing and distribution: developer_notes/beta_testing_notes.md
       - Debian packaging: developer_notes/debian_packaging.md

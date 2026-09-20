@@ -72,10 +72,10 @@ CMake prints a summary of which optional libraries it found:
   Build type  : Release
   C++ std     : 17
   GDAL        : <version>
-  OpenMP      : TRUE
-  FFTW3       : TRUE
-  GPU (CUDA)  : FALSE
-  Eigen3      : TRUE
+  OpenMP      : ON
+  FFTW3       : ON
+  GPU (CUDA)  : OFF
+  Eigen3      : ON
 ===================================
 ```
 
@@ -95,7 +95,7 @@ Replace `/path/to/lsdtt3` with wherever you cloned the repository.
 If you don't want to modify your `.bashrc` file you can also just put the path to the binaries in your `$PATH`, but you need to do this every time you open a new shell:
 
 ```bash
-export PATH=/path/to/lsdtt3/build:$PATH'
+export PATH=/path/to/lsdtt3/build:$PATH
 lsdtt-channel-extraction --help
 ```
 

@@ -246,7 +246,7 @@ void lsdtt_flowinfo::create(
     // DEM -- pits, flats, cycles and bad inputs are all caught above. Run on
     // every build it cost time and ~10 B/cell of transient memory. Code correctness is established in CTest instead:
     // unit_flow_d8_identity and unit_flow_properties call validate() on every
-    // fixture. Removed 2026-09-13; see docs/testing_and_benchmarking.md.
+    // fixture. Removed 2026-09-13; see docs/developer_notes/testing_and_benchmarking.md.
     is_built_ = true;
 }
 

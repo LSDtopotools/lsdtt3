@@ -251,8 +251,8 @@ You will see `[[nodiscard]]` on many functions throughout the headers, especiall
 query functions on `lsdtt_flowinfo`:
 
 ```cpp
-[[nodiscard]] flat_index_type receiver_of_unchecked(flat_index_type flat) const noexcept;
-[[nodiscard]] lsdtt_flat_index_slice upslope_nodes(flat_index_type flat) const;
+[[nodiscard]] std::int64_t receiver_of_unchecked(std::int64_t flat) const noexcept;
+[[nodiscard]] lsdtt_flat_index_slice upslope_nodes(std::int64_t flat) const;
 [[nodiscard]] lsdtt_raster_cpu add_constant(float val) const;
 ```
 
@@ -270,7 +270,7 @@ Without `[[nodiscard]]` these would silently compile and do nothing useful.
 It is not used on functions that act through side effects (e.g. `clear()`,
 `print_raster_info()`), where a void return or ignored return is normal.
 
-### Cell indices and `lsdtt_flow_types.hpp`
+### Cell indices and sentinel values
 
 For a handful of data members in `lsdtt_flowinfo` we need to be able to hold very large integer numbers. For example a 50000x500000 DEM will have more pixels than there are integers available using a 32 bit integer. So we use `std::int64_t` for these. 
 
@@ -279,8 +279,9 @@ no `flat_index_type` typedef — using the concrete type directly makes the code
 easier to read and avoids explaining a flexible typedef that was rarely changed
 in practice. `int64_t` is safe for any raster you can load into memory.
 
-`lsdtt_flow_types.hpp` defines the sentinel values you will encounter when
-iterating the flow graph:
+`src/core/lsdtt_types.hpp` defines the sentinel values you will encounter when
+iterating the flow graph. That file is the single home for shared types — see
+design principle 13 in the architecture note; do not add a new `*_types.hpp`:
 
 ```cpp
 k_nodata_receiver = -1   // cell is nodata / outside the valid mask
@@ -297,9 +298,9 @@ if (fi.receiver_of_unchecked(flat) == lsdtt::k_outlet_receiver)
 }
 ```
 
-The `std::uint8_t` is `uint8_t` because no cell on a regular grid can have
-more than 8 donors (D8 routing), so a byte is sufficient and keeps the
-donor-count array compact.
+Donor counts are stored as `std::uint8_t`: a cell on a regular grid can have
+at most 8 direct donors under D8 routing, so a byte is sufficient and keeps
+the donor-count array compact.
 
 ---
 

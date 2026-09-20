@@ -13,7 +13,7 @@
 // Fetch a raster (currently a DEM) for a bounding box and write it as an
 // analysis-ready projected GeoTIFF. No Python environment required.
 //
-// Testing and benchmarking notes: docs/testing_and_benchmarking.md
+// Testing and benchmarking notes: docs/developer_notes/testing_and_benchmarking.md
 //
 // Workflow:
 //   1. Parse parameters and cross-parameter checks

@@ -22,7 +22,7 @@
 // FLAT HANDLING: lsdtt3 and RichDEM do DIFFERENT things
 //
 // RichDEM is used as the external reference in the flow-routing benchmark
-// (docs/testing_and_benchmarking.md), so it is worth being explicit about
+// (docs/developer_notes/testing_and_benchmarking.md), so it is worth being explicit about
 // where the two agree and where they deliberately do not.
 //
 //   min_slope == 0  -- equivalent to RichDEM's FillDepressions(epsilon=false).
@@ -280,7 +280,7 @@ struct hydraulic_surface_fill_result
 // Improved Priority-Flood, which is O(N log N) because nearly every cell passes
 // through a binary heap. This routine is O(N) with a small constant and almost
 // entirely sequential memory access, which is why TopoToolbox's equivalent is
-// roughly twice as fast as ours (see docs/testing_and_benchmarking.md).
+// roughly twice as fast as ours (see docs/developer_notes/testing_and_benchmarking.md).
 //
 // *** IT DOES NOT SUPPORT min_slope > 0 ***
 //

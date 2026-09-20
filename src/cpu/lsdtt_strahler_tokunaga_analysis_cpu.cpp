@@ -2060,7 +2060,7 @@ lsdtt_area_scaling_result compute_area_scaling(
     // upper cut from 0 to 2 decades swung the untruncated estimate 0.50 -> 1.89
     // while the truncated one stayed at 0.43-0.45, and the untruncated value was
     // predicted to within ~1% on every case by applying this correction in
-    // reverse. See docs/testing_and_benchmarking.md 8b.1c.
+    // reverse. See docs/developer_notes/testing_and_benchmarking.md 8b.1c.
     double sum_log = 0.0;
     std::size_t n_mle = 0;
     for (double v : a)

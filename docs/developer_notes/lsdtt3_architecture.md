@@ -42,6 +42,7 @@ lsdtt3/
 │   ├── lsdtt-cosmo-prediction.cpp
 │   ├── lsdtt-cosmo-tool.cpp
 │   ├── lsdtt-cross-sections.cpp
+│   ├── lsdtt-distributed-hydrology.cpp
 │   ├── lsdtt-divide-migration.cpp
 │   ├── lsdtt-drainage-analysis.cpp
 │   ├── lsdtt-feature-finder.cpp
@@ -49,14 +50,15 @@ lsdtt3/
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-fluvial-surfaces.cpp
 │   ├── lsdtt-graphflood.cpp
+│   ├── lsdtt-hillslope-channel-coupling.cpp
 │   ├── lsdtt-internal-drainage.cpp
 │   ├── lsdtt-lem.cpp
 │   ├── lsdtt-linear-stats.cpp
 │   ├── lsdtt-marsh-topography.cpp
 │   ├── lsdtt-mountain-front.cpp
+│   ├── lsdtt-outlet-matching.cpp
 │   ├── lsdtt-raster-calculator.cpp
 │   ├── lsdtt-raster-preprocessing.cpp
-│   ├── lsdtt-synthetic-surfaces.cpp
 │   ├── lsdtt-ridgeline-analysis.cpp
 │   ├── lsdtt-sediment-routing.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
@@ -64,6 +66,7 @@ lsdtt3/
 │   ├── lsdtt-surface-metrics.cpp
 │   ├── lsdtt-swath-profile.cpp
 │   ├── lsdtt-synthetic-networks.cpp
+│   ├── lsdtt-synthetic-surfaces.cpp
 │   ├── lsdtt-valley-centreline.cpp
 │   ├── lsdtt-water-centreline.cpp
 │   └── lsdtt-water-line-repair.cpp
@@ -256,92 +259,83 @@ the utility-layer numerical functions.
 
 
 
-**`lsdtt3_core` sources** (`src/core/`):
-- `lsdtt_gdal_init.cpp`
-- `lsdtt_pixel_type.cpp`
-- `lsdtt_raster_meta.cpp`
-- `lsdtt_raster_base.cpp`
-- `lsdtt_data_loader.cpp`
-- `lsdtt_backend_factory.cpp`
-- `lsdtt_param_parser.cpp`
-- `lsdtt_crs_suggest.cpp`
-- `lsdtt_raster_reproject.cpp`
-- `lsdtt_raster_warp.cpp`
-- `lsdtt_vector_utils.cpp`
-- `lsdtt_point_input.cpp`
-- `lsdtt_stat_csv.cpp`
+**`CMakeLists.txt` is the authoritative list.** The inventories below group the
+modules by subsystem so you can find your way around; they are not maintained
+line-by-line against the build. To see exactly what is compiled, read
+`LSDTT3_CORE_SOURCES`, `LSDTT3_UTILS_SOURCES` and `LSDTT3_CPU_SOURCES` in
+`CMakeLists.txt`. At the time of writing that is 21 core, 10 utils and 129 CPU
+translation units.
 
-**`lsdtt3_utils` sources** (`src/utils/`):
-- `lsdtt_statistics.cpp`
-- `lsdtt_histogram.cpp`
-- `lsdtt_statistical_tests.cpp`
-- `lsdtt_distributions.cpp`
-- `lsdtt_splines.cpp`
-- `lsdtt_regression.cpp`
-- `lsdtt_binary_array2d_tracing.cpp`
 
-**`lsdtt3_cpu` sources** (`src/cpu/`):
-- `lsdtt_raster_cpu.cpp`
-- `lsdtt_raster_algebra.cpp`
-- `lsdtt_raster_surface_metrics_cpu.cpp`
-- `lsdtt_surface_texture_cpu.cpp`
-- `lsdtt_raster_surface_fitting_cpu.cpp`
-- `lsdtt_raster_flow_preprocessing_cpu.cpp`
-- `lsdtt_raster_nodata_filling_cpu.cpp`
-- `lsdtt_raster_spectral_cpu.cpp`
-- `lsdtt_raster_synthetic_surfaces_cpu.cpp`
-- `lsdtt_synthetic_network_cpu.cpp`
-- `lsdtt_synthetic_domain_cpu.cpp`
-- `lsdtt_raster_feature_finder_cpu.cpp`
-- `lsdtt_flowinfo_cpu.cpp`
-- `lsdtt_flow_base.cpp`
-- `lsdtt_junction_network_cpu.cpp`
-- `lsdtt_junction_network_base.cpp`
-- `lsdtt_depression_hierarchy_cpu.cpp`
-- `lsdtt_fill_spill_merge_cpu.cpp`
-- `lsdtt_flow_snapping_cpu.cpp`
-- `lsdtt_basin_cpu.cpp`
-- `lsdtt_junction_basin_cpu.cpp`
-- `lsdtt_junction_basin_manager_cpu.cpp`
-- `lsdtt_basin_outline_cpu.cpp`
-- `lsdtt_flat_surface_finder.cpp`
-- `lsdtt_flat_surface_plane_analysis.cpp`
-- `lsdtt_reference_field_ladder_cpu.cpp`
-- `lsdtt_vector_rasterise_cpu.cpp`
-- `lsdtt_proximity_cpu.cpp`
-- `lsdtt_swath_cpu.cpp`
-- `lsdtt_streamlines_cpu.cpp`
-- `lsdtt_lem_cpu.cpp`
-- `lsdtt_stream_power_cpu.cpp`
-- `lsdtt_steady_state_cpu.cpp`
-- `lsdtt_hillslope_transport_cpu.cpp`
-- `lsdtt_hillslope_steady_state_cpu.cpp`
-- `lsdtt_flowgraph_cpu.cpp`
-- `lsdtt_raster_vectorise_cpu.cpp`
-- `lsdtt_raster_mosaic_cpu.cpp`
-- `lsdtt_connectivity_cpu.cpp`
-- `lsdtt_hydraulic_graph_cpu.cpp`
-- `lsdtt_chi_extraction_cpu.cpp`
-- `lsdtt_chi_network_analysis_cpu.cpp`
-- `lsdtt_chi_disorder_cpu.cpp`
-- `lsdtt_chi_data_maps_cpu.cpp`
-- `lsdtt_channel_network_analysis_cpu.cpp`
-- `lsdtt_strahler_tokunaga_analysis_cpu.cpp`
-- `lsdtt_raster_skeleton_graph_cpu.cpp`
-- `lsdtt_raster_binary_mask_vectorise_cpu.cpp`
-- `lsdtt_raster_binary_mask_cpu.cpp`
-- `lsdtt_burn_streams_cpu.cpp`
-- `lsdtt_mountain_front_cpu.cpp`
-- `lsdtt_landscape_drape_cpu.cpp`
-- `lsdtt_cosmo_raster_cpu.cpp`
-- `lsdtt_crn_parameters.cpp`
-- `lsdtt_crn_column.cpp`
-- `lsdtt_raster_image_ops_cpu.cpp`
-- `lsdtt_chi_ksn_inversion_cpu.cpp` *(when Eigen3 is available)*
+**`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
+parameter parsing, projection and vector plumbing:
+
+`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`
+
+
+**`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
+raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
+
+`lsdtt_binary_array2d_tracing`, `lsdtt_distributions`, `lsdtt_histogram`, `lsdtt_image_filters`, `lsdtt_natural_breaks`, `lsdtt_regression`, `lsdtt_signal1d`, `lsdtt_splines`, `lsdtt_statistical_tests`, `lsdtt_statistics`
+
+
+**`lsdtt3_cpu` sources** (`src/cpu/`), by subsystem:
+
+
+*Raster core and algebra*: `lsdtt_raster_cpu`, `lsdtt_raster_algebra`, `lsdtt_raster_hierarchy_cpu`, `lsdtt_raster_resampling_cpu`, `lsdtt_raster_mosaic_cpu`, `lsdtt_raster_coregistration_cpu`, `lsdtt_raster_nodata_filling_cpu`, `lsdtt_raster_image_ops_cpu`, `lsdtt_labelled_raster_stats_cpu`
+
+
+*Surface metrics and texture*: `lsdtt_raster_surface_metrics_cpu`, `lsdtt_raster_surface_fitting_cpu`, `lsdtt_surface_texture_cpu`, `lsdtt_raster_spectral_cpu`, `lsdtt_critical_slope_cpu`, `lsdtt_slope_break_finder_cpu`
+
+
+*Flow routing and preprocessing*: `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
+
+
+*Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`
+
+
+*Basins*: `lsdtt_basin_cpu`, `lsdtt_basin_outline_cpu`, `lsdtt_basin_outline_metrics_cpu`, `lsdtt_basin_stats_cpu`, `lsdtt_junction_basin_cpu`, `lsdtt_junction_basin_manager_cpu`, `lsdtt_zero_order_basin_manager_cpu`, `lsdtt_side_tributary_basins_cpu`, `lsdtt_outlet_basin_verification_cpu`, `lsdtt_outlet_resolution_cpu`
+
+
+*Hillslopes and divides*: `lsdtt_hillslope_transport_cpu`, `lsdtt_hillslope_steady_state_cpu`, `lsdtt_hillslope_implicit_cpu`, `lsdtt_hillslope_newton_cpu`, `lsdtt_hillslope_cellular_cpu`, `lsdtt_hillslope_peclet_cpu`, `lsdtt_hillslope_length_search_cpu`, `lsdtt_hillslope_particle_io`, `lsdtt_hilltop_flow_routing_cpu`, `lsdtt_ridgeline_cpu`, `lsdtt_divide_diagnostics_cpu`, `lsdtt_divide_migration_cpu`, `lsdtt_perron_qimp_cpu`, `lsdtt_ren_modular_implicit_cpu`
+
+
+*Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
+
+
+*Hydrology and hydraulics*: `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`, `lsdtt_hydro_routing_cpu`, `lsdtt_hydro_velocity_field_cpu`, `lsdtt_hydro_roughness_cpu`, `lsdtt_hydraulic_graph_cpu`, `lsdtt_infiltration_excess_cpu`, `lsdtt_canopy_interception_cpu`, `lsdtt_giuh_cpu`, `lsdtt_graphflood_optimised_cpu`, `lsdtt_sti_cpu`
+
+
+*Cosmogenic nuclides*: `lsdtt_cosmo_raster_cpu`, `lsdtt_cosmo_site_cpu`, `lsdtt_crn_parameters`, `lsdtt_crn_column`, `lsdtt_crn_diagnostics`, `lsdtt_cronus_v3_input`, `lsdtt_quartz_fertility_cpu`, `lsdtt_niemi_ensemble_cpu`
+
+
+*Landslides*: `lsdtt_landslide_crn_cpu`, `lsdtt_landslide_event_cpu`, `lsdtt_landslide_placement_cpu`, `lsdtt_landslide_size_cpu`
+
+
+*Valleys, floodplains and terraces*: `lsdtt_valley_centreline_cpu`, `lsdtt_valley_cross_sections_cpu`, `lsdtt_valley_spacing_cpu`, `lsdtt_cross_sections_cpu`, `lsdtt_terrace_edge_tracer_cpu`, `lsdtt_flat_surface_finder`, `lsdtt_flat_surface_plane_analysis`, `lsdtt_flat_surface_channel_classify_cpu`, `lsdtt_water_area_centreline_cpu`, `lsdtt_swath_cpu`, `lsdtt_proximity_cpu`
+
+
+*Coastal and tidal*: `lsdtt_marsh_platform_cpu`, `lsdtt_tidal_channel_cpu`, `lsdtt_tidal_skeleton_metrics_cpu`
+
+
+*Feature detection and image analysis*: `lsdtt_raster_feature_finder_cpu`, `lsdtt_raster_linear_features_cpu`, `lsdtt_raster_skeleton_graph_cpu`, `lsdtt_raster_binary_mask_cpu`, `lsdtt_raster_binary_mask_vectorise_cpu`, `lsdtt_raster_contours_cpu`, `lsdtt_mountain_front_cpu`
+
+
+*Vector I/O and conversion*: `lsdtt_vector_ops_cpu`, `lsdtt_vector_rasterise_cpu`, `lsdtt_raster_vectorise_cpu`, `lsdtt_vector_line_repair_cpu`, `lsdtt_vector_network_d8_clean_cpu`
+
+
+*Synthetic surfaces and reference fields*: `lsdtt_raster_synthetic_surfaces_cpu`, `lsdtt_synthetic_domain_cpu`, `lsdtt_synthetic_network_cpu`, `lsdtt_reference_field_ladder_cpu`
+
+
+*Data acquisition*: `lsdtt_usgs_elevation`
+
+
+`lsdtt_chi_ksn_inversion_cpu` is compiled only when Eigen3 is available.
 
 `lsdtt3_cpu` depends on `lsdtt3_core` and `lsdtt3_utils`. All CLI executables
 link against `lsdtt3_cpu` and `lsdtt3_core`. OpenMP, FFTW, NetCDF, and Eigen3
 link to `lsdtt3_cpu`.
+
 
 **Dependencies:**
 - GDAL — required
@@ -381,7 +375,7 @@ workflow.
 
 **CLI executables use dashes, not underscores:**
 - Object/library: `lsdtt_flowinfo_cpu`, `lsdtt_raster_cpu`, `lsdtt_param_parser`
-- CLI executable: `lsdtt-test-flowinfo`, `lsdtt-raster-preprocessing`
+- CLI executable: `lsdtt-channel-extraction`, `lsdtt-raster-preprocessing`
 
 **Output filename convention:**
 `<write_fname>_<descriptor>.tif`. If `write_fname` not set, defaults to stem
@@ -407,8 +401,11 @@ Nothing backend-specific. No CPU arrays. No CUDA.
 **`src/cpu/`** — everything that runs on host CPU: the CPU raster class,
 all CPU analysis free functions, and the CPU flow routing object.
 
-**`src/gpu/`** — GPU implementations. Currently `lsdtt_raster_gpu` placeholder.
-Future: `lsdtt_flowinfo_gpu`.
+**`src/gpu/`** — GPU implementations. Currently holds only
+`lsdtt_surface_gpu.{hpp,cu}`, which has not been compiled or parity-tested on
+real hardware. There is no `lsdtt_raster_gpu`; `lsdtt_backend_factory.cpp`
+includes such a header under `#ifdef LSDTT_GPU_ENABLED`, a macro CMake never
+defines. See [`gpu_compute.md`](gpu_compute.md) for what is actually built.
 
 **`src/utils/`** — header-only utilities with no backend dependency.
 
@@ -416,17 +413,17 @@ Future: `lsdtt_flowinfo_gpu`.
 ```
 src/core/lsdtt_raster_base    ← abstract interface for raster backends
 src/cpu/lsdtt_raster_cpu      ← CPU implementation
-src/gpu/lsdtt_raster_gpu      ← GPU implementation (placeholder)
+src/gpu/lsdtt_raster_gpu      ← GPU implementation (not written)
 
 src/core/lsdtt_flow_base      ← abstract interface for flow routing
 src/cpu/lsdtt_flowinfo_cpu    ← CPU implementation
-src/gpu/lsdtt_flowinfo_gpu    ← GPU implementation (future)
+src/gpu/lsdtt_flowinfo_gpu    ← GPU implementation (not written)
 ```
 
 **Factory pattern:**
 ```
-lsdtt_backend_factory  →  lsdtt_raster_cpu or lsdtt_raster_gpu
-make_flow_base()       →  lsdtt_flowinfo_cpu or lsdtt_flowinfo_gpu (future)
+lsdtt_backend_factory  →  lsdtt_raster_cpu (the gpu branch is not built)
+make_flow_base()       →  lsdtt_flowinfo_cpu (lsdtt_flowinfo_gpu not written)
 ```
 
 **CLIs hold abstract interfaces via unique_ptr — never concrete types:**
@@ -1233,6 +1230,41 @@ After adoption, renaming that parameter is a one-line change in one file, not a
 twenty-CLI edit. This is why parameter renames in the remediation plan are low-risk:
 the shared layer makes them self-enforcing.
 
+- **`lsdtt-distributed-hydrology.cpp`**  
+  A raster TOPMODEL: a time-evolving, rainfall-driven simulation built on the
+  same wetness index `lsdtt-drainage-analysis` reports. The driver contains no
+  hydrology of its own — it assembles `lsdtt_wetness_index_cpu`,
+  `lsdtt_landcover_scenario_cpu`, `lsdtt_channel_extent_cpu`,
+  `lsdtt_hydro_roughness_cpu`, `lsdtt_hydro_velocity_field_cpu`,
+  `lsdtt_canopy_interception_cpu`, `lsdtt_infiltration_excess_cpu`,
+  `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu` and
+  `lsdtt_hydro_routing_cpu` in order. Routing is D-infinity or MFD through
+  `lsdtt_flowgraph_cpu`; D8 is deliberately not offered, because sending all of
+  a cell's area to one neighbour stripes the wetness index and therefore the
+  deficit field built on it.
+
+- **`lsdtt-hillslope-channel-coupling.cpp`**  
+  Couples hillslope form to channel form. For every ridgeline pixel it measures
+  hilltop curvature, traces the flow path down to the channel that pixel drains
+  to, and reports hillslope length, relief and the non-dimensional pair
+  E\* / R\* (Hurst et al. 2012; Grieve et al. 2016). Divides are traced on the
+  pixel-corner divide grid, so a divide runs *between* DEM pixels: hilltop
+  pixels are the pixels a ridgeline separates, one either side, and because the
+  ridgeline is ordered each pixel carries its position along the divide and
+  which side it sits on. That side partitions a divide's hilltops into the two
+  opposing hillslopes, so E\*/R\* can be compared across a divide rather than
+  only pooled.
+
+- **`lsdtt-outlet-matching.cpp`**  
+  Matches reference-DEM outlets to target-DEM cells by comparing reference and
+  target D8 contributing-basin areas. Loads both DEMs and a reference outlet
+  CSV, validates CRS and transformed-extent overlap, builds D8 flow plus
+  target contributing-pixel and edge-influence rasters, then selects the
+  closest-area non-edge candidate. Writes matched-outlet and diagnostic CSVs.
+  Uses the outlet-resolution stack (`lsdtt_outlet_bounds_discovery`,
+  `lsdtt_outlet_clusters`, `lsdtt_outlet_resolution_cpu`,
+  `lsdtt_outlet_basin_verification_cpu`).
+
 **Migration status:** Not all CLIs have adopted the shared layer yet. Legacy CLIs
 that predate the shared layer still hand-declare their parameters. The remediation
 plan migrates them per-phase.
@@ -1413,12 +1445,12 @@ alongside `k_version` and `k_citation`.
 
 **Version reporting (`-v` / `--version`):** prints both the CLI's own
 `k_version` and the package-level version, e.g.
-`lsdtt-chi-analysis version 0.2.0 (lsdtt3 0.2.0)`. The package version is
+`lsdtt-chi-analysis version 1.0.0 (lsdtt3 0.5.1)`. The package version is
 injected by CMake as the `LSDTT3_VERSION` compile definition on
 `lsdtt3_core` (used only in `lsdtt_param_parser.cpp`). A build made exactly
 on the release tag `v<PROJECT_VERSION>` reports the plain version; any
 other build reports a development string derived from `git describe`, e.g.
-`0.3.0-dev, git v0.2.0-14-g04460f4-dirty` — so distributed development
+`0.5.1-dev, git v0.5.1-14-g04460f4-dirty` — so distributed development
 builds self-identify. Captured at configure time (rerun cmake to refresh).
 Per-CLI `k_version` numbers are versioned independently of the package.
 
@@ -2018,7 +2050,7 @@ first and then pass the resulting flat sample into `src/utils/` routines.
 
 ## lsdtt-raster-preprocessing CLI
 
-File: `cli/lsdtt-raster-preprocessing.cpp`  |  Version: 0.2.0
+File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_version`: 1.0.0
 
 **Preprocessing pipeline (in order):**
 1. **Projection** — detect and reproject geographic / Web Mercator rasters
@@ -2837,14 +2869,6 @@ an attribution question, not a licensing one.
 
 This matters for packaging: the whole tree is single-licence, which is why
 `debian/copyright` needs no third-party stanza.
-
----
-
-## Known compile errors fixed (for reference)
-
-| File | Issue | Fix |
-|------|-------|-----|
-| `lsdtt-raster-preprocessing.cpp` | `const lsdtt_raster_base&` to cpu fn | Changed to `const lsdtt_raster_cpu&` |
 
 ---
 

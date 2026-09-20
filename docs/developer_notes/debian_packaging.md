@@ -270,7 +270,7 @@ build log:
 ===================================
 ```
 
-A package built with `FFTW3 : FALSE` is missing a tool and will not tell the
+A package built with `FFTW3 : OFF` is missing a tool and will not tell the
 user why.
 
 ---

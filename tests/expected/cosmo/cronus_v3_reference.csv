@@ -1,5 +1,5 @@
 # CRONUS v3 online-calculator erosion rates for the lsdtt3
-# comparison fixture - see docs/testing_and_benchmarking.md
+# comparison fixture - see docs/developer_notes/testing_and_benchmarking.md
 # FROZEN reference - refreshing it is a reviewable event.
 name,nuclide,scheme,erate_gcm2yr,unc_int_gcm2yr,unc_ext_gcm2yr
 LSDTT-1,Be-10,St,0.00031995,1.1997e-05,3.3801e-05

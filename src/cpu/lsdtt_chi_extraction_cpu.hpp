@@ -57,7 +57,7 @@ namespace lsdtt
 // 2026-09-08: that rule was O(h) and biased chi HIGH on every segment, because
 // the denominator grows downstream so the upstream integrand always exceeds the
 // segment average. Measured at ~0.4 % on a 30 m grid, growing with cell size.
-// See chi_increment() in the .cpp and docs/testing_and_benchmarking.md.
+// See chi_increment() in the .cpp and docs/developer_notes/testing_and_benchmarking.md.
 //
 // where denominator is either:
 //

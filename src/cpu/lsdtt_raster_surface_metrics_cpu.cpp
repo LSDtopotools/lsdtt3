@@ -403,7 +403,7 @@ lsdtt_raster_cpu compute_hillshade(
     // old form pinned aspect to 0) falls out identically: both reduce to
     // 1 + 254*sin_alt.  Measured bit-identical to the previous implementation
     // over 515,524 valid pixels, and ~11x faster.  See
-    // docs/testing_and_benchmarking.md section 10b.
+    // docs/developer_notes/testing_and_benchmarking.md section 10b.
     const double alt_rad = altitude * k_deg2rad;
     const double az_rad  = azimuth  * k_deg2rad;
     const double sin_alt = std::sin(alt_rad);
@@ -3162,7 +3162,7 @@ poly_fit_coeffs direct_polyfit(
         // and took a line for ownership on every 4-byte write across seven
         // strided streams -- ~58 bytes of data per pixel became ~1.6 kB of
         // traffic. Measured 2.8x on this pass at 2880x2880.
-        // See docs/testing_and_benchmarking.md section 10b.
+        // See docs/developer_notes/testing_and_benchmarking.md section 10b.
 #ifdef _OPENMP
         #pragma omp for schedule(static)
 #endif

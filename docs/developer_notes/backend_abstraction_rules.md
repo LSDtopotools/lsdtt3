@@ -213,7 +213,7 @@ Example implementation in `src/cpu/lsdtt_raster_spectral_dispatch.cpp`:
 #include "../core/lsdtt_raster_spectral_dispatch.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
 
-#ifdef LSDTT_GPU
+#ifdef LSDTT_GPU_KERNELS
 #include "../gpu/lsdtt_raster_spectral_gpu.hpp"
 #endif
 
@@ -234,7 +234,7 @@ poly_fit_coeffs wavelet_quadratic_fit_dispatch(
         return wavelet_quadratic_fit(raster, lambda, n_threads);
     }
 
-#ifdef LSDTT_GPU
+#ifdef LSDTT_GPU_KERNELS
     const bool gpu_ok =
         gpu_available() &&
         n_pixels >= dispatch.min_pixels_for_gpu;
@@ -810,36 +810,20 @@ Current and intended examples:
 
 These two rules are deliberate. The codebase should not try to force both kinds
 of component into one abstraction style.
-```
 
 ---
 
-## Succinct version for the architecture document
+## Relationship to `gpu_compute.md`
 
-Below is a shorter version you can paste directly into `docs/developer_notes/lsdtt3_architecture.md`.
+This note is **design-ahead prescription**: it states how backend dispatch
+should be structured as GPU work lands. [`gpu_compute.md`](gpu_compute.md)
+**describes what is actually built** — the process-global
+`set_compute_backend()` / `get_compute_backend()` preference resolved inside
+`direct_polyfit`, and the `LSDTT_GPU_KERNELS` compile definition that is the
+only GPU macro CMake ever defines.
 
-```md
-### Backend abstraction rules
-
-`lsdtt3` uses **two backend-abstraction patterns**, not one.
-
-1. **Selective dispatch for broad compute substrates**  
-   Components such as `lsdtt_raster_cpu` are special cases: they underpin many
-   CPU analyses and should remain concrete CPU-side objects. Do **not** try to
-   virtualise every raster analysis. Instead, keep most raster analyses as CPU
-   free functions and add dispatch wrappers only for the small number of heavy
-   kernels that are realistic GPU targets. Dispatch declarations live in
-   `src/core/`; dispatch implementations live in `src/cpu/`; optional GPU
-   implementations live in `src/gpu/`.
-
-2. **Narrow abstract bases for persistent stateful engines**  
-   Flow-like engines should use abstract bases in `src/core/` plus factories
-   implemented in `src/cpu/`, so that CLIs and workflows hold
-   `std::unique_ptr<..._base>` rather than concrete CPU classes. This rule
-   applies to `lsdtt_flow_base`, should also apply to
-   `lsdtt_junction_network_base`, and is the intended long-term pattern for the
-   basin-manager and particle-tracer layers. These interfaces must remain
-   narrow, stable, and behaviour-oriented.
-
-In short: **rasters stay concrete and selectively dispatched; stateful engines
-use narrow abstract bases and factories.**
+Where the two differ, `gpu_compute.md` is authoritative for present
+behaviour. In particular the `lsdtt_dispatch_options` struct and the
+`wavelet_quadratic_fit_dispatch` entry point used as examples above do not
+exist in the tree: they illustrate the shape of the pattern, not code you can
+call today.
