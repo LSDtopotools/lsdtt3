@@ -170,6 +170,7 @@ nav:
       - Testing and benchmarking: developer_notes/testing_and_benchmarking.md
     - Packaging and release:
       - Making release packages: developer_notes/making_release_packages.md
+      - Publishing to PyPI: developer_notes/publishing_to_pypi.md
       - QGIS plugin development: developer_notes/qgis_plugin_development.md
       - Beta testing and distribution: developer_notes/beta_testing_notes.md
       - Debian packaging: developer_notes/debian_packaging.md

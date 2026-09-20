@@ -41,6 +41,120 @@ For local Windows packaging, `package_windows_backend.ps1` does **not** validate
 the version string against git tags or `CMakeLists.txt`: it simply writes your
 `-Version` into the zip name, bundle README, and `manifest.json`.
 
+## Building everything locally (`make_all_packages.sh`)
+
+**If your goal is "produce all three artefacts without spending GitHub Actions
+minutes", this is the script.** It wraps the three separate release paths:
+
+| | artefact | what it wraps |
+|---|---|---|
+| a | backend tarball | `make_release.sh`, i.e. what `release.yml` uploads |
+| b | Debian package | `dpkg-buildpackage` over `debian/` |
+| c | Python wheel | what `python-wheels.yml` ships |
+
+```bash
+# always start here: checks tooling, prints the plan, builds nothing
+tools/make_all_packages.sh --check-only
+
+# the latest tagged version, all three artefacts, into dist/
+tools/make_all_packages.sh --clean
+
+# the working tree including uncommitted changes, wheel only
+tools/make_all_packages.sh --dirty --only wheel
+```
+
+### Clean versus dirty
+
+`--clean` (the default) exports the latest tag with `git archive` into a
+scratch directory and builds **that**. Your working tree is untouched and
+uncommitted changes are not included, so the artefact corresponds exactly to
+the tag.
+
+`--dirty` builds the working tree as it stands. Every artefact is versioned
+from `git describe`, so a dirty build can never be mistaken for a release:
+
+| artefact | clean | dirty |
+|---|---|---|
+| tarball | `0.5.1` | `0.5.1-39-g79b6649-dirty` |
+| `.deb` | `0.5.1` | `0.5.1+git39.g79b6649.dirty` |
+| wheel | `0.1.0` | `0.1.0+git39.g79b6649.dirty` |
+
+The three grammars differ because the three packaging systems demand it.
+`make_release.sh` compares the part before the first `-` against
+`CMakeLists.txt`, so the tarball wants a hyphen. `debian/source/format` is
+`3.0 (native)`, where a hyphen would be read as introducing a Debian revision,
+so the `.deb` uses `+git`. The wheel follows PEP 440, and takes its base
+version from `python_bindings/pyproject.toml`, which is independent of the
+lsdtt3 version.
+
+### Two things to know before you run it
+
+**Each target compiles the C++ separately.** There is no shared object cache
+between the tarball, the `.deb` and the wheel: three targets is roughly three
+full builds. While iterating, use `--only`.
+
+**Without podman the wheel is not distributable.** A publishable Linux wheel
+must be a manylinux wheel, built inside the manylinux image so it does not
+depend on this machine's glibc and GDAL. That needs a container engine, and
+this project does not use Docker. If `podman` is installed the script uses it
+and produces a real manylinux wheel; otherwise it builds a **host** wheel,
+prefixes the file `LOCAL-ONLY-`, and says so. A host wheel is fine for testing
+locally and must not be uploaded.
+
+```bash
+sudo apt install podman     # for a publishable wheel
+```
+
+### The wheel builds in a pixi environment
+
+The wheel target uses the `packaging` pixi environment:
+
+```bash
+pixi install -e packaging
+```
+
+That environment exists for exactly this purpose and contains one thing,
+`build`, the PEP 517 front end. `build` creates its own isolated virtualenv and
+installs the backend pinned in `python_bindings/pyproject.toml` into *that*, so
+the wheel is built against the declared pins (`scikit-build-core>=0.10`,
+`nanobind>=3.0,<3.1`) rather than against whatever happens to be installed on
+the machine. That is why the `packaging` environment does not need nanobind or
+scikit-build-core itself.
+
+The script looks for an interpreter in this order and takes the first that has
+both `ensurepip` and `build`:
+
+1. `.pixi/envs/packaging`
+2. `.pixi/envs/default`
+3. `.pixi/envs/docs`
+4. the system `python3`
+
+**It never installs anything into your interpreter.** There is no `pip install`
+anywhere in the script. If no usable interpreter is found it says so and stops,
+with both fixes spelled out.
+
+> **Why the system python usually is not enough.** On Debian and Ubuntu,
+> `ensurepip` is split into a separate `python3-venv` package, so the system
+> interpreter typically cannot create the isolated venv that `build` needs.
+> `sudo apt install python3-venv` is the alternative if you would rather not
+> use pixi, but keeping this in pixi is the project convention.
+
+> **A probing trap worth knowing about.** This repository has a `build/`
+> *directory* at its root, and Python puts the current directory on
+> `sys.path`. So `python -c 'import build'` run from the repository root
+> succeeds as a namespace package and tells you the build *tool* is installed
+> when it is not. The script probes from `/` to avoid this; so should you, if
+> you are checking by hand.
+
+### If a target will not build from a tag
+
+A tag can predate a target. `v0.5.1` was cut three days before `debian/` was
+added, so `--clean --only deb` against that tag has nothing to build from. The
+script checks this before compiling anything and tells you to cut a newer tag,
+use `--dirty`, or skip the target.
+
+---
+
 ## Release cheat sheet
 
 > **The scripts never create, move, or push a git tag.** `make_release.sh`

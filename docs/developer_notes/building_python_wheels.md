@@ -154,6 +154,8 @@ manylinux leg.
 
 - [`python_bindings_architecture.md`](python_bindings_architecture.md) — how the
   bindings are laid out and what the checker scripts do
+- [`publishing_to_pypi.md`](publishing_to_pypi.md) — getting the wheels to
+  users, by hand with twine or from CI
 - [`making_release_packages.md`](making_release_packages.md) — the CLI backend
   tarballs, which are a separate release path
 - [`building_on_windows.md`](building_on_windows.md) — the MSVC OpenMP situation

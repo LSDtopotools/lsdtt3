@@ -169,6 +169,15 @@ docs/plan_docs/
 docs/tex_technical/
 
 # -----------------------------------------------------------------------------
+# Local git identity mapping
+#
+# .mailmap canonicalises author names and addresses in git history. It is kept
+# local rather than committed: it reflects one person's view of who is who,
+# including addresses that need not be published in the repository.
+# -----------------------------------------------------------------------------
+.mailmap
+
+# -----------------------------------------------------------------------------
 # Run output written into the repository root
 #
 # Analysis runs driven from the repo root drop their rasters, tables and vectors

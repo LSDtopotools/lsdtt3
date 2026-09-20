@@ -204,6 +204,25 @@ matplotlib = "*"
 [feature.workflows.pypi-dependencies]
 snakemake = "*"
 
+# Local packaging: building the release artefacts without spending GitHub
+# Actions minutes (tools/make_all_packages.sh). Kept out of the default
+# environment because only whoever is cutting a package needs it.
+#
+# `build` is the PEP 517 front end. It creates an isolated virtualenv and
+# installs the backend pinned in python_bindings/pyproject.toml into THAT, so
+# the wheel is built against the declared pins rather than against whatever
+# happens to be installed here. This environment therefore does not need
+# nanobind or scikit-build-core itself.
+#
+# Python is pinned below 3.14 because that is what the wheel targets
+# (cp310-cp314 in pyproject.toml) and because the build backend chain is better
+# tested there.
+[feature.packaging.dependencies]
+python = ">=3.11,<3.14"
+
+[feature.packaging.pypi-dependencies]
+build = "*"
+
 [environments]
 osm = ["osm"]
 # The peer-review benchmark environment: all three external reference
@@ -216,6 +235,9 @@ benchmark = ["reference", "whitebox"]
 # rows.
 benchmark-lite = ["reference"]
 docs = ["docs"]
+# Used by tools/make_all_packages.sh for the wheel target; the script looks
+# for .pixi/envs/packaging first.
+packaging = ["packaging"]
 workflows = ["workflows"]
 # The CTest Python tiers; see [feature.test.dependencies].
 test = { features = ["test"], no-default-feature = true }
