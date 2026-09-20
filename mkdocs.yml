@@ -58,6 +58,7 @@ nav:
   - What is lsdtt3:
     - Overview: what_is_lsdtt3/overview.md
     - Installation: what_is_lsdtt3/install_lsdtt3.md
+    - Your first analysis: what_is_lsdtt3/first_analysis.md
     - Data:
       - Vector data: what_is_lsdtt3/vector_data.md
       - Raster data: what_is_lsdtt3/raster_data.md

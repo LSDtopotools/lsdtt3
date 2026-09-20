@@ -26,10 +26,13 @@ Two broad strategies are available:
 The **stream power law** describes erosion on channelized flow paths. It states that the rate of channel incision is
 
 ```
-dz/dt = K · A^m · S^n − U
+dz/dt = U − K · A^m · S^n
 ```
 
-where `z` is elevation, `t` is time, `K` is an erodibility coefficient, `A` is the drainage area, `S` is the local slope, `m` and `n` are dimensionless exponents (typically 0.4–0.5 and 1, respectively, although n = 1 is more for computational convinience than for accurate physics, see the last two decades of landscape evolution papers), and `U` is uplift rate. The area-slope form comes from **Howard and Kerby (1983)**, who measured it directly on rapidly eroding badland channels. In lsdtt3 it is the basis of all fluvial incision.
+where `z` is elevation, `t` is time, `K` is an erodibility coefficient, `A` is the drainage area, `S` is the local slope, `m` and `n` are dimensionless exponents (typically 0.4–0.5 and 1, respectively, although n = 1 is more for computational convinience than for accurate physics, see the last two decades of landscape evolution papers), and `U` is uplift rate. Incision lowers the surface, so the erosion term enters
+with a negative sign; the steady state `U = K A^m S^n` is unchanged by the
+convention, but the transient is not. The area-slope form comes from
+**Howard and Kerby (1983)**, who measured it directly on rapidly eroding badland channels. In lsdtt3 it is the basis of all fluvial incision.
 
 #### The exponents m and n
 
@@ -417,7 +420,7 @@ A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice 
 Compute `a = A / dx` (drainage area divided by cell size), so `a` has units of **metres**. The stream power law becomes
 
 ```
-dz/dt = K · (a)^m · S^n − U  =  K · (A/dx)^m · S^n − U
+dz/dt = U − K · (a)^m · S^n  =  U − K · (A/dx)^m · S^n
 ```
 
 This is the **default in lsdtt3** and was advocated by **Bonetti, Hooshyar, Camporeale and Porporato (2020, PNAS 117:1375–1382)** and **Litwin et al. (2022, JGR-ES)**.
@@ -427,7 +430,7 @@ This is the **default in lsdtt3** and was advocated by **Bonetti, Hooshyar, Camp
 Use the raw upslope area `A` in m², without dividing by dx. The law is
 
 ```
-dz/dt = K · A^m · S^n − U
+dz/dt = U − K · A^m · S^n
 ```
 
 This was used in **Perron et al. (2008, JGR-ES 113:F04016)** and **Perron et al. (2009, Nature 460:502–505)**.

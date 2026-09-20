@@ -2244,9 +2244,12 @@ failure is a defect rather than a modelling disagreement.
 | E9 | AMS standardisation factors match the CRONUS table (Be-10 KNSTD → 07KNSTD 0.9042; Al-26 ZAL94 → KNSTD 0.9134), and applying a factor scales the inverted ε consistently |
 
 Parameter invariants also asserted: the knickpoint Table 1 F-sums are exactly 1
-for ¹⁰Be/²⁶Al/¹⁴C under BraucherBorchers; the CAIRN Table 2 ²⁶Al F sums to
-0.97525 and must **not** be normalised; ¹⁴C uses P0 = 15.533, F = {0.788, 0.212,
-0, 0} (Lupker 2015) and λ = 121e-6 yr⁻¹; λ(¹⁰Be) = 500e-9 and λ(²⁶Al) = 980e-9
+for ¹⁰Be/²⁶Al/¹⁴C under BraucherBorchers; the CAIRN Table 2 ²⁶Al F values sum
+to exactly 1 in code, because lsdtt3 uses 0.0275 where the published table
+prints 0.00275 (which would sum to 0.97525) — see the do-not-"fix" note in
+`tests/cpp/test_cosmo_physics.cpp`; ¹⁴C uses P0 = 15.533, F = {0.788, 0.212,
+0, 0} (Lupker 2015) and λ = 121.58e-6 yr⁻¹ under BraucherBorchers (5700 yr
+half-life, IAEA 2024); λ(¹⁰Be) = 500e-9 and λ(²⁶Al) = 980e-9
 yr⁻¹. Schemes without a paper anchor (Granger, Schaller) are frozen as exact
 in-code constants with a comment naming their literature lineage (COSMOCALC,
 Schaller et al. 2009/2016).

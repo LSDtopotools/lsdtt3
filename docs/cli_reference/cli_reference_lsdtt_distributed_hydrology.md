@@ -535,6 +535,6 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_output_format` | `string` | `cog` | `io` | - | Raster output format: cog, gtiff, bil, png or same_as_input. | cog is a Cloud Optimised GeoTIFF and is the project default. It falls back to gtiff for small rasters, where the tiling overhead is not worth it. There is ONE raster format parameter per CLI: it governs every raster the tool writes. Vector outputs are governed separately by write_vector_format. |
+| `write_output_format` | `string` | `cog` | `io` | - | Raster output format: cog, gtiff, png or same_as_input. | cog is a Cloud Optimised GeoTIFF and is the project default. It falls back to gtiff for small rasters, where the tiling overhead is not worth it. There is ONE raster format parameter per CLI: it governs every raster the tool writes. Vector outputs are governed separately by write_vector_format. |
 
 <!-- END GENERATED CLI PARAMETERS -->

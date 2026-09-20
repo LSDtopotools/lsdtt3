@@ -52,14 +52,23 @@ into your Linux home directory and keep only data on the Windows side.
 ### WSL2 quirks
 
 **No internet from WSL2** (package downloads fail): `/etc/resolv.conf` is
-usually wrong. Edit it with `sudo nano /etc/resolv.conf` so it contains:
+usually wrong. Two files are involved, and the settings are not
+interchangeable. First stop WSL2 regenerating the file, by adding to
+`/etc/wsl.conf`:
 
 ```
+[network]
 generateResolvConf = false
+```
+
+Then set a nameserver in `/etc/resolv.conf`:
+
+```
 nameserver 8.8.8.8
 ```
 
-Save with `Ctrl+O`, then `Ctrl+X`.
+Save each with `Ctrl+O`, then `Ctrl+X`. Restart WSL2 from a Windows prompt
+(`wsl --shutdown`) for the `wsl.conf` change to take effect.
 
 **Executable bits and git:** on a clone under `/mnt/c/`, `chmod +x` is not
 visible to git (NTFS has no exec bit). To mark a script executable in the

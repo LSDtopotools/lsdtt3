@@ -89,9 +89,15 @@ P(z) = P0 · S_tot · Σ_i F_i · exp(−z / Γ_i)          i = 0..3
 
 `P0` is the sea-level high-latitude (SLHL) production rate in atoms g⁻¹ yr⁻¹,
 `F_i` are the dimensionless production fractions, and `S_tot` is the total
-scaling and shielding factor at the site. The `F_i` sum to 1 for most schemes;
-where a published table does not sum to 1 it is **not** renormalised (the CAIRN
-Table 2 ²⁶Al values sum to 0.97525 and are asserted to stay that way).
+scaling and shielding factor at the site. The `F_i` sum to exactly 1 in every
+scheme lsdtt3 implements, and this is asserted by the test suite.
+
+One transcription trap is worth recording, because it looks like a
+non-normalised table and is not. CAIRN Table 2 *prints* the second ²⁶Al
+fraction as 0.00275, which would make the four values sum to 0.97525. lsdtt3
+uses **0.0275**, giving a sum of 1.0, and `tests/cpp/test_cosmo_physics.cpp`
+carries a do-not-"fix"-these note to that effect. The printed value is a typo
+in the table, not a deliberate non-normalisation.
 
 This four-exponential decomposition is the standard treatment of muon production
 following Granger & Muzikar (2001) and Heisinger et al. (2002), as parameterised

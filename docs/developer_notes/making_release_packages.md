@@ -184,9 +184,11 @@ scripts resolve the runtime closure themselves and fail if anything is missing.
 ## Alternative distribution routes
 
 - [`debian_packaging.md`](debian_packaging.md) — building a `.deb`, and hosting
-  a minimal APT repository. See also the `.deb` design section in
-  `docs/plan_docs/release_ci_plan.md` for the vendored-vs-system-libraries
-  trade-off, which is the decision that shapes the whole package.
+  a minimal APT repository. The decision that shapes the whole package is
+  vendored-versus-system libraries: the `.deb` links the system GDAL, PROJ,
+  FFTW and netCDF through `Depends:` so the package stays small and tracks
+  distribution security updates, whereas the tarball backends vendor their
+  closure so they run on a machine with no matching system libraries at all.
 - **conda-forge** — the intended route once the repository is public;
   `conda-recipe/meta.yaml` is the draft recipe. It is also the right answer for
   QGIS integration, because QGIS and lsdtt3 would then share one conda-managed

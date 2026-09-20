@@ -223,11 +223,11 @@ For UK upland applications (the design drivers for lsdtt3), Manning is reasonabl
 **Interception and vegetation**
 
 - Dickinson, R.E. (1984). *Modeling evapotranspiration for three-dimensional global climate models.* Climate Processes and Climate Sensitivity, Geophysical Monograph 29:58–72.
-- van Dijk, A.I.J.M., & Bruijnzeel, L.A. (2001). *Forest patch size and LAI affect throughfall and stemflow rates in the lutz spruce forest in Germany.* Journal of Hydrology 247:230–238.
+- van Dijk, A.I.J.M., & Bruijnzeel, L.A. (2001). *Modelling rainfall interception by vegetation of variable density using an adapted analytical model. Part 1. Model description.* Journal of Hydrology 247:230–238.
 - Aston, A.R. (1979). *Rainfall interception by eight small trees.* Journal of Hydrology 42:383–396.
 
 **Indices and catchment structure**
 
 - Leopold, L.B., & Maddock, T. (1953). *The hydraulic geometry of stream channels and some physiographic implications.* U.S. Geological Survey Professional Paper 252.
-- Rickenmann, D., & Recking, A. (2011). *Evaluation of flow resistance equations using a large field database.* Water Resources Research 47:W07538.
-- Ferguson, R. (2007). *Flow resistance in gravel-bed rivers at bankfull stage.* Journal of Hydraulic Engineering 133(6):671–678.
+- Rickenmann, D., & Recking, A. (2011). *Evaluation of flow resistance in gravel-bed rivers through a large field data set.* Water Resources Research 47:W07538.
+- Ferguson, R. (2007). *Flow resistance equations for gravel- and boulder-bed streams.* Water Resources Research 43(5):W05427. doi:10.1029/2006WR005422

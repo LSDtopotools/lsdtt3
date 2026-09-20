@@ -19,14 +19,15 @@ integer that encodes both row and column. This replaces the old NodeIndex.
 flat_index = row * n_cols + col
 ```
 
-The type is `lsdtt_flowinfo::flat_index_type`, currently `int64_t`
-(`std::int64_t`), so flow indexing is 64-bit throughout.
+Flat indices are `std::int64_t` throughout, so flow indexing is 64-bit. There
+is deliberately no `flat_index_type` typedef: the concrete type is used
+directly so that the width is visible at every call site.
 
 ### Converting between flat index and row/col
 
 ```cpp
 // row, col → flat index
-lsdtt::lsdtt_flowinfo::flat_index_type flat = fi.flat_index_unchecked(row, col);
+std::int64_t flat = fi.flat_index_unchecked(row, col);
 
 // flat index → row and col
 int row = fi.row_from_flat_unchecked(flat);
@@ -60,9 +61,13 @@ flat-resolved. Use `fill_pits` or `breach_depressions` from
 
 // Options — defaults are fine for most use cases
 lsdtt::lsdtt_flowinfo_options opts;
-opts.boundary_conditions      = "oooo";   // open on all four sides
+opts.boundary_conditions       = "oooo";  // open on all four sides
 opts.interior_nodata_is_outlet = true;    // nodata islands are outlets
-opts.build_s_vector           = true;     // needed for upslope queries
+opts.require_acyclic_graph     = true;    // validate; throw on a cycle
+opts.build_topological_order   = true;    // needed for ordered traversal
+opts.build_s_vector            = true;    // needed for upslope queries
+opts.n_threads                 = 0;       // 0 = use the OpenMP default
+opts.allow_pits_as_outlets     = false;   // unfilled pits are an error
 
 // Construct from a CPU raster
 lsdtt::lsdtt_flowinfo fi(
@@ -72,6 +77,33 @@ lsdtt::lsdtt_flowinfo fi(
     opts
 );
 ```
+
+Setting `build_topological_order` or `build_s_vector` to `false` skips that
+part of construction; the corresponding queries then throw, and
+`has_topological_order()` / `has_s_vector()` report which are available.
+Turning either off must not change routing — only which queries are served.
+
+### Forced outlets (internally drained basins)
+
+`opts.forced_outlet_flats` nominates cells as unconditional flow terminations,
+given as flat indices. Each listed cell gets `outlet_receiver` and
+`no_direction` in preference to any downhill neighbour. This is for genuinely
+internally drained basins — moulins, swallow holes, playas, quarries — where
+flow leaves the surface at the pit rather than spilling over the depression's
+lowest saddle.
+
+**The DEM must have been prepared with `fill_pits_with_sinks()` (or
+`breach_depressions_with_sinks()`) over the same cell set.** A plain
+`fill_pits()` raises the depression until it spills, so by the time the flow
+object sees it the floor is flat and drains outwards — the forced outlet then
+becomes a terminus with nothing draining into it. Seeding the fill from the
+same cells keeps a monotone descent to each sink. This pairing is not checked
+at construction and gets you a silently wrong answer if you break it.
+
+Indices are validated: out-of-range indices, and indices landing on masked or
+nodata cells, throw `std::invalid_argument`. Duplicates are ignored. Left
+empty (the default), routing is bit-for-bit identical to before the option
+existed.
 
 The constructor fills the receiver graph, computes donor counts, finds outlets,
 builds the topological order, and builds the s_vector. Construction is
@@ -97,7 +129,7 @@ south, west.
 ### Receiver (downstream pixel)
 
 ```cpp
-lsdtt::lsdtt_flowinfo::flat_index_type rec = fi.receiver_of_unchecked(flat);
+std::int64_t rec = fi.receiver_of_unchecked(flat);
 
 if (rec == lsdtt::lsdtt_flowinfo::outlet_receiver)
 {
@@ -177,7 +209,7 @@ lsdtt::lsdtt_flat_index_slice upslope = fi.upslope_nodes_unchecked(flat);
 
 for (const auto* it = upslope.begin(); it != upslope.end(); ++it)
 {
-    lsdtt::lsdtt_flowinfo::flat_index_type up_flat = *it;
+    std::int64_t up_flat = *it;
     int up_row = fi.row_from_flat_unchecked(up_flat);
     int up_col = fi.col_from_flat_unchecked(up_flat);
     // process upslope pixel...
@@ -233,7 +265,7 @@ Baselevel nodes are pixels with no receiver — they drain off-grid or to a
 boundary. The full list is available directly:
 
 ```cpp
-const std::vector<lsdtt::lsdtt_flowinfo::flat_index_type>& outlets = fi.outlets();
+const std::vector<std::int64_t>& outlets = fi.outlets();
 
 for (auto outlet_flat : outlets)
 {
@@ -260,7 +292,7 @@ To iterate over all valid (non-nodata) pixels in topological order (headwaters
 first, outlets last):
 
 ```cpp
-const std::vector<lsdtt::lsdtt_flowinfo::flat_index_type>& order =
+const std::vector<std::int64_t>& order =
     fi.topological_order();
 
 for (auto flat : order)
@@ -312,7 +344,19 @@ in its inner loops.
 
 ---
 
-## Complete example: compute drainage area for all pixels
+## Complete example: accumulating in topological order
+
+**In production, do not write this function.** `lsdtt_flowinfo` already
+provides `get_drainage_area_raster()`, and
+`get_drainage_area_raster_with_injection()` for the case where upstream cells
+carry an imposed value. For accumulating an arbitrary per-cell quantity, use
+`accumulate()` (returns `std::vector<double>`) or `accumulate_raster()`
+(returns `lsdtt_raster_result`).
+
+The example below is kept because it shows the traversal pattern — seed every
+valid cell, then push each cell's value into its receiver walking the
+topological order from headwaters to outlets — which is the shape of most
+flow-routed computations you will write.
 
 ```cpp
 #include "lsdtt_flowinfo_cpu.hpp"
@@ -370,6 +414,6 @@ the CPU analysis free functions in `src/cpu/`:
 - Return `lsdtt::lsdtt_raster_cpu` or `lsdtt::lsdtt_array2d_f`
 - Live in `src/cpu/` with a `_cpu` suffix on the filename
 
-The function does not need to know about `lsdtt_flow_base` or
-`lsdtt_flow_types` — those are infrastructure. Include
+The function does not need to know about `lsdtt_flow_base` — that is
+infrastructure. Include
 `lsdtt_flowinfo_cpu.hpp` and work with `lsdtt_flowinfo` directly.

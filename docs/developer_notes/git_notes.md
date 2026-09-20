@@ -303,6 +303,35 @@ territory.
 
 ---
 
+## Executable bits on a Windows checkout
+
+On a clone under `/mnt/c/` (NTFS via WSL2), `core.filemode` is effectively
+`false`: NTFS has no executable bit, so `chmod +x` succeeds locally and git
+sees nothing. `git status` stays clean and the mode never reaches the index.
+
+This fails silently and for everyone else. A `debian/rules` or a shell script
+committed as `100644` breaks the build for every person who clones, while
+working perfectly on the machine it was committed from.
+
+To set the bit in the repository itself:
+
+```bash
+git update-index --chmod=+x path/to/script.sh
+git commit -m "Set executable bit on script.sh"
+```
+
+To check what the repository actually records, rather than what your working
+tree shows:
+
+```bash
+git ls-tree HEAD debian/
+```
+
+`100755` is executable, `100644` is not. Do this for any new script, and
+before releasing anything that runs `debian/rules` or `debian/smoke-test.sh`.
+
+---
+
 ## See also
 
 - [`building_from_source.md`](building_from_source.md) — what to do once you have cloned
