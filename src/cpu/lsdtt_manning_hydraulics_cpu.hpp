@@ -3,35 +3,39 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Manning's-equation bankfull width estimation 
+// lsdtt_manning_hydraulics_cpu
 //
-// Given a reach-averaged Manning's n and a target bankfull discharge
-// back-calculated at one reference cross section per reach (external,
-// done in Python), solves for the water depth at EVERY cross section in
-// the reach that reproduces that discharge, using that cross section's
-// OWN slope (looked up from the channel-profile CSV, not averaged over
-// the reach). Reports the bank offsets and true x/y locations where the
-// water surface intersects the profile.
+// Manning's-equation bankfull width estimation.
 //
-// IMPORTANT: reaches are bounded by DISTANCE FROM SOURCE
-// (start_distance_m / end_distance_m), not by cross_section_id.
-// cross_section_id is assigned during extraction by a row-major scan of
-// the raster and has NO relationship to position along the channel.
-// A sinuous channel can produce wildly non-monotonic cross_section_id
-// values along its length. Only distance-from-source (computed via a
-// single downstream walk in compute_channel_profile) is a valid basis
-// for defining a contiguous stretch of channel.
+// For each cross section in a reach:
 //
-// write_channel_profile_csv assumes a SINGLE mainstem channel (one
-// source point) so distance-from-source can be computed as a plain
-// downstream walk from that source, with no branch/tributary
-// bookkeeping. Slope is sampled directly from the DEM via
-// direct_polyfit at each cross section's centre pixel -- it does not
-// depend on channel-network topology or cross-section point spacing.
+//   1. Look up the reach's Manning's n and target discharge (reach-averaged,
+//      back-calculated at one reference cross section, external to this file)
+//   2. Look up that cross section's own slope from the channel-profile CSV
+//   3. Solve for the water depth that reproduces the target discharge at
+//      this slope, not a reach-averaged slope
+//   4. Find where that water surface intersects the profile on each side
+//   5. Report the bank offsets and true x/y crossing locations
+//
+// Reaches are bounded by distance from source (start_distance_m /
+// end_distance_m), not by cross_section_id. cross_section_id is assigned
+// during extraction by a row-major scan of the raster and has no
+// relationship to position along the channel. A sinuous channel can
+// produce wildly non-monotonic cross_section_id values along its length.
+// Distance-from-source, computed via a single downstream walk in
+// compute_channel_profile, is the only valid basis for a contiguous
+// stretch of channel.
+//
+// compute_channel_profile assumes a single mainstem channel (one source
+// point), so distance-from-source is a plain downstream walk from that
+// source with no branch/tributary bookkeeping. Slope is sampled directly
+// from the DEM via direct_polyfit at each cross section's centre pixel,
+// independent of channel-network topology or cross-section spacing.
 // -----------------------------------------------------------------------------
 
 #pragma once

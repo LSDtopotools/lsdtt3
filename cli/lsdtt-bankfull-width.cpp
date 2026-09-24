@@ -3,54 +3,61 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
-// Released under the GNU General Public Licence v3 (GPL-3.0)
-// See LICENSE file or https://www.gnu.org/licenses/gpl-3.0.html
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt-bankfull-width
 //
-// Manning's-equation bankfull channel width from a 1m DEM.
+// Manning's-equation bankfull channel width from a 1m DEM:
 //
-// Three independent output modes, controlled by parameters, all sharing
-// the SAME cross-section extraction so cross_section_id numbering is
-// guaranteed consistent across every output file from a single run:
+//   1. optional pit filling
+//   2. D8 flow routing
+//   3. cross-section extraction from a single-source channel network
+//   4. channel profile (distance from source, drainage area, thalweg
+//      elevation, slope) per cross section
+//   5. full sampled elevation profile per cross section
+//   6. Manning's-equation width/depth solve per cross section, by reach
 //
-//   1. write_channel_profile_csv=true          -- distance from source,
-//      drainage area, thalweg elevation, and slope per cross section.
-//      REQUIRES source_points_path to resolve to exactly one source
-//      point (a single mainstem channel) -- distance-from-source is a
-//      plain downstream walk from that one point. Slope is sampled
-//      directly from the DEM via direct_polyfit at each cross
-//      section's centre pixel, independent of network topology.
-//   2. write_cross_section_sample_points=true   -- full sampled elevation
-//      profile per cross section (offset, x, y, elevation, valid). This
-//      is what the Python width-vs-depth / bankfull-pick workflow reads.
-//   3. calculate_manning_widths=true            -- requires
-//      reach_manning_parameters_path (a CSV of reach start/end DISTANCE
-//      FROM SOURCE in metres, manning_n, target_discharge_m3s -- ONE
-//      manning_n/discharge PER REACH, produced by the Python workflow)
-//      AND channel_profile_csv_path (output 1 from THIS SAME CLI,
-//      supplying per-cross-section slope AND distance-from-source used
-//      to match cross sections to reaches). Reaches are matched by
-//      DISTANCE, never by cross_id -- cross_id is assigned by a
-//      row-major raster scan during extraction and has no relationship
-//      to position along a (generally sinuous) channel. Manning's n and
-//      target discharge are held fixed across each reach; slope is
-//      looked up PER CROSS SECTION from the channel-profile CSV, so
-//      solved depth/width vary along the reach with local slope and
-//      channel geometry even though discharge does not.
+// Three output modes are controlled independently by parameters, all
+// sharing one cross-section extraction so cross_section_id numbering
+// matches across every output file from a single run:
 //
-// IMPORTANT: run modes 1 and 2 together in one invocation to produce the
-// profile CSV and sample points Python needs. Only run mode 3 once you
-// have a reach-parameters CSV built from that same run's cross-section
-// extraction -- a reach CSV built from any other extraction run
-// (different parameters, different CLI, different DEM state) will not
-// correspond to the same distance-from-source values and will silently
-// produce wrong or empty results.
+//   - write_channel_profile_csv: distance from source, drainage area,
+//     thalweg elevation, and slope per cross section. Requires
+//     source_points_path to resolve to a single source point; slope is
+//     sampled from the DEM via direct_polyfit at each cross section's
+//     centre pixel.
+//   - write_cross_section_sample_points: full sampled elevation profile
+//     per cross section, read by the Python width-vs-depth / bankfull-
+//     pick workflow.
+//   - calculate_manning_widths: solves depth and width per cross section
+//     from reach_manning_parameters_path (manning_n and
+//     target_discharge_m3s per reach, by distance from source) and
+//     channel_profile_csv_path (per-cross-section slope and distance,
+//     from this same CLI's write_channel_profile_csv). Reaches are
+//     matched by distance, not cross_section_id -- cross_section_id is
+//     assigned by a row-major raster scan and has no relationship to
+//     position along the channel.
+//
+// NOTE:
+// Run write_channel_profile_csv and write_cross_section_sample_points
+// together in one invocation so both files share identical
+// cross_section_id numbering. Only run calculate_manning_widths against
+// a channel-profile CSV from that same extraction -- one built from a
+// different DEM, parameter set, or CLI run will not correspond to the
+// same distance-from-source values and will silently produce wrong or
+// empty results.
+// Also manning_n and target_discharge_m3s are supplied per reach in
+// reach_manning_parameters_path, this tool does not derive them!!!
 //
 // Usage:
 //   lsdtt-bankfull-width <path> <parameter_file>
-//   lsdtt-bankfull-width -h
+//   lsdtt-bankfull-width <parameter_file>   (path assumed to be ./)
+//   lsdtt-bankfull-width -h                 (print help and exit)
+//   lsdtt-bankfull-width -v                 (print version and exit)
+//   lsdtt-bankfull-width -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
