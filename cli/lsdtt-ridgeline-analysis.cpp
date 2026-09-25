@@ -559,6 +559,12 @@ int main(int argc, char* argv[])
         "Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network.",
         "Triple divide outputs", "switch", ""};
 
+    bool_default_map["write_zero_order_basins_touching_selected_ridgelines"] = false;
+    help_map["write_zero_order_basins_touching_selected_ridgelines"] = {"bool", "false",
+        "Write source-based zero-order basin outlines that touch selected ridgelines.",
+        "Uses the same exact ridgeline-grid contact test as zero-order TDJ detection.",
+        "Triple divide outputs", "switch", ""};
+
     bool_default_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = false;
     help_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = {"bool", "false",
         "Write nodes where either flanking flow topological distance exceeds the threshold.",
@@ -577,6 +583,12 @@ int main(int argc, char* argv[])
         "When supplied, one topological triple-divide CSV and FlatGeobuf is "
         "written for each value. An empty value falls back to the singular "
         "topological_distance_triple_divide_threshold parameter.",
+        "Triple divide outputs", "param", ""};
+
+    string_default_map["native_tdj_channel_thresholds"] = "";
+    help_map["native_tdj_channel_thresholds"] = {"string", "",
+        "Comma-separated channel-area thresholds in square metres for native TDJs.",
+        "Native TDJs are recalculated on the selected ridgelines for each value.",
         "Triple divide outputs", "param", ""};
 
     // --- Paired flow paths (lengthwise asymmetry, Goren & Shelef 2024) ---
@@ -642,6 +654,14 @@ int main(int argc, char* argv[])
         "Characteristic lengthscale (metres) for the wavelet quadratic fit.",
         "Controls the size of the moving window. Default (70 m) is tuned for "
         "Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m).",
+        "Polynomial surface fit", "param", ""};
+
+    string_default_map["polyfit_lambda_metres_list"] = "";
+    help_map["polyfit_lambda_metres_list"] = {"string", "",
+        "Comma-separated polyfit lengthscales in metres.",
+        "When supplied, Phase 9 runs each lambda sequentially after the "
+        "ridgelines are extracted, releasing each polyfit result before the "
+        "next lambda is calculated.",
         "Polynomial surface fit", "param", ""};
 
     string_default_map["polyfit_metrics"] = "";
@@ -775,6 +795,70 @@ int main(int argc, char* argv[])
     {
         std::cerr << "FATAL: invalid topological_distance_triple_divide_thresholds: "
                   << e.what() << "\n";
+        return 1;
+    }
+
+    std::vector<float> polyfit_lambdas;
+    try
+    {
+        const std::string configured_lambdas = sf["polyfit_lambda_metres_list"];
+        if (configured_lambdas.empty())
+        {
+            polyfit_lambdas.push_back(ff["polyfit_lambda_metres"]);
+        }
+        else
+        {
+            std::stringstream values(configured_lambdas);
+            std::string token;
+            while (std::getline(values, token, ','))
+            {
+                if (token.empty()) continue;
+                const float lambda = std::stof(token);
+                if (!std::isfinite(lambda) || lambda <= 0.0f)
+                    throw std::invalid_argument("lambda must be finite and > 0");
+                if (std::find(polyfit_lambdas.begin(), polyfit_lambdas.end(), lambda) ==
+                    polyfit_lambdas.end())
+                    polyfit_lambdas.push_back(lambda);
+            }
+            if (polyfit_lambdas.empty())
+                throw std::invalid_argument("lambda list is empty");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: invalid polyfit_lambda_metres_list: " << e.what() << "\n";
+        return 1;
+    }
+
+    std::vector<int> native_tdj_thresholds;
+    try
+    {
+        const std::string configured_thresholds = sf["native_tdj_channel_thresholds"];
+        if (configured_thresholds.empty())
+        {
+            native_tdj_thresholds.push_back(ifs["threshold_contributing_pixels"]);
+        }
+        else
+        {
+            std::stringstream values(configured_thresholds);
+            std::string token;
+            while (std::getline(values, token, ','))
+            {
+                if (token.empty()) continue;
+                const int threshold = std::stoi(token);
+                if (threshold <= 0)
+                    throw std::invalid_argument("threshold must be > 0");
+                if (std::find(native_tdj_thresholds.begin(), native_tdj_thresholds.end(), threshold) ==
+                    native_tdj_thresholds.end())
+                    native_tdj_thresholds.push_back(threshold);
+            }
+            if (native_tdj_thresholds.empty())
+                throw std::invalid_argument("threshold list is empty");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: invalid native_tdj_channel_thresholds: " << e.what() << "\n";
         return 1;
     }
 
@@ -1516,6 +1600,7 @@ int main(int argc, char* argv[])
     // =========================================================================
     if (bf["write_triple_divides_on_selected_ridgelines"] ||
         bf["write_zero_order_triple_divides_on_selected_ridglines"] ||
+        bf["write_zero_order_basins_touching_selected_ridgelines"] ||
         bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
     {
         std::cout << "\n--- Writing selected-ridgeline triple divides ---\n";
@@ -1527,6 +1612,7 @@ int main(int argc, char* argv[])
             float threshold = std::numeric_limits<float>::quiet_NaN();
         };
         std::vector<triple_point> points;
+        std::set<std::size_t> touching_zero_order_basin_indices;
         struct topological_flowpath_point
         {
             std::size_t ridgeline_index;
@@ -1547,20 +1633,34 @@ int main(int argc, char* argv[])
         };
 
         std::unique_ptr<lsdtt::lsdtt_zero_order_basin_manager_cpu> zero_order_basins;
-        if (bf["write_zero_order_triple_divides_on_selected_ridglines"])
+        if (bf["write_zero_order_triple_divides_on_selected_ridglines"] ||
+            bf["write_zero_order_basins_touching_selected_ridgelines"])
         {
             zero_order_basins = std::make_unique<lsdtt::lsdtt_zero_order_basin_manager_cpu>(
                 *flow);
             zero_order_basins->select_all_zero_order_basins(source_flats);
         }
 
+        if (bf["write_triple_divides_on_selected_ridgelines"])
+        {
+            for (const int threshold : native_tdj_thresholds)
+            {
+                const std::vector<std::int64_t> native_sources =
+                    flow->get_sources_index_threshold(threshold);
+                lsdtt::lsdtt_junction_network_cpu native_network;
+                native_network.create(*flow, native_sources, jn_opts);
+                for (std::size_t r = 0; r < all_ridgelines.size(); ++r)
+                {
+                    for (const int node : all_ridgelines[r].ridgeline
+                             .get_triple_divide_node_indices(*flow, native_network))
+                        add_point(r, node, "native_threshold", static_cast<float>(threshold));
+                }
+            }
+        }
+
         for (std::size_t r = 0; r < all_ridgelines.size(); ++r)
         {
             const auto& rec = all_ridgelines[r];
-            if (bf["write_triple_divides_on_selected_ridgelines"])
-                for (int n : rec.ridgeline.get_triple_divide_node_indices(*flow, junction_network))
-                    add_point(r, n, "surrounding_basin");
-
             if (bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
             {
                 for (const float threshold : topological_distance_thresholds)
@@ -1627,9 +1727,15 @@ int main(int argc, char* argv[])
                                 ? contact_ridge_nodes[oi + 1] >= 0
                                 : (closed ? contact_ridge_nodes[0] >= 0 : false);
 
-                            if (on_contact && !previous_contact)
+                            if (on_contact &&
+                                (bf["write_zero_order_basins_touching_selected_ridgelines"] ||
+                                 !previous_contact))
+                                touching_zero_order_basin_indices.insert(bi);
+                            if (on_contact && !previous_contact &&
+                                bf["write_zero_order_triple_divides_on_selected_ridglines"])
                                 add_point(r, contact_ridge_nodes[oi], "zero_order_join");
-                            if (on_contact && !next_contact)
+                            if (on_contact && !next_contact &&
+                                bf["write_zero_order_triple_divides_on_selected_ridglines"])
                                 add_point(r, contact_ridge_nodes[oi], "zero_order_leave");
                         }
                     }
@@ -1640,6 +1746,36 @@ int main(int argc, char* argv[])
 
         try
         {
+            if (bf["write_zero_order_basins_touching_selected_ridgelines"])
+            {
+                lsdtt::lsdtt_vector_schema basin_schema;
+                basin_schema.field_names = {"zero_order_id", "source_flat"};
+                basin_schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type};
+                lsdtt::lsdtt_data_loader basin_loader;
+                basin_loader.begin_vector_write(
+                    pp.make_output_path("_zero_order_basins_touching_ridgelines", ".fgb"),
+                    "zero_order_basins_touching_ridgelines", basin_schema,
+                    dem.get_meta().crs_wkt, lsdtt::vector_output_format::flatgeobuf, true);
+                for (const std::size_t basin_index : touching_zero_order_basin_indices)
+                {
+                    const auto& basin = zero_order_basins->basin_at(basin_index);
+                    const auto outline = basin.get_basin_outline();
+                    const auto record = outline.get_outline_as_line_record(
+                        static_cast<std::int32_t>(basin_index));
+                    if (std::holds_alternative<std::monostate>(record.geometry)) continue;
+                    const auto& line = std::get<lsdtt::lsdtt_line_geom>(record.geometry);
+                    if (line.points.size() < 2) continue;
+                    basin_loader.write_line(line.points, {
+                        static_cast<std::int64_t>(basin_index),
+                        basin.get_basin_outlet_flat_index()});
+                }
+                basin_loader.finish_vector_write();
+                std::cout << "Wrote " << touching_zero_order_basin_indices.size()
+                          << " zero-order basin outlines touching selected ridgelines.\n";
+            }
+
             const std::vector<std::string> headers = {
                 "ridgeline_number", "ridgeline_type", "triple_divide_mode",
                 "node_index", "distance_along_ridgeline_m", "elevation",
@@ -1713,7 +1849,10 @@ int main(int argc, char* argv[])
                 std::cout << "Wrote " << count << " triple-divide points to " << suffix << ".\n";
             };
 
-            write_points("_native_triple_divides", {"surrounding_basin"});
+            for (const int threshold : native_tdj_thresholds)
+                write_points(
+                    "_native_triple_divides_area_" + std::to_string(threshold) + "m2",
+                    {"native_threshold"}, static_cast<float>(threshold));
             write_points("_zero_order_triple_divides", {"zero_order_join", "zero_order_leave"});
             auto threshold_label = [](float threshold)
             {
@@ -2184,7 +2323,9 @@ int main(int argc, char* argv[])
     if (bf["write_polyfit_rasters"] || !requested_polyfit_metrics.empty())
     {
         std::cout << "\n--- Phase 9 - Polynomial Surface Fit & Ridgeline Mapping ---\n";
-        std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda_metres"] << " m\n";
+        std::cout << "Lambda lengthscales:";
+        for (const float lambda : polyfit_lambdas) std::cout << " " << lambda << " m";
+        std::cout << "\n";
         std::cout << "Method: " << sf["polyfit_method"] << "\n";
 
         std::vector<std::string> methods_to_run;
@@ -2197,7 +2338,9 @@ int main(int argc, char* argv[])
         }
         else
         {
-            std::cout << "Lambda (lengthscale): " << ff["polyfit_lambda_metres"] << " m\n";
+            std::cout << "Lambda lengthscales:";
+            for (const float lambda : polyfit_lambdas) std::cout << " " << lambda << " m";
+            std::cout << "\n";
             std::cout << "Method: " << sf["polyfit_method"] << "\n";
             
             const std::string polyfit_method = sf["polyfit_method"];
@@ -2221,9 +2364,29 @@ int main(int argc, char* argv[])
             extended_headers.push_back(name);
         }
 
-        for (const std::string& method : methods_to_run)
+        const std::string base_write_fname = pp.get_write_fname();
+        struct combined_node_row
         {
-            std::cout << "  Running " << method << " polyfit..." << std::flush;
+            lsdtt::lsdtt_xy position;
+            std::vector<std::string> fields;
+        };
+        std::map<std::string, std::vector<std::vector<std::string>>> combined_csv;
+        std::map<std::string, std::vector<std::string>> combined_headers;
+        std::map<std::string, std::vector<combined_node_row>> combined_nodes;
+        for (const float lambda : polyfit_lambdas)
+        {
+            ff["polyfit_lambda_metres"] = lambda;
+            std::ostringstream lambda_label;
+            lambda_label << std::fixed << std::setprecision(6) << lambda;
+            std::string lambda_name = lambda_label.str();
+            while (!lambda_name.empty() && lambda_name.back() == '0') lambda_name.pop_back();
+            if (!lambda_name.empty() && lambda_name.back() == '.') lambda_name.pop_back();
+            pp.set_write_fname(base_write_fname + "_lambda_" + lambda_name + "m");
+
+            std::cout << "  Lambda " << lambda << " m\n";
+            for (const std::string& method : methods_to_run)
+            {
+            std::cout << "    Running " << method << " polyfit..." << std::flush;
 
             lsdtt::poly_fit_coeffs fitted;
             try {
@@ -2282,14 +2445,6 @@ int main(int argc, char* argv[])
                 }
 
 
-                for (const auto& metric : requested_polyfit_metrics) {
-                    if (!metric_result.has(metric)) continue;
-                    std::string out_path = pp.make_output_path(lsdtt::polyfit_metric_output_suffix(metric, method));
-                    std::cout << "  Writing: " << out_path << "\n";
-                    loader.write_full(metric_result.at(metric).get_data(), metric_result.at(metric).get_meta(), out_path, lsdtt::raster_output_format::cog);
-                }
-
-
                 if (!all_ridgelines.empty())
                 {
                     std::cout << "  Mapping polyfit metrics onto ridgelines (" << method << ")...\n";
@@ -2329,13 +2484,110 @@ int main(int argc, char* argv[])
 
                     lsdtt::lsdtt_data_loader csv_loader;
                     for (const auto& [pf, rows] : extended_csv_map) {
-                        std::string out_path = pp.make_output_path("_" + method + pf + "_with_polyfit", ".csv");
-                        csv_loader.write_csv(out_path, extended_headers, rows);
+                        if (polyfit_lambdas.size() == 1)
+                        {
+                            std::string out_path = pp.make_output_path("_" + method + pf + "_with_polyfit", ".csv");
+                            csv_loader.write_csv(out_path, extended_headers, rows);
+                            continue;
+                        }
+
+                        const std::string key = method + pf;
+                        const std::size_t base_count =
+                            headers_are_dual ? points_headers_dual.size() : points_headers_single.size();
+                        if (combined_csv[key].empty())
+                        {
+                            combined_csv[key] = rows;
+                            combined_headers[key] = headers_are_dual
+                                ? points_headers_dual : points_headers_single;
+                            for (const auto& metric_name : active_metric_names)
+                                combined_headers[key].push_back(
+                                    metric_name + "_lambda_" + lambda_name + "m");
+                        }
+                        else
+                        {
+                            for (std::size_t i = 0; i < rows.size() && i < combined_csv[key].size(); ++i)
+                                combined_csv[key][i].insert(
+                                    combined_csv[key][i].end(), rows[i].begin() + base_count, rows[i].end());
+                            for (const auto& metric_name : active_metric_names)
+                                combined_headers[key].push_back(
+                                    metric_name + "_lambda_" + lambda_name + "m");
+                        }
+
+                        if (combined_nodes[key].empty())
+                        {
+                            for (const auto& rec : all_ridgelines)
+                            {
+                                if (rec.file_prefix != pf) continue;
+                                for (std::size_t i = 0; i < rec.ridgeline.size(); ++i)
+                                {
+                                    std::vector<std::string> fields = {
+                                        std::to_string(rec.ridgeline_number), rec.feature_type,
+                                        std::to_string(i),
+                                        lsdtt::csv_number(rec.ridgeline.distances()[i]),
+                                        std::to_string(rec.primary_id),
+                                        std::to_string(rec.secondary_id)};
+                                    const std::size_t row_index = combined_nodes[key].size();
+                                    if (row_index < rows.size())
+                                        fields.insert(fields.end(), rows[row_index].begin() + base_count, rows[row_index].end());
+                                    combined_nodes[key].push_back({rec.ridgeline.positions()[i], std::move(fields)});
+                                }
+                            }
+                        }
+                        else
+                        {
+                            std::size_t row_index = 0;
+                            for (const auto& row : rows)
+                            {
+                                if (row_index >= combined_nodes[key].size()) break;
+                                combined_nodes[key][row_index].fields.insert(
+                                    combined_nodes[key][row_index].fields.end(),
+                                    row.begin() + base_count, row.end());
+                                ++row_index;
+                            }
+                        }
                     }
 
                 } else {
                     std::cout << "  Note: No ridgelines available for polyfit mapping.\n";
                 }
+            }
+            }
+        }
+        pp.set_write_fname(base_write_fname);
+
+        if (polyfit_lambdas.size() > 1)
+        {
+            lsdtt::lsdtt_data_loader combined_writer;
+            for (const auto& [key, rows] : combined_csv)
+            {
+                const std::size_t split = key.find('_');
+                const std::string method = key.substr(0, split);
+                const std::string pf = key.substr(split);
+                combined_writer.write_csv(
+                    pp.make_output_path("_" + method + pf + "_with_polyfit", ".csv"),
+                    combined_headers[key], rows);
+
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {
+                    "ridgeline_number", "ridgeline_type", "node_index",
+                    "distance_m", "primary_junction", "secondary_junction"};
+                for (std::size_t i = 6; i < combined_headers[key].size(); ++i)
+                    schema.field_names.push_back(combined_headers[key][i]);
+                schema.field_types.assign(
+                    schema.field_names.size(), lsdtt::lsdtt_vector_field_type::string_type);
+                lsdtt::lsdtt_data_loader node_writer;
+                node_writer.begin_vector_write(
+                    pp.make_output_path("_" + method + pf + "_nodes_with_polyfit", ".fgb"),
+                    "ridgeline_nodes", schema, dem.get_meta().crs_wkt,
+                    lsdtt::vector_output_format::flatgeobuf, true);
+                for (const auto& node : combined_nodes[key])
+                {
+                    std::vector<lsdtt::lsdtt_vector_field_value> fields;
+                    fields.reserve(node.fields.size());
+                    for (const auto& field : node.fields) fields.push_back(field);
+                    node_writer.write_point(node.position.x, node.position.y, fields);
+                }
+                node_writer.finish_vector_write();
             }
         }
     }
