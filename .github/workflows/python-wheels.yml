@@ -86,7 +86,7 @@ jobs:
             mkdocs==1.6.1 \
             mkdocs-material==9.7.7
           python python_bindings/tools/check_api_naming.py
-          python python_bindings/tools/check_api_examples.py --run
+          python python_bindings/tools/check_api_examples.py
           python python_bindings/tools/generate_api_reference.py --check
           PYTHONPATH=./python_bindings/src mkdocs build --strict
 

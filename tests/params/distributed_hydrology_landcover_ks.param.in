@@ -1,0 +1,15 @@
+# A class table carrying ks= must be a HARD ERROR with an explanation, not a
+# silently ignored field. Conductivity is not a land-cover property here: it is
+# looked up from measured soil profiles, re-keyed by land use (plan section 2.1).
+#
+# There is deliberately no landcover_fname: the table is validated whether or
+# not a raster is supplied, because deferring the parse to the point of use
+# would let exactly this case pass unnoticed.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: lcks
+
+twi_window_radius_metres: 2.0
+rainfall_fname: tiny_rainfall.csv
+landcover_table: grazing:code=1,lai=1.5,n=0.30,ks=1.5

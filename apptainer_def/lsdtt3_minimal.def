@@ -1,0 +1,70 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+# lsdtt3_minimal.def
+#
+# The MINIMAL build environment: exactly the apt packages the Linux source-build
+# guide lists (docs/developer_notes/building_from_source.md), and nothing else --
+# no Python, no GDAL command-line programs, no git.
+#
+# It exists to test the claim that a machine with only the documented C++
+# dependencies can configure, build and test lsdtt3. With the default options
+# (LSDTT_ENABLE_PYTHON_TESTS=OFF) the registered tests are the native ones, and
+# the `hermetic` label is the set that must pass here.
+#
+# For day-to-day development use lsdtt3.def, the full environment.
+#
+#   apptainer build --fakeroot lsdtt3_minimal.sif lsdtt3_minimal.def
+#   apptainer test lsdtt3_minimal.sif
+#
+# Keep the package list in step with building_from_source.md: if the guide
+# changes, change this file with it.
+
+%labels
+    Maintainer Simon M. Mudd
+    Version 1.0
+    Description lsdtt3 minimal build environment (documented apt packages only)
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    export TZ=UTC
+
+    apt-get update -y
+
+    # Exactly the build guide's list.
+    apt-get install -y \
+        build-essential cmake pkg-config \
+        libgdal-dev \
+        libfftw3-dev \
+        libeigen3-dev \
+        libnetcdf-dev
+
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%runscript
+    echo "lsdtt3 minimal build environment (documented apt packages only)"
+    echo "  GCC:    $(gcc --version | head -1)"
+    echo "  CMake:  $(cmake --version | head -1)"
+    echo "  GDAL:   $(gdal-config --version)"
+
+%test
+    echo "--- Build dependencies ---"
+    gcc --version | head -1
+    cmake --version | head -1
+    gdal-config --version
+    pkg-config --modversion fftw3
+    pkg-config --modversion eigen3
+    pkg-config --modversion netcdf
+
+    # Report, rather than assert, what the documented packages pull in: if
+    # libgdal-dev ever starts bringing Python or the GDAL programs with it, this
+    # environment stops being a test of their absence and the output says so.
+    echo "--- Not part of the minimal environment ---"
+    for prog in python3 python gdalinfo ogrinfo gdal_translate git; do
+        if command -v "$prog" >/dev/null 2>&1; then
+            echo "PRESENT (pulled in as a dependency): $prog -> $(command -v $prog)"
+        else
+            echo "absent: $prog"
+        fi
+    done

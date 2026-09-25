@@ -232,8 +232,15 @@ void separable_filter_f32(
 
     const int rx = static_cast<int>(kx.size() / 2);
     const int ry = static_cast<int>(ky.size() / 2);
-    const std::vector<float> fkx(kx.begin(), kx.end());
-    const std::vector<float> fky(ky.begin(), ky.end());
+    // Narrow the double kernels to float explicitly: the filter accumulates in
+    // float, so the cast happens either way and an implicit one is a warning.
+    const auto to_f32 = [](const std::vector<double>& k) {
+        std::vector<float> f(k.size());
+        for (std::size_t i = 0; i < k.size(); ++i) f[i] = static_cast<float>(k[i]);
+        return f;
+    };
+    const std::vector<float> fkx = to_f32(kx);
+    const std::vector<float> fky = to_f32(ky);
     const bool row_symm_small = is_symmetric(fkx) && fkx.size() <= 5;
     const bool col_symm       = is_symmetric(fky);
 

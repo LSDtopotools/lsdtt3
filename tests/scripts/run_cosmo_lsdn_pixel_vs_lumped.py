@@ -65,6 +65,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import lsdtt_test_env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_cosmo_validation as rcv  # reuse fetch/cleanup/sample-table plumbing
@@ -148,7 +149,7 @@ def run_tool(exe: Path, dem_path: Path, points_csv: Path, workdir: Path,
             continue
         lines.append(f"{key}: {val}")
     param.write_text("\n".join(lines) + "\n")
-    subprocess.run([str(exe), str(workdir), param.name], check=True, cwd=str(workdir))
+    lsdtt_test_env.run([str(exe), str(workdir), param.name], check=True, cwd=str(workdir))
     bp = workdir / f"{write_base}_BASIN_PROD.csv"
     if not bp.is_file():
         raise RuntimeError(f"cosmo-tool produced no basin-prod CSV: {bp}")

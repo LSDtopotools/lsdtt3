@@ -10,8 +10,12 @@
 #   1. Resolve the release version (--version flag, else exact git tag).
 #   2. Check it against project(lsdtt3 VERSION ...) in CMakeLists.txt.
 #      Pre-release versions (e.g. 0.3.0-rc1) compare only the X.Y.Z stem.
-#   3. Configure and build (Release; Eigen on).
-#   4. Smoke-check every packaged CLI (runs each with -v).
+#   3. Configure and build (Release; Eigen on; tests off - a release build
+#      packages nothing from the CTest suite, so compiling it is wasted CI
+#      minutes). Then refuse to continue if an optional dependency was missing:
+#      they degrade silently, so this is the only place it can be caught.
+#   4. Smoke-check every packaged CLI (runs each with -v and checks the output
+#      reports GDAL, not merely that the process exited 0).
 #   5. Package the Linux backend bundle (tools/package_linux_backend.sh).
 #   6. Optionally publish to a GitHub release with gh (--publish).
 
@@ -81,6 +85,46 @@ esac
 info()  { echo "[make_release] $*"; }
 fail()  { echo "[make_release] ERROR: $*" >&2; exit 1; }
 
+# Every optional dependency in this tree degrades SILENTLY: a missing library is
+# a CMake STATUS or WARNING line, never an error, so the build succeeds and the
+# bundle ships without the feature. Nothing downstream notices - the affected
+# CLIs still build, still run, and still exit 0 on -v. netCDF is the worst case,
+# because the cosmo tools then fall back to the standard atmosphere and produce
+# plausible, different numbers. Read the configure log and refuse to release a
+# crippled bundle.
+check_optional_deps() {
+    local log="$1"
+    [[ -f "$log" ]] || fail "configure log not found: $log"
+
+    grep -Eq "FFTW3 +: +(ON|TRUE|1)" "$log" || fail \
+        "FFTW3 was not found at configure time: lsdtt-spectral-analysis will not
+be built and the bundle would ship without it.
+Install libfftw3-dev (and pkg-config, which is how it is discovered on Linux)."
+
+    grep -Eq "Eigen3 +: +(ON|TRUE|1)" "$log" || fail \
+        "Eigen3 was not found at configure time: chi / k_sn inversion is compiled
+out of lsdtt-chi-analysis, which still builds and still runs.
+Install libeigen3-dev."
+
+    if grep -q "netCDF-C not found" "$log"; then
+        fail "netCDF was not found at configure time: ERA40 atmosphere and
+palaeomagnetic corrections are compiled out of the cosmo tools, which still
+build and still run - they silently fall back to the standard atmosphere.
+Install libnetcdf-dev."
+    fi
+
+    info "optional dependencies present: FFTW3, Eigen3, netCDF"
+}
+
+# The set of CLIs that currently exist is declared in CMakeLists.txt, not by
+# whatever happens to be sitting in the build directory. A long-lived build tree
+# accumulates binaries for tools that have since been renamed or removed, and
+# they are indistinguishable from current ones by name, mode or mtime. Packaging
+# one ships a tool that no longer has source behind it.
+current_cli_targets() {
+    sed -n 's/^[[:space:]]*lsdtt_cli(\(lsdtt-[A-Za-z0-9_-]*\).*/\1/p' CMakeLists.txt
+}
+
 # -----------------------------------------------------------------------------
 # 1. Resolve version
 # -----------------------------------------------------------------------------
@@ -122,11 +166,26 @@ fi
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
     [[ -d "$BUILD_DIR" ]] || fail "--skip-build given but build dir not found: $BUILD_DIR"
     info "skipping build; using existing $BUILD_DIR"
+    if [[ -f "$BUILD_DIR/configure.log" ]]; then
+        check_optional_deps "$BUILD_DIR/configure.log"
+    else
+        info "WARNING: no configure.log in $BUILD_DIR; cannot confirm that FFTW3,
+Eigen3 and netCDF were found for this build. Reconfigure without --skip-build to
+check, or accept that the bundle may silently lack those features."
+    fi
 else
     info "configuring $BUILD_DIR"
+    # BUILD_TESTING is ON by default (CMakeLists.txt calls include(CTest)), which
+    # would compile the whole CTest suite into every release build - minutes that
+    # CI is billed for and that package nothing. Test before releasing, not while.
+    configure_log="$BUILD_DIR/configure.log"
+    mkdir -p "$BUILD_DIR"
     cmake -B "$BUILD_DIR" \
         -DCMAKE_BUILD_TYPE=Release \
-        -DLSDTT_EIGEN=ON
+        -DBUILD_TESTING=OFF \
+        -DLSDTT_EIGEN=ON 2>&1 | tee "$configure_log"
+    # set -o pipefail is in force, so a cmake failure aborts here despite tee.
+    check_optional_deps "$configure_log"
     n_jobs="$(nproc 2>/dev/null || echo 4)"
     info "building with $n_jobs jobs"
     cmake --build "$BUILD_DIR" -j "$n_jobs"
@@ -139,14 +198,27 @@ RELEASE_CLIS=()
 if [[ ${#CLI_OVERRIDE[@]} -gt 0 ]]; then
     RELEASE_CLIS=("${CLI_OVERRIDE[@]}")
 elif [[ "$CLI_PROFILE" == "all" ]]; then
+    known="$(current_cli_targets)"
+    [[ -n "$known" ]] || fail "could not read any lsdtt_cli() targets from CMakeLists.txt"
+    skipped=()
     for exe in "$BUILD_DIR"/lsdtt-* "$BUILD_DIR"/bin/lsdtt-*; do
         [[ -f "$exe" && -x "$exe" ]] || continue
         name="$(basename "$exe")"
         [[ "$name" == *.* ]] && continue
         [[ "$name" == lsdtt-test-* ]] && continue
         [[ " ${RELEASE_CLIS[*]:-} " == *" $name "* ]] && continue
+        # Stale binary: present in the build tree, no longer a CMake target.
+        if ! grep -qx "$name" <<<"$known"; then
+            [[ " ${skipped[*]:-} " == *" $name "* ]] || skipped+=("$name")
+            continue
+        fi
         RELEASE_CLIS+=("$name")
     done
+    if [[ ${#skipped[@]} -gt 0 ]]; then
+        info "WARNING: skipping ${#skipped[@]} stale binaries in $BUILD_DIR that are
+no longer lsdtt_cli() targets in CMakeLists.txt: ${skipped[*]}
+Delete them, or build into a clean directory, to silence this."
+    fi
 else
     while read -r profile name; do
         [[ "$profile" == "$CLI_PROFILE" ]] && RELEASE_CLIS+=("$name")
@@ -158,7 +230,17 @@ for cli in "${RELEASE_CLIS[@]}"; do
     exe="$BUILD_DIR/$cli"
     [[ -x "$exe" ]] || exe="$BUILD_DIR/bin/$cli"
     [[ -x "$exe" ]] || fail "release CLI not found in build dir: $cli"
-    "$exe" -v >/dev/null || fail "smoke check failed: $cli -v returned nonzero"
+    # -v both exercises startup (shared libraries, GDAL initialisation) and
+    # reports the GDAL/PROJ actually loaded. Checking only the exit status
+    # throws away the half that catches a binary linked against one GDAL and
+    # running against another, so read the output.
+    if ! v_out="$("$exe" -v 2>&1)"; then
+        fail "smoke check failed: $cli -v returned nonzero
+$v_out"
+    fi
+    [[ "$v_out" == *GDAL* ]] || fail \
+        "smoke check failed: $cli -v did not report a GDAL version
+$v_out"
 done
 info "smoke check passed for ${#RELEASE_CLIS[@]} CLIs (profile: $CLI_PROFILE)"
 

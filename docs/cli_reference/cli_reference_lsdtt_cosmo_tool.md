@@ -116,7 +116,7 @@ shielding factor if you want CAIRN's convention.
 
 Finally, this note fixes the *convention*, not the numerical agreement: for
 validated per-sample targets against the CAIRN datasets (Bierman 2005, Dethier
-2014, Kirchner 2001, Munack, …) see `docs/testing_and_benchmarking.md`, which
+2014, Kirchner 2001, Munack, …) see `docs/developer_notes/testing_and_benchmarking.md`, which
 also records that CAIRN used SRTM 90 m throughout, so DEM resolution is a
 further difference to control.
 
@@ -200,7 +200,7 @@ concentration uncertainty with scaling held fixed.
 > concentrations arrived already on the 07KNSTD basis and were corrected a
 > second time, which inverted the apparent sign of the residual (clapp2002
 > read +6.6 % instead of −4.09 %) and sent the investigation after a
-> non-existent physics discrepancy. See `docs/testing_and_benchmarking.md`.
+> non-existent physics discrepancy. See `docs/developer_notes/testing_and_benchmarking.md`.
 >
 > The CRONUS v3 input file that this tool writes handles the second case
 > correctly: it carries the **as-measured** concentration with the standard
@@ -292,7 +292,7 @@ reproducing a published rate computed the older way, such as a CAIRN rate.
 Two things to know if you do set it: it is applied as a **single uniform value
 across the whole basin**, not per pixel; and in lsdtt3's published-dataset
 comparison tier the topographic shielding term is decomposed at roughly
-**+0.70 %** at basin scale (`docs/testing_and_benchmarking.md`).
+**+0.70 %** at basin scale (`docs/developer_notes/testing_and_benchmarking.md`).
 
 > DiBiase, R. A. (2018). Short communication: Increasing vertical attenuation
 > length of cosmogenic nuclide production on steep slopes negates topographic

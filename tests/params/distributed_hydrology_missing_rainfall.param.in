@@ -1,0 +1,8 @@
+# No rainfall_fname. This CLI is a rainfall-driven simulation and there is no
+# default storm, so this must stop rather than run a dry catchment.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: norain
+
+twi_window_radius_metres: 2.0

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "lsdtt3"
-version = "0.0.0"
+version = "0.1.0"
 description = "Python bindings for LSDTopoTools3"
 license = { text = "AGPL-3.0-or-later" }
 requires-python = ">=3.10"
@@ -21,6 +21,7 @@ lsdtt-hillslope-channel-coupling = "lsdtt3._cli:main"
 lsdtt-drainage-analysis = "lsdtt3._cli:main"
 lsdtt-feature-finder = "lsdtt3._cli:main"
 lsdtt-mountain-front = "lsdtt3._cli:main"
+lsdtt-outlet-matching = "lsdtt3._cli:main"
 lsdtt-basin-stats = "lsdtt3._cli:main"
 lsdtt-basin-extraction = "lsdtt3._cli:main"
 lsdtt-flat-surface-finder = "lsdtt3._cli:main"
@@ -58,7 +59,7 @@ cmake.build-type = "Release"
 build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = "pp* *-musllinux_*"
 test-requires = ["pytest"]
-test-command = "cd {project} && python -m pytest -q python_bindings/tests && python python_bindings/tools/check_installed_wheel.py --manifest python_bindings/api/public_api.json --smoke-console-scripts"
+test-command = "cd {project} && python -m pytest -q python_bindings/tests && python python_bindings/tools/check_api_examples.py --run && python python_bindings/tools/check_installed_wheel.py --manifest python_bindings/api/public_api.json --smoke-console-scripts"
 environment = { CMAKE_ARGS = "-DLSDTT_PYTHON_RELEASE_WHEEL=ON" }
 
 [tool.cibuildwheel.linux]

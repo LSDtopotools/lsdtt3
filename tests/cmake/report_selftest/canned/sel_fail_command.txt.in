@@ -1,0 +1,2 @@
+cwd: @BUILD@/tests/sel_fail
+@BUILD@/lsdtt-x @BUILD@/tests/sel_fail run_params.txt

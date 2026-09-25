@@ -23,6 +23,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import lsdtt_test_env
+
+# Before the third-party imports, so a missing package is a clear message.
+lsdtt_test_env.require_modules(["geopandas", "numpy", "rasterio", "shapely"])
+
 import geopandas as gpd
 import numpy as np
 import rasterio
@@ -86,7 +91,7 @@ def build_fixtures(work: Path) -> None:
 def run(build: Path, work: Path, tool: str, params: str, tag: str) -> int:
     (work / f"{tag}.param").write_text(params)
     with open(work / f"{tag}.log", "w") as log:
-        return subprocess.run([str(build / tool), "./", f"{tag}.param"],
+        return lsdtt_test_env.run([str(build / tool), "./", f"{tag}.param"],
                               cwd=work, stdout=log, stderr=subprocess.STDOUT).returncode
 
 

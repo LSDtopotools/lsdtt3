@@ -265,7 +265,7 @@ def test_backend_plugin_version_gate_runs_before_execution(monkeypatch):
             "plugin_version_range": ">=0.1.0 <0.2.0",
         },
     )
-    with pytest.raises(RuntimeError, match="current plugin version is 0.2.0"):
+    with pytest.raises(RuntimeError, match="current plugin version is 0.3.0"):
         support.run_lsdtt_tool("lsdtt-basin-extraction", {}, "/out", "run", None)
 
 

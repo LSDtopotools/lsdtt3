@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Part of the flow-routing benchmark (docs/testing_and_benchmarking.md): property tests for depression
+// Part of the flow-routing benchmark (docs/developer_notes/testing_and_benchmarking.md): property tests for depression
 // handling and flow routing.
 //
 // These are *property* tests, not comparisons: each check asserts an invariant
@@ -1060,7 +1060,7 @@ void test_radix_priority_flood(const fixture& fx)
 // RichDEM's D8 still is not steepest descent and still must not be used as a D8
 // reference, but the divergence needs a case where the lowest neighbour is
 // diagonal AND a cardinal neighbour is steeper -- not a tie. See
-// docs/testing_and_benchmarking.md 5.1 and docs/flow_routing.md.
+// docs/developer_notes/testing_and_benchmarking.md 5.1 and docs/flow_routing.md.
 //
 // What this test is for is therefore simpler than the old comment suggested: it
 // is an ANALYTIC ORACLE pinning lsdtt3's own drop-over-distance rule against a
@@ -1362,7 +1362,7 @@ int main(int argc, char** argv)
     const std::string output_dir = (argc > 1) ? argv[1] : ".";
 
     std::cout << "lsdtt3 flow-routing property tests "
-                 " (docs/testing_and_benchmarking.md)\n\n";
+                 " (docs/developer_notes/testing_and_benchmarking.md)\n\n";
 
     const std::vector<fixture> fixtures = build_fixtures();
 

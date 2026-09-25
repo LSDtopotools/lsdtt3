@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Part of the flow-routing benchmark (docs/testing_and_benchmarking.md): tests for credential handling.
+// Part of the flow-routing benchmark (docs/developer_notes/testing_and_benchmarking.md): tests for credential handling.
 //
 // lsdtt_secret is the only place in lsdtt3 that touches secrets, so it gets its
 // own test driver rather than being folded into the fetch tests. Everything
@@ -18,6 +18,10 @@
 //   - masking actually removes every occurrence
 //   - resolution order is exactly env var, then key file, then prompt
 //   - prompting never happens when stdin is not a terminal (it would hang CI)
+//   - prompting never happens when LSDTT_NONINTERACTIVE is set, EVEN WHEN stdin
+//     is a terminal -- which it is inside an interactive `ctest` run, because
+//     CTest passes the invoking terminal through. Tested on a real
+//     pseudo-terminal, so the guard is exercised rather than assumed.
 //   - a world-readable key file is reported
 //
 // Usage: lsdtt-test-secret [work_dir]
@@ -30,7 +34,11 @@
 #include <string>
 
 #ifndef _WIN32
+#  include <csignal>
+#  include <fcntl.h>
 #  include <sys/stat.h>
+#  include <sys/wait.h>
+#  include <unistd.h>
 #endif
 
 #include "lsdtt_secret.hpp"
@@ -193,6 +201,124 @@ void test_key_file_reading(const std::string& dir)
 // =============================================================================
 // Resolution order
 // =============================================================================
+// =============================================================================
+// The prompt on a REAL terminal
+//
+// An interactive `ctest` run gives every test the invoking terminal as stdin,
+// so "stdin is not a terminal" cannot be what stops a prompt there. These
+// checks put a pseudo-terminal on stdin and call resolve_secret() in a FORKED
+// CHILD with an alarm, so that a regression fails the check instead of hanging
+// the driver -- the very failure mode under test. (Pre-typed input cannot be
+// relied on: the prompt sets the terminal with TCSAFLUSH, which discards it.)
+//
+//   1. With LSDTT_NONINTERACTIVE=1 and nothing typed, the child must return
+//      not-found at once. If the switch were ignored it would block at the
+//      prompt until the alarm kills it.
+//   2. Control: with the switch unset, the parent types a key once the child
+//      is waiting, and the child must read it from the prompt. That proves the
+//      pseudo-terminal genuinely reaches the prompt, so check 1 is not passing
+//      vacuously.
+// =============================================================================
+#ifndef _WIN32
+enum class pty_outcome { refused, prompted, blocked, not_a_terminal, other };
+
+std::string describe(pty_outcome o)
+{
+    switch (o)
+    {
+        case pty_outcome::refused:        return "refused without prompting";
+        case pty_outcome::prompted:       return "prompted and read the typed key";
+        case pty_outcome::blocked:        return "BLOCKED at the prompt (killed by alarm)";
+        case pty_outcome::not_a_terminal: return "stdin was not a terminal in the child";
+        default:                          return "unexpected outcome";
+    }
+}
+
+pty_outcome resolve_on_pty(const lsdtt::lsdtt_secret_request& request,
+                           int master, int slave,
+                           bool noninteractive, bool type_key)
+{
+    std::cout.flush();
+    const pid_t pid = fork();
+    if (pid < 0) return pty_outcome::other;
+
+    if (pid == 0)
+    {
+        dup2(slave, STDIN_FILENO);
+        set_env(lsdtt::noninteractive_env_var, noninteractive ? "1" : nullptr);
+        if (!lsdtt::stdin_is_terminal()) _exit(13);
+        alarm(5);
+        const auto r = lsdtt::resolve_secret(request);
+        std::cout.flush();
+        if (!r.found) _exit(10);
+        if (r.source == "prompt" && r.value == "typed_key") _exit(11);
+        _exit(12);
+    }
+
+    int status = 0;
+    bool done = false;
+    for (int i = 0; i < 100 && !done; ++i)          // up to ~10 s
+    {
+        done = (waitpid(pid, &status, WNOHANG) == pid);
+        if (done) break;
+        if (type_key)
+        {
+            const char line[] = "typed_key\n";
+            if (write(master, line, sizeof(line) - 1) < 0) break;
+        }
+        usleep(100000);
+    }
+    if (!done)
+    {
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+        return pty_outcome::blocked;
+    }
+    if (WIFSIGNALED(status)) return pty_outcome::blocked;
+    switch (WIFEXITED(status) ? WEXITSTATUS(status) : -1)
+    {
+        case 10: return pty_outcome::refused;
+        case 11: return pty_outcome::prompted;
+        case 13: return pty_outcome::not_a_terminal;
+        default: return pty_outcome::other;
+    }
+}
+#endif
+
+void test_prompt_on_pseudo_terminal(const lsdtt::lsdtt_secret_request& prompting)
+{
+#ifdef _WIN32
+    (void)prompting;
+    std::cout << "NOTE  pseudo-terminal prompt test not available on Windows\n";
+#else
+    const int master = posix_openpt(O_RDWR | O_NOCTTY);
+    const bool opened = master >= 0 && grantpt(master) == 0 &&
+                        unlockpt(master) == 0 && ptsname(master) != nullptr;
+    const int slave = opened ? open(ptsname(master), O_RDWR | O_NOCTTY) : -1;
+    if (slave < 0)
+    {
+        if (master >= 0) close(master);
+        std::cout << "NOTE  no pseudo-terminal available; prompt test skipped\n";
+        return;
+    }
+
+    const pty_outcome refused  = resolve_on_pty(prompting, master, slave,
+                                                /*noninteractive=*/true,
+                                                /*type_key=*/false);
+    const pty_outcome prompted = resolve_on_pty(prompting, master, slave,
+                                                /*noninteractive=*/false,
+                                                /*type_key=*/true);
+    close(slave);
+    close(master);
+
+    check("pty: with LSDTT_NONINTERACTIVE=1 a terminal is NOT prompted",
+          refused == pty_outcome::refused, describe(refused));
+    check("pty: control -- without it, the same terminal IS prompted",
+          prompted == pty_outcome::prompted, describe(prompted));
+#endif
+}
+
+
 void test_resolution_order(const std::string& dir)
 {
     const std::string key_path = dir + "/order_key.txt";
@@ -250,20 +376,47 @@ void test_resolution_order(const std::string& dir)
               result.message);
     }
 
-    // --- prompting must never happen off a terminal ---
-    // Under CTest stdin is not a TTY, so this exercises the real guard: without
-    // it, a CI run would block forever on a prompt instead of failing.
-    {
-        lsdtt::lsdtt_secret_request prompting = request;
-        prompting.allow_prompt = true;
-        prompting.prompt = "should never be shown: ";
+    // --- LSDTT_NONINTERACTIVE forbids the prompt ---
+    // Deterministic whatever stdin is: with the variable set, a prompting
+    // request must come back not-found without touching stdin. CTest sets the
+    // variable on every test; it is set explicitly here so the check does not
+    // depend on how the driver was launched.
+    lsdtt::lsdtt_secret_request prompting = request;
+    prompting.allow_prompt = true;
+    prompting.prompt = "lsdtt-test-secret prompt: ";
 
+    set_env(lsdtt::noninteractive_env_var, "1");
+    {
+        check("noninteractive: the switch reads as set for \"1\"",
+              lsdtt::noninteractive_requested());
         const auto result = lsdtt::resolve_secret(prompting);
-        const bool safe = lsdtt::stdin_is_terminal() ? true : !result.found;
-        check("order: no prompt when stdin is not a terminal",
-              safe,
-              "stdin_is_terminal=" + std::to_string(lsdtt::stdin_is_terminal()));
+        check("noninteractive: a prompting request is refused, not prompted",
+              !result.found && result.message.find("no credential found") == 0,
+              result.message);
     }
+    set_env(lsdtt::noninteractive_env_var, "0");
+    check("noninteractive: \"0\" does not set the switch",
+          !lsdtt::noninteractive_requested());
+    set_env(lsdtt::noninteractive_env_var, nullptr);
+    check("noninteractive: unset does not set the switch",
+          !lsdtt::noninteractive_requested());
+
+    // --- prompting must never happen off a terminal ---
+    // Only meaningful when stdin is not a terminal. With the switch unset and
+    // stdin a terminal, this request WOULD prompt and block, so it is not run.
+    if (!lsdtt::stdin_is_terminal())
+    {
+        const auto result = lsdtt::resolve_secret(prompting);
+        check("order: no prompt when stdin is not a terminal", !result.found,
+              result.source);
+    }
+    else
+    {
+        std::cout << "NOTE  stdin is a terminal; the not-a-terminal check is "
+                     "covered by the pseudo-terminal test below instead\n";
+    }
+
+    test_prompt_on_pseudo_terminal(prompting);
 }
 
 
@@ -309,7 +462,7 @@ int main(int argc, char** argv)
     const std::string work_dir = (argc > 1) ? argv[1] : ".";
 
     std::cout << "lsdtt3 credential handling tests "
-                 " (docs/testing_and_benchmarking.md)\n\n";
+                 " (docs/developer_notes/testing_and_benchmarking.md)\n\n";
 
     test_masking();
     std::cout << "\n";

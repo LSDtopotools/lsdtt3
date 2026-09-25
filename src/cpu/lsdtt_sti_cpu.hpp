@@ -109,6 +109,32 @@ struct sti_lookup_row
     std::string source;
 };
 
+// ---------------------------------------------------------------------------
+// Look up ln(Ks*D) for a (series code, land use) pair, falling back to related
+// land uses when the exact pair is absent.
+//
+// Exposed because the distributed-hydrology work needs exactly this lookup to
+// build a transmissivity field: `ln_kd` IS ln(T0), so a land-cover scenario
+// changes transmissivity by RE-KEYING this table to the measured profile for
+// the new land use -- not by applying a multiplier. Writing a second lookup
+// with its own fallback order would be a silent way for the two to disagree.
+//
+// NOTE the units trap: ln_kd is ln of m.cm/day, not m^2/day. Convert with
+// lsdtt_topmodel_cpu.hpp's sti_ln_kd_to_ln_t0_m2_per_day/hour() before using it
+// as TOPMODEL's ln_t0.
+//
+// `out_source` is "direct" for an exact match, "fallback_other_landuse" when a
+// related land use supplied the value, and "missing" when nothing did.
+// Returns false when nothing was found.
+// ---------------------------------------------------------------------------
+bool lookup_ln_kd_with_fallback(
+    const sti_lnkd_table& table,
+    const std::string& series_code,
+    const std::string& land_use,
+    double& out_ln_kd,
+    std::string& out_source,
+    int& out_profile_count);
+
 sti_lnkd_build_result build_sti_lnkd_table_from_csv(
     const std::string& csv_path,
     const sti_lnkd_options& options);

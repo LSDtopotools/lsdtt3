@@ -1,4 +1,4 @@
-# In-LEM roering_implicit hillslope strip (docs/testing_and_benchmarking.md §8.4).
+# In-LEM roering_implicit hillslope strip (docs/developer_notes/testing_and_benchmarking.md §8.4).
 #
 # Fluvial OFF, uplift ON, channels supplied by the geometry-defined
 # channel_mask_fname rather than a drainage-area threshold: a fixed-channel

@@ -23,7 +23,7 @@ They do **not** need to be identical.
 
 Compatibility is controlled by the backend manifest field
 `plugin_version_range` (default in the Windows packaging script is
-`>=0.1.0 <0.3.0`). The plugin checks that range to decide whether a backend is
+`>=0.1.0 <0.4.0`). The plugin checks that range to decide whether a backend is
 acceptable.
 
 The current wrappers require a versioned backend bundle with

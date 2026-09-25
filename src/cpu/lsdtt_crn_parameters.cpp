@@ -281,7 +281,17 @@ void lsdtt_crn_parameters::set_granger_parameters()
 // 
 void lsdtt_crn_parameters::set_schaller_parameters()
 {
-    // Schaller et al 2016 - updated Gamma[1] for negative muons
+    // 10Be production is based on a combination of data from Braucher et al
+    // 2011 and Borchers et al 2016 as transcribed by Mirjam Schaller.
+    //
+    // NOTE on the scheme name: "Schaller" names the transcriber, not a
+    // separate source. Gamma[1] = 1500 g cm^-2 here is the SAME value used by
+    // Braucher and BraucherBorchers -- it is not specific to this scheme, and
+    // an earlier comment describing it as an "updated Gamma[1]" was
+    // misleading. Only Granger departs from 1500 (it uses 738.6). What
+    // actually distinguishes this scheme from Braucher is P0_10Be (4.01 vs
+    // 4.30) and the F values, including the negative-muon fraction
+    // F_10Be[1] (0.0042 vs 0.0027).
     lambda_10Be_ = 500e-9;
     lambda_26Al_ = 980e-9;
     lambda_14C_  = 121e-6;

@@ -3,6 +3,7 @@
 import argparse
 import pathlib
 import subprocess
+import lsdtt_test_env
 
 
 EXPECTED = {
@@ -38,7 +39,7 @@ def main() -> int:
     args = parse_args()
     for role in EXPECTED:
         executable = getattr(args, role)
-        result = subprocess.run(
+        result = lsdtt_test_env.run(
             [str(executable), "-h"], capture_output=True, text=True, check=False
         )
         if result.returncode != 0:

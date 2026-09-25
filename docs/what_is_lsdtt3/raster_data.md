@@ -46,8 +46,8 @@ get on with your life.
 
 Most geomorphic analyses measure lengths, areas, gradients, or search radii and
 therefore require a projected CRS with horizontal units in metres. A geographic
-latitude/longitude raster should normally be reprojected before analysis, and in fact our `lsdtt-raster-preprocessing` to enforces this. 
-You should use `lsdtt-raster-preprocessing` before you do any serious analyis, it insures your raster is in the right format and it can additionaly can inspect, reproject, crop, and prepare a DEM.
+latitude/longitude raster should normally be reprojected before analysis, and in fact our `lsdtt-raster-preprocessing` enforces this. 
+You should use `lsdtt-raster-preprocessing` before you do any serious analysis: it ensures your raster is in the right format, and it can additionally inspect, reproject, crop, and prepare a DEM.
 
 We also have tools to make synthetic rasters, which receive a projected default georeference unless the generating
 tool (you have three choices, see command line reference) provides another CRS option.
@@ -57,7 +57,7 @@ tool (you have three choices, see command line reference) provides another CRS o
 Nodata cells are excluded from analysis. Internally, lsdtt3 keeps raster values
 and a validity mask together; output nodata cells carry the output raster's
 declared nodata value. Be careful around raster edges and interior voids because
-many flow-routing and neighbourhood operations depend on which cells are valid. Not literally around. This is not Tron and you don't like inside a computer. Just be careful if your raster has some holes, okay?
+many flow-routing and neighbourhood operations depend on which cells are valid. Not literally around. This is not Tron and you don't live inside a computer. Just be careful if your raster has some holes, okay?
 
 `lsdtt-raster-preprocessing` provides tools for filling interior nodata holes,
 masking values, and preparing hydrologically suitable surfaces. We already told you to use `lsdtt-raster-preprocessing` before doing any serious analysis. Don't make us tell you that a third time. 

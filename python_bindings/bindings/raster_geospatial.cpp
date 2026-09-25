@@ -20,6 +20,7 @@
 #include <ogr_spatialref.h>
 
 #include <core/lsdtt_data_loader.hpp>
+#include <core/lsdtt_gdal_init.hpp>
 #include <core/lsdtt_raster_meta.hpp>
 #include <cpu/lsdtt_raster_algebra.hpp>
 #include <cpu/lsdtt_raster_flow_preprocessing_cpu.hpp>
@@ -37,7 +38,7 @@ namespace lsdtt3_python {
 namespace {
 GDALDataset* make_gdal_dataset(const Raster& raster)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
     const auto& meta = raster.native().get_meta();
     GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("MEM");
     GDALDataset* dataset = driver ? driver->Create("", meta.n_cols, meta.n_rows, 1, GDT_Float32, nullptr) : nullptr;

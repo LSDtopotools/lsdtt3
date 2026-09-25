@@ -10,10 +10,28 @@
 #   qgis - the small subset wired into the QGIS plugin (Windows default)
 #   core - tested tools shipped in official Linux/macOS releases (default)
 #   all  - not listed here: means every lsdtt-* executable found in the
-#          build directory (excluding lsdtt-test-*); local releases only
+#          build directory that is also a current lsdtt_cli() target in
+#          CMakeLists.txt (excluding lsdtt-test-*); local releases only
 #
-# CURATE ME: the core list below is a provisional starting set - Simon
-# should add/remove entries to match what has actually been tested.
+# Curation rule for `core`: a CLI belongs here when at least one CTest test
+# exercises it. That is the file's definition of "tested" and it is checkable -
+# cross-tabulate the lsdtt_cli() targets in CMakeLists.txt against tests/CMakeLists.txt.
+# Adding a tool to core without a test is a decision to ship something the
+# suite never runs.
+#
+# Every CLI target is listed below except the ones with no test coverage at
+# all, which ship only under `all`:
+#   lsdtt-cross-sections
+#   lsdtt-marsh-topography
+#   lsdtt-outlet-matching
+#   lsdtt-water-centreline
+#   lsdtt-water-line-repair
+#
+# These are in core but currently have no test exercising them - they predate
+# the rule and are kept because they already ship:
+#   lsdtt-bearing-comparison
+#   lsdtt-swath-profile
+
 
 qgis lsdtt-raster-preprocessing
 qgis lsdtt-channel-extraction
@@ -23,26 +41,38 @@ qgis lsdtt-basin-stats
 qgis lsdtt-surface-metrics
 qgis lsdtt-channel-network-analysis
 
-core lsdtt-fetch-raster
-core lsdtt-raster-preprocessing
-core lsdtt-channel-extraction
-core lsdtt-chi-analysis
 core lsdtt-basin-extraction
 core lsdtt-basin-stats
+core lsdtt-basin-surface-metrics
+core lsdtt-bearing-comparison
+core lsdtt-channel-extraction
 core lsdtt-channel-network-analysis
-core lsdtt-drainage-analysis
-core lsdtt-surface-metrics
-core lsdtt-spectral-analysis
-core lsdtt-cosmo-tool
-core lsdtt-cosmo-prediction
+core lsdtt-chi-analysis
 core lsdtt-cosmo-column-tool
+core lsdtt-cosmo-landslides
+core lsdtt-cosmo-prediction
+core lsdtt-cosmo-tool
+core lsdtt-distributed-hydrology
+core lsdtt-divide-migration
+core lsdtt-drainage-analysis
+core lsdtt-feature-finder
+core lsdtt-fetch-raster
+core lsdtt-flat-surface-finder
+core lsdtt-fluvial-surfaces
+core lsdtt-graphflood
+core lsdtt-hillslope-channel-coupling
+core lsdtt-internal-drainage
+core lsdtt-lem
+core lsdtt-linear-stats
 core lsdtt-mountain-front
 core lsdtt-raster-calculator
+core lsdtt-raster-preprocessing
 core lsdtt-ridgeline-analysis
+core lsdtt-sediment-routing
+core lsdtt-spectral-analysis
 core lsdtt-stream-burning
+core lsdtt-surface-metrics
 core lsdtt-swath-profile
 core lsdtt-synthetic-networks
 core lsdtt-synthetic-surfaces
 core lsdtt-valley-centreline
-core lsdtt-lem
-core lsdtt-bearing-comparison

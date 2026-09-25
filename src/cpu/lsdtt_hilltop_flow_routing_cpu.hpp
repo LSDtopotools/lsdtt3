@@ -243,7 +243,7 @@ struct lsdtt_hilltop_filter_options
 
     // Drop hilltop pixels with POSITIVE curvature.  A hilltop is convex, and
     // under lsdtt3's sign convention a convex-up ridge has NEGATIVE curvature
-    // (docs/testing_and_benchmarking.md), so a positive value is not a hilltop.
+    // (docs/developer_notes/testing_and_benchmarking.md), so a positive value is not a hilltop.
     bool remove_positive_curvature_hilltops = false;
 };
 

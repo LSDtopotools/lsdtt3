@@ -24,10 +24,14 @@ what to bundle.
 | macOS | by hand, on a Mac — **not yet in CI** | `tools/package_macos_backend.sh` | `lsdtt3-backend-macos-<arch>-<profile>-v<ver>.tar.gz` |
 
 `tools/make_release.sh` is the single driver: resolve version → check it
-against `project(lsdtt3 VERSION ...)` → configure → build → smoke-check every
-CLI with `-v` → package → optionally publish. CI is a thin wrapper that
-apt-installs dependencies and calls it, so a local release runs the identical
-code path.
+against `project(lsdtt3 VERSION ...)` → configure → **check that no optional
+dependency was silently dropped** → build → smoke-check every CLI with `-v` →
+package → optionally publish. CI is a thin wrapper that apt-installs
+dependencies and calls it, so a local release runs the identical code path.
+
+The release build configures with `-DBUILD_TESTING=OFF`. A release packages
+nothing from the CTest suite, so compiling it is billed CI minutes spent on
+artefacts that are thrown away. Run the tests before releasing, not during.
 
 **The version lives in exactly one place: line 2 of `CMakeLists.txt`.** Tags,
 bundle filenames, the manifest, and the version the binaries report are all
@@ -95,17 +99,23 @@ the bundle survives any filesystem or archiver.
 
 ---
 
-## GDAL and PROJ runtime data
+## Bundled runtime data
 
 A bundle stages more than shared libraries. GDAL and PROJ both read **data
-files** at run time, and a bundle that ships the libraries without the data is
-broken in a way the self-containment check above cannot see — `ldd` is satisfied
-and the tools still fail, or worse, silently use someone else's data.
+files** at run time, and lsdtt3 ships one of its own, and a bundle that has the
+libraries but not the data is broken in a way the self-containment check above
+cannot see — `ldd` is satisfied and the tools still fail, or worse, silently use
+someone else's data.
 
 | Staged path | Comes from | Why |
 |---|---|---|
 | `share/proj/` | `proj.db` and the transformation grids | every CRS lookup and datum shift |
 | `share/gdal/` | `gdal-config --datadir` | driver support files (`gdalvrt.xsd` and friends) |
+| `share/lsdtt3/` | `data/crn_parameters.nc` in the repository | the cosmo tools' production-rate and palaeomagnetic parameters |
+
+`share/lsdtt3/` is the same contract as the other two — the cosmo tools resolve
+it as `<exe>/../share/lsdtt3` — and it is just as invisible when it is missing:
+the tools start, report their version, and then cannot run without a download.
 
 ### The binaries find these themselves
 
@@ -125,7 +135,7 @@ Two consequences for packaging:
 2. **The staged layout is now a contract, not a convention.** If a future
    packaging change moves `share/proj` relative to `bin/`, the binaries will stop
    finding it and fall back to the user's environment — silently. Keep
-   `bin/../share/proj`.
+   `bin/../share/proj`, and the same for `bin/../share/lsdtt3`.
 
 ### Verifying it worked
 
@@ -174,9 +184,11 @@ scripts resolve the runtime closure themselves and fail if anything is missing.
 ## Alternative distribution routes
 
 - [`debian_packaging.md`](debian_packaging.md) — building a `.deb`, and hosting
-  a minimal APT repository. See also the `.deb` design section in
-  `docs/plan_docs/release_ci_plan.md` for the vendored-vs-system-libraries
-  trade-off, which is the decision that shapes the whole package.
+  a minimal APT repository. The decision that shapes the whole package is
+  vendored-versus-system libraries: the `.deb` links the system GDAL, PROJ,
+  FFTW and netCDF through `Depends:` so the package stays small and tracks
+  distribution security updates, whereas the tarball backends vendor their
+  closure so they run on a machine with no matching system libraries at all.
 - **conda-forge** — the intended route once the repository is public;
   `conda-recipe/meta.yaml` is the draft recipe. It is also the right answer for
   QGIS integration, because QGIS and lsdtt3 would then share one conda-managed

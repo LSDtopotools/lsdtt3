@@ -103,11 +103,26 @@ So a file at `C:\Users\Alice\data\dem.tif` is visible in WSL2 as:
 /mnt/c/Users/Alice/data/dem.tif
 ```
 
-You can run lsdtt3 tools directly on files in your Windows file system:
+You can run lsdtt3 tools directly on files in your Windows file system.
+lsdtt3 tools are driven by a parameter file, not by command-line flags: the
+only bare flags the parser accepts are `-h`/`--help` and `-v`/`--version`.
+So write a `.param` file:
+
+```
+# channel.param
+read_path: /mnt/c/Users/Alice/data/
+read_fname: dem
+write_path: /mnt/c/Users/Alice/output/
+write_fname: dem
+```
+
+and pass it to the tool:
 
 ```bash
-lsdtt-channel-extraction --dem /mnt/c/Users/Alice/data/dem.tif --output_directory /mnt/c/Users/Alice/output/
+lsdtt-channel-extraction channel.param
 ```
+
+Note that `read_fname` has no file extension.
 
 ### Reporting bugs
 
@@ -176,13 +191,13 @@ login` asks.
 ### Step 3 — Download the release tarball and install
 
 ```bash
-gh release download v0.4.0 --repo LSDtopotools/lsdtt3 \
+gh release download v0.5.1 --repo LSDtopotools/lsdtt3 \
     --pattern "lsdtt3-backend-linux-*.tar.gz" -D ~/
-tar -xzf ~/lsdtt3-backend-linux-x86_64-<profile>-v0.4.0.tar.gz -C ~/
-source ~/lsdtt3-backend-linux-x86_64-<profile>-v0.4.0/setenv.sh
+tar -xzf ~/lsdtt3-backend-linux-x86_64-<profile>-v0.5.1.tar.gz -C ~/
+source ~/lsdtt3-backend-linux-x86_64-<profile>-v0.5.1/setenv.sh
 ```
 
-Replace `v0.4.0` with the tag the developer told you to use. Then follow
+Replace `v0.5.1` with the tag the developer told you to use. Then follow
 Steps 3 and 4 from the section above (verify the installation and access your
 Windows files).
 
@@ -201,7 +216,7 @@ The release procedure is not repeated here, so it cannot drift out of step:
 
 For a beta tester, a local prerelease or a plain tarball from `dist/` is
 usually the right thing to send. Development builds identify themselves: `-v`
-reports e.g. `lsdtt3 0.4.0-dev, git v0.4.0-86-g88c4847-dirty`.
+reports e.g. `lsdtt3 0.5.1-dev, git v0.5.1-86-g88c4847-dirty`.
 
 ---
 
@@ -261,7 +276,7 @@ You build the package locally (or in CI) and push the compiled artifact:
 ```bash
 conda install anaconda-client
 conda build conda-recipe/
-anaconda upload ~/miniconda3/pkgs/lsdtt3-0.2.0-linux-64.tar.bz2
+anaconda upload ~/miniconda3/pkgs/lsdtt3-0.5.1-linux-64.tar.bz2
 ```
 
 Users then install via:

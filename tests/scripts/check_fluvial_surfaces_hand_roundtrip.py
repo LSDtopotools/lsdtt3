@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import lsdtt_test_env
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,7 +46,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def raster_checksum(path: pathlib.Path) -> int:
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         ["gdalinfo", "-checksum", str(path)],
         capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -60,7 +61,7 @@ def run_cli(exe: pathlib.Path, work_dir: pathlib.Path, out_dir: pathlib.Path,
             param_text: str, tag: str) -> None:
     param_name = f"run_{tag}.txt"
     (work_dir / param_name).write_text(param_text, encoding="utf-8")
-    result = subprocess.run(
+    result = lsdtt_test_env.run(
         [str(exe), str(work_dir), param_name],
         cwd=str(work_dir), capture_output=True, text=True, check=False)
     (work_dir / f"stdout_{tag}.log").write_text(result.stdout, encoding="utf-8")

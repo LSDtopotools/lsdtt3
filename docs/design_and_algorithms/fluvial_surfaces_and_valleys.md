@@ -712,5 +712,5 @@ terrace level.
 - [CLI reference: lsdtt-valley-centreline](../cli_reference/cli_reference_lsdtt_valley_centreline.md)
 - [CLI reference: lsdtt-flat-surface-finder](../cli_reference/cli_reference_lsdtt_flat_surface_finder.md)
 - [CLI reference: lsdtt-swath-profile](../cli_reference/cli_reference_lsdtt_swath_profile.md)
-- [Flow routing in lsdtt3](../what_is_lsdtt3/flow_routing.md)
+- [Flow routing in lsdtt3](flow_routing.md)
 - [Surface metrics](surface_metrics.md)

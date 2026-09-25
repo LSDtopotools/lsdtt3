@@ -2,7 +2,7 @@
   "schema_version": 1,
   "api_release_status": "shipped",
   "release_evidence": {
-    "declared_version": "0.0.0",
+    "declared_version": "0.1.0",
     "local_python_release_tags": [],
     "remote_release_query": "unavailable: GitHub credentials rejected",
     "published_installation_contract": "docs/python/index.md instructs users to pip install lsdtt3",

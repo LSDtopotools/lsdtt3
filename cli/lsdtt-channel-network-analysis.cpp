@@ -344,7 +344,7 @@ int main(int argc, char* argv[])
         "al. 1996). NOTE lsdtt3 currently measures ~0.54-0.58 on generated OCNs "
         "and the gap is unexplained -- read the reported a_min, n_decades and "
         "n_used before using the number, and see "
-        "docs/testing_and_benchmarking.md 8b.1c. Outputs "
+        "docs/developer_notes/testing_and_benchmarking.md 8b.1c. Outputs "
         "<write_fname>_area_scaling_summary.csv and _area_scaling_curve.csv.",
         "Junction area-ratio outputs (complement to Tokunaga)", "switch", ""};
 

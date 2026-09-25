@@ -44,6 +44,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import lsdtt_test_env
 
 REFERENCE_ENV = {
     "OPENCV_IPP": "disabled",
@@ -110,7 +111,7 @@ def run_case(exe: Path, template: str, read_path: Path, work: Path, env_extra: d
                                      write_path=str(work) + "/"))
     env = dict(os.environ)
     env.update(env_extra)
-    proc = subprocess.run([str(exe), str(work) + "/", "run.param"],
+    proc = lsdtt_test_env.run([str(exe), str(work) + "/", "run.param"],
                           cwd=work, env=env, capture_output=True, text=True)
     (work / "stdout.txt").write_text(proc.stdout)
     (work / "stderr.txt").write_text(proc.stderr)

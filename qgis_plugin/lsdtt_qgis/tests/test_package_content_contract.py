@@ -45,7 +45,7 @@ def test_distributable_matches_plugin_source_contract(tmp_path):
         (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
     )
     assert source_metadata["name"] == "lsdtt3"
-    assert source_metadata["version"] == "0.2.0"
+    assert source_metadata["version"] == "0.3.0"
     assert source_metadata["hasProcessingProvider"] == "yes"
 
     subprocess.run(

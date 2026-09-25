@@ -74,3 +74,48 @@ target_dem_fname: target.tif
 reference_outlet_fname: reference_outlets.csv
 local_search_radius_metres: 750
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `reference_dem_fname` | `string` | `reference.tif` | `io` | - | Reference DEM. | The DEM on which reference outlets are defined. |
+| `target_dem_fname` | `string` | `target.tif` | `io` | - | Target or resampled DEM. | D8 routing is rebuilt independently on this DEM. |
+| `reference_outlet_fname` | `string` | `reference_outlets.csv` | `io` | - | Reference outlet CSV. | Must contain latitude and longitude columns in EPSG:4326. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `matched_outlet_fname` | `string` | - | `io` | - | Matched outlet CSV name. | Defaults to &lt;write_fname&gt;_matched_outlets.csv. |
+| `diagnostics_fname` | `string` | - | `io` | - | Candidate diagnostics CSV name. | Defaults to &lt;write_fname&gt;_outlet_matching_diagnostics.csv. |
+
+### Routing
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `raster_is_filled` | `bool` | `true` | `param` | - | Whether both DEMs are already filled. | Set false when both DEMs need the same fill treatment before routing. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | D8 boundary conditions. | Four-character N,E,S,W boundary condition string. |
+| `n_threads` | `int` | `0` | `param` | - | Routing threads. | Zero uses the available hardware threads. |
+
+### Matching
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `local_search_radius_metres` | `float` | `1000` | `param` | - | Local search radius in metres. | Candidates are valid target cells within this distance of the transformed outlet. |
+
+<!-- END GENERATED CLI PARAMETERS -->

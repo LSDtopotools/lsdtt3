@@ -1049,7 +1049,8 @@ std::vector<float> lsdtt_basin_outline_cpu::interpolate_pixel_values_on_outline(
     const lsdtt_raster_cpu& data_raster) const
 {
   const int NNodes_outline = static_cast<int>(outline_divide_rc_.size());
-  std::vector<float> interpolated_values(NNodes_outline, data_raster.get_meta().no_data_value);
+  std::vector<float> interpolated_values(NNodes_outline,
+                                         static_cast<float>(data_raster.get_meta().no_data_value));
 
   const int n_rows_data = data_raster.get_meta().n_rows;
   const int n_cols_data = data_raster.get_meta().n_cols;
@@ -1185,7 +1186,9 @@ std::vector<lsdtt_ridgeline_cpu> lsdtt_basin_outline_cpu::split_outline_into_rid
     int mapped_ch_row = ch_row * 2 + 1;
     int mapped_ch_col = ch_col * 2 + 1;
 
-    float dist = std::sqrt(std::pow(outline_row - mapped_ch_row, 2) + std::pow(outline_col - mapped_ch_col, 2));
+    const int d_row = outline_row - mapped_ch_row;
+    const int d_col = outline_col - mapped_ch_col;
+    float dist = static_cast<float>(std::hypot(static_cast<double>(d_row), static_cast<double>(d_col)));
     if (i == 0 || dist < current_euclidean_distance) {
       current_euclidean_distance = dist;
       current_index = static_cast<int>(i);
