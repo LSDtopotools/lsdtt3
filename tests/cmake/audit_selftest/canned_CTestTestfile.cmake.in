@@ -1,0 +1,55 @@
+# Hand-written stand-in for a generated CTestTestfile.cmake; see README.md.
+# SELFTEST_DIR is set by the audit script before this file is included.
+
+# ---- must pass -------------------------------------------------------------
+add_test(sel_ok_native "/build/lsdtt-test-something")
+set_tests_properties(sel_ok_native PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "unit;tier_native;hermetic" TIMEOUT "300")
+
+# A Python fixture producer, and a native command that consumes its fixture and
+# therefore legitimately carries its tier (propagation).
+add_test(sel_ok_python_setup "/usr/bin/python3" "${SELFTEST_DIR}/scripts/plain_script.py")
+set_tests_properties(sel_ok_python_setup PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "unit;tier_python_stdlib" TIMEOUT "300" FIXTURES_SETUP "fx_py")
+add_test(sel_ok_inherit "/usr/bin/cmake" "-E" "compare_files" "a" "b")
+set_tests_properties(sel_ok_inherit PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "rigorous;tier_python_stdlib" TIMEOUT "300" FIXTURES_REQUIRED "fx_py")
+
+# A geo test whose third-party import arrives through a local module.
+add_test(sel_ok_geo "/usr/bin/python3.10" "${SELFTEST_DIR}/scripts/geo_script.py")
+set_tests_properties(sel_ok_geo PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "rigorous;tier_python_geo" TIMEOUT "300")
+
+# Benchmarks own their time budgets, so no TIMEOUT is not a violation.
+add_test(benchmark_sel_ok "/usr/bin/pixi" "run" "python" "x.py")
+set_tests_properties(benchmark_sel_ok PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "benchmark;tier_pixi")
+
+# ---- each violates exactly one check ---------------------------------------
+add_test(sel_a_two_tiers "/build/lsdtt-test-something")
+set_tests_properties(sel_a_two_tiers PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "unit;tier_native;tier_pixi" TIMEOUT "300")
+
+add_test(sel_b_pixi_wrong "/home/u/.pixi/bin/pixi" "run" "python" "x.py")
+set_tests_properties(sel_b_pixi_wrong PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "unit;tier_python_stdlib" TIMEOUT "300")
+
+add_test(sel_c_native_with_py "/build/lsdtt-something" "/nowhere/helper.py")
+set_tests_properties(sel_c_native_with_py PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "unit;tier_native" TIMEOUT "300")
+
+add_test(sel_d_hermetic_skip "/build/lsdtt-test-something")
+set_tests_properties(sel_d_hermetic_skip PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "unit;tier_native;hermetic" SKIP_RETURN_CODE "77" TIMEOUT "300")
+
+add_test(sel_e_no_env "/build/lsdtt-test-something")
+set_tests_properties(sel_e_no_env PROPERTIES ENVIRONMENT "OMP_WAIT_POLICY=passive" LABELS "unit;tier_native" TIMEOUT "300")
+
+add_test(sel_e_no_timeout "/build/lsdtt-test-something")
+set_tests_properties(sel_e_no_timeout PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "unit;tier_native")
+
+add_test(sel_f_lem "/usr/bin/python3" "/nowhere/run_cli_smoke.py" "--exe" "/build/lsdtt-lem")
+set_tests_properties(sel_f_lem PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "smoke;tier_python_stdlib" TIMEOUT "300")
+
+add_test(sel_g_harness "/usr/bin/python3" "/nowhere/run_cli_smoke.py" "--exe" "/build/lsdtt-x" "--expect-raster-size" "out.tif:5x5")
+set_tests_properties(sel_g_harness PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "smoke;tier_python_stdlib" TIMEOUT "300")
+
+add_test(sel_g_script "/usr/bin/python3" "${SELFTEST_DIR}/scripts/tool_script.py")
+set_tests_properties(sel_g_script PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "regression;tier_python_stdlib" TIMEOUT "300")
+
+add_test(sel_h_stdlib_imports "/usr/bin/python3" "${SELFTEST_DIR}/scripts/geo_script.py")
+set_tests_properties(sel_h_stdlib_imports PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "rigorous;tier_python_stdlib" TIMEOUT "300")
+
+add_test(sel_h_geo_no_imports "/usr/bin/python3" "${SELFTEST_DIR}/scripts/plain_script.py")
+set_tests_properties(sel_h_geo_no_imports PROPERTIES ENVIRONMENT "LSDTT_NONINTERACTIVE=1" LABELS "rigorous;tier_python_geo" TIMEOUT "300")

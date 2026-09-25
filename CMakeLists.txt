@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(lsdtt3 VERSION 0.5.0 LANGUAGES CXX)
+project(lsdtt3 VERSION 0.5.2 LANGUAGES CXX)
 
 include(CTest)
 
@@ -392,6 +392,16 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_reference_field_ladder_cpu.cpp
     src/cpu/lsdtt_vector_rasterise_cpu.cpp
     src/cpu/lsdtt_sti_cpu.cpp
+    src/cpu/lsdtt_wetness_index_cpu.cpp
+    src/cpu/lsdtt_hydro_velocity_field_cpu.cpp
+    src/cpu/lsdtt_topmodel_cpu.cpp
+    src/cpu/lsdtt_topmodel_dynamic_cpu.cpp
+    src/cpu/lsdtt_infiltration_excess_cpu.cpp
+    src/cpu/lsdtt_landcover_scenario_cpu.cpp
+    src/cpu/lsdtt_hydro_roughness_cpu.cpp
+    src/cpu/lsdtt_canopy_interception_cpu.cpp
+    src/cpu/lsdtt_hydro_routing_cpu.cpp
+    src/cpu/lsdtt_channel_extent_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp
     src/cpu/lsdtt_swath_cpu.cpp
     src/cpu/lsdtt_streamlines_cpu.cpp
@@ -600,6 +610,7 @@ lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-internal-drainage      cli/lsdtt-internal-drainage.cpp)
 lsdtt_cli(lsdtt-hillslope-channel-coupling cli/lsdtt-hillslope-channel-coupling.cpp)
 lsdtt_cli(lsdtt-drainage-analysis      cli/lsdtt-drainage-analysis.cpp)
+lsdtt_cli(lsdtt-distributed-hydrology  cli/lsdtt-distributed-hydrology.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)
 lsdtt_cli(lsdtt-mountain-front         cli/lsdtt-mountain-front.cpp)
 lsdtt_cli(lsdtt-basin-stats            cli/lsdtt-basin-stats.cpp)

@@ -1396,8 +1396,8 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
 
     for (std::int64_t k = 0; k < n_total; ++k)
     {
-        int row = k / nc_cols;
-        int col = k % nc_cols;
+        int row = static_cast<int>(k / nc_cols);
+        int col = static_cast<int>(k % nc_cols);
         if (!c_mask(row, col) || !e_mask(row, col)) continue;
         double erate = static_cast<double>(e_data(row, col));
         double conc  = static_cast<double>(c_data(row, col));
@@ -1413,8 +1413,8 @@ lsdtt_raster_cpu calculate_accumulated_crn_raster(
 
     for (std::int64_t k = 0; k < n_total; ++k)
     {
-        int row = k / nc_cols;
-        int col = k % nc_cols;
+        int row = static_cast<int>(k / nc_cols);
+        int col = static_cast<int>(k % nc_cols);
         double acc_e = acc_eros[static_cast<std::size_t>(k)];
         if (acc_e <= 0.0) continue;
         out_data(row, col) = static_cast<float>(acc_atoms[static_cast<std::size_t>(k)] / acc_e);

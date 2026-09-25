@@ -71,6 +71,7 @@ import re
 import shutil
 import subprocess
 import sys
+import lsdtt_test_env
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +298,7 @@ def declared_parameters(exe: pathlib.Path) -> set:
     """
     key = str(exe)
     if key not in _declared_cache:
-        r = subprocess.run([str(exe), "-h"], capture_output=True, text=True,
+        r = lsdtt_test_env.run([str(exe), "-h"], capture_output=True, text=True,
                            check=False)
         names = set(_DECLARED_RE.findall(r.stdout))
         if not names:
@@ -339,7 +340,7 @@ def hash_raster(path: pathlib.Path, scratch: pathlib.Path) -> str:
     for stale in (out, out.with_suffix(".hdr"), pathlib.Path(str(out) + ".aux.xml")):
         if stale.exists():
             stale.unlink()
-    r = subprocess.run(
+    r = lsdtt_test_env.run(
         ["gdal_translate", "-of", "ENVI", "-q", str(path), str(out)],
         capture_output=True, text=True, check=False)
     if r.returncode != 0:
@@ -408,7 +409,7 @@ def run_case(case, exe_map: dict, read_path: pathlib.Path,
         f"write_output_format: gtiff\n"
         + body.strip() + "\n")
 
-    proc = subprocess.run([str(exe), param.name], cwd=str(work),
+    proc = lsdtt_test_env.run([str(exe), param.name], cwd=str(work),
                           capture_output=True, text=True, check=False)
     (work / "stdout.log").write_text(proc.stdout)
     (work / "stderr.log").write_text(proc.stderr)

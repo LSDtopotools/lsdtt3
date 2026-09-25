@@ -124,7 +124,7 @@ dist/
 # Benchmark DEM fixtures
 #
 # Fetched at test time from Copernicus GLO-30, never committed
-# (see docs/testing_and_benchmarking.md).
+# (see docs/developer_notes/testing_and_benchmarking.md).
 # -----------------------------------------------------------------------------
 tests/data/dem_cache/
 
@@ -152,11 +152,30 @@ slurm_logs/
 #
 # docs/plan_docs/ holds working plans - they are drafted, revised and abandoned
 # during a piece of work and are not the durable record. What survives a plan
-# goes into docs/ proper (see docs/testing_and_benchmarking.md for the pattern:
+# goes into docs/ proper (see docs/developer_notes/testing_and_benchmarking.md for the pattern:
 # the committed document is the record, the plan is the scaffolding). A
 # committed file must never cite a plan doc, because the plan may not exist.
 # -----------------------------------------------------------------------------
 docs/plan_docs/
+
+# -----------------------------------------------------------------------------
+# LaTeX technical notes
+#
+# docs/tex_technical/ holds standalone LaTeX notes written for papers, not for
+# the mkdocs site (mkdocs.yml already excludes the directory from the build).
+# They are drafts carried alongside the code rather than part of the published
+# documentation, so they are not tracked here.
+# -----------------------------------------------------------------------------
+docs/tex_technical/
+
+# -----------------------------------------------------------------------------
+# Local git identity mapping
+#
+# .mailmap canonicalises author names and addresses in git history. It is kept
+# local rather than committed: it reflects one person's view of who is who,
+# including addresses that need not be published in the repository.
+# -----------------------------------------------------------------------------
+.mailmap
 
 # -----------------------------------------------------------------------------
 # Run output written into the repository root
@@ -173,3 +192,29 @@ point_input_test_output/
 # -----------------------------------------------------------------------------
 .claude/
 src/resume_claude.txt
+
+# -----------------------------------------------------------------------------
+# Debian packaging build output
+#
+# The package definition itself IS committed: debian/control, debian/rules,
+# debian/changelog, debian/source/format and debian/smoke-test.sh. Everything
+# listed below is produced by dpkg-buildpackage - debhelper's out-of-tree CMake
+# build directory, the staged package root, debhelper's own bookkeeping, and
+# the built artefacts. Note that dpkg writes the .deb one level ABOVE the
+# source tree, so the artefact patterns here are belt-and-braces.
+#
+# The package cannot be built on a /mnt/c (NTFS) path: every file reports mode
+# 777 there and dpkg-deb rejects a control directory more permissive than 0775.
+# Build from a Linux-native directory. See docs/developer_notes/debian_packaging.md
+# -----------------------------------------------------------------------------
+obj-*/
+debian/lsdtt3/
+debian/.debhelper/
+debian/files
+debian/*.substvars
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+*.deb
+*.ddeb
+*.buildinfo
+*.changes

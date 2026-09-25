@@ -46,11 +46,23 @@ std::string         g_pinned_gdal_dir;   // "" if nothing was pinned
 std::atomic<bool>   g_initialised{false};
 
 // Read an environment variable, returning "" when unset or empty.
+//
+// MSVC deprecates getenv in favour of _dupenv_s. The warning is about the
+// returned pointer being invalidated by a later setenv/putenv from another
+// thread; gdal_init() is documented as startup-only, single-threaded, and the
+// value is copied into a std::string before returning, so it does not apply.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
 std::string env_or_empty(const char* name)
 {
     const char* v = std::getenv(name);
     return (v && *v) ? std::string(v) : std::string();
 }
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 // Directories to probe for bundled runtime data, in priority order.
 //
@@ -106,15 +118,11 @@ std::string find_bundled_share_dir(const std::string& subdir,
 
 void do_init()
 {
-    // The one place that calls GDALAllRegister() directly. Everywhere else in
-    // lsdtt3 calls gdal_init(); calling it from here would re-enter
-    // std::call_once and deadlock.
-    GDALAllRegister();
-
     // ---------------------------------------------------------------------
     // PROJ. A bundled proj.db always wins, including over PROJ_DATA /
     // PROJ_LIB: paths set through OSRSetPROJSearchPaths take precedence over
-    // PROJ's environment-variable search.
+    // PROJ's environment-variable search. This must precede GDAL driver
+    // registration: registration can initialize CRS state.
     // ---------------------------------------------------------------------
     g_pinned_proj_dir = find_bundled_share_dir("proj", "proj.db");
     if (!g_pinned_proj_dir.empty())
@@ -135,6 +143,11 @@ void do_init()
     g_pinned_gdal_dir = find_bundled_share_dir("gdal", "gdalvrt.xsd");
     if (!g_pinned_gdal_dir.empty())
         CPLSetConfigOption("GDAL_DATA", g_pinned_gdal_dir.c_str());
+
+    // The one place that calls GDALAllRegister() directly. Everywhere else in
+    // lsdtt3 calls gdal_init(); calling it from here would re-enter
+    // std::call_once and deadlock.
+    GDALAllRegister();
 
     g_initialised = true;
 }

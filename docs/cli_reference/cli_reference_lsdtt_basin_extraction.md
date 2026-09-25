@@ -287,6 +287,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `crossing_line_fname` | `string` | `NULL` | `param` | - | Polyline vector file the channels must cross (same CRS as the DEM). | Required when select_basins_from_line_crossings is true. Any OGR-readable polyline layer (gpkg, fgb, shp, geojson). |
 | `crossing_minimum_contributing_pixels` | `int` | `500` | `param` | - | Minimum contributing pixels at a line crossing to seed a basin outlet. | Channel-line crossings with fewer upslope pixels are ignored. |
 | `select_all_basins` | `bool` | `false` | `switch` | - | Select one basin for every junction in the junction network. | Uses the junction network to derive a basin outlet flat index for each junction and constructs one lsdtt_junction_basin per junction. |
+| `select_all_zero_order_basins` | `bool` | `false` | `switch` | - | Select one basin for every channel-head source pixel. | Zero-order basins are the complete upslope contributing areas of source pixels identified by threshold_contributing_pixels. This is separate from Strahler stream-order basin selection. |
 | `select_all_basins_of_stream_order` | `bool` | `false` | `switch` | - | Select all basins whose junction stream order equals selected_stream_order. | This is equivalent to selecting all basins then filtering to one exact stream order. |
 | `selected_stream_order` | `int` | `-1` | `param` | - | Exact stream order used by select_all_basins_of_stream_order. | Must be &gt; 0 when select_all_basins_of_stream_order is true. |
 

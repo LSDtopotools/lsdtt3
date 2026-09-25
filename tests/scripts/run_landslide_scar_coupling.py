@@ -27,6 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
+import lsdtt_test_env
 
 
 LANDSLIDE_PARAMS = """read_path: .
@@ -56,7 +57,7 @@ time_since_change_yr: 20000
 def run(exe: pathlib.Path, work: pathlib.Path, text: str, name: str) -> str:
     param = work / f"{name}.param"
     param.write_text(text)
-    r = subprocess.run([str(exe), param.name], cwd=str(work),
+    r = lsdtt_test_env.run([str(exe), param.name], cwd=str(work),
                        capture_output=True, text=True, check=False)
     if r.returncode != 0:
         sys.stderr.write(r.stdout)
@@ -69,7 +70,7 @@ def run(exe: pathlib.Path, work: pathlib.Path, text: str, name: str) -> str:
 def band_values(raster: pathlib.Path) -> list:
     """Every pixel value, via gdal_translate to an ASCII grid."""
     out = raster.with_suffix(".asc")
-    r = subprocess.run(
+    r = lsdtt_test_env.run(
         ["gdal_translate", "-of", "AAIGrid", "-q", str(raster), str(out)],
         capture_output=True, text=True, check=False)
     if r.returncode != 0:

@@ -20,6 +20,11 @@ platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
 #   pixi install                 # default environment
 #   pixi run python python_helpers/download_dem_tiles.py --help
 #   pixi shell                   # interactive
+#   pixi install -e test         # the CTest Python tiers; see [feature.test]
+#
+# Do not configure the C++ build inside Pixi (no `pixi run cmake`, no
+# activated shell): it would pick up Pixi's GDAL.  Configure outside and pass
+# the test environment's interpreter with -DPython3_EXECUTABLE.
 # -----------------------------------------------------------------------------
 
 [dependencies]
@@ -55,6 +60,33 @@ pytest = "*"
 # Kept out of the default environment because they are heavy, optional, or only
 # needed to score lsdtt3 rather than to build or run it.
 # -----------------------------------------------------------------------------
+
+# The CTest Python tiers (tests/CMakeLists.txt, LSDTT_ENABLE_PYTHON_TESTS and
+# LSDTT_ENABLE_PYTHON_GEO_TESTS).  EXACTLY what they need, as a separate
+# environment (no default feature) so the test contract does not drift with the
+# helpers' dependencies:
+#   python >= 3.10   the scripts use `X | None` annotations and `match`
+#   gdal             the osgeo bindings AND gdalinfo / ogrinfo / gdal_translate,
+#                    which about a quarter of the harness tests run
+#   numpy rasterio geopandas shapely   the four tier_python_geo tests
+#
+# Configure the C++ build OUTSIDE Pixi (so it uses the system GDAL) and hand
+# CMake this interpreter; run ctest inside the environment:
+#
+#   pixi install -e test
+#   cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON \
+#         -DPython3_EXECUTABLE="$(pixi run -e test python -c 'import sys; print(sys.executable)')"
+#   pixi run -e test ctest --test-dir build --output-on-failure
+#
+# `pixi install` alone does not change the interpreter an existing build tree
+# was configured with; re-run cmake with -DPython3_EXECUTABLE to switch.
+[feature.test.dependencies]
+python = ">=3.10"
+gdal = "*"
+numpy = "*"
+rasterio = "*"
+geopandas = "*"
+shapely = "*"
 
 # OSM feature download (python_helpers/osm_*.py).  osmnx pulls a large solve.
 [feature.osm.dependencies]
@@ -172,6 +204,25 @@ matplotlib = "*"
 [feature.workflows.pypi-dependencies]
 snakemake = "*"
 
+# Local packaging: building the release artefacts without spending GitHub
+# Actions minutes (tools/make_all_packages.sh). Kept out of the default
+# environment because only whoever is cutting a package needs it.
+#
+# `build` is the PEP 517 front end. It creates an isolated virtualenv and
+# installs the backend pinned in python_bindings/pyproject.toml into THAT, so
+# the wheel is built against the declared pins rather than against whatever
+# happens to be installed here. This environment therefore does not need
+# nanobind or scikit-build-core itself.
+#
+# Python is pinned below 3.14 because that is what the wheel targets
+# (cp310-cp314 in pyproject.toml) and because the build backend chain is better
+# tested there.
+[feature.packaging.dependencies]
+python = ">=3.11,<3.14"
+
+[feature.packaging.pypi-dependencies]
+build = "*"
+
 [environments]
 osm = ["osm"]
 # The peer-review benchmark environment: all three external reference
@@ -184,7 +235,12 @@ benchmark = ["reference", "whitebox"]
 # rows.
 benchmark-lite = ["reference"]
 docs = ["docs"]
+# Used by tools/make_all_packages.sh for the wheel target; the script looks
+# for .pixi/envs/packaging first.
+packaging = ["packaging"]
 workflows = ["workflows"]
+# The CTest Python tiers; see [feature.test.dependencies].
+test = { features = ["test"], no-default-feature = true }
 
 [tasks]
 # Generic entry points only -- individual test suites are invoked through CTest

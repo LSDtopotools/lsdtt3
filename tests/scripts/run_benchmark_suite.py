@@ -144,6 +144,7 @@ import subprocess
 import sys
 import time
 from typing import Any
+import lsdtt_test_env
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
@@ -371,7 +372,7 @@ CASES: dict[str, dict[str, Any]] = {
     #     topotoolbox hybrid                22.84 Mcells/s
     #
     # Matched, lsdtt3 is within 2% of TopoToolbox. The 2.9x was the algorithm
-    # choice, not the implementation. See docs/testing_and_benchmarking.md.
+    # choice, not the implementation. See docs/developer_notes/testing_and_benchmarking.md.
     "fill": {
         "sequential": True,
         "suite": "flow",
@@ -481,7 +482,7 @@ CASES: dict[str, dict[str, Any]] = {
                  "like-for-like: lsdtt3 also builds an S-vector the references "
                  "do not build (~57% of its build time), retained by design "
                  "because downstream analyses depend on it -- see the note in "
-                 "CASES and docs/testing_and_benchmarking.md"),
+                 "CASES and docs/developer_notes/testing_and_benchmarking.md"),
         "engines": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
                     "whitebox": "accum_d8"},
         "lsdtt": {"exe": "lsdtt-drainage-analysis",
@@ -778,18 +779,15 @@ def system_env(threads: int) -> dict[str, str]:
 
            libstdc++.so.6: version `CXXABI_1.3.15' not found
 
-       This is lifted from run_flow_benchmark.py's system_env(), where it was
-       found the hard way.
+       This was found the hard way in run_flow_benchmark.py; the stripping now
+       lives in lsdtt_test_env.system_env(), shared by every driver.
 
     2. Pin the thread count.  OMP_NUM_THREADS is what lsdtt3's OpenMP loops
        read.  OPENBLAS_NUM_THREADS and MKL_NUM_THREADS are set alongside it
        because a BLAS pulled in transitively will otherwise spin up its own
        pool and the "1 thread" row will not be one thread.
     """
-    env = dict(os.environ)
-    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GDAL_DATA",
-                "GDAL_DRIVER_PATH", "PROJ_DATA", "PROJ_LIB", "CONDA_PREFIX"):
-        env.pop(key, None)
+    env = lsdtt_test_env.system_env()
     env["OMP_NUM_THREADS"] = str(threads)
     env["OPENBLAS_NUM_THREADS"] = str(threads)
     env["MKL_NUM_THREADS"] = str(threads)
@@ -840,7 +838,7 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
     if not hasattr(os, "wait4"):
         t0 = time.perf_counter()
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True,
+            proc = lsdtt_test_env.run(cmd, capture_output=True, text=True,
                                   env=env, cwd=str(cwd) if cwd else None,
                                   timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -868,7 +866,7 @@ def run_with_rusage(cmd: list[str], env: dict[str, str] | None = None,
             # timeout can kill the launcher AND the command it is waiting on.
             # Killing the launcher alone would orphan the measured command and
             # leave it running for the rest of the campaign.
-            proc = subprocess.Popen(launcher + list(cmd), stdout=subprocess.PIPE,
+            proc = lsdtt_test_env.popen(launcher + list(cmd), stdout=subprocess.PIPE,
                                     stderr=errf, text=True, env=env,
                                     cwd=str(cwd) if cwd else None,
                                     start_new_session=True)
@@ -1077,7 +1075,7 @@ def ensure_source_raster(region: str, source_px: int,
           f"{source_px * source_px * 4 / 1e6:.0f} MB; every ladder rung is "
           f"cropped from it")
 
-    proc = subprocess.run([str(fetch_exe), str(param_dir), param_path.name],
+    proc = lsdtt_test_env.run([str(fetch_exe), str(param_dir), param_path.name],
                           capture_output=True, text=True, env=system_env(1))
     if proc.returncode != 0:
         print(f"    fetch failed:\n{proc.stdout[-1200:]}\n{proc.stderr[-1200:]}",
@@ -1285,7 +1283,7 @@ def filesystem_type(path: pathlib.Path) -> str:
     mount for the path directly, including bind mounts, and it works on macOS.
     """
     try:
-        r = subprocess.run(["stat", "-f", "-c", "%T", str(path)],
+        r = lsdtt_test_env.run(["stat", "-f", "-c", "%T", str(path)],
                            capture_output=True, text=True, check=False)
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
@@ -1340,7 +1338,7 @@ def prepare_filled_fixture(fixture: pathlib.Path, work_dir: pathlib.Path,
     raster.  lsdtt3's fill is used as that common input, which needs
     justifying since it is one of the tools under test: it is bit-exact against
     both RichDEM's Barnes 2014 fill and TopoToolbox's `fillsinks` (see
-    docs/testing_and_benchmarking.md), so choosing it favours nobody.  It is
+    docs/developer_notes/testing_and_benchmarking.md), so choosing it favours nobody.  It is
     NOT Whitebox's fill, which returns a different surface on the test fixture
     -- see the note in whitebox_reference.py.
 
@@ -1741,7 +1739,7 @@ def calibrate_rss_floor() -> dict[str, Any]:
             floors.append(r["peak_rss_mb"])
 
     # The old, broken route, kept only to show whether the trap is live here.
-    proc = subprocess.Popen([true_exe])
+    proc = lsdtt_test_env.popen([true_exe])
     _, _, ru = os.wait4(proc.pid, 0)
     proc.returncode = 0
 
@@ -1836,7 +1834,7 @@ def calibrate_overheads(build_dir: pathlib.Path, fixture: pathlib.Path,
 # -----------------------------------------------------------------------------
 def run_capture(cmd: list[str]) -> dict[str, Any]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = lsdtt_test_env.run(cmd, capture_output=True, text=True, check=False)
     except (FileNotFoundError, PermissionError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": proc.returncode == 0, "stdout": proc.stdout,
@@ -2377,7 +2375,7 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
              "rows exist only at 1 thread and are marked `serial_reference`. A "
              "flat scaling curve for them is not a finding.")
     L.append("- Values are not asserted anywhere in this campaign. Correctness "
-             "lives in the CTest suite; see `docs/testing_and_benchmarking.md`.")
+             "lives in the CTest suite; see `docs/developer_notes/testing_and_benchmarking.md`.")
     path.write_text("\n".join(L) + "\n")
 
 
@@ -2540,9 +2538,11 @@ def main() -> int:
                          "absolute path to collect results elsewhere.")
     ap.add_argument("--fixture-dir", default="",
                     help="where the downloaded region sources and their crops "
-                         "live. Defaults to <out-dir>/benchmark_fixtures when "
-                         "--out-dir is given, otherwise tests/data/dem_cache "
-                         "inside the repo. The server profile stores ~300 MB "
+                         "live. Defaults to <out-dir>/benchmark_fixtures. "
+                         "Because --out-dir itself defaults to "
+                         "'benchmark_campaigns', fixtures always land beside "
+                         "the campaign and never inside tests/data/. "
+                         "The server profile stores ~300 MB "
                          "here, so on a cluster keep it off a quota'd home: "
                          "point it at project or scratch storage. Reused "
                          "across campaigns, so it is worth keeping.")
@@ -2788,7 +2788,7 @@ def main() -> int:
     print("reference implementations importable by it:")
     _available = []
     for _mod in ("richdem", "topotoolbox", "whitebox_workflows"):
-        _probe = subprocess.run(
+        _probe = lsdtt_test_env.run(
             [args.python_exe, "-c", f"import {_mod}"],
             capture_output=True, text=True)
         _ok = _probe.returncode == 0

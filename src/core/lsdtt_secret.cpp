@@ -122,6 +122,13 @@ std::string prompt_for_secret(const std::string& prompt_text)
 // Public API
 // =============================================================================
 
+bool noninteractive_requested()
+{
+    const std::string value = env_value(noninteractive_env_var);
+    return !value.empty() && value != "0";
+}
+
+
 bool stdin_is_terminal()
 {
 #ifdef _WIN32
@@ -213,8 +220,11 @@ lsdtt_secret_result resolve_secret(const lsdtt_secret_request& request)
 
     // ---- 3. Interactive prompt ----
     // Only on a terminal: prompting in CI would hang the run rather than
-    // failing cleanly, which is far worse than a clear error.
-    if (request.allow_prompt && stdin_is_terminal())
+    // failing cleanly, which is far worse than a clear error. And never when
+    // LSDTT_NONINTERACTIVE is set: CTest hands the invoking terminal to every
+    // test as its stdin, so "stdin is a terminal" is true inside an interactive
+    // ctest run and the prompt would block the suite with nobody to answer it.
+    if (request.allow_prompt && !noninteractive_requested() && stdin_is_terminal())
     {
         const std::string prompt_text =
             request.prompt.empty() ? std::string("Enter API key: ")

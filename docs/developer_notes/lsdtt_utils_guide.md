@@ -125,8 +125,37 @@ These are naturally CPU/GPU-side or object-side tasks.
 
 ## Current contents of `src/utils/`
 
-The utils layer currently contains or is intended to contain the following
-kinds of files.
+The utils layer contains the following headers. The sections below describe the
+long-standing core modules in detail; the rest are summarised in the table.
+
+| Header | Purpose |
+|---|---|
+| `lsdtt_array2d` | Lightweight 2D array over a contiguous `std::vector` |
+| `lsdtt_binary_array2d_tracing` | Boundary tracing on binary images (Gonzalez, Woods & Eddins pp. 557–560); returns row/col in the input array's coordinate system |
+| `lsdtt_distributions` | Parametric distribution fitting for valid flat numeric samples |
+| `lsdtt_histogram` | Histogram, PDF/CDF and binning utilities |
+| `lsdtt_image_filters` | Generic 2-D image-filter primitives on flat row-major arrays |
+| `lsdtt_linear_algebra` | Lightweight linear algebra utilities |
+| `lsdtt_natural_breaks` | Jenks natural-breaks classification (`lsdtt_jenks_options`) |
+| `lsdtt_numeric_utils` | Numeric helpers, including inclusive `start, start + step, …` ranges |
+| `lsdtt_polygon_geometry` | Header-only planar polygon geometry |
+| `lsdtt_random` | Fully specified random numbers (splitmix64) |
+| `lsdtt_raster_geometry` | Header-only raster geometry from metadata alone |
+| `lsdtt_regression` | Linear, orthogonal and polynomial regression for valid paired samples |
+| `lsdtt_signal1d` | 1-D profile signal processing: moving average, LOWESS, derivative |
+| `lsdtt_splines` | Parametric spline fitting for valid ordered planar data |
+| `lsdtt_statistical_tests` | Nonparametric two-sample tests and distribution distances |
+| `lsdtt_statistics` | Basic 1-D descriptive statistics |
+| `lsdtt_string_utils` | Header-only string helpers shared by CLIs and library |
+| `lsdtt_thread_utils` | Thread-count resolution |
+
+`lsdtt_image_filters` is worth singling out: it holds the native Otsu,
+Canny, Hough and adaptive-threshold primitives that replaced OpenCV. Where a
+primitive stands in for an OpenCV routine it reproduces that routine's rounding
+rules, and names the routine it mirrors in its comment, so raster-level
+operations built on it match the previous output exactly. Its inputs are dense
+images — every element is data, with no nodata or mask handling; the raster
+layer in `src/cpu/` decides what nodata becomes before calling in.
 
 ### `lsdtt_array2d.hpp`
 A lightweight 2D array wrapper over a contiguous `std::vector`.

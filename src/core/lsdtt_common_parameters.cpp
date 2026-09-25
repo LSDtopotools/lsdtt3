@@ -173,7 +173,7 @@ void declare_raster_output_format_parameter(
         prefixed_parameter_key(prefix, "write_output_format");
     string_default_map[k_write_output_format] = "cog";
     help_map[k_write_output_format] = {"string", "cog",
-        "Raster output format: cog, gtiff, bil, png or same_as_input.",
+        "Raster output format: cog, gtiff, png or same_as_input.",
         "cog is a Cloud Optimised GeoTIFF and is the project default. It falls "
         "back to gtiff for small rasters, where the tiling overhead is not "
         "worth it. There is ONE raster format parameter per CLI: it governs "

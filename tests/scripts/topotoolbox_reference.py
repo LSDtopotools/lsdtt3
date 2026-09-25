@@ -16,7 +16,7 @@ kept as a *report-only* reference.
 tie-break and fails a planar ramp. Both are wrong -- its tie-break prefers
 cardinals, and on a 50x50 north-south ramp it returns cardinal south for all
 2304 interior cells. The divergence comes from the selection rule and needs no
-tie at all. See docs/testing_and_benchmarking.md 5.1.)
+tie at all. See docs/developer_notes/testing_and_benchmarking.md 5.1.)
 
 TopoToolbox computes true steepest descent -- `libtopotoolbox/src/flow_routing.c`
 divides the drop by a chamfer distance (1 for cardinals, sqrt(2) for diagonals)
@@ -24,7 +24,7 @@ before comparing -- which is the same rule lsdtt3 uses. It reproduces the planar
 ramp exactly, so it *is* a valid correctness reference for D8 and its
 comparisons are asserted.
 
-See docs/testing_and_benchmarking.md for the measurements behind that.
+See docs/developer_notes/testing_and_benchmarking.md for the measurements behind that.
 
 INSTALL
 
@@ -36,7 +36,7 @@ ships wheels for cp311-cp313 only. Run under:
 
 Routine -> TopoToolbox mapping:
 
-  Flow routing (docs/testing_and_benchmarking.md, flow plan):
+  Flow routing (docs/developer_notes/testing_and_benchmarking.md, flow plan):
     fill               GridObject.fillsinks(hybrid=True)   DEFAULT
                        Vincent-style grayscale reconstruction: forward and
                        backward raster scans plus a FIFO queue. O(N), almost
@@ -49,7 +49,7 @@ Routine -> TopoToolbox mapping:
     an earlier version of the suite compared lsdtt3's heap against this
     reconstruction and reported lsdtt3 2.9x slower -- which measured the
     algorithm choice, not the implementations. See
-    docs/testing_and_benchmarking.md.
+    docs/developer_notes/testing_and_benchmarking.md.
     accum_d8           FlowObject(method='d8').flow_accumulation()
 
   Surface metrics (surface-metrics plan Tier B -- SPEED ONLY):

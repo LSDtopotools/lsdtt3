@@ -8,6 +8,7 @@
 
 #include <gdal_priv.h>
 
+#include <core/lsdtt_gdal_init.hpp>
 #include <core/lsdtt_secret.hpp>
 #include <core/lsdtt_dem_grouping.hpp>
 #include <cpu/lsdtt_outlet_basin_verification_cpu.hpp>
@@ -37,7 +38,7 @@ Raster fetch_dem(
     const std::string& pc_collection, const std::string& pc_asset,
     int http_timeout_seconds, int http_connect_timeout_seconds, int http_max_retry)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
     lsdtt::lsdtt_fetch_options options;
     options.west = west;
     options.south = south;
@@ -269,7 +270,7 @@ OutletFetchResult fetch_dem_for_outlets(
     double verify_expand_factor, int verify_max_iters, bool tight_bbox_refetch,
     int min_search_radius_pixels, int max_search_radius_pixels, bool mask_outside_basins)
 {
-    GDALAllRegister();
+    lsdtt::gdal_init();
     const lsdtt::lsdtt_dem_source parsed_source = source_from_name(source);
     lsdtt::lsdtt_outlet_bounds_discovery_options discovery_options;
     discovery_options.initial_radius_km = initial_radius_km;
@@ -543,7 +544,7 @@ OutletFetchResult
 )doc");
 
     module.def("bounds_from_vector", [](const std::string& path, const std::string& layer) {
-        GDALAllRegister();
+        lsdtt::gdal_init();
         return lsdtt::bounds_from_vector_file(path, layer);
     }, nb::arg("path"), nb::arg("layer") = "", R"doc(
 Derive WGS84 ``(west, south, east, north)`` bounds from a vector file.

@@ -1,0 +1,27 @@
+Source: lsdtt3
+Section: science
+Priority: optional
+Maintainer: Simon M. Mudd <simon.m.mudd@ed.ac.uk>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.15),
+               pkg-config,
+               libgdal-dev,
+               libfftw3-dev,
+               libeigen3-dev,
+               libnetcdf-dev
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/LSDtopotools/lsdtt3
+
+Package: lsdtt3
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Topographic analysis tools for digital elevation models
+ lsdtt3 is a set of command line tools for topographic analysis of digital
+ elevation models (DEMs). It is a redesign of LSDTopoTools2 using modern
+ C++17. Tools include raster preprocessing (pit filling, depression
+ breaching, nodata repair), flow routing, hillshade and surface metrics,
+ channel extraction, chi analysis, cosmogenic nuclide analysis and a
+ landscape evolution model.
+ .
+ See https://github.com/LSDtopotools/lsdtt3 for documentation.

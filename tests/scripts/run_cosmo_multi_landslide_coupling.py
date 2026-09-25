@@ -18,6 +18,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import lsdtt_test_env
 
 
 LANDSLIDE_PARAMS = """read_path: .
@@ -69,7 +70,7 @@ def close(a: float, b: float) -> bool:
 def run(exe: pathlib.Path, work: pathlib.Path, text: str, stem: str) -> str:
     param = work / f"{stem}.param"
     param.write_text(text)
-    res = subprocess.run([str(exe), param.name], cwd=str(work),
+    res = lsdtt_test_env.run([str(exe), param.name], cwd=str(work),
                          capture_output=True, text=True, check=False)
     (work / f"{stem}.stdout").write_text(res.stdout)
     (work / f"{stem}.stderr").write_text(res.stderr)

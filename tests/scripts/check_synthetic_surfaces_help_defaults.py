@@ -6,6 +6,7 @@ import math
 import pathlib
 import subprocess
 import tempfile
+import lsdtt_test_env
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,7 +18,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_checked(command: list[str]) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = lsdtt_test_env.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"command failed ({result.returncode}): {' '.join(command)}\n"

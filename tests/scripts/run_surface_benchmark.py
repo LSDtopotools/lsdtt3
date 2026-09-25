@@ -92,6 +92,7 @@ import statistics
 import subprocess
 import sys
 import time
+import lsdtt_test_env
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -239,7 +240,7 @@ COMPARISONS = {
     #
     # This is a by-product of the timing work, not a correctness assertion --
     # but it is exactly the trap a user comparing the two tools would fall
-    # into, so it belongs in docs/testing_and_benchmarking.md.
+    # into, so it belongs in docs/developer_notes/testing_and_benchmarking.md.
     #
     # REPORT-ONLY, and not because of handedness. lsdtt-surface-metrics does
     # not time its hillshade step internally the way it times the polyfit, so
@@ -324,10 +325,10 @@ def git_sha() -> str:
     nobody can reproduce or bisect.
     """
     try:
-        sha = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse",
+        sha = lsdtt_test_env.run(["git", "-C", str(REPO_ROOT), "rev-parse",
                               "--short", "HEAD"],
                              capture_output=True, text=True).stdout.strip()
-        dirty = subprocess.run(["git", "-C", str(REPO_ROOT), "status",
+        dirty = lsdtt_test_env.run(["git", "-C", str(REPO_ROOT), "status",
                                 "--porcelain"],
                                capture_output=True, text=True).stdout.strip()
         return f"{sha}-dirty" if dirty else sha
@@ -414,7 +415,7 @@ def run_lsdtt_once(exe, fixture, out_dir, params):
         cmd = [str(time_exe), "-f", "LSDTT_MAXRSS_KB %M"] + cmd
 
     t0 = time.perf_counter()
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=system_env())
+    proc = lsdtt_test_env.run(cmd, capture_output=True, text=True, env=system_env())
     wall = time.perf_counter() - t0
 
     if proc.returncode != 0:
@@ -518,7 +519,7 @@ def run_reference(routine, fixture, out_path, repeats, extra_args=None):
     cmd = [sys.executable, str(REFERENCE_SCRIPT), "--routine", routine,
            "--in", str(fixture), "--out", str(out_path),
            "--repeats", str(repeats)] + list(extra_args or [])
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = lsdtt_test_env.run(cmd, capture_output=True, text=True)
 
     if proc.returncode == SKIP_EXIT:
         die_skip("topotoolbox not available. Use `pixi run -e benchmark ...`")

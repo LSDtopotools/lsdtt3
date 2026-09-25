@@ -1,12 +1,12 @@
 # Overview
 
-`lsdtt3` is a redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) that retains the many of the same scientific algorithms while rebuilding the codebase for modern C++17, better memory efficiency, and easier ongoing development. It also includes a number of new analyses and some replacement algorithms where there is a substantial improvement in performance or accuracy. `lsdtt3` also includes testing suites, as well as a QGIS plugin. 
+`lsdtt3` is a redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) that retains many of the same scientific algorithms while rebuilding the codebase for modern C++17, better memory efficiency, and easier ongoing development. It also includes a number of new analyses and some replacement algorithms where there is a substantial improvement in performance or accuracy. `lsdtt3` also includes testing suites, as well as a QGIS plugin. 
 
 ---
 
 ## What it does
 
-`lsdtt3` provides a collection of command-line programs for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. The tools cover:
+`lsdtt3` provides a collection of **40 command-line programs** for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. Much of the same functionality is also available through **Python bindings**, and a subset through a **QGIS plugin**. The tools cover:
 
 - **DEM preparation** — reprojection, depression filling, breaching, nodata handling.
 - **Surface morphology** — curvature, roughness, hillshade, local relief, cloth-drape upper envelope, Frangi vessel filter.
@@ -32,7 +32,7 @@ And many other features.
 | Memory | Higher | Reduced — see [Memory use](#memory-use) below |
 | Parallelism | Limited OpenMP | OpenMP across most bottleneck routines |
 | Output format | ENVI bil | Cloud-Optimised GeoTIFF (COG) by default, GeoTIFF on small rasters |
-| Testing | No test suite | Multiple test suites to comare against alternative analyses (e.g., TopoToolbox3, RichDEM, Cronus Calculator) 
+| Testing | No test suite | Multiple test suites to compare against alternative analyses (e.g., TopoToolbox3, RichDEM, Cronus Calculator) 
 
 ---
 
@@ -113,12 +113,29 @@ lsdtt3 is aimed at geomorphologists, physical geographers, hydrologists and eart
 - run reproducible analyses from parameter files,
 - integrate topographic analysis into scripted pipelines.
 
-For reproducible multi-stage pipelines with Snakemake + Pixi, see
+[The lsdtt3 command-line tools](lsdtt3_clis.md) lists all 40 and what each is
+for. For reproducible multi-stage pipelines with Snakemake + Pixi, see
 [Workflows](workflows.md).
+
+### Three ways to drive it
+
+The command line is the primary interface, but not the only one:
+
+- **Command line.** Every tool, every parameter. Driven by a parameter file
+  — see [Your first analysis](first_analysis.md).
+- **[Python bindings](../python/index.md).** Much of the library is exposed
+  directly to Python, which suits exploratory work and stitching steps
+  together without writing parameter files. There are guides for loading and
+  saving DEMs, flow and basins, chi and k₁₅ₙ, channel-head extraction,
+  cosmogenics and GraphFlood, plus a full
+  [API reference](../python_api/index.md). Note that the Python package is for
+  **driving** lsdtt3; the numerical work stays in the C++ library.
+- **[QGIS plugin](../qgis.md).** A reduced set of core analyses, run from
+  inside QGIS.
 
 It is not a GIS — it has no interactive GUI. Inputs and outputs are files. However we have provided a lightweight QGIS plugin (which is under development). The QGIS plugin has a reduced feature set to the full `lsdtt3` command line interface collection. But for many users, the "core" analyses tools that are in the QGIS plugin should be sufficient for everyday use. 
 
-The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R.
+The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R. `lsdviztools3` is for **visualisation**: computation belongs in lsdtt3 itself.
 
 ---
 

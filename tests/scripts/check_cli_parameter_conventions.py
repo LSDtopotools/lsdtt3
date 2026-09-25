@@ -68,6 +68,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import lsdtt_test_env
 
 # --------------------------------------------------------------------------
 # Rule identifiers.  These strings are part of the baseline key: renaming one
@@ -206,7 +207,7 @@ def read_parameters(exe: Path, timeout: float) -> list[dict]:
     Raises RuntimeError with a short reason if the document cannot be read.
     """
     try:
-        proc = subprocess.run(
+        proc = lsdtt_test_env.run(
             [str(exe), "-h", "json"],
             capture_output=True,
             text=True,

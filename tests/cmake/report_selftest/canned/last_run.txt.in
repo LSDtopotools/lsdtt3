@@ -1,0 +1,5 @@
+args: -j4 -LE ^heavy$
+start: 2026-01-01 00:00:00
+console_log: @BUILD@/test-logs/ctest_selftest.log
+end: 2026-01-01 00:00:06
+ctest_exit: 8

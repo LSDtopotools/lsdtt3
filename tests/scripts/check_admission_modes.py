@@ -40,6 +40,7 @@ import struct
 import subprocess
 import sys
 from pathlib import Path
+import lsdtt_test_env
 
 
 def build_dem(path: Path, cell: float = 10.0) -> None:
@@ -151,7 +152,7 @@ def run_mode(exe: str, work: Path, dem: Path, mode: str, cap: float,
         f"admission_slope_cap_degrees: {cap}\n"
         f"{window_setting}\n",
         encoding="utf-8")
-    proc = subprocess.run([exe, param.name], capture_output=True,
+    proc = lsdtt_test_env.run([exe, param.name], capture_output=True,
                           text=True, cwd=str(work))
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout + proc.stderr)
@@ -169,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         0 on success, 1 on a failed assertion.
     """
+    lsdtt_test_env.require_modules(["osgeo.gdal"])
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", required=True)
     ap.add_argument("--work-dir", required=True)

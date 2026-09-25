@@ -26,15 +26,18 @@ Two broad strategies are available:
 The **stream power law** describes erosion on channelized flow paths. It states that the rate of channel incision is
 
 ```
-dz/dt = K · A^m · S^n − U
+dz/dt = U − K · A^m · S^n
 ```
 
-where `z` is elevation, `t` is time, `K` is an erodibility coefficient, `A` is the drainage area, `S` is the local slope, `m` and `n` are dimensionless exponents (typically 0.4–0.5 and 1, respectively, although n = 1 is more for computational convinience than for accurate physics, see the last two decades of landscape evolution papers), and `U` is uplift rate. The area-slope form comes from **Howard and Kerby (1983)**, who measured it directly on rapidly eroding badland channels. In lsdtt3 it is the basis of all fluvial incision.
+where `z` is elevation, `t` is time, `K` is an erodibility coefficient, `A` is the drainage area, `S` is the local slope, `m` and `n` are dimensionless exponents (typically 0.4–0.5 and 1, respectively, although n = 1 is more for computational convinience than for accurate physics, see the last two decades of landscape evolution papers), and `U` is uplift rate. Incision lowers the surface, so the erosion term enters
+with a negative sign; the steady state `U = K A^m S^n` is unchanged by the
+convention, but the transient is not. The area-slope form comes from
+**Howard and Kerby (1983)**, who measured it directly on rapidly eroding badland channels. In lsdtt3 it is the basis of all fluvial incision.
 
 #### The exponents m and n
 
-- **`m`** (the drainage-area exponent, default 0.45) captures how incision scales with catchment size. A larger basin carries more water, so it erodes faster. `m ≈ 0.4–0.5` reflects observations that incision is sub-linear in area: doubling the catchment does not double the erosion rate. This exponent acutually includes exponents about runoff efficiency as well as channel width scaling: see Whipple and Tucker (1999). 
-- **`n`** (the slope exponent, default 1.0) determines how strongly the channel responds to slope. `n = 1` (linear slope dependence) is the simplest choice and is physically motivated by laminar shear stress on the bed. `n ≠ 1` is also observed in real landscapes (in fact much more frequently than n = 1) but requires iterative (Newton–Raphson) solution instead of a closed-form formula, making it numerically (much) more expensive.
+- **`m`** (the drainage-area exponent, default 0.45) captures how incision scales with catchment size. A larger basin carries more water, so it erodes faster. `m ≈ 0.4–0.5` reflects observations that incision is sub-linear in area: doubling the catchment does not double the erosion rate. This exponent actually includes exponents about runoff efficiency as well as channel width scaling: see Whipple and Tucker (1999). 
+- **`n`** (the slope exponent, default 1.0) determines how strongly the channel responds to slope. `n = 1` (linear slope dependence) is the simplest choice. This does have a physical basis (see Whipple and Tucker, 1999) but in reality it is often chosen due to its considerable numerical advantages over n not equal to 1. Empirical observations suggest n > 1 (e.g., Harel et al., 2016) but this is an ongoing debate within the geomorphology community, with many arguments for n = 1 and many against. `n ≠ 1` requires iterative (Newton–Raphson) solution instead of a closed-form formula, making it numerically (much) more expensive.
 
 The combination matters for landscape form: the landscape **Péclet number** `p = m + n` (under the Bonetti convention for specific area, discussed below) sets the ratio of advective (fluvial) to diffusive (hillslope) transport. A hillslope length `L_h` emerges at the crossover where `K A^m S^n ≈ D S^2 / L_h^2`, which gives `L_h ~ (D / K)^(1/p)`. Getting the exponent `p` wrong is an error in an **exponent, not a constant**, so it cannot be calibrated away by adjusting `K` or `D` after the fact.
 
@@ -42,7 +45,9 @@ The combination matters for landscape form: the landscape **Péclet number** `p 
 
 The stream power law is stiff: steep hillslopes try to transport sediment very fast, and naïve time-stepping requires tiny timesteps. lsdtt3 solves this using **implicit (unconditionally stable) numerical schemes**:
 
-- **n = 1 (default):** A closed-form implicit solution exists (a quartic equation, solved in closed form). This is the fastest route and is used automatically when `n_exponent: 1.0`.
+- **n = 1 (default):** The implicit update is **linear** in the unknown and so has a closed form, `z_new = (z_old + K A^m (dt/dx) z_r) / (1 + K A^m (dt/dx))` — Braun & Willett (2013), eq. 2. This is the fastest route and is taken automatically when `n_exponent: 1.0`.
+
+    One qualification: this applies to the **single-receiver** case. In the D-infinity path a cell with two receivers is solved by Newton–Raphson whatever `n` is, because the two-receiver equation is not linear even at `n = 1`.
 - **n ≠ 1:** Newton–Raphson iteration over an implicit equation. More expensive but allows exponents like `n = 1.5` or `n = 2`. The implementation builds on the implicit stream-power solver strategy of **Braun and Willett (2013)** — the FastScape algorithm, an O(n) implicit sweep in topological order. **Anand, Hooshyar and Porporato (2020)** extend that ordering from single- to multiple-flow-direction networks, which is what makes a D-infinity fluvial step affordable at the same complexity; and **Anand et al. (2022)** give a linear stability analysis of when a fluvial landscape channelises and at what spacing, which is the analytical counterpart of the emergent drainage density discussed below.
 
 See the CLI reference for the `n_exponent` and `slope_clamp` parameters that control this solver.
@@ -97,9 +102,9 @@ lsdtt3 offers multiple solvers for hillslope transport. The primary choice is th
 |---|---|---|---|---|
 | `linear` | D · ∇²z | explicit FD | CFL-limited | Thick sediment cover, long time horizons, when diffusion dominates |
 | `roering` | Roering (1999) nonlinear law | explicit FD with auto-subcycling | CFL-limited near S_c | Transient dynamics, landscapes with strong slope feedback |
-| `cidre` | Carretier et al. (2016) finite-volume | explicit FV + D-infinity routing | CFL-limited | Coupled fluvial–hillslope on emergent network (D-infinity). Note that this does not have significant time savings over roering for test cases.|
-| `roering_implicit` | Roering nonlinear law | implicit backward-Euler or TR-BDF2 | unconditionally stable | Long, fine-grid runs; relief-targeting studies; see caveat below |
-| `adi` | Laplacian | alternating-direction implicit | unconditionally stable | Regular grids; when explicit schemes bottleneck |
+| `cidre` | Carretier et al. (2016) finite-volume | explicit FV + D-infinity routing | CFL-limited, but stable near Sc via slope-restoration | Coupled fluvial–hillslope on emergent network (D-infinity). Note that this does not have significant time savings over roering for test cases.|
+| `roering_implicit` | Roering nonlinear law | implicit backward-Euler or TR-BDF2 (Newton, Picard fallback) | unconditionally stable (nonlinear) | Long, fine-grid runs; relief-targeting studies; see caveat below |
+| `adi` | Laplacian | alternating-direction implicit | unconditionally stable (linear only) | Regular grids; when explicit schemes bottleneck |
 | `cellular` | Roering below `r_match`, finite tangent continuation above | conservative face transfers with automatic subcycling | CFL controlled, finite above S_c | Fast nonlinear coupling, nonlocal transport and tracing |
 
 ### Linear diffusion solver (`linear`)
@@ -118,7 +123,9 @@ It uses D-infinity routing (Tarboton 1997), so it is more expensive than a regul
 
 ### Roering implicit solver (`roering_implicit`)
 
-The **unconditionally stable backward-Euler solver** for the Roering law. It solves an implicit nonlinear equation (using Picard iteration + a sparse linear solver from Eigen3) and is the most robust for long runs on fine grids. It is the **only solver that eliminates CFL limitation**, allowing arbitrarily small time steps or large grids without risking instability.
+The **unconditionally stable backward-Euler solver** for the Roering law. It solves an implicit nonlinear equation with a sparse linear solver from Eigen3, and is the most robust for long runs on fine grids: being implicit, it carries no CFL restriction, so the timestep is set by accuracy rather than stability. (`adi` is also unconditionally stable, but only for **linear** diffusion; `roering_implicit` is the unconditionally stable option for the **nonlinear** law.)
+
+**Newton first, Picard as fallback.** The nonlinear solve is Newton–Raphson by default: differentiating the nonlinear mobility gives an iteration count that does not grow with the grid. Picard is retained as the automatic fallback — it is the only option in an Eigen-free build, and a step Newton cannot take is worth retrying with a damped method rather than failing the run. `hillslope_force_sor` forces the Picard path for transient runs as well as steady ones.
 
 Transient `roering_implicit` can run in the emergent-drainage regime: transient diffusion is well posed without channel Dirichlet nodes and distributed fluvial incision supplies the sink. Only a purely steady elliptic solve without any Dirichlet boundary is singular.
 
@@ -306,15 +313,12 @@ Setting `1/Δt = 0` recovers steady-state; non-zero `1/Δt` is the transient for
 **Newton is faster than SOR for the LINEAR problem too, which is not obvious.** A linear steady
 solve has no critical-slope difficulty at all, so the natural expectation is that SOR wins. It does
 not: `F` is already linear in `z`, so the Jacobian *is* the operator and Newton reduces to a single
-sparse direct solve. Measured at `tolerance = 1e-6`, single-threaded:
-
-| grid | unknowns | SOR | sweeps | Newton | speed-up |
-|---:|---:|---:|---:|---:|---:|
-| 41² | 1,681 | 8 ms | 234 | 6 ms | 1.3× |
-| 81² | 6,561 | 93 ms | 786 | 17 ms | 5.4× |
-| 161² | 25,921 | 1.22 s | 2,188 | 146 ms | 8.3× |
-| 251² | 63,001 | 8.37 s | 5,281 | 393 ms | 21× |
-| 401² | 160,801 | 49.3 s | 13,322 | 2.12 s | 23× |
+sparse direct solve. The measured grid-by-grid comparison is in
+[testing_and_benchmarking.md §10h](../developer_notes/testing_and_benchmarking.md),
+which is the durable record for it; the numbers are not duplicated here. The
+direction of the result is that Newton's advantage **grows with grid size**,
+from near-parity on the smallest grid to more than an order of magnitude on the
+largest tested.
 
 Two things are going on. First, SOR's sweep count grows as roughly O(n²) here, not the O(n) that
 over-relaxation is supposed to deliver, because the automatic `ω` is capped at 1.95 while the
@@ -326,10 +330,10 @@ step-size criterion understates the true solution error by the usual `1/(1 − �
 about 1000× here.
 
 **Where a direct solve stops paying.** Newton's cost is dominated by sparse-LU fill-in, and the
-time exponent in `N` sits near 1.5 up to a few hundred thousand unknowns before climbing: 4.3 s at
-251k, 9.5 s at 491k, 38 s at 1M. Above `direct_solve_max_unknowns` (default 250,000) the solver
-therefore switches automatically to BiCGSTAB with an incomplete-LU preconditioner, which trades the
-factorisation for iterations and keeps memory bounded.
+time exponent in `N` sits near 1.5 up to a few hundred thousand unknowns before climbing (the
+measured points are in the benchmarking record). Above `direct_solve_max_unknowns` (default
+250,000) the solver therefore switches automatically to BiCGSTAB with an incomplete-LU
+preconditioner, which trades the factorisation for iterations and keeps memory bounded.
 
 **Measurements (41×41 cross-slope fixture):** outer-iteration counts of 10 / 42 / 6 for n = 21 / 41 / 81 — the point being that the count does **not grow with the grid**, unlike SOR's O(n). It is not monotonic in n either: the count depends on how far each initial guess sits above `S_c`, because the restoration phase pays for that (the n = 41 case spends 89 line-search backtracks getting back under `S_c`). Linear mode solves in exactly one iteration and matches SOR to 3.8e-6 m; the transient form relaxes to the steady state in 15 sub-steps (49 Newton iterations) to within 1.9e-6 m.
 
@@ -353,9 +357,9 @@ Here is a comprehensive view of all available options, with the trade-offs that 
 |---|---|---|---|---|---|
 | `linear` (explicit) | D·∇²z | Transient, thick diffusivities, if CFL is not limiting | CFL: Δt ≤ h²/(4D) | ~1 ms per cell per step | Simplest, well-tested; use if explicit schemes are fast enough |
 | `roering` (explicit) | Roering with auto-subcycling | Transient, nonlinear dynamics, modest grids | CFL: Δt ≤ h²/(4D_tangent) near Sc | ~10 ms per cell per step; auto-subcycling adds cost near Sc | Captures nonlinear threshold; no matrix solves; expensive on fine grids |
-| `cidre` (explicit FV) | Roering on D-infinity flow net | Emergent drainage density, coupled fluvial–hillslope | CFL-limited | ~100 ms per sweep (D-infinity routing cost) | Most realistic for channelization studies; requires empty channel set |
+| `cidre` (explicit FV) | Roering on D-infinity flow net | Emergent drainage density, coupled fluvial–hillslope | CFL-limited | ~100 ms per sweep (D-infinity routing cost) | Most realistic for channelization studies; used with an empty channel set |
 | `adi` (implicit) | Laplacian only | Long linear runs on regular grids | Unconditionally stable | ~10 ms per line solve (1D subproblems) | Very fast; no sparse matrix fill; linear only |
-| `roering_implicit` (backward-Euler + Picard) | Roering nonlinear law | Long runs with imposed channels; relief targeting | Unconditionally stable | ~20–40 s per steady solve (62.5k unknowns); transient uses similar per step | Robust but limited to ω ≤ 0.5 on nonlinear; Picard limit-cycles at high ω |
+| `roering_implicit` (backward-Euler, Newton with Picard fallback) | Roering nonlinear law | Long runs with imposed channels; relief targeting | Unconditionally stable | ~20–40 s per steady solve (62.5k unknowns); transient uses similar per step | Newton needs no relaxation factor; the Picard fallback is limited to ω ≤ 0.5 on nonlinear and limit-cycles at high ω |
 | **Newton** (backward-Euler + Newton) *(default for steady state)* | Roering nonlinear law | Nonlinear steady-state and transient, especially near critical slopes | Unconditionally stable | ~10–30 s per steady solve (62.5k unknowns); O(1) iterations independent of grid | Converges where Picard cannot; 9-point Jacobian costs more per iteration but far fewer iterations; use SparseLU for grids <10⁶, BiCGSTAB/ILUT for larger |
 | `cellular` | Soft-critical conservative flux, optional nonlocal split | Fast transient coupling and tracing | Explicit tangent-based subcycling | 19–136x faster than Newton in tested one-step grids | Exact Roering below `r_match`; finite above; deterministic topography |
 | SOR steady-state (Picard) | Roering nonlinear law | Linear steady-state, or nonlinear at low ω (legacy) | N/A (steady-state only) | ~5–10 s per solve; O(n) iteration count scales with grid | Same operator as above; serves as fallback/predictor for Newton; documented here for completeness |
@@ -417,7 +421,7 @@ A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice 
 Compute `a = A / dx` (drainage area divided by cell size), so `a` has units of **metres**. The stream power law becomes
 
 ```
-dz/dt = K · (a)^m · S^n − U  =  K · (A/dx)^m · S^n − U
+dz/dt = U − K · (a)^m · S^n  =  U − K · (A/dx)^m · S^n
 ```
 
 This is the **default in lsdtt3** and was advocated by **Bonetti, Hooshyar, Camporeale and Porporato (2020, PNAS 117:1375–1382)** and **Litwin et al. (2022, JGR-ES)**.
@@ -427,7 +431,7 @@ This is the **default in lsdtt3** and was advocated by **Bonetti, Hooshyar, Camp
 Use the raw upslope area `A` in m², without dividing by dx. The law is
 
 ```
-dz/dt = K · A^m · S^n − U
+dz/dt = U − K · A^m · S^n
 ```
 
 This was used in **Perron et al. (2008, JGR-ES 113:F04016)** and **Perron et al. (2009, Nature 460:502–505)**.
@@ -470,9 +474,15 @@ merely describing it.
 
 These are two different experiments, not two settings, so the combinations that
 contradict themselves are refused rather than silently resolved: asking for
-`coupled` together with `roering_implicit`, with `enable_d8_fluvial_erosion: true`,
-or with `run_steady_state`; and asking for `channels_as_boundaries` with no channel
-set at all.
+`coupled` with `enable_d8_fluvial_erosion: true` or with `run_steady_state`;
+asking for `channels_as_boundaries` with no channel set at all; and asking for
+`roering_implicit` with `run_steady_state` when `boundary_conditions` contains
+no `'o'` edge — that last case is a steady elliptic problem with no Dirichlet
+data anywhere, so the solution is not determined and the field drifts without
+bound.
+
+`coupled` together with `roering_implicit` **is** allowed. It used to be fatal;
+that restriction was removed on 2026-08-27 (see below).
 
 ### Imposed drainage density (`incision_threshold_specific_area > 0`)
 
@@ -495,7 +505,7 @@ This is the approach of the **DonkModel** and is physically more realistic — c
 
 - **D-infinity routing is required** for hillslope coupling to work correctly. With D8, a diverging hillslope cell (upslope area increases downslope) may manufacture spurious channel heads because area concentrates artificially along one receiver.
 - **The coupled regime is slower**: every hillslope solve must build a D-infinity flow graph to identify (non-existent) channels. Cidre routing adds further cost.
-- **`roering_implicit` cannot run in this regime.** The implicit solver requires Dirichlet sinks (channels) to anchor the boundary-value problem; with an empty channel set it skips the hillslope step entirely. So **the most numerically robust hillslope solver is the one that cannot run the emergent-drainage-density experiment** — a real and non-obvious constraint on experimental design, not a temporary limitation. Use `roering`, `linear`, `cidre` or `adi` instead. Asking for `coupled` with `roering_implicit` is refused outright rather than silently skipping the hillslopes.
+- **`roering_implicit` runs in this regime.** It did not before 2026-08-27: the transient hillslope step was skipped whenever the channel set was empty, on the reasoning that without Dirichlet channel sinks the solve degenerates to meaningless sink-free diffusion. That reasoning holds only for a **steady** solve with no Dirichlet data anywhere, which is singular. It does not hold for a transient step: a diffusion step over `dt` is well posed under any boundary condition and simply redistributes mass; in the coupled regime the fluvial term is itself the sink, applied to every cell in the same timestep; and an `'o'` edge supplies base level regardless of channels. Since an empty channel set is exactly what `coupled` produces on purpose, the guard was disabling the emergent-drainage-density mode it was meant to support. **The hillslope operator needs boundary conditions, not channels.** The one case still refused is `roering_implicit` + `run_steady_state` with no `'o'` edge.
 
 ### Coupling models in the literature
 
@@ -523,7 +533,7 @@ Here is a decision tree:
 
 3. **Do you have a field-mapped channel network with imposed drainage?** → Set `incision_threshold_specific_area > 0`. Use D8 routing, with `roering_implicit` for transient runs.
 
-4. **Do you want the drainage network to emerge from the landscape dynamics?** → Set `incision_threshold_specific_area: 0`, use D-infinity and Cidre (coupled routing). This cannot be combined with `roering_implicit`, but works with `linear`, `roering` and `adi`.
+4. **Do you want the drainage network to emerge from the landscape dynamics?** → Set `incision_threshold_specific_area: 0`, use D-infinity and Cidre (coupled routing). `roering_implicit` works here too for transient runs; give it an `'o'` edge if you also want a steady solve.
 
 5. **How long is your run?**
    - Short transient (synthetic, < 1 My) with explicit scheme: any solver is fine.
@@ -543,6 +553,16 @@ text names a paper, this is the paper it means.
   *Geological Society of America Bulletin*, 94(6), 739–752.
   doi:10.1130/0016-7606(1983)94&lt;739:CCIB&gt;2.0.CO;2 — the badlands study from
   which the area–slope form of the incision law comes.
+- **Whipple, K. X., & Tucker, G. E. (1999).** Dynamics of the stream-power
+  river incision model: implications for height limits of mountain ranges,
+  landscape response timescales, and research needs. *Journal of Geophysical
+  Research: Solid Earth*, 104(B8), 17661–17674. doi:10.1029/1999JB900120 —
+  what the exponents `m` and `n` absorb, including runoff efficiency and
+  channel-width scaling.
+- **Harel, M.-A., Mudd, S. M., & Attal, M. (2016).** Global analysis of the
+  stream power law parameters based on worldwide ¹⁰Be denudation rates.
+  *Geomorphology*, 268, 184–196. doi:10.1016/j.geomorph.2016.05.035 — the
+  empirical case that `n > 1`.
 - **Braun, J., & Willett, S. D. (2013).** A very efficient O(n), implicit and
   parallel method to solve the stream power equation governing fluvial incision
   and landscape evolution. *Geomorphology*, 180–181, 170–179.

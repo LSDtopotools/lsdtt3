@@ -1,0 +1,24 @@
+# Pins the TWI raster produced by lsdtt-drainage-analysis.
+#
+# This exists to guard the lift of the TWI computation out of the CLI and into
+# lsdtt_wetness_index_cpu (plan_raster_topmodel.md Phase 0). The move must be a
+# pure refactor, so the checksum below was captured from the pre-refactor CLI
+# and must not change. Both lsdtt-drainage-analysis and
+# lsdtt-distributed-hydrology are required to produce this same raster.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tiny
+
+raster_is_filled: false
+write_output_format: gtiff
+threshold_contributing_pixels: 1000
+
+write_d8_drainage_area_raster: false
+write_dinf_drainage_area_raster: false
+write_mfd_drainage_area_raster: false
+write_twi_raster: true
+twi_drainage_area_method: Dinf
+twi_window_radius_metres: 2.0
+write_connectivity_raster: false
+write_height_above_channel_raster: false

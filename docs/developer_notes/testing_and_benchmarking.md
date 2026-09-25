@@ -49,31 +49,102 @@ to exactly zero.
 
 ## 2. Test tiers
 
-Everything except `benchmark` and `performance` runs offline against committed
-fixtures.
+### Dependency tiers come first
 
-| Label | Needs | Covers |
+What a test needs **to start** is labelled on its own axis, separate from what
+it tests. Every test has exactly one runtime tier:
+
+| Tier | Registered by | Needs |
 |---|---|---|
-| `smoke` | — | each CLI runs end to end on a tiny fixture |
-| `rigorous` | — | exact output checks: checksums, sizes, feature counts, hashes |
-| `failure` | — | bad parameters are rejected with the expected message |
-| `unit` | — | C++ unit tests |
-| `cosmo` | — | cosmogenic physics vs frozen CRONUS + numerics sentinel |
-| `cosmo_realworld` | network | published-basin runs against frozen summaries |
-| `surface_metrics` | — | surface-metrics validation (slope, curvature, SMAP, MADk2) |
-| `flow` | — | flow routing and depression-handling properties |
-| `fetch` | — | native DEM fetching; offline logic by default |
-| `network` | network | tests that actually download |
-| `benchmark` | network + RichDEM/TopoToolbox | comparison against external references on real DEMs |
-| `performance` | — | in-process timings, reported and never asserted |
+| `tier_native` | `BUILD_TESTING=ON` (always) | the C++ build only |
+| `tier_python_stdlib` | `LSDTT_ENABLE_PYTHON_TESTS=ON` | Python ≥ 3.10, standard library; some also GDAL's command-line programs |
+| `tier_python_geo` | `LSDTT_ENABLE_PYTHON_GEO_TESTS=ON` | Python + GDAL bindings, NumPy, Rasterio, GeoPandas, Shapely |
+| `tier_pixi` | `LSDTT_ENABLE_BENCHMARKS=ON` | the Pixi `benchmark` environment |
+
+and zero or more flags: `hermetic` (native, no skip path, no network, no host
+data — the reproducible floor), `needs_network` (downloads; registered only
+with `LSDTT_ENABLE_NETWORK_TESTS=ON`), `needs_gdal_tools` (runs `gdalinfo`,
+`ogrinfo` or `gdal_translate`). `lem_component` marks the landscape evolution
+model's tests; `heavy` marks the slow ones.
+
+A default configure registers **only the native tests**. Most CLI coverage is
+in the Python tiers, so a native-only green run says the libraries are sound,
+not that every CLI is. Configure prints what it registered and what each OFF
+option left out, and a missing interpreter, program or Python package is a
+configure error naming it.
 
 ```sh
+# native only: the C++ build dependencies and nothing else
 cmake -S . -B build && cmake --build build -j
-ctest --test-dir build --output-on-failure          # default: offline suite
+ctest --test-dir build -L '^hermetic$' --output-on-failure
 
-ctest --test-dir build -L unit --output-on-failure
-ctest --test-dir build -L flow --output-on-failure
+# add the Python tiers
+cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON
+ctest --test-dir build -LE '^heavy$' --output-on-failure
 ```
+
+`-L` and `-LE` take regular expressions: anchor them. `-L network` matches the
+`network` domain *and* `synthetic_networks`.
+
+**Pixi and the system GDAL.** The C++ build and the Python tests can use
+different GDALs. Configure the build *outside* Pixi, give CMake the Pixi
+`test` environment's interpreter, and run the tests inside Pixi:
+
+```sh
+pixi install -e test
+cmake -S . -B build -DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_PYTHON_GEO_TESTS=ON \
+      -DPython3_EXECUTABLE="$(pixi run -e test python -c 'import sys; print(sys.executable)')"
+pixi run -e test ctest --test-dir build --output-on-failure
+```
+
+Inside Pixi, `GDAL_DATA`, `PROJ_DATA` and `GDAL_DRIVER_PATH` belong to Pixi's
+GDAL. A CLI built against the system GDAL would read them without complaint —
+another installation's PROJ database — so the test launcher
+(`tests/scripts/lsdtt_test_env.py`) removes them, with `LD_LIBRARY_PATH` and
+`CONDA_PREFIX`, from lsdtt3 programs whose GDAL is not the environment's.
+`unit_test_env_isolation` checks this, with a control that shows the leak
+without it. Do not activate Pixi around a system-built suite any other way.
+
+**Execution contract.** Every test runs with `LSDTT_NONINTERACTIVE=1` and,
+from Python, with `/dev/null` as stdin — CTest passes the terminal it was
+started from to every test, so a prompt would hang an interactive run while
+passing in CI. Every test has a timeout (`failure_*` 60 s, `heavy` 3600 s,
+otherwise 300 s, unless it sets its own). OpenMP tests run with
+`OMP_WAIT_POLICY=passive` so that they do not spin against each other under
+`-j`; the serial, benchmark and performance tests are exempt.
+`unit_test_inventory_audit` checks all of this, and every label, against the
+commands the tests actually run.
+
+**Logs and reports.** CTest's per-test log lives in
+`Testing/Temporary/LastTest.log.tmp` until a run completes and is overwritten
+by the next `ctest` call of any kind; it also records a timeout as "Test
+Failed." and a skip as "Test Passed.". For a durable record, run through the
+wrapper, and after a failing run build the report a user can send:
+
+```sh
+cmake -P build/run_tests.cmake -LE '^heavy$' -j4     # tees into build/test-logs/
+cmake --build build --target test_report            # one plain-text file to send
+```
+
+### Kind labels
+
+| Label | Covers |
+|---|---|
+| `smoke` | each CLI runs end to end on a tiny fixture (mostly Python-driven) |
+| `rigorous` | exact output checks: checksums, sizes, feature counts, hashes |
+| `failure` | bad parameters are rejected with the expected message |
+| `unit` | unit tests, mostly C++ |
+| `cosmo` | cosmogenic physics vs frozen CRONUS + numerics sentinel |
+| `cosmo_realworld` | published-basin runs against frozen summaries (`needs_network`) |
+| `surface_metrics` | surface-metrics validation (slope, curvature, SMAP, MADk2) |
+| `flow` | flow routing and depression-handling properties |
+| `fetch` | native DEM fetching; offline logic by default |
+| `benchmark` | comparison against external references on real DEMs |
+| `performance` | in-process timings, reported and never asserted |
+| `configure_contract` | configures the project in a scratch directory and checks what it reports for a disabled or missing tier |
+
+Downloading tests carry `needs_network`; `network` is the flow-routing
+**domain** below, not network access.
 
 ### Compartments: run what your change can affect
 
@@ -101,9 +172,9 @@ the codebase it exercises. The expensive ones additionally carry `heavy`.
 The intended inner loop:
 
 ```sh
-ctest --test-dir build -L cosmo -LE heavy     # I changed cosmogenic code
-ctest --test-dir build -L network -LE heavy   # I changed routing / chi / basins
-ctest --test-dir build -LE heavy              # everything cheap
+ctest --test-dir build -L '^cosmo$' -LE '^heavy$'     # I changed cosmogenic code
+ctest --test-dir build -L '^network$' -LE '^heavy$'   # I changed routing / chi / basins
+ctest --test-dir build -LE '^heavy$'              # everything cheap
 ctest --test-dir build                        # everything, before committing
 ```
 
@@ -122,12 +193,13 @@ suite runs before a commit.
 
 #### What is `heavy`, and why `RUN_SERIAL` matters
 
-`heavy` is `unit_hillslope_implicit`, `smoke_lem_roering_implicit_strip`, and
-the eight `cosmo_realworld_*` tiers. The first two **saturate every core** — the
-implicit hillslope test takes 9 min 24 s wall for 73 min of CPU, a parallelism
-of 7.8 on 8 cores.
+`heavy` is `unit_hillslope_implicit` and the eight `cosmo_realworld_*` tiers.
+The implicit hillslope test **saturates every core**: 9 min 24 s wall for
+73 min of CPU, a parallelism of 7.8 on 8 cores (2026-08-04).
+`smoke_lem_roering_implicit_strip` was also `heavy` until 2026-09-18, when it
+measured 2 s and was taken off the list.
 
-Both are marked `RUN_SERIAL`. This is not a nicety. Under `ctest -j4` a test
+It is marked `RUN_SERIAL`. This is not a nicety. Under `ctest -j4` a test
 that wants 8 threads and gets 2 does not merely run slower, it can be starved
 past its timeout: `unit_hillslope_implicit` "failed" at CTest's default 1500 s
 ceiling while passing in 9 minutes when given the machine to itself. A timeout
@@ -1125,7 +1197,7 @@ order gives the identical raster (0 differing cells of 1,000,000) for
 **This is deliberately NOT changed**, and the CLI keeps building the S-vector.
 It is what makes `is_upslope_of` an O(1) interval test, and chi analysis, basin
 summaries, source finding and the cosmogenic routines all depend on it. See
-`docs/what_is_lsdtt3/flow_routing.md`.
+`docs/design_and_algorithms/flow_routing.md`.
 
 **Fix:** the `accum_d8` case note now states that lsdtt3 performs work the
 references do not, and quantifies it. The asymmetry is recorded rather than
@@ -1602,7 +1674,7 @@ down routine testing:
 ```sh
 cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DLSDTT_ENABLE_PERF_TESTS=ON
 cmake --build build-perf -j
-ctest --test-dir build-perf -L performance --output-on-failure
+ctest --test-dir build-perf -L '^performance$' --output-on-failure
 ```
 
 `-DCMAKE_BUILD_TYPE=Release` is not optional for timing work: a Debug or
@@ -1640,7 +1712,7 @@ if needed.
 
 #### On a shared server
 
-- **Pin the threads.** `OMP_NUM_THREADS=8 ctest --test-dir build-perf -L performance`.
+- **Pin the threads.** `OMP_NUM_THREADS=8 ctest --test-dir build-perf -L '^performance$'`.
   Left unset, OpenMP takes every core it can see, so a busy node produces numbers
   that are not comparable with anything. Note §6's finding that thread scaling is
   limited and accumulation is *slower* with more threads — more threads is not
@@ -2172,12 +2244,20 @@ failure is a defect rather than a modelling disagreement.
 | E9 | AMS standardisation factors match the CRONUS table (Be-10 KNSTD → 07KNSTD 0.9042; Al-26 ZAL94 → KNSTD 0.9134), and applying a factor scales the inverted ε consistently |
 
 Parameter invariants also asserted: the knickpoint Table 1 F-sums are exactly 1
-for ¹⁰Be/²⁶Al/¹⁴C under BraucherBorchers; the CAIRN Table 2 ²⁶Al F sums to
-0.97525 and must **not** be normalised; ¹⁴C uses P0 = 15.533, F = {0.788, 0.212,
-0, 0} (Lupker 2015) and λ = 121e-6 yr⁻¹; λ(¹⁰Be) = 500e-9 and λ(²⁶Al) = 980e-9
-yr⁻¹. Schemes without a paper anchor (Granger, Schaller) are frozen as exact
-in-code constants with a comment naming their literature lineage (COSMOCALC,
-Schaller et al. 2009/2016).
+for ¹⁰Be/²⁶Al/¹⁴C under BraucherBorchers; the CAIRN Table 2 ²⁶Al F values sum
+to exactly 1 in code, because lsdtt3 uses 0.0275 where the published table
+prints 0.00275 (which would sum to 0.97525) — see the do-not-"fix" note in
+`tests/cpp/test_cosmo_physics.cpp`; ¹⁴C uses P0 = 15.533, F = {0.788, 0.212,
+0, 0} (Lupker 2015) and λ = 121.58e-6 yr⁻¹ under BraucherBorchers (5700 yr
+half-life, IAEA 2024); λ(¹⁰Be) = 500e-9 and λ(²⁶Al) = 980e-9
+yr⁻¹. Granger is frozen as exact in-code constants with a comment
+naming its literature lineage (COSMOCALC). `Schaller` is NOT an unanchored
+scheme: its ¹⁰Be production combines Braucher et al. (2011) and Borchers et al.
+(2016), transcribed by Mirjam Schaller, so the scheme name identifies the
+transcriber rather than a source. An earlier comment citing "Schaller et al.
+2009/2016" for an updated Gamma[1] was wrong on both counts — no such
+publication was found, and Gamma[1] = 1500 g cm⁻² is shared with Braucher and
+BraucherBorchers rather than being specific to this scheme.
 
 > **Internal cross-checks are not independent oracles.** E7 established that the
 > analytic basin formula and the CRN-column particle path evaluate the *same*
@@ -4057,7 +4137,7 @@ coupled fluvial + hillslope diamond-square run. Both run entirely from
 
 One implicit solve, flat field, U = 0, run as back-to-back interleaved A/B pairs
 on the same machine — WSL2 host-load noise makes isolated timings unreliable.
-Run it with `ctest -L performance -R hillslope` after configuring with
+Run it with `ctest -L '^performance$' -R hillslope` after configuring with
 `-DLSDTT_ENABLE_PERF_TESTS=ON`, or directly as
 `lsdtt-test-hillslope-implicit <out_dir> --performance`.
 
@@ -5033,7 +5113,7 @@ while doing less than you asked", which is the failure mode tests exist for.
 ### Running it
 
 ```bash
-ctest -L surface_metrics               # unit tests, ~1 s, no network
+ctest -L '^surface_metrics$'               # unit tests, ~1 s, no network
 ctest -R benchmark_surface             # vs TopoToolbox, needs pixi + network
 ctest -R performance_surface_metrics   # full sweep, ~4 min
 ```
@@ -6099,7 +6179,7 @@ standing red tests: `failure_hydraulic_routing_invalid_mode` asserts a message
 ### Testing regime
 
 Label `fluvial_surfaces`, 23 tests, run as
-`ctest -L fluvial_surfaces -LE heavy`. What counts as a genuine regression:
+`ctest -L '^fluvial_surfaces$' -LE '^heavy$'`. What counts as a genuine regression:
 
 - tread purity on the dissected staircase falling below 1.0;
 - any ladder window reporting `resolved` when its minimum band-centre gap is
@@ -6644,6 +6724,46 @@ rows were reading an lsdtt3-written filled DEM and were also routing NaN. The
 fix is shared (both drivers call `whitebox_reference.py`), but **any campaign
 recorded before 2026-09-08 is invalid for Whitebox flow rows and must be
 re-run.**
+
+---
+
+## 10p. Hydrology test coverage — PLACEHOLDER, not yet written up
+
+**Status: placeholder.** The tests below exist and pass. What they measure has
+not been written up here, so this section is a stub naming them rather than a
+record of findings. Treat the hydrology modules as **tested but not
+documented**: the assertions are in the test sources, not in this file.
+
+Context for whoever fills this in: the raster TOPMODEL stack was ported so a
+dissertation student could use it, and it has **not been calibrated against any
+observed catchment**. The tests are implementation checks — mass conservation,
+closed-form limits, convergence — not evidence of predictive skill. Do not let
+this section imply otherwise when it is written.
+
+| Suite | Module | What it covers (to be confirmed and expanded) |
+|---|---|---|
+| `unit_topmodel_column` | `lsdtt_topmodel_cpu` | Column equations after TOPMODEL 95.02; exponential baseflow recession as a closed-form limit |
+| `unit_topmodel_dynamic` | `lsdtt_topmodel_dynamic_cpu` | Prognostic saturated zone; the index relation should appear as its steady state |
+| `unit_infiltration_excess` | `lsdtt_infiltration_excess_cpu` | Green-Ampt with exponentially declining conductivity; Green-Ampt infiltration capacity as a closed form. **Also needs:** whether `use_dimensional_ponding_test` is exercised in both settings, since the default reproduces the original FORTRAN's dimensionally inconsistent ponding test |
+| `unit_canopy_interception` | `lsdtt_canopy_interception_cpu` | Rutter-type store; `C = k_S·LAI` and `p = exp(−κ·LAI)`. **Also needs:** a check that `PET_residual` divides by `evap_factor` rather than subtracting `E_canopy` directly — the header flags this as the easiest thing to get wrong |
+| `unit_hydro_roughness` | `lsdtt_hydro_roughness_cpu` | The three-regime partition; `rigorous_roughness_partition` asserting that a land-cover change leaves channel `n` untouched; `jarrett` and `ferguson_vpe` depth dependence |
+| `unit_hydro_routing` | `lsdtt_hydro_routing_cpu` | Linear reservoir, Muskingum-Cunge, kinematic wave |
+| `unit_hydro_velocity_field` | `lsdtt_hydro_velocity_field_cpu` | Velocity, travel time, width-function IUH |
+| `unit_giuh_discharge` | `lsdtt_giuh_cpu` | Width function; `v_i = v_ref (S_i/S_ref)^β` with β = 0.5 |
+
+**Not covered anywhere, and worth deciding about:**
+
+- **Graphflood has no entry here** beyond the DAGGER parity reference in §4.
+  Its solver is stationary, explicit (forward Euler plus a flux limiter), and
+  rebuilds topology from `z + h`; none of those three properties is pinned by a
+  test recorded in this document.
+- **No mass-conservation figure is quoted anywhere** for the distributed
+  hydrology path. The design doc claims mass conservation is checked; this
+  document does not say to what tolerance.
+- **No cross-implementation reference.** Unlike flow routing (TopoToolbox,
+  RichDEM, Whitebox) and cosmogenics (CRONUS, OCTOPUS), the hydrology stack has
+  no external oracle. Whether one is worth building is an open question given
+  the intended use.
 
 ---
 

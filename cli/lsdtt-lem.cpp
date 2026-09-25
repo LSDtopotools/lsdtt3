@@ -463,13 +463,15 @@ int main(int argc, char* argv[])
         "or channel_mask_fname; needs a non-empty channel set or the step is skipped. "
         "Set enable_nonlinear_hillslopes false for linear diffusion. "
         "cidre: Carretier et al. (2016) finite-volume forward sweep using D-inf routing; "
-        "unconditionally stable near Sc via slope-restoration. The ONLY model that works "
-        "with an emergent channel network (incision_threshold_specific_area = 0). "
+        "explicit, so CFL-limited, but stable as slopes approach Sc via slope-restoration. "
+        "Works with an emergent channel network (incision_threshold_specific_area = 0); "
+        "since 2026-08-27 roering_implicit does too, for transient runs. "
         "adi: Crank-Nicolson implicit linear diffusion using uncoupled ADI sweeps "
         "(transient only; steady-state runs use Newton regardless). "
-        "NOTE: 'linear' and 'roering' select EXPLICIT solvers. They are CFL-limited and "
-        "less stable than the implicit path, and are retained only for testing and for "
-        "builds without Eigen; both are redirected to roering_implicit with a warning. "
+        "NOTE: 'linear' and 'roering' select EXPLICIT solvers and are run as asked: "
+        "they are CFL-limited and less stable than the implicit path, and are retained "
+        "for testing and for builds without Eigen. They are NOT redirected to "
+        "roering_implicit -- if you want the implicit solver, ask for it by name. "
         "Requires enable_hillslope_transport.",
         "Process switches", "param", ""};
 

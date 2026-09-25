@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import lsdtt_test_env
 
 EXIT_OK, EXIT_FAIL, EXIT_SKIP = 0, 1, 77
 
@@ -37,7 +38,7 @@ def fail(msg: str) -> int:
 
 
 def run_cli(exe: pathlib.Path, workdir: pathlib.Path, param_file: pathlib.Path) -> None:
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         [str(exe), str(workdir), param_file.name],
         cwd=str(workdir),
         capture_output=True,
@@ -68,7 +69,7 @@ def close(a: float, b: float) -> bool:
 def check_quartz_weight_oracle(path: pathlib.Path) -> None:
     if not path.is_file():
         raise RuntimeError(f"missing quartz-weight raster: {path}")
-    proc = subprocess.run(
+    proc = lsdtt_test_env.run(
         ["gdalinfo", "-json", "-stats", str(path)],
         capture_output=True,
         text=True,

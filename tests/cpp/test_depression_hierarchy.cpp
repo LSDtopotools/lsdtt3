@@ -408,26 +408,47 @@ void test_hierarchy_outlets_on_dense_pit_field()
 void test_scaling_is_not_quadratic()
 {
     struct point { double cells; double secs; };
-    std::vector<point> pts;
+    const int sizes[2] = {150, 300};
 
-    for (const int n : {150, 300})
+    std::vector<lsdtt::lsdtt_raster_cpu> dems;
+    for (const int n : sizes)
     {
         lsdtt::lsdtt_raster_meta meta = make_meta(n, n, 10.0);
-        lsdtt::lsdtt_raster_cpu  dem =
-            lsdtt::generate_uniform_random_noise_surface(meta, 1, 0.0, 10.0);
-
-        std::vector<lsdtt::dep_label_t> labels;
-        std::vector<uint8_t>            flowdirs;
-
-        const auto t0 = std::chrono::steady_clock::now();
-        const lsdtt::lsdtt_depression_hierarchy hier =
-            lsdtt::build_depression_hierarchy(dem, labels, flowdirs);
-        const auto t1 = std::chrono::steady_clock::now();
-
-        (void)hier;
-        pts.push_back({static_cast<double>(n) * n,
-                       std::chrono::duration<double>(t1 - t0).count()});
+        dems.push_back(lsdtt::generate_uniform_random_noise_surface(meta, 1, 0.0, 10.0));
     }
+
+    // Best of five, INTERLEAVED (small, large, small, large, ...). Each build
+    // takes ~20-200 ms, so under `ctest -j` one burst of load from a
+    // neighbouring test moved the exponent past the bound: 1.66 in 2 of 3 `-j4`
+    // runs on 2026-09-18, passing alone. A best-of-3 per size, timed back to
+    // back, still failed once in 7 runs, because a burst can cover all three
+    // runs of one size. Interleaving exposes both sizes to the same load, and
+    // the minimum is the estimate closest to the true cost, since contention
+    // only ever adds time. It is not enough on its own: contention slows the
+    // larger grid more than the smaller one, so CTest also runs this driver
+    // RUN_SERIAL (tests/CMakeLists.txt).
+    double best[2] = {0.0, 0.0};
+    for (int rep = 0; rep < 5; ++rep)
+    {
+        for (int k = 0; k < 2; ++k)
+        {
+            std::vector<lsdtt::dep_label_t> labels;
+            std::vector<uint8_t>            flowdirs;
+
+            const auto t0 = std::chrono::steady_clock::now();
+            const lsdtt::lsdtt_depression_hierarchy hier =
+                lsdtt::build_depression_hierarchy(dems[k], labels, flowdirs);
+            const auto t1 = std::chrono::steady_clock::now();
+
+            (void)hier;
+            const double secs = std::chrono::duration<double>(t1 - t0).count();
+            if (rep == 0 || secs < best[k]) best[k] = secs;
+        }
+    }
+
+    std::vector<point> pts;
+    for (int k = 0; k < 2; ++k)
+        pts.push_back({static_cast<double>(sizes[k]) * sizes[k], best[k]});
 
     // Guard against a machine so fast the smaller case is unmeasurable, which
     // would make the ratio meaningless rather than failing honestly.

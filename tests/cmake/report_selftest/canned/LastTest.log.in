@@ -1,0 +1,66 @@
+Start testing: Jan 01 00:00 UTC
+----------------------------------------------------------
+1/4 Testing: sel_pass
+1/4 Test: sel_pass
+Command: "@BUILD@/lsdtt-test-something"
+Directory: @BUILD@/tests
+"sel_pass" start time: Jan 01 00:00 UTC
+Output:
+----------------------------------------------------------
+all good
+<end of output>
+Test time =   0.10 sec
+----------------------------------------------------------
+Test Passed.
+"sel_pass" end time: Jan 01 00:00 UTC
+"sel_pass" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/4 Testing: sel_fail
+2/4 Test: sel_fail
+Command: "/usr/bin/python3" "@BUILD@/run_cli_smoke.py" "--exe" "@BUILD@/lsdtt-x" "--work-dir" "@BUILD@/tests/sel_fail"
+Directory: @BUILD@/tests
+"sel_fail" start time: Jan 01 00:00 UTC
+Output:
+----------------------------------------------------------
+planted failure output while reading @HOME@/data/dem.tif; semicolons [and brackets] survive
+<end of output>
+Test time =   0.50 sec
+----------------------------------------------------------
+Test Failed.
+"sel_fail" end time: Jan 01 00:00 UTC
+"sel_fail" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/4 Testing: sel_timeout
+3/4 Test: sel_timeout
+Command: "@BUILD@/lsdtt-test-slow"
+Directory: @BUILD@/tests
+"sel_timeout" start time: Jan 01 00:00 UTC
+Output:
+----------------------------------------------------------
+started
+<end of output>
+Test time =   5.01 sec
+----------------------------------------------------------
+Test Failed.
+"sel_timeout" end time: Jan 01 00:00 UTC
+"sel_timeout" time elapsed: 00:00:05
+----------------------------------------------------------
+
+4/4 Testing: sel_skip
+4/4 Test: sel_skip
+Command: "@BUILD@/lsdtt-test-optional"
+Directory: @BUILD@/tests
+"sel_skip" start time: Jan 01 00:00 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"sel_skip" end time: Jan 01 00:00 UTC
+"sel_skip" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jan 01 00:00 UTC

@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Part of the flow-routing benchmark (docs/testing_and_benchmarking.md): performance of the flow
+// Part of the flow-routing benchmark (docs/developer_notes/testing_and_benchmarking.md): performance of the flow
 // routing and depression-handling routines.
 //
 // WHY THIS EXISTS SEPARATELY FROM THE PYTHON BENCHMARK DRIVER
@@ -15,7 +15,7 @@
 // benchmark_results.csv records lsdtt3 as whole-process CLI wall time (startup,
 // parameter parsing, GDAL open, the routine, GDAL write) against RichDEM's
 // in-process routine call. Those numbers are NOT comparable, and
-// docs/testing_and_benchmarking.md required an in-process harness before any performance claim is made.
+// docs/developer_notes/testing_and_benchmarking.md required an in-process harness before any performance claim is made.
 // This driver times the routines themselves, with the raster already in memory
 // and nothing written to disk.
 //
@@ -400,7 +400,7 @@ int main(int argc, char** argv)
     const std::string sha = git_sha();
 
     std::cout << "lsdtt3 flow routing performance "
-                 " (docs/testing_and_benchmarking.md)\n"
+                 " (docs/developer_notes/testing_and_benchmarking.md)\n"
                << "git " << sha << ", best of " << k_repeats
                << ", timings are IN-PROCESS (no file I/O, no CLI startup)\n\n";
 

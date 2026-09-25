@@ -151,7 +151,8 @@ std::vector<double> find_population_breaks(
     const double bw = (hi_log - lo_log) / nb;
 
     // Two moving-average passes (radius 2) approximate a Gaussian smooth.
-    std::vector<double> sm(hist.begin(), hist.end()), tmp(nb, 0.0);
+    std::vector<double> sm(hist.size()), tmp(nb, 0.0);
+    for (std::size_t i = 0; i < hist.size(); ++i) sm[i] = static_cast<double>(hist[i]);
     for (int pass = 0; pass < 2; ++pass)
     {
         for (int b = 0; b < nb; ++b)
