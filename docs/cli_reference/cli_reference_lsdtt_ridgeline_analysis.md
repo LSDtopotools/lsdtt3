@@ -29,7 +29,7 @@ Set with `ridgeline_analysis_mode`. The mode controls how ridgelines are derived
 |---|---|---|
 | `basin_outline_ridgelines` *(default)* | Splits each selected basin outline into a left and a right ridgeline. The split point is chosen by `outline_splitting_method`; ridge snouts are segmented following Robinson et al. (2025). | Required (`select_all_basins`, `select_basins_from_outlets`, or `..._nested`). |
 | `interfluvial_divide_ridgelines` | Extracts the divide shared between every pair of non‑nested selected basins. | Required. |
-| `range_defined_ridgelines` | Detects range‑spanning basins draining to opposing open (`o`) boundaries (mountain fronts) and extracts transverse divides and the Main Drainage Divide. | Automatic (range‑spanning detection); needs 4 boundary segments with at least one opposing pair of open boundaries. |
+| `range_defined_ridgelines` | Identifies range-spanning basins on both opposing open (`o`) boundaries, interpreted as mountain fronts, and constructs the transverse divides and Main Drainage Divide from those basin sequences. | Automatic (range-spanning detection); needs 4 boundary segments with at least one opposing pair of open boundaries. |
 
 To analyse **all ridges in a DEM**, use the default mode with `select_all_basins: true`.
 

@@ -1574,29 +1574,20 @@ int main(int argc, char* argv[])
                 if (!mdd_for_each_boundary[i].empty()) boundary_indices.push_back(i);
             }
 
-            if (boundary_indices.size() == 4) 
+            // Union the side-derived MDD traces rather than requiring shared
+            // raster nodes. This preserves MDD portions present on either
+            // boundary-derived trace, including one-sided results.
+            for (std::size_t i = 0; i < boundary_indices.size(); ++i)
             {
-                std::cout << "You just made it to the end-game of topographic analysis: you supplied a DEM with range-spanning basins on all four DEM boundaries touching each other at exactly one divide-node! This is extremely rare.\nI am not going to analyse this mdd because analysis of only one node is not that useful.\n\n";
-            }
-            else if (boundary_indices.size() == 2) 
-            {
-                int b_idx = boundary_indices[0];
-                int opp_b_idx = boundary_indices[1];
-
-                mdd_for_each_boundary[opp_b_idx].reverse();
-                auto mdd_segments = mdd_for_each_boundary[b_idx]
-                    .extract_contiguous_shared_ridgelines(mdd_for_each_boundary[opp_b_idx]);
-
-                for (auto& seg : mdd_segments) 
-                {
-                    all_ridgelines.push_back({
-                        std::move(seg),
-                        ridgeline_counter++,
-                        -1, -1, 
-                        "main_drainage_divide", "_range_defined_ridgelines", 
-                        true, nan_f, nan_f
-                    });
-                }
+                int boundary_index = boundary_indices[i];
+                if (i > 0) mdd_for_each_boundary[boundary_index].reverse();
+                all_ridgelines.push_back({
+                    std::move(mdd_for_each_boundary[boundary_index]),
+                    ridgeline_counter++,
+                    -1, -1,
+                    "main_drainage_divide", "_range_defined_ridgelines",
+                    true, nan_f, nan_f
+                });
             }
         }
         else if (analysis_mode == "basin_outline_ridgelines" || range_outline_mode)
