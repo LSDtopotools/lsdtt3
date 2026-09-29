@@ -128,6 +128,9 @@ public:
   // Splits the outline exactly in half by perimeter length
   [[nodiscard]] std::vector<lsdtt_ridgeline_cpu> split_outline_into_ridgelines_by_equal_length() const;
 
+  // Returns the complete basin outline as one ridgeline.
+  [[nodiscard]] std::vector<lsdtt_ridgeline_cpu> get_outline_as_ridgeline() const;
+
   // Extracts the left transverse divide (range-spanning basin boundaries)
   [[nodiscard]] lsdtt_ridgeline_cpu get_left_transverse_divide_as_ridgeline(
       std::int32_t basin_junction,

@@ -319,7 +319,20 @@ std::vector<std::vector<std::int64_t>> split_boundary_into_cardinal_segments(
             "pixels");
     }
 
-    const int n_cols = mask.n_cols();
+    return split_boundary_trace_into_cardinal_segments(
+        boundary_rc, mask.n_cols(), corners);
+}
+
+std::vector<std::vector<std::int64_t>>
+split_boundary_trace_into_cardinal_segments(
+    const std::vector<lsdtt_pixel_rc>&  boundary_rc,
+    int                                n_cols,
+    const std::array<std::int64_t, 4>& corners
+)
+{
+    if (boundary_rc.empty() || n_cols <= 0)
+        throw std::runtime_error(
+            "split_boundary_trace_into_cardinal_segments: empty boundary trace");
 
     std::vector<std::int64_t> boundary_flats;
     boundary_flats.reserve(boundary_rc.size());

@@ -174,4 +174,83 @@ basin_slope_area_result compute_basin_slope_area_metrics(
     return result;
 }
 
+basin_slope_area_result compute_basin_slope_area_metrics_n_bins(
+    const std::vector<float>& log10_area,
+    const std::vector<std::vector<float>>& slopes_by_scale,
+    int n_bins)
+{
+    if (n_bins <= 0)
+        throw std::invalid_argument("number of slope-area bins must be positive");
+    for (const auto& slopes : slopes_by_scale)
+    {
+        if (slopes.size() != log10_area.size())
+            throw std::invalid_argument(
+                "compute_basin_slope_area_metrics_n_bins: area and slope sizes differ");
+    }
+
+    std::vector<double> valid_area;
+    for (float area : log10_area)
+        if (std::isfinite(area) && area > -100)
+            valid_area.push_back(static_cast<double>(area));
+
+    basin_slope_area_result result;
+    result.scales.resize(slopes_by_scale.size());
+    if (valid_area.empty()) return result;
+
+    const auto mm = std::minmax_element(valid_area.begin(), valid_area.end());
+    const double lo = *mm.first;
+    const double hi = (*mm.second > lo) ? *mm.second : lo + 1.0;
+    const double width = (hi - lo) / static_cast<double>(n_bins);
+
+    for (int b = 0; b < n_bins; ++b)
+    {
+        slope_area_bin_result bin;
+        bin.log_area_lower = lo + width * static_cast<double>(b);
+        bin.log_area_upper = (b == n_bins - 1) ? hi : bin.log_area_lower + width;
+        bin.log_area_center = (bin.log_area_lower + bin.log_area_upper) / 2.0;
+
+        for (const auto& slopes : slopes_by_scale)
+        {
+            std::vector<double> bin_slopes;
+            for (std::size_t i = 0; i < slopes.size(); ++i)
+            {
+                const bool in_bin = (b == n_bins - 1)
+                    ? log10_area[i] >= bin.log_area_lower && log10_area[i] <= bin.log_area_upper
+                    : log10_area[i] >= bin.log_area_lower && log10_area[i] < bin.log_area_upper;
+                if (in_bin && std::isfinite(log10_area[i]) && log10_area[i] > -100 &&
+                    std::isfinite(slopes[i]))
+                    bin_slopes.push_back(static_cast<double>(slopes[i]));
+            }
+
+            slope_area_percentiles p;
+            if (!bin_slopes.empty())
+            {
+                p.p05 = compute_percentile(bin_slopes, 5.0);
+                p.p25 = compute_percentile(bin_slopes, 25.0);
+                p.p50 = compute_percentile(bin_slopes, 50.0);
+                p.p75 = compute_percentile(bin_slopes, 75.0);
+                p.p95 = compute_percentile(bin_slopes, 95.0);
+            }
+            bin.slope_by_scale.push_back(p);
+        }
+        result.bins.push_back(std::move(bin));
+    }
+
+    for (std::size_t scale = 0; scale < slopes_by_scale.size(); ++scale)
+    {
+        double max_median = -std::numeric_limits<double>::infinity();
+        for (const auto& bin : result.bins)
+        {
+            const double median = bin.slope_by_scale[scale].p50;
+            if (std::isfinite(median) && median > max_median)
+            {
+                max_median = median;
+                result.scales[scale].area_at_maximum_median_slope =
+                    std::pow(10.0, bin.log_area_center);
+            }
+        }
+    }
+    return result;
+}
+
 } // namespace lsdtt

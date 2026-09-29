@@ -80,6 +80,10 @@ public:
     [[nodiscard]] const std::vector<lsdtt_xy>&       positions() const noexcept { return positions_; }
     [[nodiscard]] const std::vector<double>&         distances() const noexcept { return distances_; }
     [[nodiscard]] const std::vector<float>&          elevations() const noexcept { return elevations_; }
+    [[nodiscard]] const std::vector<float>& nearest_channel_elevations_left() const noexcept
+    { return nearest_channel_elevations_left_; }
+    [[nodiscard]] const std::vector<float>& nearest_channel_elevations_right() const noexcept
+    { return nearest_channel_elevations_right_; }
 
     [[nodiscard]] double total_length() const noexcept
     {
@@ -141,6 +145,11 @@ public:
 
     // Compute the detrended elevation profile and smooth it.
     void smoothen_and_derive_detrended_ridgeline(int smoothing_window_pixels);
+
+    void calculate_nearest_channel_elevations(
+        const lsdtt_flow_base& flow,
+        const lsdtt_raster_cpu& dem,
+        const std::vector<std::uint8_t>& channel_mask);
 
     // Calculate normalized ridgeline steepness for basin-outline based ridgelines.
     [[nodiscard]] float calculate_ridgeline_steepness(
@@ -239,6 +248,8 @@ private:
     std::vector<float> detrended_elevations_;
     std::vector<float> smoothed_detrended_elevations_;
     std::vector<float> smoothed_detrended_slopes_;
+    std::vector<float> nearest_channel_elevations_left_;
+    std::vector<float> nearest_channel_elevations_right_;
 
     // Core state properties
     int   snoutidx_      = 0;

@@ -123,7 +123,7 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `outline_splitting_method` | string | `longest_channel` | How a basin outline is split into two ridgelines (`basin_outline_ridgelines` only): `longest_channel` (point nearest the longest channel's head), `max_elevation`, or `equal_length`. |
+| `outline_splitting_method` | string | `longest_channel` | How a basin outline is split (`basin_outline_ridgelines` only): `longest_channel`, `max_elevation`, or `equal_length`; `none` returns one ridgeline following the complete basin outline. |
 | `ridgeline_smoothing_window_fraction` | float | `0.05` | LOWESS smoothing window, as a fraction (0–1) of total ridgeline length, used for max‑curvature snout segmentation (Robinson et al. 2025; Kneed algorithm, Satopää et al. 2011). |
 | `ridgeline_pixels_smoothing_window` | int | `1` | Pixel window for the moving‑average smoothing of the detrended ridgeline before extracting extrema. `1` = no smoothing. Distinct from `ridgeline_smoothing_window_fraction`. |
 | `use_polynomial_fit_for_ridgeline` | bool | `false` | Detrend ridgeline elevation with a polynomial fit. Slope/steepness are always from a linear fit; this only changes detrended‑elevation outputs. |
@@ -144,6 +144,12 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 
 The FlatGeobuf line layer is written to `<write_fname><mode_prefix>.fgb` and
 contains ridgeline IDs, basin IDs, node counts, and total lengths.
+
+When `write_slope_area_analysis` is enabled, ridgeline point CSVs and
+polyfit-enriched node outputs also contain `elevation_nearest_channel_left` and
+`elevation_nearest_channel_right`. These are the elevations of the first marked
+D8 channel pixel reached by tracing from the pixels immediately on either side
+of each outgoing divide edge. The final node has `NaN` values.
 
 ## Selected-ridgeline triple-divide outputs
 
@@ -254,7 +260,7 @@ Phase 6 elevation fill and smoothing, which move the nodes.
 
 ---
 
-## Polynomial surface fit and along‑ridgeline mapping (Phase 9)
+## Polynomial surface fit and along-ridgeline mapping (Phase 9)
 
 Runs when `write_polyfit_rasters` is true **or** `polyfit_metrics` is non‑empty. Sampled metric values are appended to a `_with_polyfit` ridgeline CSV per method.
 
@@ -268,6 +274,40 @@ Runs when `write_polyfit_rasters` is true **or** `polyfit_metrics` is non‑empt
 | `write_polyfit_rasters` | bool | `false` | Write the six coefficient rasters and each requested metric raster (`_<method>_polyfit_*.tif`). |
 | `write_ridgeline_power_spectra_csv` | bool | `false` | Write the 1‑D power spectrum of each sampled metric along each ridgeline (`_<method><mode_prefix>_power_spectra.csv`). Requires FFTW. |
 | `write_ridgeline_autocorrelation_csv` | bool | `false` | Write the characteristic spacing (dominant wavelength) of each sampled metric per ridgeline (`_<method><mode_prefix>_characteristic_spacing.csv`). |
+
+---
+
+## Slope-area channel analysis
+
+Slope-area analysis runs after basin selection and ridgeline extraction. It
+uses a direct quadratic polynomial fit to the original DEM for topographic
+slope, while both D8 and optional D-infinity routing use the filled DEM. The
+maximum-median-slope logarithmic area bin supplies the channel-area threshold.
+The binary channel mask always uses filled-D8 accumulation and sets pixels
+outside the selected basin scope to zero. Nested basin selections are not
+supported and produce a fatal error.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_slope_area_analysis` | bool | `false` | Run slope-area analysis and append nearest-channel elevation fields to node outputs. |
+| `slope_area_flow_method` | string | `d8` | Area used for slope-area histograms: `d8` or `dinfinity`. Both route the filled DEM. |
+| `slope_area_polyfit_lambda_metres` | float | `70.0` | Direct polynomial slope-fit lengthscale, independent of the general polyfit settings. |
+| `slope_area_number_of_bins` | int | `100` | Number of evenly spaced bins in log10 drainage area. |
+| `slope_area_clipping` | string | `all_basins` | Use `all_basins` for one union histogram/threshold or `per_basin` for one per selected basin. |
+| `write_slope_area_raster` | bool | `true` | Write `<write_fname>_slope_area_channel_mask.tif`. Values are binary 0/1. |
+| `write_slope_area_histogram` | bool | `true` | Write histogram and threshold CSV outputs. |
+
+Outputs are:
+
+```text
+<write_fname>_slope_area_histogram.csv
+<write_fname>_slope_area_thresholds.csv
+<write_fname>_slope_area_channel_mask.tif
+```
+
+The histogram CSV records `d05`, `d25`, `d50`, `d75`, and `d95` slope
+percentiles for each area bin and marks the selected maximum-median bin. The
+threshold CSV records the selected area threshold for the union or each basin.
 
 ---
 
