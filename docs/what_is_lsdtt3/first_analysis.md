@@ -59,6 +59,8 @@ extension, so `write_fname: my_dem` produces
 `read_fname` stem, and if you leave `write_path` out it defaults to
 `read_path`.
 
+**Make sure that `read_path` and `write_path` include the terminal `/`.**
+
 Outputs are Cloud Optimised GeoTIFF by default. `write_output_format` changes
 that to `gtiff`, `png` or `same_as_input`.
 
