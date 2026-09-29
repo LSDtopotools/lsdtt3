@@ -12,26 +12,6 @@ every library they depend on.
 
 ---
 
-## Choose your route
-
-**1. Where do you want to run lsdtt3?**
-
-| | |
-|---|---|
-| On my own computer | continue to question 2 |
-| In a browser, with nothing installed | [Google Colab](#google-colab) |
-
-**2. What is your computer running?**
-
-| | |
-|---|---|
-| Linux | [Linux package](#linux-package) |
-| Windows | [Windows, via WSL2](#windows-via-wsl2) — **recommended**, full functionality |
-| Windows, and I want native `.exe` files | [Windows native package](#windows-native-package) — reduced tool set |
-| macOS | [macOS](#macos) |
-
----
-
 ## Where the packages live
 
 Both of these hold the same files. Use whichever you can reach.
@@ -60,6 +40,26 @@ subset the QGIS plugin drives.
 > 0.5.1` → tag `v0.5.1` → `...-v0.5.1.tar.gz`). If you cannot see the
 > repository, take the newest file from one of the two download locations
 > above instead. Substitute that number throughout.
+
+---
+
+## Choose your route
+
+**1. Where do you want to run lsdtt3?**
+
+| | |
+|---|---|
+| On my own computer | continue to question 2 |
+| In a browser, with nothing installed | [Google Colab](#google-colab) |
+
+**2. What is your computer running?**
+
+| | |
+|---|---|
+| Linux | [Linux package](#linux-package) |
+| Windows | [Windows, via WSL2](#windows-via-wsl2) — **recommended**, full functionality |
+| Windows, and I want native `.exe` files | [Windows native package](#windows-native-package) — reduced tool set |
+| macOS | [macOS](#macos) |
 
 ---
 
