@@ -10,47 +10,35 @@
 // -----------------------------------------------------------------------------
 // lsdtt-bankfull-width
 //
-// Manning's-equation bankfull channel width from a 1m DEM:
+// Manning's-equation bankfull channel width from a high-resolution DEM:
 //
-//   1. optional pit filling
+//   1. Optional pit filling (boundary-condition aware)
 //   2. D8 flow routing
-//   3. cross-section extraction from a single-source channel network
-//   4. channel profile (distance from source, drainage area, thalweg
-//      elevation, slope) per cross section
-//   5. full sampled elevation profile per cross section
+//   3. Cross-section extraction from a single-source channel network
+//   4. Channel profile (distance from source, drainage area, thalweg
+//      elevation, along-channel slope) per cross section
+//   5. Full sampled elevation profile per cross section
 //   6. Manning's-equation width/depth solve per cross section, by reach
 //
-// Three output modes are controlled independently by parameters, all
-// sharing one cross-section extraction so cross_section_id numbering
-// matches across every output file from a single run:
+// Outputs (all share one cross-section extraction, so cross_section_id
+// numbering matches across every file from a single run):
 //
-//   - write_channel_profile_csv: distance from source, drainage area,
-//     thalweg elevation, and slope per cross section. Requires
-//     source_points_path to resolve to a single source point; slope is
-//     sampled from the DEM via direct_polyfit at each cross section's
-//     centre pixel.
-//   - write_cross_section_sample_points: full sampled elevation profile
-//     per cross section, read by the Python width-vs-depth / bankfull-
-//     pick workflow.
-//   - calculate_manning_widths: solves depth and width per cross section
-//     from reach_manning_parameters_path (manning_n and
-//     target_discharge_m3s per reach, by distance from source) and
-//     channel_profile_csv_path (per-cross-section slope and distance,
-//     from this same CLI's write_channel_profile_csv). Reaches are
-//     matched by distance, not cross_section_id -- cross_section_id is
-//     assigned by a row-major raster scan and has no relationship to
-//     position along the channel.
+//   <write_fname>_channel_profile.csv          write_channel_profile_csv
+//   <write_fname>_cross_section_sample_points  write_cross_section_sample_points
+//   <write_fname>_manning_bank_points          write_manning_bank_points
+//   <write_fname>_manning_widths.csv           write_manning_widths_csv
 //
-// NOTE:
-// Run write_channel_profile_csv and write_cross_section_sample_points
-// together in one invocation so both files share identical
-// cross_section_id numbering. Only run calculate_manning_widths against
-// a channel-profile CSV from that same extraction -- one built from a
-// different DEM, parameter set, or CLI run will not correspond to the
-// same distance-from-source values and will silently produce wrong or
-// empty results.
-// Also manning_n and target_discharge_m3s are supplied per reach in
-// reach_manning_parameters_path, this tool does not derive them!!!
+// Reaches are matched by distance from source, not cross_section_id, which
+// is assigned by a row-major raster scan and has no relationship to position
+// along the channel. Reach membership is half-open: start <= d < end.
+//
+// When run_manning_widths and write_channel_profile_csv are both set, the
+// profile computed in this run is used directly. channel_profile_csv_path is
+// only needed (and only read) when the profile is NOT computed in this run;
+// it must then come from the same DEM and cross-section geometry parameters.
+//
+// manning_n and target_discharge_m3s are supplied per reach in
+// reach_manning_parameters_path. This tool does not derive them.
 //
 // Usage:
 //   lsdtt-bankfull-width <path> <parameter_file>
@@ -61,6 +49,7 @@
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -68,6 +57,7 @@
 #include <string>
 #include <vector>
 
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
@@ -78,7 +68,7 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_manning_hydraulics_cpu.hpp"
 
-static const std::string k_version   = "0.4.0";
+static const std::string k_version   = "0.1.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-bankfull-width";
 
@@ -87,11 +77,17 @@ static void print_banner()
     std::cout
         << "=========================================================\n"
         << "|| Welcome to lsdtt-bankfull-width                     ||\n"
-        << "|| Manning's-equation bankfull channel width           ||\n"
-        << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
+        << "|| Manning's-equation bankfull channel width from a    ||\n"
+        << "|| high-resolution DEM, solved per cross section and   ||\n"
+        << "|| per reach. Part of lsdtt3 by Simon M. Mudd          ||\n"
         << "=========================================================\n"
-        << "|| Version : " << k_version  << "\n"
+        << "|| Full lsdtt3 release version: run with -v / --version\n"
+        << "|| This CLI's version : " << k_version << "\n"
+        << "|| A CLI version below 1.0.0 means this CLI is still\n"
+        << "|| experimental and not fully tested.\n"
+        << "=========================================================\n"
         << "|| Citation: " << k_citation << "\n"
+        << "|| Run with -h for parameter help.\n"
         << "=========================================================\n\n";
 }
 
@@ -109,186 +105,239 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string> string_default_map;
     lsdtt::lsdtt_help_registry         help_map;
 
-    // --- Run control ---
-    int_default_map["n_threads"] = 0;
-    help_map["n_threads"] = {"int", "0",
-        "Number of OpenMP threads.", "0 = use all available hardware threads.",
-        "Run control", "io", ""};
-
-    string_default_map["boundary_conditions"] = "oooo";
-    help_map["boundary_conditions"] = {"string", "oooo",
-        "Boundary conditions for flow routing (north east south west).",
-        "o = open, n = no-flux, p = periodic, b = forced outlet.",
-        "Flow routing", "param", ""};
+    // --- Flow routing ---
+    // Shared layer: declares boundary_conditions, n_threads and the other
+    // routing-core parameters. Do not hand-declare them here.
+    lsdtt::declare_routing_core_parameters(
+        int_default_map, string_default_map, help_map);
 
     // --- DEM preparation ---
-    bool_default_map["raster_is_filled"] = false;
-    help_map["raster_is_filled"] = {"bool", "false",
-        "Whether the input raster is already pit-filled.",
-        "If false, fill_pits() is run before flow routing.",
-        "Pit filling", "switch", ""};
+    string_default_map["vertical_units"] = "metres";
+    help_map["vertical_units"] = {"string", "metres",
+        "Vertical unit of the input DEM elevations.",
+        "metres / feet / us_survey_feet. Slope, and therefore Manning "
+        "discharge, is wrong by a factor of 3.28 if the DEM is in feet and "
+        "this is left as metres. Nothing in the file records the unit. "
+        "Horizontal units must already be metres.",
+        "DEM preparation", "param", ""};
 
-    float_default_map["fill_min_slope"] = 0.0001f;
-    help_map["fill_min_slope"] = {"float", "0.0001",
-        "Minimum slope imposed by pit filling.", "",
-        "Pit filling", "param", ""};
+    // --- Pit filling ---
+    lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
+    lsdtt::declare_fill_min_slope_parameter(float_default_map, help_map);
 
-    // --- Source-point input ---
+    // --- Source points ---
     string_default_map["source_points_path"] = "";
     help_map["source_points_path"] = {"string", "",
-        "Path to the source-point input file.",
+        "Path to the source-point input file (exactly one point).",
         "CSV: latitude/longitude in EPSG:4326. Vector (.gpkg/.fgb): read "
-        "through OGR and transformed to the raster CRS.",
+        "through OGR and transformed to the raster CRS. Required. When "
+        "write_channel_profile_csv is true it must resolve to a single "
+        "source (a single mainstem channel).",
         "Source points", "io", ""};
 
     string_default_map["source_points_layer_name"] = "";
     help_map["source_points_layer_name"] = {"string", "",
-        "Optional layer name for vector source-point input.", "",
+        "Optional layer name for vector source-point input.",
+        "Only used for vector input. Empty means the first layer.",
         "Source points", "param", ""};
 
     string_default_map["source_points_input_format"] = "auto_detect";
     help_map["source_points_input_format"] = {"string", "auto_detect",
-        "auto_detect / csv_latitude_longitude_epsg4326 / ogr_vector_layer.", "",
+        "Source-point file format.",
+        "auto_detect / csv_latitude_longitude_epsg4326 / ogr_vector_layer.",
         "Source points", "param", ""};
 
     string_default_map["source_points_latitude_field_name"] = "latitude";
     help_map["source_points_latitude_field_name"] = {"string", "latitude",
-        "Latitude field name for CSV source-point input.", "",
+        "Latitude column name for CSV source-point input.",
+        "Only used for CSV input.",
         "Source points", "param", ""};
 
     string_default_map["source_points_longitude_field_name"] = "longitude";
     help_map["source_points_longitude_field_name"] = {"string", "longitude",
-        "Longitude field name for CSV source-point input.", "",
+        "Longitude column name for CSV source-point input.",
+        "Only used for CSV input.",
         "Source points", "param", ""};
 
-    // --- Cross-section geometry ---
+    // --- Cross sections ---
     float_default_map["cross_section_half_length_metres"] = 50.0f;
     help_map["cross_section_half_length_metres"] = {"float", "50.0",
-        "Half-length of each cross section in metres.", "",
+        "Half-length of each cross section [m].",
+        "Must be greater than cross_section_sample_spacing_metres and "
+        "comfortably larger than the expected bank-to-bank half-width, or "
+        "banks will not be found (quality_flag bank_crossing_not_found).",
         "Cross sections", "param", ""};
 
     float_default_map["cross_section_sample_spacing_metres"] = 5.0f;
     help_map["cross_section_sample_spacing_metres"] = {"float", "5.0",
-        "Spacing between sampled points along each cross section.", "",
+        "Spacing between sampled points along each cross section [m].",
+        "Must be > 0. Coarse spacing under-resolves the channel; width "
+        "accuracy is limited to roughly this value. Use a few times the DEM "
+        "cell size or finer.",
         "Cross sections", "param", ""};
 
     float_default_map["bearing_window_length_metres"] = 50.0f;
     help_map["bearing_window_length_metres"] = {"float", "50.0",
-        "Along-channel window used to estimate local channel bearing.", "",
+        "Along-channel window used to estimate local channel bearing [m].",
+        "Sections are cut perpendicular to this bearing. Longer windows "
+        "smooth sinuous channels but blur tight bends.",
         "Cross sections", "param", ""};
 
     int_default_map["cross_section_thinning"] = 1;
     help_map["cross_section_thinning"] = {"int", "1",
-        "Keep every Nth channel pixel as a cross-section centre.", "",
+        "Keep every Nth channel pixel as a cross-section centre.",
+        "Must be >= 1. 1 keeps every channel pixel.",
         "Cross sections", "param", ""};
 
     bool_default_map["skip_junction_pixels"] = false;
     help_map["skip_junction_pixels"] = {"bool", "false",
-        "Skip cross sections centred on junction pixels.", "",
+        "Skip cross sections centred on junction pixels.",
+        "Irrelevant for a single-source network, which has no junctions.",
         "Cross sections", "switch", ""};
 
     int_default_map["minimum_bearing_window_pixels"] = 3;
     help_map["minimum_bearing_window_pixels"] = {"int", "3",
-        "Minimum channel pixels required to fit a local bearing.", "",
+        "Minimum channel pixels required to fit a local bearing.",
+        "Sections with fewer pixels in the bearing window are dropped.",
+        "Cross sections", "param", ""};
+
+    float_default_map["thalweg_search_half_width_metres"] = 25.0f;
+    help_map["thalweg_search_half_width_metres"] = {"float", "25.0",
+        "Half-width around each section centre searched for the thalweg [m].",
+        "The thalweg is the lowest sample within +/- this distance of the "
+        "section centre, so a ditch, gully or second channel elsewhere in "
+        "the section cannot capture the solve. The centre is a D8 channel "
+        "pixel, which can sit up to about half a channel width from the true "
+        "thalweg: set this to roughly half the channel width or a little "
+        "more, and check thalweg_s in the widths CSV.",
         "Cross sections", "param", ""};
 
     // --- Output control ---
     bool_default_map["calculate_spatial_index"] = true;
     help_map["calculate_spatial_index"] = {"bool", "true",
-        "Whether to calculate a spatial index for vector data writes.", "",
+        "Calculate a spatial index for vector writes.",
+        "Faster loading and queries in a GIS, but the whole layer is held in "
+        "memory while writing.",
         "Output", "switch", ""};
 
-    // --- Channel profile CSV (for Python reach identification AND for
-    //     per-XS slope + distance consumed by the Manning solve) ---
+    // --- Channel profile ---
     bool_default_map["write_channel_profile_csv"] = true;
     help_map["write_channel_profile_csv"] = {"bool", "true",
-        "Write distance from source, drainage area, thalweg elevation, "
-        "and slope per cross section.",
-        "REQUIRES source_points_path to resolve to exactly one source point "
-        "(a single mainstem channel) -- distance-from-source is a plain "
-        "downstream walk from that point. Run alongside "
-        "write_cross_section_sample_points so both files share identical "
-        "cross_section_id numbering. This file's distance_from_source_m and "
-        "slope_m_per_m columns are also the inputs to calculate_manning_widths "
-        "(via channel_profile_csv_path) that determine reach membership and "
-        "per-cross-section slope respectively.",
+        "Write distance from source, drainage area, thalweg elevation and "
+        "slope per cross section.",
+        "Requires source_points_path to resolve to exactly one source point. "
+        "Output: <write_fname>_channel_profile.csv. Its distance and slope "
+        "columns drive the Manning solve. If run_manning_widths is also set "
+        "in the same run, the in-memory profile is used and "
+        "channel_profile_csv_path is ignored.",
         "Channel profile", "switch", ""};
 
-    float_default_map["slope_window_radius_metres"] = 10.0f;
-    help_map["slope_window_radius_metres"] = {"float", "10.0",
-        "Polyfit window radius (metres) for per-cross-section slope.",
-        "Slope is sampled from the DEM at each cross section's centre pixel "
-        "via direct_polyfit -- independent of channel-network topology or "
-        "cross-section point spacing along the network.",
+    float_default_map["slope_window_half_length_metres"] = 25.0f;
+    help_map["slope_window_half_length_metres"] = {"float", "25.0",
+        "Half-length of the along-channel slope-fit window [m].",
+        "Slope is the least-squares slope of pit-filled elevation against "
+        "along-channel distance over +/- this distance, so it has no "
+        "cross-channel component. Must be at least two cell sizes; use "
+        "roughly 5-10 channel widths. Near the source or outlet a one-sided "
+        "window is accepted only if the valid cells span at least this "
+        "distance, otherwise slope_valid is 0.",
         "Channel profile", "param", "write_channel_profile_csv"};
 
-    // --- Cross-section sample points ---
     bool_default_map["write_cross_section_sample_points"] = true;
     help_map["write_cross_section_sample_points"] = {"bool", "true",
         "Write the full sampled elevation profile per cross section.",
-        "Columns/fields: cross_section_id, offset_metres, x, y, elevation, valid.",
+        "Fields: cross_section_id, offset_metres, x, y, elevation, valid. "
+        "Output: <write_fname>_cross_section_sample_points.fgb (or .gpkg).",
         "Channel profile", "switch", ""};
 
-    // Force vector output (FlatGeobuf) for cross-section sample points
     string_default_map["cross_section_sample_points_output_format"] = "fgb";
     help_map["cross_section_sample_points_output_format"] = {"string", "fgb",
         "Output format for sampled cross-section points.",
-        "Allowed values: flatgeobuf, fgb, gpkg. (CSV is not supported here.)",
-        "Channel profile", "param", ""};
+        "flatgeobuf / fgb / gpkg. CSV is not supported here.",
+        "Channel profile", "param", "write_cross_section_sample_points"};
 
-    // --- Manning's equation width solve ---
-    bool_default_map["calculate_manning_widths"] = false;
-    help_map["calculate_manning_widths"] = {"bool", "false",
+    // --- Manning widths ---
+    bool_default_map["run_manning_widths"] = false;
+    help_map["run_manning_widths"] = {"bool", "false",
         "Compute bankfull channel widths via Manning's equation.",
         "Requires reach_manning_parameters_path (manning_n and "
-        "target_discharge_m3s per reach, bounded by DISTANCE FROM SOURCE, "
-        "not cross_id) AND channel_profile_csv_path (per-cross-section slope "
-        "and distance, from THIS SAME CLI's write_channel_profile_csv output). "
-        "For each cross section whose distance-from-source falls within a "
-        "reach's bounds, solves the water depth that reproduces the reach's "
-        "target discharge USING THAT CROSS SECTION'S OWN SLOPE -- discharge "
-        "and Manning's n are held constant across a reach, but slope and "
-        "channel geometry vary per cross section, so solved depth varies "
-        "along the reach.",
+        "target_discharge_m3s per reach, bounded by DISTANCE FROM SOURCE, not "
+        "cross_id). For each cross section inside a reach, solves the depth "
+        "that reproduces the reach's target discharge using THAT cross "
+        "section's own slope: discharge and n are constant across a reach, "
+        "but slope and geometry vary per section, so solved depth varies "
+        "along the reach. Only water connected to the channel is counted.",
         "Manning widths", "switch", ""};
 
     string_default_map["reach_manning_parameters_path"] = "";
     help_map["reach_manning_parameters_path"] = {"string", "",
         "CSV of reach parameters.",
         "Columns: start_distance_m,end_distance_m,manning_n,target_discharge_m3s. "
-        "Bounds are along-channel DISTANCE FROM SOURCE in metres, NOT cross_id "
-        "-- cross_id is assigned during extraction by a row-major raster scan "
-        "and has no relationship to position along the channel, so it cannot "
-        "define a contiguous stretch of channel. Slope comes from "
-        "channel_profile_csv_path instead of a column in this file.",
-        "Manning widths", "io", "calculate_manning_widths"};
+        "Bounds are along-channel distance from source in metres. Reaches are "
+        "half-open [start, end), must not overlap, and must have start < end, "
+        "manning_n > 0 and target_discharge_m3s > 0. Slope comes from the "
+        "channel profile, not this file.",
+        "Manning widths", "io", "run_manning_widths"};
 
     string_default_map["channel_profile_csv_path"] = "";
     help_map["channel_profile_csv_path"] = {"string", "",
-        "Path to the channel-profile CSV supplying per-cross-section "
-        "distance-from-source and slope.",
-        "Normally the _channel_profile.csv written by write_channel_profile_csv "
-        "in an earlier run against the SAME DEM and SAME cross-section geometry "
-        "parameters. distance_from_source_m is used to match cross sections to "
-        "reaches; slope_m_per_m is looked up per cross section, never averaged "
-        "over a reach.",
-        "Manning widths", "io", "calculate_manning_widths"};
+        "Channel-profile CSV supplying per-section distance and slope.",
+        "Only read when write_channel_profile_csv is false. Must be the "
+        "_channel_profile.csv from an earlier run against the SAME DEM and "
+        "SAME cross-section geometry parameters; otherwise cross_ids do not "
+        "correspond and results are wrong or empty (a coverage report is "
+        "printed).",
+        "Manning widths", "io", "run_manning_widths"};
+
+    float_default_map["manning_min_depth_metres"] = 0.01f;
+    help_map["manning_min_depth_metres"] = {"float", "0.01",
+        "Lower bracket of the depth solve [m].",
+        "Must be > 0 and < manning_max_depth_metres. Sections whose target "
+        "discharge lies outside the bracket are flagged "
+        "target_discharge_not_bracketed.",
+        "Manning widths", "param", "run_manning_widths"};
+
+    float_default_map["manning_max_depth_metres"] = 15.0f;
+    help_map["manning_max_depth_metres"] = {"float", "15.0",
+        "Upper bracket of the depth solve [m].",
+        "Raise for very large rivers. Must exceed manning_min_depth_metres.",
+        "Manning widths", "param", "run_manning_widths"};
+
+    float_default_map["manning_depth_tolerance_metres"] = 0.005f;
+    help_map["manning_depth_tolerance_metres"] = {"float", "0.005",
+        "Bisection depth tolerance [m].",
+        "Must be > 0. Solved depth is within about this of the exact root.",
+        "Manning widths", "param", "run_manning_widths"};
+
+    float_default_map["manning_max_discharge_relative_error"] = 0.05f;
+    help_map["manning_max_discharge_relative_error"] = {"float", "0.05",
+        "Maximum |Q_solved - Q_target| / Q_target before a section is flagged.",
+        "Above this the section gets quality_flag spill_discontinuity: the "
+        "water surface overtopped a bank crest into lower ground and no depth "
+        "reproduces the target discharge. Must be > 0.",
+        "Manning widths", "param", "run_manning_widths"};
 
     bool_default_map["write_manning_bank_points"] = true;
     help_map["write_manning_bank_points"] = {"bool", "true",
-        "Write Manning bank points as georeferenced point data.", "",
-        "Manning widths", "switch", "calculate_manning_widths"};
+        "Write Manning bank points as georeferenced points.",
+        "One point per bank per valid section. Output: "
+        "<write_fname>_manning_bank_points.fgb (or .gpkg).",
+        "Manning widths", "switch", "run_manning_widths"};
 
     string_default_map["manning_bank_points_output_format"] = "flatgeobuf";
     help_map["manning_bank_points_output_format"] = {"string", "flatgeobuf",
         "Output format for Manning bank points.",
-        "Allowed values: csv, flatgeobuf, fgb, gpkg.",
-        "Manning widths", "param", "calculate_manning_widths"};
+        "flatgeobuf / fgb / gpkg. CSV is rejected: a point CSV must carry "
+        "EPSG:4326 lat/lon, which is not implemented; use "
+        "write_manning_widths_csv for tabular output.",
+        "Manning widths", "param", "run_manning_widths"};
 
     bool_default_map["write_manning_widths_csv"] = true;
     help_map["write_manning_widths_csv"] = {"bool", "true",
-        "Write per-section Manning width diagnostics to CSV.", "",
-        "Manning widths", "switch", "calculate_manning_widths"};
+        "Write per-section Manning results to CSV.",
+        "One row per section, valid or not, with quality_flag. Output: "
+        "<write_fname>_manning_widths.csv.",
+        "Manning widths", "switch", "run_manning_widths"};
 
     if (cli_args.help_requested)
     {
@@ -316,32 +365,85 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
+    // -------------------------------------------------------------------------
+    // Cross-parameter validation (before any expensive work)
+    // -------------------------------------------------------------------------
     if (sf["source_points_path"].empty())
     {
         std::cerr << "FATAL: source_points_path must be set.\n";
         return 1;
     }
-    if (bf["calculate_manning_widths"] && sf["reach_manning_parameters_path"].empty())
-    {
-        std::cerr << "FATAL: calculate_manning_widths=true requires "
-                  << "reach_manning_parameters_path.\n";
-        return 1;
-    }
-    if (bf["calculate_manning_widths"] && sf["channel_profile_csv_path"].empty())
-    {
-        std::cerr << "FATAL: calculate_manning_widths=true requires "
-                  << "channel_profile_csv_path (per-cross-section distance "
-                  << "and slope).\n";
-        return 1;
-    }
     if (!bf["write_channel_profile_csv"] &&
         !bf["write_cross_section_sample_points"] &&
-        !bf["calculate_manning_widths"])
+        !bf["run_manning_widths"])
     {
         std::cerr << "FATAL: nothing to do -- set write_channel_profile_csv, "
-                  << "write_cross_section_sample_points, and/or "
-                  << "calculate_manning_widths.\n";
+                  << "write_cross_section_sample_points and/or "
+                  << "run_manning_widths.\n";
         return 1;
+    }
+    if (!(ff["cross_section_sample_spacing_metres"] > 0.0f))
+    {
+        std::cerr << "FATAL: cross_section_sample_spacing_metres must be > 0.\n";
+        return 1;
+    }
+    if (!(ff["cross_section_half_length_metres"] >
+          ff["cross_section_sample_spacing_metres"]))
+    {
+        std::cerr << "FATAL: cross_section_half_length_metres must be greater "
+                  << "than cross_section_sample_spacing_metres.\n";
+        return 1;
+    }
+    if (ifs["cross_section_thinning"] < 1)
+    {
+        std::cerr << "FATAL: cross_section_thinning must be >= 1.\n";
+        return 1;
+    }
+    if (!(ff["thalweg_search_half_width_metres"] > 0.0f))
+    {
+        std::cerr << "FATAL: thalweg_search_half_width_metres must be > 0.\n";
+        return 1;
+    }
+
+    if (bf["run_manning_widths"])
+    {
+        if (sf["reach_manning_parameters_path"].empty())
+        {
+            std::cerr << "FATAL: run_manning_widths=true requires "
+                      << "reach_manning_parameters_path.\n";
+            return 1;
+        }
+        if (!bf["write_channel_profile_csv"] && sf["channel_profile_csv_path"].empty())
+        {
+            std::cerr << "FATAL: run_manning_widths=true needs a channel "
+                      << "profile: either set write_channel_profile_csv=true "
+                      << "(computed in this run) or supply "
+                      << "channel_profile_csv_path.\n";
+            return 1;
+        }
+        if (!(ff["manning_min_depth_metres"] > 0.0f) ||
+            !(ff["manning_max_depth_metres"] > ff["manning_min_depth_metres"]))
+        {
+            std::cerr << "FATAL: need 0 < manning_min_depth_metres < "
+                      << "manning_max_depth_metres.\n";
+            return 1;
+        }
+        if (!(ff["manning_depth_tolerance_metres"] > 0.0f) ||
+            !(ff["manning_max_discharge_relative_error"] > 0.0f))
+        {
+            std::cerr << "FATAL: manning_depth_tolerance_metres and "
+                      << "manning_max_discharge_relative_error must be > 0.\n";
+            return 1;
+        }
+        if (bf["write_manning_bank_points"] &&
+            lsdtt::resolve_point_output_format(sf["manning_bank_points_output_format"]) ==
+                lsdtt::point_output_format::csv)
+        {
+            std::cerr << "FATAL: manning_bank_points_output_format=csv is not "
+                      << "supported. Use flatgeobuf/fgb/gpkg; the widths CSV is "
+                      << "controlled by write_manning_widths_csv.\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -366,18 +468,46 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    const double cell_size = loader.get_meta().cell_size;
+    if (bf["write_channel_profile_csv"] &&
+        static_cast<double>(ff["slope_window_half_length_metres"]) < 2.0 * cell_size)
+    {
+        std::cerr << "FATAL: slope_window_half_length_metres ("
+                  << ff["slope_window_half_length_metres"]
+                  << ") must be at least two cell sizes (" << 2.0 * cell_size
+                  << " m).\n";
+        return 1;
+    }
+
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // Convert elevations to metres. Slope (and so Manning discharge) is wrong
+    // by 3.28x for a DEM in feet, and nothing in the file records the unit.
+    try
+    {
+        dem = lsdtt::convert_vertical_units_to_metres(
+            dem, lsdtt::parse_vertical_unit(sf["vertical_units"]));
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "\nFATAL: " << e.what() << "\n";
+        return 1;
+    }
+    lsdtt::warn_if_vertically_implausible(dem, std::cout, "vertical_units");
+
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
-    // Pit fill
+    // Pit fill (boundary-condition aware: a periodic run must not be filled
+    // as if its edges were open, or routing fails at the seam)
     // -------------------------------------------------------------------------
     if (!bf["raster_is_filled"])
     {
         std::cout << "\n--- Pit filling ---\n";
         try
         {
-            routed_dem = lsdtt::fill_pits(dem, ff["fill_min_slope"], ifs["n_threads"]);
+            routed_dem = lsdtt::fill_pits(
+                dem, ff["fill_min_slope"], sf["boundary_conditions"], ifs["n_threads"]);
         }
         catch (const std::exception& e)
         {
@@ -462,9 +592,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // write_channel_profile_csv assumes a single mainstem: distance-from-
-    // source is a plain downstream walk from one source point, and cannot
-    // be defined unambiguously if the network has more than one source.
+    // Distance-from-source is a plain downstream walk from ONE source point
+    // and cannot be defined unambiguously for a multi-source network.
     if (bf["write_channel_profile_csv"] && source_flats.size() != 1)
     {
         std::cerr << "FATAL: write_channel_profile_csv=true requires exactly "
@@ -527,40 +656,62 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "Cross sections extracted: " << sections.size() << "\n";
-    if (!sections.empty())
-    {
-        std::cout << "cross_section_id range: "
-                  << sections.front().cross_section_id << " - "
-                  << sections.back().cross_section_id << "\n";
-    }
-
     if (sections.empty())
     {
         std::cerr << "FATAL: no cross sections were produced.\n";
         return 1;
     }
+    std::cout << "cross_section_id range: "
+              << sections.front().cross_section_id << " - "
+              << sections.back().cross_section_id << "\n";
 
     // -------------------------------------------------------------------------
-    // Channel profile CSV (distance from source, drainage area, thalweg
-    // elevation, slope -- single mainstem only)
+    // Channel profile
     // -------------------------------------------------------------------------
+    std::vector<lsdtt::lsdtt_channel_profile_row> profile_rows;
+    bool profile_computed_this_run = false;
+
     if (bf["write_channel_profile_csv"])
     {
         std::cout << "\n--- Computing channel profile ---\n";
-        std::cout << "Slope window radius: "
-                  << ff["slope_window_radius_metres"] << " m\n";
+        std::cout << "Slope window half-length: "
+                  << ff["slope_window_half_length_metres"] << " m (along channel)\n";
 
         try
         {
-            const std::vector<lsdtt::lsdtt_channel_profile_row> profile =
-                lsdtt::compute_channel_profile(
-                    sections, *flow, dem,
-                    ff["slope_window_radius_metres"],
-                    source_flats.front(),
-                    ifs["n_threads"]);
+            profile_rows = lsdtt::compute_channel_profile(
+                sections, *flow, routed_dem,
+                static_cast<double>(ff["slope_window_half_length_metres"]),
+                source_flats.front(),
+                static_cast<double>(ff["thalweg_search_half_width_metres"]));
+            profile_computed_this_run = true;
+
+            std::size_t n_slope_valid = 0;
+            std::size_t n_near_imposed = 0;
+            for (const auto& r : profile_rows)
+            {
+                if (!r.slope_valid) continue;
+                ++n_slope_valid;
+                if (r.slope_m_per_m < 10.0 * static_cast<double>(ff["fill_min_slope"]))
+                    ++n_near_imposed;
+            }
+            std::cout << "Cross sections with valid slope: " << n_slope_valid
+                      << " of " << profile_rows.size() << "\n";
+
+            if (!bf["raster_is_filled"] && n_near_imposed > 0)
+            {
+                std::cerr << "WARNING: " << n_near_imposed << " section(s) have "
+                          << "fitted slope below 10 x fill_min_slope ("
+                          << 10.0 * static_cast<double>(ff["fill_min_slope"])
+                          << "). Pit filling imposes fill_min_slope on flats, so "
+                          << "on these low-gradient reaches the slope (and "
+                          << "Manning discharge, which scales as sqrt(slope)) is "
+                          << "materially set by the fill. Reduce fill_min_slope "
+                          << "or supply a pre-filled DEM.\n";
+            }
 
             const std::string out_path = pp.make_output_path("_channel_profile", ".csv");
-            lsdtt::write_channel_profile_csv(profile, out_path);
+            lsdtt::write_channel_profile_csv(profile_rows, out_path);
             std::cout << "Wrote: " << out_path << "\n";
         }
         catch (const std::exception& e)
@@ -571,7 +722,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Cross-section sample points (FORCED FlatGeobuf / vector output)
+    // Cross-section sample points
     // -------------------------------------------------------------------------
     if (bf["write_cross_section_sample_points"])
     {
@@ -583,8 +734,8 @@ int main(int argc, char* argv[])
 
         if (sample_points_format == lsdtt::point_output_format::csv)
         {
-            std::cerr << "FATAL: cross_section_sample_points_output_format=csv is not allowed. "
-                         "Use fgb/flatgeobuf (or gpkg).\n";
+            std::cerr << "FATAL: cross_section_sample_points_output_format=csv is "
+                         "not allowed. Use fgb/flatgeobuf (or gpkg).\n";
             return 1;
         }
 
@@ -613,18 +764,29 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Manning widths
     // -------------------------------------------------------------------------
-    if (bf["calculate_manning_widths"])
+    if (bf["run_manning_widths"])
     {
         std::cout << "\n--- Manning's equation widths ---\n";
         std::cout << "Reach parameters : " << sf["reach_manning_parameters_path"] << "\n";
-        std::cout << "Channel profile  : " << sf["channel_profile_csv_path"] << "\n";
 
         std::vector<lsdtt::lsdtt_manning_reach> reaches;
         lsdtt::lsdtt_channel_profile_lookup profile;
         try
         {
             reaches = lsdtt::read_manning_reaches_csv(sf["reach_manning_parameters_path"]);
-            profile = lsdtt::read_channel_profile_csv(sf["channel_profile_csv_path"]);
+            lsdtt::validate_manning_reaches(reaches);
+
+            if (profile_computed_this_run)
+            {
+                std::cout << "Channel profile  : computed in this run "
+                          << "(channel_profile_csv_path ignored)\n";
+                profile = lsdtt::make_channel_profile_lookup(profile_rows);
+            }
+            else
+            {
+                std::cout << "Channel profile  : " << sf["channel_profile_csv_path"] << "\n";
+                profile = lsdtt::read_channel_profile_csv(sf["channel_profile_csv_path"]);
+            }
         }
         catch (const std::exception& e)
         {
@@ -637,8 +799,43 @@ int main(int argc, char* argv[])
         std::cout << "Cross sections with slope in profile    : "
                   << profile.slope_by_cross_id.size() << "\n";
 
-        const std::vector<lsdtt::lsdtt_manning_width_record> manning_results =
-            lsdtt::compute_manning_widths_all_reaches(sections, reaches, profile);
+        const lsdtt::lsdtt_manning_profile_coverage coverage =
+            lsdtt::compute_manning_profile_coverage(sections, profile);
+        std::cout << "Sections not in profile (skipped)       : "
+                  << coverage.n_missing_distance << " of " << coverage.n_sections << "\n";
+        std::cout << "Sections with no valid slope (flagged)  : "
+                  << coverage.n_missing_slope << "\n";
+        if (coverage.n_missing_distance > 0)
+        {
+            std::cerr << "WARNING: " << coverage.n_missing_distance << " of "
+                      << coverage.n_sections << " extracted sections are absent "
+                      << "from the channel profile and are skipped silently by "
+                      << "the solve. If this is most of them, the profile is "
+                      << "from a different run: cross_section_id numbering "
+                      << "depends on the DEM and every cross-section geometry "
+                      << "parameter.\n";
+        }
+
+        lsdtt::lsdtt_manning_solver_options solver_opts;
+        solver_opts.min_depth_m       = static_cast<double>(ff["manning_min_depth_metres"]);
+        solver_opts.max_depth_m       = static_cast<double>(ff["manning_max_depth_metres"]);
+        solver_opts.depth_tolerance_m = static_cast<double>(ff["manning_depth_tolerance_metres"]);
+        solver_opts.thalweg_search_half_width_m =
+            static_cast<double>(ff["thalweg_search_half_width_metres"]);
+        solver_opts.max_discharge_relative_error =
+            static_cast<double>(ff["manning_max_discharge_relative_error"]);
+
+        std::vector<lsdtt::lsdtt_manning_width_record> manning_results;
+        try
+        {
+            manning_results = lsdtt::compute_manning_widths_all_reaches(
+                sections, reaches, profile, solver_opts);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: Manning solve failed: " << e.what() << "\n";
+            return 1;
+        }
 
         std::size_t n_valid = 0;
         for (const auto& r : manning_results) if (r.valid) ++n_valid;
@@ -646,15 +843,20 @@ int main(int argc, char* argv[])
         std::cout << "Manning widths: " << n_valid << " valid out of "
                   << manning_results.size() << " sections matched to a reach by distance.\n";
 
+        {
+            std::map<std::string, std::size_t> flag_counts;
+            for (const auto& r : manning_results) ++flag_counts[r.quality_flag];
+            std::cout << "Quality flags:\n";
+            for (const auto& kv : flag_counts)
+                std::cout << "  " << kv.first << ": " << kv.second << "\n";
+        }
+
         if (manning_results.empty())
         {
             std::cerr << "WARNING: 0 sections matched any reach's distance range. "
-                      << "Check reach_manning_parameters_path's start_distance_m/"
-                      << "end_distance_m values fall within the channel_profile_csv_path "
-                      << "run's distance_from_source_m range, and that both were built "
-                      << "from a channel_profile / sample_points run with IDENTICAL "
-                      << "cross-section geometry parameters (half_length, spacing, "
-                      << "bearing_window, thinning) to this run.\n";
+                      << "Check that reach start_distance_m/end_distance_m fall "
+                      << "within the profile's distance_from_source_m range (reaches "
+                      << "are half-open [start, end)).\n";
         }
 
         if (bf["write_manning_bank_points"])
@@ -662,18 +864,11 @@ int main(int argc, char* argv[])
             const lsdtt::point_output_format manning_points_format =
                 lsdtt::resolve_point_output_format(sf["manning_bank_points_output_format"]);
 
-            std::string output_file;
-            if (manning_points_format == lsdtt::point_output_format::csv)
-            {
-                output_file = pp.make_output_path("_manning_bank_points", ".csv");
-            }
-            else
-            {
-                const std::string extension =
-                    lsdtt::output_extension(
-                        lsdtt::convert_point_to_vector_output_format(manning_points_format));
-                output_file = pp.make_output_path("_manning_bank_points", extension);
-            }
+            const std::string extension =
+                lsdtt::output_extension(
+                    lsdtt::convert_point_to_vector_output_format(manning_points_format));
+            const std::string output_file =
+                pp.make_output_path("_manning_bank_points", extension);
 
             std::cout << "Writing: " << output_file << "\n";
             try
@@ -695,7 +890,8 @@ int main(int argc, char* argv[])
             const std::string csv_path = pp.make_output_path("_manning_widths", ".csv");
             try
             {
-                const std::size_t n_csv_valid = lsdtt::write_manning_widths_csv(manning_results, csv_path);
+                const std::size_t n_csv_valid =
+                    lsdtt::write_manning_widths_csv(manning_results, csv_path);
                 std::cout << "Wrote " << manning_results.size() << " rows ("
                           << n_csv_valid << " valid) to: " << csv_path << "\n";
             }
@@ -707,6 +903,7 @@ int main(int argc, char* argv[])
         }
     }
 
+    pp.print_help(help_map, pp.get_write_fname() + "_README", k_version, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-bankfull-width: done.\n";
     return 0;
