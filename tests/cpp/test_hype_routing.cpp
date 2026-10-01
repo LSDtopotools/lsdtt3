@@ -18,6 +18,11 @@
 //   * the translation queue delays by the integer part and splits by the
 //     fractional part, and conserves volume;
 //   * a zero-length river passes flow straight on.
+// Ring-buffer checks (WP7 B5): the ring-buffer translation queue gives
+// bitwise-identical outflow and in-transit volume to a reference copy of the
+// former shifting implementation (HYPE's qqueue shift, sw_proc.f90:1278), for
+// several translation times, over more steps than the buffer length; and it
+// conserves volume across the ring wrap-around.
 // Oracle checks: the `routing` case (cout, cloc, crun for two sub-basins in
 // series) and `default_all` (cout, crun), with the HYPE column producing the
 // runoff. Tolerance as in unit_hype_column: 5e-4 + 2e-5 x |value|.
@@ -25,7 +30,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -119,6 +126,114 @@ void analytic_checks()
         lsdtt::hype_river r = lsdtt::make_hype_river(0.0, 1.0, 0.5, k_day);
         check(lsdtt::hype_river_step(r, 3.5, k_day) == 3.5, "zero-length river passes flow on");
     }
+}
+
+// Reference copy of the former shifting translation queue (Stage A code
+// before WP7 B5), kept to check the ring buffer against. qqueue(0:y+1) is
+// stored directly, and shifted every step as HYPE does (sw_proc.f90:1278).
+double reference_shift_translate(std::vector<double>& queue, const lsdtt::hype_river& r,
+                                 double qin_m3s, double dt_seconds)
+{
+    queue[0] = qin_m3s * dt_seconds;
+    if (r.transtime > 0.0)
+    {
+        const std::size_t y = static_cast<std::size_t>(r.ttstep);
+        const double x = r.ttpart;
+        double qout = (1.0 - x) * queue[y] + x * queue[y + 1];
+        qout = qout / dt_seconds;
+        for (std::size_t k = y + 1; k >= 1; --k) queue[k] = queue[k - 1];
+        return qout;
+    }
+    return qin_m3s;
+}
+
+double reference_shift_in_transit(const std::vector<double>& queue, const lsdtt::hype_river& r)
+{
+    double v = 0.0;
+    if (r.length_m > 0.0 && r.transtime > 0.0)
+    {
+        const std::size_t y = static_cast<std::size_t>(r.ttstep);
+        for (std::size_t k = 1; k <= y; ++k) v += queue[k];
+        v += queue[y + 1] * r.ttpart;
+    }
+    return v;
+}
+
+bool bitwise_equal(double a, double b)
+{
+    std::uint64_t ua = 0, ub = 0;
+    std::memcpy(&ua, &a, sizeof a);
+    std::memcpy(&ub, &b, sizeof b);
+    return ua == ub;
+}
+
+// Irregular inflow [m3/s]: runs of zeros, small and large values, from a
+// fixed linear congruential generator so the series is the same every run.
+std::vector<double> irregular_inflow(std::size_t n)
+{
+    std::vector<double> q(n, 0.0);
+    std::uint64_t state = 0x2545F4914F6CDD1DULL;
+    for (std::size_t t = 0; t < n; ++t)
+    {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        const double u = static_cast<double>(state >> 11) * (1.0 / 9007199254740992.0);   // [0,1)
+        if (u < 0.25)       q[t] = 0.0;
+        else if (u < 0.6)   q[t] = u * 1.0e-3;
+        else if (u < 0.95)  q[t] = u * 37.3;
+        else                q[t] = u * 4.1e4;
+    }
+    return q;
+}
+
+void ring_buffer_checks()
+{
+    std::cout << "\n--- ring-buffer translation queue (WP7 B5) ---\n";
+    const std::size_t n_steps = 2000;
+    const std::vector<double> qin = irregular_inflow(n_steps);
+
+    struct tcase { const char* name; double transtime; double damp; };
+    // transtime in steps: L = transtime * v * dt with v = 1 m/s, damp = 0
+    // (all translation). The zero case uses damp = 1 on a non-zero length.
+    const tcase cases[] = {
+        {"transtime 0",           1.0,   1.0},
+        {"transtime 3 (integer)", 3.0,   0.0},
+        {"transtime 0.4",         0.4,   0.0},
+        {"transtime 2.7",         2.7,   0.0},
+        {"transtime 10.3",        10.3,  0.0},
+        {"transtime 9.6, damp",   12.0,  0.2},
+    };
+    std::size_t total_compared = 0;
+    for (const auto& c : cases)
+    {
+        const double L = c.transtime * 1.0 * k_day;
+        lsdtt::hype_river r = lsdtt::make_hype_river(L, 1.0, c.damp, k_day);
+        std::vector<double> ref_queue(static_cast<std::size_t>(r.ttstep) + 2, 0.0);
+        std::size_t n_out_diff = 0, n_vol_diff = 0;
+        double vin = 0.0, vout = 0.0, worst_bal = 0.0;
+        for (std::size_t t = 0; t < n_steps; ++t)
+        {
+            const double q_ref = reference_shift_translate(ref_queue, r, qin[t], k_day);
+            const double q_new = lsdtt::hype_river_translate(r, qin[t], k_day);
+            if (!bitwise_equal(q_ref, q_new)) ++n_out_diff;
+            const double v_ref = reference_shift_in_transit(ref_queue, r);
+            const double v_new = lsdtt::hype_river_in_transit_m3(r);
+            if (!bitwise_equal(v_ref, v_new)) ++n_vol_diff;
+            // Volume conservation: in = out + in transit, across the wrap.
+            vin  += qin[t] * k_day;
+            vout += q_new * k_day;
+            const double bal = std::fabs(vin - vout - v_new) / std::max(1.0, vin);
+            worst_bal = std::max(worst_bal, bal);
+        }
+        total_compared += n_steps;
+        std::printf("  %-22s ttstep %2d ttpart %.3f buffer %2zu: outflow diffs %zu, in-transit diffs %zu"
+                    " over %zu steps; max |in-out-transit|/in %.3e\n",
+                    c.name, r.ttstep, r.ttpart, r.queue.size(), n_out_diff, n_vol_diff, n_steps, worst_bal);
+        check(n_out_diff == 0, std::string(c.name) + ": outflow bitwise equal to the shifting queue");
+        check(n_vol_diff == 0, std::string(c.name) + ": in-transit volume bitwise equal to the shifting queue");
+        check(n_steps > r.queue.size(), std::string(c.name) + ": run wraps the ring buffer");
+        check(worst_bal < 1e-12, std::string(c.name) + ": volume conserved across the ring wrap-around");
+    }
+    std::printf("  compared %zu steps over %zu cases\n", total_compared, sizeof(cases) / sizeof(cases[0]));
 }
 
 void run_case(const std::string& oracle_dir, const std::string& name,
@@ -240,6 +355,7 @@ int main(int argc, char* argv[])
     try
     {
         analytic_checks();
+        ring_buffer_checks();
         run_case(argv[1], "routing", {"cout", "cloc", "crun"});
         run_case(argv[1], "default_all", {"cout", "crun"});
     }

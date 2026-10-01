@@ -21,11 +21,16 @@
 //     unit (HYPE PET option 0); actual ET still needs temperature above ttmp
 //     and never exceeds it.
 //   * A non-daily timestep is rejected.
+//   * Balance tracking off (WP7 B1): flows and unit states bitwise identical
+//     to tracking on; storage terms NaN, cumulative fluxes still kept.
+//   * A column failure inside the parallel land loop (WP7 B2) comes out of
+//     step() as an exception, at 1 thread and at the maximum thread count.
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -37,6 +42,10 @@
 #include "../../src/core/lsdtt_distributed_hydrology_forcing.hpp"
 #include "../../src/cpu/lsdtt_hype_model_cpu.hpp"
 #include "../../src/cpu/lsdtt_hype_parameters.hpp"
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace
 {
@@ -210,6 +219,123 @@ void observed_pet_checks(const std::string& oracle)
     check(same, "NaN observed PET gives exactly the calculated-PET run");
 }
 
+bool same_bits(double a, double b) { return std::memcmp(&a, &b, sizeof(double)) == 0; }
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() &&
+           (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0);
+}
+
+bool same_state(const lsdtt::hype_unit_state& a, const lsdtt::hype_unit_state& b)
+{
+    return same_bits(a.snow_mm, b.snow_mm) && same_bits(a.snowliq_mm, b.snowliq_mm) &&
+           same_bits(a.water_mm[0], b.water_mm[0]) && same_bits(a.water_mm[1], b.water_mm[1]) &&
+           same_bits(a.water_mm[2], b.water_mm[2]);
+}
+
+// WP7 B1: switching the balance off skips only the storage pass.
+void balance_off_checks(const std::string& oracle)
+{
+    std::cout << "\n--- balance tracking off ---\n";
+    const std::string in = oracle + "/default_all/lsdtt_input";
+    const auto setup = lsdtt::load_hype_setup_directory(in);
+    const forcing_series fs = load_forcing(in);
+    lsdtt::lsdtt_hype_model_cpu on(setup);
+    lsdtt::lsdtt_hype_model_cpu off(setup, 86400.0, false);
+    check(on.balance_tracked() && !off.balance_tracked(), "balance_tracked() reports the constructor flag");
+
+    bool flows_same = true, states_same = true, fluxes_same = true;
+    for (std::size_t t = 0; t < fs.prec_mm.size(); ++t)
+    {
+        on.step(fs.prec_mm[t], fs.temp_c[t], fs.doy[t]);
+        off.step(fs.prec_mm[t], fs.temp_c[t], fs.doy[t]);
+        if (!same_bits(on.runoff_mm(), off.runoff_mm()) ||
+            !same_bits(on.local_outflow_m3s(), off.local_outflow_m3s()) ||
+            !same_bits(on.outflow_m3s(), off.outflow_m3s())) flows_same = false;
+        for (std::size_t k = 0; k < on.units().size(); ++k)
+        {
+            const auto& a = on.units()[k];
+            const auto& b = off.units()[k];
+            if (!same_state(a.state, b.state)) states_same = false;
+            if (!same_bits(a.fluxes.runoff_mm, b.fluxes.runoff_mm) ||
+                !same_bits(a.fluxes.evap_mm, b.fluxes.evap_mm) ||
+                !same_bits(a.fluxes.class_precipitation_mm, b.fluxes.class_precipitation_mm)) fluxes_same = false;
+        }
+    }
+    check(flows_same, "tracking off: sub-basin runoff, local outflow and outflow bitwise identical, every step");
+    check(states_same, "tracking off: every unit state bitwise identical, every step");
+    check(fluxes_same, "tracking off: unit runoff, evaporation and precipitation bitwise identical, every step");
+
+    const auto& bo = on.balance();
+    const auto& bf = off.balance();
+    check(bo.storage_tracked && !bf.storage_tracked, "storage_tracked follows the flag");
+    check(same_bits(bo.precipitation_m3, bf.precipitation_m3) && same_bits(bo.evaporation_m3, bf.evaporation_m3) &&
+          same_bits(bo.outflow_m3, bf.outflow_m3),
+          "tracking off: cumulative precipitation, evaporation and outflow bitwise identical");
+    check(std::isnan(bf.storage_start_m3) && std::isnan(bf.storage_m3) && std::isnan(bf.closure_error_m3()),
+          "tracking off: storage terms and closure error are NaN");
+    check(std::isfinite(bo.closure_error_m3()), "tracking on: closure error is finite");
+    check(same_bits(on.storage_m3(), off.storage_m3()), "storage_m3() on request is the same with tracking off");
+}
+
+// WP7 B2: an exception thrown by a unit inside the parallel land loop must
+// leave step() as an exception (escaping an OpenMP region would terminate),
+// and the reported failure must be the lowest-index failing unit at any
+// thread count. Validation leaves no input that makes the column fail, so the
+// model's test hook makes every unit from index k_first upward throw; with
+// many failing units spread over the threads, the report must still name
+// unit k_first.
+void parallel_throw_checks(const std::string& oracle)
+{
+    std::cout << "\n--- exception from the parallel land loop ---\n";
+    const std::string in = oracle + "/default_all/lsdtt_input";
+    const auto setup = lsdtt::load_hype_setup_directory(in);
+    const forcing_series fs = load_forcing(in);
+
+    auto run = [&](int n_threads, std::size_t first, std::string& message) -> bool
+    {
+#ifdef _OPENMP
+        omp_set_num_threads(n_threads);
+#else
+        (void)n_threads;
+#endif
+        lsdtt::lsdtt_hype_model_cpu model(setup);
+        model.step(fs.prec_mm[0], fs.temp_c[0], fs.doy[0]);           // one clean step
+        model.inject_failure_from_unit_for_testing(first);
+        try
+        {
+            model.step(fs.prec_mm[1], fs.temp_c[1], fs.doy[1]);
+        }
+        catch (const std::runtime_error& e)
+        {
+            message = e.what();
+            return true;
+        }
+        return false;
+    };
+
+#ifdef _OPENMP
+    const int n_max = std::max(2, omp_get_max_threads());
+#else
+    const int n_max = 1;
+#endif
+    const std::size_t first = 1;   // default_all has 6 units; units 1..5 all throw
+    std::string msg_one, msg_many;
+    const bool threw_one  = run(1, first, msg_one);
+    const bool threw_many = run(n_max, first, msg_many);
+#ifdef _OPENMP
+    omp_set_num_threads(n_max);
+#endif
+    std::cout << "  " << n_max << " threads: " << msg_many << "\n";
+    const std::string want = "injected test failure in unit " + std::to_string(first);
+    check(threw_one, "a unit failure propagates out of step() as std::runtime_error at 1 thread");
+    check(threw_many, "a unit failure propagates out of step() as std::runtime_error at " +
+                          std::to_string(n_max) + " threads");
+    check(msg_many.find(want) != std::string::npos && msg_one == msg_many,
+          "the lowest-index failing unit is reported, the same at 1 and " + std::to_string(n_max) + " threads");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -227,6 +353,8 @@ int main(int argc, char* argv[])
                  {"cout", "crun"});
         run_case(oracle, "routing", {}, {"cout", "cloc", "crun"});
         observed_pet_checks(oracle);
+        balance_off_checks(oracle);
+        parallel_throw_checks(oracle);
 
         bool threw = false;
         try { lsdtt::lsdtt_hype_model_cpu m(lsdtt::load_hype_setup_directory(oracle + "/routing/lsdtt_input"), 3600.0); }

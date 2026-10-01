@@ -55,7 +55,12 @@ struct hype_river
     double r2         = 1.0;   // damping coefficient on the stored volume
     double dead_m3    = 0.0;   // dead volume never released
     double water_m3   = 0.0;   // damping-box volume
-    std::vector<double> queue; // queue[0..ttstep+1], volumes per step [m3]
+    // Translation queue: HYPE's qqueue(0:ttstep+1), volumes per step [m3],
+    // stored as a ring buffer of ttstep+2 slots. HYPE's logical slot j sits at
+    // queue[(head + j) % queue.size()]; slot 0 is this step's inflow. Read
+    // the queue through hype_river_in_transit_m3, not directly.
+    std::vector<double> queue;
+    std::size_t         head = 0;  // physical index of logical slot 0
 };
 
 // Build a river (model_hype.f90:1265-1306). rivvel [m/s], damp [-],
@@ -70,6 +75,11 @@ struct hype_river
 // One step of a river: translation then damping. Returns the outflow [m3/s].
 // A river of zero length passes its inflow straight on (model_hype.f90:6747).
 [[nodiscard]] double hype_river_step(hype_river& r, double qin_m3s, double dt_seconds);
+
+// Water in transit in the translation queue [m3]: the volume that has entered
+// and not yet left the delay (model_hype.f90:1424, the queue part of HYPE's
+// river volume). Owned here so the queue layout stays private to routing.
+[[nodiscard]] double hype_river_in_transit_m3(const hype_river& r) noexcept;
 
 // The two rivers of every sub-basin and how they connect.
 struct hype_river_network

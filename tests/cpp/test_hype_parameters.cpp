@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -533,6 +534,37 @@ void test_in_memory_validation(const fs::path& oracle)
 
 } // namespace
 
+
+// Parameter ranges (validate_hype_setup): values HYPE would clamp or that make
+// the column fail are rejected, naming the table and column.
+void parameter_range_checks(const fs::path& oracle_dir)
+{
+    std::cout << "\n--- parameter ranges ---\n";
+    const auto base = lsdtt::load_hype_setup_directory((oracle_dir / "default_all" / "lsdtt_input").string());
+    auto expect_reject = [&](const std::string& what, const std::function<void(lsdtt::hype_setup&)>& mutate,
+                             const std::string& needle)
+    {
+        lsdtt::hype_setup s = base;
+        mutate(s);
+        std::string msg;
+        bool threw = false;
+        try { lsdtt::validate_hype_setup(s); }
+        catch (const std::invalid_argument& e) { threw = true; msg = e.what(); }
+        check("range: rejects " + what, threw && msg.find(needle) != std::string::npos, msg);
+    };
+    expect_reject("negative srrcs", [](auto& s) { s.landuse[0].srrcs = -10.0; }, "srrcs");
+    expect_reject("pcluse > 1", [](auto& s) { s.landuse[0].pcluse = 1.5; }, "pcluse");
+    expect_reject("negative wcwp", [](auto& s) { s.soils[0].wcwp = -0.1; }, "wcwp");
+    expect_reject("negative mperc1", [](auto& s) { s.soils[0].mperc1 = -1.0; }, "mperc1");
+    expect_reject("wcwp+wcfc+wcep > 1", [](auto& s) { s.soils[0].wcep = 0.9; }, "wcwp+wcfc+wcep");
+    expect_reject("damp > 1", [](auto& s) { s.general.damp = 1.2; }, "damp");
+    expect_reject("whcsnow = 1", [](auto& s) { s.general.whcsnow = 1.0; }, "whcsnow");
+    expect_reject("negative rivvel", [](auto& s) { s.general.rivvel = -0.5; }, "rivvel");
+    bool ok = true;
+    try { lsdtt::validate_hype_setup(base); } catch (...) { ok = false; }
+    check("range: the unmodified default_all set-up still validates", ok);
+}
+
 int main(int argc, char** argv)
 {
     std::cout << "lsdtt-test-hype-parameters\n"
@@ -553,6 +585,7 @@ int main(int argc, char** argv)
         test_downstream_order();
         test_rejections(oracle, out);
         test_in_memory_validation(oracle);
+        parameter_range_checks(oracle);
     }
     catch (const std::exception& e)
     {

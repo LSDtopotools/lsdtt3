@@ -2518,6 +2518,18 @@ add_test(NAME unit_hype_raster_setup
          COMMAND lsdtt-test-hype-raster-setup "${CMAKE_CURRENT_BINARY_DIR}/hype_raster_setup_output")
 lsdtt_set_tests_properties(unit_hype_raster_setup PROPERTIES LABELS "unit;distributed_hydrology")
 
+# HYPE thread-count invariance (plan_potential_shype_port.md 7.7.2): 1 thread
+# vs N threads must be bitwise identical. Guards the Stage B parallel steps.
+add_executable(lsdtt-test-hype-thread-invariance cpp/test_hype_thread_invariance.cpp)
+target_link_libraries(lsdtt-test-hype-thread-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_thread_invariance COMMAND lsdtt-test-hype-thread-invariance)
+lsdtt_set_tests_properties(unit_hype_thread_invariance PROPERTIES LABELS "unit;distributed_hydrology")
+
+# HYPE timing harness (plan_potential_shype_port.md 7.7.1). Built always so it
+# can be run by hand; registered only under LSDTT_ENABLE_PERF_TESTS below.
+add_executable(lsdtt-test-hype-performance cpp/test_hype_performance.cpp)
+target_link_libraries(lsdtt-test-hype-performance PRIVATE lsdtt3_cpu)
+
 add_executable(lsdtt-test-subbasin-partition cpp/test_subbasin_partition.cpp)
 target_link_libraries(lsdtt-test-subbasin-partition PRIVATE lsdtt3_cpu)
 add_test(NAME unit_subbasin_partition COMMAND lsdtt-test-subbasin-partition)
@@ -4111,6 +4123,17 @@ if(LSDTT_ENABLE_PERF_TESTS)
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --performance)
     lsdtt_set_tests_properties(perf_cosmo_lsdn_production
         PROPERTIES LABELS "performance;cosmo" TIMEOUT 1800)
+
+    # HYPE model timing (plan_potential_shype_port.md 7.7.1): set-up, per-step
+    # and per-unit-step cost, phase split, peak RSS on synthetic in-memory
+    # workloads. REPORTED, NEVER ASSERTED -- fails only on a water-balance or
+    # non-finite-flow error. --quick runs the small workload only; run the
+    # binary directly, without --quick, for the three-size baseline.
+    add_test(NAME performance_hype_model
+             COMMAND lsdtt-test-hype-performance
+                     ${CMAKE_CURRENT_BINARY_DIR}/perf_output --quick)
+    lsdtt_set_tests_properties(performance_hype_model
+        PROPERTIES LABELS "performance;distributed_hydrology" TIMEOUT 1800)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/perf_output)
 endif()

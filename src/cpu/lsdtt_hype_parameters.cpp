@@ -607,6 +607,46 @@ void validate_hype_setup(const hype_setup& s)
     validate_subbasins_table(s.subbasins, subbasin_label);
     validate_subbasin_classes_table(s.subbasin_classes, sc_label);
 
+    // Parameter ranges. HYPE itself clamps or silently misbehaves on some of
+    // these (e.g. a negative srrcs makes the saturation-excess term remove
+    // more water than layer 1 holds, and the column stops); reject them here.
+    const std::string general_label = table_label(s, "general_parameters.csv");
+    auto require = [](bool ok, const std::string& where, const std::string& what) {
+        if (!ok) throw std::invalid_argument(where + what);
+    };
+    auto general_at = [&](const char* name) { return general_label + ", parameter \"" + std::string(name) + "\": "; };
+    const hype_general_parameters& g = s.general;
+    require(g.ttpi >= 0.0, general_at("ttpi"), "must be >= 0, got " + num(g.ttpi));
+    require(g.lp >= 0.0, general_at("lp"), "must be >= 0, got " + num(g.lp));
+    require(g.epotdist >= 0.0, general_at("epotdist"), "must be >= 0, got " + num(g.epotdist));
+    require(g.fsceff >= 0.0 && g.fsceff <= 1.0, general_at("fsceff"), "must be in [0, 1], got " + num(g.fsceff));
+    require(g.whcsnow >= 0.0 && g.whcsnow < 1.0, general_at("whcsnow"), "must be in [0, 1), got " + num(g.whcsnow));
+    require(g.rrcs3 >= 0.0, general_at("rrcs3"), "must be >= 0, got " + num(g.rrcs3));
+    require(g.rivvel >= 0.0, general_at("rivvel"), "must be >= 0, got " + num(g.rivvel));
+    require(g.damp >= 0.0 && g.damp <= 1.0, general_at("damp"), "must be in [0, 1], got " + num(g.damp));
+    for (std::size_t i = 0; i < s.landuse.size(); ++i)
+    {
+        const hype_landuse_parameters& l = s.landuse[i];
+        require(l.cmlt >= 0.0, at(landuse_label, i + 1, "cmlt"), "must be >= 0, got " + num(l.cmlt));
+        require(l.cevp >= 0.0, at(landuse_label, i + 1, "cevp"), "must be >= 0, got " + num(l.cevp));
+        require(l.srrcs >= 0.0, at(landuse_label, i + 1, "srrcs"), "must be >= 0, got " + num(l.srrcs));
+        require(l.pcluse >= 0.0 && l.pcluse <= 1.0, at(landuse_label, i + 1, "pcluse"),
+                "must be in [0, 1], got " + num(l.pcluse));
+    }
+    for (std::size_t i = 0; i < s.soils.size(); ++i)
+    {
+        const hype_soil_parameters& o = s.soils[i];
+        const std::pair<const char*, double> nonneg[] = {
+            {"wcwp", o.wcwp}, {"wcfc", o.wcfc}, {"wcep", o.wcep}, {"rrcs1", o.rrcs1}, {"rrcs2", o.rrcs2},
+            {"mperc1", o.mperc1}, {"mperc2", o.mperc2}, {"macrate", o.macrate}, {"srrate", o.srrate},
+            {"mactrinf", o.mactrinf}, {"mactrsm", o.mactrsm}};
+        for (const auto& [name, v] : nonneg)
+            require(v >= 0.0, at(soil_label, i + 1, name), "must be >= 0, got " + num(v));
+        const double porosity = o.wcwp + o.wcfc + o.wcep;
+        require(porosity <= 1.0, at(soil_label, i + 1, "wcwp+wcfc+wcep"),
+                "the stacked volume fractions sum to " + num(porosity) + "; they cannot exceed 1");
+    }
+
     // Classes -> land use and soil.
     std::unordered_set<int> landuse_codes, soil_codes, class_ids;
     for (const auto& lu : s.landuse) landuse_codes.insert(lu.code);

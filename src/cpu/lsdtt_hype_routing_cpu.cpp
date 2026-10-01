@@ -78,19 +78,53 @@ hype_river make_hype_river(double length_m, double rivvel, double damp,
 double hype_river_translate(hype_river& r, double qin_m3s, double dt_seconds)
 {
     // translation_in_river (sw_proc.f90:1237)
-    r.queue[0] = qin_m3s * dt_seconds;
+    //
+    // Ring buffer: HYPE's qqueue(j) is r.queue[(r.head + j) % n], n = ttstep+2.
+    // HYPE's per-step shift qqueue(1:y+1) = qqueue(0:y) (:1278) moves every
+    // logical slot up by one; here it is a decrement of the head, O(1) instead
+    // of O(n). The slot that wraps round to the new logical 0 holds the old
+    // qqueue(y+1), where HYPE would keep the old qqueue(0); either way it is
+    // overwritten by the next step's inflow before it is read, so the values
+    // read (slots 1..y+1) and the arithmetic on them are unchanged.
+    const std::size_t n = r.queue.size();
+    r.queue[r.head] = qin_m3s * dt_seconds;                  // qqueue(0)
     if (r.transtime > 0.0)
     {
         const std::size_t y = static_cast<std::size_t>(r.ttstep);
         const double x = r.ttpart;
-        double qout = (1.0 - x) * r.queue[y] + x * r.queue[y + 1];   // (:1268)
+        std::size_t py  = r.head + y;                        // physical slot of qqueue(y)
+        if (py >= n) py -= n;
+        std::size_t py1 = py + 1;                            // physical slot of qqueue(y+1)
+        if (py1 >= n) py1 -= n;
+        double qout = (1.0 - x) * r.queue[py] + x * r.queue[py1];   // (:1268)
         qout = qout / dt_seconds;
-        // queue(1:y+1) = queue(0:y): the right-hand side is evaluated first in
-        // Fortran, so shift from the top down.
-        for (std::size_t k = y + 1; k >= 1; --k) r.queue[k] = r.queue[k - 1];
+        // queue(1:y+1) = queue(0:y) (:1278), as a head decrement.
+        r.head = (r.head == 0) ? n - 1 : r.head - 1;
         return qout;
     }
     return qin_m3s;
+}
+
+double hype_river_in_transit_m3(const hype_river& r) noexcept
+{
+    // model_hype.f90:1424: SUM(qqueue(1:ttstep)) + qqueue(ttstep+1)*ttpart,
+    // summed in HYPE's logical order (k = 1..ttstep ascending, then the
+    // partial slot) through the ring-buffer mapping (see hype_river_translate).
+    double v = 0.0;
+    if (r.length_m > 0.0 && r.transtime > 0.0)
+    {
+        const std::size_t n = r.queue.size();
+        const std::size_t y = static_cast<std::size_t>(r.ttstep);
+        std::size_t p = r.head;                              // logical slot 0
+        for (std::size_t k = 1; k <= y; ++k)
+        {
+            if (++p == n) p = 0;                             // logical slot k
+            v += r.queue[p];
+        }
+        if (++p == n) p = 0;                                 // logical slot y+1
+        v += r.queue[p] * r.ttpart;
+    }
+    return v;
 }
 
 double hype_river_step(hype_river& r, double qin_m3s, double dt_seconds)

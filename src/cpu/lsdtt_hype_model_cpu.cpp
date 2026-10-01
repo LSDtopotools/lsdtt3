@@ -11,6 +11,9 @@
 
 #include "lsdtt_hype_model_cpu.hpp"
 
+#include <cstdint>
+#include <exception>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -20,19 +23,13 @@ namespace lsdtt
 
 double hype_river_volume_m3(const hype_river& r) noexcept
 {
-    // model_hype.f90:1424: water + SUM(qqueue(1:ttstep)) + qqueue(ttstep+1)*ttpart
-    double v = r.water_m3;
-    if (r.length_m > 0.0 && r.transtime > 0.0)
-    {
-        const std::size_t y = static_cast<std::size_t>(r.ttstep);
-        for (std::size_t k = 1; k <= y; ++k) v += r.queue[k];
-        v += r.queue[y + 1] * r.ttpart;
-    }
-    return v;
+    // model_hype.f90:1424: damping box + water in transit in the queue
+    return r.water_m3 + hype_river_in_transit_m3(r);
 }
 
-lsdtt_hype_model_cpu::lsdtt_hype_model_cpu(const hype_setup& setup, double dt_seconds)
-    : general_(setup.general), dt_seconds_(dt_seconds)
+lsdtt_hype_model_cpu::lsdtt_hype_model_cpu(const hype_setup& setup, double dt_seconds,
+                                           bool track_balance)
+    : general_(setup.general), dt_seconds_(dt_seconds), track_balance_(track_balance)
 {
     if (dt_seconds != 86400.0)
     {
@@ -93,8 +90,17 @@ lsdtt_hype_model_cpu::lsdtt_hype_model_cpu(const hype_setup& setup, double dt_se
     flows_.local_outflow_m3s.assign(setup.subbasins.size(), 0.0);
     flows_.outflow_m3s.assign(setup.subbasins.size(), 0.0);
 
-    balance_.storage_start_m3 = storage_m3();
-    balance_.storage_m3       = balance_.storage_start_m3;
+    if (track_balance_)
+    {
+        balance_.storage_start_m3 = storage_m3();
+        balance_.storage_m3       = balance_.storage_start_m3;
+    }
+    else
+    {
+        balance_.storage_tracked  = false;
+        balance_.storage_start_m3 = std::numeric_limits<double>::quiet_NaN();
+        balance_.storage_m3       = std::numeric_limits<double>::quiet_NaN();
+    }
 }
 
 double lsdtt_hype_model_cpu::storage_m3() const
@@ -120,8 +126,43 @@ void lsdtt_hype_model_cpu::step(double precipitation_mm, double temperature_c, i
     forcing.day_of_year      = day_of_year;
     forcing.observed_pet_mm  = observed_pet_mm;
 
-    // Land: every unit, then fixed-order aggregation per sub-basin.
-    for (auto& u : units_) hype_unit_step(general_, u.constants, forcing, u.state, u.fluxes);
+    // Land: every unit in parallel (each touches only its own state and
+    // fluxes), then fixed-order aggregation per sub-basin in a separate serial
+    // loop, so the sums do not depend on the thread count. An exception must
+    // not leave the parallel region: record the one from the lowest-index
+    // failing unit (the same unit at any thread count) and rethrow after.
+    const std::int64_t n_units = static_cast<std::int64_t>(units_.size());
+    std::exception_ptr first_error;
+    std::int64_t       first_error_unit = n_units;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::int64_t k = 0; k < n_units; ++k)
+    {
+        hype_model_unit& u = units_[static_cast<std::size_t>(k)];
+        try
+        {
+            if (static_cast<std::size_t>(k) >= inject_from_unit_)
+            {
+                throw std::runtime_error("hype model: injected test failure in unit " + std::to_string(k));
+            }
+            hype_unit_step(general_, u.constants, forcing, u.state, u.fluxes);
+        }
+        catch (...)
+        {
+#ifdef _OPENMP
+            #pragma omp critical (lsdtt_hype_model_unit_failure)
+#endif
+            {
+                if (k < first_error_unit)
+                {
+                    first_error_unit = k;
+                    first_error      = std::current_exception();
+                }
+            }
+        }
+    }
+    if (first_error) std::rethrow_exception(first_error);
 
     double prec_m3 = 0.0, evap_m3 = 0.0;
     for (std::size_t s = 0; s + 1 < unit_offset_.size(); ++s)
@@ -149,7 +190,7 @@ void lsdtt_hype_model_cpu::step(double precipitation_mm, double temperature_c, i
     balance_.precipitation_m3 += prec_m3;
     balance_.evaporation_m3   += evap_m3;
     balance_.outflow_m3       += out_m3;
-    balance_.storage_m3        = storage_m3();
+    if (track_balance_) balance_.storage_m3 = storage_m3();
 }
 
 } // namespace lsdtt
