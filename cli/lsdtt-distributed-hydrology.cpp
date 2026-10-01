@@ -57,6 +57,7 @@
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_distributed_hydrology_forcing.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_canopy_interception_cpu.hpp"
@@ -105,66 +106,6 @@ static void print_banner()
         << "|| Citation : " << k_citation << "\n"
         << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// load_depth_series
-//
-// Read a forcing time series from a CSV. One row per timestep, in order.
-//
-// Two column spellings are accepted for each quantity -- metres and
-// millimetres -- because rain gauge and reanalysis products are published in
-// millimetres while everything inside the model is in metres. Converting at
-// the door is better than letting a user multiply by 1000 in a spreadsheet and
-// get it wrong; there is no way to detect that mistake downstream, because a
-// millimetre of rain read as a metre is a perfectly plausible storm.
-// -----------------------------------------------------------------------------
-static std::vector<double> load_depth_series(
-    const std::string& path,
-    const std::string& column_metres,
-    const std::string& column_mm)
-{
-    const lsdtt::lsdtt_csv_table table = lsdtt::load_csv_table(path);
-
-    const bool have_metres = lsdtt::csv_has_column(table, column_metres);
-    const bool have_mm     = lsdtt::csv_has_column(table, column_mm);
-
-    if (!have_metres && !have_mm)
-    {
-        throw std::runtime_error(
-            "forcing file '" + path + "' has no column '" + column_metres +
-            "' and no column '" + column_mm + "'. One of the two is required, "
-            "holding the depth for each timestep, one row per step.");
-    }
-
-    const std::string key   = have_metres ? column_metres : column_mm;
-    const double      scale = have_metres ? 1.0 : 0.001;
-
-    std::vector<double> series;
-    series.reserve(table.rows.size());
-
-    for (std::size_t i = 0; i < table.rows.size(); ++i)
-    {
-        const double v = lsdtt::csv_row_double_required(
-            table.rows[i], key, path, static_cast<int>(i) + 1);
-
-        if (!(v >= 0.0) || !std::isfinite(v))
-        {
-            throw std::runtime_error(
-                "forcing file '" + path + "' row " + std::to_string(i + 1) +
-                ": '" + key + "' is negative or non-finite (" +
-                std::to_string(v) + "). A depth per timestep cannot be either.");
-        }
-        series.push_back(v * scale);
-    }
-
-    if (series.empty())
-    {
-        throw std::runtime_error(
-            "forcing file '" + path + "' has a header but no data rows.");
-    }
-
-    return series;
 }
 
 // -----------------------------------------------------------------------------
@@ -1246,13 +1187,13 @@ int main(int argc, char* argv[])
     std::vector<double> pet_series;
     try
     {
-        rainfall_series = load_depth_series(
+        rainfall_series = lsdtt::load_distributed_hydrology_depth_series(
             pp.add_read_path_if_needed(sf["rainfall_fname"]),
             "rainfall_metres", "rainfall_mm");
 
         if (!sf["pet_fname"].empty())
         {
-            pet_series = load_depth_series(
+            pet_series = lsdtt::load_distributed_hydrology_depth_series(
                 pp.add_read_path_if_needed(sf["pet_fname"]),
                 "pet_metres", "pet_mm");
         }

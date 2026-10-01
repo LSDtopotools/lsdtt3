@@ -275,6 +275,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_coastal_mask.cpp
     src/core/lsdtt_dem_grouping.cpp
     src/core/lsdtt_csv_table.cpp
+    src/core/lsdtt_distributed_hydrology_forcing.cpp
     src/core/lsdtt_stat_csv.cpp
     src/core/lsdtt_outlet_clusters.cpp
     src/core/lsdtt_common_parameters.cpp
@@ -401,6 +402,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_hydro_roughness_cpu.cpp
     src/cpu/lsdtt_canopy_interception_cpu.cpp
     src/cpu/lsdtt_hydro_routing_cpu.cpp
+    src/cpu/lsdtt_hype_parameters.cpp
+    src/cpu/lsdtt_subbasin_partition_cpu.cpp
     src/cpu/lsdtt_channel_extent_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp
     src/cpu/lsdtt_swath_cpu.cpp
