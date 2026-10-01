@@ -2500,6 +2500,12 @@ add_test(NAME unit_hype_column
          COMMAND lsdtt-test-hype-column "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
 lsdtt_set_tests_properties(unit_hype_column PROPERTIES LABELS "unit;distributed_hydrology")
 
+add_executable(lsdtt-test-hype-routing cpp/test_hype_routing.cpp)
+target_link_libraries(lsdtt-test-hype-routing PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_routing
+         COMMAND lsdtt-test-hype-routing "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
+lsdtt_set_tests_properties(unit_hype_routing PROPERTIES LABELS "unit;distributed_hydrology")
+
 add_executable(lsdtt-test-subbasin-partition cpp/test_subbasin_partition.cpp)
 target_link_libraries(lsdtt-test-subbasin-partition PRIVATE lsdtt3_cpu)
 add_test(NAME unit_subbasin_partition COMMAND lsdtt-test-subbasin-partition)
