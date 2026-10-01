@@ -403,6 +403,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_canopy_interception_cpu.cpp
     src/cpu/lsdtt_hydro_routing_cpu.cpp
     src/cpu/lsdtt_hype_parameters.cpp
+    src/cpu/lsdtt_hype_column_cpu.cpp
     src/cpu/lsdtt_subbasin_partition_cpu.cpp
     src/cpu/lsdtt_channel_extent_cpu.cpp
     src/cpu/lsdtt_proximity_cpu.cpp

@@ -2494,6 +2494,12 @@ add_test(NAME unit_hype_parameters
                  "${CMAKE_CURRENT_BINARY_DIR}/hype_parameters_output")
 lsdtt_set_tests_properties(unit_hype_parameters PROPERTIES LABELS "unit;distributed_hydrology")
 
+add_executable(lsdtt-test-hype-column cpp/test_hype_column.cpp)
+target_link_libraries(lsdtt-test-hype-column PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_column
+         COMMAND lsdtt-test-hype-column "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
+lsdtt_set_tests_properties(unit_hype_column PROPERTIES LABELS "unit;distributed_hydrology")
+
 add_executable(lsdtt-test-subbasin-partition cpp/test_subbasin_partition.cpp)
 target_link_libraries(lsdtt-test-subbasin-partition PRIVATE lsdtt3_cpu)
 add_test(NAME unit_subbasin_partition COMMAND lsdtt-test-subbasin-partition)
