@@ -319,7 +319,9 @@ These apply only when `use_landscape_equilibration_cycle` and
 When `frequency_of_output_writing` is greater than zero, optional PNG
 diagnostics can be written at the same checkpoints as the elevation snapshots.
 The D-infinity diagnostic is `log10` drainage area with an inverted grayscale
-mapping, so larger drainage areas are darker.
+mapping, so larger drainage areas are darker. The diagnostics are also written
+for the initial and final modelled topographies. PNG georeferencing sidecars are
+removed by default because these files are intended for visual inspection.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -327,6 +329,7 @@ mapping, so larger drainage areas are darker.
 | `intermediate_hillshade_write_path` | string | empty | Optional directory for intermediate hillshade PNGs; empty uses `write_path`. |
 | `write_intermediate_log10_dinf_drainage_area_png` | bool | `false` | Write an inverted-grayscale `log10` D-infinity drainage-area PNG at every output checkpoint. |
 | `intermediate_drainage_area_write_path` | string | empty | Optional directory for intermediate D-infinity area PNGs; empty uses `write_path`. |
+| `write_intermediate_png_sidecars` | bool | `false` | Keep PNG georeferencing sidecars (`.pgw` and `.aux.xml`) instead of removing them. |
 
 ---
 
