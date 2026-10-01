@@ -352,6 +352,11 @@ arithmetic one. On the development machine a compute-bound loop reached 3.09×
 on 4 threads while a streaming loop managed only 1.14× — and 0.27× on 8, where
 hyperthreads contend for the same load/store ports.
 
+Those two figures come from `tests/scripts/omp_ceiling.cpp`, which measures
+them on *your* machine in about ten seconds. Run it before you interpret any
+scaling table — see
+[Measure the machine's ceiling first](#measure-the-machines-ceiling-first).
+
 Two practical consequences:
 
 - **Cap `--threads` at your physical core count.** Including hyperthreads makes
@@ -400,12 +405,77 @@ Before submitting a long run:
    pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
        --profile server --dry-run
    ```
-5. **Submit the plumbing test first** ([Slurm run a](#a-the-plumbing-test-one-case-one-region-2-minutes)),
+5. **Check how many CPUs you actually have.** Not how many the machine has —
+   how many this process may use. On a login node they are often very
+   different:
+   ```sh
+   nproc                                    # respects the mask
+   grep Cpus_allowed_list /proc/self/status # the mask itself
+   taskset -cp $$
+   ```
+   If `nproc` is far below the machine's core count you are pinned, and every
+   scaling row above that number will be time-slicing. See
+   [Measure the machine's ceiling first](#measure-the-machines-ceiling-first).
+6. **Submit the plumbing test first** ([Slurm run a](#a-the-plumbing-test-one-case-one-region-2-minutes)),
    then the server profile.
 
 ```sh
 pixi run bench-server --out-dir "$PWD" --fixture-dir /scratch/$USER/lsdtt3_fixtures
 ```
+
+### Measure the machine's ceiling first
+
+A scaling curve is uninterpretable without knowing what the machine can do.
+`tests/scripts/omp_ceiling.cpp` answers that in about ten seconds. It is
+standalone by design — no lsdtt3 headers, no CMake, no pixi — so it runs on a
+bare node, and on a machine with no lsdtt3 build at all:
+
+```sh
+g++ -O3 -DNDEBUG -fopenmp tests/scripts/omp_ceiling.cpp -o omp_ceiling
+./omp_ceiling
+```
+
+It runs two OpenMP kernels at 1, 2 and 4 threads: a compute-bound one (60
+`sqrt` per element, data in registers) and a memory-bound one (a streaming
+triad, sized at runtime to 4× the machine's last-level cache so it really does
+reach DRAM). Typical healthy output on a four-core machine:
+
+```text
+logical cores reported by OpenMP: 8
+last-level cache               : 8.0 MiB
+memory-kernel working set      : 32.0 MiB over 128 passes
+
+kernel                   1t         2t         4t
+compute speedup       1.00x      1.81x      3.06x
+memory  speedup       1.00x      1.00x      1.00x
+```
+
+**Read the first line and the compute row. Nothing else matters for this check.**
+
+| what you see | what it means |
+|---|---|
+| `logical cores` below what the machine has | you are pinned. Stop and fix this before measuring anything |
+| compute row near cores-many speedup | the machine parallelises fine; any flat lsdtt3 curve is about the kernel, not the machine |
+| compute row flat or plateauing early | throttled, cpuset-limited or oversubscribed. **No lsdtt3 scaling number measured here means anything** |
+| memory row flat | correct and expected — a bandwidth-bound kernel has nothing for extra threads to win. Not a fault |
+
+The memory row is context, not a health check. If it *does* scale strongly,
+suspect the working set is fitting in cache rather than streaming; the tool
+warns when that is the case, and an explicit size in MiB per array can be
+passed as a first argument (`./omp_ceiling 256`).
+
+!!! danger "The failure this catches"
+    A 2026-09-21 campaign on a 192-core server produced a full set of
+    plausible-looking scaling tables in which every row above two threads was
+    time-slicing. The login session held `Cpus_allowed_list: 1,97` — two
+    hyperthread siblings of **one** physical core — while `os.cpu_count()`
+    dutifully reported 192, so nothing in the suite noticed. The ceiling test
+    reported `logical cores reported by OpenMP: 2` on its first line and
+    identified it immediately.
+
+    The suite now reads process affinity rather than machine core count and
+    warns on the mismatch, but run the ceiling test anyway: it is the only
+    check that measures what the cores actually *do* rather than counting them.
 
 ### Set up once (both routes)
 
@@ -497,6 +567,42 @@ top rung:
 
 ### Route A: a plain bash session
 
+!!! danger "On a cluster, a plain bash session is usually a login node"
+    If the machine has a scheduler, an interactive shell on it is very often
+    **not** where your cores are. Login nodes are routinely pinned to one or
+    two CPUs so that an interactive session cannot consume a shared machine —
+    and the restriction is invisible unless you look for it. `lscpu` will
+    happily report 192 cores while your process may use two.
+
+    ```sh
+    nproc                                      # 2
+    grep Cpus_allowed_list /proc/self/status   # Cpus_allowed_list: 1,97
+    ```
+
+    Two CPUs numbered like that are usually the two hyperthread siblings of a
+    single physical core — confirm with
+    `cat /sys/devices/system/cpu/cpu1/topology/thread_siblings_list`.
+
+    **The fix is to ask the scheduler for cores, not to run harder on the login
+    node.** Either submit through [Route B](#route-b-slurm), or take an
+    interactive allocation and run Route A inside it:
+
+    ```sh
+    srun --cpus-per-task=8 --pty bash      # then run the campaign in here
+    nproc                                  # should now report 8
+    ```
+
+    A one-off check is cheap and worth it either way:
+
+    ```sh
+    srun --cpus-per-task=8 --pty bash -c 'nproc; ./omp_ceiling'
+    ```
+
+    If the affinity is an inherited mask rather than a cpuset, `taskset -c
+    0-15 <command>` may widen it without the scheduler — but an allocation is
+    the correct answer on a shared machine, and the only one that also keeps
+    co-tenants out of your timings.
+
 The honest caveat first, because it is the whole reason Slurm is preferred:
 
 !!! warning "A shared machine measures its co-tenants"
@@ -540,7 +646,11 @@ scheduler:
   real number.
 - **Nothing enforces the thread/allocation match.** The sbatch wrapper refuses
   to start if `--cpus-per-task` is below the sweep; here there is no such
-  guard, so an oversubscribed row is yours to avoid.
+  guard, so an oversubscribed row is yours to avoid. The suite warns when
+  `--threads` exceeds the CPUs the process may use, but a warning in a log is
+  easy to miss — check `nproc` yourself before a long run. Inside an
+  interactive allocation, ask for at least the largest thread count in the
+  sweep: `srun --cpus-per-task=8 --pty bash` for the default `1,2,4,8`.
 - **Watch progress** without the log:
 
   ```sh
@@ -1032,9 +1142,26 @@ too slow — not a failure. Raise the limit if you want the number.
 database. Activate the environment (`conda activate <env>`, or use
 `pixi run`) rather than calling an interpreter's binary by its full path.
 
-**"--threads goes up to N but this machine reports M logical cores."** Rows
-above the core count are oversubscribed and their scaling figures are
-meaningless. Pass a smaller `--threads`.
+**"--threads goes up to N but this process may use M CPUs."** Rows above `M`
+are oversubscribed and their scaling figures are meaningless. If `M` is the
+machine's core count, pass a smaller `--threads`. If the warning also says
+*"this machine has X logical cores but the process is restricted to M"*, the
+limit is an affinity mask rather than the hardware — shortening the sweep would
+just record the restriction more politely. Get cores instead: see
+[Route A's login-node warning](#route-a-a-plain-bash-session).
+
+**Every scaling row is flat, or plateaus at exactly 2 threads.** Before
+suspecting the code, measure the machine:
+
+```sh
+g++ -O3 -DNDEBUG -fopenmp tests/scripts/omp_ceiling.cpp -o omp_ceiling && ./omp_ceiling
+```
+
+If its **compute** row is also flat, nothing about lsdtt3 is implicated — the
+machine is not giving you cores, and no scaling number measured on it means
+anything. A plateau at exactly two threads is the classic signature of a
+two-CPU affinity mask. See
+[Measure the machine's ceiling first](#measure-the-machines-ceiling-first).
 
 **The log is empty and it looks hung.** Almost always stdout buffering, not a
 stall. The suite line-buffers its own output, but if you are on a version that

@@ -1427,6 +1427,16 @@ allocation count.
 
 #### Current fused-loop result and leading candidates (2026-09-01)
 
+!!! warning "Superseded on 2026-09-21"
+    The server measurements in this section were taken on a session restricted
+    to two CPUs by a login-node affinity mask, which was not known at the time.
+    The fused loop **does** scale: 3.22× at 4000² on four threads, measured in
+    a real allocation. See
+    [Server campaign 2026-09-21](#server-campaign-2026-09-21-forth01-release-052-thread-scaling-measured).
+    The laptop measurements below are unaffected — that machine was never
+    restricted — and the investigation order at the end of this section is
+    still the right order for the residual gap between 3.2× and 4×.
+
 The bounded-prefix and fused-strip changes were bit-identical on all 324
 reference rasters. They made `direct_polyfit` 20-73% faster and reduced peak
 memory by 13-25%, but did not produce useful thread scaling: one and four
@@ -2170,6 +2180,110 @@ peak memory. This is the first campaign in which that is visible.
 `cpu.max` / `Cpus_allowed_list` / load on the node, and one direct
 `/usr/bin/time -v` run of a surface CLI at `n_threads: 8` outside the harness),
 then re-run `--suites surface` where 8 threads really get 8 cores.
+
+> **Resolved 2026-09-21.** The cause was a login-node CPU affinity mask, not a
+> code or harness fault. See the next section.
+
+### Server campaign 2026-09-21 (forth01, release 0.5.2): thread scaling measured
+
+`server` profile (1000/2000/4000², threads 1/2/4/8, 5 repeats) at `b8b6cdf`,
+**clean tree**, on **forth01**. `b8b6cdf` is the commit tagged `v0.5.2`, so
+this is the first campaign that measures a tagged release rather than a
+development tree. 318 rows, all `ok`. Raw data:
+`../data/benchmarking/server_forth01.geos.ed.ac.uk_20260921_153611`.
+
+Note that the suite records the git SHA and not the release version, so the
+"0.5.2" in this heading is asserted here by hand; `git rev-parse
+"v0.5.2^{commit}"` resolves to `b8b6cdf` and is the check.
+
+#### What had been limiting the earlier campaigns
+
+An interactive session on forth01 is restricted to **two CPUs** —
+`Cpus_allowed_list: 1,97`, the two SMT siblings of a single physical core —
+while `lscpu` and `os.cpu_count()` both report 192. forth01 is a Slurm head
+node and this is ordinary login-node policy. Every campaign run from an
+interactive shell therefore swept 1/2/4/8 threads on two CPUs, which is why the
+09-13 job appeared to have "about 1.5 cores".
+
+It was identified with `tests/scripts/omp_ceiling.cpp`, which reported
+`logical cores reported by OpenMP: 2` and an identical 1.62× at **both** 2 and
+4 threads for a pure-arithmetic kernel containing no lsdtt3 code. In an
+allocation the same kernel gives 2.00× and 3.99×.
+
+Two consequences, both acted on:
+
+- The suite's oversubscription guard used `os.cpu_count()`, which ignores
+  affinity. It now uses `len(os.sched_getaffinity(0))`, records `usable_cores`
+  and `affinity_restricted` alongside `logical_cores`, and warns in
+  `SUMMARY.md`. **This campaign predates that change**, so its manifest carries
+  no `usable_cores` field; the evidence that it had real cores is in the data
+  below rather than in the manifest.
+- `docs/what_is_lsdtt3/running_benchmarks.md` documents the check and the
+  `srun --cpus-per-task=8` route.
+
+#### Thread scaling (lsdtt3, alpine; lakeland within 0.03× throughout)
+
+| case | rung | 1t | 2t | 4t | 8t |
+|---|---|---|---|---|---|
+| `slope_only` | 1000² | 1.00× | 1.85× | 1.96× | 0.50× |
+| | 2000² | 1.00× | 1.87× | 1.96× | 2.13× |
+| | 4000² | 1.00× | 1.87× | **3.18×** | **3.62×** |
+| `polyfit_all` | 1000² | 1.00× | 1.77× | 1.99× | 1.01× |
+| | 2000² | 1.00× | 1.91× | 2.02× | 2.74× |
+| | 4000² | 1.00× | 1.85× | **3.22×** | **3.48×** |
+| `hillshade` | 1000² | 1.00× | 1.50× | 1.49× | 0.76× |
+| | 2000² | 1.00× | 1.52× | 1.61× | 1.04× |
+| | 4000² | 1.00× | 1.52× | **2.05×** | **2.09×** |
+
+The previous campaign measured 1.07× at 4000², four threads, for
+`polyfit_all`. The polyfit kernel is byte-identical between the two runs — the
+only source difference between `a8529f6` and `b8b6cdf` in
+`lsdtt_raster_surface_metrics_cpu.cpp` is two comment paths.
+
+Scaling **improves with grid size**, which reverses the behaviour recorded for
+the historical two-pass implementation. The small rungs still lose at 8
+threads (0.50× at 1000²); there is not enough work per thread to amortise the
+parallel region, and this is the expected shape rather than a finding.
+
+#### The 1-thread rows are the control
+
+lsdtt3's single-thread times are unchanged from the affinity-limited campaign
+six hours earlier — `polyfit_all` 4000² 2.042 s → 2.064 s, `slope_only` 0.805 s
+→ 0.805 s. Across all 1-thread rows over 50 ms, every lsdtt3, RichDEM and
+TopoToolbox case moved by ≤1.5% (median). Same machine, same binaries, same
+work: only the threaded rows changed.
+
+Peak RSS is identical to the previous campaign — **zero rows differ by more
+than 10%**, on any engine — so the memory table from 09-21 10:43 stands
+unchanged, and memory figures are insensitive to the affinity problem.
+
+#### Whitebox's thread pinning does not take effect
+
+The 09-13 section already refused to quote Whitebox's multi-threaded tools.
+This campaign gives the mechanism. `whitebox_reference.py:504` sets
+`wbe.max_procs = int(args.threads)` and the suite does pass `--threads 1`, but
+five cases ran **40-72% faster** at "1 thread" once the allocation had more
+CPUs, while every other engine reproduced to within 1.5%:
+
+| case | 1-thread change, 2 CPUs → allocation |
+|---|---|
+| `slope_only` | −72.3% |
+| `hillshade` | −59.8% |
+| `polyfit_all` | −55.3% |
+| `accum_d8`, `accum_d8_no_svector` | −41.9% |
+
+Whole-process CPU seconds are unchanged across both runs and both thread counts
+(22.9 s for `slope_only` 4000² at 1 and 2 threads, in both campaigns). The work
+is constant; only the wall time moved, because more cores were available to
+absorb it. `max_procs` is not constraining these tools in
+whitebox_workflows 2.0.6.
+
+**`accum_d8` and `accum_d8_no_svector` are in the like-for-like ratio table**,
+where Whitebox now reports 15.95-24.68 Mcells/s against lsdtt3's 9.25-11.75.
+That comparison is one-thread lsdtt3 against many-thread Whitebox and **must
+not be quoted**. The other three affected cases are `report_only` and carry no
+ratio. Until the pinning is understood, treat every Whitebox row for slope,
+hillshade, curvature and D8 accumulation as an unpinned measurement.
 
 ## 7. Cosmogenic nuclide testing
 
