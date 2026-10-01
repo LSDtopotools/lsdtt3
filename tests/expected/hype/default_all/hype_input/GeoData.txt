@@ -1,3 +1,0 @@
-subid	maindown	area	elev_mean	slope_mean	loc_rivlen	rivlen	slc_1	slc_2	slc_3	dhslc_1	dhslc_2	dhslc_3
-1	2	20000000	350	12	5000	8000	0.5	0.3	0.2	80	-20	-60
-2	0	35000000	150	4	7000	25000	0.2	0.4	0.4	30	0	-40

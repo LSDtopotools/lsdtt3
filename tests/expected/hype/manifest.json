@@ -7,96 +7,84 @@
   },
   "cases": {
     "default_all": {
-      "description": "All kept processes together: two sub-basins in series, three classes (3-, 2- and 1-layer soils, two land uses, two soils), lapse rate, interception, snow, PET/AET, diversion with macropores, percolation, soil runoff with slope term, saturation excess, local and main river routing. One hydrological year.",
+      "description": "All kept processes together: two sub-basins in series, three classes (3-, 2- and 1-layer soils, two land uses, two soils), lapse rate, interception, snow, PET/AET, diversion with macropores, percolation, soil runoff with slope term, saturation excess, local and main river routing. 150 daily steps spanning one compressed seasonal cycle (snow accumulation and melt included).",
       "modeloptions": {},
-      "n_steps": 365,
+      "n_steps": 150,
       "precision_floor": {
-        "basin_cloc": {
-          "max_abs_diff": 3.534e-06,
-          "max_abs_value": 9.028018
-        },
         "basin_cout": {
-          "max_abs_diff": 2.99e-06,
-          "max_abs_value": 13.75195
+          "max_abs_diff": 2.831e-06,
+          "max_abs_value": 5.696627
         },
         "basin_crun": {
-          "max_abs_diff": 1.21e-05,
-          "max_abs_value": 26.09723
+          "max_abs_diff": 1.088e-05,
+          "max_abs_value": 11.156
         },
         "class_crun": {
-          "max_abs_diff": 6.77e-05,
-          "max_abs_value": 31.5173
+          "max_abs_diff": 5.434e-05,
+          "max_abs_value": 14.35237
         },
         "class_evap": {
-          "max_abs_diff": 2.31e-06,
-          "max_abs_value": 3.770078
+          "max_abs_diff": 7.8e-07,
+          "max_abs_value": 2.887191
         },
         "class_infi": {
-          "max_abs_diff": 9.27e-05,
-          "max_abs_value": 43.13609
+          "max_abs_diff": 4.9e-06,
+          "max_abs_value": 35.97554
         },
         "class_melt": {
-          "max_abs_diff": 0.0001025,
-          "max_abs_value": 24.80435
+          "max_abs_diff": 4.93e-06,
+          "max_abs_value": 15.75
         },
         "class_ros1": {
-          "max_abs_diff": 1.178e-05,
-          "max_abs_value": 4.15246
+          "max_abs_diff": 1.76e-06,
+          "max_abs_value": 2.092358
         },
         "class_ros2": {
-          "max_abs_diff": 1.023e-05,
-          "max_abs_value": 6.38587
+          "max_abs_diff": 9.13e-07,
+          "max_abs_value": 5.567029
         },
         "class_sml1": {
-          "max_abs_diff": 6.71e-05,
+          "max_abs_diff": 2.9e-05,
           "max_abs_value": 144.0
         },
         "class_sml2": {
-          "max_abs_diff": 0.0001,
+          "max_abs_diff": 7e-05,
           "max_abs_value": 198.0
         },
         "class_sml3": {
-          "max_abs_diff": 0.000123,
+          "max_abs_diff": 0.000108,
           "max_abs_value": 440.0
         },
         "class_snow": {
-          "max_abs_diff": 0.000111,
-          "max_abs_value": 506.7021
+          "max_abs_diff": 1.01e-05,
+          "max_abs_value": 99.36916
         }
       }
     },
     "diversion": {
       "description": "Threshold diversion of rain to infiltration-excess surface runoff (srrate, mactrinf, mactrsm), with ET on so layer 1 crosses the soil-moisture threshold. Macropore flow, percolation and soil runoff off; no snow.",
       "modeloptions": {},
-      "n_steps": 365,
+      "n_steps": 120,
       "precision_floor": {
-        "basin_prec": {
-          "max_abs_diff": 0.0,
-          "max_abs_value": 40.0
-        },
-        "basin_temp": {
-          "max_abs_diff": 9e-07,
-          "max_abs_value": 20.0
-        },
         "class_evap": {
-          "max_abs_diff": 6.35e-06,
-          "max_abs_value": 4.257
+          "max_abs_diff": 9.5e-07,
+          "max_abs_value": 4.23
         },
         "class_infi": {
           "max_abs_diff": 4e-07,
-          "max_abs_value": 30.4
+          "max_abs_value": 40.0
         },
         "class_ros2": {
           "max_abs_diff": 3.8e-07,
           "max_abs_value": 9.6
         },
         "class_sml1": {
-          "max_abs_diff": 3.98e-05,
+          "max_abs_diff": 5.6e-06,
           "max_abs_value": 50.0
         },
         "class_sml2": {
-          "max_abs_diff": 1.33e-05,
-          "max_abs_value": 102.556
+          "max_abs_diff": 1.39e-05,
+          "max_abs_value": 102.5888
         },
         "class_sml3": {
           "max_abs_diff": 3.1e-05,
@@ -107,31 +95,23 @@
     "et": {
       "description": "Potential evaporation (option 0, seasonal coefficient) and actual evapotranspiration from the top two layers, with the PET layer split. No snow (temperature always above ttmp); diversion, percolation and soil runoff off.",
       "modeloptions": {},
-      "n_steps": 365,
+      "n_steps": 120,
       "precision_floor": {
-        "basin_prec": {
-          "max_abs_diff": 0.0,
-          "max_abs_value": 10.0
-        },
-        "basin_temp": {
-          "max_abs_diff": 9e-07,
-          "max_abs_value": 17.0
-        },
         "class_epot": {
-          "max_abs_diff": 8.8e-07,
-          "max_abs_value": 8.317069
+          "max_abs_diff": 8.5e-07,
+          "max_abs_value": 8.222656
         },
         "class_evap": {
-          "max_abs_diff": 8.59e-07,
-          "max_abs_value": 2.551742
+          "max_abs_diff": 1.42e-06,
+          "max_abs_value": 4.005842
         },
         "class_sml1": {
-          "max_abs_diff": 1.27e-05,
-          "max_abs_value": 49.81025
+          "max_abs_diff": 9.4e-06,
+          "max_abs_value": 49.63484
         },
         "class_sml2": {
-          "max_abs_diff": 2.35e-05,
-          "max_abs_value": 104.1392
+          "max_abs_diff": 1.2e-05,
+          "max_abs_value": 104.1597
         },
         "class_sml3": {
           "max_abs_diff": 1.5e-05,
@@ -142,18 +122,10 @@
     "percolation": {
       "description": "Percolation between three layers with mperc1/mperc2 binding and non-binding, and the lowest layer filling so the receiving-layer limit binds. ET on; diversion, macropore flow and soil runoff off; no snow.",
       "modeloptions": {},
-      "n_steps": 365,
+      "n_steps": 120,
       "precision_floor": {
-        "basin_prec": {
-          "max_abs_diff": 0.0,
-          "max_abs_value": 30.0
-        },
-        "basin_temp": {
-          "max_abs_diff": 5e-07,
-          "max_abs_value": 16.0
-        },
         "class_evap": {
-          "max_abs_diff": 4e-07,
+          "max_abs_diff": 3.3e-07,
           "max_abs_value": 3.9
         },
         "class_infi": {
@@ -161,11 +133,11 @@
           "max_abs_value": 30.0
         },
         "class_sml1": {
-          "max_abs_diff": 1.48e-05,
+          "max_abs_diff": 4.31e-05,
           "max_abs_value": 100.0
         },
         "class_sml2": {
-          "max_abs_diff": 1.7e-05,
+          "max_abs_diff": 2.3e-05,
           "max_abs_value": 150.0
         },
         "class_sml3": {
@@ -177,39 +149,27 @@
     "routing": {
       "description": "Local and main river translation plus damping in two sub-basins in series (1 -> 2), with fractional translation steps (rivvel 0.5 m/s, damp 0.4). Column as in soil_runoff without snow.",
       "modeloptions": {},
-      "n_steps": 365,
+      "n_steps": 120,
       "precision_floor": {
         "basin_cloc": {
-          "max_abs_diff": 7.1e-07,
-          "max_abs_value": 3.299767
+          "max_abs_diff": 6.7e-07,
+          "max_abs_value": 3.278175
         },
         "basin_cout": {
-          "max_abs_diff": 8.6e-07,
-          "max_abs_value": 2.697786
+          "max_abs_diff": 5.5e-07,
+          "max_abs_value": 2.679257
         },
         "basin_crun": {
-          "max_abs_diff": 1.65e-06,
-          "max_abs_value": 10.20905
-        },
-        "class_crun": {
-          "max_abs_diff": 1.65e-06,
-          "max_abs_value": 10.20905
+          "max_abs_diff": 1.4e-06,
+          "max_abs_value": 10.18267
         }
       }
     },
     "snow": {
       "description": "Class forcing (lapse-rate temperature correction, pcluse interception), rain/snow ramp and snowpack with liquid-water retention. ET, diversion, percolation and soil runoff are off.",
       "modeloptions": {},
-      "n_steps": 181,
+      "n_steps": 120,
       "precision_floor": {
-        "basin_prec": {
-          "max_abs_diff": 0.0,
-          "max_abs_value": 20.0
-        },
-        "basin_temp": {
-          "max_abs_diff": 4.6e-07,
-          "max_abs_value": 9.0
-        },
         "class_cprc": {
           "max_abs_diff": 8e-07,
           "max_abs_value": 18.0
@@ -219,80 +179,68 @@
           "max_abs_value": 9.9
         },
         "class_infi": {
-          "max_abs_diff": 7.77e-05,
-          "max_abs_value": 32.92174
+          "max_abs_diff": 2.2e-06,
+          "max_abs_value": 24.88696
         },
         "class_melt": {
-          "max_abs_diff": 7.77e-05,
-          "max_abs_value": 16.20652
+          "max_abs_diff": 1.81e-06,
+          "max_abs_value": 14.90217
         },
         "class_snow": {
-          "max_abs_diff": 9.4e-05,
-          "max_abs_value": 397.455
+          "max_abs_diff": 1.2e-05,
+          "max_abs_value": 114.057
         },
         "class_snwc": {
-          "max_abs_diff": 1.07e-05,
-          "max_abs_value": 31.52009
+          "max_abs_diff": 1.74e-06,
+          "max_abs_value": 9.119739
         }
       }
     },
     "soil_runoff": {
       "description": "Soil-layer runoff with depth-decaying recession coefficients, stream depth in layer 1, 2 and 3 (one class each), two sub-basin slopes (2 % and 25 %) for the slope term; saturation-excess surface runoff; macropore placement and the second percolation call. ET on; no snow. Sub-basins are not connected.",
       "modeloptions": {},
-      "n_steps": 365,
+      "n_steps": 120,
       "precision_floor": {
-        "basin_crun": {
-          "max_abs_diff": 9.12e-06,
-          "max_abs_value": 14.67619
-        },
         "class_cro1": {
-          "max_abs_diff": 1.038e-05,
-          "max_abs_value": 12.0153
+          "max_abs_diff": 9.19e-06,
+          "max_abs_value": 11.94203
         },
         "class_cro2": {
-          "max_abs_diff": 1.506e-05,
-          "max_abs_value": 7.195364
+          "max_abs_diff": 6.715e-06,
+          "max_abs_value": 7.058015
         },
         "class_cro3": {
-          "max_abs_diff": 3.45e-06,
-          "max_abs_value": 3.239885
+          "max_abs_diff": 2.32e-06,
+          "max_abs_value": 2.565529
         },
         "class_crun": {
-          "max_abs_diff": 1.814e-05,
-          "max_abs_value": 18.29069
-        },
-        "class_evap": {
-          "max_abs_diff": 1.71e-06,
-          "max_abs_value": 3.9
-        },
-        "class_infi": {
-          "max_abs_diff": 1.1e-06,
-          "max_abs_value": 41.5
+          "max_abs_diff": 1.19e-05,
+          "max_abs_value": 18.18854
         },
         "class_ros1": {
-          "max_abs_diff": 4.125e-06,
-          "max_abs_value": 3.711502
+          "max_abs_diff": 3.12e-06,
+          "max_abs_value": 3.662384
         },
         "class_ros2": {
           "max_abs_diff": 7.2e-08,
           "max_abs_value": 3.5
         },
         "class_sml1": {
-          "max_abs_diff": 2.37e-05,
+          "max_abs_diff": 2.35e-05,
           "max_abs_value": 45.0
         },
         "class_sml2": {
-          "max_abs_diff": 0.000101,
+          "max_abs_diff": 4.9e-05,
           "max_abs_value": 135.0
         },
         "class_sml3": {
-          "max_abs_diff": 0.000126,
+          "max_abs_diff": 7.3e-05,
           "max_abs_value": 495.0
         }
       }
     }
   },
-  "generated_utc": "2026-10-01T14:15:09Z",
+  "generated_utc": "2026-10-01T14:31:14Z",
   "host": "Linux 6.6.87.2-microsoft-standard-WSL2 x86_64",
   "hype": {
     "archive": "hype_5_36_0_src.tgz",
@@ -301,5 +249,5 @@
     "url": "https://sourceforge.net/projects/hype/files/release_hype_5_36_0/hype_5_36_0_src.tgz/download",
     "version": "5.36.0"
   },
-  "script_git_revision": "312036105a46502e57bda6e034ffb3fb98ebebc3+uncommitted"
+  "script_git_revision": "5ee0210ba0dc2c6955320c8484a0b3f1e49044ac+uncommitted"
 }

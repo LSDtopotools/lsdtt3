@@ -1,2 +1,0 @@
-!class	landuse	soil	crop1	crop2	rotation	vegtype	special	tiledepth	streamdepth	nlayers	depth1	depth2	depth3
-1	1	1	0	0	0	1	0	0	0.8	3	0.1	0.4	1.2

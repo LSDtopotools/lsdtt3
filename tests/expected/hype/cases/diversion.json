@@ -9,7 +9,7 @@
   ],
   "dates": {
     "start": "2001-01-01",
-    "end": "2001-12-31"
+    "end": "2001-04-30"
   },
   "general": {
     "rivvel": 1.0,
@@ -108,7 +108,8 @@
     ],
     "temp_mean_c": 12.0,
     "temp_amp_c": 8.0,
-    "temp_phase_day": 105
+    "temp_period_steps": 120,
+    "temp_phase_steps": 30
   },
   "class_outputs": [
     "infi",
@@ -118,8 +119,5 @@
     "sml3",
     "evap"
   ],
-  "basin_outputs": [
-    "prec",
-    "temp"
-  ]
+  "basin_outputs": []
 }

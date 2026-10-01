@@ -7,7 +7,7 @@
   ],
   "dates": {
     "start": "2001-01-01",
-    "end": "2001-12-31"
+    "end": "2001-04-30"
   },
   "general": {
     "rivvel": 0.5,
@@ -120,11 +120,10 @@
     ],
     "temp_mean_c": 10.0,
     "temp_amp_c": 6.0,
-    "temp_phase_day": 105
+    "temp_period_steps": 120,
+    "temp_phase_steps": 30
   },
-  "class_outputs": [
-    "crun"
-  ],
+  "class_outputs": [],
   "basin_outputs": [
     "cout",
     "cloc",

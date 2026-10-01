@@ -1,12 +1,12 @@
 {
   "name": "default_all",
-  "description": "All kept processes together: two sub-basins in series, three classes (3-, 2- and 1-layer soils, two land uses, two soils), lapse rate, interception, snow, PET/AET, diversion with macropores, percolation, soil runoff with slope term, saturation excess, local and main river routing. One hydrological year.",
+  "description": "All kept processes together: two sub-basins in series, three classes (3-, 2- and 1-layer soils, two land uses, two soils), lapse rate, interception, snow, PET/AET, diversion with macropores, percolation, soil runoff with slope term, saturation excess, local and main river routing. 150 daily steps spanning one compressed seasonal cycle (snow accumulation and melt included).",
   "processes": [
     "all"
   ],
   "dates": {
     "start": "2001-10-01",
-    "end": "2002-09-30"
+    "end": "2002-02-27"
   },
   "general": {
     "rivvel": 0.7,
@@ -182,7 +182,8 @@
     ],
     "temp_mean_c": 5.0,
     "temp_amp_c": 9.0,
-    "temp_phase_day": 105
+    "temp_period_steps": 150,
+    "temp_phase_steps": 37
   },
   "class_outputs": [
     "snow",
@@ -198,7 +199,6 @@
   ],
   "basin_outputs": [
     "cout",
-    "cloc",
     "crun"
   ]
 }

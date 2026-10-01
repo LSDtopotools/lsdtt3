@@ -1,2 +1,0 @@
-subid	maindown	area	elev_mean	slope_mean	loc_rivlen	rivlen	slc_1	dhslc_1
-1	0	1000000	300	5	1000	2000	1	150

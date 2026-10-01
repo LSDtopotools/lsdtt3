@@ -28,12 +28,14 @@ WHAT IT DOES
        its values are not committed.
 3. For every case definition in tests/expected/hype/cases/*.json, writes two
    views of the same set-up:
-     <case>/hype_input/   info.txt GeoData.txt GeoClass.txt par.txt Pobs.txt Tobs.txt
+     HYPE input (work directory only; regenerated from the JSON every run):
+                          info.txt GeoData.txt GeoClass.txt par.txt Pobs.txt Tobs.txt
      <case>/lsdtt_input/  general_parameters.csv landuse_parameters.csv
                           soil_parameters.csv classes.csv subbasins.csv
                           subbasin_classes.csv forcing.csv
-   runs both builds on hype_input/ (in a temporary copy, so HYPE's log files
-   never land in the repo), and writes the single-precision results to
+   runs both builds on the HYPE input (in the temporary work directory, so
+   HYPE's log files never land in the repo), and writes the single-precision
+   results, at HYPE's 9 significant figures in shortest form, to
      <case>/expected/class_<var>.csv   columns: date, <subid>_<classid> ...
      <case>/expected/basin_<var>.csv   columns: date, <subid> ...
 4. Writes tests/expected/hype/manifest.json (provenance and, per case and
@@ -176,8 +178,10 @@ def forcing_of(case, dates):
     """Deterministic forcing, written to file with fixed formatting.
 
     precipitation: precip_pattern_mm repeated cyclically, times precip_scale.
-    temperature:   temp_mean_c + temp_amp_c * sin(2 pi (doy - temp_phase_day)/365)
+    temperature:   temp_mean_c + temp_amp_c * sin(2 pi (step - temp_phase_steps) / temp_period_steps)
                    + temp_trend_c_per_day * step, rounded to 2 decimals.
+    A short temp_period_steps puts a whole seasonal cycle into a short case,
+    which keeps the committed files small.
     """
     f = case["forcing"]
     pat = f["precip_pattern_mm"]
@@ -185,9 +189,9 @@ def forcing_of(case, dates):
     prec, temp = [], []
     for i, d in enumerate(dates):
         prec.append(round(pat[i % len(pat)] * scale, 3))
-        doy = d.timetuple().tm_yday
         t = (f["temp_mean_c"]
-             + f.get("temp_amp_c", 0.0) * math.sin(2 * math.pi * (doy - f.get("temp_phase_day", 0)) / 365.0)
+             + f.get("temp_amp_c", 0.0) * math.sin(
+                 2 * math.pi * (i - f.get("temp_phase_steps", 0)) / f.get("temp_period_steps", 365))
              + f.get("temp_trend_c_per_day", 0.0) * i)
         temp.append(round(t, 2))
     return prec, temp
@@ -223,17 +227,21 @@ def write_hype_inputs(case, dates, prec, temp, d):
     ]
     for opt, val in sorted(case.get("modeloptions", {}).items()):
         lines.append(f"modeloption {opt} {val}")
-    lines += [
-        "classoutput 1 variable " + " ".join(case["class_outputs"]),
-        "classoutput 1 allbasin",
-        "classoutput 1 definegroup allclass",
-        "classoutput 1 meanperiod 1",
-        f"classoutput 1 signfigures {SIGNIFICANT_FIGURES}",
-        "basinoutput variable " + " ".join(case["basin_outputs"]),
-        "basinoutput allbasin",
-        "basinoutput meanperiod 1",
-        f"basinoutput signfigures {SIGNIFICANT_FIGURES}",
-    ]
+    if case.get("class_outputs"):
+        lines += [
+            "classoutput 1 variable " + " ".join(case["class_outputs"]),
+            "classoutput 1 allbasin",
+            "classoutput 1 definegroup allclass",
+            "classoutput 1 meanperiod 1",
+            f"classoutput 1 signfigures {SIGNIFICANT_FIGURES}",
+        ]
+    if case.get("basin_outputs"):
+        lines += [
+            "basinoutput variable " + " ".join(case["basin_outputs"]),
+            "basinoutput allbasin",
+            "basinoutput meanperiod 1",
+            f"basinoutput signfigures {SIGNIFICANT_FIGURES}",
+        ]
     (d / "info.txt").write_text("".join(nl(l) for l in lines))
 
     # GeoData.txt
@@ -368,7 +376,7 @@ def collect_outputs(case, results):
     """Return {('class'|'basin', var): (header, rows)} in a stable layout."""
     out = {}
     cids = class_ids(case)
-    for var in case["class_outputs"]:
+    for var in case.get("class_outputs", []):
         merged_head, merged = [], None
         for g, cid in enumerate(cids, start=1):
             f = results / f"time{var.upper()}_DD_CG{g}.txt"
@@ -384,7 +392,7 @@ def collect_outputs(case, results):
                     assert m[0] == d
                     m[1].extend(v)
         out[("class", var)] = (merged_head, merged)
-    for var in case["basin_outputs"]:
+    for var in case.get("basin_outputs", []):
         head, merged = [], None
         for s in case["subbasins"]:
             f = results / f"{s['subid']:07d}.txt"
@@ -400,6 +408,15 @@ def collect_outputs(case, results):
     return out
 
 
+def compact(v):
+    """HYPE printed 9 significant figures. Keep exactly those digits, in the
+    shortest text: '0' for zero, plain decimals where that is shorter. Lossless
+    with respect to what HYPE wrote, and roughly halves the file size."""
+    if v == 0.0:
+        return "0"
+    return f"{v:.{SIGNIFICANT_FIGURES}g}"
+
+
 def write_expected(outputs, d):
     d.mkdir(parents=True, exist_ok=True)
     for (kind, var), (head, rows) in sorted(outputs.items()):
@@ -407,8 +424,7 @@ def write_expected(outputs, d):
             w = csv.writer(f, lineterminator="\n")
             w.writerow(["date"] + head)
             for dt, vals in rows:
-                # HYPE printed 9 significant figures; keep exactly that text.
-                w.writerow([dt] + [f"{v:.{SIGNIFICANT_FIGURES - 1}E}" for v in vals])
+                w.writerow([dt] + [compact(v) for v in vals])
 
 
 def precision_floor(single, double):
@@ -475,11 +491,15 @@ Regenerating is a reviewable event: commit the changed files and state why.
 ## Layout
 
     cases/<case>.json             case definitions (the single source for both views)
-    <case>/hype_input/            HYPE input files
-    <case>/lsdtt_input/           the same set-up as lsdtt3 tables
+    <case>/lsdtt_input/           the set-up as lsdtt3 tables (the HYPE input files are
+                                  regenerated from cases/<case>.json; --keep-work keeps them)
     <case>/expected/class_<v>.csv per-class output; columns <subid>_<classid>
     <case>/expected/basin_<v>.csv per-sub-basin output; columns <subid>
     manifest.json                 provenance and precision floors
+
+Values are HYPE's printed 9 significant figures, written in shortest form
+('0', '12.3456789'). Forcing uses a compressed seasonal cycle
+(temp_period_steps) so each case is short.
 
 All runs use daily steps, one precipitation and one temperature series for the
 whole domain, and HYPE's default model options unless a case lists others.
@@ -588,10 +608,13 @@ def generate(out, archive_arg, accept_new, keep_work, check_mode):
             cdir = out / name
             if cdir.exists():
                 shutil.rmtree(cdir)
-            write_hype_inputs(case, dates, prec, temp, cdir / "hype_input")
+            # The HYPE view is regenerated from the case JSON every run, so it
+            # lives only in the work directory (--keep-work to inspect it).
+            hype_in = work / f"{name}_hype_input"
+            write_hype_inputs(case, dates, prec, temp, hype_in)
             write_lsdtt_inputs(case, dates, prec, temp, cdir / "lsdtt_input")
-            res_s = collect_outputs(case, run_hype(exe_s, cdir / "hype_input", work, f"{name}_single"))
-            res_d = collect_outputs(case, run_hype(exe_d, cdir / "hype_input", work, f"{name}_double"))
+            res_s = collect_outputs(case, run_hype(exe_s, hype_in, work, f"{name}_single"))
+            res_d = collect_outputs(case, run_hype(exe_d, hype_in, work, f"{name}_double"))
             write_expected(res_s, cdir / "expected")
             manifest["cases"][name] = {
                 "description": case["description"],
