@@ -1,0 +1,125 @@
+{
+  "name": "diversion",
+  "description": "Threshold diversion of rain to infiltration-excess surface runoff (srrate, mactrinf, mactrsm), with ET on so layer 1 crosses the soil-moisture threshold. Macropore flow, percolation and soil runoff off; no snow.",
+  "processes": [
+    "class_forcing",
+    "pet",
+    "aet",
+    "diversion"
+  ],
+  "dates": {
+    "start": "2001-01-01",
+    "end": "2001-12-31"
+  },
+  "general": {
+    "rivvel": 1.0,
+    "damp": 0.5,
+    "ttpd": 0.0,
+    "ttpi": 1.0,
+    "lp": 0.9,
+    "epotdist": 4.0
+  },
+  "landuse": {
+    "1": {
+      "ttmp": -10.0,
+      "cmlt": 0.0,
+      "cevp": 0.3,
+      "srrcs": 0.0,
+      "pcluse": 0.0
+    }
+  },
+  "soil": {
+    "1": {
+      "wcwp": 0.1,
+      "wcfc": 0.25,
+      "wcep": 0.15,
+      "mperc1": 0.0,
+      "mperc2": 0.0,
+      "macrate": 0.0,
+      "srrate": 0.3,
+      "mactrinf": 8.0,
+      "mactrsm": 0.6,
+      "rrcs1": 0.0,
+      "rrcs2": 0.0
+    }
+  },
+  "classes": {
+    "1": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.1,
+        0.4,
+        1.2
+      ],
+      "stream_depth_m": 0.0
+    }
+  },
+  "subbasins": [
+    {
+      "subid": 1,
+      "maindown": 0,
+      "area_m2": 1000000.0,
+      "elev_mean_m": 100,
+      "slope_mean_percent": 5,
+      "loc_rivlen_m": 1000,
+      "rivlen_m": 2000,
+      "classes": {
+        "1": {
+          "fraction": 1.0,
+          "dh_m": 0
+        }
+      }
+    }
+  ],
+  "forcing": {
+    "precip_pattern_mm": [
+      0,
+      0,
+      15,
+      0,
+      0,
+      0,
+      25,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      40,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      12,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "temp_mean_c": 12.0,
+    "temp_amp_c": 8.0,
+    "temp_phase_day": 105
+  },
+  "class_outputs": [
+    "infi",
+    "ros2",
+    "sml1",
+    "sml2",
+    "sml3",
+    "evap"
+  ],
+  "basin_outputs": [
+    "prec",
+    "temp"
+  ]
+}

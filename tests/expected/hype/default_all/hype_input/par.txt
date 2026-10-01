@@ -1,0 +1,28 @@
+cevpam	0.3
+cevpph	20
+damp	0.3
+epotdist	4
+fsceff	0
+lp	0.75
+rivvel	0.7
+rrcs3	0.002
+tcalt	0.6
+ttpd	0.5
+ttpi	1.5
+whcsnow	0.08
+cevp	0.2	0.25
+cmlt	3.5	2.5
+pcluse	0.05	0.15
+srrcs	0.15	0.1
+ttmp	0	0.5
+macrate	0.15	0.05
+mactrinf	12	6
+mactrsm	0.6	0.7
+mperc1	20	8
+mperc2	8	3
+rrcs1	0.25	0.15
+rrcs2	0.02	0.01
+srrate	0.1	0.2
+wcep	0.14	0.08
+wcfc	0.22	0.25
+wcwp	0.08	0.15

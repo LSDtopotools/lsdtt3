@@ -1,0 +1,3 @@
+subid,maindown,area_m2,elev_mean_m,slope_mean_percent,loc_rivlen_m,rivlen_m
+1,2,50000000,200,8,30000,60000
+2,0,30000000,80,3,20000,100000

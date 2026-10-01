@@ -1,0 +1,13 @@
+name,value
+cevpam,0.3
+cevpph,20
+damp,0.3
+epotdist,4
+fsceff,0
+lp,0.75
+rivvel,0.7
+rrcs3,0.002
+tcalt,0.6
+ttpd,0.5
+ttpi,1.5
+whcsnow,0.08

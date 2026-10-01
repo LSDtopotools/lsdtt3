@@ -1,0 +1,14 @@
+bdate 2001-01-01
+cdate 2001-01-01
+edate 2001-06-30
+resultdir ./results/
+readobsid n
+classoutput 1 variable ctmp cprc snow snwc melt infi
+classoutput 1 allbasin
+classoutput 1 definegroup allclass
+classoutput 1 meanperiod 1
+classoutput 1 signfigures 9
+basinoutput variable prec temp
+basinoutput allbasin
+basinoutput meanperiod 1
+basinoutput signfigures 9

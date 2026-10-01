@@ -1,0 +1,204 @@
+{
+  "name": "default_all",
+  "description": "All kept processes together: two sub-basins in series, three classes (3-, 2- and 1-layer soils, two land uses, two soils), lapse rate, interception, snow, PET/AET, diversion with macropores, percolation, soil runoff with slope term, saturation excess, local and main river routing. One hydrological year.",
+  "processes": [
+    "all"
+  ],
+  "dates": {
+    "start": "2001-10-01",
+    "end": "2002-09-30"
+  },
+  "general": {
+    "rivvel": 0.7,
+    "damp": 0.3,
+    "ttpd": 0.5,
+    "ttpi": 1.5,
+    "tcalt": 0.6,
+    "whcsnow": 0.08,
+    "fsceff": 0.0,
+    "lp": 0.75,
+    "epotdist": 4.0,
+    "cevpam": 0.3,
+    "cevpph": 20.0,
+    "rrcs3": 0.002
+  },
+  "landuse": {
+    "1": {
+      "ttmp": 0.0,
+      "cmlt": 3.5,
+      "cevp": 0.2,
+      "srrcs": 0.15,
+      "pcluse": 0.05
+    },
+    "2": {
+      "ttmp": 0.5,
+      "cmlt": 2.5,
+      "cevp": 0.25,
+      "srrcs": 0.1,
+      "pcluse": 0.15
+    }
+  },
+  "soil": {
+    "1": {
+      "wcwp": 0.08,
+      "wcfc": 0.22,
+      "wcep": 0.14,
+      "rrcs1": 0.25,
+      "rrcs2": 0.02,
+      "mperc1": 20.0,
+      "mperc2": 8.0,
+      "macrate": 0.15,
+      "srrate": 0.1,
+      "mactrinf": 12.0,
+      "mactrsm": 0.6
+    },
+    "2": {
+      "wcwp": 0.15,
+      "wcfc": 0.25,
+      "wcep": 0.08,
+      "rrcs1": 0.15,
+      "rrcs2": 0.01,
+      "mperc1": 8.0,
+      "mperc2": 3.0,
+      "macrate": 0.05,
+      "srrate": 0.2,
+      "mactrinf": 6.0,
+      "mactrsm": 0.7
+    }
+  },
+  "classes": {
+    "1": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.1,
+        0.5,
+        1.5
+      ],
+      "stream_depth_m": 1.0
+    },
+    "2": {
+      "landuse": 2,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.15,
+        0.6
+      ],
+      "stream_depth_m": 0.5
+    },
+    "3": {
+      "landuse": 2,
+      "soil": 2,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.3
+      ],
+      "stream_depth_m": 0.25
+    }
+  },
+  "subbasins": [
+    {
+      "subid": 1,
+      "maindown": 2,
+      "area_m2": 20000000.0,
+      "elev_mean_m": 350,
+      "slope_mean_percent": 12,
+      "loc_rivlen_m": 5000,
+      "rivlen_m": 8000,
+      "classes": {
+        "1": {
+          "fraction": 0.5,
+          "dh_m": 80
+        },
+        "2": {
+          "fraction": 0.3,
+          "dh_m": -20
+        },
+        "3": {
+          "fraction": 0.2,
+          "dh_m": -60
+        }
+      }
+    },
+    {
+      "subid": 2,
+      "maindown": 0,
+      "area_m2": 35000000.0,
+      "elev_mean_m": 150,
+      "slope_mean_percent": 4,
+      "loc_rivlen_m": 7000,
+      "rivlen_m": 25000,
+      "classes": {
+        "1": {
+          "fraction": 0.2,
+          "dh_m": 30
+        },
+        "2": {
+          "fraction": 0.4,
+          "dh_m": 0
+        },
+        "3": {
+          "fraction": 0.4,
+          "dh_m": -40
+        }
+      }
+    }
+  ],
+  "forcing": {
+    "precip_pattern_mm": [
+      0,
+      4,
+      11,
+      0,
+      0,
+      2,
+      0,
+      18,
+      6,
+      0,
+      0,
+      0,
+      1,
+      0,
+      27,
+      3,
+      0,
+      0,
+      0,
+      0,
+      9,
+      0,
+      0,
+      14,
+      0,
+      0,
+      0,
+      0,
+      0,
+      35,
+      2
+    ],
+    "temp_mean_c": 5.0,
+    "temp_amp_c": 9.0,
+    "temp_phase_day": 105
+  },
+  "class_outputs": [
+    "snow",
+    "melt",
+    "evap",
+    "infi",
+    "ros1",
+    "ros2",
+    "crun",
+    "sml1",
+    "sml2",
+    "sml3"
+  ],
+  "basin_outputs": [
+    "cout",
+    "cloc",
+    "crun"
+  ]
+}

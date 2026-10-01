@@ -1,0 +1,110 @@
+{
+  "name": "snow",
+  "description": "Class forcing (lapse-rate temperature correction, pcluse interception), rain/snow ramp and snowpack with liquid-water retention. ET, diversion, percolation and soil runoff are off.",
+  "processes": [
+    "class_forcing",
+    "rain_snow_split",
+    "snowpack"
+  ],
+  "dates": {
+    "start": "2001-01-01",
+    "end": "2001-06-30"
+  },
+  "general": {
+    "rivvel": 1.0,
+    "damp": 0.5,
+    "ttpd": 0.5,
+    "ttpi": 1.5,
+    "tcalt": 0.6,
+    "whcsnow": 0.08,
+    "fsceff": 0.0,
+    "lp": 0.9
+  },
+  "landuse": {
+    "1": {
+      "ttmp": 0.0,
+      "cmlt": 3.0,
+      "cevp": 0.0,
+      "srrcs": 0.0,
+      "pcluse": 0.1
+    }
+  },
+  "soil": {
+    "1": {
+      "wcwp": 0.1,
+      "wcfc": 0.2,
+      "wcep": 0.15,
+      "mperc1": 0.0,
+      "mperc2": 0.0,
+      "macrate": 0.0,
+      "srrate": 0.0,
+      "mactrinf": 0.0,
+      "mactrsm": 0.0,
+      "rrcs1": 0.0,
+      "rrcs2": 0.0
+    }
+  },
+  "classes": {
+    "1": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.1,
+        0.4,
+        1.5
+      ],
+      "stream_depth_m": 0.0
+    }
+  },
+  "subbasins": [
+    {
+      "subid": 1,
+      "maindown": 0,
+      "area_m2": 1000000.0,
+      "elev_mean_m": 300,
+      "slope_mean_percent": 5,
+      "loc_rivlen_m": 1000,
+      "rivlen_m": 2000,
+      "classes": {
+        "1": {
+          "fraction": 1.0,
+          "dh_m": 150
+        }
+      }
+    }
+  ],
+  "forcing": {
+    "precip_pattern_mm": [
+      0,
+      3,
+      8,
+      0,
+      0,
+      12,
+      1,
+      0,
+      5,
+      0,
+      0,
+      20,
+      0,
+      2
+    ],
+    "temp_mean_c": -1.0,
+    "temp_amp_c": 8.0,
+    "temp_phase_day": 105
+  },
+  "class_outputs": [
+    "ctmp",
+    "cprc",
+    "snow",
+    "snwc",
+    "melt",
+    "infi"
+  ],
+  "basin_outputs": [
+    "prec",
+    "temp"
+  ]
+}
