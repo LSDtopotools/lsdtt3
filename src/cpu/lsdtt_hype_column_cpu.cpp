@@ -583,8 +583,11 @@ void hype_unit_step(const hype_general_parameters& g, const hype_unit_constants&
     // --- Potential evaporation (soilmodel0.f90:281). Snow PET (fepotsnow) is
     // weighted by effcov, which is 0 with sublimation off, so epot is unchanged
     // (soilmodel0.f90:338).
-    const double epot = hype_potential_evaporation(temp, c.landuse.ttmp, c.landuse.cevp,
-                                                   g.cevpam, g.cevpph, forcing.day_of_year);
+    // Observed PET replaces the calculated value (option 0, atm_proc.f90:2091).
+    const double epot = std::isfinite(forcing.observed_pet_mm)
+        ? forcing.observed_pet_mm
+        : hype_potential_evaporation(temp, c.landuse.ttmp, c.landuse.cevp,
+                                     g.cevpam, g.cevpph, forcing.day_of_year);
     f.epot_mm = epot;
 
     // --- Rain/snow split (:284) and snowpack (:285).

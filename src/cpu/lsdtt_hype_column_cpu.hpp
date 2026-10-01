@@ -67,6 +67,7 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 
 #include "lsdtt_hype_parameters.hpp"
 
@@ -144,6 +145,10 @@ struct hype_unit_forcing
     double precipitation_mm = 0.0;  // sub-basin precipitation for the step
     double temperature_c    = 0.0;  // sub-basin air temperature
     int    day_of_year      = 1;    // 1..366, for the PET seasonal factor
+    // Observed potential evaporation [mm/step]. When supplied (finite), it
+    // replaces the calculated value, as HYPE's PET option 0 does with an
+    // observed series (atm_proc.f90:2091-2092). NaN means "not supplied".
+    double observed_pet_mm  = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct hype_unit_fluxes
