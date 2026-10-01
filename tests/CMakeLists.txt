@@ -2512,6 +2512,12 @@ add_test(NAME unit_hype_model
          COMMAND lsdtt-test-hype-model "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
 lsdtt_set_tests_properties(unit_hype_model PROPERTIES LABELS "unit;distributed_hydrology")
 
+add_executable(lsdtt-test-hype-raster-setup cpp/test_hype_raster_setup.cpp)
+target_link_libraries(lsdtt-test-hype-raster-setup PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_raster_setup
+         COMMAND lsdtt-test-hype-raster-setup "${CMAKE_CURRENT_BINARY_DIR}/hype_raster_setup_output")
+lsdtt_set_tests_properties(unit_hype_raster_setup PROPERTIES LABELS "unit;distributed_hydrology")
+
 add_executable(lsdtt-test-subbasin-partition cpp/test_subbasin_partition.cpp)
 target_link_libraries(lsdtt-test-subbasin-partition PRIVATE lsdtt3_cpu)
 add_test(NAME unit_subbasin_partition COMMAND lsdtt-test-subbasin-partition)
