@@ -318,7 +318,9 @@ run_lem_step(
             opts.timestep,
             opts.incision_threshold_area,
             opts.divide_area_by_dx,
-            opts.slope_clamp
+            opts.slope_clamp,
+            opts.drainage_area_moving_average_kernel_size_pixels,
+            opts.boundary_conditions
         );
     }
     else if (opts.enable_dinf_fluvial_erosion)
@@ -346,7 +348,9 @@ run_lem_step(
             opts.incision_threshold_area,
             opts.divide_area_by_dx,
             opts.slope_clamp,
-            opts.n_threads
+            opts.n_threads,
+            opts.drainage_area_moving_average_kernel_size_pixels,
+            opts.boundary_conditions
         );
     }
 

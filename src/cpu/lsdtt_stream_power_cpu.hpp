@@ -32,6 +32,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "lsdtt_flowgraph_cpu.hpp"
@@ -53,6 +54,9 @@ namespace lsdtt
 //   incision_threshold_area min drainage area (m^2) needed for incision (0 = none)
 //   divide_area_by_dx       if true use specific area A/dx; if false use raw area A
 //   slope_clamp             minimum slope applied as NR fallback (m/m)
+//   drainage_area_moving_average_kernel_size_pixels
+//                           odd square smoothing kernel; 1 disables smoothing
+//   boundary_conditions      four characters in N,E,S,W order; p enables wrapping
 //
 //  There is no threading/parallelism here since it uses the depth-first 
 //  Braun & Willett (2013) stack in the flowinfo, which is not easily
@@ -67,7 +71,9 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
     float dt,
     float incision_threshold_area,
     bool  divide_area_by_dx,
-    float slope_clamp
+    float slope_clamp,
+    int   drainage_area_moving_average_kernel_size_pixels = 1,
+    const std::string& boundary_conditions = ""
 );
 
 // Returns a new elevation raster after one implicit stream-power timestep of
@@ -84,6 +90,9 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 //   divide_area_by_dx       if true use specific area A/dx; if false use raw area A
 //   slope_clamp             minimum slope applied as NR fallback (m/m)
 //   n_threads               0 = OMP default
+//   drainage_area_moving_average_kernel_size_pixels
+//                           odd square smoothing kernel; 1 disables smoothing
+//   boundary_conditions      four characters in N,E,S,W order; p enables wrapping
 lsdtt_raster_cpu compute_dinf_stream_power_incision(
     const lsdtt_raster_cpu&    dem,
     const lsdtt_flowgraph_cpu& flow,
@@ -94,7 +103,9 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     float incision_threshold_area,
     bool  divide_area_by_dx,
     float slope_clamp,
-    int   n_threads = 0
+    int   n_threads = 0,
+    int   drainage_area_moving_average_kernel_size_pixels = 1,
+    const std::string& boundary_conditions = ""
 );
 
 // =============================================================================

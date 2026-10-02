@@ -199,6 +199,12 @@ int main(int argc, char* argv[])
         "equations in Litwin et al. (2025, ESurf).",
         "Fluvial incision", "param", ""};
 
+    int_default_map["drainage_area_moving_average_kernel_size_pixels"] = 1;
+    help_map["drainage_area_moving_average_kernel_size_pixels"] = {
+        "int", "1", "Odd-sized square moving-average kernel for drainage area "
+        "used by stream-power incision; 1 disables smoothing.",
+        "Only positive odd values are allowed.", "Fluvial incision", "param", ""};
+
     // --- Hillslope diffusion ---
     string_default_map["hillslope_model"] = "adi";
     help_map["hillslope_model"] = {
@@ -315,6 +321,9 @@ int main(int argc, char* argv[])
                 "frequency_of_output_writing cannot be negative");
         require(ifs.at("progress_reporting_interval") >= 0,
                 "progress_reporting_interval cannot be negative");
+        require(ifs.at("drainage_area_moving_average_kernel_size_pixels") > 0 &&
+                    ifs.at("drainage_area_moving_average_kernel_size_pixels") % 2 == 1,
+                "drainage_area_moving_average_kernel_size_pixels must be a positive odd number");
         require(sf.at("boundary_conditions").size() == 4,
                 "boundary_conditions must contain four characters");
         for (const auto& name : {"intermediate_hillshade_format",
@@ -337,6 +346,8 @@ int main(int argc, char* argv[])
     options.erodibility = ff.at("K");
     options.m_exponent = ff.at("m_exponent");
     options.n_exponent = ff.at("n_exponent");
+    options.drainage_area_moving_average_kernel_size_pixels =
+        ifs.at("drainage_area_moving_average_kernel_size_pixels");
     options.hillslope_diffusivity = ff.at("D");
     options.uplift_rate = ff.at("uplift_rate");
     options.divide_area_by_dx = bf.at("use_specific_drainage_area");

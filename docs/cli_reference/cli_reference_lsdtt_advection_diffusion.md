@@ -42,6 +42,7 @@ K: ...
 m_exponent: ...
 n_exponent: ...
 use_specific_drainage_area: false
+drainage_area_moving_average_kernel_size_pixels: 1
 hillslope_model: adi
 D: ...
 uplift_rate: ...
@@ -54,6 +55,13 @@ When `use_specific_drainage_area` is false, total drainage area `A` is used.
 When true, the fluvial calculation uses `A / dx`. The former follows the
 nondimensional scaling of Theodratos et al. (2018); the latter follows the
 characteristic-scale convention of Litwin et al. (2025).
+
+After flow routing, the drainage-area field used by stream-power incision can
+be smoothed with an odd-sized square moving-average kernel. The default value
+of `1` leaves the field unchanged. Larger positive odd values average valid
+drainage-area cells in the local window before the new incised elevation is
+calculated. Windows wrap across any side marked `p` in `boundary_conditions`
+(`N,E,S,W` order); other sides are clipped at the DEM edge.
 
 The initial surface is always red noise. `fill_initial_surface` defaults to
 true. Set it to false only when initial internal drainage is intentional.
