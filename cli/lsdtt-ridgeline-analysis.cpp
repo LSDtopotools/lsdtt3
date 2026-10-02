@@ -64,6 +64,7 @@
 #include <sstream>
 #include <utility>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
@@ -94,6 +95,95 @@
 static const std::string k_version   = "0.3.0";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-ridgeline-analysis";
+
+// -----------------------------------------------------------------------------
+// MDD union helpers
+// -----------------------------------------------------------------------------
+static std::uint64_t ridge_node_key(const lsdtt::lsdtt_pixel_rc& node)
+{
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(node.row)) << 32) |
+           static_cast<std::uint32_t>(node.col);
+}
+
+static std::vector<lsdtt::lsdtt_ridgeline_cpu> union_mdd_ridgelines(
+    const std::vector<lsdtt::lsdtt_ridgeline_cpu>& traces,
+    bool periodic_rows, bool periodic_columns)
+{
+    if (traces.empty()) return {};
+    const auto& meta = traces.front().divide_grid_meta();
+    std::vector<lsdtt::lsdtt_pixel_rc> nodes;
+    std::unordered_map<std::uint64_t, std::size_t> index_by_node;
+    for (const auto& trace : traces)
+        for (const auto& node : trace.nodes())
+            if (index_by_node.emplace(ridge_node_key(node), nodes.size()).second)
+                nodes.push_back(node);
+
+    std::vector<std::vector<std::size_t>> adjacency(nodes.size());
+    auto add_neighbour = [&](std::size_t index, int row, int col)
+    {
+        if (periodic_rows)
+            row = (row % meta.n_rows + meta.n_rows) % meta.n_rows;
+        if (periodic_columns)
+            col = (col % meta.n_cols + meta.n_cols) % meta.n_cols;
+        if (row < 0 || row >= meta.n_rows || col < 0 || col >= meta.n_cols)
+            return;
+        const lsdtt::lsdtt_pixel_rc candidate{row, col};
+        const auto it = index_by_node.find(ridge_node_key(candidate));
+        if (it != index_by_node.end()) adjacency[index].push_back(it->second);
+    };
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+    {
+        add_neighbour(i, nodes[i].row - 1, nodes[i].col);
+        add_neighbour(i, nodes[i].row + 1, nodes[i].col);
+        add_neighbour(i, nodes[i].row, nodes[i].col - 1);
+        add_neighbour(i, nodes[i].row, nodes[i].col + 1);
+    }
+
+    std::vector<bool> visited(nodes.size(), false);
+    std::vector<lsdtt::lsdtt_ridgeline_cpu> components;
+    for (std::size_t seed = 0; seed < nodes.size(); ++seed)
+    {
+        if (visited[seed]) continue;
+        std::vector<std::size_t> component, pending{seed};
+        visited[seed] = true;
+        while (!pending.empty())
+        {
+            const std::size_t current = pending.back();
+            pending.pop_back();
+            component.push_back(current);
+            for (const std::size_t neighbour : adjacency[current])
+                if (!visited[neighbour])
+                {
+                    visited[neighbour] = true;
+                    pending.push_back(neighbour);
+                }
+        }
+        std::size_t start = component.front();
+        for (const std::size_t index : component)
+            if (adjacency[index].size() <= 1) { start = index; break; }
+        std::unordered_set<std::size_t> in_component(
+            component.begin(), component.end());
+        std::unordered_set<std::size_t> walked;
+        std::vector<lsdtt::lsdtt_pixel_rc> ordered;
+        std::size_t previous = nodes.size(), current = start;
+        while (in_component.count(current) && !walked.count(current))
+        {
+            walked.insert(current);
+            ordered.push_back(nodes[current]);
+            std::size_t next = nodes.size();
+            for (const std::size_t neighbour : adjacency[current])
+                if (neighbour != previous && !walked.count(neighbour))
+                { next = neighbour; break; }
+            if (next == nodes.size()) break;
+            previous = current;
+            current = next;
+        }
+        for (const std::size_t index : component)
+            if (!walked.count(index)) ordered.push_back(nodes[index]);
+        components.emplace_back(std::move(ordered), meta);
+    }
+    return components;
+}
 
 // -----------------------------------------------------------------------------
 // Unified Ridgeline Structure
@@ -271,9 +361,15 @@ int main(int argc, char* argv[])
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string", "oooo",
         "Boundary conditions for flow routing.",
-        "Four-character string (N, E, S, W). o = open, n = no-flux, p = periodic. Note "
-        "that range_defined_ridgelines relies on opposing no-flux boundaries (n) being "
-        "interpreted as mountain fronts.",
+         "Four-character string (N, E, S, W). o = open, n = no-flux, p = periodic. "
+         "Routing boundaries are separate from mountain_front_boundaries.",
+        "Threading / Routing", "param", ""};
+
+    string_default_map["mountain_front_boundaries"] = "nnnn";
+    help_map["mountain_front_boundaries"] = {
+        "string", "nnnn", "Mountain-front flags in N,E,S,W order.",
+        "m marks a mountain front; n marks an ordinary boundary. Range-defined "
+        "MDD extraction uses opposing m boundaries and does not alter routing.",
         "Threading / Routing", "param", ""};
 
     lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
@@ -1171,7 +1267,8 @@ int main(int argc, char* argv[])
         if (analysis_mode == "range_defined_ridgelines")
         {
             std::cout << "I am going to select range-spanning basins for your!\n";
-            std::cout << "For this to work, you MUST have exactly 4 boundary conditions specified with at least one pair of opposing no-flux boundaries (interpreted as the mountain fronts.)\n";
+            std::cout << "For this to work, you MUST have exactly 4 boundary "
+                      << "conditions and opposing mountain-front flags.\n";
 
             std::vector<lsdtt::lsdtt_input_point> corner_pts;
             std::array<std::int64_t, 4>           corner_flats{};
@@ -1237,7 +1334,7 @@ int main(int argc, char* argv[])
 
             basin_manager.select_all_junction_basins();
             basin_manager.filter_range_spanning(
-                boundary_segments, sf["boundary_conditions"]
+                boundary_segments, sf["mountain_front_boundaries"]
             );
             if (bf["filter_nested_basins"])
             {
@@ -1263,10 +1360,11 @@ int main(int argc, char* argv[])
                         b_flats.begin(), b_flats.end(), rs_outlets[i]
                     );
                     if (it != b_flats.end()) {
-                        char bc_char = static_cast<char>(std::tolower(
-                            static_cast<unsigned char>(sf["boundary_conditions"][b])
+                        char mf_char = static_cast<char>(std::tolower(
+                            static_cast<unsigned char>(
+                                sf["mountain_front_boundaries"][b])
                         ));
-                        if (bc_char == 'n') {
+                        if (mf_char == 'm') {
                             outlet_positions.emplace_back(
                                 static_cast<int>(std::distance(b_flats.begin(), it)),
                                 rs_junctions[i]
@@ -1487,7 +1585,8 @@ int main(int argc, char* argv[])
         if (analysis_mode == "range_defined_ridgelines" && !range_outline_mode)
         {
             std::cout << "\nYou selected an analysis option that requires finding drainage divides defined by mountain range boundaries, for example transverse divides or the main drainage divide.\n";
-            std::cout << "For this to work, you must have exactly four boundary conditions with at least one pair of opposing no-flux boundaries. I am going to interpret these no-flux boundaries as mountain fronts.\n\n";
+            std::cout << "For this to work, you must have exactly four boundary "
+                      << "conditions with opposing mountain-front flags.\n\n";
 
             std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_for_each_boundary(4);
 
@@ -1581,17 +1680,25 @@ int main(int argc, char* argv[])
                 if (!mdd_for_each_boundary[i].empty()) boundary_indices.push_back(i);
             }
 
-            // Union the side-derived MDD traces rather than requiring shared
-            // raster nodes. This preserves MDD portions present on either
-            // boundary-derived trace, including one-sided results.
+            // Union the side-derived MDD traces and split the union into
+            // connected components. A continuous union is one ridgeline; a
+            // genuine gap produces multiple MDD ridgeline records.
+            std::vector<lsdtt::lsdtt_ridgeline_cpu> mdd_traces;
             for (std::size_t i = 0; i < boundary_indices.size(); ++i)
             {
-                int boundary_index = boundary_indices[i];
+                const int boundary_index = boundary_indices[i];
                 if (i > 0) mdd_for_each_boundary[boundary_index].reverse();
+                mdd_traces.push_back(
+                    std::move(mdd_for_each_boundary[boundary_index]));
+            }
+            const std::string& bc = sf["boundary_conditions"];
+            const bool periodic_rows = bc[0] == 'p' && bc[2] == 'p';
+            const bool periodic_columns = bc[1] == 'p' && bc[3] == 'p';
+            for (auto& segment : union_mdd_ridgelines(
+                     mdd_traces, periodic_rows, periodic_columns))
+            {
                 all_ridgelines.push_back({
-                    std::move(mdd_for_each_boundary[boundary_index]),
-                    ridgeline_counter++,
-                    -1, -1,
+                    std::move(segment), ridgeline_counter++, -1, -1,
                     "main_drainage_divide", "_range_defined_ridgelines",
                     true, nan_f, nan_f
                 });
@@ -2516,6 +2623,15 @@ int main(int argc, char* argv[])
                       << "one periodic boundary pair.\n";
             return 1;
         }
+        std::size_t mdd_count = 0;
+        for (const auto& record : all_ridgelines)
+            if (record.feature_type == "main_drainage_divide") ++mdd_count;
+        if (mdd_count > 1)
+        {
+            std::cerr << "FATAL: orient_periodic_ridgelines cannot orient "
+                      << "multiple discontinuous main drainage divides.\n";
+            return 1;
+        }
         for (auto& record : all_ridgelines)
             record.ridgeline.orient_periodic_start(periodic_columns);
     }
@@ -2558,12 +2674,12 @@ int main(int argc, char* argv[])
     transform.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
 
     std::vector<std::string> points_headers_single = {
-        "basin_junction_number", "latitude", "longitude", "ridgeline_type", "distance", 
+        "basin_junction_number", "row", "col", "latitude", "longitude", "ridgeline_type", "distance", 
         "elevation", "fitted_elevation", "detrended_elevation", 
         "smoothed_detrended_elevation", "smoothed_detrended_slope"
     };
     std::vector<std::string> points_headers_dual = {
-        "ridgeline_number", "latitude", "longitude", "ridgeline_type", "distance", 
+        "ridgeline_number", "row", "col", "latitude", "longitude", "ridgeline_type", "distance", 
         "elevation", "fitted_elevation", "detrended_elevation", 
         "smoothed_detrended_elevation", "smoothed_detrended_slope"
     };

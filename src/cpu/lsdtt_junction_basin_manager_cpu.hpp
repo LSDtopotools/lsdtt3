@@ -114,7 +114,7 @@ public:
     // Retains only basins that are range-spanning
     lsdtt_junction_basin_manager_cpu& filter_range_spanning(
         const std::vector<std::vector<std::int64_t>>& boundary_segments,
-        const std::string& boundary_conditions
+        const std::string& mountain_front_boundaries
     );
 
 
