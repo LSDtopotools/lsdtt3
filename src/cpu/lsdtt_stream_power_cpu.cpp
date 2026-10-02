@@ -51,40 +51,83 @@ std::vector<double> smooth_drainage_area(
     auto wrapped_index = [](int index, int size) {
         return (index % size + size) % size;
     };
-    std::vector<double> smoothed(area.size(), 0.0);
+
+    auto resolve_index = [&](int index, int size, bool periodic_negative,
+                             bool periodic_positive) {
+        if (index < 0 && !periodic_negative) return -1;
+        if (index >= size && !periodic_positive) return -1;
+        return wrapped_index(index, size);
+    };
+
+    const std::size_t n_cells = static_cast<std::size_t>(n_rows) * n_cols;
+    std::vector<double> horizontal_sum(n_cells, 0.0);
+    std::vector<std::size_t> horizontal_count(n_cells, 0);
+
+    // First pass: rolling horizontal sums and valid-cell counts.
     for (int row = 0; row < n_rows; ++row)
     {
+        double sum = 0.0;
+        std::size_t count = 0;
+        auto add_column = [&](int raw_col, double sign) {
+            const int column = resolve_index(
+                raw_col, n_cols, periodic_west, periodic_east);
+            if (column < 0) return;
+            const std::size_t neighbour =
+                static_cast<std::size_t>(row) * n_cols + column;
+            if (neighbour < area.size() && neighbour < mask.size() &&
+                mask[neighbour] != 0)
+            {
+                sum += sign * area[neighbour];
+                if (sign > 0.0) ++count;
+                else --count;
+            }
+        };
+
+        for (int offset = -radius; offset <= radius; ++offset)
+            add_column(offset, 1.0);
         for (int col = 0; col < n_cols; ++col)
         {
             const std::size_t flat = static_cast<std::size_t>(row) * n_cols + col;
-            if (flat >= area.size() || flat >= mask.size() || mask[flat] == 0)
-                continue;
-
-            double sum = 0.0;
-            std::size_t count = 0;
-            for (int raw_row = row - radius; raw_row <= row + radius; ++raw_row)
+            horizontal_sum[flat] = sum;
+            horizontal_count[flat] = count;
+            if (col + 1 < n_cols)
             {
-                if (raw_row < 0 && !periodic_north) continue;
-                if (raw_row >= n_rows && !periodic_south) continue;
-                const int window_row = (raw_row < 0 || raw_row >= n_rows)
-                    ? wrapped_index(raw_row, n_rows) : raw_row;
-                for (int raw_col = col - radius; raw_col <= col + radius; ++raw_col)
-                {
-                    if (raw_col < 0 && !periodic_west) continue;
-                    if (raw_col >= n_cols && !periodic_east) continue;
-                    const int window_col = (raw_col < 0 || raw_col >= n_cols)
-                        ? wrapped_index(raw_col, n_cols) : raw_col;
-                    const std::size_t neighbour =
-                        static_cast<std::size_t>(window_row) * n_cols + window_col;
-                    if (neighbour < area.size() && neighbour < mask.size() &&
-                        mask[neighbour] != 0)
-                    {
-                        sum += area[neighbour];
-                        ++count;
-                    }
-                }
+                add_column(col - radius, -1.0);
+                add_column(col + radius + 1, 1.0);
             }
-            smoothed[flat] = count == 0 ? area[flat] : sum / count;
+        }
+    }
+
+    std::vector<double> smoothed(n_cells, 0.0);
+
+    // Second pass: rolling vertical sums over the horizontal-pass results.
+    for (int col = 0; col < n_cols; ++col)
+    {
+        double sum = 0.0;
+        std::size_t count = 0;
+        auto add_row = [&](int raw_row, double sign) {
+            const int row = resolve_index(
+                raw_row, n_rows, periodic_north, periodic_south);
+            if (row < 0) return;
+            const std::size_t neighbour =
+                static_cast<std::size_t>(row) * n_cols + col;
+            sum += sign * horizontal_sum[neighbour];
+            if (sign > 0.0) count += horizontal_count[neighbour];
+            else count -= horizontal_count[neighbour];
+        };
+
+        for (int offset = -radius; offset <= radius; ++offset)
+            add_row(offset, 1.0);
+        for (int row = 0; row < n_rows; ++row)
+        {
+            const std::size_t flat = static_cast<std::size_t>(row) * n_cols + col;
+            if (mask[flat] != 0 && count != 0)
+                smoothed[flat] = sum / static_cast<double>(count);
+            if (row + 1 < n_rows)
+            {
+                add_row(row - radius, -1.0);
+                add_row(row + radius + 1, 1.0);
+            }
         }
     }
     return smoothed;
