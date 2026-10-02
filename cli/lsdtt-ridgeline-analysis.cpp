@@ -300,6 +300,13 @@ int main(int argc, char* argv[])
         "Only applies when ridgeline_analysis_mode is range_defined_ridgelines.",
         "Workflow mode", "switch", ""};
 
+    bool_default_map["orient_periodic_ridgelines"] = false;
+    help_map["orient_periodic_ridgelines"] = {
+        "bool", "false", "Orient periodic ridgelines at the first grid edge.",
+        "East/west periodic ridgelines start at the first column; north/south "
+        "periodic ridgelines start at the first row.",
+        "Workflow mode", "switch", ""};
+
     // --- Range-defined boundaries ---
     string_default_map["corner_coordinates_fname"] = "NULL";
     help_map["corner_coordinates_fname"] = {"string", "NULL",
@@ -2493,6 +2500,24 @@ int main(int argc, char* argv[])
                       << e.what() << "\n";
             return 1;
         }
+    }
+
+    // =========================================================================
+    // Phase 5c - Optional periodic ridgeline orientation
+    // =========================================================================
+    if (bf["orient_periodic_ridgelines"])
+    {
+        const std::string& bc = sf["boundary_conditions"];
+        const bool periodic_columns = bc[1] == 'p' && bc[3] == 'p';
+        const bool periodic_rows = bc[0] == 'p' && bc[2] == 'p';
+        if (periodic_columns == periodic_rows)
+        {
+            std::cerr << "FATAL: orient_periodic_ridgelines requires exactly "
+                      << "one periodic boundary pair.\n";
+            return 1;
+        }
+        for (auto& record : all_ridgelines)
+            record.ridgeline.orient_periodic_start(periodic_columns);
     }
 
     // =========================================================================

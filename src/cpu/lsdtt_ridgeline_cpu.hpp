@@ -124,6 +124,9 @@ public:
     void reverse();
     void append_without_check(const lsdtt_ridgeline_cpu& other);
 
+    // Rotate a periodic ridgeline to the first grid column or row.
+    void orient_periodic_start(bool columns);
+
     // -------------------------------------------------------------------------
     // MDD assembly helper
     // -------------------------------------------------------------------------

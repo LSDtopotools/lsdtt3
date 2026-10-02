@@ -264,6 +264,32 @@ void lsdtt_ridgeline_cpu::reverse()
     compute_positions_and_distances_();
 }
 
+void lsdtt_ridgeline_cpu::orient_periodic_start(bool columns)
+{
+    if (nodes_.empty()) return;
+    const auto index = std::min_element(
+        nodes_.begin(), nodes_.end(),
+        [columns](const lsdtt_pixel_rc& a, const lsdtt_pixel_rc& b)
+        { return columns ? a.col < b.col : a.row < b.row; });
+    const auto offset = static_cast<std::size_t>(index - nodes_.begin());
+    if (offset == 0) return;
+
+    std::rotate(nodes_.begin(), nodes_.begin() + offset, nodes_.end());
+    std::rotate(positions_.begin(), positions_.begin() + offset, positions_.end());
+    if (!elevations_.empty())
+        std::rotate(elevations_.begin(), elevations_.begin() + offset, elevations_.end());
+    if (!fitted_elevations_.empty())
+        std::rotate(fitted_elevations_.begin(), fitted_elevations_.begin() + offset, fitted_elevations_.end());
+    if (!detrended_elevations_.empty())
+        std::rotate(detrended_elevations_.begin(), detrended_elevations_.begin() + offset, detrended_elevations_.end());
+    if (!smoothed_detrended_elevations_.empty())
+        std::rotate(smoothed_detrended_elevations_.begin(), smoothed_detrended_elevations_.begin() + offset, smoothed_detrended_elevations_.end());
+    if (!smoothed_detrended_slopes_.empty())
+        std::rotate(smoothed_detrended_slopes_.begin(), smoothed_detrended_slopes_.begin() + offset, smoothed_detrended_slopes_.end());
+
+    compute_positions_and_distances_();
+}
+
 void lsdtt_ridgeline_cpu::calculate_nearest_channel_elevations(
     const lsdtt_flow_base& flow,
     const lsdtt_raster_cpu& dem,
