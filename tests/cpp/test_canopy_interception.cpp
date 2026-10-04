@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Unit tests for src/cpu/lsdtt_canopy_interception_cpu -- Phase 4 of the
-// distributed-hydrology work (plan_raster_topmodel.md section 8, phase 4).
+// distributed-hydrology work.
 //
 // What is under test
 // ------------------

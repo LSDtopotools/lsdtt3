@@ -7,8 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Unit tests for phases 0, 1 and 3 of the internal-drainage work
-// (docs/plan_docs/internal_drainage_plan.md, section 6.1).
+// Unit tests for phases 0, 1 and 3 of the internal-drainage work.
 //
 // Detection and the vector round-trip remain in the separate phase 2b test;
 // the CLI belongs to phase 4.
@@ -213,7 +212,7 @@ std::int64_t steepest_descent_terminus(const lsdtt::lsdtt_raster_cpu& dem,
 // steepest_descent_passes_through
 //
 // True if the steepest-descent walk from `start` ever steps onto `target`.
-// This is REACHABILITY, and the plan (section 6.1) records that it does not
+// This is REACHABILITY, and it does not
 // discriminate: after a plain fill a handful of cells still step down onto the
 // old pit incidentally. It is computed here only so the driver can report the
 // contrast alongside the termination counts that are actually asserted.
@@ -301,7 +300,7 @@ std::int64_t receiver_terminus(const lsdtt::lsdtt_flowinfo& flow,
 
 // A single cone crater on a tilted plane. Centre placed exactly on a pixel
 // centre, which the generator's header requires for the analytic pit to be the
-// raster minimum (see the phase-0 note in section 6.1 of the plan).
+// raster minimum.
 struct single_crater_fixture
 {
     lsdtt::lsdtt_crater_field_surface gt;
@@ -591,7 +590,7 @@ void test_flat_floor_tie_break()
           "z_min " + std::to_string(z_min) +
           " vs analytic " + std::to_string(a.pit_elevation[0]));
 
-    // A lowest-flat-index tie-break is the rule the plan fixes (section 5.5).
+    // A lowest-flat-index tie-break is the rule.
     // It must be reproducible, and it must land ON the floor -- but it will NOT
     // agree with the generator's reported pit_rc, because the generator reports
     // the cell containing the centre while this rule picks the north-westmost
@@ -708,7 +707,7 @@ void test_fill_with_sinks_retains_descent()
         if (steepest_descent_terminus(filled_sinks, i) == own_pit) ++n_term_sinks;
         if (steepest_descent_terminus(filled_plain, i) == own_pit) ++n_term_plain;
 
-        // Reachability, for contrast: this is the assertion the plan warns off,
+        // Reachability, for contrast: this is the assertion to avoid,
         // because plain filling leaves a handful of cells whose imposed
         // min_slope gradient happens to step down onto the old pit in passing.
         if (steepest_descent_passes_through(filled_plain, i, own_pit))
@@ -951,7 +950,7 @@ void test_forced_outlet_terminates()
           n_off_grid == 0,
           std::to_string(n_off_grid) + " cells");
 
-    // Plan section 5.3b: the internal basin is STRICTLY LARGER than the crater
+    // The internal basin is STRICTLY LARGER than the crater
     // footprint on a tilted background, because the depression intercepts the
     // up-slope strip draining into it. Subset, never equality.
     const lsdtt::lsdtt_raster_result ncp =

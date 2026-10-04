@@ -23,7 +23,7 @@
 //   P3  n != 1 is REFUSED, because the closed form does not close there
 //   P4  an unset prefactor is REFUSED rather than defaulted to 1
 //   P5  THE RELIEF BUDGET IS PARTITIONED, not checked: the closed form derives K
-//       from the budget, so the guard the plan asked for cannot fire. The
+//       from the budget, so the guard the design asked for cannot fire. The
 //       invariant is what is tested
 //   P6  E* is reported, and the stiffness warning fires when S_max approaches S_c
 //   P7  chi_c matters: a larger chi_c means more of the relief is fluvial
@@ -192,7 +192,7 @@ int main()
     // -------------------------------------------------------------------------
     std::cout << "\nP5: the relief budget is PARTITIONED, not checked\n";
     {
-        // The plan (section 5.3) asked for a guard against the hillslope
+        // The design asked for a guard against the hillslope
         // demanding more relief than the total budget. That guard cannot fire
         // here, and the reason is structural rather than lucky: K is DERIVED
         // from the budget, so with h = c^p L_h^(2-p)/2 > 0 and chi_c > 0,

@@ -10,7 +10,7 @@
 // Phase 0 of the triggered landslide module: the size distribution only. No
 // DEM, no flow routing, no placement.
 //
-// Tests T1-T5b of docs/plan_docs/landslide_event_module_plan.md:
+// Tests T1-T5b:
 //   T1  discrete pmf sums to 1 for both families
 //   T2  sampling recovers the target pmf (chi-squared) -- catches a regression
 //       to sample-then-round
@@ -21,7 +21,7 @@
 //   T5b unit convention pinned two ways (Simonett via Malamud; Hovius eps)
 //
 // Also exercises the truncation diagnostics that decide how many landslides a
-// volume budget buys (plan section 2.5).
+// volume budget buys.
 //
 // Usage: test-landslide-size [output_dir]
 // -----------------------------------------------------------------------------
@@ -304,10 +304,10 @@ int main(int argc, char** argv)
     }
 
     // -------------------------------------------------------------------------
-    // Truncation diagnostics (plan section 2.5) -- reported, and the number
+    // Truncation diagnostics -- reported, and the number
     // fraction asserted. The VOLUME fraction is expected to be large.
     // -------------------------------------------------------------------------
-    std::cout << "\nTruncation diagnostics on a 30 m DEM (plan 2.5)\n";
+    std::cout << "\nTruncation diagnostics on a 30 m DEM\n";
     {
         const std::string csv = outdir + "/landslide_truncation.csv";
         FILE* f = std::fopen(csv.c_str(), "w");
@@ -345,7 +345,7 @@ int main(int argc, char** argv)
         const double ratio = s1000.mean_volume_m3() / s500.mean_volume_m3();
         std::cout << "        E[V] ratio (1000 px / 500 px) = " << ratio << "\n";
         check(ratio > 1.05,
-              "E[V] rises materially with A_max (plan 2.5; intended, not a bug)");
+              "E[V] rises materially with A_max (intended, not a bug)");
 
         // A 30 m cell cannot resolve the rollover: 900 m^2 > the ~400 m^2 mode.
         check(s1000.rollover_unresolved(),

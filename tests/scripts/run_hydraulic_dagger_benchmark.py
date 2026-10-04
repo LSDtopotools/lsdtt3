@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Hydraulic benchmark: lsdtt3 vs DAGGER GraphFlood reference.
 
-Plan document: docs/plan_docs/hydraulic_routing_dagger_validation_plan.md
-
 This Phase 3 harness runs matched lsdtt3 and DAGGER scenarios, compares key
 output rasters, and writes one metrics row to hydraulic_benchmark_results.csv.
 

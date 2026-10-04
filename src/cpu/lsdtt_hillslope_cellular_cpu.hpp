@@ -2,7 +2,7 @@
 // lsdtt_hillslope_cellular_cpu.hpp
 //
 // Experimental conservative face-transfer hillslope solver. This is the global
-// deterministic correctness oracle for plan_cellular_hillslope_transport.md;
+// deterministic correctness oracle for cellular hillslope transport;
 // it is not exposed through the LEM or CLI.
 // =============================================================================
 

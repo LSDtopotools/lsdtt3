@@ -1,0 +1,38 @@
+# Smoke test for lsdtt-distributed-hydrology, column_model: hype, outlets by
+# Strahler order.
+#
+# Same generated input set as distributed_hydrology_hype_outlets.param.in. Every
+# first-order junction basin becomes a sub-basin outlet: the two arms of the Y,
+# which are therefore two separate domain outlets, and the trunk below them is
+# outside the model. PET is HYPE's own (no pet_fname).
+#
+# Order 1 only, not 1 and above: the trunk leaves the DEM, so stream-order
+# selection would also put an outlet on its base-level pixel, whose sub-basin
+# is the strip of edge pixels draining along the southern edge and has no
+# valid gradient. That case is failure_distributed_hydrology_hype_edge_subbasin.
+read_path: __READ_PATH__
+read_fname: hype_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hypeorder
+
+raster_is_filled: false
+
+column_model: hype
+dt_seconds: 86400
+hype_start_date: 2001-01-01
+rainfall_fname: hype_rainfall.csv
+temperature_fname: hype_temperature.csv
+
+landcover_fname: hype_landuse.tif
+hype_soil_class_fname: hype_soil.tif
+hype_general_parameters_fname: hype_general_parameters.csv
+hype_landuse_parameters_fname: hype_landuse_parameters.csv
+hype_soil_parameters_fname: hype_soil_parameters.csv
+hype_classes_fname: hype_classes.csv
+
+threshold_contributing_pixels: 50
+select_all_basins_of_stream_order: true
+selected_stream_order: 1
+
+write_discharge_csv: true
+write_water_balance_csv: true

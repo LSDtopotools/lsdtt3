@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Unit tests for src/cpu/lsdtt_channel_extent_cpu -- Phase 6 (plan section 8).
+// Unit tests for src/cpu/lsdtt_channel_extent_cpu -- Phase 6.
 //
 // What is under test
 // ------------------
@@ -22,7 +22,7 @@
 //
 // WHY THE GATE IS PHRASED THAT WAY
 // --------------------------------
-// The plan's gate name is `rigorous_channel_transition_continuity`, and Phase 1
+// The gate name is `rigorous_channel_transition_continuity`, and Phase 1
 // already measures the continuity itself (largest step-to-step velocity change
 // 0.92% across six decades of area). What Phase 6 adds is the claim that
 // introducing a MASK cannot break that continuity, because the mask is wired to

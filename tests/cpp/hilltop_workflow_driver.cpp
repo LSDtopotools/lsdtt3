@@ -10,7 +10,7 @@
 // SCAFFOLDING, NOT A PRODUCT.
 //
 // Runs the hilltop / channel coupling pipeline on a supplied DEM so the E*-R*
-// validation workflow (plan section 4.8) can be run before the Phase 4 CLI
+// validation workflow can be run before the Phase 4 CLI
 // exists.  It is a placeholder for `lsdtt-hillslope-channel-coupling` and
 // should be DELETED when that lands, not grown into a second CLI: it has no
 // parameter file, no help system and no output-format choice, all of which the

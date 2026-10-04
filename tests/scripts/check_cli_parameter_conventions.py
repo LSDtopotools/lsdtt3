@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """CLI parameter-naming conformance check (Phase 0d).
 
-Implements item **0d** of `docs/plan_docs/cli_consistency_remediation_plan.md`:
+Implements the durable guard on CLI parameter naming:
 a CTest case that walks every built `lsdtt-*` CLI, reads its declared
 parameters out of the help registry (`<cli> -h json`), and asserts the
-mechanical naming rules of plan section 3 ("The standard to enforce"):
+mechanical naming rules:
 
   R1 unit_suffix        no parameter name ends in `_m`, `_px` or `_deg`;
                         the spellings are `_metres`, `_pixels`, `_degrees`.
@@ -412,7 +412,7 @@ def key_of(violation: dict) -> tuple[str, str, str]:
 
 BASELINE_README = [
     "Baseline allow-list for tests/scripts/check_cli_parameter_conventions.py",
-    "(Phase 0d of docs/plan_docs/cli_consistency_remediation_plan.md).",
+    "(the CLI parameter naming guard).",
     "",
     "Every entry is a CLI parameter that violates a section-3 naming",
     "convention TODAY and is knowingly tolerated until the phase that renames",
@@ -531,7 +531,7 @@ def main() -> int:
         n_params += len(params)
         violations.extend(check_cli(exe.name, params))
 
-    print("CLI parameter-convention check (plan 0d)")
+    print("CLI parameter-convention check")
     print("  binaries found        : %d" % len(clis))
     print("  help registries parsed: %d" % n_parsed)
     print("  parameters inspected  : %d" % n_params)
@@ -580,8 +580,8 @@ def main() -> int:
                 % (v["cli"], v["parameter"], v["rule"], v["detail"])
             )
         print(
-            "\nRename the parameter to the section-3 convention "
-            "(docs/plan_docs/cli_consistency_remediation_plan.md section 3). "
+            "\nRename the parameter to the convention listed at the top of "
+            "tests/scripts/check_cli_parameter_conventions.py. "
             "Adding it to the baseline is not the fix: that list only shrinks."
         )
         return 1

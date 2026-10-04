@@ -1,6 +1,6 @@
 # A class table carrying ks= must be a HARD ERROR with an explanation, not a
 # silently ignored field. Conductivity is not a land-cover property here: it is
-# looked up from measured soil profiles, re-keyed by land use (plan section 2.1).
+# looked up from measured soil profiles, re-keyed by land use.
 #
 # There is deliberately no landcover_fname: the table is validated whether or
 # not a raster is supplied, because deferring the parse to the point of use

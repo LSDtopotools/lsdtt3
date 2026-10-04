@@ -51,7 +51,7 @@
 // `ctest` run. It only removes the prompt; the environment variable and key
 // file routes work as before.
 //
-// The plan originally proposed a --api-key-file command-line flag. That was
+// An earlier design proposed a --api-key-file command-line flag. That was
 // dropped: lsdtt_param_parser::parse_args_deferred() interprets extra argv
 // entries as <path> <parameter_file>, so a new flag would require changing the
 // shared parser used by every CLI. An environment variable naming the file

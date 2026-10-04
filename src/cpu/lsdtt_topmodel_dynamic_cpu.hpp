@@ -30,8 +30,8 @@
 //
 // WHAT VALIDATES THIS, GIVEN THERE IS NO ORACLE
 // ---------------------------------------------
-// The 95.02 reference only covers `index` mode, so the plan expected water
-// balance and grid convergence to be the only guards here. There is a better
+// The 95.02 reference only covers `index` mode, so water
+// balance and grid convergence were expected to be the only guards here. There is a better
 // one, and it is derivable rather than empirical.
 //
 // TOPMODEL's index relation is not an independent assumption: it is what the

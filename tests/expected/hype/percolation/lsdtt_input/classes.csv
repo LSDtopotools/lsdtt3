@@ -1,0 +1,2 @@
+class_id,landuse,soil,n_layers,layer1_bottom_m,layer2_bottom_m,layer3_bottom_m,stream_depth_m,tile_depth_m
+1,1,1,3,0.2,0.5,0.9,0,0

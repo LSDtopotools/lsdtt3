@@ -1,7 +1,6 @@
 ### Cosmogenic transient step-change + landslide ensemble.
 ###
-### This is the Snakemake translation of the hand-run experiment documented in
-### docs/plan_docs/plan_cosmo_transient_landslides.md and executed by
+### This is the Snakemake translation of the hand-run experiment executed by
 ### p5_gen_ls.sh / p5_run_scenario.sh / p5_analyse.py in
 ### data/cosmo_transient_test/lsdtt3_version/ls_phase3/. The `.param` files in
 ### that directory are the ground truth: every key written below is copied from
@@ -84,7 +83,7 @@ def _ct_uplift_new(mag):
 def _ct_event_volume_per_area_m(mag):
     """Geometric scar thickness for one event, in metres.
 
-    plan_cosmo_transient_landslides.md section 5: the event is expressed as
+    The event is expressed as
     years of post-step erosion, converted from a ROCK-equivalent depth to a
     GEOMETRIC scar depth by rho_rock / rho_scar. The two densities are not
     interchangeable -- Larsen's V = alpha * A^gamma is fitted to measured scar
@@ -111,7 +110,7 @@ def _ct_step_change_block(mag):
         "write_step_change_rasters: true\n"
         f"step_change_production_from_generated_dem: {_ct_bool(sc['production_from_generated_dem'])}\n"
         # The generated step-change DEM carries a ~56 m elevation cliff along
-        # drainage divides (plan section 7.2), so 5.4 % of tag-4 pixels drain
+        # drainage divides, so 5.4 % of tag-4 pixels drain
         # across it when D8 is rebuilt on that surface. Routing on the ORIGINAL
         # DEM removes the contamination entirely; the final runs used false.
         f"step_change_route_on_generated_dem: {_ct_bool(sc['route_on_generated_dem'])}\n"

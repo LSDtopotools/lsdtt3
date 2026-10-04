@@ -1,0 +1,38 @@
+# Smoke test for lsdtt-distributed-hydrology, column_model: hype: the gauges of
+# hype_outlets_offset.csv sit 3 columns east of the channel, and downstream
+# snapping must follow flow onto it (row 18 col 22 and row 50 col 30). This lands
+# lower on the west arm than expanding_square, so sub-basin 1 is larger.
+#
+# Input set: lsdtt-test-hype-cli-fixture (fixture_hype_cli).
+read_path: __READ_PATH__
+read_fname: hype_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hypesnapds
+
+raster_is_filled: false
+write_output_format: gtiff
+
+column_model: hype
+dt_seconds: 86400
+hype_start_date: 2001-01-01
+rainfall_fname: hype_rainfall.csv
+temperature_fname: hype_temperature.csv
+pet_fname: hype_pet.csv
+
+landcover_fname: hype_landuse.tif
+hype_soil_class_fname: hype_soil.tif
+hype_general_parameters_fname: hype_general_parameters.csv
+hype_landuse_parameters_fname: hype_landuse_parameters.csv
+hype_soil_parameters_fname: hype_soil_parameters.csv
+hype_classes_fname: hype_classes.csv
+
+threshold_contributing_pixels: 50
+select_basins_from_outlets: true
+basin_outlet_fname: hype_outlets_offset.csv
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 50
+
+write_discharge_csv: true
+write_water_balance_csv: true
+write_hype_subbasin_raster: true
+write_hype_geodata: true

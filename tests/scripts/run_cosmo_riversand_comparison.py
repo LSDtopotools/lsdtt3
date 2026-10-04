@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase-5 riversand basin comparison harness (cosmo plan 5b / 6c(B)).
+"""Phase-5 riversand basin comparison harness.
 
 This script follows the same "download -> run -> delete" pattern as the other
 `cosmo_realworld` tools, but targets a small starter subset for the riversand

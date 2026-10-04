@@ -269,7 +269,7 @@ double field_peak_abs(const lsdtt::lsdtt_raster_cpu& f)
 }
 
 // Total volume of the field above a datum: sum( (z - datum) * cell_area ).
-// Units m^3.  Used by the conservation test (plan section 9 item 7).
+// Units m^3.  Used by the conservation test.
 double total_volume_above(const lsdtt::lsdtt_raster_cpu& field, double datum)
 {
     const std::vector<float>& z = field.get_data();
@@ -389,8 +389,8 @@ int main(int argc, char** argv)
 
     std::cout << "=========================================================\n"
               << "|| lsdtt-test-hillslope-implicit (Roering nonlinear)   ||\n"
-              << "|| Rectangular-domain validation (plan section 9       ||\n"
-              << "|| tests 1 & 2).  Phase 1/2: PASS in the sub-critical  ||\n"
+              << "|| Rectangular-domain validation (tests 1 & 2).        ||\n"
+              << "|| Phase 1/2: PASS in the sub-critical                 ||\n"
               << "|| regime with 2nd-order grid convergence.            ||\n"
               << "=========================================================\n\n";
 
@@ -625,14 +625,14 @@ int main(int argc, char** argv)
               + ", tol " + fmt(rel_tol) + ")");
     }
 
-    // --- Test 7: conservation (plan section 9 item 7). -----------------------
+    // --- Test 7: conservation. -----------------------
     // With U = 0 and reflecting (no-flux 'nnnn') boundaries and NO channel sinks,
     // the discrete conservative diffusion operator moves mass between cells but
     // adds/removes none across the no-flux edges, so the total volume above the
     // datum must be conserved to solver/round-off tolerance as the field relaxes.
     // We start from a GENTLE linear-ramp ridge (max slope 0.4 = 0.5*Sc, well below
     // Sc) so the r_max limiter NEVER fires -- the Carretier slope-restoration
-    // removal path (plan section 5) would break conservation if it did, so we stay
+    // removal path would break conservation if it did, so we stay
     // in the limiter-off regime and assert limiter_fired == false.  Volume is
     // tracked over the whole simulation by integrating in successive chunks.
     {
@@ -710,11 +710,11 @@ int main(int argc, char** argv)
               + ", max_slope_ratio=" + fmt(final_ratio));
     }
 
-    // --- Test 4: match the SOR steady state (plan section 9 item 4). ----------
+    // --- Test 4: match the SOR steady state. ----------
     // Run the transient implicit solver to convergence (and, in linear mode, with
     // ONE huge backward-Euler step) and compare against compute_hillslope_steady_state
     // on the SAME DEM + is_channel.  Both must agree to solver tolerance because they
-    // assemble the SAME shared discretization operator (plan section 3).
+    // assemble the SAME shared discretization operator.
     //
     // The comparison uses 'n'/'p' edges with is_channel supplying the Dirichlet sinks.
     //
@@ -728,7 +728,7 @@ int main(int argc, char** argv)
     // channel rows (the channels override them, so no Neumann face is ever assembled).
     // The two solvers' nonlinear face diffusivities also coincide exactly on this
     // 1D-varying strip: the cross-slope is uniform across each face, so the implicit
-    // face-centred D_eff equals the SOR per-cell D_eff (plan section 3).  Driving is
+    // face-centred D_eff equals the SOR per-cell D_eff.  Driving is
     // kept sub-critical (U*L/D = 0.5 = 0.625*Sc) so neither solver's slope cap fires.
     {
         const double cs   = 1.0;
@@ -775,7 +775,7 @@ int main(int argc, char** argv)
             std::cout << "  linear   : Linf(implicit-SOR)=" << diff << "  peak=" << peak
                       << "  rel=" << rel << "  (SOR iters=" << sr.n_iterations
                       << ", res=" << sr.final_residual << ")\n";
-            // GATE (plan section 8 item 1): never compare against an unconverged
+            // GATE: never compare against an unconverged
             // reference. At tolerance 1e-6 this solve used to run to the 200,000
             // iteration cap every time -- the criterion sat below the float noise
             // floor -- so this comparison was silently made against a field that
@@ -836,7 +836,7 @@ int main(int argc, char** argv)
             }
             write_profile_csv(plot_data_dir + "test4_sor_match_profile.csv",
                               ir.elevation, sor_midcol);
-            // GATE (plan section 8 item 1) -- see the linear branch above.
+            // GATE -- see the linear branch above.
             check("test4_nonlinear_sor_reference_converged",
                   sr.converged && sr.final_residual <= sopts.tolerance,
                   "SOR reference converged in " + fmt((double)sr.n_iterations)
@@ -849,14 +849,14 @@ int main(int argc, char** argv)
     }
 
     // --- Test 3: coupled lowering-channel dynamic equilibrium -- the BC hand-off
-    // check (plan section 9 item 3).  A both-ends hillslope strip whose CHANNEL
+    // check.  A both-ends hillslope strip whose CHANNEL
     // cells (is_channel Dirichlet sinks, NOT 'o' edges) are lowered at a constant
     // base-level-fall rate E:  z_ch(t) = z_ch0 - E*t.  At dynamic equilibrium every
     // point lowers at the channel rate, so the relief relative to the channel is
     // steady and given by the Roering profile driven by (U+E):
     //   D*S/(1-(S/Sc)^2) = (U+E)*x      (linear limit ((U+E)/2D)(L^2 - x^2)).
     // This is the DECISIVE test that the Dirichlet hand-off uses the NEW-time,
-    // post-incision channel elevation z_ch^{n+1} (plan section 3): with the correct
+    // post-incision channel elevation z_ch^{n+1}: with the correct
     // new-time value the equilibrium relief matches the analytic profile to solver
     // tolerance and is INDEPENDENT of dt; feeding the solver the OLD-time z_ch^n
     // instead lags the hillslope by one step and biases the divide relief high by

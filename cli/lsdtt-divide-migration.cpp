@@ -811,7 +811,7 @@ int main(int argc, char* argv[])
         basin_manager.get_basin_outlet_flat_indices();
 
     // -------------------------------------------------------------------------
-    // Unit-pair divide search, driven by basin adjacency (plan §3.1).
+    // Unit-pair divide search, driven by basin adjacency.
     //
     // Only basins that touch on the grid can share a divide, so one pass over
     // the basin cells decides which pairs are worth the (expensive) ridgeline

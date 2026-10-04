@@ -295,7 +295,7 @@ int main(int argc, char* argv[])
         check(lsdtt::delivered_quartz_fertility(cfg, 0.4, 100.0) < 0.11,
               "a deep scar tends to the bedrock fertility");
 
-        // The claim in the plan: landslide debris is under-represented in the
+        // The claim: landslide debris is under-represented in the
         // quartz separate relative to its mass, so the dilution it causes is
         // WEAKER than a mass-weighted calculation predicts.
         lsdtt::lsdtt_raster_cpu mass = uniform(meta, 0.02f);

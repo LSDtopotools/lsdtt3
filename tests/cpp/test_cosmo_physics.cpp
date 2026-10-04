@@ -38,7 +38,7 @@
 //                           [--regenerate-sentinel-i-have-simons-approval]
 //                           [--regenerate-lsdn-sentinel-i-have-simons-approval]
 //                           [--regenerate-g4-goldens-i-have-simons-approval]
-//   output_dir (default ".") receives the plottable CSVs (plan Sec7).
+//   output_dir (default ".") receives the plottable CSVs.
 //   sentinel_csv_path (default tests/expected/cosmo/numerics_sentinel.csv
 //   relative to the CTest invocation) holds the Sec3b pinned values.
 //   lsdn_sentinel_csv_path is the SEPARATE LSDn sentinel (Phase 7 L1); it has
@@ -106,12 +106,12 @@ std::string diff_str(double a, double b)
 }
 
 // =============================================================================
-// Consolidated frozen tolerances (plan Sec3b S6)
+// Consolidated frozen tolerances (S6)
 // =============================================================================
 // Every frozen bound in this driver lives here, each carrying the measured
 // value and the date it was frozen.  Loosening any of these to make a test
 // pass is the SAME class of event as regenerating the numerics sentinel: it is
-// gated and needs Simon Mudd's review (plan S6).  Do not relax a bound to
+// gated and needs Simon Mudd's review (S6).  Do not relax a bound to
 // silence a failure - a failure here is a result.
 namespace tol
 {
@@ -120,13 +120,13 @@ constexpr double sentinel_rel = 1e-12;   // S1 numerics sentinel (pins the core)
 constexpr double e7_analytic  = 5e-7;    // E7 analytic vs integrator; worst 9.25e-8
 constexpr double e6_roundtrip = 3e-3;    // E6 forward/inverse round-trip; worst 9.93e-4
 constexpr double tc2_cronus   = 10.0;    // T-C2 vs CRONUS v3 St, percent; worst 6.65
-// Phase 5 geomagnetic (measured-then-frozen 2026-07-23; see plan Sec9b):
+// Phase 5 geomagnetic (measured-then-frozen 2026-07-23):
 constexpr double g1_static    = 1e-12;   // G1 constant-VDM correction is exactly 1
 constexpr double g4_golden    = 1e-9;    // G4 paleomag goldens; deterministic double core
 constexpr double g6c_band     = 25.0;    // 6c(A) equatorial ON-OFF |delta|, percent
-// Phase 8 Stone-paleomag surface (lsdn plan Sec3.9 / Sec7.4; L14).  The first
+// Phase 8 Stone-paleomag surface (L14).  The first
 // bound below was WRITTEN DOWN BEFORE THE CODE RAN
-// (docs/plan_docs/phase8_g4_prediction.md, 2026-07-26) and is the re-freeze
+// (2026-07-26) and is the re-freeze
 // gate: putting stone2000sp_paleomag on the surface was predicted to move the
 // six G4 goldens only by the re-association of a 108-term sum, i.e. a few ulp,
 // because the surface's pressure dependence is exact and all six golden
@@ -161,15 +161,15 @@ constexpr double lsdn_sweep_rate    = 2.5;   // L11 error ratio per halving of h
 constexpr double lsdn_node    = 1e-15;   // L4 grid-node round trip; worst 3.47e-16
 // Phase 4 dispatch (measured-then-frozen 2026-07-26).  A REGRESSION GUARD on
 // our own numbers, not a claim about either scheme: LSDn and Stone genuinely
-// differ, and how much is a result (plan Sec3.0.1), not an error.  Measured over
+// differ, and how much is a result, not an error.  Measured over
 // the 15-sample CRONUS fixture x {Be10, Al26, C14} x ages {0, 2e4}: min 0.83608,
 // max 1.14456; and per pixel on the 40x31 fixture, which is well inside that.
 constexpr double lsdn_stone_ratio_lo = 0.80;  // L7 LSDn/Stone band, low
 constexpr double lsdn_stone_ratio_hi = 1.18;  // L7 LSDn/Stone band, high
 // Phase 5 frozen comparison against the CRONUS v3 LSDn column (measured-then-
-// frozen 2026-07-26; lsdn plan Phase 5).  Percent, (CRONUS - lsdtt)/lsdtt, and
+// frozen 2026-07-26).  Percent, (CRONUS - lsdtt)/lsdtt, and
 // positive throughout - CRONUS is higher.  These are RESULTS, not error terms
-// (plan Sec3.6): the residual carries the P0 convention (~2 %), the muon-scheme
+//: the residual carries the P0 convention (~2 %), the muon-scheme
 // difference (+1.8...+6.65 % measured for St in Sec9b) and the 2010 "now"
 // assumption, and must never be tuned toward zero.
 //   - MATCHED comparison, sample age = Gamma_sp/eps, the erosional integration
@@ -186,7 +186,7 @@ constexpr double tc2_cronus_lsdn = 15.0;
 //     lat 70 deg where Rc ~ 0.  Frozen at 55 % purely as a REGRESSION GUARD on
 //     our own numbers.
 constexpr double tc2_cronus_lsdn_modern = 55.0;
-// L12 - the DEM-free OCTOPUS LSDn POINT kernel oracle (lsdn plan Phase 6(i)),
+// L12 - the DEM-free OCTOPUS LSDn POINT kernel oracle,
 // measured-then-frozen 2026-07-26 over the 50 basins of the three tracked
 // datasets.  Percent, (OCTOPUS EBEL - lsdtt)/lsdtt, at the matched sample age
 // t = Gamma_sp/eps.  These are RESULTS and REGRESSION GUARDS on our own kernel,
@@ -218,7 +218,7 @@ constexpr double tc2_cronus_lsdn_modern = 55.0;
 // the residual is attributed to - not a defect on either side.
 constexpr double lsdn_octopus_point = 20.0;
 constexpr double lsdn_octopus_point_lsdttP0 = 23.0;
-// L13 - PER-PIXEL LSDn vs LUMPED LSDn (lsdn plan Phase 6(ii)), measured-then-
+// L13 - PER-PIXEL LSDn vs LUMPED LSDn, measured-then-
 // frozen 2026-07-26 over the 47 delineation-reliable basins of the three tracked
 // datasets, at the headline sample age t = 5000 yr.  Percent,
 // 100*(per-pixel - lumped)/lumped, on the production SCALING.
@@ -269,7 +269,7 @@ constexpr double l13_atm_press_recovery_hPa = 16.433130;   // 1.25 x measured 13
 // too, on the same x[2, 0.5] rule as the pct median.  MEASURED +0.734254 hPa.
 constexpr double l13_atm_press_med_lo = 0.367127;   // 0.5 x measured +0.734254
 constexpr double l13_atm_press_med_hi = 1.468508;   // 2.0 x measured +0.734254
-// Muon-scheme isolation (measured-then-frozen 2026-07-28; muon plan M2d).
+// Muon-scheme isolation (measured-then-frozen 2026-07-28).
 // Percent residuals are 100*(model - reference)/reference over
 // p={700, 850, 1013.25} hPa x 200 log-spaced erosion rates in [1e-5, 1e-1].
 // These are regression guards on deterministic arithmetic, not accuracy claims.
@@ -324,7 +324,7 @@ constexpr double g4_real_stone_ratio_hi    = 1.111027;
 }
 
 // =============================================================================
-// Reference physics (plan Sec3) - independent of the library implementation
+// Reference physics - independent of the library implementation
 // =============================================================================
 
 // One nuclide + scheme + per-pathway scaling, everything the reference
@@ -387,7 +387,7 @@ double ref_conc_step_change(const ref_params& p, double d, double t,
             / (p.lambda * p.Gamma[j] + eps_old);
         // Stable form of exp(-d0/G)*(exp(t*eps_n/G) - exp(-t*lambda)): the
         // printed Eq. (7) grouping underflows/overflows to 0*inf = NaN for
-        // large t*eps_new/Gamma.  Algebraically identical (plan E3 identity).
+        // large t*eps_new/Gamma.  Algebraically identical (the E3 identity).
         const double accumulated =
             p.S[j] * p.F[j] * p.Gamma[j]
             * (std::exp(-d / p.Gamma[j])
@@ -444,7 +444,7 @@ ref_params ref_params_from_scheme(const std::string& scheme,
 }
 
 // =============================================================================
-// Single-basin synthetic fixture (plan Sec4)
+// Single-basin synthetic fixture
 // =============================================================================
 //
 // A V-shaped valley draining to a single outlet at (row 0, centre column):
@@ -508,7 +508,7 @@ lsdtt::lsdtt_raster_cpu make_uniform_raster(const single_basin_fixture& fx,
 
 // Two-rate erosion raster: rows < split_row get value_upstream... note row 0
 // is the OUTLET end, so "upstream" is the high-row (high-elevation) half.
-// Used by the flux-weighting and step-change tests (plan E8).
+// Used by the flux-weighting and step-change tests (E8).
 lsdtt::lsdtt_raster_cpu make_two_rate_raster(const single_basin_fixture& fx,
                                              int split_row,
                                              float value_downstream,
@@ -526,7 +526,7 @@ lsdtt::lsdtt_raster_cpu make_two_rate_raster(const single_basin_fixture& fx,
 }
 
 // =============================================================================
-// CSV emitters (plan Sec7) - long format, one row per evaluation
+// CSV emitters - long format, one row per evaluation
 // =============================================================================
 class csv_writer
 {
@@ -553,7 +553,7 @@ private:
 };
 
 // =============================================================================
-// Phase 1: S2 exact parameter pins (plan Sec3b)
+// Phase 1: S2 exact parameter pins
 // =============================================================================
 //
 // Every constant is compared with EXACT equality.  A changed constant is a
@@ -799,7 +799,7 @@ void phase1_standardisation_pins()
 }
 
 // =============================================================================
-// Phase 1: equation-fidelity tests E1-E5 (plan Sec3)
+// Phase 1: equation-fidelity tests E1-E5
 // =============================================================================
 
 // E1 - depth-integration limits: Eq. (14) -> Eq. (12) as d_t -> 0 and
@@ -1055,7 +1055,7 @@ void phase1_E5_linearity_and_limits()
 }
 
 // =============================================================================
-// Phase 2: E6-E8 (plan Sec3)
+// Phase 2: E6-E8
 // =============================================================================
 
 // Builds ref_params whose F values have been scaled by the library's own
@@ -1105,7 +1105,7 @@ double ref_invert_erate(const ref_params& p, double conc)
 // Library rasters store float, so the agreement floor is ~1e-7 relative.
 // Measured worst case on first run (2026-07-16): 9.25e-8, i.e. the two paths
 // are algebraically identical and the difference is pure float storage.
-// Bound frozen at 5e-7 per plan open question 2 (measure first, then freeze).
+// Bound frozen at 5e-7 (measured first, then frozen).
 void phase2_E7_analytic_vs_integrator(const single_basin_fixture& fx,
                                       const std::string& out_dir)
 {
@@ -1361,7 +1361,7 @@ void phase2_E8_averaging_identities(const single_basin_fixture& fx,
 }
 
 // =============================================================================
-// Phase 3: CRONUS comparison fixtures and tests T-C1..T-C4 (plan Sec5)
+// Phase 3: CRONUS comparison fixtures and tests T-C1..T-C4
 // =============================================================================
 
 // T-C3 - Stone (2000) scaling factors pinned against an INDEPENDENT
@@ -1433,7 +1433,7 @@ void phase3_TC1_site_curve(const std::string& out_dir)
 // scaling at the standard-atmosphere pressure, BraucherBorchers, surface,
 // no shielding), reported on the reference standards (07KNSTD / KNSTD), so
 // submitting them to CRONUS and comparing inverted rates against the imposed
-// eps measures the total inter-calculator difference (plan Sec5).
+// eps measures the total inter-calculator difference.
 struct cronus_fixture_sample
 {
     std::string name;
@@ -1777,7 +1777,7 @@ struct rel_stats
 
 
 // ===========================================================================
-// CRONUS v3 emulator (plan Phase 2): T1 unit checks + T2 identity vs the
+// CRONUS v3 emulator: T1 unit checks + T2 identity vs the
 // frozen tabulated muon inventory.
 // ===========================================================================
 
@@ -1952,7 +1952,7 @@ void phase2_cronus_emulator_vs_table(const std::string& expected_dir)
         return;
     }
 
-    // Plan Phase 1 gate, re-asserted against the C++ implementation: if the
+    // Phase 1 gate, re-asserted against the C++ implementation: if the
     // setter drifts from the Python fit this is what catches it.
     struct gate { const char* nuclide; double max_pct; };
     const gate gates[] = {{"Be10", 1.0}, {"Al26", 2.0}, {"C14", 2.0}};
@@ -2169,15 +2169,14 @@ void phase3_TC2_cronus_comparison(const std::string& expected_dir,
     check("csv: cronus_comparison.csv written", csv.good());
 }
 
-// T-C2(LSDn) - the Phase 5 extension of the T-C2 machinery (lsdn plan Sec5,
-// Phase 5).  Same 15-sample fixture, same FROZEN reference file, but the
+// T-C2(LSDn) - the Phase 5 extension of the T-C2 machinery.  Same 15-sample fixture, same FROZEN reference file, but the
 // fixture concentrations are now inverted with lsdtt3's OWN LSDn scaling in
 // the slot Stone occupies, and compared against the 30 LSDn rows already
 // frozen in cronus_v3_reference.csv.  No network, and the reference is only
 // ever read.
 //
 // THIS RESIDUAL IS NOT AN ERROR TERM AND MUST NEVER BE TUNED TOWARD ZERO
-// (lsdn plan Sec3.6, Q2).  Three components are expected by construction:
+//.  Three components are expected by construction:
 //   1. P0 convention - we keep lsdtt3's BraucherBorchers P0 rather than
 //      Balco's LSDn-calibrated refP_LSDn * LSDn_ref (Sec3.2), an ~2 % SLHL
 //      offset.  Reported BOTH ways below, so the scaling kernel is judged on
@@ -2382,7 +2381,7 @@ void phase7_TC2_cronus_lsdn_comparison(const lsdtt::CrnNcData& nc,
 }
 
 // =============================================================================
-// L12 - the DEM-FREE OCTOPUS LSDn point KERNEL oracle (lsdn plan Phase 6(i))
+// L12 - the DEM-FREE OCTOPUS LSDn point KERNEL oracle
 // =============================================================================
 
 // One row of the frozen tests/expected/cosmo/octopus_lsdn_point_reference.csv,
@@ -2478,7 +2477,7 @@ bool load_octopus_point_reference(const std::string& ref_path,
     return !rows.empty();
 }
 
-// L12 - OCTOPUS lumped-mode KERNEL oracle (lsdn plan Phase 6 deliverable (i)).
+// L12 - OCTOPUS lumped-mode KERNEL oracle.
 //
 // THIS VALIDATES THE LSDn SCALING KERNEL, NOT lsdtt3's PRODUCT.  Read the test
 // name and the emitted CSV that way and no other way: nothing here says
@@ -3080,7 +3079,7 @@ void phase8_muon_isolation_comparison(const lsdtt::CrnNcData& nc,
 }
 
 // =============================================================================
-// L13 - PER-PIXEL LSDn vs LUMPED LSDn (lsdn plan Phase 6 deliverable (ii))
+// L13 - PER-PIXEL LSDn vs LUMPED LSDn
 // =============================================================================
 
 // One row of tests/expected/cosmo/lsdn_pixel_vs_lumped_perpixel.csv, the frozen
@@ -3224,7 +3223,7 @@ double l13_recover_pressure(const lsdtt::lsdtt_crn_parameters& cp,
 
 // L13 - PER-PIXEL LSDn vs LUMPED LSDn: THE SCIENTIFIC RESULT, not an error term.
 //
-// Three quantities are in play (lsdn plan Sec3.0.1):
+// Three quantities are in play:
 //   (a) the PER-PIXEL LSDn basin mean -- lsdtt3's default and its whole point;
 //   (b) LSDn evaluated ONCE at (CENTR_LAT, ATM_PRESS) -- what OCTOPUS does;
 //   (c) OCTOPUS's published EBEL.
@@ -3518,7 +3517,7 @@ void phase7_L13_pixel_vs_lumped(const lsdtt::CrnNcData& nc,
     check("csv: lsdn_pixel_vs_lumped.csv written", csv.good());
 }
 
-// The LSDn scaling surface for lsdviztools3 (lsdn plan Sec5, Phase 5): the
+// The LSDn scaling surface for lsdviztools3: the
 // dimensionless scaling swept over latitude x pressure x sample age, for all
 // three nuclides.  A plotting product, not an assertion - the only checks are
 // that every value is finite and positive and that the file was written.
@@ -3553,7 +3552,7 @@ void phase7_lsdn_scaling_surface_csv(const lsdtt::CrnNcData& nc,
 }
 
 // =============================================================================
-// Phase 1: S1/S3/S4 numerics sentinel (plan Sec3b)
+// Phase 1: S1/S3/S4 numerics sentinel
 // =============================================================================
 //
 // Full-double-precision pinned values for the library's numeric core.  The
@@ -3807,7 +3806,7 @@ void phase1_sentinel(const single_basin_fixture& fx,
 }
 
 // =============================================================================
-// Phase 4: bundled-data auto-discovery + production-vs-depth emitter (plan Sec9)
+// Phase 4: bundled-data auto-discovery + production-vs-depth emitter
 // =============================================================================
 
 // The cosmo CLIs locate the shipped crn_parameters.nc relative to the running
@@ -3833,10 +3832,10 @@ lsdtt::CrnNcData phase4_auto_discovery()
     return nc;
 }
 
-// production_vs_depth.csv (plan Sec7 / Fig. 8 analogue): per-pathway and total
+// production_vs_depth.csv (Fig. 8 analogue): per-pathway and total
 // production P_j(z) = P0 * F_j * exp(-z/Gamma_j) over depth for each scheme and
 // nuclide.  Pure library values (no external oracle - the Balco full-integration
-// reference of plan Sec6d D1 is out of scope here).  Asserts the physical
+// reference is out of scope here).  Asserts the physical
 // invariants: total production is positive, strictly decreasing with depth, and
 // equals P0*sum(F) at the surface.
 void phase4_production_vs_depth(const std::string& out_dir)
@@ -3892,7 +3891,7 @@ void phase4_production_vs_depth(const std::string& out_dir)
 // read-only, build synthetic CrnNcData in-code (no external file), and pin our
 // trajectory against the committed data/crn_parameters.nc (Knudsen VDM record).
 // They never assert exact agreement with CRONUS's Lm/LSDn (which use a
-// different VDM record); see plan Sec6c.
+// different VDM record).
 
 // Synthetic CrnNcData with a CONSTANT VDM record (G1 constant-field limit).
 // loaded=true is enough for stone2000sp_paleomag: it only reads muscheler_*.
@@ -5522,9 +5521,9 @@ void phase5_G3_full_inversion_vs_cronus(const lsdtt::CrnNcData& nc_real,
 // G4 - golden trajectories against the committed Knudsen VDM record.  These pin
 // OUR time-integrated Stone factor at a few (lat, pressure, age) triplets;
 // measured 2026-07-23 against data/crn_parameters.nc and frozen at tol::g4_golden.
-// They are NOT a CRONUS comparison (different VDM record - plan Sec6c).
+// They are NOT a CRONUS comparison (different VDM record).
 //
-// WHICH PATH THESE RUN THROUGH (lsdn plan Sec7.4).  Since Phase 8,
+// WHICH PATH THESE RUN THROUGH.  Since Phase 8,
 // stone2000sp_paleomag() evaluates on the precomputed latitude surface, so
 // these six goldens pin THE PATH THE RASTER TOOL USES, not a reference path
 // nothing calls.  L14c additionally pins them against the direct definition.
@@ -5621,7 +5620,7 @@ void phase5_G4_golden_trajectories(const lsdtt::CrnNcData& nc_real,
 // The frozen CRONUS reference's Lm-vs-St spread at LSDTT-1 is read for CONTEXT
 // only: it is the size of a time-dependent correction, but its sign need not
 // match ours - CRONUS uses a different (Pavon-family) VDM record, so absolute
-// agreement is not expected and is NOT asserted (plan Sec6c).
+// agreement is not expected and is NOT asserted.
 void phase5_G6c_equator_on_off(const lsdtt::CrnNcData& nc_real,
                                 const std::string& expected_dir,
                                 const std::string& out_dir)
@@ -5684,7 +5683,7 @@ void phase5_G6c_equator_on_off(const lsdtt::CrnNcData& nc_real,
                   << "our equatorial ON-OFF production delta spans "
                   << std::setprecision(4) << d_short << " to " << d_long
                   << " % across 5-49.5 kyr (Knudsen VDM; opposite net sign to "
-                  << "CRONUS is the record difference, plan Sec6c).\n"
+                  << "CRONUS is the record difference).\n"
                   << std::setprecision(17);
     }
     check("csv: geomag_on_off_LSDTT1.csv written", csv.good());
@@ -5785,7 +5784,7 @@ void phase5_G4_real_atmosphere_validation(const lsdtt::CrnNcData& nc_real,
 // Phase 0 smoke tests
 // =============================================================================
 
-// Reference-helper identities: quick versions of plan E1/E2 that prove the
+// Reference-helper identities: quick versions of E1/E2 that prove the
 // reference implementations are self-consistent.  (The full battery with
 // sweeps, all schemes, and tight documented tolerances is Phase 1.)
 void smoke_reference_identities()
@@ -5955,7 +5954,7 @@ void smoke_library_pipeline(const single_basin_fixture& fx,
 }
 
 // =============================================================================
-// Phase 7: LSDn scaling (docs/plan_docs/lsdn_implementation_plan.md Sec5)
+// Phase 7: LSDn scaling
 // =============================================================================
 //
 // L0-L6, L10, L11.  LSDn (Lifton, Sato & Dunai 2014, EPSL 386:149-160) is a
@@ -6073,7 +6072,7 @@ void phase7_L0_pins(const lsdtt::CrnNcData& nc)
         // t2 holds step CENTRES and is ONLY the get_DipRc.m branch threshold.
         // Asserting that it DIFFERS from t2max.back() is what stops it being
         // re-purposed as an averaging weight.
-        // Pinned at full precision.  The plan and the research note quote these
+        // Pinned at full precision.  The design notes quote these
         // to 6 s.f. as 2.00074e7 / 2.02044e7; the packed values are the full
         // doubles below, which is what the branch actually compares against.
         check("L0: t2.back() == 20007387.005737517 exactly (branch threshold, "
@@ -7223,7 +7222,7 @@ void phase8_L11_stone_resolution_sweep(const lsdtt::CrnNcData& nc,
 }
 
 // =============================================================================
-// L14 - Stone paleomag on the precomputed surface (lsdn plan Phase 8 / Sec3.9)
+// L14 - Stone paleomag on the precomputed surface
 // =============================================================================
 //
 // Phase 8 moved stone2000sp_paleomag() off its per-pixel time loop and onto a
@@ -7324,8 +7323,8 @@ void phase8_L14_stone_paleomag_surface(const lsdtt::CrnNcData& nc_real,
     lsdtt::lsdtt_crn_parameters cp;
 
     // ---- L14a: the frozen sentinels, byte for byte -------------------------
-    // These hashes are the ones recorded in the lsdn plan Sec3.9 requirement 3
-    // and Sec5.4.  If either moves, STOP: it means something outside the Stone
+    // These hashes are the ones recorded when the surface was built.
+    // If either moves, STOP: it means something outside the Stone
     // paleomag path was touched.  NEVER regenerate a sentinel to clear this.
     {
         // Moved once, 2026-08-08, signed off by Simon Mudd: the three
@@ -7512,7 +7511,7 @@ void phase8_L14_stone_paleomag_surface(const lsdtt::CrnNcData& nc_real,
 }
 
 // =============================================================================
-// L1 - the LSDn numerics sentinel (plan Sec3b S1/S3/S4)
+// L1 - the LSDn numerics sentinel (S1/S3/S4)
 // =============================================================================
 //
 // A SEPARATE file from the Stone sentinel, with its own regeneration flag, so
@@ -7689,7 +7688,7 @@ void phase7_L1_sentinel(const lsdtt::CrnNcData& nc,
 }
 
 // =============================================================================
-// Performance tier (plan Sec3.8; label "performance", OUT of the default suite)
+// Performance tier (label "performance", OUT of the default suite)
 // =============================================================================
 //
 // TIMINGS ARE REPORTED, NEVER ASSERTED.  Machine-dependent numbers must not
@@ -7902,7 +7901,7 @@ int main(int argc, char** argv)
     std::string test_data_dir = ".";
     bool regenerate_sentinel = false;
     bool regenerate_lsdn_sentinel = false;
-    // The Phase 8 G4 re-freeze gate (lsdn plan Sec3.9 req 1 / Sec3b S4): it
+    // The Phase 8 G4 re-freeze gate (S4): it
     // emits the old/new/shift artefact for review INSTEAD of asserting, and
     // never edits the goldens itself.
     bool regenerate_g4 = false;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Harvest an OCTOPUS study's basins + outlets into a tracked validation dataset.
 
-Real-landscape cosmogenic validation tier (cosmo plan Phase 6 / §5b). This is the
+Real-landscape cosmogenic validation tier. This is the
 small, committed helper that turns an OCTOPUS ``STUDYID`` into the two tracked
 artefacts the download->run->delete harness (``run_cosmo_validation.py``) reads:
 
@@ -41,7 +41,7 @@ The written manifest is a SKELETON: hand-edit its ``description`` and any
 narrative caveats before freezing. The numeric fields (bbox, target_epsg,
 octopus_source) are complete and correct as written.
 
-SECOND MODE -- ``--point-reference`` (lsdn plan Phase 6 deliverable (i), test L12)
+SECOND MODE -- ``--point-reference`` (test L12)
 ---------------------------------------------------------------------------------
 OCTOPUS does **not** compute LSDn from the DEM. Per Saktura et al. (2025, GChron
 7:113) CAIRN reduces each basin to two scalars -- ``CENTR_LAT`` (centroid
@@ -136,7 +136,7 @@ SCALING_FIELDS = {
     "LSDnNS": {"mmkyr": "EBELNS",    "err": "EBELNS_EXT",  "gcmyr": None},
 }
 
-# Fields written by --point-reference (lsdn plan Phase 6 deliverable (i), L12).
+# Fields written by --point-reference (test L12).
 POINT_REFERENCE_FIELDS = [
     # keys
     "sample", "dataset", "study_id",
@@ -415,8 +415,7 @@ def harvest(args) -> int:
     samples_name = f"{args.dataset}_samples.csv"
     samples_path = out_dir / samples_name
     header = [
-        f"# OCTOPUS study {args.study} 10Be basins -- REAL regression targets "
-        f"(cosmo plan Phase 6).",
+        f"# OCTOPUS study {args.study} 10Be basins -- REAL regression targets.",
         "#",
         f"# HARVESTED {harvested} from the OCTOPUS database via WFS by "
         f"tests/scripts/harvest_octopus.py -- NOT scraped from the paper and NOT",
@@ -426,7 +425,7 @@ def harvest(args) -> int:
         "oracle,",
         "# not bit-exact (lsdtt3 has since diverged: updated production params + a "
         "high-",
-        "# elevation S_tot>=1 scaling fix this suite found, plan §9b).",
+        "# elevation S_tot>=1 scaling fix this suite found).",
         f"#   WFS: {WFS_ENDPOINT}",
         f"#        typeName={BASINS_TYPE} (+ {OUTLETS_TYPE}), "
         f"CQL_FILTER STUDYID='{args.study}'",
@@ -472,7 +471,7 @@ def harvest(args) -> int:
     summary_name = f"{args.dataset}_summary.csv"
     manifest = {
         "_comment": [
-            "Real-landscape validation manifest (cosmo plan Phase 6 / §5b).",
+            "Real-landscape validation manifest.",
             "SKELETON written by tests/scripts/harvest_octopus.py -- hand-edit the",
             "'description' and any narrative caveats; the numeric fields (bbox,",
             "target_epsg, octopus_source, run_params) are complete as written.",
@@ -613,8 +612,7 @@ def harvest(args) -> int:
             "run_date_utc", "git_sha",
         ]
         with open(summary_path, "w", newline="") as f:
-            f.write(f"# {args.dataset} validation SUMMARY -- FROZEN skeleton "
-                    f"(cosmo plan Phase 6).\n")
+            f.write(f"# {args.dataset} validation SUMMARY -- FROZEN skeleton.\n")
             f.write("# Written by run_cosmo_validation.py; first accepted networked "
                     "run appends one\n# row per basin (a reviewable freeze). "
                     "Difference is EXPECTED, not zero.\n")
@@ -838,7 +836,7 @@ def harvest_point_reference(args) -> int:
                 "# than an assumed one. ELEV_AVE and AREA are context only and never "
                 "enter the\n"
                 "# inversion. BESTND is recorded because BE10NC is already "
-                "renormalised (plan §9b).\n")
+                "renormalised.\n")
         f.write("#\n")
         f.write("# CENTR_LON IS DERIVED BY US, NOT A PUBLISHED OCTOPUS FIELD. "
                 "OCTOPUS publishes\n"

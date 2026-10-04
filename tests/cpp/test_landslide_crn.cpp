@@ -8,8 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Phase 4 of the triggered landslide module: what landslides do to cosmogenic
-// nuclide concentrations. Test T16 of
-// docs/plan_docs/landslide_event_module_plan.md.
+// nuclide concentrations. Test T16.
 //
 // The expected signature, from Niemi et al. (2005) and Yanites et al. (2009):
 // landsliding LOWERS the mean concentration (fresh rock from depth carries

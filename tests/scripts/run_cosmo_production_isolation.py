@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production-vs-BEPROD isolation test (cosmo plan Phase 6 / §6e).
+"""Production-vs-BEPROD isolation test.
 
 DECISIVE test for whether the ~+4% lsdtt3-vs-OCTOPUS erosion-rate residual on the
 Dethier (2014) Front Range basins is GEOMETRIC (COP30 DEM hypsometry / basin-mean
@@ -8,7 +8,7 @@ erosion rate is proportional to basin-mean production, so if lsdtt3's basin-mean
 production is ~+4% above OCTOPUS's stored CAIRN basin-mean production (BEPROD), the
 whole residual is production/DEM and the inversion is exonerated.
 
-Procedure (plan §6e):
+Procedure:
   1. Fetch the keyless COP30 DEM (lsdtt-fetch-raster) into a temp workdir, warped to
      the manifest target_epsg -- deleted on exit (cleanup trap).
   2. Run lsdtt-cosmo-tool MATCHED to OCTOPUS: muon_scheme Braucher, atmosphere NCEP,
@@ -65,14 +65,14 @@ EXIT_OK, EXIT_FAIL, EXIT_SKIP = 0, 1, 77
 # Reported for provenance only -- see note below on why it is NOT applied.
 P0_REF_BRAUCHER_10BE = 4.30
 
-# UNITS NOTE (tester, 2026-07-24): the plan §6e specifies P_lsdtt = P0_ref x
+# UNITS NOTE (tester, 2026-07-24): the original specification was P_lsdtt = P0_ref x
 # mean(scaling). Empirically that OVER-scales by ~4.3x (= P0) and gives an absurd
 # +330% "residual". lsdtt-cosmo-tool's PROD raster stores stone2000sp(lat,P,Fsp=1),
 # i.e. the Stone-2000 SPALLATION scaling S (~6.3 at 2500 m), and its basin mean
 # equals OCTOPUS BEPROD to ~1% DIRECTLY (6.205 vs 6.221; 11.16 vs 11.07; ...).
 # OCTOPUS BEPROD is therefore a P0-normalised production SCALING, in the same units
 # as lsdtt's PROD raster -- so the comparable quantity is mean(scaling) itself, with
-# NO P0 multiply. We report P_lsdtt = mean(scaling) and flag the plan's units error.
+# NO P0 multiply. We report P_lsdtt = mean(scaling) and flag that units error.
 
 PILOT_OBSIDS = [
     "S169WTS036", "S169WTS035", "S169WTS032", "S169WTS029", "S169WTS005",
@@ -146,7 +146,7 @@ def run_tool(exe: Path, dem_path: Path, samples: list, workdir: Path) -> Path:
         f"write_fname: {write_base}",
         "nuclide: Be10",
         f"sample_points_fname: {points_csv.name}",
-        # --- matched to OCTOPUS (plan §6e) ---
+        # --- matched to OCTOPUS ---
         "muon_scheme: Braucher",
         "atmosphere: NCEP",
         "sample_age_yr: 0",
@@ -307,7 +307,7 @@ def run_isolation(args) -> int:
                 "lsdtt-cosmo-tool _BASIN_PROD.csv\n# (stone2000sp, Fsp=1), averaged over "
                 "the EXACT upslope set the inversion uses. NO P0 multiply:\n# OCTOPUS "
                 "BEPROD is itself a P0-normalised scaling in the same units (lsdtt "
-                "mean-S == BEPROD\n# to ~1%); the plan's 'x P0_ref' over-scales by ~4.3x "
+                "mean-S == BEPROD\n# to ~1%); the specified 'x P0_ref' over-scales by ~4.3x "
                 "and is a units error (tester 2026-07-24).\n")
         f.write("# BEPROD/BETOTS/BETOPO/ELEV_AVE harvested from OCTOPUS WFS (STUDYID "
                 "S169), NOT fabricated.\n")

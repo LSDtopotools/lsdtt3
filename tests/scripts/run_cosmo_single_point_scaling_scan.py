@@ -5,8 +5,8 @@ Generates point-scan datasets across latitude/elevation/erosion-rate space for
 Be10/Al26/C14, runs lsdtt3 forward->inverse at each point, and optionally joins
 CRONUS v3 references.
 
-This script is data-workflow infrastructure for:
-  docs/plan_docs/cosmo_visualisation_scaling_plan.md
+This script is data-workflow infrastructure for the cosmo scaling
+visualisations.
 
 Notes:
   - Uses synthetic 3x3 ASCII DEMs centred at each scan point.
@@ -178,7 +178,7 @@ def build_grid(preset: str) -> list[GridPoint]:
         elevations = [0.0, 1000.0, 2000.0, 3000.0]
         erates = [0.001, 0.003, 0.01, 0.03, 0.1]
     elif preset == "latsweep":
-        # Plan Phase 4 validation grid.  The erosion-rate ceiling is 1.0, not
+        # Phase 4 validation grid.  The erosion-rate ceiling is 1.0, not
         # 0.1: the mini/full presets stopped at 0.1, which is a large part of
         # why the balcoCRONUSv3PD defect went unnoticed on real samples.
         lats = [-60.0, -30.0, -1.0, 30.0, 60.0]

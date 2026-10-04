@@ -132,7 +132,7 @@ def load_struct(path, expect_name):
         raise ValueError(f"{path}: expected one variable, found {keys}")
     if keys[0] != expect_name:
         print(f"  NOTE: {os.path.basename(path)} holds '{keys[0]}', "
-              f"plan says '{expect_name}'")
+              f"expected '{expect_name}'")
     return d[keys[0]], keys[0]
 
 
@@ -416,7 +416,7 @@ def extract(data_dir, log):
 # Output
 # ---------------------------------------------------------------------------
 def emit_reference_csv(path, arrays, prov):
-    """Write the FROZEN L2 grid reference (lsdn_implementation_plan Sec5, L2).
+    """Write the FROZEN L2 grid reference (test L2).
 
     The values are evaluated from the float64 `.mat` grids with scipy's
     RegularGridInterpolator (method='linear'), which is the same 4-point formula
@@ -498,7 +498,7 @@ def emit_reference_csv(path, arrays, prov):
 
     with open(path, "w") as fh:
         fh.write(
-            "# LSDn v3 GRID REFERENCE (frozen) - lsdn_implementation_plan Sec5 L2\n"
+            "# LSDn v3 GRID REFERENCE (frozen) - test L2\n"
             "# Evaluated from the FLOAT64 v3 .mat grids with scipy\n"
             "# RegularGridInterpolator(method='linear'); lsdtt3 must reproduce\n"
             "# these from the float32 grids packed in data/crn_parameters.nc.\n"

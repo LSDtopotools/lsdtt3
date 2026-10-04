@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Unit tests for src/cpu/lsdtt_hydro_roughness_cpu -- Phase 3 of the
-// distributed-hydrology work (plan_raster_topmodel.md section 8, phase 3).
+// distributed-hydrology work.
 //
 // What is under test
 // ------------------
@@ -24,7 +24,7 @@
 //
 // A NOTE ON WHAT "n DECLINES DOWNSTREAM" ACTUALLY CLAIMS
 // ------------------------------------------------------
-// The plan's gate is `rigorous_channel_n_declines_downstream`. That is true of
+// The gate is `rigorous_channel_n_declines_downstream`. That is true of
 // `drainage_area` and `grain_size`, where the mechanism is Sternberg fining, but
 // it is NOT a prediction of `ksn` mode. In a graded profile ksn is roughly
 // constant, so ksn-mode n is roughly constant too: that mode says n tracks
@@ -485,7 +485,7 @@ void test_partition()
 // 5b. End to end: the roughness field drives the velocity field
 //
 // This is the Phase 3 payoff and the reason the two modules share
-// hydraulic_radius_from_area(). It also settles a design question the plan left
+// hydraulic_radius_from_area(). It also settles a design question that was left
 // open: the velocity module does NOT need a separate `roughness_raster` mode.
 // Composing compute_roughness_field() into compute_velocity_field()'s existing
 // roughness input already does everything that mode was for, so it is not

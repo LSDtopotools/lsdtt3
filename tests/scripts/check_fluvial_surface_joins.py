@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Relational check on the band-then-label outputs of lsdtt-fluvial-surfaces.
 
-Phase 1 of docs/plan_docs/plan_fluvial_surfaces_cli_split.md makes the patch
+Phase 1 of the fluvial-surfaces split makes the patch
 label the join key for everything downstream: _banded_labels.tif carries it per
 pixel, _band_index.tif carries the band, and _surface_patches.csv is the table
-those two are meant to join to. Section 4.3 of the plan drops the band-packed
+those two are meant to join to. The band-packed
 label id specifically because that raster plus that table make packing
 unnecessary - which is only true if the join actually holds. Nothing in a
 per-file schema or checksum assertion can see a join, so this script exists.

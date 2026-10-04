@@ -330,7 +330,7 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
     result.K_used          = K_used;
     result.max_unit_height = max_unit_height;
 
-    // chi_c on the D-infinity path too. The plan asked only for D8, but leaving
+    // chi_c on the D-infinity path too. D8 alone was the original scope, but leaving
     // one path reporting it and the other silent would be a worse trap than not
     // reporting it at all: a caller would read a zero as "the channel head is at
     // the outlet" rather than "this path does not compute it".

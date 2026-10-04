@@ -1,10 +1,10 @@
-# OCTOPUS study S014 10Be basins -- REAL regression targets (cosmo plan Phase 6).
+# OCTOPUS study S014 10Be basins -- REAL regression targets.
 #
 # HARVESTED 2026-07-24 from the OCTOPUS database via WFS by tests/scripts/harvest_octopus.py -- NOT scraped from the paper and NOT
 # invented. OCTOPUS recalculates every rate with CAIRN (Mudd et al. 2016) -- the
 # same algorithm lsdtt-cosmo-tool implements -- so these are a NEAR-CAIRN oracle,
 # not bit-exact (lsdtt3 has since diverged: updated production params + a high-
-# elevation S_tot>=1 scaling fix this suite found, plan §9b).
+# elevation S_tot>=1 scaling fix this suite found).
 #   WFS: http://geoserver.octopusdata.org/geoserver/wfs
 #        typeName=be10-denude:crn_int_basins (+ be10-denude:crn_int_outlets), CQL_FILTER STUDYID='S014'
 #   OCTOPUS DBVERNO=v2.3(4)   STUDYID=S014   harvested 2026-07-24

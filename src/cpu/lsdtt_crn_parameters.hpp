@@ -591,7 +591,7 @@ public:
     // n_pixels    : the number of pixels the surface would serve; used only by
     //               the small-raster guard below.
     // h_step_deg  : horizontal resolution of the surface, in degrees.  ***THE
-    //               DEFAULT IS A PLACEHOLDER*** carried over from the plan; it
+    //               DEFAULT IS A PLACEHOLDER*** carried over from the design; it
     //               has NOT yet been chosen by the L11 sensitivity sweep.  Do
     //               not cite it as a validated value.
     // force_build : build even when the guard below would decline.  Exists so

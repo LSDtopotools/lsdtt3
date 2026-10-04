@@ -80,7 +80,7 @@ void declare_routing_core_parameters(
 }
 
 // -----------------------------------------------------------------------------
-// Mandatory-fill assertion (concept A in plan section 2.2)
+// Mandatory-fill assertion
 // -----------------------------------------------------------------------------
 void declare_raster_is_filled_parameter(
     std::map<std::string, bool>& bool_default_map,
@@ -102,7 +102,7 @@ void declare_raster_is_filled_parameter(
 }
 
 // -----------------------------------------------------------------------------
-// Optional-fill analytical choice (concept B in plan section 2.2)
+// Optional-fill analytical choice
 // -----------------------------------------------------------------------------
 void declare_fill_before_routing_parameter(
     std::map<std::string, bool>& bool_default_map,

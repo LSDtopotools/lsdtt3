@@ -1,0 +1,29 @@
+# Failure test for lsdtt-distributed-hydrology, column_model: hype: the land-use
+# table has a column cmelt, which is not a HYPE parameter.
+# Otherwise the input set of distributed_hydrology_hype_order.param.in.
+read_path: __READ_PATH__
+read_fname: hype_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hypefail_unknown_parameter
+
+raster_is_filled: false
+
+column_model: hype
+dt_seconds: 86400
+hype_start_date: 2001-01-01
+rainfall_fname: hype_rainfall.csv
+temperature_fname: hype_temperature.csv
+
+landcover_fname: hype_landuse.tif
+hype_soil_class_fname: hype_soil.tif
+hype_general_parameters_fname: hype_general_parameters.csv
+hype_landuse_parameters_fname: hype_landuse_parameters_unknown.csv
+hype_soil_parameters_fname: hype_soil_parameters.csv
+hype_classes_fname: hype_classes.csv
+
+threshold_contributing_pixels: 50
+select_all_basins_of_stream_order: true
+selected_stream_order: 1
+
+write_discharge_csv: true
+write_water_balance_csv: true

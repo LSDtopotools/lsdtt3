@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Real-landscape validation manifest (cosmo plan Phase 6 / \u00a75b).",
+    "Real-landscape validation manifest.",
     "SKELETON written by tests/scripts/harvest_octopus.py -- hand-edit the",
     "'description' and any narrative caveats; the numeric fields (bbox,",
     "target_epsg, octopus_source, run_params) are complete as written.",

@@ -11,8 +11,7 @@
 // lsdtt_reference_field_ladder_cpu
 //
 // Stratification of a REFERENCE FIELD into height bands, and connected-component
-// labelling WITHIN each band. Phase 0c of
-// docs/plan_docs/plan_fluvial_surfaces_cli_split.md.
+// labelling WITHIN each band.
 //
 // ONE OPERATION, TWO TASKS. Finding a valley floor and segmenting a terrace
 // flight are the same computation at different band counts: the valley floor is

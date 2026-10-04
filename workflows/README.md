@@ -53,7 +53,7 @@ This run writes outputs under:
 ## Cosmogenic transient + landslide ensemble
 
 `analysis.module: cosmo_transient_landslides` is the Snakemake translation of
-the experiment in `docs/plan_docs/plan_cosmo_transient_landslides.md`. It runs
+the hand-run cosmogenic transient-landslide experiment. It runs
 
 1. a step-change landscape per magnitude (`lsdtt-cosmo-prediction`), giving
    `SC_DEM`, `SC_ERATE`, `SC_STEPTIME`, `SC_TAG`, `SC_CHI`;

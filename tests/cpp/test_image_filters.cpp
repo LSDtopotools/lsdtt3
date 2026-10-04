@@ -9,7 +9,7 @@
 //
 // -----------------------------------------------------------------------------
 // Unit tests for src/utils/lsdtt_random.hpp and src/utils/lsdtt_image_filters.*
-// (OpenCV removal plan, Phase 1). No OpenCV needed.
+//. No OpenCV needed.
 //
 // Every expected value comes from something other than the code under test:
 //   - published splitmix64 outputs, and an independent Python implementation

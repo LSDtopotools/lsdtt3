@@ -63,8 +63,8 @@
 //
 // MODES IMPLEMENTED IN THIS PHASE
 // -------------------------------
-// hydraulic_geometry, strahler_table and constant. The `roughness_raster` mode
-// of the plan is deliberately ABSENT rather than stubbed: it is defined as "a
+// hydraulic_geometry, strahler_table and constant. The proposed `roughness_raster`
+// mode is deliberately ABSENT rather than stubbed: it is defined as "a
 // single supplied n field overrides the three-way hillslope/floodplain/channel
 // partition", and that partition does not exist until Phase 3, so the mode
 // would be an exact duplicate of hydraulic_geometry today. It arrives with the

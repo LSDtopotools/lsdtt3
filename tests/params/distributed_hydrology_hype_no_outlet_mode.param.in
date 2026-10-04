@@ -1,0 +1,27 @@
+# Failure test for lsdtt-distributed-hydrology, column_model: hype: no outlet
+# mode is chosen.
+# Otherwise the input set of distributed_hydrology_hype_order.param.in.
+read_path: __READ_PATH__
+read_fname: hype_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hypefail_no_outlet_mode
+
+raster_is_filled: false
+
+column_model: hype
+dt_seconds: 86400
+hype_start_date: 2001-01-01
+rainfall_fname: hype_rainfall.csv
+temperature_fname: hype_temperature.csv
+
+landcover_fname: hype_landuse.tif
+hype_soil_class_fname: hype_soil.tif
+hype_general_parameters_fname: hype_general_parameters.csv
+hype_landuse_parameters_fname: hype_landuse_parameters.csv
+hype_soil_parameters_fname: hype_soil_parameters.csv
+hype_classes_fname: hype_classes.csv
+
+threshold_contributing_pixels: 50
+
+write_discharge_csv: true
+write_water_balance_csv: true

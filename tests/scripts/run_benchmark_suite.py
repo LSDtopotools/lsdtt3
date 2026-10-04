@@ -424,7 +424,7 @@ CASES: dict[str, dict[str, Any]] = {
                  "matched to fill_min_slope * cell size"),
         # Whitebox: the Wang & Liu tool, not `fill_epsilon` (its Barnes-style
         # fill_depressions), which disagrees with three other implementations
-        # by up to 9.78 m (benchmarking plan section 2.2) -- and until
+        # by up to 9.78 m -- and until
         # 2026-09-13 it also ran at Whitebox's default flat_increment of 1e-4 m
         # per cell against lsdtt3's 1e-4 GRADIENT (3e-3 m per cell at 30 m),
         # a 30x different amount of flat work. The increment is now matched

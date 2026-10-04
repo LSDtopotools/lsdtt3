@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Phase 3 Step 0 (plan_hillslope_channel_coupling_cli.md section 4.3).
+// Streamline reuse instrumentation benchmark.
 //
 // Two questions, in this order, because the second is only worth answering if
 // the first says so:

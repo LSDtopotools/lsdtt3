@@ -113,7 +113,7 @@ struct lsdtt_channel_head_metric_record
 //   are skipped rather than being allowed to poison the mean. Each metric
 //   therefore carries its own valid-value count, n_<metric>_a / n_<metric>_b,
 //   which is the n its mean AND its uncertainty were computed from. This
-//   extends the schema drafted in the plan (§6.3), which named only
+//   extends the original schema, which named only
 //   n_heads_a / n_heads_b.
 // -----------------------------------------------------------------------------
 struct lsdtt_pair_summary_record
@@ -322,7 +322,7 @@ struct lsdtt_pair_summary_options
 // Which of the supplied basins touch each other on the grid. Divide extraction
 // is expensive and only ever succeeds for basins that share a boundary, so this
 // replaces the naive all-vs-all pair loop over N basins with one pass over the
-// basin cells (§3.1 of the divide-migration plan).
+// basin cells.
 //
 // CONNECTIVITY IS EIGHT-WAY, and that is not a free choice. A divide is traced
 // by walking a basin outline and asking, at each outline NODE, which of the four
