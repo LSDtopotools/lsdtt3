@@ -1022,6 +1022,79 @@ lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_order_range PROPERTI
     LABELS "smoke;cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
+# Snapping. hype_outlets_offset.csv puts both gauges 3 columns east of the
+# channel. expanding_square moves each to the nearest channel pixel; downstream
+# follows flow, which lands lower on the west arm (row 18 rather than 16), so
+# its sub-basin 1 is larger (54200 m2 against 45300 m2). Snapping 'none' is a
+# failure case below.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_snap_square
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_snap_square.param.in
+    hypesnapsq_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Outlet 1: row=16 col=21"
+    --stdout-contains "Outlet 2: row=50 col=30"
+    --stdout-contains "Sub-basins         : 2"
+    --expect-file-contains "hypesnapsq_hype_subbasins.csv:,45300,"
+    --expect-file-not-contains "hypesnapsq_hype_discharge.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_snap_square PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_snap_downstream
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_snap_downstream.param.in
+    hypesnapds_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Outlet 1: row=18 col=22"
+    --stdout-contains "Outlet 2: row=50 col=30"
+    --stdout-contains "Sub-basins         : 2"
+    --expect-file-contains "hypesnapds_hype_subbasins.csv:,54200,"
+    --expect-file-not-contains "hypesnapds_hype_discharge.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_snap_downstream PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# Nodata in a class raster. A 10 x 5 block of nodata soil straddles the soil
+# boundary inside the trunk sub-basin (25 pixels each of classes 2 and 3). The
+# 50 pixels stay in the sub-basin area (262500 m2) but leave the class
+# fractions, which renormalise over 2575 pixels. The expected fractions were
+# checked against an independent pixel count of the rasters (2026-10-04):
+# 465/2575, 875/2575, 605/2575, 630/2575.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_class_holes
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_class_holes.param.in
+    hypeholes_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Pixels with no class: 50"
+    --expect-file-contains "hypeholes_hype_subbasins.csv:,262500,"
+    --expect-file-contains "hypeholes_hype_geodata/GeoData.txt:0.1805825243\t0.3398058252\t0.2349514563\t0.2446601942"
+    --expect-file-not-contains "hypeholes_hype_discharge.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_class_holes PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# n_timesteps shorter than the forcing runs only those days.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_short_run
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_short_run.param.in
+    hypeshort_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Steps to run       : 30"
+    --expect-file-contains "hypeshort_hype_discharge.csv:30,2001-01-30,"
+    --expect-file-not-contains "hypeshort_hype_discharge.csv:31,2001-01-31,"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_short_run PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
 # Failure paths. Each asserts the FATAL text, not just the exit code: the
 # messages are what tell the user which restriction of the first version
 # they hit, and the library errors must arrive with their own
@@ -1034,6 +1107,12 @@ set(_hype_failures
     "missing_class_pair|has no class for these (land use, soil) pairs found in the rasters: (1, 2)"
     "bad_column_model|FATAL: column_model must be 'topmodel' or 'hype'. Got: hbv"
     "no_outlet_mode|FATAL: column_model hype needs exactly one outlet mode"
+    "snap_none_off_channel|basin outlet at row 15, col 23 is not on the channel network"
+    "class_nodata_subbasin|sub-basin 1 (outlet flat 920) has no pixel with a valid class"
+    "forcing_length|FATAL: the forcing series differ in length (rainfall 120, temperature 119, PET 120 rows)"
+    "n_timesteps_too_long|FATAL: n_timesteps (121) is longer than the forcing (120 rows)"
+    "bad_date_invalid|FATAL: hype_start_date must be the date of the first forcing row as YYYY-MM-DD (e.g. 2001-10-01). Got: '2001-02-30'"
+    "bad_date_format|FATAL: hype_start_date must be the date of the first forcing row as YYYY-MM-DD (e.g. 2001-10-01). Got: '01/01/2001'"
 )
 foreach(_case IN LISTS _hype_failures)
     string(FIND "${_case}" "|" _bar)

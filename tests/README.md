@@ -183,6 +183,44 @@ CSV. Generated in C++, never committed.
 - `failure_divide_migration_single_unit` — all outlets in one cluster is rejected
   with `outlets=3, units=1` rather than silently producing no divides.
 
+## Distributed hydrology: the S-HYPE column
+
+`column_model: hype` of `lsdtt-distributed-hydrology` is tested against
+**HYPE 5.36.0's own output**. The files are committed under `tests/expected/hype/`
+and were written by `tests/scripts/generate_hype_oracle.py`. That script is run
+by hand: CTest only reads its files and never downloads or compiles HYPE.
+
+```bash
+ctest -R "hype|subbasin_partition|distributed_hydrology_forcing" -LE heavy
+```
+
+**Library suites** (C++ drivers):
+
+- `unit_hype_parameters`, `unit_hype_column`, `unit_hype_routing`,
+  `unit_hype_model`: compare against the oracle within a tolerance about five
+  times the measured single-vs-double precision floor of HYPE itself (1.08e-4 mm).
+- `unit_subbasin_partition`, `unit_hype_raster_setup`: the set-up from rasters.
+- `unit_hype_thread_invariance`: the model must be bitwise identical at 1 and 8
+  threads.
+
+**CLI tests:**
+
+- `fixture_hype_cli` generates the input set (a 60×60 Y-network DEM, land use,
+  soil, parameter tables and 120 days of forcing with snow). Nothing is committed.
+- The `smoke_distributed_hydrology_hype_*` tests cover:
+  - the three outlet modes;
+  - `expanding_square` and `downstream` snapping of off-channel gauges;
+  - nodata holes in the soil raster;
+  - a run shorter than the forcing;
+  - the daily default for `dt_seconds`.
+- The `failure_distributed_hydrology_hype_*` tests assert the FATAL message for
+  each rejected input.
+
+The timing harness (`lsdtt-test-hype-performance`) is always built, but
+it is registered as the test `performance_hype_model` only under
+`LSDTT_ENABLE_PERF_TESTS`. What each suite asserts, and the measured numbers,
+are in §10q of `docs/developer_notes/testing_and_benchmarking.md`.
+
 ## lsdtt-lem
 
 `smoke_lem_strip_fixture` generates the hillslope strip through

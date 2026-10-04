@@ -29,6 +29,9 @@
 // two arms are first-order channels that meet in a second-order trunk, so the
 // Strahler outlet modes have something to select, and a gauge on an arm plus
 // one on the trunk make a two-sub-basin chain for the user-outlet mode.
+// hype_outlets.csv puts those gauges on channel pixels (row 15 col 20, row 50
+// col 30); hype_outlets_offset.csv moves both 3 columns east onto the
+// hillslope, so the snapping methods have something to do.
 //
 // THE CLASSES. Land use (hype_landuse.tif) is 1 west of column 30 and 2 from
 // column 30 east; soil (hype_soil.tif) is 1 north of row 30 and 2 from row 30
@@ -42,7 +45,16 @@
 //
 // FAILURE INPUTS. Three deliberately broken tables for the failure tests:
 // fsceff != 0, an unknown land-use parameter column, and a class table with no
-// class for the (1, 2) pair.
+// class for the (1, 2) pair. Also a temperature series one day short of the
+// rainfall (hype_temperature_short.csv).
+//
+// NODATA IN THE CLASS RASTERS. hype_soil_holes.tif is hype_soil.tif with a
+// 10 x 5 nodata block at rows 25-34, cols 35-39. In the user-outlet run it lies
+// inside the trunk sub-basin and straddles the soil boundary at row 30, taking
+// 25 pixels each from classes 2 and 3, so the class fractions must change:
+// those pixels drop out of the fractions, they do not break the run. hype_soil_north_nodata.tif is nodata over rows 0-15, which
+// takes in the whole west-arm sub-basin, so that sub-basin has no class pixel
+// at all and the run must stop with a message.
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
@@ -126,10 +138,13 @@ void write_text(const std::string& path, const std::string& text)
 
 // Two gauges, as row/col cell centres: one on the west arm, one on the trunk
 // above the southern edge. The CLI snaps them downstream onto the channel.
-void write_outlets(const lsdtt::lsdtt_raster_meta& meta, const std::string& path)
+// col_offset moves both gauges east of the channel: 0 puts them on it, 3 puts
+// them on the hillslope, which is what the snapping-method tests need.
+void write_outlets(const lsdtt::lsdtt_raster_meta& meta, const std::string& path,
+                   int col_offset = 0)
 {
     const int rows[2] = {15, 50};
-    const int cols[2] = {20, 30};
+    const int cols[2] = {20 + col_offset, 30 + col_offset};
 
     OGRSpatialReference utm;
     OGRSpatialReference wgs84;
@@ -182,6 +197,12 @@ void write_forcing(const std::string& dir)
     write_text(dir + "/hype_rainfall.csv", rain.str());
     write_text(dir + "/hype_temperature.csv", temp.str());
     write_text(dir + "/hype_pet.csv", pet.str());
+
+    // One day short: drop the last row.
+    std::string short_temp = temp.str();
+    short_temp.pop_back();
+    short_temp.erase(short_temp.rfind('\n') + 1);
+    write_text(dir + "/hype_temperature_short.csv", short_temp);
 }
 
 const char* k_general =
@@ -246,7 +267,21 @@ int main(int argc, char* argv[])
         write_raster(landuse, meta, dir + "/hype_landuse.tif");
         write_raster(soil, meta, dir + "/hype_soil.tif");
 
+        const float nodata = static_cast<float>(meta.no_data_value);
+        std::vector<float> soil_holes = soil;
+        for (int r = 25; r <= 34; ++r)
+            for (int c = 35; c <= 39; ++c)
+                soil_holes[static_cast<std::size_t>(r) * k_n_cols + c] = nodata;
+        write_raster(soil_holes, meta, dir + "/hype_soil_holes.tif");
+
+        std::vector<float> soil_north_nodata = soil;
+        for (int r = 0; r <= 15; ++r)
+            for (int c = 0; c < k_n_cols; ++c)
+                soil_north_nodata[static_cast<std::size_t>(r) * k_n_cols + c] = nodata;
+        write_raster(soil_north_nodata, meta, dir + "/hype_soil_north_nodata.tif");
+
         write_outlets(meta, dir + "/hype_outlets.csv");
+        write_outlets(meta, dir + "/hype_outlets_offset.csv", 3);
         write_forcing(dir);
 
         write_text(dir + "/hype_general_parameters.csv", k_general);

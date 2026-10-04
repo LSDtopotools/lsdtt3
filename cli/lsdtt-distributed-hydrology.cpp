@@ -665,6 +665,21 @@ static int run_hype_model(
             const std::vector<std::int64_t> snapped = read_and_snap_hype_outlets(
                 *flow, pp.add_read_path_if_needed(sf["basin_outlet_fname"]),
                 dem.get_meta(), snapping_method, ifs);
+            // A sub-basin outlet must sit on the channel network. With snapping
+            // 'none' a point is used as given, so a gauge a few pixels off the
+            // channel would otherwise fail deep in the junction code.
+            for (std::size_t i = 0; i < snapped.size(); ++i)
+            {
+                if (network->is_channel(snapped[i])) continue;
+                throw std::runtime_error(
+                    "basin outlet at row " + std::to_string(snapped[i] / meta.n_cols) +
+                    ", col " + std::to_string(snapped[i] % meta.n_cols) +
+                    " is not on the channel network (threshold_contributing_pixels " +
+                    std::to_string(ifs["threshold_contributing_pixels"]) +
+                    "). basin_outlet_snapping_method '" + snapping_method +
+                    "' left it there; use expanding_square or downstream to move "
+                    "outlets onto the channel, or lower threshold_contributing_pixels");
+            }
             outlet_flats = lsdtt::subbasin_outlets_from_user_flats(*flow, *network,
                                                                    snapped);
         }
@@ -786,6 +801,23 @@ static int run_hype_model(
                                    cell_area_m2, 10)
               << " m2 drains to base level without passing a selected outlet and "
                  "is outside the model)\n";
+
+    // Modelled pixels that are nodata in the land-use or soil raster have no
+    // class. They still count in their sub-basin's area, but not in its class
+    // fractions, so they take on the class mix of the rest of the sub-basin.
+    {
+        const std::vector<std::uint8_t>& class_mask = class_raster.get_mask();
+        std::int64_t n_no_class = 0;
+        for (std::size_t i = 0; i < partition.subbasin_id.size(); ++i)
+            if (partition.subbasin_id[i] >= 0 && class_mask[i] == 0u) ++n_no_class;
+        std::cout << "Pixels with no class: " << n_no_class;
+        if (n_no_class > 0)
+        {
+            std::cout << " (nodata in landcover_fname or hype_soil_class_fname; "
+                         "counted in sub-basin area, left out of class fractions)";
+        }
+        std::cout << "\n";
+    }
 
     // -------------------------------------------------------------------------
     // Set-up outputs. Written BEFORE the run: they describe the set-up, not the
@@ -1024,11 +1056,17 @@ int main(int argc, char* argv[])
         "Which column model to run: topmodel or hype.",
         "topmodel: the raster TOPMODEL on every pixel, routed down the flow "
         "network (everything else in this help that is not marked HYPE). "
+        "Choose it for storm events at sub-daily steps, for per-pixel "
+        "saturation and runoff maps, and for land-cover scenarios such as "
+        "interception or infiltration changes. "
         "hype: a simplified S-HYPE model on sub-basins x classes. The DEM is "
         "split into incremental sub-basins between the selected outlets, each "
         "sub-basin is split into classes (land use x soil), every class runs "
         "HYPE's soil column, and sub-basins are routed through HYPE's local and "
-        "main rivers. hype is daily only (dt_seconds 86400) and needs "
+        "main rivers. Choose it for seasonal to multi-year daily flows "
+        "(snow accumulation and melt, summer evapotranspiration, low flows) "
+        "reported per sub-basin at gauges, or for a set-up that can be checked "
+        "in HYPE itself. hype is daily only (dt_seconds 86400) and needs "
         "temperature_fname, landcover_fname, hype_soil_class_fname, the four "
         "hype_*_fname parameter tables, hype_start_date and exactly one outlet "
         "mode. The TOPMODEL-only stages (canopy, Green-Ampt, per-cell routing) "
@@ -1632,7 +1670,9 @@ int main(int argc, char* argv[])
         "The forcing and the reporting both live on this step and it never "
         "moves: there is no adaptive stepping, because the routing schemes have "
         "no stability limit to dodge. Sub-cycling inside the routing operator "
-        "is available separately.",
+        "is available separately. With column_model hype the step must be "
+        "daily: leave it unset (the run uses 86400 and says so) or set 86400; "
+        "any other value is an error.",
         "Forcing and time", "param", ""};
 
     int_default_map["n_timesteps"] = 0;
@@ -1640,7 +1680,8 @@ int main(int argc, char* argv[])
         "Number of timesteps to run.",
         "0 runs the length of the rainfall series. A larger value continues "
         "past the end of the series with zero rainfall, which is how you let a "
-        "recession play out.",
+        "recession play out. With column_model hype it may not exceed the "
+        "forcing length, because there is no temperature to continue with.",
         "Forcing and time", "param", ""};
 
     int_default_map["routing_substeps"] = 0;
