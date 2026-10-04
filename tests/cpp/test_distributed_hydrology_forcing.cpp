@@ -8,7 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Unit tests for src/core/lsdtt_distributed_hydrology_forcing -- WP1 of the S-HYPE port.
+// Unit tests for src/core/lsdtt_distributed_hydrology_forcing (S-HYPE column).
 //
 // What is under test
 // ------------------

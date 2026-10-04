@@ -10,7 +10,7 @@
 // -----------------------------------------------------------------------------
 // unit_param_parser_deprecation
 //
-// Phase 3b of docs/plan_docs/plan_fluvial_surfaces_cli_split.md.
+// Phase 3b of the fluvial-surfaces split.
 //
 // WHAT IS BEING PINNED, AND WHY IT NEEDED BUILDING. The typed parse functions
 // iterate over a CLI's DEFAULTS MAPS and pull matching keys out of the file, so

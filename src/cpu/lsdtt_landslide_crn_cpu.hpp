@@ -162,7 +162,7 @@ constexpr double k_landslide_never_failed = -1.0;
 // -----------------------------------------------------------------------------
 // LandslideStepChangeConfig
 //
-// The "scar" coupling of plan Phase 2: the landslide material is long gone from
+// The "scar" coupling: the landslide material is long gone from
 // the system, and what remains is a scar eroding at the catchment rate from a
 // column whose inheritance was stripped when it failed.
 //

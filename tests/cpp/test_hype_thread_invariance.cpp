@@ -9,8 +9,7 @@
 //
 // -----------------------------------------------------------------------------
 // unit_hype_thread_invariance: the HYPE model gives BITWISE identical results
-// with 1 thread and with N threads (WP7 B0, plan_potential_shype_port.md
-// sections 7.4 and 7.7.2). The guard for the Stage B parallel steps.
+// with 1 thread and with N threads. The guard for the Stage B parallel steps.
 //
 // Usage: lsdtt-test-hype-thread-invariance
 //
@@ -134,7 +133,7 @@ void compare(const std::vector<double>& a, const std::vector<double>& b, const s
 
 int main()
 {
-    std::cout << "unit_hype_thread_invariance (plan_potential_shype_port.md 7.7.2)\n";
+    std::cout << "unit_hype_thread_invariance\n";
 
 #ifdef _OPENMP
     const int n_threads = std::max(2, omp_get_max_threads());

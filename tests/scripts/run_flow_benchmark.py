@@ -456,7 +456,7 @@ def load_raster(path: pathlib.Path):
 
 
 def elevation_metrics(a_path, b_path, original_path=None, tol=0.01):
-    """Plan Sec4.1 metrics for two elevation rasters.
+    """Comparison metrics for two elevation rasters.
 
     `original_path` is the unmodified input DEM. It is needed for the volume
     check: docs/developer_notes/testing_and_benchmarking.md asks for a "total fill volume ratio", i.e. how much
@@ -551,7 +551,7 @@ def cell_size_of(path: pathlib.Path) -> float:
 
 
 def accumulation_metrics(lsdtt_path, richdem_path, cell_area, top_fraction=0.01):
-    """Plan Sec4.3 metrics for two flow-accumulation rasters.
+    """Comparison metrics for two flow-accumulation rasters.
 
     UNIT CONVENTION: lsdtt3 reports drainage AREA in m^2 (its accumulate()
     weights each cell by cell_size^2); RichDEM reports a CELL COUNT, with
@@ -615,7 +615,7 @@ def accumulation_metrics(lsdtt_path, richdem_path, cell_area, top_fraction=0.01)
 def count_interior_minima(path: pathlib.Path) -> int:
     """Interior cells strictly lower than all eight neighbours.
 
-    Plan Sec4.1 calls this the most valuable line in the benchmark: it says the
+    This is the most valuable line in the benchmark: it says the
     filled DEM is genuinely depression-free regardless of what RichDEM thinks,
     so it still has teeth if both implementations are wrong in the same way.
 

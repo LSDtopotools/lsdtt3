@@ -8,8 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Unit tests for src/cpu/lsdtt_hype_parameters -- WP2 of the S-HYPE port
-// (plan_potential_shype_port.md section 7.6).
+// Unit tests for src/cpu/lsdtt_hype_parameters (S-HYPE column).
 //
 // What is under test
 // ------------------
@@ -44,6 +43,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -560,6 +560,8 @@ void parameter_range_checks(const fs::path& oracle_dir)
     expect_reject("damp > 1", [](auto& s) { s.general.damp = 1.2; }, "damp");
     expect_reject("whcsnow = 1", [](auto& s) { s.general.whcsnow = 1.0; }, "whcsnow");
     expect_reject("negative rivvel", [](auto& s) { s.general.rivvel = -0.5; }, "rivvel");
+    expect_reject("NaN sub-basin slope", [](auto& s) { s.subbasins[0].slope_mean_percent = std::numeric_limits<double>::quiet_NaN(); }, "slope_mean_percent");
+    expect_reject("infinite class dh", [](auto& s) { s.subbasin_classes[0].dh_m = std::numeric_limits<double>::infinity(); }, "dh_m");
     bool ok = true;
     try { lsdtt::validate_hype_setup(base); } catch (...) { ok = false; }
     check("range: the unmodified default_all set-up still validates", ok);

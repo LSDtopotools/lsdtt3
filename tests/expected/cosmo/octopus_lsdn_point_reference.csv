@@ -34,7 +34,7 @@
 # EBE_GCMYR/EBE_MMKYR are carried so the mm/kyr -> g cm^-2 yr^-1 conversion uses
 # OCTOPUS's OWN density (their ratio gives 2.6474-2.6521, i.e. 2.650 g/cm3) rather
 # than an assumed one. ELEV_AVE and AREA are context only and never enter the
-# inversion. BESTND is recorded because BE10NC is already renormalised (plan §9b).
+# inversion. BESTND is recorded because BE10NC is already renormalised.
 #
 # CENTR_LON IS DERIVED BY US, NOT A PUBLISHED OCTOPUS FIELD. OCTOPUS publishes
 # CENTR_LAT with no centroid longitude, and lsdn_scaling() needs a longitude because

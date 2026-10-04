@@ -309,8 +309,7 @@ valley_centreline_result extract_valley_centrelines(
         //
         // Either taken from a supplied mask, or derived here by searching the
         // corridor HAND population for a break. The derived path is the whole
-        // of what phase 5 of the fluvial-surfaces plan moves out of this
-        // engine; it is kept for one release and deleted with the valley_*
+        // of what moved out of this engine into lsdtt-fluvial-surfaces; it is kept for one release and deleted with the valley_*
         // break parameters that drive it.
         // ---------------------------------------------------------------------
         std::vector<std::uint8_t> valley(n, k_off);

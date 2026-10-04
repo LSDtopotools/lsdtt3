@@ -10,8 +10,8 @@
 // -----------------------------------------------------------------------------
 // HYPE parameter tables and the sub-basin set-up struct
 //
-// WP2 of the S-HYPE port (plan_potential_shype_port.md, sections 2.10, 5.2.2,
-// 5.3 and 7.2). This file holds the inputs of the simplified HYPE column and
+// Part of the S-HYPE column of lsdtt-distributed-hydrology (see
+// docs/design_and_algorithms/hydrological_modelling.md). This file holds the inputs of the simplified HYPE column and
 // nothing else: plain structs, CSV readers and validation. No process code.
 //
 // WHAT IS HERE
@@ -31,7 +31,7 @@
 //
 // Field names are HYPE's own parameter / column names so that a value can be
 // traced straight back to the Fortran. Units are HYPE's: mm, mm per timestep,
-// degrees C, m. The model runs daily (plan 7.1), so "per timestep" is "per day".
+// degrees C, m. The model runs daily, so "per timestep" is "per day".
 //
 // ABSENT MEANS ZERO
 // -----------------
@@ -67,7 +67,7 @@ namespace lsdtt
 {
 
 // ---------------------------------------------------------------------------
-// General parameters (plan 2.10). All default to 0, HYPE's value for a
+// General parameters. All default to 0, HYPE's value for a
 // parameter that is not given.
 // ---------------------------------------------------------------------------
 struct hype_general_parameters
@@ -101,7 +101,7 @@ struct hype_landuse_parameters
 
 // ---------------------------------------------------------------------------
 // Soil parameters, one row per soil code. wcwp, wcfc and wcep are STACKED
-// volume fractions (plan 2.2), not cumulative contents.
+// volume fractions, not cumulative contents.
 // ---------------------------------------------------------------------------
 struct hype_soil_parameters
 {
@@ -136,7 +136,7 @@ struct hype_class_definition
 };
 
 // ---------------------------------------------------------------------------
-// Sub-basin (a GeoData row, plan 5.2.2).
+// Sub-basin (a GeoData row).
 // ---------------------------------------------------------------------------
 struct hype_subbasin
 {
@@ -234,7 +234,7 @@ struct hype_setup
 void validate_hype_setup(const hype_setup& setup);
 
 // Sub-basins in downstream (topological) order: every sub-basin comes before
-// its maindown, so one forward sweep routes the network (plan 7.3). Returns
+// its maindown, so one forward sweep routes the network. Returns
 // INDICES into `subbasins`. Ties keep input order, so the result is
 // deterministic. Throws std::invalid_argument on a maindown that is neither 0
 // nor a subid, or on a cycle (naming the sub-basins on it).

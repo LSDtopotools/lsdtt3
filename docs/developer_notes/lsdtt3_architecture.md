@@ -1227,7 +1227,7 @@ lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
 ```
 
 After adoption, renaming that parameter is a one-line change in one file, not a
-twenty-CLI edit. This is why parameter renames in the remediation plan are low-risk:
+twenty-CLI edit. This is why parameter renames are low-risk:
 the shared layer makes them self-enforcing.
 
 - **`lsdtt-distributed-hydrology.cpp`**  
@@ -1266,8 +1266,8 @@ the shared layer makes them self-enforcing.
   `lsdtt_outlet_basin_verification_cpu`).
 
 **Migration status:** Not all CLIs have adopted the shared layer yet. Legacy CLIs
-that predate the shared layer still hand-declare their parameters. The remediation
-plan migrates them per-phase.
+that predate the shared layer still hand-declare their parameters, and are migrated
+one at a time.
 
 **Naming standard:** Every shared parameter follows the conventions in
 `docs/developer_notes/cli_parameter_conventions.md`. That document is the durable record of what

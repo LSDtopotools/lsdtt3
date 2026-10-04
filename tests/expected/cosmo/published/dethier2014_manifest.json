@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Real-landscape validation manifest (cosmo plan Phase 6 / §5b).",
+    "Real-landscape validation manifest.",
     "Small, TRACKED file. Names the DEM to fetch and where the authoritative",
     "per-sample regression targets come from. NO large data is ever committed.",
     "The DEM is fetched keyless via the lsdtt-fetch-raster CLI (Copernicus",
@@ -48,7 +48,7 @@
       "atmosphere NCEP, 07KNSTD) it reproduces OCTOPUS/CAIRN erate to +0.38% mean (§6e",
       "isolation test) and basin-mean production to -0.19% vs BEPROD -- i.e. ESSENTIALLY",
       "EXACT. The earlier ~+4% 'surplus' was a HARNESS BUG (standardisation double-count),",
-      "now fixed; see standardisation_convention below and plan §6e."
+      "now fixed; see standardisation_convention below."
     ],
     "expect_zero": false,
     "band": "measured-then-frozen. DEFAULT config (this summary): reliable basins ~-5.6% (range -6.98..-2.27%, 12 reliable; WTS036 +71% and WTS032 flagged delineation-unreliable). This is the muon-scheme offset, uniform and single-signed. MATCHED config (isolation test): +0.38%.",

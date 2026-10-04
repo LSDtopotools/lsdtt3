@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Phase 1b of plan_lem_hillslope_length_targeting.md: how far apart are the two
+// How far apart are the two
 // hillslope-length measurements in lsdtt3?
 //
 //   estimate_hillslope_length_stats   D8 flow distance to the nearest channel,
@@ -15,8 +15,8 @@
 //   lsdtt-hillslope-channel-coupling  Lea (1992) / Tarboton (1997) sub-pixel
 //                                     streamline tracing, from hilltop pixels
 //
-// They measure nominally the same quantity by different means, and the plan
-// proposes to CALIBRATE a constant against the first and VALIDATE it with the
+// They measure nominally the same quantity by different means, and the targeting
+// workflow proposes to CALIBRATE a constant against the first and VALIDATE it with the
 // second. That is only sound if the gap between them is known.
 //
 // D8 is confined to eight directions, so it runs long: a path at 22.5 degrees

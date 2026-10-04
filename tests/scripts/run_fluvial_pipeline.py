@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the two-stage fluvial-surfaces pipeline and check it hands over.
 
-After phase 5 of docs/plan_docs/plan_fluvial_surfaces_cli_split.md the valley is
+After phase 5 of the fluvial-surfaces split the valley is
 identified by lsdtt-fluvial-surfaces and traced by lsdtt-valley-centreline, so
 neither tool can be smoke-tested end to end on its own: CLI 3 will not start
 without a mask, and the only supported source of that mask is CLI 2.

@@ -1,4 +1,4 @@
-# LSDn v3 GRID REFERENCE (frozen) - lsdn_implementation_plan Sec5 L2
+# LSDn v3 GRID REFERENCE (frozen) - test L2
 # Evaluated from the FLOAT64 v3 .mat grids with scipy
 # RegularGridInterpolator(method='linear'); lsdtt3 must reproduce
 # these from the float32 grids packed in data/crn_parameters.nc.

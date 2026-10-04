@@ -831,7 +831,7 @@ int main(int argc, char* argv[])
                      "refuted by measurement,\n"
                      "        so the magnitude of the under-read is recorded as "
                      "UNEXPLAINED. See the\n"
-                     "        comment here and the plan document before drawing "
+                     "        comment here before drawing "
                      "a conclusion from it.\n";
         check(shallow > 0.0 && deep > 0.0,
               "both scar geometries produce a usable ensemble (diagnostic only)");

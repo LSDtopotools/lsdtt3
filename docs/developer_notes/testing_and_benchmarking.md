@@ -1458,7 +1458,7 @@ Changing `RSTRIP` from 256 to 64 improved best complete profiled time by 18-36%
 at 1000² and 16-26% at 4000² across one and four threads. Generated outputs were
 byte-identical at 1/2/4 threads and the five surface-metric tests passed.
 `RSTRIP=64` is now provisional pending the full 324-raster exact-comparison
-matrix; see the plan's §9.5f for the measurements and validation caveat.
+matrix.
 
 The following serial-memory step removed the redundant `H` zero-fill, initialized
 the independent output arrays concurrently, and copied the five required masks
@@ -1500,8 +1500,8 @@ Current investigation order:
 4. Test padded carry storage last. Static scheduling limits cross-thread carry
    sharing to partition boundaries, and carries are written only once per strip.
 
-These are outstanding work rather than findings, so they are tracked in the
-benchmarking plan (uncommitted scratch) rather than here. This document records
+These are outstanding work rather than findings, so they are tracked
+elsewhere rather than here. This document records
 what was measured; it is not a to-do list.
 
 #### Sequential cases are no longer swept (changed 2026-09-01)
@@ -3806,7 +3806,7 @@ simply is not covered. Worth a case when the landslide coupling next changes.
 ### 7.10b Validity is not capability (`lsdtt-cosmo-landslides`, 2026-08-05)
 
 A shipped defect, found while planning the cosmogenic CLI rationalisation and
-fixed under plan phase R2b. It is recorded because the *shape* of it recurs.
+fixed as part of that rationalisation. It is recorded because the *shape* of it recurs.
 
 **What it was.** `lsdtt-cosmo-landslides` caught any failure inside its cosmogenic
 block, printed a stderr warning, and fell through to **exit 0** having written

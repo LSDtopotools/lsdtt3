@@ -1,6 +1,6 @@
 # DiBiase et al. (2010) San Gabriel -- LSDn tier validation SUMMARY (FROZEN).
 #
-# lsdn plan Phase 6 deliverable (iii): the END-TO-END PER-PIXEL LSDn tier.
+# The END-TO-END PER-PIXEL LSDn tier.
 # Written by tests/scripts/run_cosmo_validation.py from the manifest
 # dibiase2010_lsdn_manifest.json (same bbox, same run knobs and the SAME sample table as
 # the Stone tier's dibiase2010; the only changes are scaling_scheme: lsdn and the

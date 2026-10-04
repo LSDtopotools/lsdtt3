@@ -36,7 +36,7 @@ ships wheels for cp311-cp313 only. Run under:
 
 Routine -> TopoToolbox mapping:
 
-  Flow routing (docs/developer_notes/testing_and_benchmarking.md, flow plan):
+  Flow routing (docs/developer_notes/testing_and_benchmarking.md):
     fill               GridObject.fillsinks(hybrid=True)   DEFAULT
                        Vincent-style grayscale reconstruction: forward and
                        backward raster scans plus a FIFO queue. O(N), almost
@@ -52,7 +52,7 @@ Routine -> TopoToolbox mapping:
     docs/developer_notes/testing_and_benchmarking.md.
     accum_d8           FlowObject(method='d8').flow_accumulation()
 
-  Surface metrics (surface-metrics plan Tier B -- SPEED ONLY):
+  Surface metrics (Tier B -- SPEED ONLY):
     evansslope         GridObject.evansslope(modified=False)
     evansslope_partials  ...(partial_derivatives=True) -> (fx, fy)
     curvature_profc    GridObject.curvature(ctype='profc')
@@ -655,7 +655,7 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         "peak_rss_mb": peak_rss_mb(),
         "shape": list(arr.shape),
         "n_cells": int(arr.size),
-        # Equivalence-of-work check (plan Sec2.4): a tool that produced far
+        # Equivalence-of-work check: a tool that produced far
         # fewer valid cells did less work, and its timing must not be averaged
         # in with the other's as though the comparison were fair.
         "n_valid": int(finite.size),

@@ -18,7 +18,7 @@
 // trigger time and an event volume; this file answers "how many landslides, of
 // what sizes". The alternative -- deriving sizes from slope stability, as
 // HyLands does (Campforts et al. 2020, GMD 13, 3863-3886) -- is the more
-// fundamental approach and is noted in the plan as the eventual comparison, but
+// fundamental approach and is the intended eventual comparison, but
 // it makes the landslide flux an outcome of rock-strength calibration, which is
 // exactly the variable we do not want in the loop when asking what landslides
 // do to cosmogenic nuclide concentrations.
@@ -249,7 +249,7 @@ class LandslideSizeSampler
 
     // Fraction of the UNTRUNCATED distribution lying above area_max, by number
     // and by volume. Expect the volume fraction to be large (~59% at a 1000-px
-    // threshold on a 30 m DEM) -- see the plan, section 2.5. Reported so the
+    // threshold on a 30 m DEM). Reported so the
     // truncation is visible, never silently absorbed.
     double truncated_fraction_number() const noexcept { return trunc_frac_n_; }
     double truncated_fraction_volume() const noexcept { return trunc_frac_v_; }

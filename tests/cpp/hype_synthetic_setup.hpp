@@ -8,8 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Synthetic HYPE set-ups and forcing, built in memory (WP7 B0,
-// plan_potential_shype_port.md section 7.7). Shared, header-only, by
+// Synthetic HYPE set-ups and forcing, built in memory. Shared, header-only, by
 // performance_hype_model (test_hype_performance.cpp) and
 // unit_hype_thread_invariance (test_hype_thread_invariance.cpp). Nothing is
 // read from or written to disk.

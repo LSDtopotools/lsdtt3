@@ -11,8 +11,8 @@
 //
 // WHY THIS EXISTS
 //
-// lsdtt_flowinfo::create() is being refactored for speed (benchmarking plan
-// section 9.4: interior fast paths in the receiver build and the s-vector donor
+// lsdtt_flowinfo::create() is being refactored for speed (interior fast
+// paths in the receiver build and the s-vector donor
 // search, merged passes, row-major accumulation writes, no double fills). The
 // requirement is that NOT ONE BYTE of any output changes. This test was written,
 // and its pins generated, from the code BEFORE that refactor (commit 7e81a39),

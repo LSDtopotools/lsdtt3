@@ -15,7 +15,7 @@
 // dimensionally different, and the default is the one the documentation did not
 // describe.
 //
-// (An earlier note in the plan called the behaviour "a pixel count". That is
+// (An earlier design note called the behaviour "a pixel count". That is
 // also wrong -- a pixel count would be A/dx^2. It is A/dx.)
 //
 // This is a units error that cannot show up as a crash or a NaN: it selects a

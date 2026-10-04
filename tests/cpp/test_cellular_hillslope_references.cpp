@@ -1,6 +1,6 @@
 // test_cellular_hillslope_references.cpp
 //
-// Small Newton-Roering reference fixtures for the cellular hillslope plan.
+// Small Newton-Roering reference fixtures for cellular hillslope transport.
 // These are intentionally narrow or small: they freeze converged reference
 // fields and coupling behaviour without putting the 250x250 OCN benchmark in
 // the normal development loop.

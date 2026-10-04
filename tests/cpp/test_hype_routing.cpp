@@ -8,7 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// unit_hype_routing: HYPE river routing (WP4, Stage A).
+// unit_hype_routing: HYPE river routing.
 //
 // Usage: lsdtt-test-hype-routing <oracle_dir>   (tests/expected/hype)
 //
@@ -18,7 +18,7 @@
 //   * the translation queue delays by the integer part and splits by the
 //     fractional part, and conserves volume;
 //   * a zero-length river passes flow straight on.
-// Ring-buffer checks (WP7 B5): the ring-buffer translation queue gives
+// Ring-buffer checks: the ring-buffer translation queue gives
 // bitwise-identical outflow and in-transit volume to a reference copy of the
 // former shifting implementation (HYPE's qqueue shift, sw_proc.f90:1278), for
 // several translation times, over more steps than the buffer length; and it
@@ -128,8 +128,8 @@ void analytic_checks()
     }
 }
 
-// Reference copy of the former shifting translation queue (Stage A code
-// before WP7 B5), kept to check the ring buffer against. qqueue(0:y+1) is
+// Reference copy of the former shifting translation queue (the Stage A
+// code before the ring buffer), kept to check the ring buffer against. qqueue(0:y+1) is
 // stored directly, and shifted every step as HYPE does (sw_proc.f90:1278).
 double reference_shift_translate(std::vector<double>& queue, const lsdtt::hype_river& r,
                                  double qin_m3s, double dt_seconds)
@@ -187,7 +187,7 @@ std::vector<double> irregular_inflow(std::size_t n)
 
 void ring_buffer_checks()
 {
-    std::cout << "\n--- ring-buffer translation queue (WP7 B5) ---\n";
+    std::cout << "\n--- ring-buffer translation queue ---\n";
     const std::size_t n_steps = 2000;
     const std::vector<double> qin = irregular_inflow(n_steps);
 

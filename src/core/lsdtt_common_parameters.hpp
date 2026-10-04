@@ -28,7 +28,7 @@
 // than a twenty-CLI sweep. That is what makes the naming standard in
 // `docs/cli_parameter_conventions.md` self-enforcing rather than aspirational.
 //
-// This is Phase 0a of `docs/plan_docs/cli_consistency_remediation_plan.md`.
+// This is Phase 0a of the CLI consistency clean-up.
 // Phase 0 changes no CLI and no behaviour: these functions are purely additive
 // and nothing calls them yet. Adoption by the 38 CLIs is Phase 2+ work.
 //
@@ -89,14 +89,13 @@
 //
 // PROVENANCE OF THE NAMES AND DEFAULTS
 //
-// Canonical names and defaults come from §3 of the remediation plan where that
-// table pins them. Where it does not, the name and default were taken from the
-// existing CLI that already spells it in the most conformant way:
+// Canonical names and defaults follow the CLI parameter conventions. Where
+// those do not pin them, the name and default were taken from the existing CLI that already spells it in the most conformant way:
 //
 //   raster_is_filled, fill_min_slope,
 //   boundary_conditions, n_threads                cli/lsdtt-channel-extraction.cpp
 //   fill_before_routing                           cli/lsdtt-hillslope-channel-coupling.cpp
-//   threshold_contributing_pixels                 plan D1/D3 (int, 1000)
+//   threshold_contributing_pixels                 (int, 1000)
 //   write_output_format, write_vector_format      cli/lsdtt-fluvial-surfaces.cpp
 //   calculate_spatial_index                       cli/lsdtt-basin-extraction.cpp
 //   basin_outlet_* (all five)                     cli/lsdtt-basin-extraction.cpp
@@ -114,14 +113,14 @@
 //
 //   cell_size_metres  (CLIs say `cell_size` / `grid_resolution`; §3 requires
 //       units spelled out)
-//   noise_type / noise_relief_metres  (plan §9.4 names; the closest existing keys are
+//   noise_type / noise_relief_metres  (the closest existing keys are
 //       lem's `initial_surface_type` and raster-synthetic-tests'
 //       `diamond_square_noise_relief_metres`)
 //
 // THE TWO FILL FLAGS ARE NOT THE SAME PARAMETER
 //
 // `raster_is_filled` and `fill_before_routing` are one word apart and ask
-// different questions (plan section 2.2 / decision D2). They have separate
+// different questions. They have separate
 // declaration functions, and the help text of each names the other:
 //
 //   raster_is_filled     - "has the input ALREADY been filled?" Filling is
@@ -187,7 +186,7 @@ void declare_fill_min_slope_parameter(
     lsdtt_help_registry&          help_map,
     const std::string&            prefix = "");
 
-// Channel-initiation threshold (plan D1/D3).
+// Channel-initiation threshold.
 void declare_channel_initiation_parameters(
     std::map<std::string, int>& int_default_map,
     lsdtt_help_registry&        help_map,
@@ -254,7 +253,7 @@ void declare_surface_fitting_parameters(
     const std::string&                  prefix = "");
 
 // -----------------------------------------------------------------------------
-// Synthetic model domain (plan §9.4). Each concept is independently selectable
+// Synthetic model domain. Each concept is independently selectable
 // because the synthetic CLIs do not share one CRS model or every domain knob.
 //
 //   n_rows            int     128
@@ -293,7 +292,7 @@ void declare_synthetic_domain_parameters(
     const std::string&                  prefix = "");
 
 // -----------------------------------------------------------------------------
-// Synthetic noise surfaces (plan §9.4).
+// Synthetic noise surfaces.
 //
 //   noise_type                    string  "flat"
 //   noise_target_stddev_metres           float   1.0

@@ -1,7 +1,7 @@
 # Pins the TWI raster produced by lsdtt-drainage-analysis.
 #
 # This exists to guard the lift of the TWI computation out of the CLI and into
-# lsdtt_wetness_index_cpu (plan_raster_topmodel.md Phase 0). The move must be a
+# lsdtt_wetness_index_cpu. The move must be a
 # pure refactor, so the checksum below was captured from the pre-refactor CLI
 # and must not change. Both lsdtt-drainage-analysis and
 # lsdtt-distributed-hydrology are required to produce this same raster.

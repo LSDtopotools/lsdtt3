@@ -1,8 +1,8 @@
 # Hydrological Modelling in lsdtt3
 
-This page explains the three hydrology tools available in lsdtt3: what each computes, when you should use each one, where the theory comes from, and how they differ fundamentally. It is not a CLI reference — for parameter names and default values see the CLI reference pages for [lsdtt-drainage-analysis](../cli_reference/cli_reference_lsdtt_drainage_analysis.md), [lsdtt-distributed-hydrology](../cli_reference/cli_reference_lsdtt_distributed_hydrology.md), and [lsdtt-graphflood](../cli_reference/cli_reference_lsdtt_graphflood.md). Instead, this page is for understanding which tool answers your research question.
+This page explains the three hydrology tools available in lsdtt3, and the two column models of `lsdtt-distributed-hydrology` (TOPMODEL and S-HYPE): what each computes, when you should use each one, where the theory comes from, and how they differ fundamentally. It is not a CLI reference — for parameter names and default values see the CLI reference pages for [lsdtt-drainage-analysis](../cli_reference/cli_reference_lsdtt_drainage_analysis.md), [lsdtt-distributed-hydrology](../cli_reference/cli_reference_lsdtt_distributed_hydrology.md), and [lsdtt-graphflood](../cli_reference/cli_reference_lsdtt_graphflood.md). Instead, this page is for understanding which tool answers your research question.
 
-If you are new to lsdtt3 hydrology, start with [The three tools](#the-three-tools) to understand the distinction, then move to [When to use each tool](#when-to-use-each-tool) to match your question to a method. If you already know which tool you want, turn to the corresponding CLI reference.
+If you are new to lsdtt3 hydrology, start with [The three tools](#the-three-tools) to understand the distinction, then move to [When to use each tool](#when-to-use-each-tool) to match your question to a method. The equations each model solves are collected in [Governing equations](#governing-equations). If you already know which tool you want, turn to the corresponding CLI reference.
 
 ---
 
@@ -12,7 +12,9 @@ lsdtt3 offers three hydrological tools that approach the problem from different 
 
 1. **lsdtt-drainage-analysis**: Computes **static topographic indices** (drainage area, Topographic Wetness Index, Soil Topographic Index, connectivity). No time, no rainfall, no water balance. This is what the catchment *looks like*.
 
-2. **lsdtt-distributed-hydrology**: A **time-evolving rainfall-driven hydrological simulation** with a full water balance, built on TOPMODEL. Simulates how water moves vertically (interception → infiltration → root zone → unsaturated zone → saturated zone) and laterally (surface and subsurface routing). This is what happens *during a storm*.
+2. **lsdtt-distributed-hydrology**: A **time-evolving rainfall-driven hydrological simulation** with a full water balance. It has two column models, chosen with `column_model`:
+    - `topmodel` (the default): a raster TOPMODEL on every pixel. Simulates how water moves vertically (interception → infiltration → root zone → unsaturated zone → saturated zone) and laterally (surface and subsurface routing). This is what happens *during a storm*.
+    - `hype`: a simplified S-HYPE, the HYPE model of the Swedish Meteorological and Hydrological Institute (SMHI), run on sub-basins split into land-use × soil classes, with daily steps, snow and seasonal evapotranspiration. This is what happens *over seasons and years*.
 
 3. **lsdtt-graphflood**: A **stationary graph-based hydraulic routing** solver with Manning friction. Routes a supplied discharge over an evolving water surface (z + h, where z is bed elevation and h is water depth). This is where the water *goes and how deep* it is.
 
@@ -20,7 +22,7 @@ lsdtt3 offers three hydrological tools that approach the problem from different 
 
 | Question | `lsdtt-drainage-analysis` | `lsdtt-distributed-hydrology` | `lsdtt-graphflood` |
 |---|---|---|---|
-| What is supplied? | DEM and optional soil data | DEM, rainfall, PET, and optional soil/land-cover data | DEM, roughness field, and a rainfall-rate field (optionally a point inflow) |
+| What is supplied? | DEM and optional soil data | DEM, rainfall, PET, and optional soil/land-cover data (`hype`: also temperature, land-use and soil rasters, parameter tables) | DEM, roughness field, and a rainfall-rate field (optionally a point inflow) |
 | What is computed? | Static drainage and wetness metrics | Rainfall-runoff response and outlet hydrograph | Flow depth and inundation for the supplied water |
 | Does it have time? | No | Yes | No (stationary solver) |
 | Does it generate discharge? | No | Yes | No |
@@ -55,6 +57,22 @@ This tool simulates **what happens to water during a rainfall event**, hour by h
 **Input**: DEM, rainfall time series, PET time series, soil data table, optional LAI (Leaf Area Index) scenarios, optional vector channel network.
 
 **Output**: outlet streamflow time series plus rasters of saturation deficit, saturation, velocity, travel time, and TWI. Uniform-transmissivity runs require calibration of `ln_t0` (default 5.0) and the unsaturated-zone delay `td_hours_per_metre` (default 50.0); STI-table runs instead derive spatial transmissivity from the supplied measured profiles.
+
+### lsdtt-distributed-hydrology with `column_model: hype`: simplified S-HYPE
+
+With `column_model: hype` the same CLI runs a different model: a reimplementation of the land and river processes of HYPE (Lindström et al. 2010), the model behind SMHI's national S-HYPE set-up for Sweden, with HYPE's **default model options**. It does not run on pixels. The spatial unit is a **sub-basin × class** pair:
+
+- **Sub-basins** are incremental basins between outlets that you choose, by one of three outlet modes whose keys are `lsdtt-basin-extraction`'s: supplied outlet points (`select_basins_from_outlets` with `basin_outlet_fname`), every junction basin of one Strahler order (`select_all_basins_of_stream_order`), or every junction basin within an order range (`filter_basins_by_stream_order`). In the stream-order modes a trunk that reaches base level yields two junction basins, the one just above the base-level pixel and the base-level pixel's own edge strip; these are merged into one sub-basin with its outlet at base level.
+- **Classes** are (land use, soil) pairs. Land use comes from `landcover_fname`, soil codes from `hype_soil_class_fname`, and every pair present must have a row in the class table (`hype_classes_fname`, HYPE's GeoClass), which sets the soil-layer depths and the stream depth.
+- **Sub-basin properties** (HYPE's GeoData) are derived from the DEM rather than supplied: area, mean and standard deviation of elevation, each class's area fraction and elevation offset from the sub-basin mean, mean slope, and the lengths of the local and main rivers. Slope is `slope_mean = 100 × mean gradient (m/m)`, the percent form HYPE expects; no angle is computed. River lengths are lsdtt3 flow distances (see [Governing equations](#s-hype)).
+
+Each class runs HYPE's soil column on its own state (snow, up to three soil layers); class runoff is area-weighted into its sub-basin, and sub-basins are routed through HYPE's local and main rivers, upstream first.
+
+**Input**: DEM, daily precipitation (`rainfall_fname`) and air temperature (`temperature_fname`) series, optional observed PET (otherwise HYPE's temperature-index PET is calculated), `hype_start_date` (for the day of year), land-use and soil rasters, and four parameter tables in HYPE's own parameter names: general (`hype_general_parameters_fname`), land use (`hype_landuse_parameters_fname`), soil (`hype_soil_parameters_fname`) and classes (`hype_classes_fname`). Soil data is user-supplied; none ships with lsdtt3. One precipitation and one temperature series drive the whole domain.
+
+**Output**: daily discharge per sub-basin (`_hype_discharge.csv`), a sub-basin table (`_hype_subbasins.csv`), the domain water balance (`_hype_water_balance.csv`), and optionally the sub-basin raster and the derived set-up written as HYPE `GeoData.txt` / `GeoClass.txt` (`write_hype_geodata`), so the same set-up can be run in HYPE itself.
+
+**Restrictions of this first version**, enforced at start-up: daily steps only (`dt_seconds` defaults to 86400 when not set and any other value is fatal); `fsceff = 0` (no fractional snow cover); no snow sublimation, tile drainage, frozen soil, lakes, regional groundwater, nutrients or regional parameter corrections. Negative and out-of-range parameters are rejected.
 
 ### lsdtt-graphflood: graph-based hydraulic routing
 
@@ -102,6 +120,14 @@ The implementation is conceptually inspired by the graph-based hydraulic-routing
 - You want a physically grounded model with **measured soil data** rather than a black-box emulator.
 
 **Limitations**: The tool has not yet been calibrated against observed catchments. It is an event-scale, grid-based hydrological model, not a full 2D groundwater model. In `index` mode, the quasi-steady topographic-index assumption can break down during rapid transients; use `dynamic` mode and timestep-sensitivity checks when that assumption is unsuitable.
+
+### Use `column_model: hype` if:
+
+- Your question is about **daily flows over seasons to years** rather than a single storm: snow accumulation and melt, summer evapotranspiration deficits, low flows.
+- You want results **per sub-basin** at gauges or chosen confluences rather than per pixel.
+- You want a set-up that can be **checked against, or handed to, HYPE itself**: the derived set-up is written in HYPE's file formats and the parameters carry HYPE's names.
+
+**Limitations**: daily steps only, so it cannot resolve storm hydrographs; a single forcing series for the domain; the restrictions listed above. Like TOPMODEL here, it has not been calibrated against an observed catchment.
 
 ### Use lsdtt-graphflood if:
 
@@ -153,6 +179,14 @@ The distributed form is informed by:
 
 **Why this matters for your model**: a TOPMODEL parameter set published for a different river basin is not a substitute for calibration. Parameters such as uniform `ln_t0` and the recession scale `szm_metres` (default 0.032 m) are catchment-specific. The index mode reproduces the classic TOPMODEL formulation; it does not establish predictive skill for a new site.
 
+### lsdtt-distributed-hydrology, `column_model: hype`: HYPE 5.36.0
+
+The column and river routing are written from the equations in the Fortran source of **HYPE 5.36.0** (SMHI, LGPLv3; Lindström et al. 2010), with the default model options. The order of operations, the caps and the clips are reproduced, including several HYPE behaviours that are easy to miss: rain on snow bypasses the snowpack; percolation runs twice per step with a shared rate cap; soil runoff takes its pressure level from the soil water before evapotranspiration but its available water from after it. HYPE's output variables also have definitions worth knowing: `melt` is the liquid water leaving the snowpack, not the melt rate, and `sml1` excludes water standing above the pore volume.
+
+**Testing against HYPE.** The suites `unit_hype_column`, `unit_hype_routing` and `unit_hype_model` compare lsdtt3 against output files written by HYPE 5.36.0 itself, compiled from the release source, for seven cases (snow, evapotranspiration, diversion, percolation, soil runoff, routing, and all default processes together). The files are committed under `tests/expected/hype/`; CTest reads only these files and never downloads or compiles HYPE. `tests/scripts/generate_hype_oracle.py` is the record of how they were made, and regenerates them byte for byte. HYPE runs in single precision and lsdtt3 in double, so the tolerances come from running HYPE twice, in single and double precision: the largest difference was 1.08e-4 mm (layer-3 soil water, which holds about 440 mm).
+
+`unit_hype_parameters`, `unit_subbasin_partition` and `unit_hype_raster_setup` cover parameter validation and the set-up from rasters, and `unit_hype_thread_invariance` checks that results are bitwise identical at any thread count. As with the TOPMODEL column: **these are implementation checks, and the model has not been calibrated against any observed catchment**.
+
 ### lsdtt-graphflood: Gailleton et al. (2024)
 
 The implementation is conceptually inspired by graph-based hydraulic-routing ideas described by **Gailleton et al. (2024)**, with **Manning friction** over a routing graph derived from the water surface.
@@ -201,6 +235,214 @@ A philosophical difference worth understanding, because it affects how you param
 **lsdtt-distributed-hydrology** does this differently. The transmissivity `ln_t0` comes from a lookup table keyed on `(soil series, land use)`. When you convert a pixel from grazing to woodland, the model does not multiply an existing value; it re-keys the lookup. The measured profile for that soil under grazing is replaced by the measured profile for the same soil under woodland. **The two profiles can differ in transmissivity and in sign** — e.g., a clay soil might have lower permeability under woodland (root reinforcement, less tillage), while a sandy soil gains higher permeability (less compaction). The model captures this variation rather than asserting a universal multiplier.
 
 **Why this matters**: if you are modelling NFM (land-cover change for flood mitigation), using measured soil profiles is more faithful to the physics than a multiplier. But you need measured data: either field observations from your site, or a soil-survey database (like the UK's HOST, or USDA SSURGO). A model run with made-up multipliers is no better than a model run with no physics at all.
+
+---
+
+## Governing equations
+
+This section collects the equations each model solves, in the form the code solves them. Gradients are dimensionless rise over run (m/m) throughout; `tan β` is TOPMODEL's notation for the local gradient, not a trigonometric function of a computed angle.
+
+### TOPMODEL
+
+The column runs on units that are either raster cells or TWI histogram bins, each with a topographic index `TWI_i = ln(a/tan β)` and an area fraction. Stores per unit are the root-zone deficit `S_rz` and the unsaturated-zone storage `S_uz` [m]; in index mode the saturated zone is one catchment-mean deficit `S̄` [m].
+
+**Local saturation deficit** (index mode, quasi-steady water table):
+
+```
+D_i = S̄ + m (λ − TWI_i)        clipped at 0
+λ   = Σ_i f_i TWI_i            areal mean of the index
+```
+
+where `m` is `szm_metres` and `f_i` the area fractions.
+
+**Column, per step** (TOPMODEL 95.02 order):
+
+```
+S_rz ← S_rz − P                          rain fills the root-zone deficit;
+                                         any surplus passes to S_uz
+q_se = max(0, S_uz − D_i)                saturation excess; S_uz capped at D_i
+q_v  = min(S_uz, S_uz / (D_i t_d Δt))    drainage to the saturated zone
+E_a  = E_p (1 − S_rz / S_rmax)           capped at S_rmax − S_rz
+```
+
+`t_d` is `td_hours_per_metre`, `Δt` is `dt_hours`, `S_rmax` is `srmax_metres`, and `E_p` is the PET passed down (after canopy interception, if enabled).
+
+**Baseflow and the catchment deficit** (index mode, explicit in `S̄`):
+
+```
+Q_b = exp(ln T_0 + ln Δt − λ) · exp(−S̄ / m)
+S̄  ← S̄ − Σ_i f_i q_v,i + Q_b
+```
+
+`ln T_0` is `ln_t0` (`T_0` in m² h⁻¹).
+
+**Dynamic mode** replaces the single `S̄` with a deficit `D_i` per cell, updated from its own recharge and a lateral saturated flux routed down the flow graph:
+
+```
+q_i = T_0 exp(−D_i / m) tan β_i          per unit contour width
+```
+
+Under uniform steady recharge this has the equilibrium `D_i + m TWI_i = constant`, which is the index-mode relation; the test suite checks that limit.
+
+Infiltration excess (Green-Ampt with exponentially declining conductivity), canopy interception and the routing schemes are described under [The process modules](#the-process-modules).
+
+### GraphFlood
+
+GraphFlood iterates water depth `h` [m] on a grid of cell size `Δx` (cell area `A = Δx²`) towards the stationary depth field produced by a steady input. Flow directions are taken on the **water surface** `η = z + h`, not the bed `z`.
+
+**Source per cell:**
+
+```
+Q_src,i = R_i A  (+ Q_point at the inflow cell, if use_point_inflow)
+```
+
+with `R_i` the rainfall rate [m s⁻¹] from `rainfall_rate_fname`.
+
+**Discharge accumulation** (MFD on `η`, in topological order of `η`):
+
+```
+S_ik  = (η_i − η_k) / d_ik                         for each lower neighbour k
+w_ik  = S_ik^p · W_ik / Σ_k (S_ik^p · W_ik)
+Q_in,i = Q_src,i + Σ_donors j  w_ji Q_in,j
+```
+
+`d_ik` is `Δx` for cardinal and `√2 Δx` for diagonal neighbours, `p` is `mfd_exponent` (default 1), and the flow width `W_ik` is `d_ik` unless `receiver_width` is set. The accumulated quantity is the **inflow**: at the stationary state every cell passes on what it receives, so the routed discharge is the steady discharge.
+
+**Outflow** through the steepest-descent link, with a power-law friction law:
+
+```
+S_i     = max(max_k S_ik, S_min)
+Q_cap,i = W_i k_i h_i^a S_i^b
+Q_out,i = min(Q_cap,i,  Q_in,i + h_i A / Δt)
+```
+
+`S_min` is `hydraulic_min_slope` (default 1e-4), `W_i` the width of the steepest link, `k_i` the friction coefficient from `friction_coefficient_fname`, and `a`, `b` are `friction_depth_exponent` and `friction_slope_exponent`. The defaults `a = 5/3`, `b = 1/2` with `k = 1/n` give Manning's equation for a wide channel, `q = (1/n) h^(5/3) S^(1/2)` per unit width. The second argument of the `min` is the flux limiter: a cell cannot release more than it receives plus what it holds.
+
+**Depth update** (explicit):
+
+```
+h_i ← max(0, h_i + (Δt / A)(Q_in,i − Q_out,i))
+```
+
+`Δt` is `hydraulic_dt`, a relaxation parameter. The fixed point, `Q_out = Q_in` everywhere water flows, is the solution; the iteration path to it is not a flood history.
+
+### S-HYPE
+
+All land quantities are in mm per daily step and temperatures in °C, as in HYPE; parameter names are HYPE's. The sequence below is HYPE's `soilmodel_0` with the default options, run on each class `j` of each sub-basin.
+
+**Class forcing.** Temperature is lapsed by the class's elevation offset `Δh_j` [m] from the sub-basin mean, and a fixed land-use fraction of precipitation is lost as interception (HYPE has no interception store):
+
+```
+T_j = T − tcalt · Δh_j / 100
+P_j = P (1 − pcluse)
+```
+
+**Rain and snow** (linear ramp around the threshold `T_t = ttmp + ttpd`):
+
+```
+a_rain = 0                                  T ≤ T_t − ttpi
+       = (T − (T_t − ttpi)) / (2 ttpi)      |T − T_t| < ttpi
+       = 1                                  T ≥ T_t + ttpi
+rain = a_rain P_j,   snowfall = (1 − a_rain) P_j
+```
+
+**Snowpack** (degree-day melt, liquid water holding capacity):
+
+```
+M     = cmlt (T − ttmp)                     if snow > 0 and T ≥ ttmp, capped at the frozen pack
+L_max = whcsnow · max(0, S_ice − M) / (1 − whcsnow)
+```
+
+Liquid water above `L_max` leaves the pack as snow runoff. Rain on snow does not enter the pack.
+
+**Potential evaporation** (temperature index with a seasonal factor; replaced by observed PET when `pet_fname` is given):
+
+```
+c_e   = cevp [1 + cevpam sin(2π (day − 1 − cevpph) / 365)]
+E_pot = c_e (T − ttmp)                      if T > ttmp, else 0
+```
+
+**Soil storage.** Each layer `k` of thickness `d_k` [m] has three stacked pore volumes [mm], not cumulative contents:
+
+```
+W_wp,k = 1000 wcwp d_k     below wilting point
+W_fc,k = 1000 wcfc d_k     wilting point to field capacity (plant-available)
+W_ep,k = 1000 wcep d_k     above field capacity (drainable)
+W_pw,k = W_wp,k + W_fc,k + W_ep,k
+```
+
+The state `W_k` is the total water in the layer; each layer starts at `W_wp,k + W_fc,k`.
+
+**Infiltration and diversion.** With `G` = rain + snow runoff, and only if `G > mactrinf` and `W_1 > mactrsm (W_wp,1 + W_fc,1)`:
+
+```
+Q_mac = macrate (G − mactrinf)              macropore flow
+Q_ie  = srrate  (G − mactrinf)              infiltration-excess surface runoff
+I     = G − Q_mac − Q_ie                    into layer 1
+```
+
+`macrate` and `srrate` are rescaled to sum to 1 if their sum exceeds it.
+
+**Percolation** (rate-capped, from water above field capacity, limited by the receiving layer's free space):
+
+```
+p1_max = min(W_1 − W_wp,1 − W_fc,1,  mperc1 − P_1,prev)
+p2_max = min(W_pw,3 − W_3,           mperc2 − P_2,prev)
+P_2    = min(max(W_2 − W_wp,2 − W_fc,2 + p1_max, 0),  p2_max)
+P_1    = min(p1_max,  max(P_2 − (W_2 − W_pw,2), 0))
+```
+
+Percolation runs twice per step, before evapotranspiration and after macropore water is added; `P_prev` is what the first call moved, so the two together respect `mperc1` and `mperc2`.
+
+**Actual evapotranspiration** from the upper two layers, when `T > ttmp`:
+
+```
+E_k = E_pot f_k · min(1, (W_k − W_wp,k) / (lp · W_fc,k))      capped at W_k − W_wp,k
+f̃_1 = d_1 exp(−epotdist z_1 / 2),   f̃_2 = d_2 exp(−epotdist (z_1 + d_2 / 2)),   f_k = f̃_k / Σ f̃
+```
+
+where `z_k` is the depth to the bottom of layer `k`.
+
+**Soil runoff** to the stream, from each layer, when the class's stream depth `d_d` is above zero. With the water-table height in a layer `δ_k = d_k (W_k − W_wp,k − W_fc,k) / W_ep,k` and the pressure level `Δh_k` built from `δ_k`, the depth of the drainage level within the layer, and saturated layers above:
+
+```
+Q_soil,k = r_k (Δh_k / d_k) W_ep,k                     capped at the water available
+r_0 = min(1, rrcs1) + rrcs3 · slope_mean   (≤ 1),       r_n = min(1, rrcs2)
+r_k = r_0 exp(−b z_k),   b = ln(r_0 / r_n) / ((z_n − d_n/2) − d_1/2)
+```
+
+`slope_mean` is the sub-basin's mean slope in percent, 100 × the mean gradient. It is the default model's only direct topographic control on runoff generation, and the depth decay of `r_k` is HYPE's discrete-layer analogue of TOPMODEL's exponential transmissivity profile.
+
+**Saturation excess and macropores:**
+
+```
+Q_se = max(0, min(1, srrcs) (W_1 − W_pw,1))             removed from layer 1
+```
+
+`Q_mac` is then placed in the layer holding the groundwater table, overflowing upwards into the layers above.
+
+**Class and sub-basin runoff.** Class runoff is `Σ_k Q_soil,k + Q_se + Q_ie`; sub-basin runoff is its class-area-fraction-weighted sum.
+
+**River routing.** Each sub-basin has a local river, fed by its own runoff, and a main river, fed by the local river's outflow plus the outflow of upstream sub-basins. Both use a pure translation followed by one linear damping box:
+
+```
+t_tot   = L / (rivvel Δt)                   [steps]
+t_trans = (1 − damp) t_tot = y + x          (integer y, fraction x)
+k       = damp · t_tot
+
+translation:  Q_trans = (1 − x) V_(t−y) + x V_(t−y−1)
+damping box:  Q = r_1 I + r_2 (S − I),   r_1 = 1 − k (1 − e^(−1/k)),   r_2 = 1 − e^(−1/k)
+```
+
+`I` is this step's inflow to the box and `S` its storage (dead volume zero in this version). River lengths are lsdtt3 D8 flow distances `FD`:
+
+```
+main river   L = FD(p_in) − FD(p_out)
+local river  L = mean over the sub-basin's pixels of the flow distance to the nearest
+                 downstream main-river pixel
+```
+
+where `p_out` is the sub-basin outlet and `p_in` the upper end of its main river: the receiver of the largest upstream sub-basin's outlet, or, for a headwater sub-basin, the pixel where a walk up the largest-area donor drops below the channel threshold (`threshold_contributing_pixels`).
 
 ---
 
@@ -358,6 +600,11 @@ For UK upland applications (the design drivers for lsdtt3), Manning is reasonabl
 - Beven, K.J., & Kirkby, M.J. (1979). *A physically based, variable contributing area model of basin hydrology.* Hydrological Sciences Bulletin 24(1):43–69.
 - Beven, K.J., Lamb, R., Quinn, P., Romanowicz, R., & Freer, J. (1995). TOPMODEL. Computer models of watershed hydrology. Water Resources Publications, pp. 627–668.
 - Beven, K.J., Kirkby, M.J., Freer, J.E., & Lamb, R. (2021). *A history of TOPMODEL.* Hydrology and Earth System Sciences 25(2):527–549. doi:10.5194/hess-25-527-2021
+
+**HYPE**
+
+- Lindström, G., Pers, C., Rosberg, J., Strömqvist, J., & Arheimer, B. (2010). *Development and testing of the HYPE (Hydrological Predictions for the Environment) water quality model for different spatial scales.* Hydrology Research 41(3–4):295–319. doi:10.2166/nh.2010.007
+- SMHI. HYPE source code, release 5.36.0 (2026), LGPLv3. https://sourceforge.net/projects/hype/
 
 **Distributed TOPMODEL**
 

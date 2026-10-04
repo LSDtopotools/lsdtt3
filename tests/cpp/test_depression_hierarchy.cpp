@@ -10,11 +10,9 @@
 // Unit tests for src/cpu/lsdtt_depression_hierarchy_cpu, our port of Richard
 // Barnes's depression hierarchy (Barnes et al. 2020, doi:10.5194/esurf-8-431-2020).
 //
-// Phase 0 of docs/plan_docs/depression_hierarchy_fix_plan.md.
-//
 // WHAT THESE TESTS ARE FOR
 // ------------------------
-// They pin the defect described in section 1 of that plan: outlet_link
+// They pin a defect in the original port: outlet_link
 // (lsdtt_depression_hierarchy_cpu.hpp) derives from std::pair and adds two
 // REFERENCE members aliasing first/second.  The implicitly generated copy
 // constructor binds a copy's references to the SOURCE object's members, so when
@@ -333,7 +331,7 @@ void test_hierarchy_outlets_on_dense_pit_field()
     // reserve, so no rehash occurs and the dangling references are never
     // re-read. See the stderr line "BFS done. N leaf depressions, M outlets"
     // above against the pit-cell count. Forcing outlets > 3 * pit_cells through
-    // the public API is an OPEN PROBLEM -- see the plan, phase 0 results.
+    // the public API is an OPEN PROBLEM.
     report("rehash headroom",
            "outlet_db reserve is 3 * (pit cells + 1); a rehash needs the outlet "
            "count to exceed it. Compare the two figures on the stderr lines above.");
@@ -390,7 +388,7 @@ void test_hierarchy_outlets_on_dense_pit_field()
 }
 
 // =============================================================================
-// COMPLEXITY GUARD  (phase 4 of the plan, section 4.3)
+// COMPLEXITY GUARD
 //
 // The outlet_link defect made this algorithm QUADRATIC in cell count: 56.9 s on
 // a 400x400 noise surface, and 2 h 33 min on the 17.4 Mpx Greenland DEM. Barnes
@@ -547,11 +545,11 @@ void run_scaling_harness()
 // =============================================================================
 // ORACLE DUMP  (--dump <dem> [--crop])
 //
-// Phase 2 of the plan: prints our hierarchy in a form comparable with upstream
+// Prints our hierarchy in a form comparable with upstream
 // Barnes, so the two can be checked against each other on the 25 test DEMs.
 //
 // --crop strips a fully-nodata outer border.  This exists because of the
-// ocean-labelling divergence recorded in plan 3.2: upstream treats NODATA cells
+// ocean-labelling divergence: upstream treats NODATA cells
 // as OCEAN, while lsdtt3 seeds ocean from valid cells touching an open GRID
 // EDGE and ignores nodata entirely.  Every upstream fixture has a nodata ring,
 // so without cropping lsdtt3 finds no ocean seed at all and throws.
@@ -572,7 +570,7 @@ void run_oracle_dump(const std::string& path, double ocean_level)
     // Upstream semantics exactly (Barnes .../src/main.cpp):
     //     label(i) = OCEAN  where  topo.isNoData(i) || topo(i) == ocean_level
     // and nothing else is ocean -- so the boundary-condition rule is switched
-    // off. This is what option (A) of plan 4.2a bought us: no fixture surgery,
+    // off. This is what that option bought us: no fixture surgery,
     // no cropping, both implementations asked the same question.
     lsdtt::depression_hierarchy_options opts;
     opts.ocean_from_boundary = false;
@@ -609,15 +607,16 @@ void run_oracle_dump(const std::string& path, double ocean_level)
 // =============================================================================
 // ORACLE SUITE  (--oracle <data_dir> <expected_dir>)
 //
-// Phase 3 of docs/plan_docs/depression_hierarchy_fix_plan.md.
+// Phase 3 of the depression-hierarchy fix.
 //
 // Compares build_depression_hierarchy() field by field against expected output
 // generated ONCE from the upstream Barnes implementation.  The expected files
 // are committed; upstream is NOT built by lsdtt3 and is not needed to run this.
-// See the plan's 3.3 for how they were produced and which commits they pin.
+// See tests/expected/depression_hierarchy/PROVENANCE.md for how they were
+// produced and which commits they pin.
 //
 // Both sides are asked the same question via the explicit ocean options added in
-// phase 2 (plan 4.2b): ocean = NODATA cells or cells at ocean_level, exactly as
+// phase 2: ocean = NODATA cells or cells at ocean_level, exactly as
 // upstream's driver defines it, with the boundary-condition rule switched off.
 //
 // KNOWN DIVERGENCES.  Six fixtures disagree structurally: upstream records
@@ -637,7 +636,7 @@ void run_oracle_dump(const std::string& path, double ocean_level)
 // differs, and in five of the 8 every outlet in the DEM shares a single
 // elevation (`kerry_test1`: nine leaves, every out_elev 6), so there is no
 // well-defined nesting to find: upstream's binary tree is an artefact of its
-// hash-map iteration order, and ours of our tie-break. See plan 7.2.
+// hash-map iteration order, and ours of our tie-break.
 //
 // The leaf-set equality is ASSERTED below rather than skipped, so a genuine
 // detection bug cannot hide behind this list.
@@ -887,8 +886,7 @@ int main(int argc, char** argv)
     }
 
     std::cout << "=== depression hierarchy: phase 0 ===\n";
-    std::cout << "These tests are EXPECTED TO FAIL on unmodified HEAD.\n"
-                 "See docs/plan_docs/depression_hierarchy_fix_plan.md phase 0.\n";
+    std::cout << "These tests are EXPECTED TO FAIL on unmodified HEAD.\n";
 
     try
     {

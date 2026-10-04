@@ -7,11 +7,9 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Phase 0a of docs/plan_docs/plan_fluvial_surfaces_cli_split.md.
-//
 // lsdtt-flat-surface-finder and lsdtt-valley-centreline shipped with NO test
-// coverage of any kind (plan finding C4): no smoke test, no parameter template,
-// no fixture. Every later phase of that plan changes their behaviour, so this
+// coverage of any kind: no smoke test, no parameter template,
+// no fixture. Every later phase of the fluvial-surfaces split changes their behaviour, so this
 // driver exists to lay down a baseline BEFORE anything moves.
 //
 // What it writes (--write-cli-fixture MODE):
@@ -385,7 +383,7 @@ void run_terrace_staircase_checks()
     const std::vector<float>& tid = st.tread_id.get_data();
     const std::vector<float>& ch  = st.channel_mask.get_data();
 
-    // The plan's exit criterion: exactly n_terraces distinct tread elevations
+    // The exit criterion: exactly n_terraces distinct tread elevations
     // at a fixed downstream station.
     const int probe_row = k_st_n_rows / 2;
     std::vector<double> tread_levels;
@@ -801,7 +799,7 @@ void write_phase0b_fixtures(const std::string& output_dir)
 // =============================================================================
 // Phase 0c - the reference-field ladder engine
 //
-// T2, T4, T5 and T7 of section 7 of the plan.
+// Tests T2, T4, T5 and T7.
 // =============================================================================
 
 // HAND above the staircase's own trunk channel, plus the flow-distance raster
@@ -1516,7 +1514,7 @@ void run_ladder_checks()
 // =============================================================================
 // T3 - the fitted-surface reference field does not shred a fan
 //
-// Phase 2 of docs/plan_docs/plan_fluvial_surfaces_cli_split.md.
+// Phase 2 of the fluvial-surfaces split.
 //
 // The claim under test is about WHICH FIELD, not which algorithm: the same
 // ladder, the same break finder and the same k selection are run twice, and the

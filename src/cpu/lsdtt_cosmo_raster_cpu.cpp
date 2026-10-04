@@ -81,7 +81,7 @@ struct CrnBasinPrecomp
 
 
 // ---------------------------------------------------------------------------
-// CRONUS v3 emulator support (plan Phase 3)
+// CRONUS v3 emulator support
 //
 // The emulator splits the site factor the way v3 does: the SPALLATION pathway
 // takes the production scaling and topographic shielding, the three MUON

@@ -1,7 +1,7 @@
 {
   "README": [
     "Baseline allow-list for tests/scripts/check_cli_parameter_conventions.py",
-    "(Phase 0d of docs/plan_docs/cli_consistency_remediation_plan.md).",
+    "(the CLI parameter naming guard).",
     "",
     "Every entry is a CLI parameter that violates a section-3 naming",
     "convention TODAY and is knowingly tolerated until the phase that renames",

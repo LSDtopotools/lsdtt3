@@ -124,7 +124,7 @@ cosmo_step_change:
 
 # ---------------------------------------------------------------------------
 # Cosmogenic transient step-change + landslide ensemble.
-# Translation of docs/plan_docs/plan_cosmo_transient_landslides.md, phase 5.
+# Translation of the hand-run cosmogenic transient-landslide experiment.
 # Every value below is taken from the hand-run param files in
 # data/cosmo_transient_test/lsdtt3_version/ls_phase3/.
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ cosmo_transient_landslides:
   mask_magnitude: "5x"
   nuclides: ["Be10", "Al26", "C14"]
 
-  # The scenario matrix of plan section 3. S1 - S1f - S2 decomposes the
+  # The scenario matrix. S1 - S1f - S2 decomposes the
   # fresh-failure effect into debris dilution and scar depletion.
   scenarios:
     S1:                                  # landslides just happened, debris sampled
@@ -193,7 +193,6 @@ cosmo_transient_landslides:
     # draining across the divide into the unadjusted catchment. Routing on the
     # ORIGINAL DEM removes the contamination entirely: old-zone contaminated
     # pixels go from 1168 to 0 and the anchor drift from 9.4e-4 to 3.0e-7.
-    # See plan_cosmo_transient_landslides.md section 7.2.
     route_on_generated_dem: false
 
   # --- CRN physics: PINNED, and identical in every forward and inverse run --
@@ -224,7 +223,7 @@ cosmo_transient_landslides:
     # the soil thickness that Larsen's V = alpha * A^gamma is fitted to. It is
     # NOT interchangeable with crn.rock_density_kg_m3.
     scar_density_kg_m3: 1500
-    # Event magnitude as years of post-step erosion (plan section 5, "low"):
+    # Event magnitude as years of post-step erosion ("low"):
     #   event_volume_per_area_metres = uplift_new * recurrence * rho_rock/rho_scar
     # which gives 0.17667 m at 5x and 0.35333 m at 10x, matching the hand runs.
     # Set event_volume_per_area_metres to pin the value directly instead.

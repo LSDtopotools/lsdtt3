@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Unit tests for src/cpu/lsdtt_topmodel_dynamic_cpu -- Phase 7 (plan section 8).
+// Unit tests for src/cpu/lsdtt_topmodel_dynamic_cpu -- Phase 7.
 //
 // THE CENTREPIECE: AN ORACLE THAT IS DERIVED, NOT MEASURED
 // --------------------------------------------------------

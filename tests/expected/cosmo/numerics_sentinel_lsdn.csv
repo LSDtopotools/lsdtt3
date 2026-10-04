@@ -1,4 +1,4 @@
-# LSDn NUMERICS SENTINEL - see docs/developer_notes/testing_and_benchmarking.md
+# LSDn NUMERICS SENTINEL - see docs/testing_and_benchmarking.md
 # Pinned full-double-precision LSDn (Lifton, Sato & Dunai 2014)
 # production scaling values.  These encode the verified behaviour
 # of the packed b/m grids, the LSD2014 Eq. 2 cutoff-rigidity path

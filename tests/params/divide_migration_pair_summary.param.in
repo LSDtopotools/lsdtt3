@@ -1,5 +1,4 @@
-# End-to-end divide-migration run that writes the PAIR SUMMARY CSV
-# (plan §11.2 L/M).
+# End-to-end divide-migration run that writes the PAIR SUMMARY CSV.
 #
 # The fixture is the ridge DEM used by the fragment-merging smokes: one valley
 # draining north and two draining south, with cluster_id grouping the two

@@ -647,6 +647,27 @@ void validate_hype_setup(const hype_setup& s)
                 "the stacked volume fractions sum to " + num(porosity) + "; they cannot exceed 1");
     }
 
+    // Sub-basin and class values must be finite. A sub-basin derived from
+    // rasters can carry NaN (e.g. a slope over pixels whose gradient is all
+    // nodata), and the column fails on it much later with an unrelated message.
+    for (std::size_t i = 0; i < s.subbasins.size(); ++i)
+    {
+        const hype_subbasin& b = s.subbasins[i];
+        const std::pair<const char*, double> vals[] = {
+            {"area_m2", b.area_m2}, {"elev_mean_m", b.elev_mean_m}, {"elev_std_m", b.elev_std_m},
+            {"slope_mean_percent", b.slope_mean_percent}, {"loc_rivlen_m", b.loc_rivlen_m},
+            {"rivlen_m", b.rivlen_m}};
+        for (const auto& [name, v] : vals)
+            require(std::isfinite(v), at(subbasin_label, i + 1, name),
+                    "subid " + std::to_string(b.subid) + " has a non-finite value (" + num(v) + ")");
+    }
+    for (std::size_t i = 0; i < s.subbasin_classes.size(); ++i)
+    {
+        const hype_subbasin_class& sc = s.subbasin_classes[i];
+        require(std::isfinite(sc.fraction), at(sc_label, i + 1, "fraction"), "is not finite (" + num(sc.fraction) + ")");
+        require(std::isfinite(sc.dh_m), at(sc_label, i + 1, "dh_m"), "is not finite (" + num(sc.dh_m) + ")");
+    }
+
     // Classes -> land use and soil.
     std::unordered_set<int> landuse_codes, soil_codes, class_ids;
     for (const auto& lu : s.landuse) landuse_codes.insert(lu.code);

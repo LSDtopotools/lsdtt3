@@ -8,7 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// unit_hype_raster_setup: the HYPE set-up built from rasters (WP6).
+// unit_hype_raster_setup: the HYPE set-up built from rasters.
 //
 // Usage: lsdtt-test-hype-raster-setup <output_dir>
 //

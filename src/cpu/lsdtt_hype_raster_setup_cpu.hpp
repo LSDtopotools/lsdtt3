@@ -11,8 +11,7 @@
 // HYPE set-up from rasters: sub-basins, GeoData and class fractions
 //
 // Builds the hype_setup that lsdtt_hype_model_cpu runs, from a DEM and
-// land-use and soil rasters, instead of from supplied tables (plan sections
-// 5.2.1-5.2.5). This is where lsdtt3 replaces HYPE's external set-up step:
+// land-use and soil rasters, instead of from supplied tables. This is where lsdtt3 replaces HYPE's external set-up step:
 //
 //   1. a CLASS raster: each pixel's (land-use code, soil code) pair is looked
 //      up in the user's class table (HYPE's GeoClass) to give a class id;
@@ -24,7 +23,7 @@
 //      is 100 x mean gradient (no angles anywhere).
 //
 // The parameter tables (general, land use, soil, classes) are the user's and
-// pass through unchanged. Soil data is user-supplied (plan section 5.4).
+// pass through unchanged. Soil data is user-supplied.
 //
 // write_hype_geodata_files() writes the derived set-up in HYPE's own
 // GeoData.txt / GeoClass.txt formats, so a DEM-derived set-up can be run in

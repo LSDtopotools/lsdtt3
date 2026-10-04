@@ -180,7 +180,7 @@ int main(int argc, char* argv[])
 
 
 
-    // --- Valley mask input (phase 5 of the fluvial-surfaces plan) ---
+    // --- Valley mask input ---
     string_default_map["valley_mask_fname"] = "";
     help_map["valley_mask_fname"] = {"string","",
         "Valley mask raster from lsdtt-fluvial-surfaces, in read_path.",
@@ -530,8 +530,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Parameter key policy
     //
-    // Valley identification left this tool at phase 5 of the fluvial-surfaces
-    // plan, taking fifteen parameters with it. Without the maps below every one
+    // Valley identification moved out of this tool into lsdtt-fluvial-surfaces,
+    // taking fifteen parameters with it. Without the maps below every one
     // of them would sit in an existing parameter file doing nothing, silently,
     // because the typed parses only look at keys a defaults map declares.
     //

@@ -51,7 +51,8 @@
 // i.e. every valid flow cell assigned to the sub-basin. A statistic with no
 // valid pixels in a sub-basin is NaN.
 //
-// See docs/plan_docs/plan_potential_shype_port.md, Sections 5.2.1 to 5.2.4.
+// See docs/design_and_algorithms/hydrological_modelling.md
+// (S-HYPE) for how the HYPE model uses these.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -91,6 +92,13 @@ namespace lsdtt
 //   at base level is itself a junction whose basin outlet is that pixel. So a
 //   trunk ending at base level contributes two outlets of its order: the pixel
 //   above the base-level pixel, and the base-level pixel itself.
+//   The base-level pixel's own sub-basin would be only the edge strip draining
+//   straight to it, which is degenerate (its 3x3 gradient is all nodata). So
+//   the returned list MERGES it (decided 2026-10-04): the selected outlet
+//   draining directly into a base-level outlet (the largest, if several) is
+//   dropped, making that area and the strip one sub-basin with its outlet at
+//   the base-level pixel. A base-level outlet with nothing selected above it is
+//   dropped, and its pixels are left unassigned.
 // -----------------------------------------------------------------------------
 [[nodiscard]] std::vector<std::int64_t> subbasin_outlets_from_user_flats(
     const lsdtt_flow_base&             flow,
@@ -223,7 +231,7 @@ struct subbasin_geodata_result
 // as lsdtt_landcover_scenario_cpu reads them); a non-integral valid value
 // throws std::invalid_argument.
 //
-// Layout: compressed rows, as the HYPE model's unit array (plan Section 7.3).
+// Layout: compressed rows, as the HYPE model's unit array.
 // Entries for sub-basin s are entries[offset[s]] .. entries[offset[s+1]-1],
 // sorted by class code. Absent classes have no entry (fraction 0).
 // -----------------------------------------------------------------------------
@@ -253,7 +261,7 @@ struct subbasin_class_fractions_result
 // -----------------------------------------------------------------------------
 // compute_subbasin_river_lengths
 //
-// Plan Section 5.2.3. FD is get_distance_from_outlet_raster(): D8 flow-path
+// FD is get_distance_from_outlet_raster(): D8 flow-path
 // length to base level, cardinal step = cell_size, diagonal = cell_size*sqrt 2.
 //
 // TRUNK (the sub-basin's main river), from its upstream end p_in to its
@@ -270,7 +278,7 @@ struct subbasin_class_fractions_result
 //   * sub-basin with upstream sub-basins: p_in is the receiver of the outlet of
 //     the upstream sub-basin with the largest contributing pixel count at its
 //     outlet (ties: lower sub-basin index), and the trunk is the D8 path from
-//     p_in down to p_out. This is the plan's definition, because the main
+//     p_in down to p_out. This is the definition used, because the main
 //     river's job in HYPE is to carry the upstream inflow; the threshold plays
 //     no part. Where the largest upstream inflow is also the largest-area
 //     branch at every confluence, this is exactly where the in-sub-basin walk

@@ -7,8 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Unit tests for phase 2b of the internal-drainage work
-// (docs/plan_docs/internal_drainage_plan.md, sections 4.3, 5 and 6.1): the
+// Unit tests for phase 2b of the internal-drainage work: the
 // detection module src/cpu/lsdtt_internal_drainage_cpu.
 //
 // Phases 0 and 1 -- the crater generator, fill_pits_with_sinks and
@@ -30,13 +29,13 @@
 //
 //   find_internal_drainage(), method fill_difference (the legacy path)
 //     agreement with the hierarchy on a simple crater field, and the
-//     DOCUMENTED disagreement in COUNT on a nested one (plan section 5.4)
+//     DOCUMENTED disagreement in COUNT on a nested one
 //
 //   the review round-trip
 //     write -> read -> write in CSV, FlatGeobuf and GeoPackage; .csv and .fgb
 //     from one detection run parsing back to identical records; attribute
 //     typing; the four position tiers; a hand-added feature; a candidate layer
-//     supplied in EPSG:4326; format resolution errors; and -- plan 5.7 -- a
+//     supplied in EPSG:4326; format resolution errors; and a
 //     FlatGeobuf round trip with the SPATIAL INDEX ON, which reorders features
 //     on write and must therefore be keyed on sink_id and never on file
 //     position
@@ -46,7 +45,7 @@
 //     that with leaves_only == false an intermediate node whose cells are all
 //     claimed by its children has an EMPTY footprint and therefore no polygon
 //
-// A trap worth restating (plan section 5.3b): sink_candidate::area_m2 is the
+// A trap worth restating: sink_candidate::area_m2 is the
 // DEPRESSION FOOTPRINT, not the drainage basin of the sink.  Nothing here
 // asserts that the two are equal, because they are not.
 //
@@ -382,7 +381,7 @@ const lsdtt::sink_candidate* sink_at_pit(
 }
 
 // Field-for-field equality of two candidate records.  Every field is compared:
-// this is what "identical sink_candidate vectors" in plan 6.1 means, and it is
+// this is what "identical sink_candidate vectors" means, and it is
 // what makes the cross-format tests worth anything.
 bool records_equal(const lsdtt::sink_candidate& a, const lsdtt::sink_candidate& b)
 {
@@ -872,7 +871,7 @@ void test_nested_craters_hierarchy()
     // The SHAPE of the chain is the contract, not which particular hollow
     // merges first: two of the three leaves join into the first meta, the
     // remaining leaf joins that meta in the second, and the second meta is the
-    // top of the tree.  (The plan records 0->3, 1->3, 2->4, 3->4, 4->-1 from
+    // top of the tree.  (The design notes record 0->3, 1->3, 2->4, 3->4, 4->-1 from
     // its own fixture; which two leaves pair up first depends on the geometry,
     // so the measured chain is reported alongside.)
     int n_children_of_3 = 0;
@@ -1120,8 +1119,8 @@ void test_min_pixels_filters_a_leaf()
 // surviving ancestor, so the ground it covered is still inside some reported
 // footprint, just attributed to a coarser sink.
 //
-// This is the invariant that phase 5b of
-// docs/plan_docs/depression_hierarchy_fix_plan.md restored. It was violated
+// This is the invariant that phase 5b of the depression-hierarchy fix
+// restored. It was violated
 // because a sink whose cells are disconnected -- exactly what happens when a
 // dropped leaf's patch reattaches to an ancestor across a sibling's footprint --
 // had all but one of its parts silently discarded by the polygon tracer.
@@ -1218,9 +1217,9 @@ void test_fill_difference_agrees_on_a_simple_field()
     // (spill - z) is maximised at exactly the lowest cell and the two
     // definitions coincide.  A POSITIVE min_slope lays an epsilon gradient
     // across the flat and IS EXPECTED to move the deepest-fill cell by a pixel
-    // or two (plan section 5.4).  If this test ever fails after a min_slope
-    // change, that is the reason, and the Greenland cross-validation in plan
-    // 6.2 is where the legacy value must be checked.
+    // or two.  If this test ever fails after a min_slope
+    // change, that is the reason, and the Greenland cross-validation is where
+    // the legacy value must be checked.
     check("fill_difference_agrees: the same pit cells, exactly",
           pit_flats_of(from_fill) == pit_flats_of(from_hierarchy));
 
@@ -1298,7 +1297,7 @@ void test_fill_difference_diverges_on_a_nested_field()
     const std::vector<lsdtt::sink_candidate> components =
         lsdtt::find_internal_drainage(fx.dem, legacy);
 
-    // A DOCUMENTED DIVERGENCE, not a defect (plan section 5.4).  Connected
+    // A DOCUMENTED DIVERGENCE, not a defect.  Connected
     // components of the fill difference merge a lake and every hollow inside it
     // into ONE patch, so the legacy method reports one sink where the hierarchy
     // reports three.
@@ -1581,7 +1580,7 @@ void test_nested_sink_may_have_no_polygon()
         static_cast<double>(meta.n_rows) * meta.n_cols * meta.pixel_area();
 
     // A sum of area_m2 over the same sinks double-counts, because a parent's
-    // area includes its children.  That contrast is the point of plan 5.3b.
+    // area includes its children.  That contrast is the point.
     double attribute_total = 0.0;
     for (const lsdtt::sink_candidate& s : sinks) attribute_total += s.area_m2;
 
@@ -1884,7 +1883,7 @@ void test_csv_fgb_record_equality(const std::string&                        dir,
     // Compared through the sink_candidate accessors, NEVER through the
     // attribute kind: a value written as 0 comes back kind::integer from CSV
     // (typed by inspection) and kind::real from OGR (typed by the schema), and
-    // plan 6.4(4) records that consumers must not compare type across formats.
+    // Consumers must not compare type across formats.
     const std::vector<lsdtt::sink_candidate> from_csv =
         lsdtt::read_sink_candidates(csv_path, meta, lsdtt::sink_io_format::csv);
     const std::vector<lsdtt::sink_candidate> from_fgb =
@@ -2578,8 +2577,8 @@ void test_fgb_spatial_index_round_trip(const std::string&              dir,
 {
     lsdtt::lsdtt_data_loader loader;
 
-    // FlatGeobuf's packed Hilbert R-tree REORDERS features on write (plan
-    // section 5.7: written 7, 8, 9 came back 9, 7, 8).  The reader is faithful;
+    // FlatGeobuf's packed Hilbert R-tree REORDERS features on write
+    // (written 7, 8, 9 came back 9, 7, 8).  The reader is faithful;
     // it is the writer that reorders.  So the sink layer must be keyed on
     // sink_id and nothing may key on file position.
     //

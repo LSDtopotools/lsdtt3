@@ -1,4 +1,4 @@
-# Smoke test for lsdtt-distributed-hydrology (plan_raster_topmodel.md Phase 10).
+# Smoke test for lsdtt-distributed-hydrology.
 #
 # tiny_dem.asc is 5x5 with 1 m cells, so the slope window radius is 2 m: that
 # is what leaves the interior 3x3 valid, which is the same nine pixels the TWI

@@ -1,4 +1,4 @@
-# End-to-end divide-migration run that exercises FRAGMENT MERGING (plan §11.1E).
+# End-to-end divide-migration run that exercises FRAGMENT MERGING.
 #
 # The fixture is a single E-W ridge with one valley draining north and two
 # draining south, so the northern basin faces BOTH southern basins. cluster_id

@@ -1,0 +1,31 @@
+# Strahler order range 1.. (every junction basin of order >= 1). The trunk
+# reaches the DEM edge, so the selection includes the base-level pixel; the
+# outlet helper merges it with the sub-basin above (2026-10-04) instead of
+# leaving a degenerate edge-strip sub-basin. dt_seconds is deliberately NOT
+# set: the HYPE path must default to daily.
+read_path: __READ_PATH__
+read_fname: hype_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hypeorderrange
+
+raster_is_filled: false
+
+column_model: hype
+hype_start_date: 2001-01-01
+rainfall_fname: hype_rainfall.csv
+temperature_fname: hype_temperature.csv
+
+landcover_fname: hype_landuse.tif
+hype_soil_class_fname: hype_soil.tif
+hype_general_parameters_fname: hype_general_parameters.csv
+hype_landuse_parameters_fname: hype_landuse_parameters.csv
+hype_soil_parameters_fname: hype_soil_parameters.csv
+hype_classes_fname: hype_classes.csv
+
+threshold_contributing_pixels: 50
+filter_basins_by_stream_order: true
+basins_min_stream_order: 1
+basins_max_stream_order: -1
+
+write_discharge_csv: true
+write_water_balance_csv: true

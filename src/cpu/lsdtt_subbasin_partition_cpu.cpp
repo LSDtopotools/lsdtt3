@@ -140,7 +140,46 @@ std::vector<std::int64_t> subbasin_outlets_by_stream_order(
     lsdtt_junction_basin_manager_cpu manager(flow, junction_network);
     manager.select_all_junction_basins();
     manager.filter_by_stream_order(min_order, max_order);
-    return manager.get_basin_outlet_flat_indices();
+    std::vector<std::int64_t> outlets = manager.get_basin_outlet_flat_indices();
+
+    // Base-level outlets. A channel that reaches base level is a junction at
+    // its base-level pixel, so the selection also holds an outlet there whose
+    // incremental sub-basin is only the edge strip draining straight to it.
+    // That strip is degenerate (e.g. its 3x3 gradient is all nodata). Merge
+    // it with the sub-basin above: drop the selected outlet that drains
+    // directly into it (the largest one if several do), so that area and the
+    // strip become one sub-basin with its outlet at the base-level pixel. A
+    // base-level outlet with nothing selected above it is dropped; its pixels
+    // are then unassigned and counted as such by the partition.
+    bool any_base = false;
+    for (const std::int64_t f : outlets) if (flow.is_outlet(f)) { any_base = true; break; }
+    if (!any_base) return outlets;
+
+    const subbasin_partition_result p = partition_incremental_subbasins(flow, outlets);
+    std::vector<char> drop(p.outlet_flat.size(), 0);
+    for (std::size_t b = 0; b < p.outlet_flat.size(); ++b)
+    {
+        if (!flow.is_outlet(p.outlet_flat[b])) continue;
+        std::int64_t best = -1, best_n = -1;
+        for (std::size_t u = 0; u < p.outlet_flat.size(); ++u)
+        {
+            if (p.downstream[u] != static_cast<std::int32_t>(b) || drop[u]) continue;
+            // Contributing area of u's outlet: its own pixels plus everything upstream.
+            std::int64_t n_up = 0;
+            for (std::size_t w = 0; w < p.outlet_flat.size(); ++w)
+            {
+                std::int32_t d = static_cast<std::int32_t>(w);
+                while (d >= 0 && d != static_cast<std::int32_t>(u)) d = p.downstream[static_cast<std::size_t>(d)];
+                if (d == static_cast<std::int32_t>(u)) n_up += p.n_pixels[w];
+            }
+            if (n_up > best_n || (n_up == best_n && static_cast<std::int64_t>(u) < best)) { best_n = n_up; best = static_cast<std::int64_t>(u); }
+        }
+        if (best >= 0) drop[static_cast<std::size_t>(best)] = 1;   // merge u into the base-level sub-basin
+        else           drop[b] = 1;                                // strip alone: drop it
+    }
+    std::vector<std::int64_t> kept;
+    for (std::size_t k = 0; k < p.outlet_flat.size(); ++k) if (!drop[k]) kept.push_back(p.outlet_flat[k]);
+    return kept;
 }
 
 // =============================================================================

@@ -8,7 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Tests for lsdtt_subbasin_partition_cpu (S-HYPE port, WP6 gate).
+// Tests for lsdtt_subbasin_partition_cpu (S-HYPE column).
 //
 // Every DEM is built in memory and is small enough that its D8 routing, its
 // contributing areas and its flow distances can be written out by hand. The
@@ -529,26 +529,32 @@ void test_nested_tree()
               p1.downstream == std::vector<std::int32_t>{-1, -1}, vec_str(p1.downstream));
     }
     {
+        // Order 2 selects (6,5) and the base-level pixel (7,5). The base-level
+        // outlet's own strip is degenerate, so the helper merges (6,5) into it
+        // (decided 2026-10-04): one sub-basin of 70 + 10 = 80 pixels with its
+        // outlet at (7,5).
         const auto o2 = lsdtt::subbasin_outlets_by_stream_order(fb, jn, 2, 2);
-        check("C order 2: outlets {(6,5), (7,5)}",
-              sorted(o2) == std::vector<std::int64_t>{F(6, 5), F(7, 5)}, vec_str(o2));
+        check("C order 2: base-level merge leaves outlet {(7,5)}",
+              sorted(o2) == std::vector<std::int64_t>{F(7, 5)}, vec_str(o2));
         const auto p2 = lsdtt::partition_incremental_subbasins(fb, sorted(o2));
-        check("C order 2: counts {70, 10}, chain 0 -> 1 -> -1",
-              p2.n_pixels == std::vector<std::int64_t>{70, 10} &&
-              p2.downstream == std::vector<std::int32_t>{1, -1} && p2.n_unassigned == 0,
+        check("C order 2: one sub-basin of 80 pixels, maindown -1",
+              p2.n_pixels == std::vector<std::int64_t>{80} &&
+              p2.downstream == std::vector<std::int32_t>{-1} && p2.n_unassigned == 0,
               vec_str(p2.n_pixels) + " " + vec_str(p2.downstream));
     }
     {
+        // Orders 1..2 select four outlets; (6,5) drains directly into the
+        // base-level outlet (7,5) and is merged into it: 52 + 10 = 62 pixels.
         const auto o12 = lsdtt::subbasin_outlets_by_stream_order(fb, jn, 1, 2);
-        const std::vector<std::int64_t> want = {F(1, 4), F(1, 6), F(6, 5), F(7, 5)};
-        check("C orders 1..2: all four outlets", sorted(o12) == want, vec_str(o12));
+        const std::vector<std::int64_t> want = {F(1, 4), F(1, 6), F(7, 5)};
+        check("C orders 1..2: outlets after the base-level merge", sorted(o12) == want, vec_str(o12));
         const auto p = lsdtt::partition_incremental_subbasins(fb, sorted(o12));
-        check("C orders 1..2: counts {10, 8, 52, 10}",
-              p.n_pixels == std::vector<std::int64_t>{10, 8, 52, 10}, vec_str(p.n_pixels));
-        check("C orders 1..2: chain {2, 2, 3, -1}",
-              p.downstream == std::vector<std::int32_t>{2, 2, 3, -1}, vec_str(p.downstream));
-        check("C orders 1..2: upstream-to-downstream {0, 1, 2, 3}",
-              p.upstream_to_downstream == std::vector<std::int32_t>{0, 1, 2, 3},
+        check("C orders 1..2: counts {10, 8, 62}",
+              p.n_pixels == std::vector<std::int64_t>{10, 8, 62}, vec_str(p.n_pixels));
+        check("C orders 1..2: chain {2, 2, -1}",
+              p.downstream == std::vector<std::int32_t>{2, 2, -1}, vec_str(p.downstream));
+        check("C orders 1..2: upstream-to-downstream {0, 1, 2}",
+              p.upstream_to_downstream == std::vector<std::int32_t>{0, 1, 2},
               vec_str(p.upstream_to_downstream));
     }
 

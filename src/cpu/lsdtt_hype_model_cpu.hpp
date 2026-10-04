@@ -15,7 +15,7 @@
 //
 //   * UNITS are the (sub-basin, class) pairs with a non-zero area fraction,
 //     stored in one flat array ordered by sub-basin then class. Sub-basin s
-//     owns units unit_offset[s] .. unit_offset[s+1]-1 (plan section 7.3).
+//     owns units unit_offset[s] .. unit_offset[s+1]-1.
 //     Aggregating class runoff to a sub-basin is a loop over that contiguous
 //     range in fixed order, so the result does not depend on how units are
 //     stepped (the basis of Stage B's thread-count invariance).
@@ -29,11 +29,11 @@
 //   * The land loop runs in parallel over units (OpenMP, schedule(static)).
 //     Each unit touches only its own state, and the per-sub-basin sums are a
 //     separate serial loop in fixed order (no reduction clause), so results
-//     are bitwise identical at any thread count (plan section 7.4).
+//     are bitwise identical at any thread count.
 //
 // Sub-basin order is the set-up's order; ids are kept for output. Forcing is
 // one precipitation and one temperature value per step for the whole domain
-// (first version, plan section 7.1), optionally with observed PET. Daily
+// (first version), optionally with observed PET. Daily
 // steps only.
 // -----------------------------------------------------------------------------
 
@@ -58,7 +58,7 @@ struct hype_model_unit
     hype_unit_constants constants;
     hype_unit_state     state;
     // The full per-step flux record is kept outside the unit
-    // (lsdtt_hype_model_cpu::unit_fluxes(), WP7 B4b) so the unit stays small.
+    // (lsdtt_hype_model_cpu::unit_fluxes()) so the unit stays small.
 };
 
 // Domain totals of the last step and the running balance [m3].
@@ -115,7 +115,7 @@ public:
     [[nodiscard]] const std::vector<hype_model_unit>& units() const noexcept { return units_; }
     [[nodiscard]] const std::vector<std::size_t>& unit_offset() const noexcept { return unit_offset_; }
 
-    // Per-unit flux records of the last step, in units() order (WP7 B4b).
+    // Per-unit flux records of the last step, in units() order.
     // Kept by default; set_store_unit_fluxes(false) stops writing them, which
     // cuts per-step memory traffic when only sub-basin results are needed.
     // When off, unit_fluxes() is empty.

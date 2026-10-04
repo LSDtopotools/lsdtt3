@@ -8,7 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// unit_hype_model: the assembled HYPE model (WP5) against HYPE.
+// unit_hype_model: the assembled HYPE model against HYPE.
 //
 // Usage: lsdtt-test-hype-model <oracle_dir>   (tests/expected/hype)
 //
@@ -21,9 +21,9 @@
 //     unit (HYPE PET option 0); actual ET still needs temperature above ttmp
 //     and never exceeds it.
 //   * A non-daily timestep is rejected.
-//   * Balance tracking off (WP7 B1): flows and unit states bitwise identical
+//   * Balance tracking off: flows and unit states bitwise identical
 //     to tracking on; storage terms NaN, cumulative fluxes still kept.
-//   * A column failure inside the parallel land loop (WP7 B2) comes out of
+//   * A column failure inside the parallel land loop comes out of
 //     step() as an exception, at 1 thread and at the maximum thread count.
 // -----------------------------------------------------------------------------
 
@@ -235,7 +235,7 @@ bool same_state(const lsdtt::hype_unit_state& a, const lsdtt::hype_unit_state& b
            same_bits(a.water_mm[2], b.water_mm[2]);
 }
 
-// WP7 B1: switching the balance off skips only the storage pass.
+// Switching the balance off skips only the storage pass.
 void balance_off_checks(const std::string& oracle)
 {
     std::cout << "\n--- balance tracking off ---\n";
@@ -283,7 +283,7 @@ void balance_off_checks(const std::string& oracle)
 }
 
 
-// WP7 B4b: not storing per-unit fluxes must not change any result.
+// Not storing per-unit fluxes must not change any result.
 void unit_flux_storage_checks(const std::string& oracle)
 {
     std::cout << "\n--- per-unit flux storage off ---\n";
@@ -310,7 +310,7 @@ void unit_flux_storage_checks(const std::string& oracle)
           "flux storage off: balance bitwise identical");
 }
 
-// WP7 B2: an exception thrown by a unit inside the parallel land loop must
+// An exception thrown by a unit inside the parallel land loop must
 // leave step() as an exception (escaping an OpenMP region would terminate),
 // and the reported failure must be the lowest-index failing unit at any
 // thread count. Validation leaves no input that makes the column fail, so the

@@ -7,7 +7,7 @@
 # The lines are STRICTLY INTERIOR (ten cells in from every edge). A vertex lying
 # exactly on the raster boundary makes this CLI abort with an uncaught
 # std::out_of_range from row_from_y ("y lies outside raster extent") -- a core
-# dump, not a diagnostic. That is a real defect, recorded in the plan; keep the
+# dump, not a diagnostic. That is a real defect, not yet fixed; keep the
 # fixture interior until it is fixed, or this test dies on a SIGABRT rather than
 # reporting anything useful.
 read_path: __READ_PATH__

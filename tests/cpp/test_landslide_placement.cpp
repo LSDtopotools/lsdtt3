@@ -8,8 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Phase 1 of the triggered landslide module: placing a scar of a known size on
-// a real flow network. Tests T6-T10d of
-// docs/plan_docs/landslide_event_module_plan.md:
+// a real flow network. Tests T6-T10d:
 //
 //   T6   no scar pixel has contributing area >= the channel threshold
 //   T7   max hostable size stays below the channel threshold
@@ -248,10 +247,10 @@ int main(int argc, char** argv)
 
     // -------------------------------------------------------------------------
     // Channel-head clustering: large landslides should fill their hosts more
-    // completely than small ones (plan 3.2). Reported and asserted, because it
+    // completely than small ones. Reported and asserted, because it
     // is an imposed spatial correlation the user should know about.
     // -------------------------------------------------------------------------
-    std::cout << "\nHost fill ratio vs landslide size (plan 3.2)\n";
+    std::cout << "\nHost fill ratio vs landslide size\n";
     {
         const std::string csv = outdir + "/landslide_host_fill.csv";
         FILE* f = std::fopen(csv.c_str(), "w");

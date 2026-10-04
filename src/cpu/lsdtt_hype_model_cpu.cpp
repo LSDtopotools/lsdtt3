@@ -136,7 +136,7 @@ void lsdtt_hype_model_cpu::step(double precipitation_mm, double temperature_c, i
     forcing.temperature_c    = temperature_c;
     forcing.day_of_year      = day_of_year;
     forcing.observed_pet_mm  = observed_pet_mm;
-    // WP7 B3: the PET seasonal factor once per step, not once per unit.
+    // The PET seasonal factor once per step, not once per unit.
     forcing.pet_seasonal_factor = hype_pet_seasonal_factor(general_.cevpam, general_.cevpph, day_of_year);
 
     // Land: every unit in parallel (each touches only its own state and

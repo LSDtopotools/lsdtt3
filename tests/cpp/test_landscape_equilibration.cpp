@@ -945,7 +945,7 @@ void test_critical_slope_model_runs_inside_cycle()
 }
 
 // ---------------------------------------------------------------------------
-// S1-S3: the elliptic-stabilisation hypothesis of plan section 3.3.3b.
+// S1-S3: the elliptic-stabilisation hypothesis.
 //
 // The claim under test: an elliptic hillslope solve should stabilise on the
 // FIRST try, because the divide is an output of a unique solution rather than
@@ -962,8 +962,8 @@ void test_critical_slope_model_runs_inside_cycle()
 //
 // The assertions below therefore test what is true -- monotone contraction to
 // exactly zero within a few cycles, and S3 -- and PRINT the literal S1/S2
-// numbers so the gap against the plan stays visible. Do not read a pass here
-// as confirmation of the plan's criteria.
+// numbers so the gap against the original criteria stays visible. Do not
+// read a pass here as confirmation of those criteria.
 // ---------------------------------------------------------------------------
 void test_elliptic_stabilisation_hypothesis(const std::string& model)
 {
@@ -1004,11 +1004,11 @@ void test_elliptic_stabilisation_hypothesis(const std::string& model)
     const double s2_value = std::abs(result.cycles[2].divide.step_p90_m
                                      - result.cycles[1].divide.step_p90_m);
 
-    std::cout << "      [" << model << "] S1 (plan: == 0.0 exactly) measured "
+    std::cout << "      [" << model << "] S1 (criterion: == 0.0 exactly) measured "
               << s1_value << "  -> " << (s1_value == 0.0 ? "MET" : "NOT MET")
               << "\n"
               << "      [" << model
-              << "] S2 (plan: |dp90| <= 1e-6) measured " << s2_value
+              << "] S2 (criterion: |dp90| <= 1e-6) measured " << s2_value
               << " m -> " << (s2_value <= 1e-6 ? "MET" : "NOT MET") << "\n";
 
     check(model + ": every cycle's hillslope solve converged",
@@ -1061,7 +1061,7 @@ void test_elliptic_stabilisation_hypothesis(const std::string& model)
 
 
 // ---------------------------------------------------------------------------
-// S4/S5: the critical-slope half of the plan section 3.3.3b claim.
+// S4/S5: the critical-slope half of the claim.
 //
 // The claim: critical-slope hillslopes may limit-cycle, where an elliptic
 // steady-state solve stabilises, because critical slope is path integration
@@ -1163,7 +1163,7 @@ void test_s4_s5_critical_slope_versus_elliptic()
                   << "  n_channel=" << c.n_channel_pixels << "\n";
     }
 
-    std::cout << "      [critical_slope] S4 (plan: records limit_cycle_detected"
+    std::cout << "      [critical_slope] S4 (criterion: records limit_cycle_detected"
                  " within 20 cycles) measured detected="
               << r_crit.limit_cycle_detected
               << " period=" << r_crit.limit_cycle_period
@@ -1213,7 +1213,7 @@ void test_s4_s5_critical_slope_versus_elliptic()
               << ", critical_slope(Sc=0.1)=" << p90_crit_fair
               << ", linear=" << p90_lin
               << ", roering=" << p90_roe << "\n"
-              << "      [S5] plan: elliptic strictly smaller -> "
+              << "      [S5] criterion: elliptic strictly smaller -> "
               << ((p90_lin < p90_crit && p90_roe < p90_crit) ? "MET" : "NOT MET")
               << "\n";
 
@@ -1378,7 +1378,7 @@ void test_critical_slope_orbit_period_greater_than_one()
 }
 
 // ---------------------------------------------------------------------------
-// The two pre-flight reporting biases of plan section 3.3.3c. Both made the
+// The two pre-flight reporting biases. Both made the
 // warnings quietest in exactly the nonlinear case where the divergence lives.
 //
 // (1) predicted_hillslope_relief_m used U*L^2/(2D) -- the LINEAR steady-state
@@ -1386,7 +1386,7 @@ void test_critical_slope_orbit_period_greater_than_one()
 //     model-aware and keeping the linear value alongside as an explicit
 //     reference.
 //
-//     MEASURED CORRECTION TO THE PLAN. Section 3.3.3c says the Roering relief
+//     MEASURED CORRECTION TO THE ORIGINAL CLAIM, which was that the Roering relief
 //     is "strictly larger" than the linear one; it is strictly SMALLER. Under
 //     q = D*S/(1 - (S/Sc)^2) the nonlinear law transports more for a given
 //     gradient, so it needs less gradient for the same flux, and its relief is
@@ -1398,7 +1398,7 @@ void test_critical_slope_orbit_period_greater_than_one()
 //     The real, large under-fire is critical_slope: it imposes Sc*L outright,
 //     247 m here against the 15.9 m the linear form reported -- a factor of 15,
 //     and the difference between the relief warning firing and staying silent.
-//     The assertions below are written to the measurement, not to the plan.
+//     The assertions below are written to the measurement, not to the original criteria.
 // (2) predicted_max_hillslope_gradient was evaluated at the MEAN hillslope
 //     length, but the gradient that drives the solver to Sc is the one on the
 //     longest hillslopes. Now evaluated at the p90 length, with the mean-length

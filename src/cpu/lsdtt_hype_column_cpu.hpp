@@ -40,7 +40,7 @@
 // depths. The conversion from lsdtt3's metres happens at the model boundary,
 // not here.
 //
-// FIRST-VERSION RESTRICTIONS (plan section 7.1), enforced by
+// FIRST-VERSION RESTRICTIONS, enforced by
 // validate_hype_column_options(): daily timestep; fsceff = 0 (no fractional
 // snow cover); no snow sublimation; no tile drainage; no frozen soil; no
 // regional parameter corrections. Under those options several HYPE terms are
@@ -109,7 +109,8 @@ struct hype_unit_constants
     double dh_m           = 0.0;   // class elevation deviation from sub-basin mean
 
     // The land-use and soil parameters the column reads every step, and only
-    // those (WP7 B4a: the full parameter rows are not copied into every unit).
+    // those: the full parameter rows are not copied into every unit, to keep
+    // units small.
     struct landuse_part { double ttmp = 0, cmlt = 0, cevp = 0, srrcs = 0, pcluse = 0; };
     struct soil_part    { double mperc1 = 0, mperc2 = 0, macrate = 0, srrate = 0, mactrinf = 0, mactrsm = 0; };
     landuse_part landuse;
@@ -126,7 +127,7 @@ struct hype_unit_constants
     double                         dh_m);
 
 // Throws std::invalid_argument for general parameters outside the first
-// version's scope (plan section 7.1): fsceff != 0.
+// version's scope: fsceff != 0.
 void validate_hype_column_options(const hype_general_parameters& general);
 
 // ---------------------------------------------------------------------------
@@ -148,7 +149,7 @@ struct hype_unit_forcing
     double precipitation_mm = 0.0;  // sub-basin precipitation for the step
     double temperature_c    = 0.0;  // sub-basin air temperature
     int    day_of_year      = 1;    // 1..366, for the PET seasonal factor
-    // Seasonal PET factor 1 + cevpam*sin(...) for this step (WP7 B3). It
+    // Seasonal PET factor 1 + cevpam*sin(...) for this step. It
     // depends only on the day and two general parameters, so a caller
     // stepping many units computes it once with hype_pet_seasonal_factor()
     // and passes it in. NaN means "compute it here".
@@ -227,7 +228,7 @@ void hype_unit_step(const hype_general_parameters& general,
                                                 double cevp, double cevpam, double cevpph,
                                                 int day_of_year) noexcept;
 
-// As above, with the seasonal factor already computed (WP7 B3). Gives
+// As above, with the seasonal factor already computed. Gives
 // bitwise the same value as hype_potential_evaporation.
 [[nodiscard]] double hype_potential_evaporation_with_factor(double temperature_c, double ttmp,
                                                             double cevp, double seasonal_factor) noexcept;
