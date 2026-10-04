@@ -108,9 +108,12 @@ struct hype_unit_constants
     double stream_depth_m = 0.0;
     double dh_m           = 0.0;   // class elevation deviation from sub-basin mean
 
-    // The land-use and soil parameters this unit uses.
-    hype_landuse_parameters landuse;
-    hype_soil_parameters    soil;
+    // The land-use and soil parameters the column reads every step, and only
+    // those (WP7 B4a: the full parameter rows are not copied into every unit).
+    struct landuse_part { double ttmp = 0, cmlt = 0, cevp = 0, srrcs = 0, pcluse = 0; };
+    struct soil_part    { double mperc1 = 0, mperc2 = 0, macrate = 0, srrate = 0, mactrinf = 0, mactrsm = 0; };
+    landuse_part landuse;
+    soil_part    soil;
 };
 
 // slope_mean_percent is the sub-basin's mean slope in percent (100 x gradient).
@@ -145,6 +148,11 @@ struct hype_unit_forcing
     double precipitation_mm = 0.0;  // sub-basin precipitation for the step
     double temperature_c    = 0.0;  // sub-basin air temperature
     int    day_of_year      = 1;    // 1..366, for the PET seasonal factor
+    // Seasonal PET factor 1 + cevpam*sin(...) for this step (WP7 B3). It
+    // depends only on the day and two general parameters, so a caller
+    // stepping many units computes it once with hype_pet_seasonal_factor()
+    // and passes it in. NaN means "compute it here".
+    double pet_seasonal_factor = std::numeric_limits<double>::quiet_NaN();
     // Observed potential evaporation [mm/step]. When supplied (finite), it
     // replaces the calculated value, as HYPE's PET option 0 does with an
     // observed series (atm_proc.f90:2091-2092). NaN means "not supplied".
@@ -210,10 +218,19 @@ void hype_unit_step(const hype_general_parameters& general,
 [[nodiscard]] double hype_rain_fraction(double precipitation_mm, double temperature_c,
                                         double ttmp, double ttpd, double ttpi) noexcept;
 
+// Seasonal factor of potential evaporation, 1 + cevpam*sin(...)
+// (atm_proc.f90:2068), daily steps.
+[[nodiscard]] double hype_pet_seasonal_factor(double cevpam, double cevpph, int day_of_year) noexcept;
+
 // Potential evaporation, option 0/1 (atm_proc.f90:2068, :2094).
 [[nodiscard]] double hype_potential_evaporation(double temperature_c, double ttmp,
                                                 double cevp, double cevpam, double cevpph,
                                                 int day_of_year) noexcept;
+
+// As above, with the seasonal factor already computed (WP7 B3). Gives
+// bitwise the same value as hype_potential_evaporation.
+[[nodiscard]] double hype_potential_evaporation_with_factor(double temperature_c, double ttmp,
+                                                            double cevp, double seasonal_factor) noexcept;
 
 // Percolation 1->2 and 2->3 (soil_proc.f90:2064). `percolation_mm` carries
 // what earlier calls in the same step moved, and is increased.

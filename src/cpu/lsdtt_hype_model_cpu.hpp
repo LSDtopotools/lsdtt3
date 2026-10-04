@@ -57,7 +57,8 @@ struct hype_model_unit
     double      fraction = 0.0;  // area fraction of the sub-basin
     hype_unit_constants constants;
     hype_unit_state     state;
-    hype_unit_fluxes    fluxes;  // of the last step
+    // The full per-step flux record is kept outside the unit
+    // (lsdtt_hype_model_cpu::unit_fluxes(), WP7 B4b) so the unit stays small.
 };
 
 // Domain totals of the last step and the running balance [m3].
@@ -114,6 +115,14 @@ public:
     [[nodiscard]] const std::vector<hype_model_unit>& units() const noexcept { return units_; }
     [[nodiscard]] const std::vector<std::size_t>& unit_offset() const noexcept { return unit_offset_; }
 
+    // Per-unit flux records of the last step, in units() order (WP7 B4b).
+    // Kept by default; set_store_unit_fluxes(false) stops writing them, which
+    // cuts per-step memory traffic when only sub-basin results are needed.
+    // When off, unit_fluxes() is empty.
+    void set_store_unit_fluxes(bool store);
+    [[nodiscard]] bool store_unit_fluxes() const noexcept { return store_unit_fluxes_; }
+    [[nodiscard]] const std::vector<hype_unit_fluxes>& unit_fluxes() const noexcept { return unit_fluxes_; }
+
     [[nodiscard]] const hype_model_balance& balance() const noexcept { return balance_; }
     [[nodiscard]] bool balance_tracked() const noexcept { return track_balance_; }
 
@@ -134,6 +143,11 @@ private:
     hype_general_parameters  general_;
     double                   dt_seconds_ = 86400.0;
     bool                     track_balance_ = true;
+    bool                     store_unit_fluxes_ = true;
+    std::vector<hype_unit_fluxes> unit_fluxes_;      // per unit, when stored
+    std::vector<double>      unit_runoff_mm_;        // per unit, always: what aggregation needs
+    std::vector<double>      unit_prec_mm_;
+    std::vector<double>      unit_evap_mm_;
     std::vector<int>         subids_;
     std::vector<hype_model_unit> units_;
     std::vector<std::size_t> unit_offset_;

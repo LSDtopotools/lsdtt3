@@ -86,6 +86,10 @@ lsdtt_hype_model_cpu::lsdtt_hype_model_cpu(const hype_setup& setup, double dt_se
         net_.area_m2.push_back(sb.area_m2);
     }
     net_.order = hype_subbasin_downstream_order(setup.subbasins);
+    unit_fluxes_.assign(units_.size(), hype_unit_fluxes{});   // stored by default
+    unit_runoff_mm_.assign(units_.size(), 0.0);
+    unit_prec_mm_.assign(units_.size(), 0.0);
+    unit_evap_mm_.assign(units_.size(), 0.0);
     runoff_mm_.assign(setup.subbasins.size(), 0.0);
     flows_.local_outflow_m3s.assign(setup.subbasins.size(), 0.0);
     flows_.outflow_m3s.assign(setup.subbasins.size(), 0.0);
@@ -117,6 +121,13 @@ double lsdtt_hype_model_cpu::storage_m3() const
     return v;
 }
 
+void lsdtt_hype_model_cpu::set_store_unit_fluxes(bool store)
+{
+    store_unit_fluxes_ = store;
+    if (store) unit_fluxes_.assign(units_.size(), hype_unit_fluxes{});
+    else       std::vector<hype_unit_fluxes>().swap(unit_fluxes_);
+}
+
 void lsdtt_hype_model_cpu::step(double precipitation_mm, double temperature_c, int day_of_year,
                                 double observed_pet_mm)
 {
@@ -125,6 +136,8 @@ void lsdtt_hype_model_cpu::step(double precipitation_mm, double temperature_c, i
     forcing.temperature_c    = temperature_c;
     forcing.day_of_year      = day_of_year;
     forcing.observed_pet_mm  = observed_pet_mm;
+    // WP7 B3: the PET seasonal factor once per step, not once per unit.
+    forcing.pet_seasonal_factor = hype_pet_seasonal_factor(general_.cevpam, general_.cevpph, day_of_year);
 
     // Land: every unit in parallel (each touches only its own state and
     // fluxes), then fixed-order aggregation per sub-basin in a separate serial
@@ -146,7 +159,12 @@ void lsdtt_hype_model_cpu::step(double precipitation_mm, double temperature_c, i
             {
                 throw std::runtime_error("hype model: injected test failure in unit " + std::to_string(k));
             }
-            hype_unit_step(general_, u.constants, forcing, u.state, u.fluxes);
+            hype_unit_fluxes  local;
+            hype_unit_fluxes& f = store_unit_fluxes_ ? unit_fluxes_[static_cast<std::size_t>(k)] : local;
+            hype_unit_step(general_, u.constants, forcing, u.state, f);
+            unit_runoff_mm_[static_cast<std::size_t>(k)] = f.runoff_mm;
+            unit_prec_mm_[static_cast<std::size_t>(k)]   = f.class_precipitation_mm;
+            unit_evap_mm_[static_cast<std::size_t>(k)]   = f.evap_mm;
         }
         catch (...)
         {
@@ -171,10 +189,10 @@ void lsdtt_hype_model_cpu::step(double precipitation_mm, double temperature_c, i
         for (std::size_t k = unit_offset_[s]; k < unit_offset_[s + 1]; ++k)
         {
             const auto& u = units_[k];
-            runoff  += u.fluxes.runoff_mm * u.fraction;                       // model_hype.f90:2361
+            runoff  += unit_runoff_mm_[k] * u.fraction;                       // model_hype.f90:2361
             const double area_m2 = u.fraction * net_.area_m2[s];
-            prec_m3 += u.fluxes.class_precipitation_mm * 1.0e-3 * area_m2;
-            evap_m3 += u.fluxes.evap_mm * 1.0e-3 * area_m2;
+            prec_m3 += unit_prec_mm_[k] * 1.0e-3 * area_m2;
+            evap_m3 += unit_evap_mm_[k] * 1.0e-3 * area_m2;
         }
         runoff_mm_[s] = runoff;
     }

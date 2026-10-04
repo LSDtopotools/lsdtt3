@@ -397,8 +397,17 @@ hype_unit_constants make_hype_unit_constants(
 
     hype_unit_constants c;
     c.n_layers       = class_def.n_layers;
-    c.landuse        = landuse;
-    c.soil           = soil;
+    c.landuse.ttmp   = landuse.ttmp;
+    c.landuse.cmlt   = landuse.cmlt;
+    c.landuse.cevp   = landuse.cevp;
+    c.landuse.srrcs  = landuse.srrcs;
+    c.landuse.pcluse = landuse.pcluse;
+    c.soil.mperc1    = soil.mperc1;
+    c.soil.mperc2    = soil.mperc2;
+    c.soil.macrate   = soil.macrate;
+    c.soil.srrate    = soil.srrate;
+    c.soil.mactrinf  = soil.mactrinf;
+    c.soil.mactrsm   = soil.mactrsm;
     c.stream_depth_m = class_def.stream_depth_m;
     c.dh_m           = dh_m;
 
@@ -497,15 +506,27 @@ double hype_rain_fraction(double precipitation_mm, double temperature_c,
     return arain;
 }
 
-double hype_potential_evaporation(double temperature_c, double ttmp, double cevp,
-                                  double cevpam, double cevpph, int day_of_year) noexcept
+double hype_pet_seasonal_factor(double cevpam, double cevpph, int day_of_year) noexcept
 {
     // atm_proc.f90:2068. Daily step: tsofday = timesteps_per_day = 1, so the
     // day term is (dayno - 1 + 1/1 - cevpph).
-    const double ce = cevp * (1.0 + cevpam * std::sin(2.0 * k_hype_pi *
-        (static_cast<double>(day_of_year) - 1.0 + 1.0 - cevpph) / 365.0));
+    return 1.0 + cevpam * std::sin(2.0 * k_hype_pi *
+        (static_cast<double>(day_of_year) - 1.0 + 1.0 - cevpph) / 365.0);
+}
+
+double hype_potential_evaporation_with_factor(double temperature_c, double ttmp, double cevp,
+                                              double seasonal_factor) noexcept
+{
+    const double ce = cevp * seasonal_factor;
     // Option 0/1 (:2094/:2100); cevpcorr is regional and absent, so x 1.
     return (temperature_c > ttmp) ? ce * (temperature_c - ttmp) : 0.0;
+}
+
+double hype_potential_evaporation(double temperature_c, double ttmp, double cevp,
+                                  double cevpam, double cevpph, int day_of_year) noexcept
+{
+    return hype_potential_evaporation_with_factor(
+        temperature_c, ttmp, cevp, hype_pet_seasonal_factor(cevpam, cevpph, day_of_year));
 }
 
 void hype_percolation(const hype_unit_constants& c, std::array<double, 3>& water,
@@ -584,10 +605,12 @@ void hype_unit_step(const hype_general_parameters& g, const hype_unit_constants&
     // weighted by effcov, which is 0 with sublimation off, so epot is unchanged
     // (soilmodel0.f90:338).
     // Observed PET replaces the calculated value (option 0, atm_proc.f90:2091).
+    const double seasonal = std::isfinite(forcing.pet_seasonal_factor)
+        ? forcing.pet_seasonal_factor
+        : hype_pet_seasonal_factor(g.cevpam, g.cevpph, forcing.day_of_year);
     const double epot = std::isfinite(forcing.observed_pet_mm)
         ? forcing.observed_pet_mm
-        : hype_potential_evaporation(temp, c.landuse.ttmp, c.landuse.cevp,
-                                     g.cevpam, g.cevpph, forcing.day_of_year);
+        : hype_potential_evaporation_with_factor(temp, c.landuse.ttmp, c.landuse.cevp, seasonal);
     f.epot_mm = epot;
 
     // --- Rain/snow split (:284) and snowpack (:285).

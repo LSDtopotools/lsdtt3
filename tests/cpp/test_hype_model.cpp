@@ -94,9 +94,8 @@ forcing_series load_forcing(const std::string& in)
     return f;
 }
 
-double class_value(const std::string& v, const lsdtt::hype_model_unit& u)
+double class_value(const std::string& v, const lsdtt::hype_model_unit& u, const lsdtt::hype_unit_fluxes& f)
 {
-    const auto& f = u.fluxes;
     if (v == "snow") return u.state.snow_mm;
     if (v == "melt") return f.out_melt_mm;
     if (v == "evap") return f.evap_mm;
@@ -146,7 +145,7 @@ void run_case(const std::string& oracle, const std::string& name,
     {
         model.step(fs.prec_mm[t], fs.temp_c[t], fs.doy[t]);
         for (const auto& v : class_vars)
-            for (std::size_t k = 0; k < model.units().size(); ++k) cls[v][k][t] = class_value(v, model.units()[k]);
+            for (std::size_t k = 0; k < model.units().size(); ++k) cls[v][k][t] = class_value(v, model.units()[k], model.unit_fluxes()[k]);
         for (std::size_t s = 0; s < model.n_subbasins(); ++s)
         {
             if (bas.count("cout")) bas["cout"][s][t] = model.outflow_m3s()[s];
@@ -187,14 +186,16 @@ void observed_pet_checks(const std::string& oracle)
     {
         const double obs = 1.0 + 0.5 * static_cast<double>(t % 7);   // 1.0 .. 4.0 mm
         model.step(fs.prec_mm[t], fs.temp_c[t], fs.doy[t], obs);
-        for (const auto& u : model.units())
+        for (std::size_t k = 0; k < model.units().size(); ++k)
         {
-            if (u.fluxes.epot_mm != obs) epot_replaced = false;
-            if (u.fluxes.evap_mm > obs + 1e-12) aet_bounded = false;
-            if (!(u.fluxes.class_temperature_c > u.constants.landuse.ttmp))
+            const auto& u = model.units()[k];
+            const auto& f = model.unit_fluxes()[k];
+            if (f.epot_mm != obs) epot_replaced = false;
+            if (f.evap_mm > obs + 1e-12) aet_bounded = false;
+            if (!(f.class_temperature_c > u.constants.landuse.ttmp))
             {
                 ++cold_steps;
-                if (u.fluxes.evap_mm != 0.0) aet_off_when_cold = false;
+                if (f.evap_mm != 0.0) aet_off_when_cold = false;
             }
             else ++warm_steps;
         }
@@ -258,9 +259,11 @@ void balance_off_checks(const std::string& oracle)
             const auto& a = on.units()[k];
             const auto& b = off.units()[k];
             if (!same_state(a.state, b.state)) states_same = false;
-            if (!same_bits(a.fluxes.runoff_mm, b.fluxes.runoff_mm) ||
-                !same_bits(a.fluxes.evap_mm, b.fluxes.evap_mm) ||
-                !same_bits(a.fluxes.class_precipitation_mm, b.fluxes.class_precipitation_mm)) fluxes_same = false;
+            const auto& fa = on.unit_fluxes()[k];
+            const auto& fb = off.unit_fluxes()[k];
+            if (!same_bits(fa.runoff_mm, fb.runoff_mm) ||
+                !same_bits(fa.evap_mm, fb.evap_mm) ||
+                !same_bits(fa.class_precipitation_mm, fb.class_precipitation_mm)) fluxes_same = false;
         }
     }
     check(flows_same, "tracking off: sub-basin runoff, local outflow and outflow bitwise identical, every step");
@@ -277,6 +280,34 @@ void balance_off_checks(const std::string& oracle)
           "tracking off: storage terms and closure error are NaN");
     check(std::isfinite(bo.closure_error_m3()), "tracking on: closure error is finite");
     check(same_bits(on.storage_m3(), off.storage_m3()), "storage_m3() on request is the same with tracking off");
+}
+
+
+// WP7 B4b: not storing per-unit fluxes must not change any result.
+void unit_flux_storage_checks(const std::string& oracle)
+{
+    std::cout << "\n--- per-unit flux storage off ---\n";
+    const std::string in = oracle + "/default_all/lsdtt_input";
+    const auto setup = lsdtt::load_hype_setup_directory(in);
+    const forcing_series fs = load_forcing(in);
+    lsdtt::lsdtt_hype_model_cpu on(setup), off(setup);
+    off.set_store_unit_fluxes(false);
+    bool flows_same = true, states_same = true;
+    for (std::size_t t = 0; t < fs.prec_mm.size(); ++t)
+    {
+        on.step(fs.prec_mm[t], fs.temp_c[t], fs.doy[t]);
+        off.step(fs.prec_mm[t], fs.temp_c[t], fs.doy[t]);
+        if (!same_bits(on.runoff_mm(), off.runoff_mm()) ||
+            !same_bits(on.outflow_m3s(), off.outflow_m3s()) ||
+            !same_bits(on.local_outflow_m3s(), off.local_outflow_m3s())) flows_same = false;
+        for (std::size_t k = 0; k < on.units().size(); ++k)
+            if (!same_state(on.units()[k].state, off.units()[k].state)) states_same = false;
+    }
+    check(off.unit_fluxes().empty() && !off.store_unit_fluxes(), "flux storage off: unit_fluxes() is empty");
+    check(flows_same, "flux storage off: sub-basin flows bitwise identical, every step");
+    check(states_same, "flux storage off: unit states bitwise identical, every step");
+    check(same_bits(on.balance().closure_error_m3(), off.balance().closure_error_m3()),
+          "flux storage off: balance bitwise identical");
 }
 
 // WP7 B2: an exception thrown by a unit inside the parallel land loop must
@@ -355,6 +386,7 @@ int main(int argc, char* argv[])
         observed_pet_checks(oracle);
         balance_off_checks(oracle);
         parallel_throw_checks(oracle);
+        unit_flux_storage_checks(oracle);
 
         bool threw = false;
         try { lsdtt::lsdtt_hype_model_cpu m(lsdtt::load_hype_setup_directory(oracle + "/routing/lsdtt_input"), 3600.0); }

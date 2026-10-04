@@ -11,7 +11,7 @@
 // performance_hype_model: timing harness for the HYPE model (WP7 B0,
 // plan_potential_shype_port.md section 7.7.1).
 //
-// Usage: lsdtt-test-hype-performance <output_dir> [--quick] [--skip-large] [--repeats N] [--no-balance]
+// Usage: lsdtt-test-hype-performance <output_dir> [--quick] [--skip-large] [--repeats N] [--no-balance] [--no-unit-fluxes]
 //   --quick       small workload only (the registered CTest test uses this)
 //   --skip-large  small and medium only
 //   --no-balance  timed repeats run with balance tracking off (WP7 B1); the
@@ -58,6 +58,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -196,9 +197,10 @@ struct activity
 
 void count_activity(const lsdtt::lsdtt_hype_model_cpu& model, activity& a)
 {
-    for (const auto& u : model.units())
+    for (std::size_t k = 0; k < model.units().size(); ++k)
     {
-        const auto& f = u.fluxes;
+        const auto& u = model.units()[k];
+        const auto& f = model.unit_fluxes()[k];
         if (u.state.snow_mm > 0.0) ++a.snow;
         if (f.soil_evap_mm[0] + f.soil_evap_mm[1] > 0.0) ++a.aet;
         if (f.macropore_mm > 0.0) ++a.macropore;
@@ -212,6 +214,8 @@ void count_activity(const lsdtt::lsdtt_hype_model_cpu& model, activity& a)
 // --no-balance: timed repeats build the model with balance tracking off (WP7
 // B1). The untimed warm-up keeps it on, so closure is still checked once.
 bool g_track_balance = true;
+// --no-unit-fluxes: timed repeats do not store per-unit flux records (WP7 B4b).
+bool g_store_unit_fluxes = true;
 
 result run_workload(const workload& w, int repeats)
 {
@@ -235,6 +239,7 @@ result run_workload(const workload& w, int repeats)
         const bool warmup = (rep == 0);
         auto t0 = clock_type::now();
         lsdtt::lsdtt_hype_model_cpu model(setup, 86400.0, warmup ? true : g_track_balance);
+        if (!warmup) model.set_store_unit_fluxes(g_store_unit_fluxes);
         const double ts = seconds_since(t0);
         r.n_units = model.units().size();
 
@@ -310,15 +315,18 @@ result run_workload(const workload& w, int repeats)
         double t_land = 0, t_agg = 0, t_route = 0;
         double prec_m3 = 0, evap_m3 = 0;
         lsdtt::hype_unit_forcing f;
+        std::vector<lsdtt::hype_unit_fluxes> unit_fluxes(units.size());
         const auto t_all = clock_type::now();
         for (std::size_t i = 0; i < n_steps; ++i)
         {
             f.precipitation_mm = forcing.prec_mm[i];
             f.temperature_c    = forcing.temp_c[i];
             f.day_of_year      = forcing.doy[i];
+            f.pet_seasonal_factor = lsdtt::hype_pet_seasonal_factor(setup.general.cevpam, setup.general.cevpph, f.day_of_year);   // as the model does (B3)
 
             auto t0 = clock_type::now();
-            for (auto& u : units) lsdtt::hype_unit_step(setup.general, u.constants, f, u.state, u.fluxes);
+            for (std::size_t k = 0; k < units.size(); ++k)
+                lsdtt::hype_unit_step(setup.general, units[k].constants, f, units[k].state, unit_fluxes[k]);
             auto t1 = clock_type::now();
             double step_prec = 0.0, step_evap = 0.0;
             for (std::size_t s = 0; s + 1 < offset.size(); ++s)
@@ -327,10 +335,10 @@ result run_workload(const workload& w, int repeats)
                 for (std::size_t k = offset[s]; k < offset[s + 1]; ++k)
                 {
                     const auto& u = units[k];
-                    ro += u.fluxes.runoff_mm * u.fraction;
+                    ro += unit_fluxes[k].runoff_mm * u.fraction;
                     const double area_m2 = u.fraction * net.area_m2[s];
-                    step_prec += u.fluxes.class_precipitation_mm * 1.0e-3 * area_m2;
-                    step_evap += u.fluxes.evap_mm * 1.0e-3 * area_m2;
+                    step_prec += unit_fluxes[k].class_precipitation_mm * 1.0e-3 * area_m2;
+                    step_evap += unit_fluxes[k].evap_mm * 1.0e-3 * area_m2;
                 }
                 runoff[s] = ro;
             }
@@ -394,6 +402,7 @@ int main(int argc, char** argv)
         else if (a == "--skip-large") skip_large = true;
         else if (a == "--repeats" && i + 1 < argc) repeats = std::max(1, std::atoi(argv[++i]));
         else if (a == "--no-balance") g_track_balance = false;
+        else if (a == "--no-unit-fluxes") g_store_unit_fluxes = false;
         else out_dir = a;
     }
 
@@ -424,6 +433,8 @@ int main(int argc, char** argv)
     std::vector<result> results;
     for (const auto& w : loads) results.push_back(run_workload(w, repeats));
 
+    std::error_code mkdir_error;
+    std::filesystem::create_directories(out_dir, mkdir_error);   // the CSV needs its directory
     const std::string csv_path = out_dir + "/hype_performance.csv";
     std::ofstream csv(csv_path);
     csv << "workload,n_subbasins,n_units,n_steps,threads,setup_s,step_total_s,per_step_ms,"
