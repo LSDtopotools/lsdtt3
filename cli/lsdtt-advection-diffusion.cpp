@@ -31,6 +31,8 @@
 #include <cmath>
 #include <iostream>
 #include <map>
+#include <filesystem>
+#include <regex>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -77,6 +79,34 @@ void require(bool condition, const std::string& message)
     if (!condition) throw std::runtime_error(message);
 }
 
+std::pair<std::string, int> find_latest_intermediate(
+    const std::string& directory, const std::string& prefix)
+{
+    namespace fs = std::filesystem;
+    const std::regex pattern(
+        "^" + prefix + "_model_iteration_([0-9]+)\\.tif$");
+    int latest = -1;
+    std::string latest_path;
+    std::error_code error;
+    if (!fs::is_directory(directory, error)) return {latest_path, latest};
+    for (const auto& entry : fs::directory_iterator(directory, error))
+    {
+        if (error || !entry.is_regular_file()) continue;
+        std::smatch match;
+        const std::string filename = entry.path().filename().string();
+        if (std::regex_match(filename, match, pattern))
+        {
+            const int iteration = std::stoi(match[1].str());
+            if (iteration > latest)
+            {
+                latest = iteration;
+                latest_path = entry.path().string();
+            }
+        }
+    }
+    return {latest_path, latest};
+}
+
 class stdout_silencer
 {
 public:
@@ -109,6 +139,21 @@ int main(int argc, char* argv[])
     help_map["write_path"] = {
         "string", "./outputs", "Directory for outputs.", "",
         "File I/O", "io", ""};
+
+    string_default_map["read_path"] = "";
+    help_map["read_path"] = {
+        "string", "", "Optional directory containing an existing input grid.",
+        "This loads a grid for a new run and automatically takes n_rows, "
+        "n_cols and cell_size_metres from its raster metadata. It is distinct "
+        "from automatic continuation: continuation instead discovers the "
+        "highest <write_fname>_model_iteration_N.tif in write_path.",
+        "File I/O", "io", ""};
+
+    string_default_map["read_fname"] = "";
+    help_map["read_fname"] = {
+        "string", "", "Filename of the existing input grid in read_path.",
+        "Use with read_path to start a new run from an existing grid; this is "
+        "not a continuation switch.", "File I/O", "io", ""};
 
     string_default_map["write_fname"] = "advection_diffusion";
     help_map["write_fname"] = {
@@ -309,6 +354,8 @@ int main(int argc, char* argv[])
                 "fluvial_incision_model must be d8 or dinf");
         require(sf.at("hillslope_model") == "adi",
                 "hillslope_model currently supports only adi");
+        require(sf.at("read_path").empty() == sf.at("read_fname").empty(),
+                "read_path and read_fname must either both be set or both be empty");
         require(ifs.at("n_rows") > 0 && ifs.at("n_cols") > 0,
                 "n_rows and n_cols must be positive");
         require(ff.at("cell_size_metres") > 0.0f,
@@ -373,9 +420,36 @@ int main(int argc, char* argv[])
     meta.y_min = 0.0;
     meta.no_data_value = -9999.0;
     meta.set_default_synthetic_georeference();
-    lsdtt::lsdtt_raster_cpu current = lsdtt::generate_red_noise_surface(
-        meta, ifs.at("random_seed"), 0.0,
-        ff.at("noise_target_stddev_metres"), 6, ifs.at("n_threads"));
+    lsdtt::lsdtt_data_loader loader;
+    const auto latest = find_latest_intermediate(
+        parser.get_write_path(), parser.get_write_fname());
+    int starting_iteration = 0;
+    lsdtt::lsdtt_raster_cpu current;
+    if (!sf.at("read_path").empty())
+    {
+        std::string input_path = sf.at("read_path");
+        if (input_path.back() != '/' && input_path.back() != '\\') input_path += '/';
+        input_path += sf.at("read_fname");
+        loader.open_raster(input_path);
+        current = lsdtt::lsdtt_raster_cpu(loader);
+        meta = current.get_meta();
+        std::cout << "Loading existing grid for a new run: " << input_path << "\n";
+    }
+    else if (latest.second >= 0)
+    {
+        loader.open_raster(latest.first);
+        current = lsdtt::lsdtt_raster_cpu(loader);
+        starting_iteration = latest.second;
+        meta = current.get_meta();
+        std::cout << "Resuming from intermediate output at iteration "
+                  << starting_iteration << ": " << latest.first << "\n";
+    }
+    else
+    {
+        current = lsdtt::generate_red_noise_surface(
+            meta, ifs.at("random_seed"), 0.0,
+            ff.at("noise_target_stddev_metres"), 6, ifs.at("n_threads"));
+    }
 
     // -------------------------------------------------------------------------
     // Step 3 - Fill the initial surface and set baselevel boundaries
@@ -392,7 +466,6 @@ int main(int argc, char* argv[])
         current.get_data()[static_cast<std::size_t>(flat)] =
             ff.at("baselevel_elevation");
 
-    lsdtt::lsdtt_data_loader loader;
     const auto format = lsdtt::resolve_raster_output_format(
         sf.at("write_output_format"));
 
@@ -510,11 +583,14 @@ int main(int argc, char* argv[])
             }
         }
     };
-    const std::string initial_path =
-        parser.make_output_path("_initial_topography", ".tif");
-    loader.write_full(
-        current.get_data(), current.get_meta(), initial_path, format);
-    write_diagnostics(current, "_initial");
+    if (starting_iteration == 0)
+    {
+        const std::string initial_path =
+            parser.make_output_path("_initial_topography", ".tif");
+        loader.write_full(
+            current.get_data(), current.get_meta(), initial_path, format);
+        write_diagnostics(current, "_initial");
+    }
 
     // -------------------------------------------------------------------------
     // Step 4 - Fixed-timestep loop
@@ -526,7 +602,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_hillslope_newton_workspace hillslope_workspace;
     lsdtt::lsdtt_hillslope_cellular_workspace cellular_workspace;
-    for (int iteration = 1;
+    for (int iteration = starting_iteration + 1;
          iteration <= ifs.at("number_of_iterations"); ++iteration)
     {
         // Step 4a-c - Advance one advection-diffusion timestep
