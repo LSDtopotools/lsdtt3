@@ -300,18 +300,8 @@ madk2_result calculate_madk2(
                     break;
                 }
 
-                // O(N) median via nth_element - avoids full O(N log N) sort.
-                const std::size_t mid = k2_diffs.size() / 2;
-                std::nth_element(k2_diffs.begin(), k2_diffs.begin() + mid, k2_diffs.end());
-                double med = static_cast<double>(k2_diffs[mid]);
-                if (k2_diffs.size() % 2 == 0)
-                {
-                    // Average with the largest value in the lower half.
-                    const float lo =
-                        *std::max_element(k2_diffs.begin(), k2_diffs.begin() + mid);
-                    med = (static_cast<double>(lo) + med) * 0.5;
-                }
-                mad_dir[d] = med;
+                // O(N) median by selection, mean of the two middle values.
+                mad_dir[d] = compute_median_in_place(k2_diffs);
             }
 
             if (!valid) continue;

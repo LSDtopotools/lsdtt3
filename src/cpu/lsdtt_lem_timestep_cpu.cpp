@@ -11,6 +11,7 @@
 // =============================================================================
 
 #include "lsdtt_lem_timestep_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -48,9 +49,7 @@ double median_interior_gradient(const lsdtt_raster_cpu& dem)
             g.push_back(std::sqrt(gx * gx + gy * gy));
         }
 
-    if (g.empty()) return 0.0;
-    std::nth_element(g.begin(), g.begin() + g.size() / 2, g.end());
-    return g[g.size() / 2];
+    return compute_median_upper_in_place(g, 0.0);
 }
 
 

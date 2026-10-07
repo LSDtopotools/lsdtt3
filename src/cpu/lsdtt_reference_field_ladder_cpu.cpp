@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -30,17 +31,6 @@ namespace
 // Float32 exact-integer ceiling. Above this a label cannot round-trip through
 // the raster's backing store, so a join keyed on it silently corrupts.
 constexpr std::int64_t k_max_exact_float_label = 16777216;
-
-double median_of_copy(std::vector<double> v)
-{
-    if (v.empty()) return 0.0;
-    const std::size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + mid, v.end());
-    const double upper = v[mid];
-    if (v.size() % 2 != 0) return upper;
-    const double lower = *std::max_element(v.begin(), v.begin() + mid);
-    return 0.5 * (lower + upper);
-}
 
 // -----------------------------------------------------------------------------
 // band_of
@@ -101,7 +91,7 @@ partition_metrics evaluate_partition(
     pm.band_centres.reserve(k);
     for (std::vector<double>& b : bins)
     {
-        pm.band_centres.push_back(median_of_copy(std::move(b)));
+        pm.band_centres.push_back(compute_median_of_copy(std::move(b), 0.0));
     }
     std::sort(pm.band_centres.begin(), pm.band_centres.end());
 
@@ -886,10 +876,7 @@ ladder_result build_reference_field_ladder(
     {
         if (sld == nullptr || slopes.empty())
             return request.vertical_accuracy_metres;
-        std::vector<double> s = slopes;
-        const std::size_t mid = s.size() / 2;
-        std::nth_element(s.begin(), s.begin() + static_cast<long>(mid), s.end());
-        const double med = s[mid];
+        const double med = compute_median_upper_of_copy(slopes);
         return (med <= request.vertical_accuracy_break_degrees)
             ? request.vertical_accuracy_gentle_metres
             : request.vertical_accuracy_steep_metres;
@@ -898,10 +885,7 @@ ladder_result build_reference_field_ladder(
     {
         if (sld == nullptr || slopes.empty())
             return std::numeric_limits<double>::quiet_NaN();
-        std::vector<double> s = slopes;
-        const std::size_t mid = s.size() / 2;
-        std::nth_element(s.begin(), s.begin() + static_cast<long>(mid), s.end());
-        return s[mid];
+        return compute_median_upper_of_copy(slopes);
     };
     auto gap_from_ev = [&](double ev) -> double
     {
@@ -1504,7 +1488,7 @@ banded_label_result label_components_within_bands(
                 sy += y;
                 sz += z;
             }
-            rec.median_field = median_of_copy(vals);
+            rec.median_field = compute_median_of_copy(vals, 0.0);
 
             if (vals.size() >= 3)
             {

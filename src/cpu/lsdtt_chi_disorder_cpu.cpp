@@ -45,6 +45,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_disorder_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -609,33 +610,9 @@ float percentile_of_finite(std::vector<float> values, double p)
         return quiet_nan();
     }
 
-    std::sort(values.begin(), values.end());
-
-    if (p <= 0.0)
-    {
-        return values.front();
-    }
-    if (p >= 1.0)
-    {
-        return values.back();
-    }
-
-    const double position = p * static_cast<double>(values.size() - 1);
-    const std::size_t lower = static_cast<std::size_t>(std::floor(position));
-    const std::size_t upper = static_cast<std::size_t>(std::ceil(position));
-
-    if (lower == upper)
-    {
-        return values[lower];
-    }
-
-    const double weight_upper = position - static_cast<double>(lower);
-    const double weight_lower = 1.0 - weight_upper;
-
+    // p outside [0, 1] gives the minimum or maximum.
     return static_cast<float>(
-        weight_lower * static_cast<double>(values[lower]) +
-        weight_upper * static_cast<double>(values[upper])
-    );
+        compute_quantile_interpolated_in_place(values, std::clamp(p, 0.0, 1.0)));
 }
 
 

@@ -9,6 +9,7 @@
 // See lsdtt_landslide_placement_cpu.hpp for the design.
 
 #include "lsdtt_landslide_placement_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -300,11 +301,7 @@ bool LandslidePlacer::place_scar_seeded(int n_target_pixels,
 
 void LandslidePlacer::finalise_diagnostics()
 {
-    if (fill_ratios_.empty()) { diag_.median_host_fill_ratio = 0.0; return; }
-    std::vector<double> v = fill_ratios_;
-    const std::size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + mid, v.end());
-    diag_.median_host_fill_ratio = v[mid];
+    diag_.median_host_fill_ratio = compute_median_upper_of_copy(fill_ratios_, 0.0);
 }
 
 }  // namespace lsdtt

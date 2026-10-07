@@ -22,6 +22,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_network_analysis_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1346,30 +1347,6 @@ void write_chi_network_fit_segments_csv(
 // =============================================================================
 // Per-basin channel-steepness summary
 // =============================================================================
-namespace
-{
-
-double median_of(std::vector<double> values)
-{
-    if (values.empty())
-    {
-        return 0.0;
-    }
-
-    std::sort(values.begin(), values.end());
-
-    const std::size_t mid = values.size() / 2;
-
-    if (values.size() % 2 == 0)
-    {
-        return 0.5 * (values[mid - 1] + values[mid]);
-    }
-
-    return values[mid];
-}
-
-} // unnamed namespace
-
 lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
     const lsdtt_chi_network_fit_collection_result& fit_results)
 {
@@ -1424,7 +1401,7 @@ lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
         if (!all_k_sn.empty())
         {
             row.mean_k_sn   = sum_k_sn / static_cast<double>(all_k_sn.size());
-            row.median_k_sn = median_of(all_k_sn);
+            row.median_k_sn = compute_median_of_copy(all_k_sn, 0.0);
             row.min_k_sn =
                 *std::min_element(all_k_sn.begin(), all_k_sn.end());
             row.max_k_sn =
@@ -1440,7 +1417,7 @@ lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
         {
             row.main_stem_mean_k_sn =
                 main_stem_sum_k_sn / static_cast<double>(main_stem_k_sn.size());
-            row.main_stem_median_k_sn = median_of(main_stem_k_sn);
+            row.main_stem_median_k_sn = compute_median_of_copy(main_stem_k_sn, 0.0);
         }
 
         table.rows.push_back(row);

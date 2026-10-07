@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hydraulic_graph_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 
 #include <algorithm>
@@ -1376,13 +1377,8 @@ lsdtt_hydraulic_graph_cpu::compute_convergence_stats() const
         }
     }
 
-    auto mid_abs = abs_vals.begin() + abs_vals.size() / 2;
-    std::nth_element(abs_vals.begin(), mid_abs, abs_vals.end());
-    stats.median_abs_dhw = *mid_abs;
-
-    auto mid_rel = rel_vals.begin() + rel_vals.size() / 2;
-    std::nth_element(rel_vals.begin(), mid_rel, rel_vals.end());
-    stats.median_rel_dhw = *mid_rel;
+    stats.median_abs_dhw = compute_median_upper_in_place(abs_vals);
+    stats.median_rel_dhw = compute_median_upper_in_place(rel_vals);
 
     return stats;
 }

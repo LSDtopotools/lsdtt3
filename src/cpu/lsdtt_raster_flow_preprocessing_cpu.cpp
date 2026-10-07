@@ -21,6 +21,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_binary_mask_vectorise_cpu.hpp"
 #include "lsdtt_raster_algebra.hpp"
@@ -2397,12 +2398,7 @@ perona_malik_result perona_malik_diffusion(
                 "perona_malik_diffusion: no finite neighbour differences, so "
                 "K cannot be estimated. State k_metres_per_cell instead.");
         }
-        std::size_t idx = static_cast<std::size_t>(
-            options.k_gradient_quantile * static_cast<double>(vals.size() - 1));
-        idx = std::min(idx, vals.size() - 1);
-        std::nth_element(vals.begin(), vals.begin() + static_cast<long>(idx),
-                         vals.end());
-        k = static_cast<double>(vals[idx]);
+        k = compute_quantile_floor_in_place(vals, options.k_gradient_quantile);
     }
     else
     {

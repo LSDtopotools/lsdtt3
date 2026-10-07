@@ -158,6 +158,85 @@ double compute_stddev_sample(
 );
 
 // -----------------------------------------------------------------------------
+// In-place order statistics
+//
+// Selection (std::nth_element) rather than a full sort, and the vector is
+// REORDERED: each function makes exactly the nth_element / max_element calls
+// listed, so a caller that goes on to use the vector sees the same order every
+// time. Same input contract as above (valid values only; a NaN in the input
+// makes the result undefined). Float input is selected as float and the
+// arithmetic is done in double.
+//
+// Each reproduces, bit for bit, a family of private helpers it replaced
+// (tests/cpp/test_order_statistics.cpp keeps those as the reference). The
+// definitions are NOT the same as compute_median / compute_percentile above,
+// which interpolate as v0 + f * (v1 - v0) on a sorted copy and can differ in
+// the last bit.
+//
+//   compute_median_in_place          mean of the two middle values for even n:
+//                                    nth_element at n/2, max_element of the
+//                                    lower half, 0.5 * (lower + upper)
+//   compute_median_upper_in_place    upper middle value for even n:
+//                                    nth_element at n/2, return v[n/2]
+//   compute_quantile_interpolated_in_place
+//                                    q in [0, 1]; position q * (n - 1) on a
+//                                    sorted vector; v[lo] when lo == hi, else
+//                                    (1 - w) * v[lo] + w * v[hi]
+//   compute_quantile_floor_in_place  q in [0, 1]; the element at
+//                                    floor(q * (n - 1)), no interpolation
+//
+// The medians return empty_value for empty input, so each caller keeps its own
+// convention (NaN, 0.0, -1.0). The quantiles return NaN for empty input.
+// -----------------------------------------------------------------------------
+
+double compute_median_in_place(
+    std::vector<double>& values,
+    double empty_value = std::numeric_limits<double>::quiet_NaN()
+);
+
+double compute_median_in_place(
+    std::vector<float>& values,
+    double empty_value = std::numeric_limits<double>::quiet_NaN()
+);
+
+double compute_median_upper_in_place(
+    std::vector<double>& values,
+    double empty_value = std::numeric_limits<double>::quiet_NaN()
+);
+
+double compute_median_upper_in_place(
+    std::vector<float>& values,
+    double empty_value = std::numeric_limits<double>::quiet_NaN()
+);
+
+// By-value forms for callers that keep using their vector afterwards: the
+// selection reorders this function's own copy, never the caller's.
+double compute_median_of_copy(
+    std::vector<double> values,
+    double empty_value = std::numeric_limits<double>::quiet_NaN()
+);
+
+double compute_median_upper_of_copy(
+    std::vector<double> values,
+    double empty_value = std::numeric_limits<double>::quiet_NaN()
+);
+
+double compute_quantile_interpolated_in_place(
+    std::vector<double>& values,
+    double q_0_to_1
+);
+
+double compute_quantile_interpolated_in_place(
+    std::vector<float>& values,
+    double q_0_to_1
+);
+
+double compute_quantile_floor_in_place(
+    std::vector<float>& values,
+    double q_0_to_1
+);
+
+// -----------------------------------------------------------------------------
 // Vector wrappers for float / int / other arithmetic types.
 //
 // These wrappers promote input values to double and then call the compiled

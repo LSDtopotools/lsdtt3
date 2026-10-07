@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_terrace_edge_tracer_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include "lsdtt_raster_cell_predicates_cpu.hpp"
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
@@ -36,26 +37,6 @@ struct rc_pixel
     int row = -1;
     int col = -1;
 };
-
-static double median_copy_(std::vector<double> vals)
-{
-    if (vals.empty())
-        return std::numeric_limits<double>::quiet_NaN();
-
-    const std::size_t n = vals.size();
-    const std::size_t mid = n / 2;
-
-    std::nth_element(vals.begin(), vals.begin() + mid, vals.end());
-    double med = vals[mid];
-
-    if (n % 2 == 0)
-    {
-        std::nth_element(vals.begin(), vals.begin() + mid - 1, vals.end());
-        med = 0.5 * (med + vals[mid - 1]);
-    }
-
-    return med;
-}
 
 // -----------------------------------------------------------------------------
 // label_centreline_components_d8_
@@ -254,7 +235,7 @@ static terrace_edge_seed_info compute_seed_stats_(
     var /= static_cast<double>(z.size());
 
     info.mean_elevation_metres   = mean;
-    info.median_elevation_metres = median_copy_(z);
+    info.median_elevation_metres = compute_median_of_copy(z);
     info.stddev_elevation_metres = std::sqrt(std::max(0.0, var));
 
     return info;

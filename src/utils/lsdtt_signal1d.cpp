@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_signal1d.hpp"
+#include "lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -84,17 +85,6 @@ std::vector<double> compute_lowess_smoothing(
     std::vector<double> weights(n);
     std::vector<double> residuals(n, 0.0);
 
-    auto get_median = [](std::vector<double> v) -> double {
-        if (v.empty()) return 0.0;
-        std::size_t mid_n = v.size() / 2;
-        std::nth_element(v.begin(), v.begin() + mid_n, v.end());
-        if (v.size() % 2 == 0) {
-            auto rit = std::max_element(v.begin(), v.begin() + mid_n);
-            return (*rit + v[mid_n]) / 2.0;
-        }
-        return v[mid_n];
-    };
-
     auto weighted_least_squares = [](const std::vector<double>& dx, const std::vector<double>& dy, const std::vector<double>& dw, double& intercept, double& gradient) {
         double sw = 0, swx = 0, swx2 = 0, swy = 0, swxy = 0;
         for (std::size_t j = 0; j < dx.size(); ++j) {
@@ -121,7 +111,7 @@ std::vector<double> compute_lowess_smoothing(
         if (iter > 0) {
             // Note: LSDStatsTools updated residuals per point natively during smoothing,
             // resulting in a slight dependency order anomaly. We calculate it correctly over the whole vector block.
-            scale = 6.0 * get_median(residuals); 
+            scale = 6.0 * compute_median_of_copy(residuals, 0.0); 
         }
 
         std::vector<double> current_smoothed_y(n, 0.0);

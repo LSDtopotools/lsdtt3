@@ -32,6 +32,7 @@
 // the statistics functions are the actual values being analysed.
 // -----------------------------------------------------------------------------
 #include "lsdtt_statistics.hpp"
+#include "lsdtt_statistics_detail.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -45,10 +46,8 @@ namespace {
 
 constexpr double k_mad_normal_scale = 1.482602218505602;
 
-double nan_value()
-{
-    return std::numeric_limits<double>::quiet_NaN();
-}
+using statistics_detail::nan_value;
+using statistics_detail::make_sorted_copy;
 
 struct basic_moments
 {
@@ -153,15 +152,6 @@ double compute_percentile_of_sorted_values(
 
     return sorted_values[i0] +
            fraction * (sorted_values[i1] - sorted_values[i0]);
-}
-
-std::vector<double> make_sorted_copy(
-    const std::vector<double>& values
-)
-{
-    std::vector<double> sorted = values;
-    std::sort(sorted.begin(), sorted.end());
-    return sorted;
 }
 
 } // unnamed namespace
@@ -365,6 +355,101 @@ lsdtt_descriptive_stats compute_descriptive_stats(
         k_mad_normal_scale * stats.median_absolute_deviation;
 
     return stats;
+}
+
+// -----------------------------------------------------------------------------
+// In-place order statistics (see the header for the contract)
+// -----------------------------------------------------------------------------
+
+namespace {
+
+template <class T>
+double median_in_place_impl(std::vector<T>& values, double empty_value)
+{
+    if (values.empty()) return empty_value;
+    const std::size_t mid = values.size() / 2;
+    std::nth_element(values.begin(), values.begin() + mid, values.end());
+    const double upper = static_cast<double>(values[mid]);
+    if (values.size() % 2 != 0) return upper;
+    const double lower =
+        static_cast<double>(*std::max_element(values.begin(), values.begin() + mid));
+    return 0.5 * (lower + upper);
+}
+
+template <class T>
+double median_upper_in_place_impl(std::vector<T>& values, double empty_value)
+{
+    if (values.empty()) return empty_value;
+    const std::size_t mid = values.size() / 2;
+    std::nth_element(values.begin(), values.begin() + mid, values.end());
+    return static_cast<double>(values[mid]);
+}
+
+template <class T>
+double quantile_interpolated_in_place_impl(std::vector<T>& values, double q_0_to_1)
+{
+    if (values.empty()) return nan_value();
+    std::sort(values.begin(), values.end());
+    const double position = q_0_to_1 * static_cast<double>(values.size() - 1);
+    const std::size_t lo = static_cast<std::size_t>(std::floor(position));
+    const std::size_t hi = static_cast<std::size_t>(std::ceil(position));
+    if (lo == hi) return static_cast<double>(values[lo]);
+    const double w = position - static_cast<double>(lo);
+    return (1.0 - w) * static_cast<double>(values[lo]) +
+           w * static_cast<double>(values[hi]);
+}
+
+} // unnamed namespace
+
+double compute_median_in_place(std::vector<double>& values, double empty_value)
+{
+    return median_in_place_impl(values, empty_value);
+}
+
+double compute_median_in_place(std::vector<float>& values, double empty_value)
+{
+    return median_in_place_impl(values, empty_value);
+}
+
+double compute_median_upper_in_place(std::vector<double>& values, double empty_value)
+{
+    return median_upper_in_place_impl(values, empty_value);
+}
+
+double compute_median_upper_in_place(std::vector<float>& values, double empty_value)
+{
+    return median_upper_in_place_impl(values, empty_value);
+}
+
+double compute_median_of_copy(std::vector<double> values, double empty_value)
+{
+    return median_in_place_impl(values, empty_value);
+}
+
+double compute_median_upper_of_copy(std::vector<double> values, double empty_value)
+{
+    return median_upper_in_place_impl(values, empty_value);
+}
+
+double compute_quantile_interpolated_in_place(std::vector<double>& values, double q_0_to_1)
+{
+    return quantile_interpolated_in_place_impl(values, q_0_to_1);
+}
+
+double compute_quantile_interpolated_in_place(std::vector<float>& values, double q_0_to_1)
+{
+    return quantile_interpolated_in_place_impl(values, q_0_to_1);
+}
+
+double compute_quantile_floor_in_place(std::vector<float>& values, double q_0_to_1)
+{
+    if (values.empty()) return nan_value();
+    std::size_t idx = static_cast<std::size_t>(
+        q_0_to_1 * static_cast<double>(values.size() - 1));
+    idx = std::min(idx, values.size() - 1);
+    std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(idx),
+                     values.end());
+    return static_cast<double>(values[idx]);
 }
 
 } // namespace lsdtt

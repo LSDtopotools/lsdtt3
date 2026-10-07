@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_strahler_tokunaga_analysis_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1375,14 +1376,7 @@ static double finite_percentile(std::vector<double> v, double p)
 {
     v.erase(std::remove_if(v.begin(), v.end(),
             [](double x){ return !std::isfinite(x); }), v.end());
-    if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
-    std::sort(v.begin(), v.end());
-    const double rank = (p / 100.0) * static_cast<double>(v.size() - 1);
-    const std::size_t lo = static_cast<std::size_t>(std::floor(rank));
-    const std::size_t hi = static_cast<std::size_t>(std::ceil(rank));
-    if (lo == hi) return v[lo];
-    const double w = rank - static_cast<double>(lo);
-    return v[lo] * (1.0 - w) + v[hi] * w;
+    return compute_quantile_interpolated_in_place(v, p / 100.0);
 }
 
 // =============================================================================

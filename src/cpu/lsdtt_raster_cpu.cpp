@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -339,10 +340,7 @@ vertical_plausibility_report check_vertical_plausibility(
 
     const auto pct = [&slopes](double p) -> double
     {
-        const std::size_t k = static_cast<std::size_t>(
-            p / 100.0 * static_cast<double>(slopes.size() - 1));
-        std::nth_element(slopes.begin(), slopes.begin() + k, slopes.end());
-        return static_cast<double>(slopes[k]);
+        return compute_quantile_floor_in_place(slopes, p / 100.0);
     };
 
     const auto deg = [](double g) { return std::atan(g) * 180.0 / M_PI; };

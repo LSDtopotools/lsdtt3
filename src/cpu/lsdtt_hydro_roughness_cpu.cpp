@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hydro_roughness_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
@@ -92,14 +93,6 @@ namespace
 
 // Median over channel cells, used when reference_ksn is left at zero so the
 // scaled field is centred on n_ref rather than on an arbitrary absolute value.
-double median_of(std::vector<double> v)
-{
-    if (v.empty()) return 0.0;
-    const std::size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
-    return v[mid];
-}
-
 double ksn_at(const roughness_field_inputs& in,
               const channel_roughness_options& opts,
               int row, int col)
@@ -204,7 +197,7 @@ lsdtt_raster_cpu compute_channel_roughness(
                 const double k = ksn_at(inputs, opts, row, col);
                 if (k > 0.0 && std::isfinite(k)) vals.push_back(k);
             }
-        ref_ksn = median_of(std::move(vals));
+        ref_ksn = compute_median_upper_of_copy(std::move(vals), 0.0);
         if (!(ref_ksn > 0.0))
             throw std::invalid_argument(
                 std::string(who) + ": no channel cell has a positive ksn, so no "

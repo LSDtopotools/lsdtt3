@@ -1,6 +1,7 @@
 // lsdtt_graphflood_optimised_cpu.cpp
 
 #include "lsdtt_graphflood_optimised_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include "lsdtt_raster_resampling_cpu.hpp"
 
@@ -863,12 +864,8 @@ private:
             convergence_rel_.push_back(value / std::max(depth_[flat], 1.0e-12));
         }
         if (convergence_abs_.empty()) return {0.0, 0.0};
-        const std::size_t middle = convergence_abs_.size() / 2;
-        std::nth_element(convergence_abs_.begin(),
-                         convergence_abs_.begin() + middle, convergence_abs_.end());
-        std::nth_element(convergence_rel_.begin(),
-                         convergence_rel_.begin() + middle, convergence_rel_.end());
-        return {convergence_abs_[middle], convergence_rel_[middle]};
+        return {compute_median_upper_in_place(convergence_abs_),
+                compute_median_upper_in_place(convergence_rel_)};
     }
 
     lsdtt_raster_result raster_from_float(const std::vector<float>& values) const

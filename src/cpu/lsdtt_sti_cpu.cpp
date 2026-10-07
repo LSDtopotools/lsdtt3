@@ -1,4 +1,5 @@
 #include "lsdtt_sti_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
@@ -311,15 +312,6 @@ struct ksat_profile_accum
     double integrated_depth_cm = 0.0;
 };
 
-double median_in_place(std::vector<double>& values)
-{
-    if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
-    std::sort(values.begin(), values.end());
-    const std::size_t n = values.size();
-    if (n % 2 == 1) return values[n / 2];
-    return 0.5 * (values[(n / 2) - 1] + values[n / 2]);
-}
-
 std::unordered_map<std::string, std::size_t> header_index_map(const std::vector<std::string>& headers)
 {
     std::unordered_map<std::string, std::size_t> out;
@@ -510,7 +502,7 @@ sti_lnkd_build_result build_sti_lnkd_table_from_csv(
     {
         std::vector<double>& values = kv.second;
         if (values.empty()) continue;
-        result.table.ln_kd_by_key[kv.first] = median_in_place(values);
+        result.table.ln_kd_by_key[kv.first] = compute_median_in_place(values);
         result.table.n_profiles_by_key[kv.first] = static_cast<int>(values.size());
     }
 

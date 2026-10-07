@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include "lsdtt_lem_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -675,12 +676,8 @@ run_lem_step(
         // p99.9 by partial sort: the whole array is never needed in order.
         if (!local_changes.empty())
         {
-            const std::size_t k = static_cast<std::size_t>(
-                0.999 * static_cast<double>(local_changes.size() - 1));
-            std::nth_element(local_changes.begin(),
-                             local_changes.begin() + static_cast<std::ptrdiff_t>(k),
-                             local_changes.end());
-            stats.p999_local_elevation_change = local_changes[k];
+            stats.p999_local_elevation_change = static_cast<float>(
+                compute_quantile_floor_in_place(local_changes, 0.999));
         }
         else stats.p999_local_elevation_change = 0.0f;
         stats.mean_erosion_rate          = static_cast<float>(sum_erosion * inv_n * inv_dt);

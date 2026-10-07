@@ -3517,6 +3517,13 @@ lsdtt_set_tests_properties(unit_drainage_injection_weights PROPERTIES
     LABELS "unit;point_input;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
 
+# Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
+add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
+target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
+add_test(NAME unit_order_statistics COMMAND lsdtt-test-order-statistics)
+lsdtt_set_tests_properties(unit_order_statistics PROPERTIES
+    LABELS "unit;statistics")
+
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
 target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
 
@@ -6332,6 +6339,8 @@ set(LSDTT_DOMAIN_RULES
     # data pinning (Phase 0), the header facade (Phase 1) and the format contract
     # (Phase 2 chunk 2a). Anyone touching that boundary wants `ctest -L gdal`.
     "gdal_"                  "gdal"
+    # Library-level statistics (src/utils/lsdtt_statistics and relatives).
+    "order_statistics"       "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. The
