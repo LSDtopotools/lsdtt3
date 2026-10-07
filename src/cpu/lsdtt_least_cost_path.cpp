@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_least_cost_path.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -118,8 +119,8 @@ lcp_result raster_least_cost_path(
     std::priority_queue<Node, std::vector<Node>, std::greater<Node>> pq;
     pq.push({0.0, start_flat});
 
-    static constexpr int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    static constexpr int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR = grid::d8_rowmajor_row;
+    static constexpr const auto& DC = grid::d8_rowmajor_col;
 
     const double gr2    = static_cast<double>(params.goal_radius)
                         * static_cast<double>(params.goal_radius);
@@ -237,7 +238,7 @@ void burn_monotonic_path(
         const int bc = static_cast<int>(b % meta.n_cols);
         const int dr = std::abs(ar - br);
         const int dc = std::abs(ac - bc);
-        return (dr == 1 && dc == 1) ? meta.cell_size * 1.4142135623730950488
+        return (dr == 1 && dc == 1) ? meta.cell_size * grid::k_sqrt2_d
                                     : meta.cell_size;
     };
 
@@ -299,11 +300,11 @@ void burn_capturing_path(
     const int    n_rows = meta.n_rows;
     const int    n_cols = meta.n_cols;
     const double cs      = meta.cell_size;
-    const double cs_diag = cs * 1.4142135623730950488;
+    const double cs_diag = cs * grid::k_sqrt2_d;
 
     // D8 neighbour offsets, dir 0=N,1=NE,2=E,3=SE,4=S,5=SW,6=W,7=NW.
-    static constexpr int DR[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-    static constexpr int DC[8] = { 0,  1, 1, 1, 0, -1, -1, -1};
+    static constexpr const auto& DR = grid::d8_clockwise_row;
+    static constexpr const auto& DC = grid::d8_clockwise_col;
 
     auto step_length = [&](std::int64_t a, std::int64_t b) -> double
     {

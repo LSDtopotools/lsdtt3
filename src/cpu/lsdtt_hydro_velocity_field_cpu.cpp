@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hydro_velocity_field_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
@@ -311,7 +312,7 @@ lsdtt_raster_cpu compute_travel_time_to_outlet(
 
             // Centre-to-centre step: cell size, or cell size * sqrt(2) diagonally.
             const double dist =
-                (d_row != 0 && d_col != 0) ? cell * 1.4142135623730951 : cell;
+                (d_row != 0 && d_col != 0) ? cell * grid::k_sqrt2_d : cell;
 
             acc     += w * (dist / v + tau[static_cast<std::size_t>(r)]);
             w_total += w;

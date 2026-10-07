@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
@@ -1395,10 +1396,10 @@ banded_label_result label_components_within_bands(
     banded_label_result out;
 
     const int  n_off = (connectivity == pixel_connectivity::d8) ? 8 : 4;
-    const int  dr8[8] = {-1, -1, -1,  0, 0,  1, 1, 1};
-    const int  dc8[8] = {-1,  0,  1, -1, 1, -1, 0, 1};
-    const int  dr4[4] = {-1,  0,  0,  1};
-    const int  dc4[4] = { 0, -1,  1,  0};
+    static constexpr const auto& dr8 = grid::d8_rowmajor_row;
+    static constexpr const auto& dc8 = grid::d8_rowmajor_col;
+    static constexpr const auto& dr4 = grid::d4_nwes_row;
+    static constexpr const auto& dc4 = grid::d4_nwes_col;
     const int* dr = (connectivity == pixel_connectivity::d8) ? dr8 : dr4;
     const int* dc = (connectivity == pixel_connectivity::d8) ? dc8 : dc4;
 

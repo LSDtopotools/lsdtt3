@@ -1,5 +1,6 @@
 // ignore this comment
 #include "lsdtt_basin_outline_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,8 +37,8 @@ static constexpr int stamp9[9][2] = {
 //   7 0 1
 //   6 x 2
 //   5 4 3
-static constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
-static constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+static constexpr const auto& d8_row = grid::d8_clockwise_row;
+static constexpr const auto& d8_col = grid::d8_clockwise_col;
 
 } // anonymous namespace
 

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hydro_routing_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
@@ -225,7 +226,7 @@ lsdtt_hydro_router_cpu::lsdtt_hydro_router_cpu(
                     const int dr = graph.row_from_flat(r) - row;
                     const int dc = graph.col_from_flat(r) - col;
                     dx_[static_cast<std::size_t>(flat)] =
-                        (dr != 0 && dc != 0) ? cell * 1.4142135623730951 : cell;
+                        (dr != 0 && dc != 0) ? cell * grid::k_sqrt2_d : cell;
                 }
             }
         }

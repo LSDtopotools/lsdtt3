@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_point_input.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
@@ -45,8 +46,8 @@ namespace
 //   6  x  2
 //   5  4  3
 // -----------------------------------------------------------------------------
-constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
-constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+static constexpr const auto& d8_row = grid::d8_clockwise_row;
+static constexpr const auto& d8_col = grid::d8_clockwise_col;
 
 
 // This is the arcmap format
@@ -77,7 +78,7 @@ std::int64_t arcmap_d8_code(std::uint8_t dir)
 
 
 
-constexpr double k_sqrt_2 = 1.4142135623730950488;
+constexpr double k_sqrt_2 = grid::k_sqrt2_d;
 
 struct resolved_neighbour
 {
@@ -2267,7 +2268,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_distance_from_outlet_raster() const
     const std::size_t n   = mask_.size();
     const float       ndv = static_cast<float>(meta_.no_data_value);
     const double      dx  = meta_.cell_size;
-    const double      dxy = meta_.cell_size * std::sqrt(2.0);
+    const double      dxy = meta_.cell_size * grid::k_sqrt2_d;
 
     std::vector<double> dist(n, 0.0);
 
@@ -2495,7 +2496,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_distance_to_channel_raster(
     const std::size_t  n     = mask_.size();
     const float        ndv   = static_cast<float>(meta_.no_data_value);
     const double       dx    = meta_.cell_size;
-    const double       dxy   = dx * std::sqrt(2.0);
+    const double       dxy   = dx * grid::k_sqrt2_d;
     const std::int64_t thresh = static_cast<std::int64_t>(threshold_contributing_pixels);
     constexpr uint8_t  k_no_dir = 255u;
 
@@ -2594,7 +2595,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_to_farthest_ridge_raster(
 
     const float  ndv = static_cast<float>(meta_.no_data_value);
     const double dx  = meta_.cell_size;
-    const double dxy = dx * std::sqrt(2.0);
+    const double dxy = dx * grid::k_sqrt2_d;
     constexpr uint8_t k_no_dir = 255u;
 
     // Pass 1: dist_from_outlet (forward)
@@ -2663,7 +2664,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_distance_to_farthest_ridge_raster() cons
     const std::size_t n   = mask_.size();
     const float       ndv = static_cast<float>(meta_.no_data_value);
     const double      dx  = meta_.cell_size;
-    const double      dxy = dx * std::sqrt(2.0);
+    const double      dxy = dx * grid::k_sqrt2_d;
     constexpr uint8_t k_no_dir = 255u;
 
     // Pass 1: dist_from_outlet (forward)
@@ -3117,7 +3118,7 @@ lsdtt_flow_topology_metrics calculate_flow_topological_distance(
     if (flat1 == flat2) return {0.0f, flat1}; // Incoming and outgoing edges share the exact same pixel
 
     double dx = flow.cell_size();
-    double dxy = dx * 1.4142135623730950488; // sqrt(2)
+    double dxy = dx * grid::k_sqrt2_d;
 
     // Trace path down from flat1 to outlet and record distances
     std::unordered_map<std::int64_t, double> path1;

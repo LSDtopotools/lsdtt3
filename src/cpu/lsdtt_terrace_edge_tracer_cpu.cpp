@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_terrace_edge_tracer_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
 #include "lsdtt_raster_cell_predicates_cpu.hpp"
@@ -69,8 +70,8 @@ static std::vector<int> label_centreline_components_d8_(
                static_cast<std::size_t>(col);
     };
 
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     int next_label = 1;
 
@@ -325,8 +326,8 @@ static terrace_edge_trace_record trace_from_endpoint_(
                std::isfinite(zd[idx]);
     };
 
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     const std::size_t seed_idx = idx_of(endpoint.row, endpoint.col);
 

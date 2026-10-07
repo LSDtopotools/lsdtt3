@@ -56,6 +56,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_ksn_inversion_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -79,7 +80,7 @@ namespace lsdtt
 namespace
 {
 
-constexpr double k_sqrt_2 = 1.4142135623730950488;
+constexpr double k_sqrt_2 = grid::k_sqrt2_d;
 
 // -----------------------------------------------------------------------------
 // Helpers

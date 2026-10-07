@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "../utils/lsdtt_raster_geometry.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_burn_vectormap_cpu.hpp"
 
 #include <algorithm>
@@ -670,7 +671,7 @@ lcp_burn_result burn_lcp_segment(
     const int    n_rows = meta.n_rows;
     const int    n_cols = meta.n_cols;
     const double cs      = meta.cell_size;
-    const double cs_diag = cs * 1.4142135623730950488;
+    const double cs_diag = cs * grid::k_sqrt2_d;
 
     auto rc = [&](std::int64_t f, int& r, int& c)
     { r = static_cast<int>(f / n_cols); c = static_cast<int>(f % n_cols); };
@@ -680,8 +681,8 @@ lcp_burn_result burn_lcp_segment(
         const int dc = std::abs(static_cast<int>(a % n_cols - b % n_cols));
         return (dr == 1 && dc == 1) ? cs_diag : cs;
     };
-    static constexpr int DR[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-    static constexpr int DC[8] = { 0,  1, 1, 1, 0, -1, -1, -1};
+    static constexpr const auto& DR = grid::d8_clockwise_row;
+    static constexpr const auto& DC = grid::d8_clockwise_col;
 
     int sr, sc, er, ec; rc(start_cell, sr, sc); rc(end_cell, er, ec);
     if (sr < 0 || sr >= n_rows || sc < 0 || sc >= n_cols ||

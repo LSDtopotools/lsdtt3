@@ -9,6 +9,7 @@
 // See lsdtt_landslide_placement_cpu.hpp for the design.
 
 #include "lsdtt_landslide_placement_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
@@ -188,7 +189,7 @@ bool LandslidePlacer::try_host(std::int64_t init_flat, int n_target,
     // lookup, which is what makes the exact flow distance affordable.
     const std::int64_t start_init = flow_.s_vector_start_unchecked(init_flat);
     const double cell = meta_.cell_size;
-    const double diag = cell * std::sqrt(2.0);
+    const double diag = cell * grid::k_sqrt2_d;
 
     // The initiation pixel itself must survive, or the scar is not anchored
     // where we said it was.

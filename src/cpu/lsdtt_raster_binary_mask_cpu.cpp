@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_proximity_cpu.hpp"  // euclidean_distance_transform
 
 namespace lsdtt
@@ -694,8 +695,8 @@ lsdtt_raster_cpu binary_opening_by_reconstruction(
 
     // Step 2: BFS from eroded-foreground seeds, constrained to original
     // foreground.  Uses 8-connectivity so diagonal necks are also restored.
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     std::vector<bool> visited(npix, false);
     std::queue<int>   q;
@@ -843,8 +844,8 @@ lsdtt_raster_cpu binary_fill_holes(
     for (int c = 0; c < ncols; ++c) { try_enqueue(0, c); try_enqueue(nrows-1, c); }
     for (int r = 0; r < nrows;  ++r) { try_enqueue(r, 0); try_enqueue(r, ncols-1); }
 
-    constexpr int DR[4] = {-1, 1,  0, 0};
-    constexpr int DC[4] = { 0, 0, -1, 1};
+    static constexpr const auto& DR = grid::d4_nswe_row;
+    static constexpr const auto& DC = grid::d4_nswe_col;
 
     // Also seed valid background pixels adjacent to any nodata pixel - they sit
     // at the effective exterior boundary of the valid DEM region and are outside
@@ -1241,8 +1242,8 @@ constexpr std::uint8_t k_off = 0u;
 constexpr std::uint8_t k_on  = 1u;
 
 // 8-neighbour offsets, row then column.
-constexpr int k_dr[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
-constexpr int k_dc[8] = { -1,  0,  1, -1, 1, -1, 0, 1 };
+static constexpr const auto& k_dr = grid::d8_rowmajor_row;
+static constexpr const auto& k_dc = grid::d8_rowmajor_col;
 }
 
 // -----------------------------------------------------------------------------
@@ -1462,7 +1463,7 @@ void filter_components_by_seed_reachability_in_place(
             pq.emplace(0.0f, cf);
         }
         const float straight = static_cast<float>(cell);
-        const float diag = static_cast<float>(cell * std::sqrt(2.0));
+        const float diag = static_cast<float>(cell * grid::k_sqrt2_d);
         while (!pq.empty())
         {
             const auto [d, flat] = pq.top();
@@ -1530,7 +1531,7 @@ void filter_components_by_seed_reachability_in_place(
             pq.emplace(0.0f, cf);
         }
         const float straight = static_cast<float>(cell);
-        const float diag = static_cast<float>(cell * std::sqrt(2.0));
+        const float diag = static_cast<float>(cell * grid::k_sqrt2_d);
         while (!pq.empty())
         {
             const auto [d, flat] = pq.top();

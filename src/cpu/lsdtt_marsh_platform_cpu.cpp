@@ -12,6 +12,7 @@
 // Unsupervised detection of salt marsh platforms: a topographic method. 
 // Earth Surface Dynamics 6, 239-255. https://doi.org/10.5194/esurf-6-239-2018
 #include "lsdtt_marsh_platform_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -665,7 +666,7 @@ static bool choose_best_neighbour_(
 
             if (avoid_row != std::numeric_limits<int>::min())
             {
-                if (pixel_distance_(nr, nc, avoid_row, avoid_col) <= std::sqrt(2.0))
+                if (pixel_distance_(nr, nc, avoid_row, avoid_col) <= grid::k_sqrt2_d)
                 {
                     continue;
                 }
@@ -673,7 +674,7 @@ static bool choose_best_neighbour_(
 
             if (grandad_row != std::numeric_limits<int>::min())
             {
-                if (pixel_distance_(nr, nc, grandad_row, grandad_col) <= std::sqrt(2.0))
+                if (pixel_distance_(nr, nc, grandad_row, grandad_col) <= grid::k_sqrt2_d)
                 {
                     continue;
                 }

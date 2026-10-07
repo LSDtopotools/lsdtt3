@@ -12,6 +12,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_divide_migration_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -597,7 +598,7 @@ std::vector<lsdtt_divide_segment_record> merge_divide_fragments(
 
     // One cell diagonal: see the criterion note in the header.
     const double tolerance =
-        (cell_size_m > 0.0) ? cell_size_m * std::sqrt(2.0) : 0.0;
+        (cell_size_m > 0.0) ? cell_size_m * grid::k_sqrt2_d : 0.0;
     const double tolerance_sq = tolerance * tolerance;
 
     const auto joins = [&](const lsdtt_xy& a, const lsdtt_xy& b) {

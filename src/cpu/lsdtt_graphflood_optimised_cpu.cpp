@@ -1,6 +1,7 @@
 // lsdtt_graphflood_optimised_cpu.cpp
 
 #include "lsdtt_graphflood_optimised_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
 #include "lsdtt_raster_resampling_cpu.hpp"
@@ -27,11 +28,11 @@ double seconds_since(clock_type::time_point start)
     return std::chrono::duration<double>(clock_type::now() - start).count();
 }
 
-constexpr int k_dr[8] = {-1, 0, 0, 1, -1, -1, 1, 1};
-constexpr int k_dc[8] = {0, -1, 1, 0, -1, 1, -1, 1};
-constexpr int k_pf_dr[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-constexpr int k_pf_dc[8] = {0, 1, 1, 1, 0, -1, -1, -1};
-constexpr float k_sqrt2 = 1.41421356237f;
+static constexpr const auto& k_dr = grid::d8_cardinal_first_row;
+static constexpr const auto& k_dc = grid::d8_cardinal_first_col;
+static constexpr const auto& k_pf_dr = grid::d8_clockwise_row;
+static constexpr const auto& k_pf_dc = grid::d8_clockwise_col;
+constexpr float k_sqrt2 = grid::k_sqrt2_f;
 constexpr std::uint32_t k_no_receiver =
     std::numeric_limits<std::uint32_t>::max();
 

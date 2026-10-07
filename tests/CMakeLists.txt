@@ -3555,6 +3555,14 @@ add_test(NAME unit_junction_graph_orders COMMAND lsdtt-test-junction-graph-order
 lsdtt_set_tests_properties(unit_junction_graph_orders PROPERTIES
     LABELS "unit;network")
 
+# Stage 5: neighbour tables (C01) and sqrt(2) (C19). The table checks are
+# static_asserts, so a mapping error fails the build of this test.
+add_executable(lsdtt-test-grid-neighbours cpp/test_grid_neighbours.cpp)
+target_link_libraries(lsdtt-test-grid-neighbours PRIVATE lsdtt3_cpu)
+add_test(NAME unit_grid_neighbours COMMAND lsdtt-test-grid-neighbours)
+lsdtt_set_tests_properties(unit_grid_neighbours PROPERTIES
+    LABELS "unit;raster")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
@@ -6374,6 +6382,7 @@ set(LSDTT_DOMAIN_RULES
     "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
     "junction_graph"         "network"
+    "grid_neighbours"        "raster"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"

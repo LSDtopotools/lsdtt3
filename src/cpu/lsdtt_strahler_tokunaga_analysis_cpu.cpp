@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_strahler_tokunaga_analysis_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
@@ -1399,8 +1400,8 @@ lsdtt_junction_area_ratio_result compute_junction_area_ratios(
     const std::vector<float>&   A = nc.data;
     const std::vector<uint8_t>& M = nc.mask;
 
-    static const int dR[8] = {-1, -1, -1,  0, 0,  1, 1, 1};
-    static const int dC[8] = {-1,  0,  1, -1, 1, -1, 0, 1};
+    static constexpr const auto& dR = grid::d8_rowmajor_row;
+    static constexpr const auto& dC = grid::d8_rowmajor_col;
 
     struct trib_t { double area; std::int32_t order; };
 

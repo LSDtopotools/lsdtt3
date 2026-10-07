@@ -19,6 +19,7 @@
 // which backend is in use.
 //
 //   #include "../core/lsdtt_flow_base.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 //
 //   auto flow = lsdtt::make_flow_base(dem_data, dem_mask, meta, options);
 //   // flow is unique_ptr<lsdtt_flow_base>
@@ -526,7 +527,7 @@ inline double d8_step_length(
     const int c_dn = static_cast<int>(flat_dn % static_cast<std::int64_t>(n_cols));
     const int dr   = std::abs(r_up - r_dn);
     const int dc   = std::abs(c_up - c_dn);
-    return (dr == 1 && dc == 1) ? cell_size * 1.41421356237309504880 : cell_size;
+    return (dr == 1 && dc == 1) ? cell_size * grid::k_sqrt2_d : cell_size;
 }
 
 // -----------------------------------------------------------------------------

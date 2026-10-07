@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_cross_sections_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_raster_sampling_cpu.hpp"
 
 #include <algorithm>
@@ -29,10 +30,10 @@ namespace lsdtt
 namespace
 {
 
-constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
-constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+static constexpr const auto& d8_row = grid::d8_clockwise_row;
+static constexpr const auto& d8_col = grid::d8_clockwise_col;
 
-constexpr double k_sqrt_2    = 1.4142135623730950488;
+constexpr double k_sqrt_2    = grid::k_sqrt2_d;
 constexpr double k_rad_to_deg = 57.2957795130823208768;
 
 struct sampled_raster_value

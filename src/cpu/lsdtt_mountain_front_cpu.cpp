@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_mountain_front_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "lsdtt_raster_algebra.hpp"
@@ -418,8 +419,8 @@ lsdtt_raster_cpu find_mountain_front_outlets(
     std::vector<uint8_t> out_mask(npix, uint8_t{0});
 
     // 8-connected neighbour offsets
-    static const int drow[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    static const int dcol[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& drow = grid::d8_rowmajor_row;
+    static constexpr const auto& dcol = grid::d8_rowmajor_col;
 
     for (int row = 0; row < nrows; ++row)
     {

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_manning_hydraulics_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../core/lsdtt_flow_base.hpp"
@@ -266,7 +267,7 @@ channel_path build_channel_path(
     channel_path path;
 
     const double cell_step = flow.cell_size();
-    const double diag_step = cell_step * std::sqrt(2.0);
+    const double diag_step = cell_step * grid::k_sqrt2_d;
 
     auto push = [&path](std::int64_t flat, double distance)
     {

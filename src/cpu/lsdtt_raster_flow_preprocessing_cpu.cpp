@@ -21,6 +21,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_binary_mask_vectorise_cpu.hpp"
@@ -249,9 +250,9 @@ static constexpr int k_closed  =  2;
 static constexpr int k_nodata  = -1;
 
 // 8-neighbour offsets - even = cardinal, odd = diagonal
-static const int k_dr[8] = { -1, -1,  0,  1,  1,  1,  0, -1 };
-static const int k_dc[8] = {  0,  1,  1,  1,  0, -1, -1, -1 };
-static constexpr float k_sqrt2 = 1.41421356f;
+static constexpr const auto& k_dr = grid::d8_clockwise_row;
+static constexpr const auto& k_dc = grid::d8_clockwise_col;
+static constexpr float k_sqrt2 = grid::k_sqrt2_f;
 
 // Sentinel value for backlink array - cell has no parent in the traversal
 static constexpr uint32_t k_no_backlink = std::numeric_limits<uint32_t>::max();
@@ -2309,8 +2310,8 @@ lsdtt_raster_cpu stencil_difference_magnitude(
             const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
             if (!m[i]) continue;
 
-            const int dr[4] = {-1, 1, 0, 0};
-            const int dc[4] = { 0, 0,-1, 1};
+            static constexpr const auto& dr = grid::d4_nswe_row;
+            static constexpr const auto& dc = grid::d4_nswe_col;
             double best = -1.0;
             for (int nb = 0; nb < 4; ++nb)
             {
@@ -2440,8 +2441,8 @@ perona_malik_result perona_malik_diffusion(
                 // exists and carries data. Skipping this is how a nodata hole
                 // would bleed a zero into the interior on the first step.
                 double acc = 0.0;
-                const int dr[4] = {-1, 1, 0, 0};
-                const int dc[4] = { 0, 0,-1, 1};
+                static constexpr const auto& dr = grid::d4_nswe_row;
+                static constexpr const auto& dc = grid::d4_nswe_col;
                 for (int nb = 0; nb < 4; ++nb)
                 {
                     const int rr = r + dr[nb];

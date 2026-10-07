@@ -22,6 +22,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_network_analysis_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
@@ -43,7 +44,7 @@ namespace lsdtt
 namespace
 {
 
-constexpr double k_sqrt_2 = 1.4142135623730950488;
+constexpr double k_sqrt_2 = grid::k_sqrt2_d;
 
 // forward declarations
 void append_fit_result_to_segment_table(

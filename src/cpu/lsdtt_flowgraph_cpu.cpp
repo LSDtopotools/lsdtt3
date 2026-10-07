@@ -28,6 +28,7 @@
 //     Environmental Modelling & Software 133: 104804.
 
 #include "lsdtt_flowgraph_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_point_input.hpp"
@@ -67,11 +68,11 @@ constexpr int k_af[8]    = {  1, -1,  1, -1,  1, -1,  1, -1 };
 
 // MFD 8-neighbour offsets.  Indices 0-3 are cardinal (distance = d);
 // indices 4-7 are diagonal (distance = dsqrt2).
-constexpr int k_nb_dr[8] = { -1,  0,  0,  1, -1, -1,  1,  1 };
-constexpr int k_nb_dc[8] = {  0, -1,  1,  0, -1,  1, -1,  1 };
+static constexpr const auto& k_nb_dr = grid::d8_cardinal_first_row;
+static constexpr const auto& k_nb_dc = grid::d8_cardinal_first_col;
 
 constexpr float k_pi_over_4  = static_cast<float>(M_PI / 4.0);
-constexpr float k_sqrt2      = 1.41421356237f;
+constexpr float k_sqrt2      = grid::k_sqrt2_f;
 constexpr float k_rad_to_deg = static_cast<float>(180.0 / M_PI);
 
 } // anonymous namespace

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_junction_network_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_junction_graph_orders.hpp"
 
 #include <algorithm>
@@ -41,8 +42,8 @@ namespace
 //   6  x  2
 //   5  4  3
 // -----------------------------------------------------------------------------
-constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
-constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+static constexpr const auto& d8_row = grid::d8_clockwise_row;
+static constexpr const auto& d8_col = grid::d8_clockwise_col;
 
 struct pixel_order_frame
 {
@@ -2085,7 +2086,7 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
 
                 const double cell = meta_.cell_size;
                 link_length += (row_step && col_step)
-                    ? cell * std::sqrt(2.0)     // diagonal
+                    ? cell * grid::k_sqrt2_d    // diagonal
                     : cell;                     // cardinal
 
                 // A wrapped step is one cell of FLOW but a domain-width jump in

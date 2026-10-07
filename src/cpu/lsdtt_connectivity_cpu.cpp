@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_connectivity_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -96,7 +97,7 @@ lsdtt_raster_result compute_D_down_raster(
 {
     const std::size_t n   = W.data.size();
     const double      dx  = W.meta.cell_size;
-    const double      dxy = dx * std::sqrt(2.0);
+    const double      dxy = dx * grid::k_sqrt2_d;
 
     const lsdtt_raster_result dir = flow.get_d8_flow_direction_raster();
 

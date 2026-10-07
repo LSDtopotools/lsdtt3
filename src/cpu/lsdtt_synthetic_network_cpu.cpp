@@ -10,6 +10,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_synthetic_network_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -24,8 +25,8 @@
 namespace lsdtt {
 
 // D8 neighbour offsets (row, col)
-static const int k_dr[8] = {-1, -1, -1,  0, 0,  1, 1, 1};
-static const int k_dc[8] = {-1,  0,  1, -1, 1, -1, 0, 1};
+static constexpr const auto& k_dr = grid::d8_rowmajor_row;
+static constexpr const auto& k_dc = grid::d8_rowmajor_col;
 
 // -----------------------------------------------------------------------------
 lsdtt_synthetic_network_cpu::lsdtt_synthetic_network_cpu(
@@ -429,7 +430,7 @@ double lsdtt_synthetic_network_cpu::link_length_(std::int64_t node,
     if (opts_.periodic_columns && dc > ncols_ - dc) dc = ncols_ - dc;
 
     const bool diag = (dr + dc == 2);
-    return diag ? opts_.cell_size * std::sqrt(2.0) : opts_.cell_size;
+    return diag ? opts_.cell_size * grid::k_sqrt2_d : opts_.cell_size;
 }
 
 // -----------------------------------------------------------------------------

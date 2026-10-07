@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_burn_streams_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -757,7 +758,7 @@ int burn_vector_in_window(
     const int    nr = meta.n_rows;
     const int    nc = meta.n_cols;
     const double cs = meta.cell_size;
-    const double perp_thr = static_cast<float>(std::sqrt(2.0) * 0.5 * cs);
+    const double perp_thr = static_cast<float>(grid::k_sqrt2_d * 0.5 * cs);
 
     int total_burned = 0;
 
@@ -1969,7 +1970,7 @@ std::vector<burned_stream_profile> burn_streams_in_place(
     // A pixel is considered "on the channel" when the perpendicular distance
     // to the polyline is within half the pixel diagonal.
     const float perp_threshold =
-        static_cast<float>(std::sqrt(2.0) * 0.5 * cell_size);
+        static_cast<float>(grid::k_sqrt2_d * 0.5 * cell_size);
 
     // -----------------------------------------------------------------------
     // Process each polyline feature independently

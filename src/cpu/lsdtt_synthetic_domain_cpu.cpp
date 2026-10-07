@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include "lsdtt_synthetic_domain_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -63,8 +64,8 @@ void keep_largest_land_component(
             {
                 const auto [cr, cc] = q.front(); q.pop();
                 ++comp_size;
-                const int dr[4] = {-1, 1, 0, 0};
-                const int dc[4] = {0, 0, -1, 1};
+                static constexpr const auto& dr = grid::d4_nswe_row;
+                static constexpr const auto& dc = grid::d4_nswe_col;
                 for (int k = 0; k < 4; ++k)
                 {
                     const int nr = cr + dr[k], nc = cc + dc[k];

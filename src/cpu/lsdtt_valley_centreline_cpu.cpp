@@ -15,6 +15,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_valley_centreline_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 
@@ -41,8 +42,8 @@ constexpr std::uint8_t k_off = 0u;
 constexpr std::uint8_t k_on  = 1u;
 
 // 8-neighbour offsets.
-constexpr int k_dr[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
-constexpr int k_dc[8] = { -1,  0,  1, -1, 1, -1, 0, 1 };
+static constexpr const auto& k_dr = grid::d8_rowmajor_row;
+static constexpr const auto& k_dc = grid::d8_rowmajor_col;
 
 // Dilate a binary mask by n iterations of 8-neighbour growth, staying inside
 // the valid domain.
@@ -485,7 +486,7 @@ valley_centreline_result extract_valley_centrelines(
             cost[static_cast<std::size_t>(start_f)] = 0.0;
             pq.emplace(0.0, start_f);
             const double straight = cell;
-            const double diag = cell * std::sqrt(2.0);
+            const double diag = cell * grid::k_sqrt2_d;
             while (!pq.empty())
             {
                 const auto [d, flat] = pq.top();

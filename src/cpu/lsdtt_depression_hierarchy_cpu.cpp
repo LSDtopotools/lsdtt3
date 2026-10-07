@@ -19,6 +19,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_depression_hierarchy_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <array>
@@ -49,8 +50,8 @@ namespace {
 //   7  0  1
 //   6  x  2
 //   5  4  3
-constexpr std::array<int, 8> k_dy{{ -1, -1,  0,  1,  1,  1,  0, -1 }};
-constexpr std::array<int, 8> k_dx{{  0,  1,  1,  1,  0, -1, -1, -1 }};
+static constexpr const auto& k_dy = grid::d8_clockwise_row;
+static constexpr const auto& k_dx = grid::d8_clockwise_col;
 
 // The inverse of direction d: the direction a neighbour must have to point
 // back at the focal cell. Used to set flowdir_out for newly labelled cells.

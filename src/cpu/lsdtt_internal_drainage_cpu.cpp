@@ -13,6 +13,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_internal_drainage_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1643,8 +1644,8 @@ tag_upslope_of_sinks(const lsdtt_flow_base&            flow,
     }
     else
     {
-        static constexpr int d_row[8] = { -1, -1, 0, 1, 1, 1, 0, -1 };
-        static constexpr int d_col[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+        static constexpr const auto& d_row = grid::d8_clockwise_row;
+        static constexpr const auto& d_col = grid::d8_clockwise_col;
 
         for (const sink_candidate& sink : sinks)
         {
@@ -1708,7 +1709,7 @@ tag_upslope_of_sinks(const lsdtt_flow_base&            flow,
                 selected_outlets.emplace(flat, sink.routing_sink_id);
                 const bool diagonal = d_row[direction] != 0 && d_col[direction] != 0;
                 sink_seeds.push_back(
-                    { flat, meta.cell_size * (diagonal ? std::sqrt(2.0) : 1.0) });
+                    { flat, meta.cell_size * (diagonal ? grid::k_sqrt2_d : 1.0) });
             }
 
             if (sink_seeds.empty())

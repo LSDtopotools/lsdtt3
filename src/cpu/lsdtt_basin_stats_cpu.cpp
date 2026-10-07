@@ -7,6 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 
 #include "lsdtt_basin_stats_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -40,7 +41,7 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
 
     const double cell_size    = meta.cell_size;
     const double cell_area_km2 = cell_size * cell_size / 1.0e6;
-    const double diag_len      = cell_size * std::sqrt(2.0);
+    const double diag_len      = cell_size * grid::k_sqrt2_d;
 
     const bool has_channel_network = (channel_network != nullptr);
 
