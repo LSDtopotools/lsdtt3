@@ -169,7 +169,7 @@ lcp_result raster_least_cost_path(
             if (!mask[nf]) continue;
 
             const bool   is_diag = (DR[k] != 0 && DC[k] != 0);
-            const double step    = is_diag ? cs * 1.41421356237 : cs;
+            const double step    = is_diag ? cs * grid::k_sqrt2_d : cs;
 
             // Channel-score weighting: pixels with high channel score are cheaper.
             double channel_factor = 1.0;

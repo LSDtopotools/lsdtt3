@@ -4379,6 +4379,21 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "c         : 15"
 )
 
+# Valley spacing proper: no test ran it before 2026-10-07. See the parameter
+# file for why (consolidation D5 changed its chamfer diagonal weight).
+add_lsdtt_cli_smoke_test(
+    smoke_spectral_analysis_valley_spacing
+    lsdtt-spectral-analysis
+    spectral_analysis_valley_spacing.param.in
+    vsp_valley_spacing.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect vsp_valley_spacing_spectrum.csv
+    --stdout-contains "--- Valley spacing ---"
+    --stdout-contains "Hillslope length (p90)  : 30 m"
+)
+lsdtt_set_tests_properties(smoke_spectral_analysis_valley_spacing PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 add_lsdtt_cli_smoke_test(
     regression_spectral_analysis_valley_spacing_legacy_alias
     lsdtt-spectral-analysis
