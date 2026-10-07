@@ -289,6 +289,15 @@ set(LSDTT_STREAM_BURNING_FIXTURE_DIR
 set(LSDTT_BASIN_STATS_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/basin_stats_fixture")
 
+# Terrace-valley DEM (lsdtt-synthetic-surfaces) plus the source-point and reach
+# CSVs, read by the lsdtt-cross-sections and lsdtt-bankfull-width tests.
+set(LSDTT_CROSS_SECTIONS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/cross_sections_fixture")
+
+# Synthetic marsh DEM written by tests/scripts/make_marsh_topography_fixture.py.
+set(LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/marsh_topography_fixture")
+
 # Written by lsdtt-test-hype-cli-fixture (the fixture_hype_cli CTest fixture):
 # a 60x60 projected Y-network DEM, land-use and soil rasters, the four HYPE
 # parameter tables (plus three broken ones), 120 days of forcing and an outlet
@@ -1472,6 +1481,125 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
     FIXTURES_REQUIRED stream_burning_fixture)
+
+# =============================================================================
+# lsdtt-cross-sections, lsdtt-bankfull-width, lsdtt-marsh-topography,
+# lsdtt-water-centreline
+#
+# None of these four CLIs had a test until 2026-10-07. Each is the only CLI
+# route to modules the src/utils + src/cpu consolidation changes
+# (lsdtt_cross_sections_cpu, lsdtt_manning_hydraulics_cpu,
+# lsdtt_marsh_platform_cpu, lsdtt_tidal_channel_cpu,
+# lsdtt_tidal_skeleton_metrics_cpu, lsdtt_water_area_centreline_cpu), and that
+# work gates on hashing every output the CLI tests write
+# (tests/scripts/capture_consolidation_e2e_hashes.py), so a CLI without a test
+# had no gate at all. These smoke tests pin what each run must report; the
+# numbers themselves are guarded by the e2e hashes, not frozen here.
+# =============================================================================
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_cross_sections_dem
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+            --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/cross_sections_fixture_dem.param.in"
+            --read-path "${LSDTT_TEST_DATA_DIR}"
+            --work-dir "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}"
+            --expect xs_terrace_staircase.tif)
+    lsdtt_mark_test_runtime(python fixture_cross_sections_dem)
+else()
+    lsdtt_mark_test_unregistered(python fixture_cross_sections_dem)
+endif()
+lsdtt_set_tests_properties(fixture_cross_sections_dem PROPERTIES
+    LABELS "fixture;cross_sections"
+    FIXTURES_SETUP cross_sections_fixture)
+
+add_test(NAME fixture_cross_sections_inputs
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/cross_sections_source.csv"
+        "${LSDTT_TEST_DATA_DIR}/bankfull_width_reaches.csv"
+        "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out/")
+lsdtt_set_tests_properties(fixture_cross_sections_inputs PROPERTIES
+    LABELS "fixture;cross_sections"
+    FIXTURES_SETUP cross_sections_fixture
+    DEPENDS fixture_cross_sections_dem)
+
+add_lsdtt_cli_smoke_test(
+    smoke_cross_sections
+    lsdtt-cross-sections
+    cross_sections_smoke.param.in
+    xsec_cross_sections.fgb
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --expect xsec_channel_network_lines.fgb
+    --expect xsec_cross_section_sample_points.fgb
+    --expect xsec_vertical_excess_curvature.tif
+    --stdout-contains "Points mapped       : 1"
+    --stdout-contains "Channel cells : 140"
+    --stdout-contains "Cross sections written from 14 channel centres."
+)
+lsdtt_set_tests_properties(smoke_cross_sections PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width
+    lsdtt-bankfull-width
+    bankfull_width_smoke.param.in
+    bf_manning_widths.csv
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --expect bf_channel_profile.csv
+    --expect bf_cross_section_sample_points.fgb
+    --expect bf_manning_bank_points.fgb
+    --stdout-contains "Cross sections with valid slope: 14 of 14"
+    --stdout-contains "Reaches loaded                          : 2"
+    --stdout-contains "Manning widths: 14 valid out of 14 sections matched to a reach by distance."
+    --expect-file-not-contains "bf_manning_widths.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_bankfull_width PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_marsh_topography_dem
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/make_marsh_topography_fixture.py"
+            "${LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR}")
+    lsdtt_mark_test_runtime(python fixture_marsh_topography_dem)
+else()
+    lsdtt_mark_test_unregistered(python fixture_marsh_topography_dem)
+endif()
+lsdtt_set_tests_properties(fixture_marsh_topography_dem PROPERTIES
+    LABELS "fixture;marsh"
+    FIXTURES_SETUP marsh_topography_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_marsh_topography
+    lsdtt-marsh-topography
+    marsh_topography_smoke.param.in
+    marsh_marsh_platform_mask.tif
+    --read-path "${LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR}"
+    --expect marsh_marsh_platform_labels.tif
+    --expect marsh_marsh_scarp_mask.tif
+    --expect marsh_marsh_platforms.fgb
+    --expect marsh_tidal_channel_mask.tif
+    --expect marsh_tidal_channel_skeleton.tif
+    --expect marsh_tidal_upl.tif
+    --expect marsh_tidal_sections.fgb
+    --expect marsh_tidal_stations.fgb
+    --expect marsh_tidal_stations.csv
+    --stdout-contains "Building nodes and sections (8 segments)..."
+    --stdout-contains "Computing cross-sections (35 stations)..."
+)
+lsdtt_set_tests_properties(smoke_marsh_topography PROPERTIES
+    FIXTURES_REQUIRED marsh_topography_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_water_centreline
+    lsdtt-water-centreline
+    water_centreline_smoke.param.in
+    wc_water_centreline.fgb
+    --stdout-contains "Water areas: 2   Water lines: 5"
+    --stdout-contains "treated as loch    : 1"
+    --stdout-contains "Tributary connectors : 4"
+    --stdout-contains "Pass-through lines    : 4"
+)
 
 # =============================================================================
 # lsdtt-basin-stats
@@ -6125,6 +6253,12 @@ set(LSDTT_DOMAIN_RULES
     # mountain_front is landform/relief work and feature_finder is multi-scale
     # surface response, so both sit in the surface compartment.
     "mountain_front|feature_finder" "surface_metrics"
+    # Added 2026-10-07 with the first tests these four CLIs have had. Cross
+    # sections, bankfull width and the water-body centreline are channel /
+    # hydrography work; marsh platform and tidal channel extraction is landform
+    # extraction, beside feature_finder.
+    "cross_sections|bankfull_width|water_centreline" "network"
+    "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
     "stream_burning"         "network"
     "sediment_routing"       "network"

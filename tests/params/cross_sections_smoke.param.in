@@ -1,0 +1,24 @@
+# Smoke test for lsdtt-cross-sections on the terrace-valley fixture DEM.
+#
+# cross_section_half_length_metres is 160 m DELIBERATELY: the channel is ~150 m
+# from the east and west edges, so the outer samples of every section fall off
+# the raster and the out-of-grid branch of the bilinear sampler runs, not just
+# the interior. Vertical excess curvature is sampled along the sections so the
+# polyfit path is exercised too.
+read_path: __READ_PATH__
+read_fname: xs_terrace_staircase.tif
+write_path: __WRITE_PATH__
+write_fname: xsec
+
+n_threads: 1
+write_output_format: gtiff
+source_points_path: __READ_PATH__/cross_sections_source.csv
+
+cross_section_half_length_metres: 160
+cross_section_sample_spacing_metres: 2
+bearing_window_length_metres: 20
+cross_section_thinning: 10
+
+write_vertical_excess_curvature_raster: true
+vertical_excess_curvature_lambda_metres: 10
+include_vertical_excess_curvature_in_cross_section_points: true
