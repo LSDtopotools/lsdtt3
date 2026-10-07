@@ -9,6 +9,7 @@
 
 #include "lsdtt_raster_coregistration_cpu.hpp"
 
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
 #include "../utils/lsdtt_linear_algebra.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "../utils/lsdtt_statistics.hpp"
@@ -159,12 +160,8 @@ static bool valid_cell_value(
     int row,
     int col)
 {
-    if (row < 0 || col < 0 || row >= meta.n_rows || col >= meta.n_cols) return false;
-    if (mask(row, col) == 0u) return false;
-    const float v = data(row, col);
-    if (!std::isfinite(v)) return false;
-    if (meta.is_nodata(v)) return false;
-    return true;
+    return raster_in_bounds(row, col, meta.n_rows, meta.n_cols) &&
+           raster_value_is_valid(meta, mask(row, col), data(row, col));
 }
 
 static void compute_slope_tan_and_aspect(

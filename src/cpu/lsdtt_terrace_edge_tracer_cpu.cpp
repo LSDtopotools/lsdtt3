@@ -9,6 +9,7 @@
 
 #include "lsdtt_terrace_edge_tracer_cpu.hpp"
 
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -35,17 +36,6 @@ struct rc_pixel
     int row = -1;
     int col = -1;
 };
-
-static bool is_valid_scalar_(
-    const lsdtt_raster_meta& meta,
-    const std::vector<float>& data,
-    const std::vector<uint8_t>& mask,
-    std::size_t idx)
-{
-    return mask[idx] != 0 &&
-           !meta.is_nodata(data[idx]) &&
-           std::isfinite(data[idx]);
-}
 
 static double median_copy_(std::vector<double> vals)
 {
@@ -109,7 +99,7 @@ static std::vector<int> label_centreline_components_d8_(
         {
             const std::size_t seed = idx_of(row, col);
 
-            if (!is_valid_scalar_(meta, data, mask, seed)) continue;
+            if (!raster_cell_is_valid(meta, data, mask, seed)) continue;
             if (data[seed] <= 0.5f) continue;
             if (labels[seed] != 0) continue;
 
@@ -134,7 +124,7 @@ static std::vector<int> label_centreline_components_d8_(
                     if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
 
                     const std::size_t nidx = idx_of(nr, nc);
-                    if (!is_valid_scalar_(meta, data, mask, nidx)) continue;
+                    if (!raster_cell_is_valid(meta, data, mask, nidx)) continue;
                     if (data[nidx] <= 0.5f) continue;
                     if (labels[nidx] != 0) continue;
 
@@ -204,7 +194,7 @@ static std::vector<std::vector<rc_pixel>> gather_endpoint_pixels_(
             for (int col = 0; col < ncols; ++col)
             {
                 const std::size_t idx = idx_of(row, col);
-                if (!is_valid_scalar_(emeta, ed, em, idx)) continue;
+                if (!raster_cell_is_valid(emeta, ed, em, idx)) continue;
                 if (ed[idx] <= 0.5f) continue;
 
                 endpoint_pixels.push_back({row, col});
@@ -243,7 +233,7 @@ static terrace_edge_seed_info compute_seed_stats_(
 
     for (const std::size_t idx : pixels)
     {
-        if (!is_valid_scalar_(meta, data, mask, idx)) continue;
+        if (!raster_cell_is_valid(meta, data, mask, idx)) continue;
         z.push_back(static_cast<double>(data[idx]));
     }
 

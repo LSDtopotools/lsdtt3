@@ -30,6 +30,7 @@
 
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
 #include "../utils/lsdtt_histogram.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -41,37 +42,6 @@ namespace
 // -----------------------------------------------------------------------------
 // Basic helpers
 // -----------------------------------------------------------------------------
-inline bool is_valid_scalar_(
-    const lsdtt_raster_meta&       meta,
-    const std::vector<float>&      data,
-    const std::vector<uint8_t>&    mask,
-    std::size_t                    idx)
-{
-    return mask[idx] != 0 &&
-           !meta.is_nodata(data[idx]) &&
-           std::isfinite(data[idx]);
-}
-
-inline bool is_binary_fg_(
-    const lsdtt_raster_meta&       meta,
-    const std::vector<float>&      data,
-    const std::vector<uint8_t>&    mask,
-    std::size_t                    idx)
-{
-    return is_valid_scalar_(meta, data, mask, idx) && data[idx] > 0.5f;
-}
-
-inline std::size_t idx_of_(int row, int col, int ncols)
-{
-    return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
-           static_cast<std::size_t>(col);
-}
-
-inline bool in_bounds_(int row, int col, int nrows, int ncols)
-{
-    return row >= 0 && row < nrows && col >= 0 && col < ncols;
-}
-
 inline double pixel_distance_(int r0, int c0, int r1, int c1)
 {
     const double dr = static_cast<double>(r0 - r1);
@@ -142,7 +112,7 @@ static std::vector<uint8_t> make_valid_domain_mask_(const lsdtt_raster_cpu& rast
     std::vector<uint8_t> out(data.size(), uint8_t{0});
     for (std::size_t i = 0; i < data.size(); ++i)
     {
-        if (is_valid_scalar_(meta, data, mask, i))
+        if (raster_cell_is_valid(meta, data, mask, i))
         {
             out[i] = uint8_t{1};
         }
@@ -211,7 +181,7 @@ static std::vector<uint8_t> foreground_mask_from_binary_raster_(
 
     for (std::size_t i = 0; i < data.size(); ++i)
     {
-        if (is_binary_fg_(meta, data, mask, i))
+        if (raster_cell_is_foreground(meta, data, mask, i))
         {
             out[i] = uint8_t{1};
         }
@@ -241,7 +211,7 @@ static lsdtt_raster_cpu compute_relative_relief_(
 
     for (std::size_t i = 0; i < npix; ++i)
     {
-        if (!is_valid_scalar_(meta, data, mask, i)) continue;
+        if (!raster_cell_is_valid(meta, data, mask, i)) continue;
         const double v = static_cast<double>(data[i]);
         vmin = std::min(vmin, v);
         vmax = std::max(vmax, v);
@@ -264,7 +234,7 @@ static lsdtt_raster_cpu compute_relative_relief_(
 #endif
     for (std::int64_t i = 0; i < static_cast<std::int64_t>(npix); ++i)
     {
-        if (!is_valid_scalar_(meta, data, mask, static_cast<std::size_t>(i))) continue;
+        if (!raster_cell_is_valid(meta, data, mask, static_cast<std::size_t>(i))) continue;
 
         out[static_cast<std::size_t>(i)] =
             static_cast<float>((static_cast<double>(data[static_cast<std::size_t>(i)]) - vmin) / denom);
@@ -371,7 +341,7 @@ static cutoff_result_ compute_cutoff_histogram_(
 
     for (std::size_t i = 0; i < dd.size(); ++i)
     {
-        if (!is_valid_scalar_(meta, dd, dm, i)) continue;
+        if (!raster_cell_is_valid(meta, dd, dm, i)) continue;
 
         platform_values.push_back((platform_order[i] > 0.5f) ? static_cast<double>(dd[i]) : 0.0);
         search_values.push_back((sm[i] != 0 && sd[i] > 0.5f) ? static_cast<double>(dd[i]) : 0.0);
@@ -517,8 +487,8 @@ static search_space_result_ compute_search_space_(
         {
             const std::size_t idx = static_cast<std::size_t>(i);
 
-            if (!is_valid_scalar_(meta, dd, dm, idx)) continue;
-            if (!is_valid_scalar_(meta, sd, sm, idx)) continue;
+            if (!raster_cell_is_valid(meta, dd, dm, idx)) continue;
+            if (!raster_cell_is_valid(meta, sd, sm, idx)) continue;
 
             const float v = dd[idx] * sd[idx];
             crossover[idx] = v;
@@ -535,8 +505,8 @@ static search_space_result_ compute_search_space_(
 #else
     for (std::size_t i = 0; i < npix; ++i)
     {
-        if (!is_valid_scalar_(meta, dd, dm, i)) continue;
-        if (!is_valid_scalar_(meta, sd, sm, i)) continue;
+        if (!raster_cell_is_valid(meta, dd, dm, i)) continue;
+        if (!raster_cell_is_valid(meta, sd, sm, i)) continue;
 
         const float v = dd[i] * sd[i];
         crossover[i] = v;
@@ -565,7 +535,7 @@ static search_space_result_ compute_search_space_(
     for (std::int64_t i = 0; i < static_cast<std::int64_t>(npix); ++i)
     {
         const std::size_t idx = static_cast<std::size_t>(i);
-        if (!is_valid_scalar_(meta, out.crossover.get_data(), out.crossover.get_mask(), idx)) continue;
+        if (!raster_cell_is_valid(meta, out.crossover.get_data(), out.crossover.get_mask(), idx)) continue;
 
         search_mask[idx] = uint8_t{1};
         search[idx] = (out.crossover.get_data()[idx] > static_cast<float>(threshold)) ? 1.0f : 0.0f;
@@ -573,16 +543,16 @@ static search_space_result_ compute_search_space_(
 
     for (int col = 0; col < ncols; ++col)
     {
-        const std::size_t i0 = idx_of_(0, col, ncols);
-        const std::size_t i1 = idx_of_(nrows - 1, col, ncols);
+        const std::size_t i0 = raster_flat_index(0, col, ncols);
+        const std::size_t i1 = raster_flat_index(nrows - 1, col, ncols);
         if (search_mask[i0] != 0) search[i0] = 0.0f;
         if (search_mask[i1] != 0) search[i1] = 0.0f;
     }
 
     for (int row = 0; row < nrows; ++row)
     {
-        const std::size_t i0 = idx_of_(row, 0, ncols);
-        const std::size_t i1 = idx_of_(row, ncols - 1, ncols);
+        const std::size_t i0 = raster_flat_index(row, 0, ncols);
+        const std::size_t i1 = raster_flat_index(row, ncols - 1, ncols);
         if (search_mask[i0] != 0) search[i0] = 0.0f;
         if (search_mask[i1] != 0) search[i1] = 0.0f;
     }
@@ -619,9 +589,9 @@ static std::vector<uint8_t> detect_scarp_seeds_(
     {
         for (int col = 1; col < ncols - 1; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
+            const std::size_t idx = raster_flat_index(row, col, ncols);
 
-            if (!is_valid_scalar_(meta, sd, sm, idx)) continue;
+            if (!raster_cell_is_valid(meta, sd, sm, idx)) continue;
             if (!(qm[idx] != 0 && qd[idx] > 0.5f)) continue;
 
             const float centre = sd[idx];
@@ -632,8 +602,8 @@ static std::vector<uint8_t> detect_scarp_seeds_(
                 for (int dc = -1; dc <= 1; ++dc)
                 {
                     if (dr == 0 && dc == 0) continue;
-                    const std::size_t nidx = idx_of_(row + dr, col + dc, ncols);
-                    if (!is_valid_scalar_(meta, sd, sm, nidx)) continue;
+                    const std::size_t nidx = raster_flat_index(row + dr, col + dc, ncols);
+                    if (!raster_cell_is_valid(meta, sd, sm, nidx)) continue;
                     if (sd[nidx] > centre)
                     {
                         is_max = false;
@@ -685,12 +655,12 @@ static bool choose_best_neighbour_(
 
             const int nr = row + dr;
             const int nc = col + dc;
-            if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+            if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-            const std::size_t nidx = idx_of_(nr, nc, ncols);
+            const std::size_t nidx = raster_flat_index(nr, nc, ncols);
 
             if (available[nidx] == 0) continue;
-            if (!is_valid_scalar_(meta, sd, sm, nidx)) continue;
+            if (!raster_cell_is_valid(meta, sd, sm, nidx)) continue;
             if (!(qm[nidx] != 0 && qd[nidx] > 0.5f)) continue;
 
             if (avoid_row != std::numeric_limits<int>::min())
@@ -740,7 +710,7 @@ static void grow_scarps_(
     std::vector<uint8_t> available(npix, uint8_t{0});
     for (std::size_t i = 0; i < npix; ++i)
     {
-        if (is_binary_fg_(search_space.get_meta(), search_space.get_data(), search_space.get_mask(), i))
+        if (raster_cell_is_foreground(search_space.get_meta(), search_space.get_data(), search_space.get_mask(), i))
         {
             available[i] = uint8_t{1};
         }
@@ -761,7 +731,7 @@ static void grow_scarps_(
     {
         for (int col = 0; col < ncols; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
+            const std::size_t idx = raster_flat_index(row, col, ncols);
             if (seed_mask[idx] == 0) continue;
 
             int ridge_count = 0;
@@ -771,8 +741,8 @@ static void grow_scarps_(
                 {
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
-                    if (scarp_order[idx_of_(nr, nc, ncols)] > 0.5f) ++ridge_count;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
+                    if (scarp_order[raster_flat_index(nr, nc, ncols)] > 0.5f) ++ridge_count;
                 }
             }
 
@@ -782,7 +752,7 @@ static void grow_scarps_(
                 continue;
             }
 
-            const std::size_t i1 = idx_of_(r1, c1, ncols);
+            const std::size_t i1 = raster_flat_index(r1, c1, ncols);
             scarp_order[i1] = 2.0f;
             available[i1] = uint8_t{0};
 
@@ -791,7 +761,7 @@ static void grow_scarps_(
                 int r2 = -1, c2 = -1;
                 if (choose_best_neighbour_(row, col, slope, search_space, available, r2, c2, r1, c1))
                 {
-                    const std::size_t i2 = idx_of_(r2, c2, ncols);
+                    const std::size_t i2 = raster_flat_index(r2, c2, ncols);
                     scarp_order[i2] = 2.0f;
                     available[i2] = uint8_t{0};
                 }
@@ -808,7 +778,7 @@ static void grow_scarps_(
         {
             for (int col = 0; col < ncols; ++col)
             {
-                const std::size_t idx = idx_of_(row, col, ncols);
+                const std::size_t idx = raster_flat_index(row, col, ncols);
                 if (std::round(scarp_order[idx]) != order - 1) continue;
 
                 int ridge_count = 0;
@@ -821,9 +791,9 @@ static void grow_scarps_(
                     {
                         const int nr = row + dr;
                         const int nc = col + dc;
-                        if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                        if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                        const std::size_t nidx = idx_of_(nr, nc, ncols);
+                        const std::size_t nidx = raster_flat_index(nr, nc, ncols);
                         if (scarp_order[nidx] > 0.5f)
                         {
                             ++ridge_count;
@@ -850,7 +820,7 @@ static void grow_scarps_(
                     continue;
                 }
 
-                const std::size_t nidx = idx_of_(nr, nc, ncols);
+                const std::size_t nidx = raster_flat_index(nr, nc, ncols);
                 scarp_order[nidx] = static_cast<float>(order);
                 available[nidx] = uint8_t{0};
                 any_added = true;
@@ -883,7 +853,7 @@ static std::vector<uint8_t> clean_scarps_(
 
     for (std::size_t i = 0; i < npix; ++i)
     {
-        if (!is_valid_scalar_(meta, dd, dm, i)) continue;
+        if (!raster_cell_is_valid(meta, dd, dm, i)) continue;
         clipped_dem[i] = dd[i];
         valid_dem.push_back(static_cast<double>(dd[i]));
     }
@@ -923,7 +893,7 @@ static std::vector<uint8_t> clean_scarps_(
     {
         for (int col = 0; col < ncols; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
+            const std::size_t idx = raster_flat_index(row, col, ncols);
             if (!(scarp_order[idx] > 0.5f)) continue;
 
             float local_max = 0.0f;
@@ -933,10 +903,10 @@ static std::vector<uint8_t> clean_scarps_(
                 {
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                    const std::size_t nidx = idx_of_(nr, nc, ncols);
-                    if (!is_valid_scalar_(meta, dd, dm, nidx)) continue;
+                    const std::size_t nidx = raster_flat_index(nr, nc, ncols);
+                    if (!raster_cell_is_valid(meta, dd, dm, nidx)) continue;
                     local_max = std::max(local_max, clipped_dem[nidx]);
                 }
             }
@@ -958,7 +928,7 @@ static std::vector<uint8_t> clean_scarps_(
     {
         for (int col = 0; col < ncols; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
+            const std::size_t idx = raster_flat_index(row, col, ncols);
             if (keep1[idx] == 0) continue;
 
             int count = 0;
@@ -968,9 +938,9 @@ static std::vector<uint8_t> clean_scarps_(
                 {
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                    if (keep1[idx_of_(nr, nc, ncols)] != 0) ++count;
+                    if (keep1[raster_flat_index(nr, nc, ncols)] != 0) ++count;
                 }
             }
 
@@ -1008,8 +978,8 @@ static std::vector<float> precompute_local_dem_max_11x11_(
     {
         for (int col = 0; col < ncols; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
-            if (!is_valid_scalar_(meta, dd, dm, idx)) continue;
+            const std::size_t idx = raster_flat_index(row, col, ncols);
+            if (!raster_cell_is_valid(meta, dd, dm, idx)) continue;
 
             float local_max = -std::numeric_limits<float>::infinity();
 
@@ -1019,10 +989,10 @@ static std::vector<float> precompute_local_dem_max_11x11_(
                 {
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                    const std::size_t nidx = idx_of_(nr, nc, ncols);
-                    if (!is_valid_scalar_(meta, dd, dm, nidx)) continue;
+                    const std::size_t nidx = raster_flat_index(nr, nc, ncols);
+                    if (!raster_cell_is_valid(meta, dd, dm, nidx)) continue;
 
                     local_max = std::max(local_max, dd[nidx]);
                 }
@@ -1060,8 +1030,8 @@ static std::vector<float> seed_platform_from_scarps_(
     {
         for (int col = 1; col < ncols - 1; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
-            if (!is_valid_scalar_(meta, dd, dm, idx)) continue;
+            const std::size_t idx = raster_flat_index(row, col, ncols);
+            if (!raster_cell_is_valid(meta, dd, dm, idx)) continue;
             if (scarp_mask[idx] != 0) continue;
 
             bool seed = false;
@@ -1073,10 +1043,10 @@ static std::vector<float> seed_platform_from_scarps_(
 
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    const std::size_t nidx = idx_of_(nr, nc, ncols);
+                    const std::size_t nidx = raster_flat_index(nr, nc, ncols);
 
                     if (scarp_mask[nidx] == 0) continue;
-                    if (!is_valid_scalar_(meta, dd, dm, nidx)) continue;
+                    if (!raster_cell_is_valid(meta, dd, dm, nidx)) continue;
 
                     if (dd[idx] >= dd[nidx])
                     {
@@ -1103,7 +1073,7 @@ static std::vector<float> seed_platform_from_scarps_(
     {
         for (int col = 1; col < ncols - 1; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
+            const std::size_t idx = raster_flat_index(row, col, ncols);
             if (seed_bin[idx] == 0) continue;
 
             int count = 0;
@@ -1111,7 +1081,7 @@ static std::vector<float> seed_platform_from_scarps_(
             {
                 for (int dc = -1; dc <= 1; ++dc)
                 {
-                    const std::size_t nidx = idx_of_(row + dr, col + dc, ncols);
+                    const std::size_t nidx = raster_flat_index(row + dr, col + dc, ncols);
                     if (seed_bin[nidx] != 0) ++count;
                 }
             }
@@ -1169,9 +1139,9 @@ static void grow_platform_(
                 {
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                    const std::size_t nidx = idx_of_(nr, nc, ncols);
+                    const std::size_t nidx = raster_flat_index(nr, nc, ncols);
                     if (scarp_mask[nidx] != 0)
                     {
                         ridge_pos.push_back({nr, nc});
@@ -1193,11 +1163,11 @@ static void grow_platform_(
 
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                    const std::size_t nidx = idx_of_(nr, nc, ncols);
+                    const std::size_t nidx = raster_flat_index(nr, nc, ncols);
 
-                    if (!is_valid_scalar_(meta, dd, dm, nidx)) continue;
+                    if (!raster_cell_is_valid(meta, dd, dm, nidx)) continue;
                     if (scarp_mask[nidx] != 0) continue;
                     if (platform_order[nidx] > 0.5f) continue;
 
@@ -1268,7 +1238,7 @@ static void apply_cutoff_(
     {
         const std::size_t idx = static_cast<std::size_t>(i);
         if (platform_order[idx] <= 0.5f) continue;
-        if (!is_valid_scalar_(meta, dd, dm, idx)) continue;
+        if (!raster_cell_is_valid(meta, dd, dm, idx)) continue;
 
         if (static_cast<double>(dd[idx]) < cutoff_elevation)
         {
@@ -1294,7 +1264,7 @@ static void fill_high_gaps_(
     for (std::int64_t i = 0; i < static_cast<std::int64_t>(platform_order.size()); ++i)
     {
         const std::size_t idx = static_cast<std::size_t>(i);
-        if (!is_valid_scalar_(meta, dd, dm, idx)) continue;
+        if (!raster_cell_is_valid(meta, dd, dm, idx)) continue;
         if (scarp_mask[idx] != 0) continue;
         if (platform_order[idx] > 0.5f) continue;
 
@@ -1329,7 +1299,7 @@ static void fill_pools_(
             {
                 for (int col = 1; col < ncols - 1; ++col)
                 {
-                    const std::size_t idx = idx_of_(row, col, ncols);
+                    const std::size_t idx = raster_flat_index(row, col, ncols);
                     if (std::round(platform_order[idx]) != counter + 1) continue;
 
                     int marsh_count = 0;
@@ -1337,7 +1307,7 @@ static void fill_pools_(
                     {
                         for (int dc = -1; dc <= 1; ++dc)
                         {
-                            if (platform_order[idx_of_(row + dr, col + dc, ncols)] > 0.5f)
+                            if (platform_order[raster_flat_index(row + dr, col + dc, ncols)] > 0.5f)
                             {
                                 ++marsh_count;
                             }
@@ -1350,7 +1320,7 @@ static void fill_pools_(
                         {
                             for (int dc = -1; dc <= 1; ++dc)
                             {
-                                const std::size_t nidx = idx_of_(row + dr, col + dc, ncols);
+                                const std::size_t nidx = raster_flat_index(row + dr, col + dc, ncols);
                                 if (platform_order[nidx] <= 0.5f && scarp_mask[nidx] == 0)
                                 {
                                     platform_order[nidx] = static_cast<float>(counter);
@@ -1385,8 +1355,8 @@ static void fill_small_holes_(
     {
         for (int col = 1; col < ncols - 1; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
-            if (!is_valid_scalar_(meta, dd, dm, idx)) continue;
+            const std::size_t idx = raster_flat_index(row, col, ncols);
+            if (!raster_cell_is_valid(meta, dd, dm, idx)) continue;
             if (scarp_mask[idx] != 0) continue;
             if (platform_order[idx] > 0.5f) continue;
 
@@ -1396,7 +1366,7 @@ static void fill_small_holes_(
                 for (int dc = -1; dc <= 1; ++dc)
                 {
                     if (dr == 0 && dc == 0) continue;
-                    if (platform_order[idx_of_(row + dr, col + dc, ncols)] > 0.5f)
+                    if (platform_order[raster_flat_index(row + dr, col + dc, ncols)] > 0.5f)
                     {
                         ++count;
                     }
@@ -1442,7 +1412,7 @@ static std::vector<uint8_t> clean_scarps_from_platform_(
     {
         for (int col = 0; col < ncols; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
+            const std::size_t idx = raster_flat_index(row, col, ncols);
             if (scarp_mask[idx] == 0) continue;
 
             bool any_platform = false;
@@ -1452,9 +1422,9 @@ static std::vector<uint8_t> clean_scarps_from_platform_(
                 {
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                    if (platform_order[idx_of_(nr, nc, ncols)] > 0.5f)
+                    if (platform_order[raster_flat_index(nr, nc, ncols)] > 0.5f)
                     {
                         any_platform = true;
                         break;
@@ -1478,7 +1448,7 @@ static std::vector<uint8_t> clean_scarps_from_platform_(
     {
         for (int col = 0; col < ncols; ++col)
         {
-            const std::size_t idx = idx_of_(row, col, ncols);
+            const std::size_t idx = raster_flat_index(row, col, ncols);
             if (keep1[idx] == 0) continue;
 
             int count = 0;
@@ -1488,9 +1458,9 @@ static std::vector<uint8_t> clean_scarps_from_platform_(
                 {
                     const int nr = row + dr;
                     const int nc = col + dc;
-                    if (!in_bounds_(nr, nc, nrows, ncols)) continue;
+                    if (!raster_in_bounds(nr, nc, nrows, ncols)) continue;
 
-                    if (keep1[idx_of_(nr, nc, ncols)] != 0) ++count;
+                    if (keep1[raster_flat_index(nr, nc, ncols)] != 0) ++count;
                 }
             }
 

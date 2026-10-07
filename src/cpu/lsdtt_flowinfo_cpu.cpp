@@ -2226,15 +2226,8 @@ lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster_with_injection(
     const std::vector<lsdtt_drainage_injection_record> injections =
         load_drainage_injection_points(vector_path, meta_, drainage_area_field);
 
-    const std::int64_t n_cells    = static_cast<std::int64_t>(mask_.size());
-    const double       pixel_area = meta_.cell_size * meta_.cell_size;
-
-    std::vector<double> weights(static_cast<std::size_t>(n_cells), pixel_area);
-
-    for (const auto& rec : injections)
-        weights[static_cast<std::size_t>(rec.flat)] += rec.drainage_area_m2;
-
-    return accumulate_raster(weights);
+    return accumulate_raster(
+        drainage_area_injection_weights(meta_, mask_.size(), injections));
 }
 
 void lsdtt_flowinfo::write_drainage_area_raster_with_injection(

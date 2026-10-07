@@ -36,17 +36,6 @@ namespace lsdtt
 namespace
 {
 
-inline bool is_valid_scalar_(
-    const lsdtt_raster_meta&    meta,
-    const std::vector<float>&   data,
-    const std::vector<uint8_t>& mask,
-    std::size_t                 idx)
-{
-    return mask[idx] != 0 &&
-           !meta.is_nodata(data[idx]) &&
-           std::isfinite(data[idx]);
-}
-
 static void validate_request_(const tidal_channel_request& request)
 {
     if (!request.use_flood_mask)

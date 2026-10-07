@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_topmodel_cpu.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -23,14 +24,6 @@ namespace
 
 constexpr double k_ln_100 = 4.605170185988091;   // cm -> m on the depth integral
 constexpr double k_ln_24  = 3.1780538303479458;  // per day -> per hour
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-}
 
 } // namespace
 
@@ -103,11 +96,11 @@ lsdtt_topmodel_index_cpu::lsdtt_topmodel_index_cpu(
     if (units_.empty())
         throw std::invalid_argument(std::string(who) + ": unit list is empty");
 
-    require_positive(params_.szm_metres, "szm_metres", who);
-    require_positive(params_.srmax_metres, "srmax_metres", who);
-    require_positive(params_.td_hours_per_metre, "td_hours_per_metre", who);
-    require_positive(params_.dt_hours, "dt_hours", who);
-    require_positive(params_.q0_metres_per_step, "q0_metres_per_step", who);
+    require_positive_finite(params_.szm_metres, "szm_metres", who);
+    require_positive_finite(params_.srmax_metres, "srmax_metres", who);
+    require_positive_finite(params_.td_hours_per_metre, "td_hours_per_metre", who);
+    require_positive_finite(params_.dt_hours, "dt_hours", who);
+    require_positive_finite(params_.q0_metres_per_step, "q0_metres_per_step", who);
 
     if (!(std::isfinite(params_.sr0_metres) && params_.sr0_metres >= 0.0))
         throw std::invalid_argument(

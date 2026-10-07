@@ -298,6 +298,11 @@ set(LSDTT_CROSS_SECTIONS_FIXTURE_DIR
 set(LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/marsh_topography_fixture")
 
+# Reference and shifted DEM pair written by
+# tests/scripts/make_dem_coregistration_fixture.py.
+set(LSDTT_DEM_COREGISTRATION_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/dem_coregistration_fixture")
+
 # Written by lsdtt-test-hype-cli-fixture (the fixture_hype_cli CTest fixture):
 # a 60x60 projected Y-network DEM, land-use and soil rasters, the four HYPE
 # parameter tables (plus three broken ones), 120 days of forcing and an outlet
@@ -1805,6 +1810,35 @@ add_lsdtt_cli_smoke_test(
     raster_calculator_difference.param.in
     tiny_and_tiny_dem_plus1_difference.tif
 )
+
+# DEM coregistration (Nuth and Kaab) had no test until 2026-10-07. The DEM pair
+# is generated: see tests/params/raster_calculator_coregistration.param.in.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_raster_calculator_coregistration_dems
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/make_dem_coregistration_fixture.py"
+            "${LSDTT_DEM_COREGISTRATION_FIXTURE_DIR}")
+    lsdtt_mark_test_runtime(python fixture_raster_calculator_coregistration_dems)
+else()
+    lsdtt_mark_test_unregistered(python fixture_raster_calculator_coregistration_dems)
+endif()
+lsdtt_set_tests_properties(fixture_raster_calculator_coregistration_dems PROPERTIES
+    LABELS "fixture;raster"
+    FIXTURES_SETUP dem_coregistration_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_calculator_coregistration
+    lsdtt-raster-calculator
+    raster_calculator_coregistration.param.in
+    coreg_and_coreg_shifted_coreg_difference.tif
+    --read-path "${LSDTT_DEM_COREGISTRATION_FIXTURE_DIR}"
+    --expect coreg_shifted_coregistered_to_coreg.tif
+    --expect coreg_and_coreg_shifted_coreg_diagnostics.csv
+    --stdout-contains "DEM coregistration offsets [m]: dx=4.01"
+    --stdout-contains "DEM coregistration iterations: 3, converged: yes"
+)
+lsdtt_set_tests_properties(smoke_raster_calculator_coregistration PROPERTIES
+    FIXTURES_REQUIRED dem_coregistration_fixture)
 
 add_lsdtt_cli_smoke_test(
     failure_channel_extraction_invalid_threshold
@@ -3456,6 +3490,32 @@ add_test(NAME unit_point_input
 lsdtt_set_tests_properties(unit_point_input PROPERTIES
     LABELS "unit;point_input")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
+
+# Characterisation tests for the src/utils + src/cpu consolidation (stage 1).
+# Each embeds the private copies it replaced, verbatim, as the reference, and
+# stays after those copies are deleted.
+add_executable(lsdtt-test-raster-cell-predicates cpp/test_raster_cell_predicates.cpp)
+target_link_libraries(lsdtt-test-raster-cell-predicates PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_cell_predicates COMMAND lsdtt-test-raster-cell-predicates)
+lsdtt_set_tests_properties(unit_raster_cell_predicates PROPERTIES
+    LABELS "unit;raster")
+
+add_executable(lsdtt-test-distributed-hydrology-argument-checks
+    cpp/test_distributed_hydrology_argument_checks.cpp)
+target_link_libraries(lsdtt-test-distributed-hydrology-argument-checks PRIVATE lsdtt3_cpu)
+add_test(NAME unit_distributed_hydrology_argument_checks
+         COMMAND lsdtt-test-distributed-hydrology-argument-checks)
+lsdtt_set_tests_properties(unit_distributed_hydrology_argument_checks PROPERTIES
+    LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-drainage-injection-weights cpp/test_drainage_injection_weights.cpp)
+target_link_libraries(lsdtt-test-drainage-injection-weights PRIVATE lsdtt3_cpu)
+add_test(NAME unit_drainage_injection_weights
+         COMMAND lsdtt-test-drainage-injection-weights
+                 ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
+lsdtt_set_tests_properties(unit_drainage_injection_weights PROPERTIES
+    LABELS "unit;point_input;flow")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
 
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
 target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)

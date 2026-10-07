@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -431,6 +432,27 @@ load_drainage_injection_points(
     const lsdtt_raster_meta& raster_meta,
     const std::string&       drainage_area_field = "drainage_area",
     const std::string&       layer_name          = ""
+);
+
+// -----------------------------------------------------------------------------
+// drainage_area_injection_weights
+//
+// The per-cell weight vector for a drainage-area accumulation with injected
+// upstream area: every one of the n_cells cells starts at the pixel area
+// (cell_size squared), and each record adds its drainage_area_m2 to the cell
+// at its flat index. Pass the result to the flow object's accumulate_raster().
+//
+// n_cells is the length of the flow object's full-grid weight vector, passed
+// by the caller (lsdtt_flowinfo and lsdtt_flowgraph_cpu, which both had this
+// loop) rather than taken from the meta, so each keeps its own sizing.
+// Records must come from load_drainage_injection_points() on the same grid,
+// which only returns cells inside it.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<double>
+drainage_area_injection_weights(
+    const lsdtt_raster_meta&                            raster_meta,
+    std::size_t                                         n_cells,
+    const std::vector<lsdtt_drainage_injection_record>& injections
 );
 
 // -----------------------------------------------------------------------------

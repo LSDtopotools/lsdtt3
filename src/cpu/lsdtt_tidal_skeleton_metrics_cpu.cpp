@@ -29,6 +29,7 @@
 #include <omp.h>
 #endif
 
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
 namespace lsdtt
@@ -39,28 +40,6 @@ namespace
 // -----------------------------------------------------------------------------
 // Basic helpers
 // -----------------------------------------------------------------------------
-inline bool is_valid_scalar_(
-    const lsdtt_raster_meta&    meta,
-    const std::vector<float>&   data,
-    const std::vector<uint8_t>& mask,
-    std::size_t                 idx)
-{
-    return mask[idx] != 0 &&
-           !meta.is_nodata(data[idx]) &&
-           std::isfinite(data[idx]);
-}
-
-inline std::size_t idx_of_(int row, int col, int ncols)
-{
-    return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
-           static_cast<std::size_t>(col);
-}
-
-inline bool in_bounds_(int row, int col, int nrows, int ncols)
-{
-    return row >= 0 && row < nrows && col >= 0 && col < ncols;
-}
-
 inline double point_distance_(
     double x0, double y0,
     double x1, double y1)
@@ -102,7 +81,7 @@ static lsdtt_raster_cpu build_node_id_raster_(
     for (const auto& node : nodes)
     {
         if (node.row < 0 || node.col < 0) continue;
-        const std::size_t idx = idx_of_(node.row, node.col, meta.n_cols);
+        const std::size_t idx = raster_flat_index(node.row, node.col, meta.n_cols);
         data[idx] = static_cast<float>(node.node_id);
         mask[idx] = uint8_t{1};
     }
@@ -132,9 +111,9 @@ static void build_section_rasters_(
     {
         for (const auto& px : sec.pixels)
         {
-            if (!in_bounds_(px.row, px.col, meta.n_rows, meta.n_cols)) continue;
+            if (!raster_in_bounds(px.row, px.col, meta.n_rows, meta.n_cols)) continue;
 
-            const std::size_t idx = idx_of_(px.row, px.col, meta.n_cols);
+            const std::size_t idx = raster_flat_index(px.row, px.col, meta.n_cols);
 
             id_data[idx] = static_cast<float>(sec.section_id);
             st_data[idx] = static_cast<float>(sec.strahler_order);
@@ -261,10 +240,10 @@ static double sample_raster_nearest_valid_(
         {
             for (int cc = col - radius; cc <= col + radius; ++cc)
             {
-                if (!in_bounds_(rr, cc, meta.n_rows, meta.n_cols)) continue;
+                if (!raster_in_bounds(rr, cc, meta.n_rows, meta.n_cols)) continue;
 
-                const std::size_t idx = idx_of_(rr, cc, meta.n_cols);
-                if (!is_valid_scalar_(meta, data, mask, idx)) continue;
+                const std::size_t idx = raster_flat_index(rr, cc, meta.n_cols);
+                if (!raster_cell_is_valid(meta, data, mask, idx)) continue;
 
                 return static_cast<double>(data[idx]);
             }
@@ -296,7 +275,7 @@ static bool sample_binary_nearest_(
     col = std::max(0, std::min(col, meta.n_cols - 1));
     row = std::max(0, std::min(row, meta.n_rows - 1));
 
-    const std::size_t idx = idx_of_(row, col, meta.n_cols);
+    const std::size_t idx = raster_flat_index(row, col, meta.n_cols);
     return mask[idx] != 0 &&
            !meta.is_nodata(data[idx]) &&
            std::isfinite(data[idx]) &&
@@ -402,7 +381,7 @@ static std::vector<std::int32_t> choose_outlets_(
 
         for (auto& node : nodes)
         {
-            const std::size_t idx = idx_of_(node.row, node.col, meta.n_cols);
+            const std::size_t idx = raster_flat_index(node.row, node.col, meta.n_cols);
             if (outlet_mask->get_mask()[idx] != 0 &&
                 !outlet_mask->get_meta().is_nodata(outlet_mask->get_data()[idx]) &&
                 std::isfinite(outlet_mask->get_data()[idx]) &&
@@ -1283,7 +1262,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
             for (std::int64_t i = 0; i < static_cast<std::int64_t>(npix); ++i)
             {
                 const std::size_t idx = static_cast<std::size_t>(i);
-                if (!is_valid_scalar_(meta, dem.get_data(), dem.get_mask(), idx)) continue;
+                if (!raster_cell_is_valid(meta, dem.get_data(), dem.get_mask(), idx)) continue;
 
                 const int row = static_cast<int>(idx / static_cast<std::size_t>(meta.n_cols));
                 const int col = static_cast<int>(idx % static_cast<std::size_t>(meta.n_cols));
@@ -1319,7 +1298,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
                     const auto* r = request.strip_value_rasters[v];
                     const std::size_t off = sid * nvar_stride + v;
 
-                    if (is_valid_scalar_(r->get_meta(), r->get_data(), r->get_mask(), idx))
+                    if (raster_cell_is_valid(r->get_meta(), r->get_data(), r->get_mask(), idx))
                     {
                         thread_valid_area[off] += pixel_area;
                         thread_value_sums[off] += static_cast<double>(r->get_data()[idx]) * pixel_area;
@@ -1344,7 +1323,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
 #else
         for (std::size_t idx = 0; idx < npix; ++idx)
         {
-            if (!is_valid_scalar_(meta, dem.get_data(), dem.get_mask(), idx)) continue;
+            if (!raster_cell_is_valid(meta, dem.get_data(), dem.get_mask(), idx)) continue;
 
             const int row = static_cast<int>(idx / static_cast<std::size_t>(meta.n_cols));
             const int col = static_cast<int>(idx % static_cast<std::size_t>(meta.n_cols));
@@ -1379,7 +1358,7 @@ lsdtt_tidal_skeleton_metrics_result analyse_tidal_skeleton(
                 const auto* r = request.strip_value_rasters[v];
                 const std::size_t off = sid * nvar_stride + v;
 
-                if (is_valid_scalar_(r->get_meta(), r->get_data(), r->get_mask(), idx))
+                if (raster_cell_is_valid(r->get_meta(), r->get_data(), r->get_mask(), idx))
                 {
                     local_valid_area[off] += pixel_area;
                     local_value_sums[off] += static_cast<double>(r->get_data()[idx]) * pixel_area;

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hydro_velocity_field_cpu.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -23,32 +24,6 @@ namespace lsdtt
 
 namespace
 {
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-    {
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-    }
-}
-
-void require_same_grid(const lsdtt_raster_cpu& r,
-                       const lsdtt_raster_meta& meta,
-                       const char* name,
-                       const char* who)
-{
-    const lsdtt_raster_meta& m = r.get_meta();
-    if (m.n_rows != meta.n_rows || m.n_cols != meta.n_cols)
-    {
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " is " +
-            std::to_string(m.n_rows) + "x" + std::to_string(m.n_cols) +
-            " but the grid is " + std::to_string(meta.n_rows) + "x" +
-            std::to_string(meta.n_cols));
-    }
-}
 
 // Velocity from Manning with the hydraulic radius supplied by the caller. Kept
 // separate so Phase 5 can pass a live flow depth here instead of a geometric R
@@ -76,11 +51,11 @@ lsdtt_raster_cpu compute_hydraulic_radius_field(
     const hydro_velocity_options& opts)
 {
     const char* who = "compute_hydraulic_radius_field";
-    require_positive(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
-    require_positive(opts.reference_area_m2, "reference_area_m2", who);
-    require_positive(opts.sheet_flow_min_depth_metres,
+    require_positive_finite(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
+    require_positive_finite(opts.reference_area_m2, "reference_area_m2", who);
+    require_positive_finite(opts.sheet_flow_min_depth_metres,
                      "sheet_flow_min_depth_metres", who);
-    require_same_grid(drainage_area, meta, "drainage_area", who);
+    require_same_grid_dims(drainage_area, meta, "drainage_area", who);
 
     const int   n_rows = meta.n_rows;
     const int   n_cols = meta.n_cols;
@@ -132,11 +107,11 @@ lsdtt_raster_cpu compute_velocity_field(
                 "in strahler_table mode");
     }
 
-    require_positive(opts.v_min_metres_per_second, "v_min_metres_per_second", who);
-    require_positive(opts.v_max_metres_per_second, "v_max_metres_per_second", who);
-    require_positive(opts.velocity_scale, "velocity_scale", who);
-    require_positive(opts.min_slope, "min_slope", who);
-    require_positive(opts.roughness_default, "roughness_default", who);
+    require_positive_finite(opts.v_min_metres_per_second, "v_min_metres_per_second", who);
+    require_positive_finite(opts.v_max_metres_per_second, "v_max_metres_per_second", who);
+    require_positive_finite(opts.velocity_scale, "velocity_scale", who);
+    require_positive_finite(opts.min_slope, "min_slope", who);
+    require_positive_finite(opts.roughness_default, "roughness_default", who);
 
     if (opts.v_min_metres_per_second > opts.v_max_metres_per_second)
     {
@@ -149,16 +124,16 @@ lsdtt_raster_cpu compute_velocity_field(
 
     if (opts.mode == hydro_velocity_mode::hydraulic_geometry)
     {
-        require_positive(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
-        require_positive(opts.reference_area_m2, "reference_area_m2", who);
-        require_positive(opts.sheet_flow_min_depth_metres,
+        require_positive_finite(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
+        require_positive_finite(opts.reference_area_m2, "reference_area_m2", who);
+        require_positive_finite(opts.sheet_flow_min_depth_metres,
                          "sheet_flow_min_depth_metres", who);
     }
 
-    require_same_grid(*inputs.drainage_area, meta, "drainage_area", who);
-    if (inputs.slope)          require_same_grid(*inputs.slope, meta, "slope", who);
-    if (inputs.roughness)      require_same_grid(*inputs.roughness, meta, "roughness", who);
-    if (inputs.strahler_order) require_same_grid(*inputs.strahler_order, meta,
+    require_same_grid_dims(*inputs.drainage_area, meta, "drainage_area", who);
+    if (inputs.slope)          require_same_grid_dims(*inputs.slope, meta, "slope", who);
+    if (inputs.roughness)      require_same_grid_dims(*inputs.roughness, meta, "roughness", who);
+    if (inputs.strahler_order) require_same_grid_dims(*inputs.strahler_order, meta,
                                                  "strahler_order", who);
 
     const int   n_rows = meta.n_rows;
@@ -276,7 +251,7 @@ lsdtt_raster_cpu compute_travel_time_to_outlet(
     const char* who = "compute_travel_time_to_outlet";
 
     const lsdtt_raster_meta& meta = graph.meta();
-    require_same_grid(velocity, meta, "velocity", who);
+    require_same_grid_dims(velocity, meta, "velocity", who);
 
     const int          n_rows = meta.n_rows;
     const int          n_cols = meta.n_cols;
@@ -382,7 +357,7 @@ width_function_result compute_width_function(
 {
     const char* who = "compute_width_function";
 
-    require_positive(opts.bin_width_seconds, "bin_width_seconds", who);
+    require_positive_finite(opts.bin_width_seconds, "bin_width_seconds", who);
     if (opts.n_bins < 0)
         throw std::invalid_argument(std::string(who) + ": n_bins must be >= 0");
 
@@ -493,9 +468,9 @@ double solve_velocity_scale_for_mean_travel_time(
     double target_mean_travel_time_seconds)
 {
     const char* who = "solve_velocity_scale_for_mean_travel_time";
-    require_positive(current_mean_travel_time_seconds,
+    require_positive_finite(current_mean_travel_time_seconds,
                      "current_mean_travel_time_seconds", who);
-    require_positive(target_mean_travel_time_seconds,
+    require_positive_finite(target_mean_travel_time_seconds,
                      "target_mean_travel_time_seconds", who);
     return current_mean_travel_time_seconds / target_mean_travel_time_seconds;
 }

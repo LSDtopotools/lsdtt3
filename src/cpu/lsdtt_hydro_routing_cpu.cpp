@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hydro_routing_cpu.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,14 +22,6 @@ namespace lsdtt
 
 namespace
 {
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-}
 
 double area_from_q(double q, double alpha, double inv_m)
 {
@@ -76,9 +69,9 @@ double solve_kinematic_newton(double q_upstream, double area_old, double lateral
                               int* iterations_out)
 {
     const char* who = "solve_kinematic_newton";
-    require_positive(alpha, "alpha", who);
-    require_positive(dt, "dt", who);
-    require_positive(dx, "dx", who);
+    require_positive_finite(alpha, "alpha", who);
+    require_positive_finite(dt, "dt", who);
+    require_positive_finite(dx, "dx", who);
     if (!(std::isfinite(m) && m > 1.0))
         throw std::invalid_argument(
             std::string(who) + ": m must be finite and > 1 (got " +
@@ -150,11 +143,11 @@ lsdtt_hydro_router_cpu::lsdtt_hydro_router_cpu(
 {
     const char* who = "lsdtt_hydro_router_cpu";
 
-    require_positive(opts_.dt_seconds, "dt_seconds", who);
-    require_positive(opts_.width_coeff, "width_coeff", who);
-    require_positive(opts_.reference_area_m2, "reference_area_m2", who);
-    require_positive(opts_.manning_n_default, "manning_n_default", who);
-    require_positive(opts_.min_slope, "min_slope", who);
+    require_positive_finite(opts_.dt_seconds, "dt_seconds", who);
+    require_positive_finite(opts_.width_coeff, "width_coeff", who);
+    require_positive_finite(opts_.reference_area_m2, "reference_area_m2", who);
+    require_positive_finite(opts_.manning_n_default, "manning_n_default", who);
+    require_positive_finite(opts_.min_slope, "min_slope", who);
     if (!(opts_.kinematic_exponent > 1.0))
         throw std::invalid_argument(
             std::string(who) + ": kinematic_exponent must be > 1");
