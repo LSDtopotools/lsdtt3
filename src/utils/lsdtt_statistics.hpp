@@ -176,8 +176,6 @@ double compute_stddev_sample(
 //   compute_median_in_place          mean of the two middle values for even n:
 //                                    nth_element at n/2, max_element of the
 //                                    lower half, 0.5 * (lower + upper)
-//   compute_median_upper_in_place    upper middle value for even n:
-//                                    nth_element at n/2, return v[n/2]
 //   compute_quantile_interpolated_in_place
 //                                    q in [0, 1]; position q * (n - 1) on a
 //                                    sorted vector; v[lo] when lo == hi, else
@@ -187,6 +185,12 @@ double compute_stddev_sample(
 //
 // The medians return empty_value for empty input, so each caller keeps its own
 // convention (NaN, 0.0, -1.0). The quantiles return NaN for empty input.
+//
+// Nine sites took the upper middle value for even n until 2026-10-07 (usgs
+// elevation, hydraulic roughness, flat-surface channel distance, landslide host
+// fill ratio, LEM timestep gradient, hydraulic-graph and graphflood convergence,
+// the reference-field ladder slope medians). They now use the mean of the two
+// middle values (decision D2 in the code-consolidation plan).
 // -----------------------------------------------------------------------------
 
 double compute_median_in_place(
@@ -199,24 +203,10 @@ double compute_median_in_place(
     double empty_value = std::numeric_limits<double>::quiet_NaN()
 );
 
-double compute_median_upper_in_place(
-    std::vector<double>& values,
-    double empty_value = std::numeric_limits<double>::quiet_NaN()
-);
-
-double compute_median_upper_in_place(
-    std::vector<float>& values,
-    double empty_value = std::numeric_limits<double>::quiet_NaN()
-);
 
 // By-value forms for callers that keep using their vector afterwards: the
 // selection reorders this function's own copy, never the caller's.
 double compute_median_of_copy(
-    std::vector<double> values,
-    double empty_value = std::numeric_limits<double>::quiet_NaN()
-);
-
-double compute_median_upper_of_copy(
     std::vector<double> values,
     double empty_value = std::numeric_limits<double>::quiet_NaN()
 );

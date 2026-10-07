@@ -864,8 +864,8 @@ private:
             convergence_rel_.push_back(value / std::max(depth_[flat], 1.0e-12));
         }
         if (convergence_abs_.empty()) return {0.0, 0.0};
-        return {compute_median_upper_in_place(convergence_abs_),
-                compute_median_upper_in_place(convergence_rel_)};
+        return {compute_median_in_place(convergence_abs_),
+                compute_median_in_place(convergence_rel_)};
     }
 
     lsdtt_raster_result raster_from_float(const std::vector<float>& values) const

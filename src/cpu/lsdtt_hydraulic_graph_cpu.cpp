@@ -1377,8 +1377,8 @@ lsdtt_hydraulic_graph_cpu::compute_convergence_stats() const
         }
     }
 
-    stats.median_abs_dhw = compute_median_upper_in_place(abs_vals);
-    stats.median_rel_dhw = compute_median_upper_in_place(rel_vals);
+    stats.median_abs_dhw = compute_median_in_place(abs_vals);
+    stats.median_rel_dhw = compute_median_in_place(rel_vals);
 
     return stats;
 }

@@ -301,7 +301,7 @@ bool LandslidePlacer::place_scar_seeded(int n_target_pixels,
 
 void LandslidePlacer::finalise_diagnostics()
 {
-    diag_.median_host_fill_ratio = compute_median_upper_of_copy(fill_ratios_, 0.0);
+    diag_.median_host_fill_ratio = compute_median_of_copy(fill_ratios_, 0.0);
 }
 
 }  // namespace lsdtt

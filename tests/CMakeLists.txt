@@ -1730,6 +1730,23 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "ff_flow_ingested_params.param:threshold_contributing_pixels: 3"
 )
 
+# Drainage-area exceedance scaling and the Tokunaga summary: no test reached
+# either before 2026-10-07. See the parameter file for the reported values.
+add_lsdtt_cli_smoke_test(
+    smoke_channel_network_analysis_area_scaling
+    lsdtt-channel-network-analysis
+    channel_network_analysis_area_scaling.param.in
+    cnas_area_scaling_summary.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect cnas_area_scaling_curve.csv
+    --expect cnas_tokunaga_summary_fit.csv
+    --expect cnas_tokunaga_summary_pair_counts.csv
+    --stdout-contains "--- Drainage-area exceedance scaling ---"
+    --stdout-contains "beta (MLE)                  : 0.6195"
+)
+lsdtt_set_tests_properties(smoke_channel_network_analysis_area_scaling PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 # Phase 4 readiness: this old spelling remains explicit after aliases land. The
 # diagnostics and Strahler/Tokunaga CSV oracle prove that threshold-defined
 # sources reach channel-network construction and a real network analysis.
@@ -3522,6 +3539,14 @@ add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
 add_test(NAME unit_order_statistics COMMAND lsdtt-test-order-statistics)
 lsdtt_set_tests_properties(unit_order_statistics PROPERTIES
+    LABELS "unit;statistics")
+
+# Stage 2 part B: records the D7 change from the private ols_fit to
+# compute_linear_regression in the drainage-area exceedance scaling.
+add_executable(lsdtt-test-drainage-area-exceedance-ols cpp/test_drainage_area_exceedance_ols.cpp)
+target_link_libraries(lsdtt-test-drainage-area-exceedance-ols PRIVATE lsdtt3_cpu)
+add_test(NAME unit_drainage_area_exceedance_ols COMMAND lsdtt-test-drainage-area-exceedance-ols)
+lsdtt_set_tests_properties(unit_drainage_area_exceedance_ols PROPERTIES
     LABELS "unit;statistics")
 
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)

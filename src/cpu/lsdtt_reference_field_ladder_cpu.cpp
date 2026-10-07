@@ -876,7 +876,7 @@ ladder_result build_reference_field_ladder(
     {
         if (sld == nullptr || slopes.empty())
             return request.vertical_accuracy_metres;
-        const double med = compute_median_upper_of_copy(slopes);
+        const double med = compute_median_of_copy(slopes);
         return (med <= request.vertical_accuracy_break_degrees)
             ? request.vertical_accuracy_gentle_metres
             : request.vertical_accuracy_steep_metres;
@@ -885,7 +885,7 @@ ladder_result build_reference_field_ladder(
     {
         if (sld == nullptr || slopes.empty())
             return std::numeric_limits<double>::quiet_NaN();
-        return compute_median_upper_of_copy(slopes);
+        return compute_median_of_copy(slopes);
     };
     auto gap_from_ev = [&](double ev) -> double
     {

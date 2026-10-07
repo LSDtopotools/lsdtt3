@@ -197,7 +197,7 @@ lsdtt_raster_cpu compute_channel_roughness(
                 const double k = ksn_at(inputs, opts, row, col);
                 if (k > 0.0 && std::isfinite(k)) vals.push_back(k);
             }
-        ref_ksn = compute_median_upper_of_copy(std::move(vals), 0.0);
+        ref_ksn = compute_median_of_copy(std::move(vals), 0.0);
         if (!(ref_ksn > 0.0))
             throw std::invalid_argument(
                 std::string(who) + ": no channel cell has a positive ksn, so no "

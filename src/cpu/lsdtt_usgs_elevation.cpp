@@ -249,9 +249,9 @@ usgs_unit_check check_vertical_units_against_usgs(const lsdtt_raster_cpu& dem,
         return out;
     }
 
-    out.median_ratio           = compute_median_upper_of_copy(ratios, 0.0);
-    out.median_abs_err_as_metres = compute_median_upper_of_copy(err_m, 0.0);
-    out.median_abs_err_as_feet   = compute_median_upper_of_copy(err_ft, 0.0);
+    out.median_ratio           = compute_median_of_copy(ratios, 0.0);
+    out.median_abs_err_as_metres = compute_median_of_copy(err_m, 0.0);
+    out.median_abs_err_as_feet   = compute_median_of_copy(err_ft, 0.0);
 
     const double feet_ratio = 1.0 / kMetresPerFoot;   // 3.28084
     std::ostringstream msg;

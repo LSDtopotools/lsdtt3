@@ -49,7 +49,7 @@ double median_interior_gradient(const lsdtt_raster_cpu& dem)
             g.push_back(std::sqrt(gx * gx + gy * gy));
         }
 
-    return compute_median_upper_in_place(g, 0.0);
+    return compute_median_in_place(g, 0.0);
 }
 
 

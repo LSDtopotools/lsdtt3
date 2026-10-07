@@ -779,7 +779,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             rec.hand_spread_metres = robust_spread(h);
         }
 
-        rec.median_channel_distance_metres = compute_median_upper_in_place(a.donor_dist, -1.0);
+        rec.median_channel_distance_metres = compute_median_in_place(a.donor_dist, -1.0);
 
         std::int32_t best_src = -1;
         std::int64_t best_votes = 0;

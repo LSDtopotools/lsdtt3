@@ -1797,45 +1797,6 @@ void write_junction_area_ratio_decades(
 namespace
 {
 
-// Least-squares fit of y = c + m x. Returns false if degenerate.
-bool ols_fit(const std::vector<double>& x, const std::vector<double>& y,
-             double& slope, double& slope_stderr, double& r_squared)
-{
-    const std::size_t n = x.size();
-    if (n < 3) return false;
-
-    double sx = 0.0, sy = 0.0;
-    for (std::size_t i = 0; i < n; ++i) { sx += x[i]; sy += y[i]; }
-    const double mx = sx / static_cast<double>(n);
-    const double my = sy / static_cast<double>(n);
-
-    double sxx = 0.0, sxy = 0.0, syy = 0.0;
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        const double dx = x[i] - mx;
-        const double dy = y[i] - my;
-        sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
-    }
-    if (!(sxx > 0.0)) return false;
-
-    slope = sxy / sxx;
-    const double intercept = my - slope * mx;
-
-    double sse = 0.0;
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        const double resid = y[i] - (intercept + slope * x[i]);
-        sse += resid * resid;
-    }
-
-    r_squared = (syy > 0.0) ? (1.0 - sse / syy) : std::numeric_limits<double>::quiet_NaN();
-
-    const double dof = static_cast<double>(n) - 2.0;
-    slope_stderr = (dof > 0.0) ? std::sqrt((sse / dof) / sxx)
-                               : std::numeric_limits<double>::quiet_NaN();
-    return true;
-}
-
 // -----------------------------------------------------------------------------
 // truncated_pareto_beta
 //
@@ -1995,8 +1956,9 @@ lsdtt_area_scaling_result compute_area_scaling(
 
         // OLS here is used only to give the KS comparison a reference line;
         // the reported exponent is the MLE, computed once at the chosen cutoff.
-        double slope = 0.0, se = 0.0, r2 = 0.0;
-        if (!ols_fit(lx, ly, slope, se, r2)) continue;
+        const lsdtt_linear_regression_result fit_ols = compute_linear_regression(lx, ly);
+        if (fit_ols.n_points < 3 || !fit_ols.has_finite_slope) continue;
+        const double slope = fit_ols.slope;
 
         // KS distance between empirical and fitted exceedance on the tail,
         // both normalised to 1 at a_min so they are comparable as distributions.
@@ -2027,8 +1989,10 @@ lsdtt_area_scaling_result compute_area_scaling(
         ly.push_back(std::log10(up[i]));
     }
 
-    double slope = 0.0, se = 0.0, r2 = 0.0;
-    if (!ols_fit(lx, ly, slope, se, r2)) return r;
+    const lsdtt_linear_regression_result fit_ols = compute_linear_regression(lx, ly);
+    if (fit_ols.n_points < 3 || !fit_ols.has_finite_slope) return r;
+    const double slope = fit_ols.slope;
+    const double r2    = fit_ols.r_squared;
 
     // r_squared is retained as a SHAPE diagnostic of the exceedance curve --
     // low r^2 means the curve is not straight in log-log over the fitted range,

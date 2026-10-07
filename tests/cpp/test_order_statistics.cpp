@@ -8,9 +8,13 @@
 //
 // -----------------------------------------------------------------------------
 // Characterisation test for the in-place order statistics in
-// src/utils/lsdtt_statistics (compute_median_in_place,
-// compute_median_upper_in_place, compute_quantile_interpolated_in_place,
-// compute_quantile_floor_in_place).
+// src/utils/lsdtt_statistics (compute_median_in_place / _of_copy,
+// compute_quantile_interpolated_in_place, compute_quantile_floor_in_place).
+//
+// The "upper middle value" helpers below were references for an intermediate
+// compute_median_upper_in_place; under decision D2 those nine sites now take the
+// mean of the two middle values, so they are checked as a deliberate change
+// (compare_d2) rather than for identity.
 //
 // Each replaced a family of private helpers. Every removed helper is kept below
 // VERBATIM (the body, wrapped in a function where it was inline code), with the
@@ -530,6 +534,54 @@ void compare_family(const std::string& name,
     check(name, bad == 0, n, first);
 }
 
+// D2 (Simon, 2026-10-07): the upper-middle sites now take the mean of the two
+// middle values. Against the removed helper: identical (bit for bit, and the
+// order the vector is left in) for empty input and odd n; for even n the new
+// value must equal the mean of the two middle values of a sorted copy, and the
+// order the vector is left in is still identical (the extra max_element does
+// not move anything).
+template <class T>
+void compare_d2(const std::string& name,
+                const std::vector<std::vector<T>>& inputs,
+                const std::function<double(std::vector<T>&)>& old_site,
+                const std::function<double(std::vector<T>&)>& new_site,
+                bool compare_order,
+                std::size_t min_n = 0)
+{
+    long long n = 0, bad = 0, n_even_changed = 0;
+    std::string first;
+    for (const auto& in : inputs)
+    {
+        if (in.size() < min_n) continue;
+        std::vector<T> a = in, b = in;
+        const double ra = old_site(a);
+        const double rb = new_site(b);
+        ++n;
+        bool ok;
+        if (in.empty() || in.size() % 2 != 0)
+            ok = same(ra, rb);
+        else
+        {
+            std::vector<T> s = in;
+            std::sort(s.begin(), s.end());
+            const std::size_t m = s.size() / 2;
+            const double expected =
+                0.5 * (static_cast<double>(s[m - 1]) + static_cast<double>(s[m]));
+            ok = (rb == expected);
+            if (!same(ra, rb)) ++n_even_changed;
+        }
+        ok = ok && (!compare_order || same_order(a, b));
+        if (!ok)
+        {
+            ++bad;
+            if (first.empty())
+                first = "n=" + std::to_string(in.size()) + " old=" + std::to_string(ra) +
+                        " new=" + std::to_string(rb);
+        }
+    }
+    check(name + " [even n changed in " + std::to_string(n_even_changed) + "]", bad == 0, n, first);
+}
+
 } // namespace
 
 int main()
@@ -571,31 +623,31 @@ int main()
             [](VF& v) { return flat_classify_median_height(v); },
             [](VF& v) { return compute_median_in_place(v); }, true, 1);
 
-        // ---- upper middle value ----
-        compare_family<double>("usgs median_of == compute_median_upper_in_place(.., 0)" + regime, ind,
+        // ---- D2: formerly upper middle value, now mean of the two middle ----
+        compare_d2<double>("usgs median_of -> compute_median_in_place(.., 0)" + regime, ind,
             [](VD& v) { return usgs_median_of(v); },
-            [](VD& v) { return compute_median_upper_of_copy(v, 0.0); }, false);
-        compare_family<double>("hydro_roughness median_of == compute_median_upper_in_place(.., 0)" + regime, ind,
+            [](VD& v) { return compute_median_of_copy(v, 0.0); }, false);
+        compare_d2<double>("hydro_roughness median_of -> compute_median_in_place(.., 0)" + regime, ind,
             [](VD& v) { return hydro_roughness_median_of(v); },
-            [](VD& v) { return compute_median_upper_of_copy(v, 0.0); }, false);
-        compare_family<float>("flat_classify median_of == compute_median_upper_in_place(.., -1), incl. order" + regime, inf,
+            [](VD& v) { return compute_median_of_copy(v, 0.0); }, false);
+        compare_d2<float>("flat_classify median_of -> compute_median_in_place(.., -1), incl. order" + regime, inf,
             [](VF& v) { return flat_classify_median_of(v); },
-            [](VF& v) { return compute_median_upper_in_place(v, -1.0); }, true);
-        compare_family<double>("landslide median_host_fill_ratio == compute_median_upper_in_place(.., 0)" + regime, ind,
+            [](VF& v) { return compute_median_in_place(v, -1.0); }, true);
+        compare_d2<double>("landslide median_host_fill_ratio -> compute_median_in_place(.., 0)" + regime, ind,
             [](VD& v) { return landslide_median_host_fill_ratio(v); },
-            [](VD& v) { return compute_median_upper_of_copy(v, 0.0); }, false);
-        compare_family<double>("lem_timestep median == compute_median_upper_in_place(.., 0), incl. order" + regime, ind,
+            [](VD& v) { return compute_median_of_copy(v, 0.0); }, false);
+        compare_d2<double>("lem_timestep median -> compute_median_in_place(.., 0), incl. order" + regime, ind,
             [](VD& v) { return lem_timestep_median(v); },
-            [](VD& v) { return compute_median_upper_in_place(v, 0.0); }, true);
-        compare_family<double>("hydraulic_graph median == compute_median_upper_in_place, incl. order" + regime, ind,
+            [](VD& v) { return compute_median_in_place(v, 0.0); }, true);
+        compare_d2<double>("hydraulic_graph median -> compute_median_in_place, incl. order" + regime, ind,
             [](VD& v) { return hydraulic_graph_median(v); },
-            [](VD& v) { return compute_median_upper_in_place(v); }, true, 1);
-        compare_family<double>("graphflood median == compute_median_upper_in_place, incl. order" + regime, ind,
+            [](VD& v) { return compute_median_in_place(v); }, true, 1);
+        compare_d2<double>("graphflood median -> compute_median_in_place, incl. order" + regime, ind,
             [](VD& v) { return graphflood_median(v); },
-            [](VD& v) { return compute_median_upper_in_place(v); }, true, 1);
-        compare_family<double>("ladder median_slope_of == compute_median_upper_in_place" + regime, ind,
+            [](VD& v) { return compute_median_in_place(v); }, true, 1);
+        compare_d2<double>("ladder median_slope_of -> compute_median_in_place" + regime, ind,
             [](VD& v) { return ladder_median_slope_of(v); },
-            [](VD& v) { return compute_median_upper_of_copy(v); }, false);
+            [](VD& v) { return compute_median_of_copy(v); }, false);
 
         // ---- interpolated quantiles ----
         for (double p : {0.0, 2.0, 10.0, 25.0, 33.3, 50.0, 75.0, 90.0, 97.5, 100.0})

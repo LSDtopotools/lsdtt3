@@ -377,15 +377,6 @@ double median_in_place_impl(std::vector<T>& values, double empty_value)
 }
 
 template <class T>
-double median_upper_in_place_impl(std::vector<T>& values, double empty_value)
-{
-    if (values.empty()) return empty_value;
-    const std::size_t mid = values.size() / 2;
-    std::nth_element(values.begin(), values.begin() + mid, values.end());
-    return static_cast<double>(values[mid]);
-}
-
-template <class T>
 double quantile_interpolated_in_place_impl(std::vector<T>& values, double q_0_to_1)
 {
     if (values.empty()) return nan_value();
@@ -411,24 +402,9 @@ double compute_median_in_place(std::vector<float>& values, double empty_value)
     return median_in_place_impl(values, empty_value);
 }
 
-double compute_median_upper_in_place(std::vector<double>& values, double empty_value)
-{
-    return median_upper_in_place_impl(values, empty_value);
-}
-
-double compute_median_upper_in_place(std::vector<float>& values, double empty_value)
-{
-    return median_upper_in_place_impl(values, empty_value);
-}
-
 double compute_median_of_copy(std::vector<double> values, double empty_value)
 {
     return median_in_place_impl(values, empty_value);
-}
-
-double compute_median_upper_of_copy(std::vector<double> values, double empty_value)
-{
-    return median_upper_in_place_impl(values, empty_value);
 }
 
 double compute_quantile_interpolated_in_place(std::vector<double>& values, double q_0_to_1)
