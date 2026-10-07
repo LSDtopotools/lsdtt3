@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_rasterise_cpu.hpp"
+#include "../core/lsdtt_vector_utils.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
@@ -31,15 +32,11 @@
 namespace lsdtt {
 namespace {
 
-struct oct_deleter
-{
-    void operator()(OGRCoordinateTransformation* tx) const
-    {
-        if (tx) OCTDestroyCoordinateTransformation(tx);
-    }
-};
+// Thrown when the vector and raster CRSs are both valid but GDAL cannot build
+// a transform between them.
+const char* const k_crs_transform_failure =
+    "lsdtt_vector_rasterise: CRS transform failed - check that vector and raster have compatible projections";
 
-using ct_ptr = std::unique_ptr<OGRCoordinateTransformation, oct_deleter>;
 
 struct macrostrat_units_field_info
 {
@@ -306,98 +303,6 @@ lsdtt_raster_cpu build_output(
     }
 
     return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
-}
-
-// Sets up OGRCoordinateTransformation from `layer_srs` to `raster_srs` if they
-// differ. Returns nullptr when no transform is needed.
-// Throws on failure to create the transform.
-ct_ptr make_ct_if_needed(
-    const OGRSpatialReference* layer_srs,
-    const std::string&   raster_wkt)
-{
-    if (!layer_srs || raster_wkt.empty()) return nullptr;
-
-    OGRSpatialReference src_srs(*layer_srs);
-    OGRSpatialReference raster_srs;
-
-    src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-
-    if (raster_srs.importFromWkt(raster_wkt.c_str()) != OGRERR_NONE)
-        return nullptr;
-
-    if (src_srs.IsSame(&raster_srs))
-        return nullptr;
-
-    OGRCoordinateTransformation* ct =
-        OGRCreateCoordinateTransformation(&src_srs, &raster_srs);
-
-    if (!ct)
-    {
-        throw std::runtime_error(
-            "lsdtt_vector_rasterise: CRS transform failed - "
-            "check that vector and raster have compatible projections");
-    }
-
-    return ct_ptr(ct);
-}
-
-// Applies a spatial filter to `layer` using the bbox of `meta`.
-// The raster bbox is transformed into the layer CRS when needed.
-void set_spatial_filter_from_raster_bbox(
-    OGRLayer*                  layer,
-    const lsdtt_raster_meta&   meta)
-{
-    if (!layer)
-        return;
-
-    double minx = meta.x_min;
-    double miny = meta.y_min;
-    double maxx = meta.x_max();
-    double maxy = meta.y_max();
-
-    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
-    if (layer_srs && !meta.crs_wkt.empty())
-    {
-        OGRSpatialReference raster_srs;
-        raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-
-        if (raster_srs.importFromWkt(meta.crs_wkt.c_str()) == OGRERR_NONE)
-        {
-            OGRSpatialReference dst_srs(*layer_srs);
-            dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-
-            if (!raster_srs.IsSame(&dst_srs))
-            {
-                OGRCoordinateTransformation* raw_ct =
-                    OGRCreateCoordinateTransformation(&raster_srs, &dst_srs);
-
-                if (raw_ct)
-                {
-                    ct_ptr ct(raw_ct);
-
-                    double xs[4] = {
-                        meta.x_min, meta.x_max(),
-                        meta.x_min, meta.x_max()
-                    };
-                    double ys[4] = {
-                        meta.y_min, meta.y_min,
-                        meta.y_max(), meta.y_max()
-                    };
-
-                    if (ct->Transform(4, xs, ys))
-                    {
-                        minx = *std::min_element(xs, xs + 4);
-                        maxx = *std::max_element(xs, xs + 4);
-                        miny = *std::min_element(ys, ys + 4);
-                        maxy = *std::max_element(ys, ys + 4);
-                    }
-                }
-            }
-        }
-    }
-
-    layer->SetSpatialFilterRect(minx, miny, maxx, maxy);
 }
 
 macrostrat_units_field_info get_macrostrat_units_field_info(
@@ -685,7 +590,7 @@ lsdtt_raster_cpu rasterise_polygons(
             std::string(OGRGeometryTypeToName(layer_type)) + ")");
     }
 
-    auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt, k_crs_transform_failure);
 
     auto geoms = collect_geometries(layer, ct.get(), is_polygon_type);
     GDALClose(vec_ds);
@@ -786,7 +691,7 @@ lsdtt_raster_cpu rasterise_polygons(
             std::string(OGRGeometryTypeToName(layer_type)) + ")");
     }
 
-    auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt, k_crs_transform_failure);
 
     auto geoms = collect_geometries(layer, ct.get(), is_polygon_type,
                                     max_features);
@@ -869,7 +774,7 @@ polygon_bbox get_first_polygon_bbox_in_raster_crs(
         ~ds_guard_t() { if (ds) GDALClose(ds); }
     } ds_guard{vec_ds};
 
-    auto ct = make_ct_if_needed(layer->GetSpatialRef(), raster_crs_wkt);
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), raster_crs_wkt, k_crs_transform_failure);
 
     layer->ResetReading();
     OGRFeature* feat = layer->GetNextFeature();
@@ -945,7 +850,7 @@ lsdtt_raster_cpu rasterise_polylines(
             std::string(OGRGeometryTypeToName(layer_type)) + ")");
     }
 
-    auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt, k_crs_transform_failure);
 
     auto geoms = collect_geometries(layer, ct.get(), is_line_type);
     GDALClose(vec_ds);
@@ -1006,7 +911,7 @@ macrostrat_geology_rasterise_result rasterise_macrostrat_geology(
             std::string(OGRGeometryTypeToName(layer_type)) + ")");
     }
 
-    set_spatial_filter_from_raster_bbox(layer, meta);
+    set_layer_spatial_filter_from_raster_bbox(layer, meta);
 
     const macrostrat_units_field_info info = get_macrostrat_units_field_info(field);
     const int field_index = find_field_index_or_throw(layer, info.field_name);
@@ -1020,7 +925,7 @@ macrostrat_geology_rasterise_result rasterise_macrostrat_geology(
         lookup_map   = build_lookup_map(lookup_table);
     }
 
-    auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt, k_crs_transform_failure);
 
     const std::size_t npix =
         static_cast<std::size_t>(meta.n_rows) * meta.n_cols;

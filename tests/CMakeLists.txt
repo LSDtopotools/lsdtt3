@@ -830,6 +830,19 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
 )
 
+# The same STI run with the polygons in EPSG:4326: the only end-to-end test of
+# the layer-to-raster CRS transform (consolidation C03). Same pins as the UTM
+# sibling below, because reprojecting the inputs must not change the result.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_sti_reprojected_layers
+    lsdtt-drainage-analysis
+    drainage_analysis_sti_reprojected.param.in
+    drainage_sti_rp_sti_p95_jenks5.tif
+    --expect-raster-values drainage_sti_rp_sti_p95_jenks5.tif:1
+    --stdout-contains "STI ksd Jenks classified pixels          : 3 / 3"
+    --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
+)
+
 add_lsdtt_cli_smoke_test(
     rigorous_drainage_sti_jenks
     lsdtt-drainage-analysis
@@ -3580,6 +3593,13 @@ target_link_libraries(lsdtt-test-grid-neighbours PRIVATE lsdtt3_cpu)
 add_test(NAME unit_grid_neighbours COMMAND lsdtt-test-grid-neighbours)
 lsdtt_set_tests_properties(unit_grid_neighbours PROPERTIES
     LABELS "unit;raster")
+
+# Stage 6: shared layer-to-raster CRS transform and spatial filter (C03).
+add_executable(lsdtt-test-vector-layer-transform cpp/test_vector_layer_transform.cpp)
+target_link_libraries(lsdtt-test-vector-layer-transform PRIVATE lsdtt3_cpu)
+add_test(NAME unit_vector_layer_transform COMMAND lsdtt-test-vector-layer-transform)
+lsdtt_set_tests_properties(unit_vector_layer_transform PROPERTIES
+    LABELS "unit;gdal")
 
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
@@ -6416,6 +6436,7 @@ set(LSDTT_DOMAIN_RULES
     "basin_stats"            "network"
     "junction_graph"         "network"
     "grid_neighbours"        "raster"
+    "vector_layer_transform" "gdal"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"

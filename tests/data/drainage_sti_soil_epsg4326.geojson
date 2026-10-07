@@ -1,0 +1,9 @@
+{
+"type": "FeatureCollection",
+"name": "drainage_sti_soil",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "SERIES_CODE": "S1" }, "geometry": { "type": "Polygon", "coordinates": [ [ [ -7.488743884387191, 0.0 ], [ -7.488721486895145, 0.0 ], [ -7.488721486896528, 0.00004509688044 ], [ -7.488743884388574, 0.000045096879047 ], [ -7.488743884387191, 0.0 ] ] ] } },
+{ "type": "Feature", "properties": { "SERIES_CODE": "S2" }, "geometry": { "type": "Polygon", "coordinates": [ [ [ -7.488721486895145, 0.0 ], [ -7.488699089402404, 0.0 ], [ -7.48869908940379, 0.000045096881833 ], [ -7.488721486896528, 0.00004509688044 ], [ -7.488721486895145, 0.0 ] ] ] } }
+]
+}
