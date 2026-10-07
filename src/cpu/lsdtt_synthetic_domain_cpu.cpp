@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include "lsdtt_synthetic_domain_cpu.hpp"
+#include "../utils/lsdtt_connected_components.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
@@ -43,40 +44,21 @@ void keep_largest_land_component(
         mask[static_cast<std::size_t>(r) * n_cols + (n_cols - 1)] = 0;
     }
 
-    std::vector<int> label(n, 0);
-    int best_label = 0;
-    std::size_t best_size = 0;
-    int next_label = 0;
-
-    for (int r = 0; r < n_rows; ++r)
+    // The largest 4-connected land component; on a tie, the first in row-major
+    // order. With no land at all best_label stays 0 and every cell is kept,
+    // as before.
+    std::vector<std::int32_t> label;
+    std::vector<std::int64_t> size;
+    const std::int32_t n_comp = label_connected_components(n_rows, n_cols, 4,
+        [&](std::size_t s) { return mask[s] != 0; }, label, size);
+    std::int32_t best_label = 0;
+    std::int64_t best_size = 0;
+    for (std::int32_t l = 1; l <= n_comp; ++l)
     {
-        for (int c = 0; c < n_cols; ++c)
+        if (size[static_cast<std::size_t>(l)] > best_size)
         {
-            const std::size_t s = static_cast<std::size_t>(r) * n_cols + c;
-            if (mask[s] == 0 || label[s] != 0) continue;
-
-            ++next_label;
-            std::size_t comp_size = 0;
-            std::queue<std::pair<int,int>> q;
-            q.push({r, c});
-            label[s] = next_label;
-            while (!q.empty())
-            {
-                const auto [cr, cc] = q.front(); q.pop();
-                ++comp_size;
-                static constexpr const auto& dr = grid::d4_nswe_row;
-                static constexpr const auto& dc = grid::d4_nswe_col;
-                for (int k = 0; k < 4; ++k)
-                {
-                    const int nr = cr + dr[k], nc = cc + dc[k];
-                    if (nr < 0 || nr >= n_rows || nc < 0 || nc >= n_cols) continue;
-                    const std::size_t ns = static_cast<std::size_t>(nr) * n_cols + nc;
-                    if (mask[ns] == 0 || label[ns] != 0) continue;
-                    label[ns] = next_label;
-                    q.push({nr, nc});
-                }
-            }
-            if (comp_size > best_size) { best_size = comp_size; best_label = next_label; }
+            best_size = size[static_cast<std::size_t>(l)];
+            best_label = l;
         }
     }
 

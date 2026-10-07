@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_slope_break_finder_cpu.hpp"
+#include "../utils/lsdtt_connected_components.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -413,34 +414,13 @@ namespace {
 std::vector<int> label_components(const std::vector<float>& data,
                                    int nrows, int ncols)
 {
-    std::vector<int> labels(nrows * ncols, 0);
-    int next_label = 1;
-    for (int r = 0; r < nrows; ++r)
-    for (int c = 0; c < ncols; ++c)
-    {
-        int idx = r * ncols + c;
-        if (data[idx] <= 0.5f || labels[idx] != 0) continue;
-        std::queue<std::pair<int,int>> q;
-        q.push({r, c});
-        labels[idx] = next_label;
-        while (!q.empty())
-        {
-            auto [cr, cc] = q.front(); q.pop();
-            for (int dr = -1; dr <= 1; ++dr)
-            for (int dc = -1; dc <= 1; ++dc)
-            {
-                if (!dr && !dc) continue;
-                int nr = cr + dr, nc = cc + dc;
-                if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
-                int ni = nr * ncols + nc;
-                if (data[ni] <= 0.5f || labels[ni] != 0) continue;
-                labels[ni] = next_label;
-                q.push({nr, nc});
-            }
-        }
-        ++next_label;
-    }
-    return labels;
+    // Written as !(<= 0.5f), not > 0.5f: the cell test has always been
+    // "skip if data <= 0.5f", which is false for NaN, so NaN is foreground.
+    std::vector<std::int32_t> label;
+    std::vector<std::int64_t> size;
+    label_connected_components(nrows, ncols, 8,
+        [&](std::size_t i) { return !(data[i] <= 0.5f); }, label, size);
+    return std::vector<int>(label.begin(), label.end());
 }
 
 } // anonymous namespace

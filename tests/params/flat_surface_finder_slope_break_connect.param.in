@@ -1,0 +1,44 @@
+# The flat-surface-finder smoke run with elevation-based slope-break skeleton
+# connection switched on (slope_break_connect_search_radius_metres > 0), on the
+# fluvial-surfaces fixture DEM.
+#
+# No test enabled the connection before 2026-10-07, so the slope-break finder's
+# component labelling (label_components, which keeps a bridge from joining two
+# ends of the same skeleton component) never ran. That labelling moved onto the
+# shared labeller (consolidation C08) and its foreground test changes under
+# decision D3. At 1500 m / 10 m this fixture gives 7 endpoints, 6 candidate
+# pairs and 2 accepted bridges; at the 300 m radius tried first, no pair of ends
+# on different components is in range.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fsfsb
+
+n_threads: 1
+write_output_format: gtiff
+
+# Detection. Fixed threshold, not adaptive: the adaptive path picks its value
+# from the relief CDF and would drift with any change to the generator.
+relief_window_side_pixels: 5
+relief_threshold_metres: 2.0
+adaptive_relief_threshold: false
+
+# No morphology, so the mask written here is the raw thresholded relief.
+flat_closing_radius_metres: 0
+flat_opening_radius_metres: 0
+min_component_pixels: 100
+
+# The channel-relative half of this CLI is deliberately left off. It moves to
+# lsdtt-fluvial-surfaces in phase 3, and pinning it here would pin behaviour
+# that is about to be relocated rather than behaviour that must not change.
+run_plane_analysis: false
+
+write_combined_flat_mask_raster: true
+write_metric_flat_mask_rasters: false
+write_texture_rasters: false
+
+slope_break_connect_search_radius_metres: 1500
+slope_break_connect_elevation_tolerance_metres: 10
+write_slope_break_centreline_raster: true
+write_slope_break_bridge_mask_raster: true
+write_slope_break_centreline_connected_raster: true

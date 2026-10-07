@@ -15,6 +15,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_valley_centreline_cpu.hpp"
+#include "../utils/lsdtt_grid_geodesic.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"
@@ -480,43 +481,20 @@ valley_centreline_result extract_valley_centrelines(
             std::vector<double> cost(
                 n, std::numeric_limits<double>::infinity());
             std::vector<std::int64_t> prev(n, -1);
-            using qnode = std::pair<double, std::int64_t>;
-            std::priority_queue<qnode, std::vector<qnode>,
-                                std::greater<qnode>> pq;
             cost[static_cast<std::size_t>(start_f)] = 0.0;
-            pq.emplace(0.0, start_f);
             const double straight = cell;
             const double diag = cell * grid::k_sqrt2_d;
-            while (!pq.empty())
-            {
-                const auto [d, flat] = pq.top();
-                pq.pop();
-                const std::size_t fi = static_cast<std::size_t>(flat);
-                if (d > cost[fi]) continue;
-                if (flat == target_f) break;
-                const int r = static_cast<int>(flat / n_cols);
-                const int c = static_cast<int>(flat % n_cols);
-                for (int k = 0; k < 8; ++k)
-                {
-                    const int rr = r + k_dr[k], cc = c + k_dc[k];
-                    if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                        continue;
-                    const std::size_t nf =
-                        static_cast<std::size_t>(rr) * n_cols + cc;
-                    if (!hole[nf]) continue;
+            grid_dijkstra_d8(n_rows, n_cols, cost, std::vector<std::int64_t>{start_f},
+                [&](std::size_t nf) { return hole[nf] != 0; },
+                [&](std::size_t, std::size_t nf, int k) {
                     const double step =
                         (k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight;
                     const double w = step *
                         (static_cast<double>(wmax - wd[nf]) + eps);
-                    const double nd = d + w;
-                    if (nd < cost[nf])
-                    {
-                        cost[nf] = nd;
-                        prev[nf] = flat;
-                        pq.emplace(nd, static_cast<std::int64_t>(nf));
-                    }
-                }
-            }
+                    return w; },
+                [&](std::size_t from, std::size_t to) {
+                    prev[to] = static_cast<std::int64_t>(from); },
+                [&](std::int64_t flat) { return flat == target_f; });
             if (std::isfinite(cost[static_cast<std::size_t>(target_f)]))
             {
                 std::int64_t cur = target_f;

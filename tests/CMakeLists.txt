@@ -3601,6 +3601,19 @@ add_test(NAME unit_vector_layer_transform COMMAND lsdtt-test-vector-layer-transf
 lsdtt_set_tests_properties(unit_vector_layer_transform PROPERTIES
     LABELS "unit;gdal")
 
+# Stage 7: connected-component labelling (C08) and grid Dijkstra (C11).
+add_executable(lsdtt-test-connected-components cpp/test_connected_components.cpp)
+target_link_libraries(lsdtt-test-connected-components PRIVATE lsdtt3_cpu)
+add_test(NAME unit_connected_components COMMAND lsdtt-test-connected-components)
+lsdtt_set_tests_properties(unit_connected_components PROPERTIES
+    LABELS "unit;raster")
+
+add_executable(lsdtt-test-grid-geodesic cpp/test_grid_geodesic.cpp)
+target_link_libraries(lsdtt-test-grid-geodesic PRIVATE lsdtt3_cpu)
+add_test(NAME unit_grid_geodesic COMMAND lsdtt-test-grid-geodesic)
+lsdtt_set_tests_properties(unit_grid_geodesic PROPERTIES
+    LABELS "unit;raster")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
@@ -5899,6 +5912,22 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_flat_surface_finder PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Slope-break skeleton connection: the only test that runs the slope-break
+# finder's component labelling. See the parameter file.
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_slope_break_connect
+    lsdtt-flat-surface-finder
+    flat_surface_finder_slope_break_connect.param.in
+    fsfsb_slope_break_centreline_connected.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsfsb_slope_break_bridge_mask.tif
+    --stdout-contains "endpoints found : 7"
+    --stdout-contains "candidates      : 6"
+    --stdout-contains "bridges accepted: 2"
+)
+lsdtt_set_tests_properties(smoke_flat_surface_finder_slope_break_connect PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 # Phase 1. The reordering through the CLI: the ladder must resolve the flight,
 # every patch must carry a band, and the run must report which windows resolved.
 # Phase 1's reordering, now driven through lsdtt-fluvial-surfaces: phase 4 moved
@@ -6437,6 +6466,7 @@ set(LSDTT_DOMAIN_RULES
     "junction_graph"         "network"
     "grid_neighbours"        "raster"
     "vector_layer_transform" "gdal"
+    "connected_components|grid_geodesic" "raster"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"
