@@ -3548,6 +3548,13 @@ add_test(NAME unit_raster_sampling COMMAND lsdtt-test-raster-sampling)
 lsdtt_set_tests_properties(unit_raster_sampling PROPERTIES
     LABELS "unit;raster")
 
+# Stage 4: junction-graph topological order and s_vector preorder (C05).
+add_executable(lsdtt-test-junction-graph-orders cpp/test_junction_graph_orders.cpp)
+target_link_libraries(lsdtt-test-junction-graph-orders PRIVATE lsdtt3_cpu)
+add_test(NAME unit_junction_graph_orders COMMAND lsdtt-test-junction-graph-orders)
+lsdtt_set_tests_properties(unit_junction_graph_orders PROPERTIES
+    LABELS "unit;network")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
@@ -6366,6 +6373,7 @@ set(LSDTT_DOMAIN_RULES
     "cross_sections|bankfull_width|water_centreline" "network"
     "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
+    "junction_graph"         "network"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"
