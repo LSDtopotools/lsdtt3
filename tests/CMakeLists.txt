@@ -1470,6 +1470,24 @@ lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "smoke;cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
+# Least-cost-path burn: regression test for the use-after-free segfault fixed on
+# 2026-10-07, and the only test that runs raster_least_cost_path. See the
+# parameter file.
+add_lsdtt_cli_smoke_test(
+    smoke_stream_burning_lcp_burn
+    lsdtt-stream-burning
+    stream_burning_lcp_burn.param.in
+    lcpb_lcp_burn_paths.fgb
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect lcpb_burn_segments.fgb
+    --expect lcpb_lcp_burned.tif
+    --expect lcpb_connected_network_lines.fgb
+    --stdout-contains "LCP burn: 12 gaps (case1/2/3), 10 D8-connected on carve"
+    --stdout-contains "Candidate detection complete."
+)
+lsdtt_set_tests_properties(smoke_stream_burning_lcp_burn PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 add_lsdtt_cli_smoke_test(
     rigorous_stream_burning_legacy_threshold
     lsdtt-stream-burning

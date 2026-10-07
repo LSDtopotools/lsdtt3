@@ -1837,11 +1837,24 @@ int main(int argc, char* argv[])
                               << " D8-connected on carve\n";
 
                     // re-fill + re-flow so the burns take effect
+                    //
+                    // dem_network holds a raw pointer to the flow object it was
+                    // built from, so replacing `flow` alone left it dangling and
+                    // the next phase (candidate junctions) read freed memory and
+                    // segfaulted. Rebuild the network from the new flow too, with
+                    // the same sources and options as step 6, so the later phases
+                    // see the burned routing. Both are built before either is
+                    // swapped in, so a failure leaves the old, consistent pair.
                     try {
                         routed_dem = lsdtt::fill_pits(routed_dem,
                             ff["fill_min_slope"], ifs["n_threads"]);
-                        flow = lsdtt::make_flow_base(routed_dem.get_data_array(),
-                            routed_dem.get_mask_array(), routed_dem.get_meta(), fi_opts);
+                        std::unique_ptr<lsdtt::lsdtt_flow_base> new_flow =
+                            lsdtt::make_flow_base(routed_dem.get_data_array(),
+                                routed_dem.get_mask_array(), routed_dem.get_meta(), fi_opts);
+                        std::unique_ptr<lsdtt::lsdtt_junction_network_base> new_network =
+                            lsdtt::make_junction_network_base(*new_flow, source_flats, jn_opts);
+                        dem_network = std::move(new_network);
+                        flow = std::move(new_flow);
                     } catch (const std::exception& e) {
                         std::cerr << "Warning: reflow after LCP burn failed: "
                                   << e.what() << "\n";
