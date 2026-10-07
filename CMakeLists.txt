@@ -355,6 +355,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_raster_resampling_cpu.cpp
     src/cpu/lsdtt_raster_hierarchy_cpu.cpp
     src/cpu/lsdtt_raster_coregistration_cpu.cpp
+    src/cpu/lsdtt_raster_sampling_cpu.cpp
     src/cpu/lsdtt_raster_surface_metrics_cpu.cpp
     src/cpu/lsdtt_surface_texture_cpu.cpp
     src/cpu/lsdtt_raster_surface_fitting_cpu.cpp

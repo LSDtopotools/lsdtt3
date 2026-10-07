@@ -3241,9 +3241,15 @@ target_link_libraries(lsdtt-test-synthetic-networks PRIVATE lsdtt3_cpu)
 add_test(NAME unit_synthetic_networks
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
+# Both synthetic-networks runs write into the same directory (the same binary
+# writes ocn_square_polygon.fgb in both modes), so they must not run at once:
+# under ctest -j the polygon write in one could fail mid-write of the other
+# (P1 failed in ~1 run in 4, measured 2026-10-07). RESOURCE_LOCK serialises
+# just these two and keeps every output path unchanged.
 lsdtt_set_tests_properties(unit_synthetic_networks PROPERTIES
     LABELS "unit;synthetic_networks"
-    FIXTURES_SETUP synthetic_networks_fixture)
+    FIXTURES_SETUP synthetic_networks_fixture
+    RESOURCE_LOCK synthetic_networks_output)
 file(MAKE_DIRECTORY ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
 
 # Reported, never asserted: the fidelity / energy table over temperature at
@@ -3257,7 +3263,8 @@ add_test(NAME unit_synthetic_networks_sweep
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR} --sweep)
 lsdtt_set_tests_properties(unit_synthetic_networks_sweep PROPERTIES
-    LABELS "unit;synthetic_networks" TIMEOUT 1800)
+    LABELS "unit;synthetic_networks" TIMEOUT 1800
+    RESOURCE_LOCK synthetic_networks_output)
 
 add_test(NAME unit_flow_properties
          COMMAND lsdtt-test-flow-properties
@@ -3533,6 +3540,13 @@ add_test(NAME unit_drainage_injection_weights
 lsdtt_set_tests_properties(unit_drainage_injection_weights PROPERTIES
     LABELS "unit;point_input;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
+
+# Stage 3: bilinear raster sampling (C07) and point_in_ring (C22).
+add_executable(lsdtt-test-raster-sampling cpp/test_raster_sampling.cpp)
+target_link_libraries(lsdtt-test-raster-sampling PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_sampling COMMAND lsdtt-test-raster-sampling)
+lsdtt_set_tests_properties(unit_raster_sampling PROPERTIES
+    LABELS "unit;raster")
 
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)

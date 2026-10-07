@@ -20,27 +20,9 @@
 #include <vector>
 
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "../utils/lsdtt_polygon_geometry.hpp"
 
 namespace lsdtt {
-
-// -----------------------------------------------------------------------------
-// point-in-polygon (even-odd ray casting); ring is a closed or open vertex list
-// in (x = col-like, y = row-like) coordinates already mapped to the grid.
-// -----------------------------------------------------------------------------
-static bool point_in_ring(const std::vector<lsdtt_xy>& ring, double x, double y)
-{
-    bool inside = false;
-    const std::size_t n = ring.size();
-    for (std::size_t i = 0, j = n - 1; i < n; j = i++)
-    {
-        const double xi = ring[i].x, yi = ring[i].y;
-        const double xj = ring[j].x, yj = ring[j].y;
-        const bool crosses = ((yi > y) != (yj > y)) &&
-            (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-        if (crosses) inside = !inside;
-    }
-    return inside;
-}
 
 // -----------------------------------------------------------------------------
 void keep_largest_land_component(
@@ -171,7 +153,7 @@ std::vector<std::uint8_t> make_efd_island_mask(
         static_cast<std::size_t>(n_rows) * n_cols, 0);
     for (int r = 0; r < n_rows; ++r)
         for (int cc = 0; cc < n_cols; ++cc)
-            if (point_in_ring(ring, cc + 0.5, r + 0.5))
+            if (point_in_ring(lsdtt_xy{cc + 0.5, r + 0.5}, ring))
                 mask[static_cast<std::size_t>(r) * n_cols + cc] = 1;
 
     keep_largest_land_component(mask, n_rows, n_cols);
@@ -259,7 +241,7 @@ std::vector<std::uint8_t> rasterise_polygon_scaled(
 
     for (int r = 0; r < n_rows; ++r)
         for (int c = 0; c < n_cols; ++c)
-            if (point_in_ring(ring, c + 0.5, r + 0.5))
+            if (point_in_ring(lsdtt_xy{c + 0.5, r + 0.5}, ring))
                 mask[static_cast<std::size_t>(r) * n_cols + c] = 1;
 
     keep_largest_land_component(mask, n_rows, n_cols);
@@ -300,7 +282,7 @@ lsdtt_polygon_true_area rasterise_polygon_true_area(
         for (int c = 0; c < out.n_cols; ++c)
         {
             const double cx = out.x_min + (c + 0.5) * cell_size;
-            if (point_in_ring(ring, cx, cy))
+            if (point_in_ring(lsdtt_xy{cx, cy}, ring))
                 out.mask[static_cast<std::size_t>(r) * out.n_cols + c] = 1;
         }
     }
