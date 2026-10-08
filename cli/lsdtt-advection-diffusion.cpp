@@ -221,7 +221,12 @@ int main(int argc, char* argv[])
 
     float_default_map["K"] = 1e-3f;
     help_map["K"] = {
-        "float", "1e-3", "Erodibility K (m^(1-2m) yr^-1).", "",
+        "float", "1e-3", "Erodibility K (m^(1-2m) yr^-1).",
+        "Note: if use_specific_drainage_area is true, this parameter is "
+        "interpreted as K_a, an erodibility with units adjusted to be "
+        "consistent with the specific drainage area formulation (Bonetti et "
+        "al., 2020, PNAS). K_a is equivalent to K*dx^m (see Litwin et al., "
+        "2025, ESurf), so has units of m^(1-m) yr^-1.",
         "Fluvial incision", "param", ""};
 
     float_default_map["m_exponent"] = 0.45f;

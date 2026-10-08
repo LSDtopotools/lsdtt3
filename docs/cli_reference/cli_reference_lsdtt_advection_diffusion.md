@@ -49,8 +49,13 @@ D: ...
 uplift_rate: ...
 ```
 
-`K` has units `m^(1 - 2m) yr^-1` when total drainage area is used. `D` has
-units `m^2 yr^-1`, and `uplift_rate` has units `m yr^-1`.
+`K` has units `m^(1 - 2m) yr^-1` when total drainage area is used. Note: if
+`use_specific_drainage_area` is true, this parameter is interpreted as `K_a`,
+an erodibility with units adjusted to be consistent with the specific drainage
+area formulation (Bonetti et al., 2020, PNAS). `K_a` is equivalent to
+`K*dx^m` (see Litwin et al., 2025, ESurf), so has units of
+`m^(1 - m) yr^-1`. `D` has units `m^2 yr^-1`, and `uplift_rate` has units
+`m yr^-1`.
 
 ## Input grids and continuation
 
