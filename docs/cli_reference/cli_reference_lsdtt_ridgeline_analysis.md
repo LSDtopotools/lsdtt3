@@ -409,9 +409,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write triple and quadruple divide nodes on selected ridgelines. | The surrounding-basin test is used. |
 | `write_zero_order_triple_divides_on_selected_ridglines` | `bool` | `false` | `switch` | - | Write triple divide join/leave nodes bounding zero-order basins. | Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network. |
+| `write_zero_order_basins_touching_selected_ridgelines` | `bool` | `false` | `switch` | - | Write source-based zero-order basin outlines that touch selected ridgelines. | Uses the same exact ridgeline-grid contact test as zero-order TDJ detection. |
 | `write_topological_distance_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write nodes where either flanking flow topological distance exceeds the threshold. | Results are written with the other selected triple-divide modes in one metadata-compatible layer. |
 | `topological_distance_triple_divide_threshold` | `float` | `0.0` | `param` | - | Flow topological distance threshold for topological triple divides. | A node qualifies when the left OR right distance is greater than this value. |
 | `topological_distance_triple_divide_thresholds` | `string` | - | `param` | - | Comma-separated flow topological distance thresholds in metres. | When supplied, one topological triple-divide CSV and FlatGeobuf is written for each value. An empty value falls back to the singular topological_distance_triple_divide_threshold parameter. |
+| `native_tdj_channel_thresholds` | `string` | - | `param` | - | Comma-separated channel-area thresholds in square metres for native TDJs. | Native TDJs are recalculated on the selected ridgelines for each value. |
 
 ### Paired flow paths
 
@@ -429,6 +431,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_polyfit_rasters` | `bool` | `false` | `switch` | - | Write the six quadratic polynomial fit coefficient rasters. | Computes a, b, c, d, e, f where z = ax^2 + by^2 + cxy + dx + ey + f over a moving window controlled by polyfit_lambda. |
 | `polyfit_lambda_metres` | `float` | `70.0` | `param` | - | Characteristic lengthscale (metres) for the wavelet quadratic fit. | Controls the size of the moving window. Default (70 m) is tuned for Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m). |
+| `polyfit_lambda_metres_list` | `string` | - | `param` | - | Comma-separated polyfit lengthscales in metres. | When supplied, Phase 9 runs each lambda sequentially after the ridgelines are extracted, releasing each polyfit result before the next lambda is calculated. |
 | `polyfit_metrics` | `string` | - | `param` | - | Comma-separated list of derived polyfit metrics to write. | Examples: slope,aspect_degrees,plan_curvature,profile_curvature. Use all to write every supported metric. Available metrics: fitted_surface, dzdx, dzdy, d2zdx2, d2zdxdy, d2zdy2, slope, slope_degrees,aspect_radians, aspect_degrees, laplacian, hessian_determinant, mean_curvature, gaussian_curvature, maximum_curvature, minimum_curvature, curvedness, shape_index, profile_curvature, plan_curvature, tangential_curvature, difference_curvature, horizontal_excess_curvature, vertical_excess_curvature, accumulation_curvature, ring_curvature, rotor. |
 | `polyfit_z_factor` | `float` | `1.0` | `param` | - | Vertical scaling applied before interpreting polyfit derivatives. | Scales first and second derivatives consistently in the polyfit metric engine. |
 | `polyfit_flat_slope_tolerance` | `float` | `1e-12` | `param` | - | Slope tolerance below which direction-dependent polyfit metrics are nodata. | Applies to aspect, plan curvature, tangential curvature, profile curvature, and rotor. |
