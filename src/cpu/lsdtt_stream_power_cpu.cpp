@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_stream_power_cpu.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -190,11 +191,11 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     float slope_clamp,
     int   n_threads)
 {
-#ifdef _OPENMP
-    if (n_threads > 0)
-        omp_set_num_threads(n_threads);
-#else
-    (void)n_threads;
+    // The thread count goes on the parallel loop (num_threads clause); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     const lsdtt_raster_meta& meta = dem.get_meta();
@@ -233,7 +234,7 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
         std::size_t level_evaluated_nodes = 0;
 
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static) \
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads) \
             reduction(+:level_slope_clamp_count, level_overexcavation_count, level_evaluated_nodes)
 #endif
         for (std::int64_t li = 0; li < level_size; ++li)

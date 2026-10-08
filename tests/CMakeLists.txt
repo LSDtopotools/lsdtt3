@@ -3635,6 +3635,14 @@ add_test(NAME unit_splitmix_copies COMMAND lsdtt-test-splitmix-copies)
 lsdtt_set_tests_properties(unit_splitmix_copies PROPERTIES
     LABELS "unit;core")
 
+# Stage 9: thread-count invariance of the kernels whose OpenMP thread setting
+# moved from omp_set_num_threads to num_threads clauses (C16, decision D4).
+add_executable(lsdtt-test-thread-count-invariance cpp/test_thread_count_invariance.cpp)
+target_link_libraries(lsdtt-test-thread-count-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_thread_count_invariance COMMAND lsdtt-test-thread-count-invariance)
+lsdtt_set_tests_properties(unit_thread_count_invariance PROPERTIES
+    LABELS "unit;lem")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
@@ -6488,7 +6496,7 @@ set(LSDTT_DOMAIN_RULES
     "grid_neighbours"        "raster"
     "vector_layer_transform" "gdal"
     "connected_components|grid_geodesic" "raster"
-    "boundary_conditions|output_file|splitmix" "core"
+    "boundary_conditions|output_file|splitmix|thread_count" "core"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"

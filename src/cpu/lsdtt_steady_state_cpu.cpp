@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_steady_state_cpu.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include "lsdtt_stream_power_cpu.hpp"
 
@@ -171,9 +172,11 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
     const lsdtt_flowgraph_cpu&                flow,
     const lsdtt_fluvial_steady_state_options& opts)
 {
-#ifdef _OPENMP
-    if (opts.n_threads > 0)
-        omp_set_num_threads(opts.n_threads);
+    // The thread count goes on each parallel loop (num_threads clause); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(opts.n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     const lsdtt_raster_meta& meta    = flow.meta();
@@ -218,7 +221,7 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
         const std::int64_t level_size = static_cast<std::int64_t>(level.size());
 
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
         for (std::int64_t li = 0; li < level_size; ++li)
         {

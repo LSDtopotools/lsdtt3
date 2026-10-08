@@ -80,10 +80,6 @@ lsdtt_valley_spacing_result compute_valley_spacing(
 {
     lsdtt_valley_spacing_result out;
 
-#ifdef _OPENMP
-    if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
-#endif
-
     const lsdtt_raster_meta& meta = dem.get_meta();
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;
