@@ -3664,6 +3664,14 @@ add_test(NAME unit_cosmo_lsdn_grid_lookup COMMAND lsdtt-test-cosmo-lsdn-grid-loo
 lsdtt_set_tests_properties(unit_cosmo_lsdn_grid_lookup PROPERTIES
     LABELS "unit;cosmo")
 
+# The production / pressure rasters' WGS84 conversion must not depend on the
+# axis order the DEM's CRS declares (northing-first CRSs such as NZTM).
+add_executable(lsdtt-test-cosmo-raster-axis-order cpp/test_cosmo_raster_axis_order.cpp)
+target_link_libraries(lsdtt-test-cosmo-raster-axis-order PRIVATE lsdtt3_cpu)
+add_test(NAME unit_cosmo_raster_axis_order COMMAND lsdtt-test-cosmo-raster-axis-order)
+lsdtt_set_tests_properties(unit_cosmo_raster_axis_order PROPERTIES
+    LABELS "unit;cosmo")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
