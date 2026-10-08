@@ -3163,6 +3163,15 @@ target_link_libraries(lsdtt-test-csv-table-quoting PRIVATE lsdtt3_core)
 add_test(NAME unit_csv_table_quoting COMMAND lsdtt-test-csv-table-quoting)
 lsdtt_set_tests_properties(unit_csv_table_quoting PROPERTIES LABELS "unit")
 
+# Strict field converters shared by the hand-written CSV readers (Manning,
+# crn_column erosion history, particle restart): file, line and text on error.
+add_executable(lsdtt-test-csv-table-field-parsers cpp/test_csv_table_field_parsers.cpp)
+target_link_libraries(lsdtt-test-csv-table-field-parsers PRIVATE lsdtt3_cpu)
+add_test(NAME unit_csv_table_field_parsers
+         COMMAND lsdtt-test-csv-table-field-parsers
+                 ${CMAKE_CURRENT_BINARY_DIR}/csv_table_field_parsers_output)
+lsdtt_set_tests_properties(unit_csv_table_field_parsers PROPERTIES LABELS "unit")
+
 # B4 the polyfit metric name/suffix table beside the polyfit_metric enum.
 add_executable(lsdtt-test-surface-metrics-polyfit-metric-table
                cpp/test_surface_metrics_polyfit_metric_table.cpp)

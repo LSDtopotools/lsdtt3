@@ -16,6 +16,7 @@
 //  committed.
 // =============================================================================
 #include "lsdtt_crn_column.hpp"
+#include "../core/lsdtt_csv_table.hpp"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -37,8 +38,14 @@ void lsdtt_crn_column::read_erosion_time_series(const std::string& csv_path)
     std::string line;
     std::getline(ifs, line);   // skip header
 
+    // Each field is trimmed and must then be a number in full: a typo such as
+    // "1.5e-4x" or a quoted field is reported with the file and line rather than
+    // being read as 1.5e-4 or failing with a bare "stod".
+    const std::string where = "lsdtt_crn_column: erosion history \"" + csv_path + "\"";
+    std::size_t line_no = 1;
     while (std::getline(ifs, line))
     {
+        ++line_no;
         if (line.empty()) continue;
         // strip control chars
         line.erase(std::remove_if(line.begin(), line.end(),
@@ -49,11 +56,12 @@ void lsdtt_crn_column::read_erosion_time_series(const std::string& csv_path)
         if (!std::getline(ss, t_s, ',') ||
             !std::getline(ss, r_s, ',') ||
             !std::getline(ss, rem_s, ','))
-            throw std::runtime_error("lsdtt_crn_column: erosion history file must have "
-                                     "three comma-separated columns: time,rate,removal");
-        t_v.push_back(std::stod(t_s));
-        r_v.push_back(std::stod(r_s));
-        rem_v.push_back(std::stod(rem_s));
+            throw std::runtime_error(where + ": line " + std::to_string(line_no) +
+                                     ": must have three comma-separated columns: "
+                                     "time,rate,removal");
+        t_v.push_back(csv_parse_double_field(csv_trim(t_s), where, line_no));
+        r_v.push_back(csv_parse_double_field(csv_trim(r_s), where, line_no));
+        rem_v.push_back(csv_parse_double_field(csv_trim(rem_s), where, line_no));
     }
 
     set_erosion_time_series(t_v, r_v, rem_v);
