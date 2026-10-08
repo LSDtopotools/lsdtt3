@@ -195,8 +195,8 @@ int main(int argc, char* argv[])
         "Irrelevant for a single-source network, which has no junctions.",
         "Cross sections", "switch", ""};
 
-    int_default_map["minimum_bearing_window_pixels"] = 3;
-    help_map["minimum_bearing_window_pixels"] = {"int", "3",
+    int_default_map["min_bearing_window_pixels"] = 3;
+    help_map["min_bearing_window_pixels"] = {"int", "3",
         "Minimum channel pixels required to fit a local bearing.",
         "Sections with fewer pixels in the bearing window are dropped.",
         "Cross sections", "param", ""};
@@ -250,11 +250,12 @@ int main(int argc, char* argv[])
         "Output: <write_fname>_cross_section_sample_points.fgb (or .gpkg).",
         "Channel profile", "switch", ""};
 
-    string_default_map["cross_section_sample_points_output_format"] = "fgb";
-    help_map["cross_section_sample_points_output_format"] = {"string", "fgb",
-        "Output format for sampled cross-section points.",
-        "flatgeobuf / fgb / gpkg. CSV is not supported here.",
-        "Channel profile", "param", "write_cross_section_sample_points"};
+    // Both point layers follow write_vector_format. The old per-layer
+    // selectors are compatibility aliases (below) whose values land in these
+    // hidden keys, so an old file that set them still gets what it asked for.
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
+    string_default_map["legacy_cross_section_sample_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // --- Manning widths ---
     bool_default_map["run_manning_widths"] = false;
@@ -324,13 +325,8 @@ int main(int argc, char* argv[])
         "<write_fname>_manning_bank_points.fgb (or .gpkg).",
         "Manning widths", "switch", "run_manning_widths"};
 
-    string_default_map["manning_bank_points_output_format"] = "flatgeobuf";
-    help_map["manning_bank_points_output_format"] = {"string", "flatgeobuf",
-        "Output format for Manning bank points.",
-        "flatgeobuf / fgb / gpkg. CSV is rejected: a point CSV must carry "
-        "EPSG:4326 lat/lon, which is not implemented; use "
-        "write_manning_widths_csv for tabular output.",
-        "Manning widths", "param", "run_manning_widths"};
+    string_default_map["legacy_manning_bank_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     bool_default_map["write_manning_widths_csv"] = true;
     help_map["write_manning_widths_csv"] = {"bool", "true",
@@ -357,6 +353,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    pp.set_deprecated_aliases({
+        {"minimum_bearing_window_pixels", "min_bearing_window_pixels"} });
+    pp.set_deprecated_compatibility_aliases({
+        {"cross_section_sample_points_output_format",
+         {"legacy_cross_section_sample_points_write_vector_format", "write_vector_format"}},
+        {"manning_bank_points_output_format",
+         {"legacy_manning_bank_points_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
 
@@ -364,6 +367,13 @@ int main(int argc, char* argv[])
     auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
+
+    // Each point layer's format: write_vector_format, unless an old parameter
+    // file set the layer's deprecated selector.
+    const std::string sample_points_format_text = lsdtt::resolve_output_format_override(
+        sf["legacy_cross_section_sample_points_write_vector_format"], sf["write_vector_format"]);
+    const std::string manning_points_format_text = lsdtt::resolve_output_format_override(
+        sf["legacy_manning_bank_points_write_vector_format"], sf["write_vector_format"]);
 
     // -------------------------------------------------------------------------
     // Cross-parameter validation (before any expensive work)
@@ -435,13 +445,14 @@ int main(int argc, char* argv[])
                       << "manning_max_discharge_relative_error must be > 0.\n";
             return 1;
         }
+        // A point CSV must carry EPSG:4326 lat/lon, which is not implemented.
         if (bf["write_manning_bank_points"] &&
-            lsdtt::resolve_point_output_format(sf["manning_bank_points_output_format"]) ==
+            lsdtt::resolve_point_output_format(manning_points_format_text) ==
                 lsdtt::point_output_format::csv)
         {
-            std::cerr << "FATAL: manning_bank_points_output_format=csv is not "
-                      << "supported. Use flatgeobuf/fgb/gpkg; the widths CSV is "
-                      << "controlled by write_manning_widths_csv.\n";
+            std::cerr << "FATAL: write_vector_format=csv is not supported for the "
+                      << "Manning bank points. Use flatgeobuf/fgb/gpkg; the widths "
+                      << "CSV is controlled by write_manning_widths_csv.\n";
             return 1;
         }
     }
@@ -641,7 +652,7 @@ int main(int argc, char* argv[])
     xs_opts.bearing_window_length_metres        = ff["bearing_window_length_metres"];
     xs_opts.cross_section_thinning              = ifs["cross_section_thinning"];
     xs_opts.skip_junction_pixels                = bf["skip_junction_pixels"];
-    xs_opts.minimum_bearing_window_pixels       = ifs["minimum_bearing_window_pixels"];
+    xs_opts.minimum_bearing_window_pixels       = ifs["min_bearing_window_pixels"];
 
     std::vector<lsdtt::lsdtt_cross_section> sections;
     try
@@ -729,13 +740,12 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing cross-section sample points ---\n";
 
         const lsdtt::point_output_format sample_points_format =
-            lsdtt::resolve_point_output_format(
-                sf["cross_section_sample_points_output_format"]);
+            lsdtt::resolve_point_output_format(sample_points_format_text);
 
         if (sample_points_format == lsdtt::point_output_format::csv)
         {
-            std::cerr << "FATAL: cross_section_sample_points_output_format=csv is "
-                         "not allowed. Use fgb/flatgeobuf (or gpkg).\n";
+            std::cerr << "FATAL: write_vector_format=csv is not allowed for the "
+                         "cross-section sample points. Use fgb/flatgeobuf (or gpkg).\n";
             return 1;
         }
 
@@ -862,7 +872,7 @@ int main(int argc, char* argv[])
         if (bf["write_manning_bank_points"])
         {
             const lsdtt::point_output_format manning_points_format =
-                lsdtt::resolve_point_output_format(sf["manning_bank_points_output_format"]);
+                lsdtt::resolve_point_output_format(manning_points_format_text);
 
             const std::string extension =
                 lsdtt::output_extension(
