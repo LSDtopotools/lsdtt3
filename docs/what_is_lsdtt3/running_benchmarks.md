@@ -314,6 +314,14 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
       (Lindsay 2016, now lsdtt3 against RichDEM) to a new `breach_least_cost`
       case against lsdtt3's own least-cost breach.
 
+!!! warning "TopoToolbox left `fill_priority_flood` on 2026-10-08"
+    TopoToolbox has no priority-flood fill. `fillsinks(hybrid=False)`, which
+    older campaigns list under `fill_priority_flood`, is sequential grayscale
+    reconstruction, so those rows were never like-for-like with lsdtt3's
+    priority flood. TopoToolbox is now compared on `fill` (hybrid
+    reconstruction, matched) and on the new timing-only case
+    `accum_d8_drained_flats` (raw DEM to a D8 network in which flats drain).
+
     The same campaign also removed `polyfit_many`, made `fill_spill_merge`
     lsdtt3-only, and reuses identical reference rows instead of re-measuring
     them (a `reused_from` column in the CSV).

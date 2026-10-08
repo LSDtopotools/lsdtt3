@@ -952,6 +952,10 @@ int main(int argc, char* argv[])
         std::cout << "Raster is not marked as filled. Running fill_pits().\n";
         std::cout << "Minimum slope: " << ff["fill_min_slope"] << "\n";
 
+        // Timed like the D8 build below, so a raw-DEM run's "Compute time:"
+        // lines sum to fill + build + accumulation in
+        // tests/scripts/run_benchmark_suite.py (case accum_d8_drained_flats).
+        const auto fill_t0 = std::chrono::steady_clock::now();
         try
         {
             routed_dem = lsdtt::fill_pits(
@@ -966,6 +970,10 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
             return 1;
         }
+        const auto fill_t1 = std::chrono::steady_clock::now();
+        std::cout << "  Compute time: "
+                  << std::chrono::duration<double>(fill_t1 - fill_t0).count()
+                  << " s\n";
     }
     else
     {

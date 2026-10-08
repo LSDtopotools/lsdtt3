@@ -293,6 +293,14 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
                     "fill_depressions_wang_and_liu, "
                     "fill_depressions_planchon_and_darboux, fill_pits)",
     },
+    "fill_priority_flood": {
+        "topotoolbox": "no priority-flood fill in topotoolbox 3.x: both "
+                       "fillsinks modes are Vincent (1993) grayscale "
+                       "reconstruction (hybrid=True -> reconstruct_hybrid, "
+                       "measured in fill; hybrid=False -> reconstruct, the "
+                       "SEQUENTIAL variant, not measured -- lsdtt3 has no "
+                       "matching backend)",
+    },
     "breach": {
         "whitebox": "no Lindsay (2016) complete breaching in whitebox_workflows "
                     "2.0.6 (hydrology offers breach_depressions_least_cost "
@@ -357,10 +365,13 @@ CASES: dict[str, dict[str, Any]] = {
     # -- suite: flow -------------------------------------------------------
     # -- fill: TWO cases, because there are two algorithm families ---------
     #
-    # Every tool here implements both a grayscale-reconstruction fill (raster
-    # scans + FIFO queue, O(N), sequential access) and a priority-flood fill
-    # (binary heap, O(N log N)). They produce the SAME surface and differ only
-    # in cost, so a fill benchmark must pair like with like.
+    # A depression fill is either a grayscale reconstruction (raster scans +
+    # FIFO queue, O(N), sequential access) or a priority flood (binary heap,
+    # O(N log N)). They produce the SAME surface and differ only in cost, so a
+    # fill benchmark must pair like with like. lsdtt3 implements both. The
+    # references do NOT: TopoToolbox has only reconstruction (both fillsinks
+    # modes), RichDEM and Whitebox only priority floods. Each case lists only
+    # the engines that implement its family -- see NOT_IMPLEMENTED.
     #
     # An earlier version of this table did not. It ran lsdtt3's DEFAULT
     # (`barnes2014`, the heap) against TopoToolbox's DEFAULT (`hybrid=True`,
@@ -399,14 +410,18 @@ CASES: dict[str, dict[str, Any]] = {
         "sequential": True,
         "suite": "flow",
         "note": ("PRIORITY-FLOOD family: heap-based flood, O(N log N). "
-                 "lsdtt3 barnes2014 vs TopoToolbox hybrid=False vs RichDEM "
-                 "(Zhou 2016) vs Whitebox fill_depressions. Same surface as "
-                 "the reconstruction case, roughly 2-3x the cost in every "
-                 "implementation"),
+                 "lsdtt3 barnes2014 vs RichDEM (Zhou 2016) vs Whitebox "
+                 "fill_depressions. Same surface as the reconstruction case. "
+                 "No TopoToolbox row: it has no priority-flood fill"),
         # Whitebox `fill` = fill_depressions(fix_flats=False), a priority-flood
         # fill (moved here from `fill` 2026-09-13).
-        "engines": {"richdem": "fill", "topotoolbox": "fill_priority_flood",
-                    "whitebox": "fill"},
+        #
+        # TopoToolbox fillsinks(hybrid=False) was paired here until
+        # 2026-10-08. It is Vincent's SEQUENTIAL reconstruction, not a heap
+        # (`reconstruct` -> forward_scan/backward_scan; no pq_* call), so the
+        # row compared a heap with a reconstruction. Its timings remain valid
+        # measurements of that algorithm; only the pairing was wrong.
+        "engines": {"richdem": "fill", "whitebox": "fill"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0",
@@ -520,6 +535,35 @@ CASES: dict[str, dict[str, Any]] = {
                              "raster_is_filled": "true",
                              "build_flow_s_vector": "false"},
                   "output": "_d8_drainage_area.tif"},
+    },
+
+    # DEM -> D8 network in which flats drain, END TO END from the raw DEM.
+    #
+    # The only place TopoToolbox enters the epsilon > 0 comparison. It never
+    # imposes a gradient in the fill (`fill_epsilon` has no TopoToolbox row);
+    # FlowObject fills internally and routes across flats on least-cost carved
+    # auxiliary topography (Schwanghart et al. 2013). lsdtt3 resolves flats
+    # in the fill instead (barnes2014 with fill_min_slope > 0) and then builds
+    # D8. Same end product -- a D8 network in which every flat drains -- by
+    # different flat rules, so the accumulation rasters differ on flats: a
+    # TIMING row, like accum_dinf/accum_mfd. lsdtt3's figure is the sum of its
+    # fill, D8 build and accumulation `Compute time:` lines.
+    #
+    # Deliberately NOT needs_filled: both engines read the raw fixture.
+    "accum_d8_drained_flats": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("raw DEM -> D8 accumulation with drainable flats; TIMING "
+                 "ONLY, flat rules differ. lsdtt3 barnes2014 fill with "
+                 "fill_min_slope 1e-4 + D8 vs TopoToolbox FlowObject(carve), "
+                 "which fills internally and carves across flats"),
+        "engines": {"topotoolbox": "accum_d8_drained_flats"},
+        "lsdtt": {"exe": "lsdtt-drainage-analysis",
+                  "params": {"write_d8_drainage_area_raster": "true",
+                             "raster_is_filled": "false",
+                             "fill_min_slope": "0.0001"},
+                  "output": "_d8_drainage_area.tif"},
+        "report_only": True,
     },
 
     # -- suite: mfd --------------------------------------------------------

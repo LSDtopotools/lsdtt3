@@ -1145,13 +1145,20 @@ because the corrected cases are only meaningful alongside what they replaced.
 
 #### 1. `fill` compared two different algorithms
 
-Both tools implement both algorithm families, and both default to a *different*
-one:
+lsdtt3 implements both algorithm families; TopoToolbox implements only
+reconstruction, and the two default to a *different* family:
 
-| | reconstruction (O(N), FIFO queue) | priority-flood (O(N log N), heap) |
-|---|---|---|
-| lsdtt3 | `vincent1993` | `barnes2014` ← **CLI default** |
-| TopoToolbox | `hybrid=True` ← **default** | `hybrid=False` |
+| | hybrid reconstruction (O(N), FIFO queue) | sequential reconstruction (repeated scans) | priority-flood (O(N log N), heap) |
+|---|---|---|---|
+| lsdtt3 | `vincent1993` | — | `barnes2014` ← **CLI default** |
+| TopoToolbox | `hybrid=True` ← **default** | `hybrid=False` | — |
+
+**TopoToolbox has no priority-flood fill.** `fillsinks(hybrid=False)` calls
+libtopotoolbox `reconstruct`, Vincent's (1993) *sequential* algorithm (forward
+and backward raster scans repeated until nothing changes); `hybrid=True` calls
+`reconstruct_hybrid`. Neither calls the `pq_*` heap routines (call graph of the
+installed `topotoolbox/_grid*.so`). The sequential pass count is data-dependent:
+33.5 s on lakeland_4000 against 3.2 s on alpine_4000.
 
 The suite used both defaults, so it ran lsdtt3's heap against TopoToolbox's
 reconstruction. On alpine_1000 at `fill_min_slope: 0`, output **bit-identical**
@@ -1167,10 +1174,16 @@ reconstruction. On alpine_1000 at `fill_min_slope: 0`, output **bit-identical**
 entirely the algorithm choice.
 
 **Fix:** the `fill` case now pins `fill_algorithm_choice: vincent1993` against
-`hybrid=True`, and a new `fill_priority_flood` case pins `barnes2014` against
-`hybrid=False` and RichDEM (Zhou 2016). `topotoolbox_reference.py` gained a
-`fill_priority_flood` routine to expose the non-hybrid path. Both families are
-now measured; neither is compared across.
+`hybrid=True`, and a `fill_priority_flood` case pins `barnes2014` against
+RichDEM (Zhou 2016) and Whitebox. Both families are measured; neither is
+compared across.
+
+Until 2026-10-08 `fill_priority_flood` also carried TopoToolbox
+`hybrid=False`, on the mistaken belief that it was a heap. It was sequential
+reconstruction against lsdtt3's priority-flood, so those rows are not
+like-for-like. Their timings remain valid measurements of sequential
+reconstruction. The routine is removed: lsdtt3 has no sequential-reconstruction
+backend to pair it with.
 
 `fill_epsilon` has no reconstruction row, and cannot: reconstruction fills to
 exactly the spill level and has no mechanism for a gradient across flats.
@@ -1554,6 +1567,7 @@ question, and an open one.
 | Suite | Cases | Status |
 |---|---|---|
 | `flow` | fill, fill_priority_flood, fill_epsilon, breach, breach_least_cost, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
+| `flow` | accum_d8_drained_flats | **timing only** -- lsdtt3 resolves flats in the fill (`fill_min_slope`), TopoToolbox in `FlowObject` (least-cost carving) |
 | `mfd` | accum_dinf, accum_mfd | **timing only** -- Tarboton vs Quinn vs Freeman proportioning genuinely differ |
 | `surface` | slope_only, polyfit_all, hillshade | **timing only** -- curvature definitions and aspect handedness differ |
 | `depression` | fill_spill_merge, fill_wang_liu | **timing only**, and the depression hierarchy has no counterpart at all |
@@ -1589,6 +1603,21 @@ algorithm from the lsdtt3 row they were compared against:
   package, so they are not verified equal to lsdtt3's.
 
 Campaigns before 2026-09-13 carry the old pairings in those three rows.
+
+**Pairings corrected 2026-10-08.** `fill_priority_flood@topotoolbox` ran
+`fillsinks(hybrid=False)`, which is Vincent's sequential reconstruction, not a
+priority flood. TopoToolbox has no priority-flood fill, so it is now `n/a` in
+that case. Campaigns before 2026-10-08 carry this row; it must not be read as a
+priority-flood comparison.
+
+TopoToolbox enters the ε > 0 comparison only through
+`accum_d8_drained_flats`: raw DEM to D8 accumulation in which flats drain.
+lsdtt3 runs `barnes2014` with `fill_min_slope: 0.0001`, then D8, and its time is
+the sum of the fill, build and accumulation `Compute time:` lines. TopoToolbox runs
+`FlowObject(dem, method='d8', sink_resolution='carve')` on the raw DEM, which
+fills internally and routes across flats on least-cost carved auxiliary
+topography (Schwanghart et al. 2013, ESPL 38:1576-1586), then
+`flow_accumulation`. The flat rules differ, so the case is timing only.
 
 `fill_spill_merge` measures lsdtt3's nested depression hierarchy (Barnes 2020)
 plus Fill-Spill-Merge (Barnes 2021), lsdtt3 only. It is recorded because the
@@ -1808,9 +1837,14 @@ an implementation-quality gap but a **different algorithm class**:
   morphological reconstruction — **O(N)**: two raster scans plus a bounded FIFO
   drain, almost entirely sequential memory access.
 
-The decisive control: TopoToolbox's *non*-hybrid path tracks lsdtt3 almost
-exactly at every size, so their implementation quality was never the
-differentiator — the hybrid reconstruction specifically was.
+TopoToolbox's *non*-hybrid path was measured tracking lsdtt3's priority-flood
+almost exactly at every size, and was read at the time as a control showing
+that implementation quality was not the differentiator. That reading is
+withdrawn: `hybrid=False` is Vincent's *sequential* reconstruction, not a
+priority flood (TopoToolbox has none), so the two curves come from different
+algorithms and their agreement is not a control. The measurement stands. The
+conclusion that the hybrid reconstruction is the faster algorithm class rests on
+the matched `vincent1993` vs `hybrid=True` comparison, not on this.
 
 lsdtt3 now has both. `fill_pits_reconstruction()` implements Vincent 1993, and
 `fill_pits()` dispatches on `min_slope`:
