@@ -10,6 +10,7 @@
 #include "lsdtt_hydro_velocity_field_cpu.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
+#include "lsdtt_manning_formula_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -22,20 +23,6 @@
 
 namespace lsdtt
 {
-
-namespace
-{
-
-// Velocity from Manning with the hydraulic radius supplied by the caller. Kept
-// separate so Phase 5 can pass a live flow depth here instead of a geometric R
-// without touching the rest of the closure.
-double manning_velocity(double roughness, double hydraulic_radius, double slope)
-{
-    return (1.0 / roughness) * std::pow(hydraulic_radius, 2.0 / 3.0) *
-           std::sqrt(slope);
-}
-
-} // namespace
 
 double hydraulic_radius_from_area(double drainage_area_m2,
                                   const hydro_velocity_options& opts) noexcept

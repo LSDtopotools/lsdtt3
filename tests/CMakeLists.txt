@@ -3681,6 +3681,22 @@ add_test(NAME unit_cosmo_raster_axis_order COMMAND lsdtt-test-cosmo-raster-axis-
 lsdtt_set_tests_properties(unit_cosmo_raster_axis_order PROPERTIES
     LABELS "unit;cosmo")
 
+# Stage 11: four-cardinal centred-difference gradient shared by the
+# vertical-units check and the LEM timestep diagnosis (C18).
+add_executable(lsdtt-test-raster-central-difference cpp/test_raster_central_difference.cpp)
+target_link_libraries(lsdtt-test-raster-central-difference PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_central_difference COMMAND lsdtt-test-raster-central-difference)
+lsdtt_set_tests_properties(unit_raster_central_difference PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 11: Manning's equation shared by hydro_velocity_field and
+# manning_hydraulics (C20).
+add_executable(lsdtt-test-hydro-velocity-manning-formula cpp/test_hydro_velocity_manning_formula.cpp)
+target_link_libraries(lsdtt-test-hydro-velocity-manning-formula PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_velocity_manning_formula COMMAND lsdtt-test-hydro-velocity-manning-formula)
+lsdtt_set_tests_properties(unit_hydro_velocity_manning_formula PROPERTIES
+    LABELS "unit;network")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
