@@ -23,6 +23,8 @@
 //   d8_cardinal_first N, W, E, S, NW, NE, SW, SE
 //   d4_nswe          N, S, W, E
 //   d4_nwes          N, W, E, S                   (raster scan order)
+//   d4_nesw          N, E, S, W                   (clockwise; the hillslope
+//                    solvers' face order)
 //
 // The tables are plain constexpr int arrays so that a module can bind its own
 // name to one (constexpr const auto& k_dr = grid::d8_rowmajor_row;) and every
@@ -59,6 +61,9 @@ inline constexpr int d4_nswe_col[4] = { 0, 0, -1, 1};
 
 inline constexpr int d4_nwes_row[4] = {-1, 0, 0, 1};
 inline constexpr int d4_nwes_col[4] = { 0, -1, 1, 0};
+
+inline constexpr int d4_nesw_row[4] = {-1, 0, 1, 0};
+inline constexpr int d4_nesw_col[4] = { 0, 1, 0, -1};
 
 // Direction codes of d8_clockwise: odd codes are the diagonals.
 inline constexpr bool d8_clockwise_is_diagonal(int direction)

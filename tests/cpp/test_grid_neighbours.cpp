@@ -362,6 +362,39 @@ static_assert(same(site38_row, grid::d8_cardinal_first_row) && same(site38_col, 
               "lsdtt_flowgraph_cpu.cpp:70 k_nb_dr/k_nb_dc is not grid::d8_cardinal_first");
 
 
+
+// ---- stage 10 (C01-H, Simon's D6 approval): hillslope-solver face tables ----
+
+// src/cpu/lsdtt_hillslope_newton_cpu.cpp:139-140 (as of 2026-10-08), stage 10
+constexpr int h0_row[4] = { -1,  0, 1,  0 };
+constexpr int h0_col[4] = {  0, 1,  0, -1 };
+static_assert(same(h0_row, grid::d4_nesw_row) && same(h0_col, grid::d4_nesw_col),
+              "lsdtt_hillslope_newton_cpu.cpp:139 k_dr/k_dc is not grid::d4_nesw");
+
+// src/cpu/lsdtt_hillslope_newton_cpu.cpp:418-419 (as of 2026-10-08), stage 10
+constexpr int h1_row[4] = { -1,  0, 1,  0 };
+constexpr int h1_col[4] = {  0, 1,  0, -1 };
+static_assert(same(h1_row, grid::d4_nesw_row) && same(h1_col, grid::d4_nesw_col),
+              "lsdtt_hillslope_newton_cpu.cpp:418 k_dr/k_dc is not grid::d4_nesw");
+
+// src/cpu/lsdtt_hillslope_cellular_cpu.cpp:453-454 (as of 2026-10-08), stage 10
+constexpr int h2_row[4] = {-1, 0, 1, 0};
+constexpr int h2_col[4] = {0, 1, 0, -1};
+static_assert(same(h2_row, grid::d4_nesw_row) && same(h2_col, grid::d4_nesw_col),
+              "lsdtt_hillslope_cellular_cpu.cpp:453 k_dr/k_dc is not grid::d4_nesw");
+
+// src/cpu/lsdtt_hillslope_cellular_cpu.cpp:661-662 (as of 2026-10-08), stage 10
+constexpr int h3_row[4] = {-1, 0, 1, 0};
+constexpr int h3_col[4] = {0, 1, 0, -1};
+static_assert(same(h3_row, grid::d4_nesw_row) && same(h3_col, grid::d4_nesw_col),
+              "lsdtt_hillslope_cellular_cpu.cpp:661 k_dr/k_dc is not grid::d4_nesw");
+
+// src/cpu/lsdtt_hillslope_operator_cpu.hpp:291-292 (as of 2026-10-08), stage 10
+constexpr int h4_row[4] = { -1,  0, 1,  0 };
+constexpr int h4_col[4] = {  0, 1,  0, -1 };
+static_assert(same(h4_row, grid::d4_nesw_row) && same(h4_col, grid::d4_nesw_col),
+              "lsdtt_hillslope_operator_cpu.hpp:291 k_dr/k_dc is not grid::d4_nesw");
+
 int g_failures = 0;
 
 void check(const std::string& what, bool ok)
@@ -378,7 +411,7 @@ std::uint32_t bits(float x)  { std::uint32_t b; std::memcpy(&b, &x, sizeof b); r
 int main()
 {
     std::cout << "== C01 neighbour tables and C19 sqrt(2) ==\n";
-    check("39 neighbour tables equal their literals (static_assert at compile time)", true);
+    check("39 neighbour tables (plus 5 hillslope face tables) equal their literals (static_assert at compile time)", true);
     check("d8_clockwise diagonals are the odd codes",
           grid::d8_clockwise_is_diagonal(1) && grid::d8_clockwise_is_diagonal(7) &&
           !grid::d8_clockwise_is_diagonal(0) && !grid::d8_clockwise_is_diagonal(6));

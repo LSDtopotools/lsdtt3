@@ -9,6 +9,7 @@
 
 #include "lsdtt_hillslope_steady_state_cpu.hpp"
 #include "lsdtt_hillslope_operator_cpu.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,8 +30,11 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     const std::vector<uint8_t>&                 is_channel,
     const lsdtt_hillslope_steady_state_options& opts)
 {
-#ifdef _OPENMP
-    if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
+    // The thread count goes on the parallel loops (num_threads clauses); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(opts.n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     const lsdtt_raster_meta& meta   = dem.get_meta();
@@ -137,7 +141,7 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
             double pass_delta = 0.0;
 
 #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) reduction(max : pass_delta)
+            #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(max : pass_delta)
 #endif
             for (int64_t idx = 0; idx < n_cells; ++idx)
             {
@@ -209,8 +213,11 @@ lsdtt_hillslope_steady_state_result compute_cidre_hillslope_steady_state(
     const std::vector<uint8_t>&                 is_channel,
     const lsdtt_hillslope_steady_state_options& opts)
 {
-#ifdef _OPENMP
-    if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
+    // The thread count goes on the parallel loops (num_threads clauses); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(opts.n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     const lsdtt_raster_meta& meta  = dem.get_meta();
@@ -273,7 +280,7 @@ lsdtt_hillslope_steady_state_result compute_cidre_hillslope_steady_state(
             const int64_t lsz = static_cast<int64_t>(level.size());
 
 #ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
             for (int64_t li = 0; li < lsz; ++li)
             {
@@ -359,7 +366,7 @@ lsdtt_hillslope_steady_state_result compute_cidre_hillslope_steady_state(
         // -----------------------------------------------------------------
         float max_delta = 0.0f;
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static) reduction(max : max_delta)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(max : max_delta)
 #endif
         for (int64_t i = 0; i < n_cells; ++i)
         {

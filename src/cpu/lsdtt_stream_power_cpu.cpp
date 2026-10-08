@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_stream_power_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
@@ -40,7 +41,7 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 {
     const lsdtt_raster_meta& meta       = dem.get_meta();
     const float              dx         = static_cast<float>(meta.cell_size);
-    const float              dx_diag    = dx * std::sqrt(2.0f);
+    const float              dx_diag    = dx * grid::k_sqrt2_f;
     const std::int64_t       n_cells    = static_cast<std::int64_t>(meta.n_rows)
                                           * meta.n_cols;
 
@@ -200,7 +201,7 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
 
     const lsdtt_raster_meta& meta = dem.get_meta();
     const float dx_cardinal  = static_cast<float>(meta.cell_size);
-    const float dx_diagonal  = static_cast<float>(meta.cell_size) * std::sqrt(2.0f);
+    const float dx_diagonal  = static_cast<float>(meta.cell_size) * grid::k_sqrt2_f;
     const std::int64_t n_cells = static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
 
     // Working elevation array, updated in-place during the sweep

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_steady_state_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
 
 #include "lsdtt_stream_power_cpu.hpp"
@@ -124,7 +125,7 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
 {
     const lsdtt_raster_meta& meta    = flow.meta();
     const float              dx      = static_cast<float>(meta.cell_size);
-    const float              dx_diag = dx * std::sqrt(2.0f);
+    const float              dx_diag = dx * grid::k_sqrt2_f;
     const std::int64_t       n_cells = static_cast<std::int64_t>(meta.n_rows)
                                        * meta.n_cols;
 
@@ -181,7 +182,7 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
 
     const lsdtt_raster_meta& meta    = flow.meta();
     const float              dx      = static_cast<float>(meta.cell_size);
-    const float              dx_diag = dx * std::sqrt(2.0f);
+    const float              dx_diag = dx * grid::k_sqrt2_f;
     const std::int64_t       n_cells = static_cast<std::int64_t>(meta.n_rows)
                                        * meta.n_cols;
 

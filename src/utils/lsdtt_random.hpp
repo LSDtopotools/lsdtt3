@@ -140,5 +140,24 @@ void shuffle(std::vector<T>& values, splitmix64_stream& rng)
     }
 }
 
+// -----------------------------------------------------------------------------
+// xorshift64star_uniform01
+//
+// One xorshift64* step on a caller-owned state (shifts 12, 25, 27; multiplier
+// 2685821657736338717), returning a double in [0, 1) from the top 53 bits of
+// the product. The state must be non-zero. The landslide event and placement
+// code (lsdtt_landslide_event_cpu, lsdtt_landslide_placement_cpu) had identical
+// copies; tests/cpp/test_landslide_rng.cpp keeps them as the reference, and the
+// landslide tests pin the sequences.
+// -----------------------------------------------------------------------------
+inline double xorshift64star_uniform01(std::uint64_t& state) noexcept
+{
+    state ^= state >> 12;
+    state ^= state << 25;
+    state ^= state >> 27;
+    const std::uint64_t v = state * 2685821657736338717ULL;
+    return static_cast<double>(v >> 11) * (1.0 / 9007199254740992.0);
+}
+
 } // namespace random
 } // namespace lsdtt

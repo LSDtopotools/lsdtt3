@@ -3643,6 +3643,27 @@ add_test(NAME unit_thread_count_invariance COMMAND lsdtt-test-thread-count-invar
 lsdtt_set_tests_properties(unit_thread_count_invariance PROPERTIES
     LABELS "unit;lem")
 
+# Stage 10: landslide xorshift64* copies replaced by lsdtt_random (L3).
+add_executable(lsdtt-test-landslide-rng cpp/test_landslide_rng.cpp)
+add_test(NAME unit_landslide_rng COMMAND lsdtt-test-landslide-rng)
+lsdtt_set_tests_properties(unit_landslide_rng PROPERTIES
+    LABELS "unit;landslide")
+
+# Stage 10: thread setting of the hillslope solvers moved from
+# omp_set_num_threads to num_threads clauses (C16-H, decision D4).
+add_executable(lsdtt-test-hillslope-thread-count-invariance cpp/test_hillslope_thread_count_invariance.cpp)
+target_link_libraries(lsdtt-test-hillslope-thread-count-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hillslope_thread_count_invariance COMMAND lsdtt-test-hillslope-thread-count-invariance)
+lsdtt_set_tests_properties(unit_hillslope_thread_count_invariance PROPERTIES
+    LABELS "unit;hillslope")
+
+# Stage 10: bilinear_regular takes its axis weights from regular_axis_weight (L1).
+add_executable(lsdtt-test-cosmo-lsdn-grid-lookup cpp/test_cosmo_lsdn_grid_lookup.cpp)
+target_link_libraries(lsdtt-test-cosmo-lsdn-grid-lookup PRIVATE lsdtt3_cpu)
+add_test(NAME unit_cosmo_lsdn_grid_lookup COMMAND lsdtt-test-cosmo-lsdn-grid-lookup)
+lsdtt_set_tests_properties(unit_cosmo_lsdn_grid_lookup PROPERTIES
+    LABELS "unit;cosmo")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
@@ -6882,6 +6903,7 @@ set(LSDTT_LEM_ENGINE_TESTS
     unit_hillslope_perron_qimp
     unit_hillslope_ren_modular_implicit
     unit_hillslope_critical_slope
+    unit_hillslope_thread_count_invariance
     performance_hillslope_implicit
     # cellular hillslope
     unit_cellular_hillslope_references

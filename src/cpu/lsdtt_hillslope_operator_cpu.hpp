@@ -68,6 +68,8 @@
 #include <string>
 #include <vector>
 
+#include "../utils/lsdtt_grid_neighbours.hpp"
+
 namespace lsdtt
 {
 
@@ -288,8 +290,8 @@ struct lsdtt_hillslope_stencil
                      double out_alpha[4], double* out_sn = nullptr,
                      double ratio_cap = 0.9999) const
     {
-        static constexpr int k_dr[4] = { -1,  0, +1,  0 };
-        static constexpr int k_dc[4] = {  0, +1,  0, -1 };
+        static constexpr const auto& k_dr = grid::d4_nesw_row;
+        static constexpr const auto& k_dc = grid::d4_nesw_col;
 
         const double zc = at(r, c);
 

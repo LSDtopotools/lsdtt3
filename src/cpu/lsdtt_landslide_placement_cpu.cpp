@@ -9,6 +9,7 @@
 // See lsdtt_landslide_placement_cpu.hpp for the design.
 
 #include "lsdtt_landslide_placement_cpu.hpp"
+#include "../utils/lsdtt_random.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
@@ -23,17 +24,9 @@ namespace lsdtt
 namespace
 {
 
-// xorshift64*, so a test can reproduce a placement exactly without dragging in
-// <random> and its implementation-defined engines.
-inline double next_uniform(std::uint64_t& state)
-{
-    state ^= state >> 12;
-    state ^= state << 25;
-    state ^= state >> 27;
-    const std::uint64_t v = state * 2685821657736338717ULL;
-    // 53 significant bits, in [0,1)
-    return static_cast<double>(v >> 11) * (1.0 / 9007199254740992.0);
-}
+// xorshift64*, so a test can reproduce a draw sequence exactly without
+// dragging in <random> and its implementation-defined engines.
+constexpr auto next_uniform = &random::xorshift64star_uniform01;
 
 }  // namespace
 

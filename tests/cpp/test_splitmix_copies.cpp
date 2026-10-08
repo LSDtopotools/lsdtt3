@@ -11,13 +11,14 @@
 // src/utils/lsdtt_random.hpp (consolidation C15).
 //
 //   lsdtt_raster_synthetic_surfaces_cpu  private splitmix64(x) -> random::splitmix64
+//   lsdtt_hillslope_cellular_cpu         private splitmix64(x) -> random::splitmix64
+//                                        (stage 10, C15-H)
 //   lsdtt_reference_field_ladder_cpu     inline "state += gamma; mix(state)"
 //                                        lambda -> random::splitmix64_stream
 //
 // lsdtt_random.hpp's own header says migrating a copy "must be shown
 // bit-identical"; this is that test. Both removed copies are kept below
-// verbatim. The landslide xorshift64* pair and the cellular hillslope copy are
-// stage 10 items.
+// verbatim. The landslide xorshift64* pair (stage 10, L3) has its own test.
 //
 // Usage: lsdtt-test-splitmix-copies
 // Prints one line per check and a final "RESULT: PASS|FAIL".
@@ -43,6 +44,16 @@ static inline std::uint64_t old_surfaces_splitmix64(std::uint64_t x)
     x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
     x =  x ^ (x >> 31);
     return x;
+}
+
+// src/cpu/lsdtt_hillslope_cellular_cpu.cpp:55-61 (as of 2026-10-08), stage 10
+// (C15-H, Simon's D6 approval); feeds particle_uniform, which stays local.
+std::uint64_t old_cellular_splitmix64(std::uint64_t x)
+{
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
 }
 
 // src/cpu/lsdtt_reference_field_ladder_cpu.cpp:627-636 (as of 2026-10-08)
@@ -97,6 +108,17 @@ int main()
     for (std::uint64_t e : {0ULL, 1ULL, ~0ULL, 0x8000000000000000ULL, 0x9E3779B97F4A7C15ULL})
         ok = ok && old_surfaces_splitmix64(e) == random::splitmix64(e);
     check("synthetic_surfaces splitmix64 == random::splitmix64 (100005 inputs)", ok);
+
+    bool ok_c = true;
+    std::uint64_t y = 12345;
+    for (int i = 0; i < 100000; ++i)
+    {
+        ok_c = ok_c && old_cellular_splitmix64(y) == random::splitmix64(y);
+        y = old_cellular_splitmix64(y) + static_cast<std::uint64_t>(i);
+    }
+    for (std::uint64_t e : {0ULL, 1ULL, ~0ULL, 0x632be59bd9b4e019ULL, 0x8cb92baa3f3d8dd7ULL, 0xdb4f0b9175ae2165ULL})
+        ok_c = ok_c && old_cellular_splitmix64(e) == random::splitmix64(e);
+    check("hillslope_cellular splitmix64 == random::splitmix64 (100006 inputs)", ok_c);
 
     bool ok2 = true;
     for (std::uint64_t seed : {0ULL, 1ULL, 2ULL, 33ULL, 20261008ULL, ~0ULL})
