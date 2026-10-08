@@ -211,6 +211,14 @@ static lsdtt_plane_fit_result fit_plane_from_xyz(
     return result;
 }
 
+lsdtt_plane_fit_result fit_plane_least_squares(
+    const std::vector<double>& xs,
+    const std::vector<double>& ys,
+    const std::vector<double>& zs)
+{
+    return fit_plane_from_xyz(xs, ys, zs);
+}
+
 // -----------------------------------------------------------------------------
 // fit_plane_3points
 //

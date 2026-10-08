@@ -9,6 +9,8 @@
 
 #include "lsdtt_raster_coregistration_cpu.hpp"
 
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
+#include "lsdtt_raster_sampling_cpu.hpp"
 #include "../utils/lsdtt_linear_algebra.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "../utils/lsdtt_statistics.hpp"
@@ -39,73 +41,10 @@ static sampled_value bilinear_sample_raster(
     double x,
     double y)
 {
-    const lsdtt_raster_meta& meta = raster.get_meta();
-    const lsdtt_array2d_f& data = raster.get_data_array();
-    const lsdtt_array2d_u8& mask = raster.get_mask_array();
-
+    // Invalid samples carry 0, and a non-finite interpolated value is invalid.
     sampled_value out;
-
-    if (x < meta.x_min || x > meta.x_max() || y < meta.y_min || y > meta.y_max())
-    {
-        return out;
-    }
-
-    const double col_f = (x - meta.x_min) / meta.cell_size - 0.5;
-    const double row_f = (meta.y_max() - y) / meta.cell_size - 0.5;
-
-    if (col_f < 0.0 || row_f < 0.0 ||
-        col_f > static_cast<double>(meta.n_cols - 1) ||
-        row_f > static_cast<double>(meta.n_rows - 1))
-    {
-        return out;
-    }
-
-    const int col0 = static_cast<int>(std::floor(col_f));
-    const int row0 = static_cast<int>(std::floor(row_f));
-
-    if (col0 >= meta.n_cols - 1 || row0 >= meta.n_rows - 1)
-    {
-        const int col_nn = static_cast<int>(std::llround(col_f));
-        const int row_nn = static_cast<int>(std::llround(row_f));
-
-        if (row_nn < 0 || row_nn >= meta.n_rows ||
-            col_nn < 0 || col_nn >= meta.n_cols)
-        {
-            return out;
-        }
-
-        if (mask(row_nn, col_nn) == 0) return out;
-
-        out.value = data(row_nn, col_nn);
-        out.valid = std::isfinite(out.value);
-        return out;
-    }
-
-    const int row1 = row0 + 1;
-    const int col1 = col0 + 1;
-
-    if (mask(row0, col0) == 0 ||
-        mask(row0, col1) == 0 ||
-        mask(row1, col0) == 0 ||
-        mask(row1, col1) == 0)
-    {
-        return out;
-    }
-
-    const double dc = col_f - static_cast<double>(col0);
-    const double dr = row_f - static_cast<double>(row0);
-
-    const double z00 = static_cast<double>(data(row0, col0));
-    const double z01 = static_cast<double>(data(row0, col1));
-    const double z10 = static_cast<double>(data(row1, col0));
-    const double z11 = static_cast<double>(data(row1, col1));
-
-    const double z0 = (1.0 - dc) * z00 + dc * z01;
-    const double z1 = (1.0 - dc) * z10 + dc * z11;
-    const double z = (1.0 - dr) * z0 + dr * z1;
-
-    out.value = static_cast<float>(z);
-    out.valid = std::isfinite(out.value);
+    out.valid = raster_sample_bilinear(raster, x, y, out.value) &&
+                std::isfinite(out.value);
     return out;
 }
 
@@ -159,12 +98,8 @@ static bool valid_cell_value(
     int row,
     int col)
 {
-    if (row < 0 || col < 0 || row >= meta.n_rows || col >= meta.n_cols) return false;
-    if (mask(row, col) == 0u) return false;
-    const float v = data(row, col);
-    if (!std::isfinite(v)) return false;
-    if (meta.is_nodata(v)) return false;
-    return true;
+    return raster_in_bounds(row, col, meta.n_rows, meta.n_cols) &&
+           raster_value_is_valid(meta, mask(row, col), data(row, col));
 }
 
 static void compute_slope_tan_and_aspect(

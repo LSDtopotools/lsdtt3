@@ -8,6 +8,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_hydro_roughness_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -24,25 +26,6 @@ namespace
 {
 
 constexpr double k_gravity = 9.80665;
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-}
-
-void require_same_grid(const lsdtt_raster_cpu& r, const lsdtt_raster_meta& meta,
-                       const char* name, const char* who)
-{
-    const lsdtt_raster_meta& m = r.get_meta();
-    if (m.n_rows != meta.n_rows || m.n_cols != meta.n_cols)
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " is " + std::to_string(m.n_rows) +
-            "x" + std::to_string(m.n_cols) + " but the grid is " +
-            std::to_string(meta.n_rows) + "x" + std::to_string(meta.n_cols));
-}
 
 void require_input(const lsdtt_raster_cpu* r, const char* name,
                    const char* mode, const char* who)
@@ -110,14 +93,6 @@ namespace
 
 // Median over channel cells, used when reference_ksn is left at zero so the
 // scaled field is centred on n_ref rather than on an arbitrary absolute value.
-double median_of(std::vector<double> v)
-{
-    if (v.empty()) return 0.0;
-    const std::size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
-    return v[mid];
-}
-
 double ksn_at(const roughness_field_inputs& in,
               const channel_roughness_options& opts,
               int row, int col)
@@ -139,10 +114,10 @@ lsdtt_raster_cpu compute_channel_roughness(
 {
     const char* who = "compute_channel_roughness";
 
-    require_positive(opts.channel_roughness, "channel_roughness", who);
-    require_positive(opts.n_min, "n_min", who);
-    require_positive(opts.n_max, "n_max", who);
-    require_positive(opts.min_slope, "min_slope", who);
+    require_positive_finite(opts.channel_roughness, "channel_roughness", who);
+    require_positive_finite(opts.n_min, "n_min", who);
+    require_positive_finite(opts.n_max, "n_max", who);
+    require_positive_finite(opts.min_slope, "min_slope", who);
     if (opts.n_min > opts.n_max)
         throw std::invalid_argument(
             std::string(who) + ": n_min exceeds n_max");
@@ -153,7 +128,7 @@ lsdtt_raster_cpu compute_channel_roughness(
             break;
         case channel_roughness_mode::drainage_area:
             require_input(inputs.drainage_area, "drainage_area", "drainage_area", who);
-            require_positive(opts.reference_area_m2, "reference_area_m2", who);
+            require_positive_finite(opts.reference_area_m2, "reference_area_m2", who);
             break;
         case channel_roughness_mode::ksn:
             require_input(inputs.ksn, "ksn", "ksn", who);
@@ -164,7 +139,7 @@ lsdtt_raster_cpu compute_channel_roughness(
             break;
         case channel_roughness_mode::grain_size:
             require_input(inputs.d50, "d50", "grain_size", who);
-            require_positive(opts.strickler_coefficient, "strickler_coefficient", who);
+            require_positive_finite(opts.strickler_coefficient, "strickler_coefficient", who);
             break;
         case channel_roughness_mode::jarrett:
             require_input(inputs.slope, "slope", "jarrett", who);
@@ -187,7 +162,7 @@ lsdtt_raster_cpu compute_channel_roughness(
         "landcover_roughness", "channel_extent", "surface_class"
     };
     for (std::size_t i = 0; i < sizeof(grids) / sizeof(grids[0]); ++i)
-        if (grids[i]) require_same_grid(*grids[i], meta, names[i], who);
+        if (grids[i]) require_same_grid_dims(*grids[i], meta, names[i], who);
 
     const int   n_rows = meta.n_rows;
     const int   n_cols = meta.n_cols;
@@ -222,7 +197,7 @@ lsdtt_raster_cpu compute_channel_roughness(
                 const double k = ksn_at(inputs, opts, row, col);
                 if (k > 0.0 && std::isfinite(k)) vals.push_back(k);
             }
-        ref_ksn = median_of(std::move(vals));
+        ref_ksn = compute_median_of_copy(std::move(vals), 0.0);
         if (!(ref_ksn > 0.0))
             throw std::invalid_argument(
                 std::string(who) + ": no channel cell has a positive ksn, so no "
@@ -328,7 +303,7 @@ roughness_field_result compute_roughness_field(
     const roughness_partition_options& opts)
 {
     const char* who = "compute_roughness_field";
-    require_positive(opts.landcover_roughness_default,
+    require_positive_finite(opts.landcover_roughness_default,
                      "landcover_roughness_default", who);
 
     const lsdtt_raster_cpu channel_n =

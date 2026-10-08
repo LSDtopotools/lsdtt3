@@ -8,7 +8,11 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_terrace_edge_tracer_cpu.hpp"
+#include "../utils/lsdtt_connected_components.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -36,37 +40,6 @@ struct rc_pixel
     int col = -1;
 };
 
-static bool is_valid_scalar_(
-    const lsdtt_raster_meta& meta,
-    const std::vector<float>& data,
-    const std::vector<uint8_t>& mask,
-    std::size_t idx)
-{
-    return mask[idx] != 0 &&
-           !meta.is_nodata(data[idx]) &&
-           std::isfinite(data[idx]);
-}
-
-static double median_copy_(std::vector<double> vals)
-{
-    if (vals.empty())
-        return std::numeric_limits<double>::quiet_NaN();
-
-    const std::size_t n = vals.size();
-    const std::size_t mid = n / 2;
-
-    std::nth_element(vals.begin(), vals.begin() + mid, vals.end());
-    double med = vals[mid];
-
-    if (n % 2 == 0)
-    {
-        std::nth_element(vals.begin(), vals.begin() + mid - 1, vals.end());
-        med = 0.5 * (med + vals[mid - 1]);
-    }
-
-    return med;
-}
-
 // -----------------------------------------------------------------------------
 // label_centreline_components_d8_
 //
@@ -80,74 +53,19 @@ static std::vector<int> label_centreline_components_d8_(
     std::vector<std::vector<std::size_t>>&   comp_pixels)
 {
     const lsdtt_raster_meta& meta = centreline.get_meta();
-    const int nrows = meta.n_rows;
-    const int ncols = meta.n_cols;
-    const std::size_t npix =
-        static_cast<std::size_t>(nrows) * static_cast<std::size_t>(ncols);
-
     const std::vector<float>&   data = centreline.get_data();
     const std::vector<uint8_t>& mask = centreline.get_mask();
 
-    std::vector<int> labels(npix, 0);
-    comp_pixels.clear();
-    comp_pixels.push_back({}); // label 0 unused
-
-    auto idx_of = [ncols](int row, int col) -> std::size_t
-    {
-        return static_cast<std::size_t>(row) * static_cast<std::size_t>(ncols) +
-               static_cast<std::size_t>(col);
-    };
-
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
-
-    int next_label = 1;
-
-    for (int row = 0; row < nrows; ++row)
-    {
-        for (int col = 0; col < ncols; ++col)
-        {
-            const std::size_t seed = idx_of(row, col);
-
-            if (!is_valid_scalar_(meta, data, mask, seed)) continue;
-            if (data[seed] <= 0.5f) continue;
-            if (labels[seed] != 0) continue;
-
-            labels[seed] = next_label;
-            comp_pixels.push_back({});
-            std::queue<std::size_t> q;
-            q.push(seed);
-
-            while (!q.empty())
-            {
-                const std::size_t cur = q.front();
-                q.pop();
-                comp_pixels[next_label].push_back(cur);
-
-                const int cr = static_cast<int>(cur / static_cast<std::size_t>(ncols));
-                const int cc = static_cast<int>(cur % static_cast<std::size_t>(ncols));
-
-                for (int d = 0; d < 8; ++d)
-                {
-                    const int nr = cr + DR8[d];
-                    const int nc = cc + DC8[d];
-                    if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
-
-                    const std::size_t nidx = idx_of(nr, nc);
-                    if (!is_valid_scalar_(meta, data, mask, nidx)) continue;
-                    if (data[nidx] <= 0.5f) continue;
-                    if (labels[nidx] != 0) continue;
-
-                    labels[nidx] = next_label;
-                    q.push(nidx);
-                }
-            }
-
-            ++next_label;
-        }
-    }
-
-    return labels;
+    // Breadth-first, neighbours in row-major order, so comp_pixels lists each
+    // component's cells in the same order as before.
+    std::vector<std::int32_t> label;
+    std::vector<std::int64_t> size;
+    label_connected_components(meta.n_rows, meta.n_cols, 8,
+        [&](std::size_t i) {
+            return raster_cell_is_valid(meta, data, mask, i) && data[i] > 0.5f;
+        },
+        label, size, &comp_pixels);
+    return std::vector<int>(label.begin(), label.end());
 }
 
 // -----------------------------------------------------------------------------
@@ -204,7 +122,7 @@ static std::vector<std::vector<rc_pixel>> gather_endpoint_pixels_(
             for (int col = 0; col < ncols; ++col)
             {
                 const std::size_t idx = idx_of(row, col);
-                if (!is_valid_scalar_(emeta, ed, em, idx)) continue;
+                if (!raster_cell_is_valid(emeta, ed, em, idx)) continue;
                 if (ed[idx] <= 0.5f) continue;
 
                 endpoint_pixels.push_back({row, col});
@@ -243,7 +161,7 @@ static terrace_edge_seed_info compute_seed_stats_(
 
     for (const std::size_t idx : pixels)
     {
-        if (!is_valid_scalar_(meta, data, mask, idx)) continue;
+        if (!raster_cell_is_valid(meta, data, mask, idx)) continue;
         z.push_back(static_cast<double>(data[idx]));
     }
 
@@ -264,7 +182,7 @@ static terrace_edge_seed_info compute_seed_stats_(
     var /= static_cast<double>(z.size());
 
     info.mean_elevation_metres   = mean;
-    info.median_elevation_metres = median_copy_(z);
+    info.median_elevation_metres = compute_median_of_copy(z);
     info.stddev_elevation_metres = std::sqrt(std::max(0.0, var));
 
     return info;
@@ -354,8 +272,8 @@ static terrace_edge_trace_record trace_from_endpoint_(
                std::isfinite(zd[idx]);
     };
 
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     const std::size_t seed_idx = idx_of(endpoint.row, endpoint.col);
 

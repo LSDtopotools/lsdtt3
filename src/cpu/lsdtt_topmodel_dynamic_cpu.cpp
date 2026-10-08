@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_topmodel_dynamic_cpu.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -19,19 +20,6 @@
 namespace lsdtt
 {
 
-namespace
-{
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-}
-
-} // namespace
-
 lsdtt_topmodel_dynamic_cpu::lsdtt_topmodel_dynamic_cpu(
     const lsdtt_flowgraph_cpu&      graph,
     const lsdtt_raster_cpu&         slope,
@@ -41,11 +29,11 @@ lsdtt_topmodel_dynamic_cpu::lsdtt_topmodel_dynamic_cpu(
 {
     const char* who = "lsdtt_topmodel_dynamic_cpu";
 
-    require_positive(params_.szm_metres, "szm_metres", who);
-    require_positive(params_.srmax_metres, "srmax_metres", who);
-    require_positive(params_.td_hours_per_metre, "td_hours_per_metre", who);
-    require_positive(params_.dt_hours, "dt_hours", who);
-    require_positive(opts_.min_slope, "min_slope", who);
+    require_positive_finite(params_.szm_metres, "szm_metres", who);
+    require_positive_finite(params_.srmax_metres, "srmax_metres", who);
+    require_positive_finite(params_.td_hours_per_metre, "td_hours_per_metre", who);
+    require_positive_finite(params_.dt_hours, "dt_hours", who);
+    require_positive_finite(opts_.min_slope, "min_slope", who);
     if (opts_.substeps < 0)
         throw std::invalid_argument(std::string(who) + ": substeps must be >= 0");
 
@@ -58,7 +46,7 @@ lsdtt_topmodel_dynamic_cpu::lsdtt_topmodel_dynamic_cpu(
     const int n_rows = meta.n_rows;
     const int n_cols = meta.n_cols;
     cell_size_ = meta.cell_size;
-    require_positive(cell_size_, "cell_size", who);
+    require_positive_finite(cell_size_, "cell_size", who);
 
     const std::int64_t n_cells = static_cast<std::int64_t>(n_rows) * n_cols;
     tan_beta_.assign(static_cast<std::size_t>(n_cells), 0.0);

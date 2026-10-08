@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "../utils/lsdtt_random.hpp"
 
 #include "../utils/lsdtt_thread_utils.hpp"
 
@@ -112,14 +113,7 @@ static lsdtt_raster_meta build_meta(
 // This makes the stochastic surfaces deterministic for a fixed seed and
 // independent of thread scheduling.
 // -----------------------------------------------------------------------------
-static inline std::uint64_t splitmix64(std::uint64_t x)
-{
-    x += 0x9E3779B97F4A7C15ULL;
-    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
-    x =  x ^ (x >> 31);
-    return x;
-}
+using random::splitmix64;   // src/utils/lsdtt_random.hpp
 
 static inline std::uint64_t hash_combine_u64(std::uint64_t h, std::uint64_t v)
 {

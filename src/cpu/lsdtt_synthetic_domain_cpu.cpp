@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <stdexcept>
 #include "lsdtt_synthetic_domain_cpu.hpp"
+#include "../utils/lsdtt_connected_components.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,27 +22,9 @@
 #include <vector>
 
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "../utils/lsdtt_polygon_geometry.hpp"
 
 namespace lsdtt {
-
-// -----------------------------------------------------------------------------
-// point-in-polygon (even-odd ray casting); ring is a closed or open vertex list
-// in (x = col-like, y = row-like) coordinates already mapped to the grid.
-// -----------------------------------------------------------------------------
-static bool point_in_ring(const std::vector<lsdtt_xy>& ring, double x, double y)
-{
-    bool inside = false;
-    const std::size_t n = ring.size();
-    for (std::size_t i = 0, j = n - 1; i < n; j = i++)
-    {
-        const double xi = ring[i].x, yi = ring[i].y;
-        const double xj = ring[j].x, yj = ring[j].y;
-        const bool crosses = ((yi > y) != (yj > y)) &&
-            (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-        if (crosses) inside = !inside;
-    }
-    return inside;
-}
 
 // -----------------------------------------------------------------------------
 void keep_largest_land_component(
@@ -60,40 +44,21 @@ void keep_largest_land_component(
         mask[static_cast<std::size_t>(r) * n_cols + (n_cols - 1)] = 0;
     }
 
-    std::vector<int> label(n, 0);
-    int best_label = 0;
-    std::size_t best_size = 0;
-    int next_label = 0;
-
-    for (int r = 0; r < n_rows; ++r)
+    // The largest 4-connected land component; on a tie, the first in row-major
+    // order. With no land at all best_label stays 0 and every cell is kept,
+    // as before.
+    std::vector<std::int32_t> label;
+    std::vector<std::int64_t> size;
+    const std::int32_t n_comp = label_connected_components(n_rows, n_cols, 4,
+        [&](std::size_t s) { return mask[s] != 0; }, label, size);
+    std::int32_t best_label = 0;
+    std::int64_t best_size = 0;
+    for (std::int32_t l = 1; l <= n_comp; ++l)
     {
-        for (int c = 0; c < n_cols; ++c)
+        if (size[static_cast<std::size_t>(l)] > best_size)
         {
-            const std::size_t s = static_cast<std::size_t>(r) * n_cols + c;
-            if (mask[s] == 0 || label[s] != 0) continue;
-
-            ++next_label;
-            std::size_t comp_size = 0;
-            std::queue<std::pair<int,int>> q;
-            q.push({r, c});
-            label[s] = next_label;
-            while (!q.empty())
-            {
-                const auto [cr, cc] = q.front(); q.pop();
-                ++comp_size;
-                const int dr[4] = {-1, 1, 0, 0};
-                const int dc[4] = {0, 0, -1, 1};
-                for (int k = 0; k < 4; ++k)
-                {
-                    const int nr = cr + dr[k], nc = cc + dc[k];
-                    if (nr < 0 || nr >= n_rows || nc < 0 || nc >= n_cols) continue;
-                    const std::size_t ns = static_cast<std::size_t>(nr) * n_cols + nc;
-                    if (mask[ns] == 0 || label[ns] != 0) continue;
-                    label[ns] = next_label;
-                    q.push({nr, nc});
-                }
-            }
-            if (comp_size > best_size) { best_size = comp_size; best_label = next_label; }
+            best_size = size[static_cast<std::size_t>(l)];
+            best_label = l;
         }
     }
 
@@ -171,7 +136,7 @@ std::vector<std::uint8_t> make_efd_island_mask(
         static_cast<std::size_t>(n_rows) * n_cols, 0);
     for (int r = 0; r < n_rows; ++r)
         for (int cc = 0; cc < n_cols; ++cc)
-            if (point_in_ring(ring, cc + 0.5, r + 0.5))
+            if (point_in_ring(lsdtt_xy{cc + 0.5, r + 0.5}, ring))
                 mask[static_cast<std::size_t>(r) * n_cols + cc] = 1;
 
     keep_largest_land_component(mask, n_rows, n_cols);
@@ -259,7 +224,7 @@ std::vector<std::uint8_t> rasterise_polygon_scaled(
 
     for (int r = 0; r < n_rows; ++r)
         for (int c = 0; c < n_cols; ++c)
-            if (point_in_ring(ring, c + 0.5, r + 0.5))
+            if (point_in_ring(lsdtt_xy{c + 0.5, r + 0.5}, ring))
                 mask[static_cast<std::size_t>(r) * n_cols + c] = 1;
 
     keep_largest_land_component(mask, n_rows, n_cols);
@@ -300,7 +265,7 @@ lsdtt_polygon_true_area rasterise_polygon_true_area(
         for (int c = 0; c < out.n_cols; ++c)
         {
             const double cx = out.x_min + (c + 0.5) * cell_size;
-            if (point_in_ring(ring, cx, cy))
+            if (point_in_ring(lsdtt_xy{cx, cy}, ring))
                 out.mask[static_cast<std::size_t>(r) * out.n_cols + c] = 1;
         }
     }

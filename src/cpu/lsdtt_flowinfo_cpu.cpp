@@ -8,6 +8,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_point_input.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
@@ -45,8 +47,8 @@ namespace
 //   6  x  2
 //   5  4  3
 // -----------------------------------------------------------------------------
-constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
-constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+static constexpr const auto& d8_row = grid::d8_clockwise_row;
+static constexpr const auto& d8_col = grid::d8_clockwise_col;
 
 
 // This is the arcmap format
@@ -77,7 +79,7 @@ std::int64_t arcmap_d8_code(std::uint8_t dir)
 
 
 
-constexpr double k_sqrt_2 = 1.4142135623730950488;
+constexpr double k_sqrt_2 = grid::k_sqrt2_d;
 
 struct resolved_neighbour
 {
@@ -842,7 +844,10 @@ void lsdtt_flowinfo::require_valid_cell(std::int64_t flat) const
 
 void lsdtt_flowinfo::parse_boundary_conditions(const std::string& boundary_conditions)
 {
-    if (boundary_conditions.size() != 4)
+    const lsdtt_boundary_parse p =
+        parse_boundary_codes(boundary_conditions, "onpb", /*fold_case=*/true);
+
+    if (p.result == lsdtt_boundary_parse::status::wrong_length)
     {
         throw std::runtime_error(
             "lsdtt_flowinfo: boundary_conditions must have length 4 "
@@ -850,32 +855,27 @@ void lsdtt_flowinfo::parse_boundary_conditions(const std::string& boundary_condi
         );
     }
 
-    for (std::size_t i = 0; i < 4; ++i)
+    if (p.result == lsdtt_boundary_parse::status::invalid_code)
     {
-        const char c = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(boundary_conditions[i]))
+        // The codes before the bad one are stored before the throw, as always.
+        for (std::size_t i = 0; i < p.bad_index; ++i) boundary_conditions_[i] = p.codes[i];
+        throw std::runtime_error(
+            "lsdtt_flowinfo: invalid boundary code '" +
+            std::string(1, boundary_conditions[p.bad_index]) + "'"
         );
-
-        if (!is_valid_boundary_code(c))
-        {
-            throw std::runtime_error(
-                "lsdtt_flowinfo: invalid boundary code '" +
-                std::string(1, boundary_conditions[i]) + "'"
-            );
-        }
-
-        boundary_conditions_[i] = c;
     }
 
+    for (std::size_t i = 0; i < 4; ++i) boundary_conditions_[i] = p.codes[i];
+
     // Periodic boundaries must be symmetric in each axis.
-    if ((boundary_conditions_[0] == 'p') != (boundary_conditions_[2] == 'p'))
+    if (p.periodic_ns_mismatch)
     {
         throw std::runtime_error(
             "lsdtt_flowinfo: north and south periodic boundary flags must match"
         );
     }
 
-    if ((boundary_conditions_[1] == 'p') != (boundary_conditions_[3] == 'p'))
+    if (p.periodic_ew_mismatch)
     {
         throw std::runtime_error(
             "lsdtt_flowinfo: east and west periodic boundary flags must match"
@@ -2226,15 +2226,8 @@ lsdtt_raster_result lsdtt_flowinfo::get_drainage_area_raster_with_injection(
     const std::vector<lsdtt_drainage_injection_record> injections =
         load_drainage_injection_points(vector_path, meta_, drainage_area_field);
 
-    const std::int64_t n_cells    = static_cast<std::int64_t>(mask_.size());
-    const double       pixel_area = meta_.cell_size * meta_.cell_size;
-
-    std::vector<double> weights(static_cast<std::size_t>(n_cells), pixel_area);
-
-    for (const auto& rec : injections)
-        weights[static_cast<std::size_t>(rec.flat)] += rec.drainage_area_m2;
-
-    return accumulate_raster(weights);
+    return accumulate_raster(
+        drainage_area_injection_weights(meta_, mask_.size(), injections));
 }
 
 void lsdtt_flowinfo::write_drainage_area_raster_with_injection(
@@ -2274,7 +2267,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_distance_from_outlet_raster() const
     const std::size_t n   = mask_.size();
     const float       ndv = static_cast<float>(meta_.no_data_value);
     const double      dx  = meta_.cell_size;
-    const double      dxy = meta_.cell_size * std::sqrt(2.0);
+    const double      dxy = meta_.cell_size * grid::k_sqrt2_d;
 
     std::vector<double> dist(n, 0.0);
 
@@ -2502,7 +2495,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_distance_to_channel_raster(
     const std::size_t  n     = mask_.size();
     const float        ndv   = static_cast<float>(meta_.no_data_value);
     const double       dx    = meta_.cell_size;
-    const double       dxy   = dx * std::sqrt(2.0);
+    const double       dxy   = dx * grid::k_sqrt2_d;
     const std::int64_t thresh = static_cast<std::int64_t>(threshold_contributing_pixels);
     constexpr uint8_t  k_no_dir = 255u;
 
@@ -2601,7 +2594,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_height_to_farthest_ridge_raster(
 
     const float  ndv = static_cast<float>(meta_.no_data_value);
     const double dx  = meta_.cell_size;
-    const double dxy = dx * std::sqrt(2.0);
+    const double dxy = dx * grid::k_sqrt2_d;
     constexpr uint8_t k_no_dir = 255u;
 
     // Pass 1: dist_from_outlet (forward)
@@ -2670,7 +2663,7 @@ lsdtt_raster_result lsdtt_flowinfo::get_distance_to_farthest_ridge_raster() cons
     const std::size_t n   = mask_.size();
     const float       ndv = static_cast<float>(meta_.no_data_value);
     const double      dx  = meta_.cell_size;
-    const double      dxy = dx * std::sqrt(2.0);
+    const double      dxy = dx * grid::k_sqrt2_d;
     constexpr uint8_t k_no_dir = 255u;
 
     // Pass 1: dist_from_outlet (forward)
@@ -3124,7 +3117,7 @@ lsdtt_flow_topology_metrics calculate_flow_topological_distance(
     if (flat1 == flat2) return {0.0f, flat1}; // Incoming and outgoing edges share the exact same pixel
 
     double dx = flow.cell_size();
-    double dxy = dx * 1.4142135623730950488; // sqrt(2)
+    double dxy = dx * grid::k_sqrt2_d;
 
     // Trace path down from flat1 to outlet and record distances
     std::unordered_map<std::int64_t, double> path1;

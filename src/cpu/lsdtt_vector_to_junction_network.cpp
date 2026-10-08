@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_to_junction_network.hpp"
+#include "../utils/lsdtt_junction_graph_orders.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
@@ -1791,50 +1792,24 @@ void lsdtt_vector_to_junction_network::break_receiver_cycles()
 // -----------------------------------------------------------------------------
 void lsdtt_vector_to_junction_network::build_topological_order()
 {
-    topological_order_.clear();
-    topological_order_.reserve(junctions_.size());
-
-    std::vector<std::int32_t> remaining(
-        junctions_.size(),
-        0
-    );
-
+    std::vector<std::int32_t> donor_counts(junctions_.size());
     for (std::size_t i = 0; i < junctions_.size(); ++i)
     {
-        remaining[i] = static_cast<std::int32_t>(
-            junctions_[i].donor_junctions.size()
+        donor_counts[i] = static_cast<std::int32_t>(junctions_[i].donor_junctions.size());
+    }
+
+    const junction_graph_order_status status = junction_graph_topological_order(
+        std::move(donor_counts),
+        [&](std::int32_t j) { return junctions_[static_cast<std::size_t>(j)].receiver_junction; },
+        topological_order_);
+
+    if (status == junction_graph_order_status::donor_count_underflow)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_to_junction_network: donor counter underflow while building topological order"
         );
     }
-
-    std::vector<std::int32_t> ready;
-    ready.reserve(junctions_.size());
-
-    for (std::int32_t j = 0; j < static_cast<std::int32_t>(junctions_.size()); ++j)
-    {
-        if (remaining[static_cast<std::size_t>(j)] == 0)
-        {
-            ready.push_back(j);
-        }
-    }
-
-    std::size_t head = 0;
-    while (head < ready.size())
-    {
-        const std::int32_t j = ready[head++];
-        topological_order_.push_back(j);
-
-        const std::int32_t rec = junctions_[static_cast<std::size_t>(j)].receiver_junction;
-        if (rec >= 0)
-        {
-            --remaining[static_cast<std::size_t>(rec)];
-            if (remaining[static_cast<std::size_t>(rec)] == 0)
-            {
-                ready.push_back(rec);
-            }
-        }
-    }
-
-    if (topological_order_.size() != junctions_.size())
+    if (status != junction_graph_order_status::ok)
     {
         throw std::runtime_error(
             "lsdtt_vector_to_junction_network: vector junction graph is cyclic or incomplete"
@@ -1935,74 +1910,30 @@ void lsdtt_vector_to_junction_network::build_strahler_order()
 // -----------------------------------------------------------------------------
 void lsdtt_vector_to_junction_network::build_s_vector()
 {
-    s_vector_.clear();
-    s_vector_.reserve(junctions_.size());
+    std::vector<std::int32_t> start;
+    std::vector<std::int32_t> size;
 
-    struct dfs_frame
+    const junction_graph_order_status status = junction_graph_preorder(
+        junctions_.size(),
+        outlets_,
+        [&](std::int32_t j) -> const std::vector<std::int32_t>& {
+            return junctions_[static_cast<std::size_t>(j)].donor_junctions;
+        },
+        s_vector_, start, size);
+
+    for (std::size_t i = 0; i < junctions_.size(); ++i)
     {
-        std::int32_t junction = k_nodata_junction;
-        std::size_t next_donor = 0;
-    };
-
-    std::vector<dfs_frame> stack;
-    stack.reserve(128);
-
-    auto push_junction =
-        [&](std::int32_t junction)
-        {
-            junctions_[static_cast<std::size_t>(junction)].s_vector_start =
-                static_cast<std::int32_t>(s_vector_.size());
-
-            junctions_[static_cast<std::size_t>(junction)].s_vector_size = 1;
-            s_vector_.push_back(junction);
-            stack.push_back({junction, 0});
-        };
-
-    for (const std::int32_t outlet : outlets_)
-    {
-        if (junctions_[static_cast<std::size_t>(outlet)].s_vector_start >= 0)
-        {
-            continue;
-        }
-
-        stack.clear();
-        push_junction(outlet);
-
-        while (!stack.empty())
-        {
-            dfs_frame& frame = stack.back();
-            auto& donors =
-                junctions_[static_cast<std::size_t>(frame.junction)].donor_junctions;
-
-            if (frame.next_donor < donors.size())
-            {
-                const std::int32_t child = donors[frame.next_donor++];
-                if (junctions_[static_cast<std::size_t>(child)].s_vector_start >= 0)
-                {
-                    throw std::runtime_error(
-                        "lsdtt_vector_to_junction_network: duplicate visit while building s_vector"
-                    );
-                }
-
-                push_junction(child);
-                continue;
-            }
-
-            const std::int32_t done = frame.junction;
-            const std::int32_t done_size =
-                junctions_[static_cast<std::size_t>(done)].s_vector_size;
-
-            stack.pop_back();
-
-            if (!stack.empty())
-            {
-                junctions_[static_cast<std::size_t>(stack.back().junction)].s_vector_size +=
-                    done_size;
-            }
-        }
+        junctions_[i].s_vector_start = start[i];
+        junctions_[i].s_vector_size  = size[i];
     }
 
-    if (s_vector_.size() != junctions_.size())
+    if (status == junction_graph_order_status::duplicate_visit)
+    {
+        throw std::runtime_error(
+            "lsdtt_vector_to_junction_network: duplicate visit while building s_vector"
+        );
+    }
+    if (status != junction_graph_order_status::ok)
     {
         throw std::runtime_error(
             "lsdtt_vector_to_junction_network: s_vector does not cover all junctions"

@@ -10,6 +10,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_paired_flowpaths_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -30,14 +31,6 @@ std::string precise(double v)
     if (!std::isfinite(v)) return "NaN";
     std::string s = std::to_string(v);
     return s;
-}
-
-double median_of(std::vector<double> v)
-{
-    if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
-    std::sort(v.begin(), v.end());
-    const std::size_t n = v.size();
-    return (n % 2) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
 }
 
 // Normalised asymmetry, 2|x-y|/(x+y), the form Goren & Shelef use for both dL
@@ -380,12 +373,12 @@ lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
 
     if (!dl.empty())
     {
-        out.median_delta_L = median_of(dl);
+        out.median_delta_L = compute_median_of_copy(dl);
         double s = 0.0;
         for (double v : dl) s += v;
         out.mean_delta_L = s / static_cast<double>(dl.size());
     }
-    out.median_delta_chi = median_of(dchi);
+    out.median_delta_chi = compute_median_of_copy(dchi);
 
     // Reported separately from n_pairs: the straight-link variant is defined
     // only where all three straight-link reads are valid, so a median over
@@ -393,7 +386,7 @@ lsdtt_paired_flowpath_result compute_paired_flowpath_statistics(
     out.n_pairs_with_straight_link = dl_sl.size();
     if (!dl_sl.empty())
     {
-        out.median_delta_L_straight_link = median_of(dl_sl);
+        out.median_delta_L_straight_link = compute_median_of_copy(dl_sl);
         double s = 0.0;
         for (double v : dl_sl) s += v;
         out.mean_delta_L_straight_link = s / static_cast<double>(dl_sl.size());

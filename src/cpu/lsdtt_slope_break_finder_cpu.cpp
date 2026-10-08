@@ -8,6 +8,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_slope_break_finder_cpu.hpp"
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
+#include "../utils/lsdtt_connected_components.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -410,37 +412,22 @@ namespace {
 
 // BFS connected-component labelling on a binary raster.
 // Returns label image (0 = background, 1..n = components).
-std::vector<int> label_components(const std::vector<float>& data,
-                                   int nrows, int ncols)
+std::vector<int> label_components(const lsdtt_raster_cpu& skeleton)
 {
-    std::vector<int> labels(nrows * ncols, 0);
-    int next_label = 1;
-    for (int r = 0; r < nrows; ++r)
-    for (int c = 0; c < ncols; ++c)
-    {
-        int idx = r * ncols + c;
-        if (data[idx] <= 0.5f || labels[idx] != 0) continue;
-        std::queue<std::pair<int,int>> q;
-        q.push({r, c});
-        labels[idx] = next_label;
-        while (!q.empty())
-        {
-            auto [cr, cc] = q.front(); q.pop();
-            for (int dr = -1; dr <= 1; ++dr)
-            for (int dc = -1; dc <= 1; ++dc)
-            {
-                if (!dr && !dc) continue;
-                int nr = cr + dr, nc = cc + dc;
-                if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
-                int ni = nr * ncols + nc;
-                if (data[ni] <= 0.5f || labels[ni] != 0) continue;
-                labels[ni] = next_label;
-                q.push({nr, nc});
-            }
-        }
-        ++next_label;
-    }
-    return labels;
+    // Foreground = a valid cell (mask set, not nodata, finite) above 0.5
+    // (decision D3, 2026-10-08). Before, any cell not <= 0.5 counted, so a
+    // masked-out cell holding the raster's nodata value counted as skeleton
+    // whenever that value was above 0.5 (prune_terminal_loops and
+    // prune_skeleton_spurs fill invalid cells with it), and NaN always did.
+    const lsdtt_raster_meta&    meta = skeleton.get_meta();
+    const std::vector<float>&   data = skeleton.get_data();
+    const std::vector<uint8_t>& mask = skeleton.get_mask();
+    std::vector<std::int32_t> label;
+    std::vector<std::int64_t> size;
+    label_connected_components(meta.n_rows, meta.n_cols, 8,
+        [&](std::size_t i) { return raster_cell_is_foreground(meta, data, mask, i); },
+        label, size);
+    return std::vector<int>(label.begin(), label.end());
 }
 
 } // anonymous namespace
@@ -463,7 +450,6 @@ elevation_connect_result connect_skeleton_by_elevation(
         request.search_radius_metres / cell));
     const float dem_nd = static_cast<float>(dem.get_meta().no_data_value);
 
-    const std::vector<float>& skel_data = skeleton.get_data();
     const std::vector<float>& dem_data  = dem.get_data();
 
     // ------------------------------------------------------------------
@@ -474,7 +460,7 @@ elevation_connect_result connect_skeleton_by_elevation(
 
     if (!request.connect_same_component)
     {
-        comp_labels = label_components(skel_data, nrows, ncols);
+        comp_labels = label_components(skeleton);
         for (int lbl : comp_labels)
             if (lbl > 0) ++comp_size[lbl];
     }

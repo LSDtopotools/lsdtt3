@@ -10,6 +10,7 @@
 // HYPE set-up from rasters. See the header.
 
 #include "lsdtt_hype_raster_setup_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -148,8 +149,8 @@ void write_hype_geodata_files(const hype_setup& setup, const std::string& dir)
     for (const auto& sc : setup.subbasin_classes) sc_of[{sc.subid, sc.class_id}] = &sc;
 
     {
-        std::ofstream f(dir + "/GeoData.txt");
-        if (!f) throw std::runtime_error("cannot write " + dir + "/GeoData.txt");
+        std::ofstream f = open_output_file(
+            dir + "/GeoData.txt", "cannot write ");
         f << std::setprecision(10);
         f << "subid\tmaindown\tarea\telev_mean\telev_std\tslope_mean\tloc_rivlen\trivlen";
         for (int c : class_ids) f << "\tslc_" << c;
@@ -173,8 +174,8 @@ void write_hype_geodata_files(const hype_setup& setup, const std::string& dir)
         }
     }
     {
-        std::ofstream f(dir + "/GeoClass.txt");
-        if (!f) throw std::runtime_error("cannot write " + dir + "/GeoClass.txt");
+        std::ofstream f = open_output_file(
+            dir + "/GeoClass.txt", "cannot write ");
         f << std::setprecision(10);
         f << "!class\tlanduse\tsoil\tcrop1\tcrop2\trotation\tvegtype\tspecial\ttiledepth\tstreamdepth\tnlayers\tdepth1\tdepth2\tdepth3\n";
         for (const auto& c : setup.classes)

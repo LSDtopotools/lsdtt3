@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_proximity_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "../utils/lsdtt_raster_geometry.hpp"  // col_from_x, row_from_y, point_within_raster
 #include "../utils/lsdtt_thread_utils.hpp"      // resolve_thread_count
@@ -444,9 +445,9 @@ lsdtt_raster_cpu inflate_values_to_nearest_source(
         pq.push(node{0.0, pv, val_data[i], static_cast<std::int64_t>(i)});
     }
 
-    static const int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    static const int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
-    const double diag = cell * std::sqrt(2.0);
+    static constexpr const auto& DR = grid::d8_rowmajor_row;
+    static constexpr const auto& DC = grid::d8_rowmajor_col;
+    const double diag = cell * grid::k_sqrt2_d;
 
     while (!pq.empty())
     {
@@ -776,8 +777,8 @@ swath_distances compute_swath_distances(
 // =============================================================================
 
 // D8 direction offsets matching lsdtt_flowinfo_cpu.cpp
-static constexpr std::array<int,8> k_d8_row_prox{{-1,-1,0,1,1,1,0,-1}};
-static constexpr std::array<int,8> k_d8_col_prox{{0,1,1,1,0,-1,-1,-1}};
+static constexpr const auto& k_d8_row_prox = grid::d8_clockwise_row;
+static constexpr const auto& k_d8_col_prox = grid::d8_clockwise_col;
 static constexpr std::uint8_t      k_no_dir_prox = 255u;
 
 // Decode a D8 direction code stored in dir_data[flat] into the receiver's

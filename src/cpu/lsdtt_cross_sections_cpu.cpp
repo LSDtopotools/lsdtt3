@@ -8,6 +8,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_cross_sections_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "lsdtt_raster_sampling_cpu.hpp"
 
 #include <algorithm>
 #include <array>
@@ -28,10 +30,10 @@ namespace lsdtt
 namespace
 {
 
-constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
-constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+static constexpr const auto& d8_row = grid::d8_clockwise_row;
+static constexpr const auto& d8_col = grid::d8_clockwise_col;
 
-constexpr double k_sqrt_2    = 1.4142135623730950488;
+constexpr double k_sqrt_2    = grid::k_sqrt2_d;
 constexpr double k_rad_to_deg = 57.2957795130823208768;
 
 struct sampled_raster_value
@@ -390,84 +392,10 @@ sampled_raster_value bilinear_sample_raster(
     double                  x,
     double                  y)
 {
-    const lsdtt_raster_meta& meta = raster.get_meta();
-    const lsdtt_array2d_f& data = raster.get_data_array();
-    const lsdtt_array2d_u8& mask = raster.get_mask_array();
-
+    // Invalid samples carry the raster's nodata value.
     sampled_raster_value out;
-    out.elevation = static_cast<float>(meta.no_data_value);
-    out.valid = 0;
-
-    if (x < meta.x_min || x > meta.x_max() ||
-        y < meta.y_min || y > meta.y_max())
-    {
-        return out;
-    }
-
-    const double col_f =
-        (x - meta.x_min) / meta.cell_size - 0.5;
-
-    const double row_f =
-        (meta.y_max() - y) / meta.cell_size - 0.5;
-
-    if (col_f < 0.0 || row_f < 0.0 ||
-        col_f > static_cast<double>(meta.n_cols - 1) ||
-        row_f > static_cast<double>(meta.n_rows - 1))
-    {
-        return out;
-    }
-
-    const int col0 = static_cast<int>(std::floor(col_f));
-    const int row0 = static_cast<int>(std::floor(row_f));
-
-    // Edge fallback: nearest-neighbour if a full 2x2 bilinear stencil
-    // is not available.
-    if (col0 >= meta.n_cols - 1 || row0 >= meta.n_rows - 1)
-    {
-        const int col_nn = static_cast<int>(std::llround(col_f));
-        const int row_nn = static_cast<int>(std::llround(row_f));
-
-        if (row_nn < 0 || row_nn >= meta.n_rows ||
-            col_nn < 0 || col_nn >= meta.n_cols)
-        {
-            return out;
-        }
-
-        if (mask(row_nn, col_nn) == 0)
-        {
-            return out;
-        }
-
-        out.elevation = data(row_nn, col_nn);
-        out.valid = 1;
-        return out;
-    }
-
-    const int row1 = row0 + 1;
-    const int col1 = col0 + 1;
-
-    if (mask(row0, col0) == 0 ||
-        mask(row0, col1) == 0 ||
-        mask(row1, col0) == 0 ||
-        mask(row1, col1) == 0)
-    {
-        return out;
-    }
-
-    const double dc = col_f - static_cast<double>(col0);
-    const double dr = row_f - static_cast<double>(row0);
-
-    const double z00 = static_cast<double>(data(row0, col0));
-    const double z01 = static_cast<double>(data(row0, col1));
-    const double z10 = static_cast<double>(data(row1, col0));
-    const double z11 = static_cast<double>(data(row1, col1));
-
-    const double z0 = (1.0 - dc) * z00 + dc * z01;
-    const double z1 = (1.0 - dc) * z10 + dc * z11;
-    const double z  = (1.0 - dr) * z0  + dr * z1;
-
-    out.elevation = static_cast<float>(z);
-    out.valid = 1;
+    out.elevation = static_cast<float>(raster.get_meta().no_data_value);
+    out.valid = raster_sample_bilinear(raster, x, y, out.elevation) ? 1 : 0;
     return out;
 }
 

@@ -1,6 +1,9 @@
 // lsdtt_graphflood_optimised_cpu.cpp
 
 #include "lsdtt_graphflood_optimised_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include "lsdtt_raster_resampling_cpu.hpp"
 
@@ -26,11 +29,11 @@ double seconds_since(clock_type::time_point start)
     return std::chrono::duration<double>(clock_type::now() - start).count();
 }
 
-constexpr int k_dr[8] = {-1, 0, 0, 1, -1, -1, 1, 1};
-constexpr int k_dc[8] = {0, -1, 1, 0, -1, 1, -1, 1};
-constexpr int k_pf_dr[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-constexpr int k_pf_dc[8] = {0, 1, 1, 1, 0, -1, -1, -1};
-constexpr float k_sqrt2 = 1.41421356237f;
+static constexpr const auto& k_dr = grid::d8_cardinal_first_row;
+static constexpr const auto& k_dc = grid::d8_cardinal_first_col;
+static constexpr const auto& k_pf_dr = grid::d8_clockwise_row;
+static constexpr const auto& k_pf_dc = grid::d8_clockwise_col;
+constexpr float k_sqrt2 = grid::k_sqrt2_f;
 constexpr std::uint32_t k_no_receiver =
     std::numeric_limits<std::uint32_t>::max();
 
@@ -173,16 +176,13 @@ private:
             initial_water_depth.size() != n_cells_ ||
             (use_v2_ && !prescribed_qin.empty() && prescribed_qin.size() != n_cells_))
             throw std::invalid_argument("run_graphflood_optimised: forcing shape mismatch");
-        if (options_.boundary_conditions.size() != 4)
+        const lsdtt_boundary_parse bcp =
+            parse_boundary_codes(options_.boundary_conditions, "onp", /*fold_case=*/false);
+        if (bcp.result == lsdtt_boundary_parse::status::wrong_length)
             throw std::invalid_argument("run_graphflood_optimised: boundary conditions must be NESW");
-
-        for (const char code : options_.boundary_conditions)
-            if (code != 'o' && code != 'n' && code != 'p')
-                throw std::invalid_argument("run_graphflood_optimised: boundaries use o, n, or p");
-        if ((options_.boundary_conditions[0] == 'p') !=
-                (options_.boundary_conditions[2] == 'p') ||
-            (options_.boundary_conditions[1] == 'p') !=
-                (options_.boundary_conditions[3] == 'p'))
+        if (bcp.result == lsdtt_boundary_parse::status::invalid_code)
+            throw std::invalid_argument("run_graphflood_optimised: boundaries use o, n, or p");
+        if (bcp.periodic_ns_mismatch || bcp.periodic_ew_mismatch)
             throw std::invalid_argument("run_graphflood_optimised: periodic boundaries must be paired");
         if (!(options_.mfd_exponent > 0.0f) ||
             !(options_.fill_slope_epsilon >= 0.0f) ||
@@ -863,12 +863,8 @@ private:
             convergence_rel_.push_back(value / std::max(depth_[flat], 1.0e-12));
         }
         if (convergence_abs_.empty()) return {0.0, 0.0};
-        const std::size_t middle = convergence_abs_.size() / 2;
-        std::nth_element(convergence_abs_.begin(),
-                         convergence_abs_.begin() + middle, convergence_abs_.end());
-        std::nth_element(convergence_rel_.begin(),
-                         convergence_rel_.begin() + middle, convergence_rel_.end());
-        return {convergence_abs_[middle], convergence_rel_[middle]};
+        return {compute_median_in_place(convergence_abs_),
+                compute_median_in_place(convergence_rel_)};
     }
 
     lsdtt_raster_result raster_from_float(const std::vector<float>& values) const

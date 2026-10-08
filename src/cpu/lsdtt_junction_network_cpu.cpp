@@ -8,6 +8,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_junction_network_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_junction_graph_orders.hpp"
 
 #include <algorithm>
 #include <array>
@@ -40,8 +42,8 @@ namespace
 //   6  x  2
 //   5  4  3
 // -----------------------------------------------------------------------------
-constexpr std::array<int, 8> d8_row{{-1, -1,  0,  1,  1,  1,  0, -1}};
-constexpr std::array<int, 8> d8_col{{ 0,  1,  1,  1,  0, -1, -1, -1}};
+static constexpr const auto& d8_row = grid::d8_clockwise_row;
+static constexpr const auto& d8_col = grid::d8_clockwise_col;
 
 struct pixel_order_frame
 {
@@ -1604,60 +1606,19 @@ void lsdtt_junction_network_cpu::build_direct_donor_lists()
 
 void lsdtt_junction_network_cpu::build_topological_order()
 {
-    topological_order_.clear();
-    topological_order_.reserve(junction_flat_.size());
+    // Donor counts are stored as uint8; the traversal consumes an int32 copy.
+    const junction_graph_order_status status = junction_graph_topological_order(
+        std::vector<std::int32_t>(donor_count_junction_.begin(), donor_count_junction_.end()),
+        [&](std::int32_t j) { return receiver_junction_[static_cast<std::size_t>(j)]; },
+        topological_order_);
 
-    const std::int32_t n_junctions =
-        static_cast<std::int32_t>(junction_flat_.size());
-
-    if (n_junctions == 0)
+    if (status == junction_graph_order_status::donor_count_underflow)
     {
-        has_topological_order_ = true;
-        return;
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu: donor counter underflow while building topological order"
+        );
     }
-
-    std::vector<std::int32_t> remaining_donors(
-        donor_count_junction_.begin(),
-        donor_count_junction_.end()
-    );
-
-    std::vector<std::int32_t> ready_queue;
-    ready_queue.reserve(static_cast<std::size_t>(n_junctions));
-
-    for (std::int32_t j = 0; j < n_junctions; ++j)
-    {
-        if (remaining_donors[static_cast<std::size_t>(j)] == 0)
-        {
-            ready_queue.push_back(j);
-        }
-    }
-
-    std::size_t head = 0;
-    while (head < ready_queue.size())
-    {
-        const std::int32_t j = ready_queue[head++];
-        topological_order_.push_back(j);
-
-        const std::int32_t rec = receiver_junction_[static_cast<std::size_t>(j)];
-        if (rec >= 0)
-        {
-            if (remaining_donors[static_cast<std::size_t>(rec)] <= 0)
-            {
-                throw std::runtime_error(
-                    "lsdtt_junction_network_cpu: donor counter underflow while building topological order"
-                );
-            }
-
-            --remaining_donors[static_cast<std::size_t>(rec)];
-
-            if (remaining_donors[static_cast<std::size_t>(rec)] == 0)
-            {
-                ready_queue.push_back(rec);
-            }
-        }
-    }
-
-    if (topological_order_.size() != junction_flat_.size())
+    if (status != junction_graph_order_status::ok)
     {
         throw std::runtime_error(
             "lsdtt_junction_network_cpu: compact junction graph is cyclic or incomplete"
@@ -1673,24 +1634,11 @@ void lsdtt_junction_network_cpu::build_topological_order()
 
 void lsdtt_junction_network_cpu::build_s_vector()
 {
-    const std::int32_t n_junctions =
-        static_cast<std::int32_t>(junction_flat_.size());
+    const std::size_t n_junctions = junction_flat_.size();
 
-    s_vector_.clear();
-    s_vector_start_.assign(static_cast<std::size_t>(n_junctions), k_nodata_junction);
-    s_vector_size_.assign(static_cast<std::size_t>(n_junctions), 0);
+    std::vector<std::vector<std::int32_t>> donors(n_junctions);
 
-    if (n_junctions == 0)
-    {
-        has_s_vector_ = true;
-        return;
-    }
-
-    std::vector<std::vector<std::int32_t>> donors(
-        static_cast<std::size_t>(n_junctions)
-    );
-
-    for (std::int32_t j = 0; j < n_junctions; ++j)
+    for (std::int32_t j = 0; j < static_cast<std::int32_t>(n_junctions); ++j)
     {
         const std::int32_t rec = receiver_junction_[static_cast<std::size_t>(j)];
         if (rec >= 0)
@@ -1707,73 +1655,21 @@ void lsdtt_junction_network_cpu::build_s_vector()
         std::sort(donor_list.begin(), donor_list.end());
     }
 
-    struct dfs_frame
+    const junction_graph_order_status status = junction_graph_preorder(
+        n_junctions,
+        outlets_,
+        [&](std::int32_t j) -> const std::vector<std::int32_t>& {
+            return donors[static_cast<std::size_t>(j)];
+        },
+        s_vector_, s_vector_start_, s_vector_size_);
+
+    if (status == junction_graph_order_status::duplicate_visit)
     {
-        std::int32_t junction   = k_nodata_junction;
-        std::size_t  next_donor = 0;
-    };
-
-    std::vector<dfs_frame> stack;
-    stack.reserve(256);
-
-    auto push_junction = [&](std::int32_t junction)
-    {
-        s_vector_start_[static_cast<std::size_t>(junction)] =
-            static_cast<std::int32_t>(s_vector_.size());
-
-        s_vector_size_[static_cast<std::size_t>(junction)] = 1;
-        s_vector_.push_back(junction);
-
-        stack.push_back(dfs_frame{junction, 0});
-    };
-
-    for (const std::int32_t outlet : outlets_)
-    {
-        if (s_vector_start_[static_cast<std::size_t>(outlet)] >= 0)
-        {
-            continue;
-        }
-
-        stack.clear();
-        push_junction(outlet);
-
-        while (!stack.empty())
-        {
-            dfs_frame& frame = stack.back();
-            const std::int32_t junction = frame.junction;
-            const auto& donor_list = donors[static_cast<std::size_t>(junction)];
-
-            if (frame.next_donor < donor_list.size())
-            {
-                const std::int32_t child =
-                    donor_list[frame.next_donor++];
-
-                if (s_vector_start_[static_cast<std::size_t>(child)] >= 0)
-                {
-                    throw std::runtime_error(
-                        "lsdtt_junction_network_cpu: duplicate visit while building s_vector"
-                    );
-                }
-
-                push_junction(child);
-                continue;
-            }
-
-            const std::int32_t completed_junction = junction;
-            const std::int32_t completed_size =
-                s_vector_size_[static_cast<std::size_t>(completed_junction)];
-
-            stack.pop_back();
-
-            if (!stack.empty())
-            {
-                s_vector_size_[static_cast<std::size_t>(stack.back().junction)] +=
-                    completed_size;
-            }
-        }
+        throw std::runtime_error(
+            "lsdtt_junction_network_cpu: duplicate visit while building s_vector"
+        );
     }
-
-    if (s_vector_.size() != static_cast<std::size_t>(n_junctions))
+    if (status != junction_graph_order_status::ok)
     {
         throw std::runtime_error(
             "lsdtt_junction_network_cpu: s_vector does not cover all junctions"
@@ -2190,7 +2086,7 @@ void lsdtt_junction_network_cpu::write_channel_network_lines(
 
                 const double cell = meta_.cell_size;
                 link_length += (row_step && col_step)
-                    ? cell * std::sqrt(2.0)     // diagonal
+                    ? cell * grid::k_sqrt2_d    // diagonal
                     : cell;                     // cardinal
 
                 // A wrapped step is one cell of FLOW but a domain-width jump in

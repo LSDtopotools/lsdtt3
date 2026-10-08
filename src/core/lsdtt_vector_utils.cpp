@@ -9,6 +9,7 @@
 
 #include "lsdtt_vector_utils.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -16,6 +17,7 @@
 
 #include <ogr_spatialref.h>
 #include <ogr_geometry.h>
+#include <ogrsf_frmts.h>
 
 namespace lsdtt
 {
@@ -375,6 +377,105 @@ std::vector<lsdtt_lonlat> xy_to_lonlat(
     }
 
     return out;
+}
+
+// -----------------------------------------------------------------------------
+// Vector layer -> raster CRS helpers
+//
+// Moved verbatim from lsdtt_vector_rasterise_cpu and lsdtt_sti_cpu (identical
+// apart from the failure message, now a parameter, and the null-layer guard,
+// which only vector_rasterise had).
+// -----------------------------------------------------------------------------
+
+void lsdtt_ogr_transform_deleter::operator()(OGRCoordinateTransformation* tx) const
+{
+    if (tx) OCTDestroyCoordinateTransformation(tx);
+}
+
+lsdtt_ogr_transform_ptr make_layer_to_raster_transform(
+    const OGRSpatialReference* layer_srs,
+    const std::string&         raster_wkt,
+    const std::string&         failure_message)
+{
+    if (!layer_srs || raster_wkt.empty()) return nullptr;
+
+    OGRSpatialReference src_srs(*layer_srs);
+    OGRSpatialReference raster_srs;
+
+    src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    if (raster_srs.importFromWkt(raster_wkt.c_str()) != OGRERR_NONE)
+        return nullptr;
+
+    if (src_srs.IsSame(&raster_srs))
+        return nullptr;
+
+    OGRCoordinateTransformation* ct =
+        OGRCreateCoordinateTransformation(&src_srs, &raster_srs);
+
+    if (!ct)
+    {
+        throw std::runtime_error(failure_message);
+    }
+
+    return lsdtt_ogr_transform_ptr(ct);
+}
+
+void set_layer_spatial_filter_from_raster_bbox(
+    OGRLayer*                layer,
+    const lsdtt_raster_meta& meta)
+{
+    if (!layer)
+        return;
+
+    double minx = meta.x_min;
+    double miny = meta.y_min;
+    double maxx = meta.x_max();
+    double maxy = meta.y_max();
+
+    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+    if (layer_srs && !meta.crs_wkt.empty())
+    {
+        OGRSpatialReference raster_srs;
+        raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+        if (raster_srs.importFromWkt(meta.crs_wkt.c_str()) == OGRERR_NONE)
+        {
+            OGRSpatialReference dst_srs(*layer_srs);
+            dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+            if (!raster_srs.IsSame(&dst_srs))
+            {
+                OGRCoordinateTransformation* raw_ct =
+                    OGRCreateCoordinateTransformation(&raster_srs, &dst_srs);
+
+                if (raw_ct)
+                {
+                    lsdtt_ogr_transform_ptr ct(raw_ct);
+
+                    double xs[4] = {
+                        meta.x_min, meta.x_max(),
+                        meta.x_min, meta.x_max()
+                    };
+                    double ys[4] = {
+                        meta.y_min, meta.y_min,
+                        meta.y_max(), meta.y_max()
+                    };
+
+                    if (ct->Transform(4, xs, ys))
+                    {
+                        minx = *std::min_element(xs, xs + 4);
+                        maxx = *std::max_element(xs, xs + 4);
+                        miny = *std::min_element(ys, ys + 4);
+                        maxy = *std::max_element(ys, ys + 4);
+                    }
+                }
+            }
+        }
+    }
+
+    layer->SetSpatialFilterRect(minx, miny, maxx, maxy);
 }
 
 } // namespace lsdtt

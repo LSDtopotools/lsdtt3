@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_algebra.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_stat_csv.hpp"
@@ -1578,36 +1579,7 @@ float raster_percentile(const lsdtt_raster_cpu& a, double p)
     }
 
     std::vector<float> values = collect_valid(a);
-    const std::size_t n = values.size();
-
-    if (n == 1) return values[0];
-
-    const double rank = (p / 100.0) * static_cast<double>(n - 1);
-
-    const std::size_t lower_index = static_cast<std::size_t>(std::floor(rank));
-    const std::size_t upper_index = static_cast<std::size_t>(std::ceil(rank));
-
-    std::nth_element(
-        values.begin(),
-        values.begin() + static_cast<std::ptrdiff_t>(upper_index),
-        values.end()
-    );
-    const float upper_value = values[upper_index];
-
-    if (lower_index == upper_index) return upper_value;
-
-    std::nth_element(
-        values.begin(),
-        values.begin() + static_cast<std::ptrdiff_t>(lower_index),
-        values.begin() + static_cast<std::ptrdiff_t>(upper_index) + 1
-    );
-    const float lower_value = values[lower_index];
-
-    const double weight_upper = rank - static_cast<double>(lower_index);
-    return static_cast<float>(
-        (1.0 - weight_upper) * static_cast<double>(lower_value) +
-        weight_upper         * static_cast<double>(upper_value)
-    );
+    return static_cast<float>(compute_quantile_interpolated_in_place(values, p / 100.0));
 }
 
 float raster_stddev_value(const lsdtt_raster_cpu& a)

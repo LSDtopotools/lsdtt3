@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_canopy_interception_cpu.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -16,19 +17,6 @@
 
 namespace lsdtt
 {
-
-namespace
-{
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-}
-
-} // namespace
 
 double canopy_capacity_from_lai(double lai, double mm_per_lai) noexcept
 {
@@ -57,11 +45,11 @@ lsdtt_canopy_interception_cpu::lsdtt_canopy_interception_cpu(
             std::string(who) + ": LAI has " + std::to_string(lai_per_unit.size()) +
             " entries but area_fraction has " + std::to_string(area_.size()));
 
-    require_positive(params_.canopy_storage_mm_per_lai,
+    require_positive_finite(params_.canopy_storage_mm_per_lai,
                      "canopy_storage_mm_per_lai", who);
-    require_positive(params_.interception_evap_factor,
+    require_positive_finite(params_.interception_evap_factor,
                      "interception_evap_factor", who);
-    require_positive(params_.lai_seasonal_factor, "lai_seasonal_factor", who);
+    require_positive_finite(params_.lai_seasonal_factor, "lai_seasonal_factor", who);
     if (!(std::isfinite(params_.lai_gap_coefficient) &&
           params_.lai_gap_coefficient >= 0.0))
         throw std::invalid_argument(

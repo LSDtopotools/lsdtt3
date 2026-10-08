@@ -14,6 +14,7 @@
 // See lsdtt_streamlines_cpu.hpp for full reference details.
 
 #include "lsdtt_streamlines_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
@@ -320,7 +321,7 @@ static lsdtt_streamline trace_one_streamline(
                 const int nk = flat(rr, cc);
                 if (!dem_mask[nk]) continue;
 
-                const double run = ((dr != 0 && dc != 0) ? std::sqrt(2.0) : 1.0) * cs;
+                const double run = ((dr != 0 && dc != 0) ? grid::k_sqrt2_d : 1.0) * cs;
                 const double g   = (z - static_cast<double>(dem_data[nk])) / run;
                 if (g > best) best = g;
             }

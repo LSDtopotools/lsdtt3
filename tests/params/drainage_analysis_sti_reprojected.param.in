@@ -1,0 +1,35 @@
+# The STI Jenks run of drainage_analysis_sti_jenks.param.in, with the soil and
+# land-use polygons supplied in EPSG:4326 (CRS84) instead of the raster's
+# UTM 30N. tests/data/drainage_sti_*_epsg4326.geojson were made from the UTM
+# files with GDAL 3.4.1: ogr2ogr -f GeoJSON -t_srs EPSG:4326
+# -lco COORDINATE_PRECISION=15.
+#
+# Every other vector test feeds layers already in the raster CRS, so the
+# layer-to-raster CRS transform (make_layer_to_raster_transform) and the
+# reprojected spatial filter (set_layer_spatial_filter_from_raster_bbox) were
+# never exercised end to end before 2026-10-07. The classified result must be
+# the same as the UTM sibling's.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: drainage_sti_rp
+
+raster_is_filled: false
+write_output_format: gtiff
+
+write_sti_raster: true
+write_sti_proxy_raster: true
+write_sti_95th_percentile_rasters: true
+write_sti_p95_jenks_rasters: true
+sti_p95_jenks_n_classes: 5
+sti_p95_jenks_max_histogram_bins: 8
+sti_drainage_area_method: dinf
+sti_window_radius_metres: 1
+
+sti_soil_fname: __READ_PATH__/drainage_sti_soil_epsg4326.geojson
+sti_soil_layer_name: drainage_sti_soil
+sti_landuse_fname: __READ_PATH__/drainage_sti_landuse_epsg4326.geojson
+sti_landuse_layer_name: drainage_sti_landuse
+sti_ksat_fname: __READ_PATH__/drainage_sti_ksat.csv
+sti_spr_fname: __READ_PATH__/drainage_sti_spr.csv
+sti_sskib_fname: __READ_PATH__/not_present.xlsx

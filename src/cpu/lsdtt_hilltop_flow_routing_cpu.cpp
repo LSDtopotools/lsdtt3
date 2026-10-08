@@ -10,6 +10,7 @@
 // side-assignment rule.
 
 #include "lsdtt_hilltop_flow_routing_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 
 #include <algorithm>
 #include <sstream>
@@ -607,11 +608,8 @@ void write_hilltop_metrics_csv(
     const lsdtt_raster_meta&              meta,
     const std::string&                    out_path)
 {
-    std::ofstream f(out_path);
-    if (!f)
-        throw std::runtime_error(
-            "lsdtt_hilltop_flow_routing_cpu: cannot open " + out_path);
-
+    std::ofstream f = open_output_file(
+        out_path, "lsdtt_hilltop_flow_routing_cpu: cannot open ");
     f << std::setprecision(10);
     f << "row,col,easting,northing,"
          "ridgeline_id,ridgeline_node_index,distance_along_ridgeline_m,"

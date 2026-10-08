@@ -23,6 +23,12 @@
 #include "lsdtt_raster_meta.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
+// Forward declarations, so this header does not pull GDAL/OGR headers into
+// every file that includes it.
+class OGRCoordinateTransformation;
+class OGRLayer;
+class OGRSpatialReference;
+
 namespace lsdtt
 {
 
@@ -135,6 +141,43 @@ private:
 [[nodiscard]] std::vector<lsdtt_lonlat> xy_to_lonlat(
     const std::vector<lsdtt_xy>& points,
     const lsdtt_coordinate_transform& transform
+);
+
+// -----------------------------------------------------------------------------
+// Vector layer -> raster CRS helpers
+//
+// Shared by lsdtt_vector_rasterise_cpu and lsdtt_sti_cpu, which had identical
+// copies (tests/cpp/test_vector_layer_transform.cpp keeps them as the
+// reference). Both SRSs are put in traditional GIS (x = easting/longitude)
+// axis order before they are compared or used.
+// -----------------------------------------------------------------------------
+
+struct lsdtt_ogr_transform_deleter
+{
+    void operator()(OGRCoordinateTransformation* tx) const;
+};
+
+using lsdtt_ogr_transform_ptr =
+    std::unique_ptr<OGRCoordinateTransformation, lsdtt_ogr_transform_deleter>;
+
+// Transform from layer_srs to the raster CRS (raster_wkt). Returns nullptr when
+// no transform is needed or possible: layer_srs is null, raster_wkt is empty or
+// does not parse, or the two CRSs are the same. Throws std::runtime_error with
+// failure_message when both CRSs are valid and different but GDAL cannot build
+// the transform.
+[[nodiscard]] lsdtt_ogr_transform_ptr make_layer_to_raster_transform(
+    const OGRSpatialReference* layer_srs,
+    const std::string&         raster_wkt,
+    const std::string&         failure_message
+);
+
+// Restricts layer to the raster's bounding box. When the layer and raster CRSs
+// differ, the four bbox corners are transformed into the layer CRS and their
+// envelope is used; if that transform cannot be built or fails, the untransformed
+// bbox is used. Does nothing when layer is null.
+void set_layer_spatial_filter_from_raster_bbox(
+    OGRLayer*                layer,
+    const lsdtt_raster_meta& meta
 );
 
 } // namespace lsdtt

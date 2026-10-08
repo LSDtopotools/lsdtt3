@@ -8,6 +8,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_steady_state_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include "lsdtt_stream_power_cpu.hpp"
 
@@ -123,7 +125,7 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
 {
     const lsdtt_raster_meta& meta    = flow.meta();
     const float              dx      = static_cast<float>(meta.cell_size);
-    const float              dx_diag = dx * std::sqrt(2.0f);
+    const float              dx_diag = dx * grid::k_sqrt2_f;
     const std::int64_t       n_cells = static_cast<std::int64_t>(meta.n_rows)
                                        * meta.n_cols;
 
@@ -171,14 +173,16 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
     const lsdtt_flowgraph_cpu&                flow,
     const lsdtt_fluvial_steady_state_options& opts)
 {
-#ifdef _OPENMP
-    if (opts.n_threads > 0)
-        omp_set_num_threads(opts.n_threads);
+    // The thread count goes on each parallel loop (num_threads clause); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(opts.n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     const lsdtt_raster_meta& meta    = flow.meta();
     const float              dx      = static_cast<float>(meta.cell_size);
-    const float              dx_diag = dx * std::sqrt(2.0f);
+    const float              dx_diag = dx * grid::k_sqrt2_f;
     const std::int64_t       n_cells = static_cast<std::int64_t>(meta.n_rows)
                                        * meta.n_cols;
 
@@ -218,7 +222,7 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
         const std::int64_t level_size = static_cast<std::int64_t>(level.size());
 
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
         for (std::int64_t li = 0; li < level_size; ++li)
         {

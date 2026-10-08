@@ -1574,6 +1574,29 @@ load_drainage_injection_points(
 }
 
 // -----------------------------------------------------------------------------
+// drainage_area_injection_weights
+//
+// Moved verbatim from lsdtt_flowinfo and lsdtt_flowgraph_cpu (identical in
+// both): a later injection at the same cell adds to the earlier one, in
+// record order.
+// -----------------------------------------------------------------------------
+std::vector<double>
+drainage_area_injection_weights(
+    const lsdtt_raster_meta&                            raster_meta,
+    std::size_t                                         n_cells,
+    const std::vector<lsdtt_drainage_injection_record>& injections)
+{
+    const double pixel_area = raster_meta.cell_size * raster_meta.cell_size;
+
+    std::vector<double> weights(n_cells, pixel_area);
+
+    for (const auto& rec : injections)
+        weights[static_cast<std::size_t>(rec.flat)] += rec.drainage_area_m2;
+
+    return weights;
+}
+
+// -----------------------------------------------------------------------------
 // Convenience filters
 // -----------------------------------------------------------------------------
 std::vector<lsdtt_input_point>

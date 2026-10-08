@@ -15,6 +15,7 @@
 // parameter_name: value
 // lines with hash at beginning are treated as comments
 #include "lsdtt_param_parser.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 
 #include "lsdtt_gdal_init.hpp"
 
@@ -1670,15 +1671,8 @@ void lsdtt_param_parser::replace_and_print_parameter_file(
     const std::map<std::string, std::string>& replacements
 ) const
 {
-    std::ofstream out(output_fname);
-    if (!out.is_open())
-    {
-        throw std::runtime_error(
-            "lsdtt_param_parser::replace_and_print_parameter_file: "
-            "cannot open " + output_fname
-        );
-    }
-
+    std::ofstream out = open_output_file(
+        output_fname, "lsdtt_param_parser::replace_and_print_parameter_file: cannot open ");
     out << "# lsdtt3 parameter file (generated)\n";
     out << "read_path: "   << fix_path(new_read_path)  << "\n";
     out << "read_fname: "  << new_read_fname            << "\n";

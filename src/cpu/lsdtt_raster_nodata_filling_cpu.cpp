@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_nodata_filling_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../cpu/lsdtt_raster_cpu.hpp"
 
 #include <algorithm>
@@ -28,8 +29,8 @@ namespace lsdtt {
 // =============================================================================
 
 // 8-neighbour offsets (used throughout this file)
-static const int k_nd_dr[8] = { -1, -1,  0,  1,  1,  1,  0, -1 };
-static const int k_nd_dc[8] = {  0,  1,  1,  1,  0, -1, -1, -1 };
+static constexpr const auto& k_nd_dr = grid::d8_clockwise_row;
+static constexpr const auto& k_nd_dc = grid::d8_clockwise_col;
 
 lsdtt_array2d<uint8_t> identify_interior_nodata(
     const lsdtt_raster_cpu&raster)
@@ -140,13 +141,13 @@ static int iterative_average_pass(
     // Distances: cardinal = 1.0, diagonal = 1/sqrt(2) for inverse weighting
     static const float k_inv_dist[8] = {
         1.0f,
-        1.0f / 1.41421356f,
+        1.0f / grid::k_sqrt2_f,
         1.0f,
-        1.0f / 1.41421356f,
+        1.0f / grid::k_sqrt2_f,
         1.0f,
-        1.0f / 1.41421356f,
+        1.0f / grid::k_sqrt2_f,
         1.0f,
-        1.0f / 1.41421356f
+        1.0f / grid::k_sqrt2_f
     };
 
 #ifdef _OPENMP

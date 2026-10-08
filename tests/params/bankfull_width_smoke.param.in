@@ -1,0 +1,24 @@
+# Smoke test for lsdtt-bankfull-width on the terrace-valley fixture DEM.
+#
+# The valley falls 0.01 m/m, so the along-channel slope in the channel profile
+# should come back near 0.01; the two reaches in bankfull_width_reaches.csv
+# split the 140 channel pixels at 150 m so both are used. As in the
+# cross-sections test, the 160 m half-length runs sections off the raster.
+read_path: __READ_PATH__
+read_fname: xs_terrace_staircase.tif
+write_path: __WRITE_PATH__
+write_fname: bf
+
+n_threads: 1
+source_points_path: __READ_PATH__/cross_sections_source.csv
+reach_manning_parameters_path: __READ_PATH__/bankfull_width_reaches.csv
+
+cross_section_half_length_metres: 160
+cross_section_sample_spacing_metres: 2
+bearing_window_length_metres: 20
+cross_section_thinning: 10
+thalweg_search_half_width_metres: 6
+slope_window_half_length_metres: 30
+
+run_manning_widths: true
+manning_max_depth_metres: 10

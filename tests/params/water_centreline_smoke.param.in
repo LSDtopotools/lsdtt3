@@ -1,0 +1,24 @@
+# Smoke test for lsdtt-water-centreline on tests/data/water_centreline_fixture,
+# a directory of two WKT CSV files that GDAL's CSV driver reads as one dataset
+# with two layers (text, so the fixture diffs; no GeoPackage on /mnt/c).
+#
+#   water_area  1: a bent river reach, 200 m long and 30 m wide (aspect > 2,
+#                  so it gets a centreline)
+#               2: an elliptical loch, 70 m x 60 m (aspect < 2, the loch path)
+#   water_line  1, 2: tributaries ending on the reach bank
+#               3: a tributary into the loch from the south
+#               4: the loch outflow running to the reach
+#               5: a line tracing part of the reach outline, which
+#                  clip_lines_to_areas must remove
+#
+# Coordinates are British National Grid (the CLI default epsg 27700).
+# lsdtt-water-centreline had no test before 2026-10-07; it is the only CLI route
+# to lsdtt_water_area_centreline_cpu.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wc
+
+input_vector: water_centreline_fixture
+water_area_layer: water_area
+water_line_layer: water_line
+min_centreline_component_metres: 5

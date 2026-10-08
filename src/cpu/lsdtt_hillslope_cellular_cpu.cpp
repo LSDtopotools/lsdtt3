@@ -1,6 +1,9 @@
 // lsdtt_hillslope_cellular_cpu.cpp
 
 #include "lsdtt_hillslope_cellular_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_random.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -51,13 +54,7 @@ struct face_scan
     double max_tangent = 1.0;
 };
 
-std::uint64_t splitmix64(std::uint64_t x)
-{
-    x += 0x9e3779b97f4a7c15ULL;
-    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
-    return x ^ (x >> 31);
-}
+using random::splitmix64;   // src/utils/lsdtt_random.hpp
 
 double particle_uniform(std::uint64_t seed, std::uint64_t id,
                         std::uint64_t step, std::uint64_t draw)
@@ -179,17 +176,18 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
         || (dom.bc_e == 'p') != (dom.bc_w == 'p'))
         throw std::invalid_argument("cellular hillslope periodic boundaries must be paired");
 
-#ifdef _OPENMP
-    if (options.n_threads > 0) omp_set_num_threads(options.n_threads);
-#else
-    (void)options.n_threads;
+    // The thread count goes on the parallel loops (num_threads clauses); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(options.n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     lsdtt_hillslope_cellular_workspace local;
     lsdtt_hillslope_cellular_workspace& ws = workspace ? *workspace : local;
     ws.elevation.resize(n);
 #ifdef _OPENMP
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
     for (long long i = 0; i < static_cast<long long>(n); ++i)
         ws.elevation[static_cast<std::size_t>(i)] =
@@ -221,7 +219,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
         const lsdtt_hillslope_stencil<double> st(dom, ws.elevation.data(), meta.cell_size);
 
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static) reduction(+:active,r70,r80,r85,r100) reduction(max:max_r,max_tangent)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(+:active,r70,r80,r85,r100) reduction(max:max_r,max_tangent)
 #endif
         for (long long flat = 0; flat < static_cast<long long>(n); ++flat)
         {
@@ -368,7 +366,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
 
         double exported_height_sum = 0.0;
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static) reduction(+:exported_height_sum)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(+:exported_height_sum)
 #endif
         for (long long flat = 0; flat < static_cast<long long>(n); ++flat)
         {
@@ -450,8 +448,8 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
                         remaining_amount -= deposited;
                     }
 
-                    static constexpr int dr[4] = {-1, 0, 1, 0};
-                    static constexpr int dc[4] = {0, 1, 0, -1};
+                    static constexpr const auto& dr = grid::d4_nesw_row;
+                    static constexpr const auto& dc = grid::d4_nesw_col;
                     int next_r = cr, next_c = cc;
                     double next_z = ws.elevation[current];
 
@@ -523,7 +521,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
             long long moved = 0, exported = 0;
             const std::uint64_t particle_step = tracker->substep_index;
 #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) reduction(+:moved,exported)
+            #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(+:moved,exported)
 #endif
             for (long long pp = 0;
                  pp < static_cast<long long>(tracker->size()); ++pp)
@@ -658,8 +656,8 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
                         }
                         else
                         {
-                            static constexpr int dr[4] = {-1, 0, 1, 0};
-                            static constexpr int dc[4] = {0, 1, 0, -1};
+                            static constexpr const auto& dr = grid::d4_nesw_row;
+                            static constexpr const auto& dc = grid::d4_nesw_col;
                             for (int k = 0; k < 4; ++k)
                             {
                                 int rr = cr, rc = cc;
@@ -718,7 +716,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport(
 
     std::vector<float> output(n);
 #ifdef _OPENMP
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
     for (long long i = 0; i < static_cast<long long>(n); ++i)
         output[static_cast<std::size_t>(i)] =
@@ -765,10 +763,11 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport_multirate(
         || (dom.bc_e == 'p') != (dom.bc_w == 'p'))
         throw std::invalid_argument("cellular multirate periodic boundaries must be paired");
 
-#ifdef _OPENMP
-    if (options.n_threads > 0) omp_set_num_threads(options.n_threads);
-#else
-    (void)options.n_threads;
+    // The thread count goes on the parallel loops (num_threads clauses); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(options.n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     lsdtt_hillslope_cellular_workspace local;
@@ -913,7 +912,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport_multirate(
                 const auto& bin = bins[static_cast<std::size_t>(colour) * levels + level];
                 long violations = 0;
 #ifdef _OPENMP
-                #pragma omp parallel for schedule(static) reduction(+:violations)
+                #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(+:violations)
 #endif
                 for (long long j = 0; j < static_cast<long long>(bin.size()); ++j)
                 {
@@ -947,7 +946,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport_multirate(
                 const auto& bin = bins[static_cast<std::size_t>(colour) * levels + level];
                 double export_sum = 0.0;
 #ifdef _OPENMP
-                #pragma omp parallel for schedule(static) reduction(+:export_sum)
+                #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(+:export_sum)
 #endif
                 for (long long j = 0; j < static_cast<long long>(bin.size()); ++j)
                 {
@@ -974,7 +973,7 @@ lsdtt_hillslope_cellular_result compute_hillslope_cellular_transport_multirate(
 
     std::vector<float> output(n);
 #ifdef _OPENMP
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
     for (long long i = 0; i < static_cast<long long>(n); ++i)
         output[static_cast<std::size_t>(i)] = static_cast<float>(ws.elevation[static_cast<std::size_t>(i)]);

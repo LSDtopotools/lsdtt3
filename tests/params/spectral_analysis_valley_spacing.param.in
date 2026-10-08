@@ -1,0 +1,15 @@
+# Smoke test for the valley-spacing analysis of lsdtt-spectral-analysis, on the
+# stream-burning fixture DEM (200 x 200 cells at 30 m).
+#
+# No test ran run_valley_spacing before 2026-10-07 (the one spectral test only
+# checks a deprecated key). Its hillslope-length estimate uses a two-pass chamfer
+# distance transform whose diagonal weight changed from the truncated 1.41421356
+# to the full sqrt(2) under consolidation decision D5.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: vsp
+
+write_output_format: gtiff
+n_threads: 1
+run_valley_spacing: true

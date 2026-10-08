@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_landscape_drape_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "../utils/lsdtt_thread_utils.hpp"
 
@@ -71,8 +72,8 @@ lsdtt_cloth_drape_result compute_cloth_drape(
     // ------------------------------------------------------------------
     // 8-connected neighbour offsets
     // ------------------------------------------------------------------
-    static constexpr int k_drow[8] = {-1, -1, -1,  0,  0,  1,  1,  1};
-    static constexpr int k_dcol[8] = {-1,  0,  1, -1,  1, -1,  0,  1};
+    static constexpr const auto& k_drow = grid::d8_rowmajor_row;
+    static constexpr const auto& k_dcol = grid::d8_rowmajor_col;
 
     const float dt2         = opts.time_step * opts.time_step;
     const int   n_threads   = lsdtt::resolve_thread_count(opts.n_threads);

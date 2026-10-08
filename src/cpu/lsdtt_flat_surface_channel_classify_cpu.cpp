@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "lsdtt_proximity_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 namespace lsdtt
 {
@@ -208,14 +209,6 @@ double robust_spread(const std::vector<float>& values)
         return static_cast<double>(s[idx]);
     };
     return q(0.98) - q(0.02);
-}
-
-double median_of(std::vector<float>& v)
-{
-    if (v.empty()) return -1.0;
-    const std::size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + mid, v.end());
-    return static_cast<double>(v[mid]);
 }
 
 // Per-source along-channel window layout: windows of width `wstep` starting at
@@ -770,14 +763,9 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         {
             rec.has_height = true;
             std::vector<float>& h = a.heights;
-            const std::size_t mid = h.size() / 2;
-            std::nth_element(h.begin(), h.begin() + mid, h.end());
-            rec.median_height = h[mid];
-            if (h.size() % 2 == 0)
-            {
-                const float upper = *std::max_element(h.begin(), h.begin() + mid);
-                rec.median_height = 0.5 * (rec.median_height + upper);
-            }
+            // Selects in place; the sum below runs over h in the order the
+            // selection leaves it, as it always has.
+            rec.median_height = compute_median_in_place(h);
             double sum = 0.0;
             rec.min_height = h[0];
             rec.max_height = h[0];
@@ -791,7 +779,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             rec.hand_spread_metres = robust_spread(h);
         }
 
-        rec.median_channel_distance_metres = median_of(a.donor_dist);
+        rec.median_channel_distance_metres = compute_median_in_place(a.donor_dist, -1.0);
 
         std::int32_t best_src = -1;
         std::int64_t best_votes = 0;

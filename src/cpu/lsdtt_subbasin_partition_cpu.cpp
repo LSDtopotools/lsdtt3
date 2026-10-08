@@ -13,6 +13,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_subbasin_partition_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "lsdtt_junction_basin_manager_cpu.hpp"
 #include "../utils/lsdtt_statistics.hpp"
@@ -91,8 +92,8 @@ void collect_donors(
     std::int64_t               flat,
     std::vector<std::int64_t>& donors)
 {
-    static constexpr int d_row[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-    static constexpr int d_col[8] = {0, 1, 1, 1, 0, -1, -1, -1};
+    static constexpr const auto& d_row = grid::d8_clockwise_row;
+    static constexpr const auto& d_col = grid::d8_clockwise_col;
 
     donors.clear();
     const int n_rows = flow.n_rows();
@@ -510,7 +511,7 @@ subbasin_river_lengths_result compute_subbasin_river_lengths(
     const std::int32_t n_sb      = partition.n_subbasins();
     const std::size_t  n         = partition.subbasin_id.size();
     const double       dx        = flow.cell_size();
-    const double       dxy       = dx * std::sqrt(2.0);
+    const double       dxy       = dx * grid::k_sqrt2_d;
 
     subbasin_river_lengths_result out;
     out.rivlen_m.assign(static_cast<std::size_t>(n_sb), 0.0);

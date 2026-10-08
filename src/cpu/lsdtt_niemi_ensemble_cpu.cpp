@@ -11,6 +11,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_niemi_ensemble_cpu.hpp"
+#include "../utils/lsdtt_string_utils.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -305,13 +306,16 @@ void write_niemi_basins_csv(const std::string& path,
     f << "realisation,outlet_flat,n_pixels,area_km2,n_failed_pixels,"
          "fraction_failed,accumulated_conc_atoms_g,apparent_erate_g_cm2_yr,"
          "true_erate_g_cm2_yr,ratio,valid\n";
-    f << std::setprecision(10);
+    // Real columns through csv_number at this file's precision (10): the same
+    // text for finite values, nan / inf spelled consistently (decision D7,
+    // 2026-10-08). Integer columns are streamed as before.
+    auto num = [](double v) { return csv_number(v, 10); };
     for (const auto& s : samples)
     {
         f << s.realisation << "," << s.outlet_flat << "," << s.n_pixels << ","
-          << s.area_km2 << "," << s.n_failed_pixels << "," << s.fraction_failed
-          << "," << s.accumulated_conc << "," << s.apparent_erate_g_cm2_yr
-          << "," << s.true_erate_g_cm2_yr << "," << s.ratio << ","
+          << num(s.area_km2) << "," << s.n_failed_pixels << "," << num(s.fraction_failed)
+          << "," << num(s.accumulated_conc) << "," << num(s.apparent_erate_g_cm2_yr)
+          << "," << num(s.true_erate_g_cm2_yr) << "," << num(s.ratio) << ","
           << (s.valid ? 1 : 0) << "\n";
     }
 }
@@ -324,13 +328,13 @@ void write_niemi_area_bins_csv(const std::string& path,
     if (!f) return;
     f << "area_lo_km2,area_hi_km2,n,median_ratio,p05,p25,p75,p95,iqr,"
          "frac_within_10pc,frac_within_20pc\n";
-    f << std::setprecision(10);
+    auto num = [](double v) { return csv_number(v, 10); };
     for (const auto& b : bins)
     {
-        f << b.area_lo_km2 << "," << b.area_hi_km2 << "," << b.n << ","
-          << b.median << "," << b.p05 << "," << b.p25 << "," << b.p75 << ","
-          << b.p95 << "," << b.iqr << "," << b.frac_within_10pc << ","
-          << b.frac_within_20pc << "\n";
+        f << num(b.area_lo_km2) << "," << num(b.area_hi_km2) << "," << b.n << ","
+          << num(b.median) << "," << num(b.p05) << "," << num(b.p25) << "," << num(b.p75) << ","
+          << num(b.p95) << "," << num(b.iqr) << "," << num(b.frac_within_10pc) << ","
+          << num(b.frac_within_20pc) << "\n";
     }
 }
 

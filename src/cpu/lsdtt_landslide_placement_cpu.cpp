@@ -9,6 +9,9 @@
 // See lsdtt_landslide_placement_cpu.hpp for the design.
 
 #include "lsdtt_landslide_placement_cpu.hpp"
+#include "../utils/lsdtt_random.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,17 +24,9 @@ namespace lsdtt
 namespace
 {
 
-// xorshift64*, so a test can reproduce a placement exactly without dragging in
-// <random> and its implementation-defined engines.
-inline double next_uniform(std::uint64_t& state)
-{
-    state ^= state >> 12;
-    state ^= state << 25;
-    state ^= state >> 27;
-    const std::uint64_t v = state * 2685821657736338717ULL;
-    // 53 significant bits, in [0,1)
-    return static_cast<double>(v >> 11) * (1.0 / 9007199254740992.0);
-}
+// xorshift64*, so a test can reproduce a draw sequence exactly without
+// dragging in <random> and its implementation-defined engines.
+constexpr auto next_uniform = &random::xorshift64star_uniform01;
 
 }  // namespace
 
@@ -187,7 +182,7 @@ bool LandslidePlacer::try_host(std::int64_t init_flat, int n_target,
     // lookup, which is what makes the exact flow distance affordable.
     const std::int64_t start_init = flow_.s_vector_start_unchecked(init_flat);
     const double cell = meta_.cell_size;
-    const double diag = cell * std::sqrt(2.0);
+    const double diag = cell * grid::k_sqrt2_d;
 
     // The initiation pixel itself must survive, or the scar is not anchored
     // where we said it was.
@@ -300,11 +295,7 @@ bool LandslidePlacer::place_scar_seeded(int n_target_pixels,
 
 void LandslidePlacer::finalise_diagnostics()
 {
-    if (fill_ratios_.empty()) { diag_.median_host_fill_ratio = 0.0; return; }
-    std::vector<double> v = fill_ratios_;
-    const std::size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + mid, v.end());
-    diag_.median_host_fill_ratio = v[mid];
+    diag_.median_host_fill_ratio = compute_median_of_copy(fill_ratios_, 0.0);
 }
 
 }  // namespace lsdtt

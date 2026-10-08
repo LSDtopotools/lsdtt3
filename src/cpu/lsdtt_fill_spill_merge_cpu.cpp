@@ -36,6 +36,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_fill_spill_merge_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -61,8 +62,8 @@ namespace {
 //   7  0  1
 //   6  x  2
 //   5  4  3
-constexpr int k_dy[8] = { -1, -1,  0,  1,  1,  1,  0, -1 };
-constexpr int k_dx[8] = {  0,  1,  1,  1,  0, -1, -1, -1 };
+static constexpr const auto& k_dy = grid::d8_clockwise_row;
+static constexpr const auto& k_dx = grid::d8_clockwise_col;
 
 constexpr double k_fp_error = 1e-4;
 

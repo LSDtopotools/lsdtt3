@@ -7,6 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 
 #include "lsdtt_critical_slope_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "lsdtt_divide_diagnostics_cpu.hpp"
 
@@ -23,7 +24,7 @@ namespace
 
 double step_length_to_receiver(std::uint8_t receiver_dir, double cell_size)
 {
-    constexpr double k_sqrt_2 = 1.4142135623730950488;
+    constexpr double k_sqrt_2 = grid::k_sqrt2_d;
     return ((receiver_dir & 1u) == 0u) ? cell_size : (cell_size * k_sqrt_2);
 }
 

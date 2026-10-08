@@ -43,10 +43,18 @@ namespace lsdtt
 // Internal helpers
 // 
 
+// BOTH CRSs are put in traditional GIS (x = easting / longitude) order. The
+// pixel coordinates passed in are always (easting, northing); with the source
+// left in authority order, a CRS whose WKT declares northing first (EPSG:2193
+// NZTM, EPSG:3006 SWEREF99 TM) had them read as (northing, easting) and every
+// pixel landed at the wrong latitude (fixed 2026-10-08;
+// tests/cpp/test_cosmo_raster_axis_order.cpp). lsdtt_coordinate_transform does
+// the same.
 static OGRCoordinateTransformation* make_to_wgs84(const lsdtt_raster_meta& meta)
 {
     OGRSpatialReference src, dst;
     src.importFromWkt(meta.crs_wkt.c_str());
+    src.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     dst.importFromEPSG(4326);
     dst.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     return OGRCreateCoordinateTransformation(&src, &dst);

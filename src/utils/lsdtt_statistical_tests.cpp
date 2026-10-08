@@ -17,6 +17,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_statistical_tests.hpp"
+#include "lsdtt_statistics_detail.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -31,10 +32,8 @@ namespace lsdtt
 namespace
 {
 
-double nan_value()
-{
-    return std::numeric_limits<double>::quiet_NaN();
-}
+using statistics_detail::nan_value;
+using statistics_detail::make_sorted_copy;
 
 double clamp_probability(double p)
 {
@@ -59,14 +58,6 @@ double compute_effective_sample_size(
 
     return (static_cast<double>(n_x) * static_cast<double>(n_y)) /
            static_cast<double>(n_x + n_y);
-}
-
-std::vector<double> make_sorted_copy(
-    const std::vector<double>& values)
-{
-    std::vector<double> sorted = values;
-    std::sort(sorted.begin(), sorted.end());
-    return sorted;
 }
 
 struct ecdf_summary

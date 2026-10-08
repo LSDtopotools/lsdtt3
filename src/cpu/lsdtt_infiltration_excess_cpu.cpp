@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_infiltration_excess_cpu.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -19,14 +20,6 @@ namespace lsdtt
 
 namespace
 {
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-}
 
 void require_non_negative(double v, const char* name, const char* who)
 {
@@ -44,9 +37,9 @@ lsdtt_infiltration_excess_cpu::lsdtt_infiltration_excess_cpu(
 {
     const char* who = "lsdtt_infiltration_excess_cpu";
 
-    require_positive(params_.xk0_metres_per_hour, "xk0_metres_per_hour", who);
-    require_positive(params_.szm_metres, "szm_metres", who);
-    require_positive(params_.tolerance, "tolerance", who);
+    require_positive_finite(params_.xk0_metres_per_hour, "xk0_metres_per_hour", who);
+    require_positive_finite(params_.szm_metres, "szm_metres", who);
+    require_positive_finite(params_.tolerance, "tolerance", who);
     require_non_negative(params_.wetting_front_suction_metres,
                          "wetting_front_suction_metres", who);
     require_non_negative(params_.delta_theta, "delta_theta", who);
@@ -129,7 +122,7 @@ infiltration_step_result lsdtt_infiltration_excess_cpu::step(
     int    timestep_index) const
 {
     const char* who = "lsdtt_infiltration_excess_cpu::step";
-    require_positive(dt_hours, "dt_hours", who);
+    require_positive_finite(dt_hours, "dt_hours", who);
 
     const double rint = std::max(0.0, rainfall_rate_metres_per_hour);
     const double dt   = dt_hours;

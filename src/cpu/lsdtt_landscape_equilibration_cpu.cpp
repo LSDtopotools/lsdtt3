@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_landscape_equilibration_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "lsdtt_stream_power_cpu.hpp"
 
@@ -34,7 +35,7 @@ namespace
 
 double flow_step_length_to_receiver(const lsdtt_flowinfo& flow, std::int64_t flat)
 {
-    constexpr double k_sqrt_2 = 1.4142135623730950488;
+    constexpr double k_sqrt_2 = grid::k_sqrt2_d;
     const std::uint8_t dir = flow.receiver_dir_of_unchecked(flat);
     return ((dir & 1u) == 0u) ? flow.cell_size() : (flow.cell_size() * k_sqrt_2);
 }

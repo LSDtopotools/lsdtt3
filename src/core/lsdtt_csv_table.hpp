@@ -39,6 +39,7 @@
 // lsdtt_point_input instead; this is the plain-table path.
 // -----------------------------------------------------------------------------
 
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -137,6 +138,31 @@ double csv_row_double_optional(const lsdtt_csv_row& row,
                                double fallback,
                                const std::string& csv_path,
                                int row_index_1based);
+
+// -----------------------------------------------------------------------------
+// Strict field conversion for readers that split lines themselves.
+//
+// Each converts the WHOLE of text: trailing characters ("1.5abc", "1.5 ") are an
+// error rather than being silently dropped, so trim first if the format allows
+// surrounding whitespace. On failure they throw std::runtime_error
+//   "<where>: line <line_no>: cannot parse '<text>' as a number."
+// ("as an integer.", "as a non-negative integer." for the integer forms), so
+// the user is told the file, the line and the offending text. `where` is
+// usually the function name and the file path.
+//
+// Moved here from lsdtt_manning_hydraulics_cpu (which had them as
+// parse_double_field / parse_int_field) so the other hand-written readers give
+// the same message.
+// -----------------------------------------------------------------------------
+double csv_parse_double_field(const std::string& text, const std::string& where,
+                              std::size_t line_no);
+
+long long csv_parse_int_field(const std::string& text, const std::string& where,
+                              std::size_t line_no);
+
+// Rejects a leading '-', which std::stoull would otherwise wrap to a huge value.
+unsigned long long csv_parse_uint_field(const std::string& text, const std::string& where,
+                                        std::size_t line_no);
 
 } // namespace lsdtt
 

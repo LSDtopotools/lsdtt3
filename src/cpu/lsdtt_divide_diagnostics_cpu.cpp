@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_divide_diagnostics_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -384,7 +385,7 @@ lsdtt_divide_step_stats compute_divide_step_stats(
     const int n_rows = meta.n_rows;
     const int n_cols = meta.n_cols;
     const double dx = meta.cell_size;
-    const double diag = dx * std::sqrt(2.0);
+    const double diag = dx * grid::k_sqrt2_d;
 
     for (std::int64_t flat = 0;
          flat < static_cast<std::int64_t>(flow.full_grid_size());

@@ -1,0 +1,28 @@
+# Smoke and regression test for lsdtt-stream-burning's least-cost-path burn
+# (segmented_trace_test + run_lcp_burn), on the stream-burning fixture DEM and
+# network.
+#
+# Regression: until 2026-10-07 this mode SEGFAULTED. After the LCP burn the CLI
+# re-filled the DEM and replaced the flow object, but the DEM junction network
+# kept a raw pointer to the old flow, so the next phase (candidate junctions)
+# read freed memory. The network is now rebuilt from the new flow. The
+# --stdout-contains "Candidate detection complete." line proves the run gets past
+# that phase.
+#
+# Coverage: this is the only test that runs raster_least_cost_path (12 gaps, so
+# 12 least-cost paths). The trace settings are chosen to leave gaps: at the
+# default trace_max_divergence_metres (10 m, a third of a 30 m cell) no reach is
+# accepted and there is nothing to burn.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: lcpb
+
+stream_vector_path: __READ_PATH__/stream_burning_network.fgb
+threshold_contributing_pixels: 1000
+
+segmented_trace_test: true
+trace_max_divergence_metres: 30
+segmented_trace_min_pixels: 4
+segmented_trace_spur_pixels: 4
+run_lcp_burn: true

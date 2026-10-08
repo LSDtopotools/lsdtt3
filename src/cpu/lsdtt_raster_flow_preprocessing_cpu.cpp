@@ -21,6 +21,9 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_binary_mask_vectorise_cpu.hpp"
 #include "lsdtt_raster_algebra.hpp"
@@ -248,9 +251,9 @@ static constexpr int k_closed  =  2;
 static constexpr int k_nodata  = -1;
 
 // 8-neighbour offsets - even = cardinal, odd = diagonal
-static const int k_dr[8] = { -1, -1,  0,  1,  1,  1,  0, -1 };
-static const int k_dc[8] = {  0,  1,  1,  1,  0, -1, -1, -1 };
-static constexpr float k_sqrt2 = 1.41421356f;
+static constexpr const auto& k_dr = grid::d8_clockwise_row;
+static constexpr const auto& k_dc = grid::d8_clockwise_col;
+static constexpr float k_sqrt2 = grid::k_sqrt2_f;
 
 // Sentinel value for backlink array - cell has no parent in the traversal
 static constexpr uint32_t k_no_backlink = std::numeric_limits<uint32_t>::max();
@@ -925,27 +928,19 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
     if (!std::isfinite(fill_slope_epsilon) || fill_slope_epsilon < 0.0f)
         throw std::invalid_argument(
             "fill_hydraulic_surface: fill_slope_epsilon must be finite and >= 0");
-    if (boundary_conditions.size() != 4)
+    const lsdtt_boundary_parse bcp =
+        parse_boundary_codes(boundary_conditions, "onp", /*fold_case=*/true);
+    if (bcp.result == lsdtt_boundary_parse::status::wrong_length)
         throw std::invalid_argument(
             "fill_hydraulic_surface: boundary_conditions must contain NESW codes");
-
-    const auto normalise_bc = [](char c) -> char
-    {
-        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    };
-    const char bn = normalise_bc(boundary_conditions[0]);
-    const char be = normalise_bc(boundary_conditions[1]);
-    const char bs = normalise_bc(boundary_conditions[2]);
-    const char bw = normalise_bc(boundary_conditions[3]);
-    for (const char b : {bn, be, bs, bw})
-    {
-        if (b != 'o' && b != 'n' && b != 'p')
-            throw std::invalid_argument(
-                "fill_hydraulic_surface: hydraulic boundaries allow only o, n, or p");
-    }
-    if ((bn == 'p') != (bs == 'p') || (be == 'p') != (bw == 'p'))
+    if (bcp.result == lsdtt_boundary_parse::status::invalid_code)
+        throw std::invalid_argument(
+            "fill_hydraulic_surface: hydraulic boundaries allow only o, n, or p");
+    if (bcp.periodic_ns_mismatch || bcp.periodic_ew_mismatch)
         throw std::invalid_argument(
             "fill_hydraulic_surface: periodic boundaries must occur in opposite pairs");
+    const char bn = bcp.codes[0];
+    const char be = bcp.codes[1];
 
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;
@@ -2308,8 +2303,8 @@ lsdtt_raster_cpu stencil_difference_magnitude(
             const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
             if (!m[i]) continue;
 
-            const int dr[4] = {-1, 1, 0, 0};
-            const int dc[4] = { 0, 0,-1, 1};
+            static constexpr const auto& dr = grid::d4_nswe_row;
+            static constexpr const auto& dc = grid::d4_nswe_col;
             double best = -1.0;
             for (int nb = 0; nb < 4; ++nb)
             {
@@ -2397,12 +2392,7 @@ perona_malik_result perona_malik_diffusion(
                 "perona_malik_diffusion: no finite neighbour differences, so "
                 "K cannot be estimated. State k_metres_per_cell instead.");
         }
-        std::size_t idx = static_cast<std::size_t>(
-            options.k_gradient_quantile * static_cast<double>(vals.size() - 1));
-        idx = std::min(idx, vals.size() - 1);
-        std::nth_element(vals.begin(), vals.begin() + static_cast<long>(idx),
-                         vals.end());
-        k = static_cast<double>(vals[idx]);
+        k = compute_quantile_floor_in_place(vals, options.k_gradient_quantile);
     }
     else
     {
@@ -2444,8 +2434,8 @@ perona_malik_result perona_malik_diffusion(
                 // exists and carries data. Skipping this is how a nodata hole
                 // would bleed a zero into the interior on the first step.
                 double acc = 0.0;
-                const int dr[4] = {-1, 1, 0, 0};
-                const int dc[4] = { 0, 0,-1, 1};
+                static constexpr const auto& dr = grid::d4_nswe_row;
+                static constexpr const auto& dc = grid::d4_nswe_col;
                 for (int nb = 0; nb < 4; ++nb)
                 {
                     const int rr = r + dr[nb];

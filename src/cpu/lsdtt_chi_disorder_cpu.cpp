@@ -45,6 +45,8 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_disorder_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -609,33 +611,9 @@ float percentile_of_finite(std::vector<float> values, double p)
         return quiet_nan();
     }
 
-    std::sort(values.begin(), values.end());
-
-    if (p <= 0.0)
-    {
-        return values.front();
-    }
-    if (p >= 1.0)
-    {
-        return values.back();
-    }
-
-    const double position = p * static_cast<double>(values.size() - 1);
-    const std::size_t lower = static_cast<std::size_t>(std::floor(position));
-    const std::size_t upper = static_cast<std::size_t>(std::ceil(position));
-
-    if (lower == upper)
-    {
-        return values[lower];
-    }
-
-    const double weight_upper = position - static_cast<double>(lower);
-    const double weight_lower = 1.0 - weight_upper;
-
+    // p outside [0, 1] gives the minimum or maximum.
     return static_cast<float>(
-        weight_lower * static_cast<double>(values[lower]) +
-        weight_upper * static_cast<double>(values[upper])
-    );
+        compute_quantile_interpolated_in_place(values, std::clamp(p, 0.0, 1.0)));
 }
 
 
@@ -1363,11 +1341,8 @@ void write_chi_disorder_subset_samples_csv(
     const std::string& filename,
     const lsdtt_chi_branch_subset_sensitivity_sample_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_disorder_subset_samples_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_disorder_subset_samples_csv: cannot open ");
     out << "basin_index,full_network_disorder,sample_index,disorder,n_nodes,"
            "included_branch_ids\n";
 
@@ -1387,11 +1362,8 @@ void write_chi_disorder_jackknife_csv(
     const std::string& filename,
     const lsdtt_chi_disorder_jackknife_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_disorder_jackknife_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_disorder_jackknife_csv: cannot open ");
     out << "basin_index,full_network_disorder,replicate_index,removed_branch_id,"
            "leave_one_out_disorder,leave_one_out_n_nodes,jackknife_mean,"
            "jackknife_standard_error\n";
@@ -1414,11 +1386,8 @@ void write_chi_disorder_bootstrap_csv(
     const std::string& filename,
     const lsdtt_chi_disorder_bootstrap_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_disorder_bootstrap_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_disorder_bootstrap_csv: cannot open ");
     out << "basin_index,full_network_disorder,replicate_index,bootstrap_disorder,"
            "bootstrap_n_nodes,bootstrap_mean,bootstrap_standard_deviation,"
            "percentile_2p5,percentile_97p5\n";
@@ -1442,11 +1411,8 @@ void write_chi_disorder_sweep_csv(
     const std::string& filename,
     const std::vector<lsdtt_chi_disorder_sweep_row>& rows)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_disorder_sweep_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_disorder_sweep_csv: cannot open ");
     out << "m_over_n,basin_index,outlet_flat,n_nodes,n_main_stem_nodes,n_branches,"
            "n_side_branches,full_network_disorder,n_subset_sensitivity_samples,"
            "jackknife_mean,jackknife_standard_error,bootstrap_mean,"

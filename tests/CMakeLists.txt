@@ -289,6 +289,20 @@ set(LSDTT_STREAM_BURNING_FIXTURE_DIR
 set(LSDTT_BASIN_STATS_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/basin_stats_fixture")
 
+# Terrace-valley DEM (lsdtt-synthetic-surfaces) plus the source-point and reach
+# CSVs, read by the lsdtt-cross-sections and lsdtt-bankfull-width tests.
+set(LSDTT_CROSS_SECTIONS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/cross_sections_fixture")
+
+# Synthetic marsh DEM written by tests/scripts/make_marsh_topography_fixture.py.
+set(LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/marsh_topography_fixture")
+
+# Reference and shifted DEM pair written by
+# tests/scripts/make_dem_coregistration_fixture.py.
+set(LSDTT_DEM_COREGISTRATION_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/dem_coregistration_fixture")
+
 # Written by lsdtt-test-hype-cli-fixture (the fixture_hype_cli CTest fixture):
 # a 60x60 projected Y-network DEM, land-use and soil rasters, the four HYPE
 # parameter tables (plus three broken ones), 120 days of forcing and an outlet
@@ -813,6 +827,19 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "'sti_soil_vector_path' is deprecated"
     --stderr-contains "'sti_ksat_csv_path' is deprecated"
     --stderr-contains "use 'sti_soil_fname'"
+    --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
+)
+
+# The same STI run with the polygons in EPSG:4326: the only end-to-end test of
+# the layer-to-raster CRS transform (consolidation C03). Same pins as the UTM
+# sibling below, because reprojecting the inputs must not change the result.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_sti_reprojected_layers
+    lsdtt-drainage-analysis
+    drainage_analysis_sti_reprojected.param.in
+    drainage_sti_rp_sti_p95_jenks5.tif
+    --expect-raster-values drainage_sti_rp_sti_p95_jenks5.tif:1
+    --stdout-contains "STI ksd Jenks classified pixels          : 3 / 3"
     --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
 )
 
@@ -1456,6 +1483,24 @@ lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "smoke;cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
+# Least-cost-path burn: regression test for the use-after-free segfault fixed on
+# 2026-10-07, and the only test that runs raster_least_cost_path. See the
+# parameter file.
+add_lsdtt_cli_smoke_test(
+    smoke_stream_burning_lcp_burn
+    lsdtt-stream-burning
+    stream_burning_lcp_burn.param.in
+    lcpb_lcp_burn_paths.fgb
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect lcpb_burn_segments.fgb
+    --expect lcpb_lcp_burned.tif
+    --expect lcpb_connected_network_lines.fgb
+    --stdout-contains "LCP burn: 12 gaps (case1/2/3), 10 D8-connected on carve"
+    --stdout-contains "Candidate detection complete."
+)
+lsdtt_set_tests_properties(smoke_stream_burning_lcp_burn PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 add_lsdtt_cli_smoke_test(
     rigorous_stream_burning_legacy_threshold
     lsdtt-stream-burning
@@ -1472,6 +1517,125 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
     FIXTURES_REQUIRED stream_burning_fixture)
+
+# =============================================================================
+# lsdtt-cross-sections, lsdtt-bankfull-width, lsdtt-marsh-topography,
+# lsdtt-water-centreline
+#
+# None of these four CLIs had a test until 2026-10-07. Each is the only CLI
+# route to modules the src/utils + src/cpu consolidation changes
+# (lsdtt_cross_sections_cpu, lsdtt_manning_hydraulics_cpu,
+# lsdtt_marsh_platform_cpu, lsdtt_tidal_channel_cpu,
+# lsdtt_tidal_skeleton_metrics_cpu, lsdtt_water_area_centreline_cpu), and that
+# work gates on hashing every output the CLI tests write
+# (tests/scripts/capture_consolidation_e2e_hashes.py), so a CLI without a test
+# had no gate at all. These smoke tests pin what each run must report; the
+# numbers themselves are guarded by the e2e hashes, not frozen here.
+# =============================================================================
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_cross_sections_dem
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+            --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/cross_sections_fixture_dem.param.in"
+            --read-path "${LSDTT_TEST_DATA_DIR}"
+            --work-dir "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}"
+            --expect xs_terrace_staircase.tif)
+    lsdtt_mark_test_runtime(python fixture_cross_sections_dem)
+else()
+    lsdtt_mark_test_unregistered(python fixture_cross_sections_dem)
+endif()
+lsdtt_set_tests_properties(fixture_cross_sections_dem PROPERTIES
+    LABELS "fixture;cross_sections"
+    FIXTURES_SETUP cross_sections_fixture)
+
+add_test(NAME fixture_cross_sections_inputs
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/cross_sections_source.csv"
+        "${LSDTT_TEST_DATA_DIR}/bankfull_width_reaches.csv"
+        "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out/")
+lsdtt_set_tests_properties(fixture_cross_sections_inputs PROPERTIES
+    LABELS "fixture;cross_sections"
+    FIXTURES_SETUP cross_sections_fixture
+    DEPENDS fixture_cross_sections_dem)
+
+add_lsdtt_cli_smoke_test(
+    smoke_cross_sections
+    lsdtt-cross-sections
+    cross_sections_smoke.param.in
+    xsec_cross_sections.fgb
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --expect xsec_channel_network_lines.fgb
+    --expect xsec_cross_section_sample_points.fgb
+    --expect xsec_vertical_excess_curvature.tif
+    --stdout-contains "Points mapped       : 1"
+    --stdout-contains "Channel cells : 140"
+    --stdout-contains "Cross sections written from 14 channel centres."
+)
+lsdtt_set_tests_properties(smoke_cross_sections PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width
+    lsdtt-bankfull-width
+    bankfull_width_smoke.param.in
+    bf_manning_widths.csv
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --expect bf_channel_profile.csv
+    --expect bf_cross_section_sample_points.fgb
+    --expect bf_manning_bank_points.fgb
+    --stdout-contains "Cross sections with valid slope: 14 of 14"
+    --stdout-contains "Reaches loaded                          : 2"
+    --stdout-contains "Manning widths: 14 valid out of 14 sections matched to a reach by distance."
+    --expect-file-not-contains "bf_manning_widths.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_bankfull_width PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_marsh_topography_dem
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/make_marsh_topography_fixture.py"
+            "${LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR}")
+    lsdtt_mark_test_runtime(python fixture_marsh_topography_dem)
+else()
+    lsdtt_mark_test_unregistered(python fixture_marsh_topography_dem)
+endif()
+lsdtt_set_tests_properties(fixture_marsh_topography_dem PROPERTIES
+    LABELS "fixture;marsh"
+    FIXTURES_SETUP marsh_topography_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_marsh_topography
+    lsdtt-marsh-topography
+    marsh_topography_smoke.param.in
+    marsh_marsh_platform_mask.tif
+    --read-path "${LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR}"
+    --expect marsh_marsh_platform_labels.tif
+    --expect marsh_marsh_scarp_mask.tif
+    --expect marsh_marsh_platforms.fgb
+    --expect marsh_tidal_channel_mask.tif
+    --expect marsh_tidal_channel_skeleton.tif
+    --expect marsh_tidal_upl.tif
+    --expect marsh_tidal_sections.fgb
+    --expect marsh_tidal_stations.fgb
+    --expect marsh_tidal_stations.csv
+    --stdout-contains "Building nodes and sections (8 segments)..."
+    --stdout-contains "Computing cross-sections (35 stations)..."
+)
+lsdtt_set_tests_properties(smoke_marsh_topography PROPERTIES
+    FIXTURES_REQUIRED marsh_topography_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_water_centreline
+    lsdtt-water-centreline
+    water_centreline_smoke.param.in
+    wc_water_centreline.fgb
+    --stdout-contains "Water areas: 2   Water lines: 5"
+    --stdout-contains "treated as loch    : 1"
+    --stdout-contains "Tributary connectors : 4"
+    --stdout-contains "Pass-through lines    : 4"
+)
 
 # =============================================================================
 # lsdtt-basin-stats
@@ -1597,6 +1761,23 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "ff_flow_ingested_params.param:threshold_contributing_pixels: 3"
 )
 
+# Drainage-area exceedance scaling and the Tokunaga summary: no test reached
+# either before 2026-10-07. See the parameter file for the reported values.
+add_lsdtt_cli_smoke_test(
+    smoke_channel_network_analysis_area_scaling
+    lsdtt-channel-network-analysis
+    channel_network_analysis_area_scaling.param.in
+    cnas_area_scaling_summary.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect cnas_area_scaling_curve.csv
+    --expect cnas_tokunaga_summary_fit.csv
+    --expect cnas_tokunaga_summary_pair_counts.csv
+    --stdout-contains "--- Drainage-area exceedance scaling ---"
+    --stdout-contains "beta (MLE)                  : 0.6195"
+)
+lsdtt_set_tests_properties(smoke_channel_network_analysis_area_scaling PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 # Phase 4 readiness: this old spelling remains explicit after aliases land. The
 # diagnostics and Strahler/Tokunaga CSV oracle prove that threshold-defined
 # sources reach channel-network construction and a real network analysis.
@@ -1677,6 +1858,35 @@ add_lsdtt_cli_smoke_test(
     raster_calculator_difference.param.in
     tiny_and_tiny_dem_plus1_difference.tif
 )
+
+# DEM coregistration (Nuth and Kaab) had no test until 2026-10-07. The DEM pair
+# is generated: see tests/params/raster_calculator_coregistration.param.in.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_raster_calculator_coregistration_dems
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/make_dem_coregistration_fixture.py"
+            "${LSDTT_DEM_COREGISTRATION_FIXTURE_DIR}")
+    lsdtt_mark_test_runtime(python fixture_raster_calculator_coregistration_dems)
+else()
+    lsdtt_mark_test_unregistered(python fixture_raster_calculator_coregistration_dems)
+endif()
+lsdtt_set_tests_properties(fixture_raster_calculator_coregistration_dems PROPERTIES
+    LABELS "fixture;raster"
+    FIXTURES_SETUP dem_coregistration_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_calculator_coregistration
+    lsdtt-raster-calculator
+    raster_calculator_coregistration.param.in
+    coreg_and_coreg_shifted_coreg_difference.tif
+    --read-path "${LSDTT_DEM_COREGISTRATION_FIXTURE_DIR}"
+    --expect coreg_shifted_coregistered_to_coreg.tif
+    --expect coreg_and_coreg_shifted_coreg_diagnostics.csv
+    --stdout-contains "DEM coregistration offsets [m]: dx=4.01"
+    --stdout-contains "DEM coregistration iterations: 3, converged: yes"
+)
+lsdtt_set_tests_properties(smoke_raster_calculator_coregistration PROPERTIES
+    FIXTURES_REQUIRED dem_coregistration_fixture)
 
 add_lsdtt_cli_smoke_test(
     failure_channel_extraction_invalid_threshold
@@ -2953,6 +3163,15 @@ target_link_libraries(lsdtt-test-csv-table-quoting PRIVATE lsdtt3_core)
 add_test(NAME unit_csv_table_quoting COMMAND lsdtt-test-csv-table-quoting)
 lsdtt_set_tests_properties(unit_csv_table_quoting PROPERTIES LABELS "unit")
 
+# Strict field converters shared by the hand-written CSV readers (Manning,
+# crn_column erosion history, particle restart): file, line and text on error.
+add_executable(lsdtt-test-csv-table-field-parsers cpp/test_csv_table_field_parsers.cpp)
+target_link_libraries(lsdtt-test-csv-table-field-parsers PRIVATE lsdtt3_cpu)
+add_test(NAME unit_csv_table_field_parsers
+         COMMAND lsdtt-test-csv-table-field-parsers
+                 ${CMAKE_CURRENT_BINARY_DIR}/csv_table_field_parsers_output)
+lsdtt_set_tests_properties(unit_csv_table_field_parsers PROPERTIES LABELS "unit")
+
 # B4 the polyfit metric name/suffix table beside the polyfit_metric enum.
 add_executable(lsdtt-test-surface-metrics-polyfit-metric-table
                cpp/test_surface_metrics_polyfit_metric_table.cpp)
@@ -3062,9 +3281,15 @@ target_link_libraries(lsdtt-test-synthetic-networks PRIVATE lsdtt3_cpu)
 add_test(NAME unit_synthetic_networks
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
+# Both synthetic-networks runs write into the same directory (the same binary
+# writes ocn_square_polygon.fgb in both modes), so they must not run at once:
+# under ctest -j the polygon write in one could fail mid-write of the other
+# (P1 failed in ~1 run in 4, measured 2026-10-07). RESOURCE_LOCK serialises
+# just these two and keeps every output path unchanged.
 lsdtt_set_tests_properties(unit_synthetic_networks PROPERTIES
     LABELS "unit;synthetic_networks"
-    FIXTURES_SETUP synthetic_networks_fixture)
+    FIXTURES_SETUP synthetic_networks_fixture
+    RESOURCE_LOCK synthetic_networks_output)
 file(MAKE_DIRECTORY ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
 
 # Reported, never asserted: the fidelity / energy table over temperature at
@@ -3078,7 +3303,8 @@ add_test(NAME unit_synthetic_networks_sweep
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR} --sweep)
 lsdtt_set_tests_properties(unit_synthetic_networks_sweep PROPERTIES
-    LABELS "unit;synthetic_networks" TIMEOUT 1800)
+    LABELS "unit;synthetic_networks" TIMEOUT 1800
+    RESOURCE_LOCK synthetic_networks_output)
 
 add_test(NAME unit_flow_properties
          COMMAND lsdtt-test-flow-properties
@@ -3328,6 +3554,163 @@ add_test(NAME unit_point_input
 lsdtt_set_tests_properties(unit_point_input PROPERTIES
     LABELS "unit;point_input")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
+
+# Characterisation tests for the src/utils + src/cpu consolidation (stage 1).
+# Each embeds the private copies it replaced, verbatim, as the reference, and
+# stays after those copies are deleted.
+add_executable(lsdtt-test-raster-cell-predicates cpp/test_raster_cell_predicates.cpp)
+target_link_libraries(lsdtt-test-raster-cell-predicates PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_cell_predicates COMMAND lsdtt-test-raster-cell-predicates)
+lsdtt_set_tests_properties(unit_raster_cell_predicates PROPERTIES
+    LABELS "unit;raster")
+
+add_executable(lsdtt-test-distributed-hydrology-argument-checks
+    cpp/test_distributed_hydrology_argument_checks.cpp)
+target_link_libraries(lsdtt-test-distributed-hydrology-argument-checks PRIVATE lsdtt3_cpu)
+add_test(NAME unit_distributed_hydrology_argument_checks
+         COMMAND lsdtt-test-distributed-hydrology-argument-checks)
+lsdtt_set_tests_properties(unit_distributed_hydrology_argument_checks PROPERTIES
+    LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-drainage-injection-weights cpp/test_drainage_injection_weights.cpp)
+target_link_libraries(lsdtt-test-drainage-injection-weights PRIVATE lsdtt3_cpu)
+add_test(NAME unit_drainage_injection_weights
+         COMMAND lsdtt-test-drainage-injection-weights
+                 ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
+lsdtt_set_tests_properties(unit_drainage_injection_weights PROPERTIES
+    LABELS "unit;point_input;flow")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
+
+# Stage 3: bilinear raster sampling (C07) and point_in_ring (C22).
+add_executable(lsdtt-test-raster-sampling cpp/test_raster_sampling.cpp)
+target_link_libraries(lsdtt-test-raster-sampling PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_sampling COMMAND lsdtt-test-raster-sampling)
+lsdtt_set_tests_properties(unit_raster_sampling PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 4: junction-graph topological order and s_vector preorder (C05).
+add_executable(lsdtt-test-junction-graph-orders cpp/test_junction_graph_orders.cpp)
+target_link_libraries(lsdtt-test-junction-graph-orders PRIVATE lsdtt3_cpu)
+add_test(NAME unit_junction_graph_orders COMMAND lsdtt-test-junction-graph-orders)
+lsdtt_set_tests_properties(unit_junction_graph_orders PROPERTIES
+    LABELS "unit;network")
+
+# Stage 5: neighbour tables (C01) and sqrt(2) (C19). The table checks are
+# static_asserts, so a mapping error fails the build of this test.
+add_executable(lsdtt-test-grid-neighbours cpp/test_grid_neighbours.cpp)
+target_link_libraries(lsdtt-test-grid-neighbours PRIVATE lsdtt3_cpu)
+add_test(NAME unit_grid_neighbours COMMAND lsdtt-test-grid-neighbours)
+lsdtt_set_tests_properties(unit_grid_neighbours PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 6: shared layer-to-raster CRS transform and spatial filter (C03).
+add_executable(lsdtt-test-vector-layer-transform cpp/test_vector_layer_transform.cpp)
+target_link_libraries(lsdtt-test-vector-layer-transform PRIVATE lsdtt3_cpu)
+add_test(NAME unit_vector_layer_transform COMMAND lsdtt-test-vector-layer-transform)
+lsdtt_set_tests_properties(unit_vector_layer_transform PROPERTIES
+    LABELS "unit;gdal")
+
+# Stage 7: connected-component labelling (C08) and grid Dijkstra (C11).
+add_executable(lsdtt-test-connected-components cpp/test_connected_components.cpp)
+target_link_libraries(lsdtt-test-connected-components PRIVATE lsdtt3_cpu)
+add_test(NAME unit_connected_components COMMAND lsdtt-test-connected-components)
+lsdtt_set_tests_properties(unit_connected_components PROPERTIES
+    LABELS "unit;raster")
+
+add_executable(lsdtt-test-grid-geodesic cpp/test_grid_geodesic.cpp)
+target_link_libraries(lsdtt-test-grid-geodesic PRIVATE lsdtt3_cpu)
+add_test(NAME unit_grid_geodesic COMMAND lsdtt-test-grid-geodesic)
+lsdtt_set_tests_properties(unit_grid_geodesic PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 8: boundary-condition string parsing (C09).
+add_executable(lsdtt-test-boundary-conditions cpp/test_boundary_conditions.cpp)
+target_link_libraries(lsdtt-test-boundary-conditions PRIVATE lsdtt3_cpu)
+add_test(NAME unit_boundary_conditions COMMAND lsdtt-test-boundary-conditions)
+lsdtt_set_tests_properties(unit_boundary_conditions PROPERTIES
+    LABELS "unit;flow")
+
+# Stage 8: open-for-write helper (C14).
+add_executable(lsdtt-test-output-file cpp/test_output_file.cpp)
+add_test(NAME unit_output_file COMMAND lsdtt-test-output-file
+         ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
+lsdtt_set_tests_properties(unit_output_file PROPERTIES
+    LABELS "unit;core")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
+
+# Stage 8: splitmix64 copies replaced by lsdtt_random.hpp (C15).
+add_executable(lsdtt-test-splitmix-copies cpp/test_splitmix_copies.cpp)
+add_test(NAME unit_splitmix_copies COMMAND lsdtt-test-splitmix-copies)
+lsdtt_set_tests_properties(unit_splitmix_copies PROPERTIES
+    LABELS "unit;core")
+
+# Stage 9: thread-count invariance of the kernels whose OpenMP thread setting
+# moved from omp_set_num_threads to num_threads clauses (C16, decision D4).
+add_executable(lsdtt-test-thread-count-invariance cpp/test_thread_count_invariance.cpp)
+target_link_libraries(lsdtt-test-thread-count-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_thread_count_invariance COMMAND lsdtt-test-thread-count-invariance)
+lsdtt_set_tests_properties(unit_thread_count_invariance PROPERTIES
+    LABELS "unit;lem")
+
+# Stage 10: landslide xorshift64* copies replaced by lsdtt_random (L3).
+add_executable(lsdtt-test-landslide-rng cpp/test_landslide_rng.cpp)
+add_test(NAME unit_landslide_rng COMMAND lsdtt-test-landslide-rng)
+lsdtt_set_tests_properties(unit_landslide_rng PROPERTIES
+    LABELS "unit;landslide")
+
+# Stage 10: thread setting of the hillslope solvers moved from
+# omp_set_num_threads to num_threads clauses (C16-H, decision D4).
+add_executable(lsdtt-test-hillslope-thread-count-invariance cpp/test_hillslope_thread_count_invariance.cpp)
+target_link_libraries(lsdtt-test-hillslope-thread-count-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hillslope_thread_count_invariance COMMAND lsdtt-test-hillslope-thread-count-invariance)
+lsdtt_set_tests_properties(unit_hillslope_thread_count_invariance PROPERTIES
+    LABELS "unit;hillslope")
+
+# Stage 10: bilinear_regular takes its axis weights from regular_axis_weight (L1).
+add_executable(lsdtt-test-cosmo-lsdn-grid-lookup cpp/test_cosmo_lsdn_grid_lookup.cpp)
+target_link_libraries(lsdtt-test-cosmo-lsdn-grid-lookup PRIVATE lsdtt3_cpu)
+add_test(NAME unit_cosmo_lsdn_grid_lookup COMMAND lsdtt-test-cosmo-lsdn-grid-lookup)
+lsdtt_set_tests_properties(unit_cosmo_lsdn_grid_lookup PROPERTIES
+    LABELS "unit;cosmo")
+
+# The production / pressure rasters' WGS84 conversion must not depend on the
+# axis order the DEM's CRS declares (northing-first CRSs such as NZTM).
+add_executable(lsdtt-test-cosmo-raster-axis-order cpp/test_cosmo_raster_axis_order.cpp)
+target_link_libraries(lsdtt-test-cosmo-raster-axis-order PRIVATE lsdtt3_cpu)
+add_test(NAME unit_cosmo_raster_axis_order COMMAND lsdtt-test-cosmo-raster-axis-order)
+lsdtt_set_tests_properties(unit_cosmo_raster_axis_order PROPERTIES
+    LABELS "unit;cosmo")
+
+# Stage 11: four-cardinal centred-difference gradient shared by the
+# vertical-units check and the LEM timestep diagnosis (C18).
+add_executable(lsdtt-test-raster-central-difference cpp/test_raster_central_difference.cpp)
+target_link_libraries(lsdtt-test-raster-central-difference PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_central_difference COMMAND lsdtt-test-raster-central-difference)
+lsdtt_set_tests_properties(unit_raster_central_difference PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 11: Manning's equation shared by hydro_velocity_field and
+# manning_hydraulics (C20).
+add_executable(lsdtt-test-hydro-velocity-manning-formula cpp/test_hydro_velocity_manning_formula.cpp)
+target_link_libraries(lsdtt-test-hydro-velocity-manning-formula PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_velocity_manning_formula COMMAND lsdtt-test-hydro-velocity-manning-formula)
+lsdtt_set_tests_properties(unit_hydro_velocity_manning_formula PROPERTIES
+    LABELS "unit;network")
+
+# Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
+add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
+target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
+add_test(NAME unit_order_statistics COMMAND lsdtt-test-order-statistics)
+lsdtt_set_tests_properties(unit_order_statistics PROPERTIES
+    LABELS "unit;statistics")
+
+# Stage 2 part B: records the D7 change from the private ols_fit to
+# compute_linear_regression in the drainage-area exceedance scaling.
+add_executable(lsdtt-test-drainage-area-exceedance-ols cpp/test_drainage_area_exceedance_ols.cpp)
+target_link_libraries(lsdtt-test-drainage-area-exceedance-ols PRIVATE lsdtt3_cpu)
+add_test(NAME unit_drainage_area_exceedance_ols COMMAND lsdtt-test-drainage-area-exceedance-ols)
+lsdtt_set_tests_properties(unit_drainage_area_exceedance_ols PROPERTIES
+    LABELS "unit;statistics")
 
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
 target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
@@ -4129,6 +4512,21 @@ add_lsdtt_cli_smoke_test(
     frangi_c15_frangi.tif
     --stdout-contains "c         : 15"
 )
+
+# Valley spacing proper: no test ran it before 2026-10-07. See the parameter
+# file for why (consolidation D5 changed its chamfer diagonal weight).
+add_lsdtt_cli_smoke_test(
+    smoke_spectral_analysis_valley_spacing
+    lsdtt-spectral-analysis
+    spectral_analysis_valley_spacing.param.in
+    vsp_valley_spacing.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect vsp_valley_spacing_spectrum.csv
+    --stdout-contains "--- Valley spacing ---"
+    --stdout-contains "Hillslope length (p90)  : 30 m"
+)
+lsdtt_set_tests_properties(smoke_spectral_analysis_valley_spacing PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
 
 add_lsdtt_cli_smoke_test(
     regression_spectral_analysis_valley_spacing_legacy_alias
@@ -5597,6 +5995,22 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_flat_surface_finder PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Slope-break skeleton connection: the only test that runs the slope-break
+# finder's component labelling. See the parameter file.
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_slope_break_connect
+    lsdtt-flat-surface-finder
+    flat_surface_finder_slope_break_connect.param.in
+    fsfsb_slope_break_centreline_connected.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsfsb_slope_break_bridge_mask.tif
+    --stdout-contains "endpoints found : 7"
+    --stdout-contains "candidates      : 6"
+    --stdout-contains "bridges accepted: 2"
+)
+lsdtt_set_tests_properties(smoke_flat_surface_finder_slope_break_connect PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 # Phase 1. The reordering through the CLI: the ladder must resolve the flight,
 # every patch must carry a band, and the run must report which windows resolved.
 # Phase 1's reordering, now driven through lsdtt-fluvial-surfaces: phase 4 moved
@@ -6125,7 +6539,18 @@ set(LSDTT_DOMAIN_RULES
     # mountain_front is landform/relief work and feature_finder is multi-scale
     # surface response, so both sit in the surface compartment.
     "mountain_front|feature_finder" "surface_metrics"
+    # Added 2026-10-07 with the first tests these four CLIs have had. Cross
+    # sections, bankfull width and the water-body centreline are channel /
+    # hydrography work; marsh platform and tidal channel extraction is landform
+    # extraction, beside feature_finder.
+    "cross_sections|bankfull_width|water_centreline" "network"
+    "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
+    "junction_graph"         "network"
+    "grid_neighbours"        "raster"
+    "vector_layer_transform" "gdal"
+    "connected_components|grid_geodesic" "raster"
+    "boundary_conditions|output_file|splitmix|thread_count" "core"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"
@@ -6138,6 +6563,8 @@ set(LSDTT_DOMAIN_RULES
     # data pinning (Phase 0), the header facade (Phase 1) and the format contract
     # (Phase 2 chunk 2a). Anyone touching that boundary wants `ctest -L gdal`.
     "gdal_"                  "gdal"
+    # Library-level statistics (src/utils/lsdtt_statistics and relatives).
+    "order_statistics"       "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. The
@@ -6509,6 +6936,7 @@ set(LSDTT_LEM_ENGINE_TESTS
     unit_hillslope_perron_qimp
     unit_hillslope_ren_modular_implicit
     unit_hillslope_critical_slope
+    unit_hillslope_thread_count_invariance
     performance_hillslope_implicit
     # cellular hillslope
     unit_cellular_hillslope_references
