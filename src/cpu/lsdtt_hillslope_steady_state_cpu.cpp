@@ -114,23 +114,84 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
     // Red-Black SOR.
     //
     // Two colour passes per iteration.  In colour pass `color`, only cells
-    // where (row + col) % 2 == color are updated.  Because the 4-connected
-    // neighbours of a red cell are always black (and vice versa), updates
-    // within a single pass are independent -> safe to parallelise with OMP.
+    // where (row + col) % 2 == color are updated.  The 4-connected neighbours
+    // of a red cell are black (and vice versa), so the z values a pass reads
+    // come from the other colour: Gauss-Seidel between the two passes.
     //
     // Update rule:
     //   z_Jacobi = (alphaN*zN + alphaS*zS + alphaE*zE + alphaW*zW + U*h^2/D) / (alphaN+alphaS+alphaE+alphaW)
     //   z_new    = (1 - omega) * z_old  +  omega * z_Jacobi
     //
-    // The face alphas are evaluated from the current z (Picard linearisation
-    // for the nonlinear mode), using the freshly-updated values of already-
-    // processed neighbours - i.e. Gauss-Seidel style within each pass.
+    // THE PASS WRITES TO A BUFFER (z_pass), copied back once the whole pass is
+    // done.  Two things read SAME-colour cells, which another thread may be
+    // updating in the same pass:
+    //   - the nonlinear face alphas (Picard linearisation) take the tangential
+    //     slope at the face neighbour, which reaches the centre cell's diagonal
+    //     neighbours -- the same colour;
+    //   - on a periodic axis of odd length the wrap makes the first and last
+    //     cells of a row (or column) neighbours of the same colour.
+    // Updating z in place made both depend on thread scheduling: two runs with
+    // the same thread count gave different results (fixed 2026-10-08,
+    // tests/cpp/test_hillslope_thread_count_invariance.cpp).  With the buffer
+    // every read in the parallel pass sees the values from the start of the
+    // pass, and the odd-axis seam cells are updated serially after it (below),
+    // so the result is the same for any thread count.  In the linear mode with
+    // no odd periodic axis no cell reads its own colour, and the result is
+    // unchanged.
     // -------------------------------------------------------------------------
     const double omega_d = static_cast<double>(omega);
 
     double final_residual = static_cast<double>(opts.tolerance) + 1.0;
     int    n_iter         = 0;
     bool   converged      = false;
+
+    // A periodic axis of ODD length wraps onto a cell of the same colour: the
+    // last column (or row) neighbours the first.  Those seam cells are left out
+    // of the parallel pass and updated afterwards, serially and in place, so no
+    // thread writes a cell another thread reads and the seam keeps its
+    // Gauss-Seidel coupling.  (Updating the two sides of the seam together,
+    // Jacobi-style under over-relaxation, converged far more slowly: 101345
+    // iterations instead of 381 on a 47x39 'pppp' linear test.)
+    const bool seam_col = dom.periodic_ew() && (ncols % 2 == 1);
+    const bool seam_row = dom.periodic_ns() && (nrows % 2 == 1);
+    auto on_seam = [&](int row, int col)
+    {
+        return (seam_col && col == ncols - 1) || (seam_row && row == nrows - 1);
+    };
+
+    // Cells a colour pass updates: its colour, unmasked, not a channel and not
+    // on an 'o' (Dirichlet) edge.
+    auto updates_in_pass = [&](int64_t idx, int color)
+    {
+        const size_t sidx = static_cast<size_t>(idx);
+        const int    row  = static_cast<int>(idx / ncols);
+        const int    col  = static_cast<int>(idx % ncols);
+        return (row + col) % 2 == color && mask[sidx] && !is_channel[sidx] &&
+               !dom.is_dirichlet_edge(row, col);
+    };
+
+    // The SOR value of one cell from the current z.
+    auto sor_value = [&](int row, int col, double zc)
+    {
+        const double zN = stencil.at(row, col, -1,  0);
+        const double zS = stencil.at(row, col, +1,  0);
+        const double zE = stencil.at(row, col,  0, +1);
+        const double zW = stencil.at(row, col,  0, -1);
+
+        // Face-first coefficients: alpha belongs to the FACE, so the two
+        // cells sharing one necessarily agree and the scheme conserves.
+        // Taken four-at-a-time so the centre cell's tangential slopes are
+        // evaluated once rather than once per face.
+        double a[4];
+        stencil.face_alphas(row, col, Scd, opts.nonlinear, a);
+        const double aN = a[0], aE = a[1], aS = a[2], aW = a[3];
+        const double aT = aN + aS + aE + aW;
+
+        const double z_jac = (aN * zN + aS * zS + aE * zE + aW * zW + rhs) / aT;
+        return (1.0 - omega_d) * zc + omega_d * z_jac;
+    };
+
+    std::vector<double> z_pass(z.size(), 0.0);
 
     for (int it = 0; it < opts.max_iterations; ++it)
     {
@@ -145,37 +206,47 @@ lsdtt_hillslope_steady_state_result compute_hillslope_steady_state(
 #endif
             for (int64_t idx = 0; idx < n_cells; ++idx)
             {
+                if (!updates_in_pass(idx, color)) continue;
+
                 const size_t sidx = static_cast<size_t>(idx);
                 const int    row  = static_cast<int>(idx / ncols);
                 const int    col  = static_cast<int>(idx % ncols);
+                if (on_seam(row, col)) continue;
 
-                if ((row + col) % 2 != color)       continue;
-                if (!mask[sidx] || is_channel[sidx]) continue;
-                if (dom.is_dirichlet_edge(row, col)) continue;   // 'o' = base level
-
-                const double zc = z[sidx];
-
-                const double zN = stencil.at(row, col, -1,  0);
-                const double zS = stencil.at(row, col, +1,  0);
-                const double zE = stencil.at(row, col,  0, +1);
-                const double zW = stencil.at(row, col,  0, -1);
-
-                // Face-first coefficients: alpha belongs to the FACE, so the two
-                // cells sharing one necessarily agree and the scheme conserves.
-                // Taken four-at-a-time so the centre cell's tangential slopes are
-                // evaluated once rather than once per face.
-                double a[4];
-                stencil.face_alphas(row, col, Scd, opts.nonlinear, a);
-                const double aN = a[0], aE = a[1], aS = a[2], aW = a[3];
-                const double aT = aN + aS + aE + aW;
-
-                const double z_jac = (aN * zN + aS * zS + aE * zE + aW * zW + rhs) / aT;
-                const double z_new = (1.0 - omega_d) * zc + omega_d * z_jac;
+                const double zc    = z[sidx];
+                const double z_new = sor_value(row, col, zc);
 
                 const double delta = std::abs(z_new - zc);
                 if (delta > pass_delta) pass_delta = delta;
 
-                z[sidx] = z_new;
+                z_pass[sidx] = z_new;
+            }
+
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
+#endif
+            for (int64_t idx = 0; idx < n_cells; ++idx)
+                if (updates_in_pass(idx, color) &&
+                    !on_seam(static_cast<int>(idx / ncols), static_cast<int>(idx % ncols)))
+                    z[static_cast<size_t>(idx)] = z_pass[static_cast<size_t>(idx)];
+
+            // Seam cells of this colour, serially, in scan order.
+            if (seam_col || seam_row)
+            {
+                for (int64_t idx = 0; idx < n_cells; ++idx)
+                {
+                    if (!updates_in_pass(idx, color)) continue;
+                    const int row = static_cast<int>(idx / ncols);
+                    const int col = static_cast<int>(idx % ncols);
+                    if (!on_seam(row, col)) continue;
+
+                    const size_t sidx  = static_cast<size_t>(idx);
+                    const double zc    = z[sidx];
+                    const double z_new = sor_value(row, col, zc);
+                    const double delta = std::abs(z_new - zc);
+                    if (delta > pass_delta) pass_delta = delta;
+                    z[sidx] = z_new;
+                }
             }
 
             if (pass_delta > max_delta) max_delta = pass_delta;

@@ -25,14 +25,17 @@
 //   - an n_threads = 1 call leaves omp_get_max_threads() as it found it, which
 //     the old global setter did not.
 //
-// compute_hillslope_steady_state in NONLINEAR mode is the exception to the
-// first two: its red-black SOR pass updates one colour in parallel, but the
-// nonlinear face coefficients read slope_x / slope_y at the face neighbour,
-// which reaches the centre cell's diagonal neighbours -- the SAME colour, being
-// updated by other threads in the same pass. With more than one thread its
-// result depends on scheduling (two runs at the same thread count differ), so
-// for it only k = 1 is compared. This race predates C16-H and is not changed
-// by it.
+// compute_hillslope_steady_state (red-black SOR) is also run on an odd-sized
+// grid with periodic boundaries, where the wrap makes edge neighbours the same
+// colour. Its nonlinear mode used to race: the face coefficients read the
+// centre cell's diagonal neighbours, which are the same colour and were being
+// written by other threads in the same pass. Each colour pass now writes to a
+// buffer and copies back afterwards (2026-10-08), so these cases must also be
+// identical for every thread count.
+//
+// The Cidre solvers are also run on a rough DEM (many convergent cells), because
+// their donors add flux into receivers with omp atomic.
+//
 // Each result's hash is printed so that a build before and after the change can
 // be compared line for line.
 //
@@ -135,8 +138,7 @@ lsdtt_raster_cpu make_dem(int nr, int nc)
 }
 
 // Runs one solver for k = 1, 2, 4 both ways and checks the three properties.
-// multithread_deterministic = false limits the first two checks to k = 1 (see
-// the note at the top).
+// multithread_deterministic = false limits the first two checks to k = 1.
 void run_solver(const std::string& name, const std::function<std::vector<float>(int)>& solve,
                 bool multithread_deterministic = true)
 {
@@ -262,8 +264,7 @@ int main()
                        o.max_iterations = 300;
                        o.n_threads = t;
                        return compute_hillslope_steady_state(dem, is_channel, o).elevation.get_data();
-                   },
-                   !nonlinear);
+                   });
 
     for (bool nonlinear : {false, true})
         run_solver(std::string("compute_cidre_hillslope_steady_state (") +
@@ -275,6 +276,67 @@ int main()
                        o.n_threads = t;
                        return compute_cidre_hillslope_steady_state(dem, is_channel, o).elevation.get_data();
                    });
+
+    // Odd-sized periodic grid: the SOR colouring wraps onto itself.
+    {
+        const int onr = 47, onc = 39;
+        const lsdtt_raster_cpu dem_odd = make_dem(onr, onc);
+        std::vector<std::uint8_t> ch_odd(static_cast<std::size_t>(onr) * onc, 0);
+        for (int r = 0; r < onr; ++r) ch_odd[static_cast<std::size_t>(r) * onc + onc / 2] = 1;
+        for (bool nonlinear : {false, true})
+            run_solver(std::string("compute_hillslope_steady_state (") +
+                           (nonlinear ? "nonlinear" : "linear") + ", 47x39, pppp)",
+                       [&](int t) {
+                           lsdtt_hillslope_steady_state_options o;
+                           o.nonlinear = nonlinear;
+                           o.boundary_conditions = "pppp";
+                           o.max_iterations = 300;
+                           o.n_threads = t;
+                           return compute_hillslope_steady_state(dem_odd, ch_odd, o).elevation.get_data();
+                       });
+    }
+
+    // Rough DEM for the Cidre solvers: many cells with several donors.
+    {
+        const int rnr = 96, rnc = 80;
+        lsdtt_raster_cpu rough = make_dem(rnr, rnc);
+        {
+            std::vector<float> z = rough.get_data();
+            std::uint64_t st = 12345;
+            for (float& v : z)
+            {
+                st = st * 6364136223846793005ULL + 1442695040888963407ULL;
+                v += static_cast<float>((st >> 40) % 1000) * 0.004f;
+            }
+            rough = lsdtt_raster_cpu(std::move(z), std::vector<uint8_t>(rough.get_mask()), rough.get_meta());
+        }
+        std::vector<std::uint8_t> ch_rough(static_cast<std::size_t>(rnr) * rnc, 0);
+        for (int r = 0; r < rnr; ++r) ch_rough[static_cast<std::size_t>(r) * rnc + rnc / 2] = 1;
+        lsdtt_flowgraph_options fg;
+        fg.method = lsdtt_flowgraph_method::d_infinity;
+        fg.n_threads = 1;
+        const lsdtt_flowgraph_cpu flow(rough.get_data_array(), rough.get_mask_array(), rough.get_meta(), fg);
+        for (bool nonlinear : {false, true})
+        {
+            run_solver(std::string("compute_cidre_hillslope_transport (") +
+                           (nonlinear ? "nonlinear" : "linear") + ", rough)",
+                       [&](int t) {
+                           return compute_cidre_hillslope_transport(rough, flow, 1e-3f, 5000.0f, nonlinear,
+                                                                    0.8f, 1e9f, false, false, t)
+                               .get_data();
+                       });
+            run_solver(std::string("compute_cidre_hillslope_steady_state (") +
+                           (nonlinear ? "nonlinear" : "linear") + ", rough)",
+                       [&](int t) {
+                           lsdtt_hillslope_steady_state_options o;
+                           o.nonlinear = nonlinear;
+                           o.max_iterations = 40;
+                           o.n_threads = t;
+                           return compute_cidre_hillslope_steady_state(rough, ch_rough, o)
+                               .elevation.get_data();
+                       });
+        }
+    }
 
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;
