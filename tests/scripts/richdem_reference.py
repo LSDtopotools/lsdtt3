@@ -39,7 +39,7 @@ import sys
 import time
 
 FLOW_ROUTINES = ("fill", "fill_epsilon", "breach",
-                 "accum_d8", "accum_dinf", "accum_mfd")
+                 "accum_d8", "accum_dinf", "accum_mfd", "route_d8_default")
 
 # Surface metrics -- TIMING ONLY.
 #
@@ -128,6 +128,15 @@ def _call_for(routine: str, dem, mfd_exponent: float):
     if routine == "accum_mfd":
         return lambda: rd.FlowAccumulation(dem, method="Freeman",
                                            exponent=mfd_exponent)
+    if routine == "route_d8_default":
+        # Raw DEM -> D8 accumulation, the way a RichDEM user gets a routed
+        # surface. epsilon=True (Barnes 2014 Priority-Flood+Epsilon) rather
+        # than the epsilon=False default: the default fill (Zhou 2016) leaves
+        # true flats, and FlowAccumulation(D8) gives a flat cell no receiver,
+        # so the surface would not be routed. One timed call covers both steps.
+        return lambda: rd.FlowAccumulation(
+            rd.FillDepressions(dem, epsilon=True, in_place=False),
+            method="D8")
 
     # -- surface -----------------------------------------------------------
     # Degrees for slope, matching whitebox_reference.py's units="degrees", so

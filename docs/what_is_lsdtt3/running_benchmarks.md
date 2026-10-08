@@ -319,8 +319,9 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
     older campaigns list under `fill_priority_flood`, is sequential grayscale
     reconstruction, so those rows were never like-for-like with lsdtt3's
     priority flood. TopoToolbox is now compared on `fill` (hybrid
-    reconstruction, matched) and on the new timing-only case
-    `accum_d8_drained_flats` (raw DEM to a D8 network in which flats drain).
+    reconstruction, matched). The new report-only case `route_d8_default`
+    times every package's default pipeline from a raw DEM to a routed D8
+    accumulation surface; the algorithms and outputs differ by design.
 
     The same campaign also removed `polyfit_many`, made `fill_spill_merge`
     lsdtt3-only, and reuses identical reference rows instead of re-measuring

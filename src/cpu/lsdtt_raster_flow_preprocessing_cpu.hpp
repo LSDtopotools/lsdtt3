@@ -357,8 +357,12 @@ lsdtt_raster_cpu resolve_flats_gradient(
 // -----------------------------------------------------------------------------
 // fill_pits_reconstruction_with_gradient
 //
-// Reconstruction fill followed by resolve_flats_gradient(): the fast O(N)
-// equivalent of fill_pits() for min_slope > 0.
+// Reconstruction fill followed by resolve_flats_gradient(): a two-pass
+// alternative to fill_pits() for min_slope > 0. It is NOT faster -- measured
+// 8-88 % slower than fill_pits_priority_flood(), for the structural reason
+// given in resolve_flats_gradient()'s header -- and its flat gradient follows
+// geodesic distance rather than priority-flood first arrival, so the output
+// differs on flats. Not wired into any CLI.
 // -----------------------------------------------------------------------------
 lsdtt_raster_cpu fill_pits_reconstruction_with_gradient(
     const lsdtt_raster_cpu& raster,

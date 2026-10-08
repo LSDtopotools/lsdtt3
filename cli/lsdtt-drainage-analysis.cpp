@@ -954,7 +954,7 @@ int main(int argc, char* argv[])
 
         // Timed like the D8 build below, so a raw-DEM run's "Compute time:"
         // lines sum to fill + build + accumulation in
-        // tests/scripts/run_benchmark_suite.py (case accum_d8_drained_flats).
+        // tests/scripts/run_benchmark_suite.py (case route_d8_default).
         const auto fill_t0 = std::chrono::steady_clock::now();
         try
         {

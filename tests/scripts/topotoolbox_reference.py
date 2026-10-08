@@ -44,17 +44,15 @@ Routine -> TopoToolbox mapping:
                        lsdtt3 `fill_algorithm_choice: vincent1993`, the same
                        algorithm.
     accum_d8           FlowObject(method='d8').flow_accumulation()
-    accum_d8_drained_flats
-                       FlowObject(RAW dem, method='d8',
-                       sink_resolution='carve').flow_accumulation()
-                       DEM -> D8 network in which flats drain. TopoToolbox
-                       never imposes a gradient in the fill; FlowObject fills
-                       internally (auxiliary_topography) and routes across
-                       flats on least-cost carved auxiliary topography
-                       (Schwanghart et al. 2013). This is its counterpart to
-                       lsdtt3's fill_min_slope > 0, and the ONLY way
-                       TopoToolbox enters the epsilon > 0 comparison. Do not
-                       call fillsinks() first: FlowObject would fill again.
+    route_d8_default   FlowObject(RAW dem).flow_accumulation(), all defaults
+                       (method='d8', sink_resolution='carve').
+                       Raw DEM -> routed D8 surface, the way a TopoToolbox
+                       user gets one. FlowObject fills internally
+                       (auxiliary_topography) and routes across the flats of
+                       the filled DEM -- including every filled depression --
+                       on least-cost carved auxiliary topography (Schwanghart
+                       et al. 2013); the DEM is left unchanged. Do not call
+                       fillsinks() first: FlowObject would fill again.
 
     TopoToolbox HAS NO PRIORITY-FLOOD FILL. fillsinks(hybrid=False) is NOT a
     heap: it calls `reconstruct`, Vincent's SEQUENTIAL algorithm (forward and
@@ -130,7 +128,7 @@ import statistics
 import sys
 import time
 
-FLOW_ROUTINES = ("fill", "accum_d8", "accum_d8_drained_flats")
+FLOW_ROUTINES = ("fill", "accum_d8", "route_d8_default")
 
 # Surface-metric routines. Each is timed best-of-N after a discarded warm-up
 # (see --repeats); the flow routines are single-shot because they are the
@@ -618,7 +616,7 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         info["hybrid"] = hybrid
         result = info.pop("_result")
 
-    elif routine in ("accum_d8", "accum_d8_drained_flats"):
+    elif routine in ("accum_d8", "route_d8_default"):
         # Timed in two phases because they are separately meaningful and
         # because RichDEM's single call does directions+accumulation without
         # sink resolution -- so `seconds` (build + accumulate) is the
@@ -629,12 +627,12 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         # what the benchmark feeds `accum_d8`, so it does not silently modify
         # the surface being compared.
         #
-        # `accum_d8_drained_flats` is the SAME call on the RAW DEM. FlowObject
-        # fills internally (auxiliary_topography) and carves across flats, so
-        # here the build phase includes the fill and the flat routing -- the
-        # end-to-end counterpart of lsdtt3 fill_min_slope > 0 + D8. The routine
-        # name exists so the CSV records which input was intended; the suite
-        # decides the input (`needs_filled` on accum_d8 only).
+        # `route_d8_default` is the SAME call on the RAW DEM. FlowObject fills
+        # internally (auxiliary_topography) and carves across flats and filled
+        # depressions, so here the build phase includes the fill and the flat
+        # routing. The routine name exists so the CSV records which input was
+        # intended; the suite decides the input (`needs_filled` on accum_d8
+        # only).
         build = _repeat_time(
             lambda: ttb.FlowObject(dem, method="d8", sink_resolution="carve"),
             repeats)

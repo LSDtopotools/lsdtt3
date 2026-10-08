@@ -373,6 +373,13 @@ CASES: dict[str, dict[str, Any]] = {
     # modes), RichDEM and Whitebox only priority floods. Each case lists only
     # the engines that implement its family -- see NOT_IMPLEMENTED.
     #
+    # ALGORITHM-ONLY. Both cases run at fill_min_slope 0, so depressions are
+    # filled but flats are left with no gradient: NOT a drained surface, and
+    # not routable by lsdtt3's D8. They are kept only to show that lsdtt3's
+    # implementations run at a similar speed to the same algorithm in other
+    # packages (Simon, 2026-10-08). The drained-surface comparison a user
+    # cares about is `route_d8_default`.
+    #
     # An earlier version of this table did not. It ran lsdtt3's DEFAULT
     # (`barnes2014`, the heap) against TopoToolbox's DEFAULT (`hybrid=True`,
     # the reconstruction) and reported lsdtt3 2.9x slower. Measured on
@@ -387,7 +394,8 @@ CASES: dict[str, dict[str, Any]] = {
     "fill": {
         "sequential": True,
         "suite": "flow",
-        "note": ("RECONSTRUCTION family: grayscale reconstruction by erosion "
+        "note": ("ALGORITHM-ONLY, not a drained surface (flats left flat). "
+                 "RECONSTRUCTION family: grayscale reconstruction by erosion "
                  "(Vincent 1993 hybrid -- raster scans + FIFO queue, O(N)). "
                  "lsdtt3 vincent1993 vs TopoToolbox hybrid=True"),
         # Whitebox was paired here until 2026-09-13, but its fill_depressions
@@ -409,7 +417,8 @@ CASES: dict[str, dict[str, Any]] = {
     "fill_priority_flood": {
         "sequential": True,
         "suite": "flow",
-        "note": ("PRIORITY-FLOOD family: heap-based flood, O(N log N). "
+        "note": ("ALGORITHM-ONLY, not a drained surface (flats left flat). "
+                 "PRIORITY-FLOOD family: heap-based flood, O(N log N). "
                  "lsdtt3 barnes2014 vs RichDEM (Zhou 2016) vs Whitebox "
                  "fill_depressions. Same surface as the reconstruction case. "
                  "No TopoToolbox row: it has no priority-flood fill"),
@@ -537,31 +546,57 @@ CASES: dict[str, dict[str, Any]] = {
                   "output": "_d8_drainage_area.tif"},
     },
 
-    # DEM -> D8 network in which flats drain, END TO END from the raw DEM.
+    # Raw DEM -> routed D8 surface, each package's DEFAULT pipeline.
     #
-    # The only place TopoToolbox enters the epsilon > 0 comparison. It never
-    # imposes a gradient in the fill (`fill_epsilon` has no TopoToolbox row);
-    # FlowObject fills internally and routes across flats on least-cost carved
-    # auxiliary topography (Schwanghart et al. 2013). lsdtt3 resolves flats
-    # in the fill instead (barnes2014 with fill_min_slope > 0) and then builds
-    # D8. Same end product -- a D8 network in which every flat drains -- by
-    # different flat rules, so the accumulation rasters differ on flats: a
-    # TIMING row, like accum_dinf/accum_mfd. lsdtt3's figure is the sum of its
-    # fill, D8 build and accumulation `Compute time:` lines.
+    # The question this answers is the user's: "how long until I have a routed
+    # surface?" (Simon, 2026-10-08). The algorithms are deliberately NOT
+    # matched -- each tool makes its own choices about depressions and flats,
+    # and those choices trade speed against the output -- so the accumulation
+    # rasters differ and no value is compared. Each engine runs its defaults,
+    # with one exception per engine only where the default would not produce
+    # a routed surface:
     #
-    # Deliberately NOT needs_filled: both engines read the raw fixture.
-    "accum_d8_drained_flats": {
+    #   lsdtt3       lsdtt-drainage-analysis, raster_is_filled false, CLI
+    #                defaults: barnes2014 priority-flood with fill_min_slope
+    #                1e-4, then D8. Time = sum of its fill, build and
+    #                accumulation `Compute time:` lines.
+    #   TopoToolbox  FlowObject(dem).flow_accumulation(), all defaults: fills
+    #                (hybrid reconstruction) and routes across flats and filled
+    #                depressions on least-cost carved auxiliary topography; the
+    #                DEM is unchanged.
+    #   RichDEM      FillDepressions(epsilon=True) + FlowAccumulation(D8).
+    #                epsilon=True is NOT the default: the default fill leaves
+    #                true flats, which RichDEM's D8 does not route.
+    #   Whitebox     fill_depressions() defaults (fix_flats, 1e-4 m per cell)
+    #                + d8_flow_accum. Not breach_depressions_least_cost, whose
+    #                default fill_deps=False can leave depressions unresolved.
+    #
+    # REQUIREMENT: every engine must return a FULLY DRAINED surface -- lsdtt3
+    # exists to provide one, so a pipeline that leaves depressions or flats
+    # unrouted is not a comparison (Simon, 2026-10-08). Checked 2026-10-08 on
+    # alpine_1000 and lakeland_1000: interior cells (off the edge, not next
+    # to nodata) with no strictly lower neighbour -- or, for TopoToolbox, no
+    # receiver in the FlowObject -- were 0 for all four engines, against
+    # 5,532 and 128,931 in the raw DEMs. Re-check before changing any
+    # engine's pipeline here.
+    #
+    # report_only: the summary lists the engines' absolute times side by side
+    # but builds no ratio, because its ratio table is like-for-like only.
+    # Deliberately NOT needs_filled: every engine reads the raw fixture.
+    "route_d8_default": {
         "sequential": True,
         "suite": "flow",
-        "note": ("raw DEM -> D8 accumulation with drainable flats; TIMING "
-                 "ONLY, flat rules differ. lsdtt3 barnes2014 fill with "
-                 "fill_min_slope 1e-4 + D8 vs TopoToolbox FlowObject(carve), "
-                 "which fills internally and carves across flats"),
-        "engines": {"topotoolbox": "accum_d8_drained_flats"},
+        "note": ("raw DEM -> routed D8 accumulation, each package's DEFAULT "
+                 "pipeline; algorithms and outputs differ by design. lsdtt3 "
+                 "barnes2014 fill (fill_min_slope 1e-4) + D8; TopoToolbox "
+                 "FlowObject(carve); RichDEM epsilon fill + D8; Whitebox "
+                 "fill_depressions + d8_flow_accum"),
+        "engines": {"richdem": "route_d8_default",
+                    "topotoolbox": "route_d8_default",
+                    "whitebox": "route_d8_default"},
         "lsdtt": {"exe": "lsdtt-drainage-analysis",
                   "params": {"write_d8_drainage_area_raster": "true",
-                             "raster_is_filled": "false",
-                             "fill_min_slope": "0.0001"},
+                             "raster_is_filled": "false"},
                   "output": "_d8_drainage_area.tif"},
         "report_only": True,
     },

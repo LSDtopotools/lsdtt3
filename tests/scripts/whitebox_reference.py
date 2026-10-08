@@ -109,6 +109,7 @@ FLOW_ROUTINES = (
     "accum_d8",
     "accum_dinf",
     "accum_mfd",
+    "route_d8_default",  # raw DEM -> D8 accumulation, Whitebox defaults
 )
 
 SURFACE_ROUTINES = (
@@ -268,6 +269,16 @@ def _make_call(wbe, routine: str, dem, args):
         fn = H.fd8_flow_accum
         return lambda: fn(dem=dem, out_type="cells",
                           exponent=args.mfd_exponent)
+    if routine == "route_d8_default":
+        # Raw DEM -> D8 accumulation with the tools' DEFAULT arguments:
+        # fill_depressions(fix_flats=True, flat_increment=1e-4), then
+        # d8_flow_accum. Not breach_depressions_least_cost: its default
+        # fill_deps=False can leave depressions unresolved, so the result is
+        # not guaranteed to be a routed surface. out_type="cells" as in
+        # accum_d8; the unit conversion does not change the cost.
+        fill_fn = H.fill_depressions
+        acc_fn = H.d8_flow_accum
+        return lambda: acc_fn(input=fill_fn(dem=dem), out_type="cells")
 
     # -- surface -----------------------------------------------------------
     if routine == "slope":

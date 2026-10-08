@@ -1566,8 +1566,9 @@ question, and an open one.
 
 | Suite | Cases | Status |
 |---|---|---|
-| `flow` | fill, fill_priority_flood, fill_epsilon, breach, breach_least_cost, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
-| `flow` | accum_d8_drained_flats | **timing only** -- lsdtt3 resolves flats in the fill (`fill_min_slope`), TopoToolbox in `FlowObject` (least-cost carving) |
+| `flow` | fill_epsilon, breach, breach_least_cost, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
+| `flow` (algorithm-only) | fill, fill_priority_flood | run at `fill_min_slope: 0`, so flats are left without a gradient and the surface is **not drained**. Kept only to show lsdtt3 runs at a similar speed to the same algorithm elsewhere; never quote them as a drained-surface comparison |
+| `flow` | route_d8_default | **timing only, report-only** -- raw DEM to routed D8 accumulation using each package's default pipeline; algorithms and outputs differ by design |
 | `mfd` | accum_dinf, accum_mfd | **timing only** -- Tarboton vs Quinn vs Freeman proportioning genuinely differ |
 | `surface` | slope_only, polyfit_all, hillshade | **timing only** -- curvature definitions and aspect handedness differ |
 | `depression` | fill_spill_merge, fill_wang_liu | **timing only**, and the depression hierarchy has no counterpart at all |
@@ -1610,14 +1611,22 @@ priority flood. TopoToolbox has no priority-flood fill, so it is now `n/a` in
 that case. Campaigns before 2026-10-08 carry this row; it must not be read as a
 priority-flood comparison.
 
-TopoToolbox enters the ε > 0 comparison only through
-`accum_d8_drained_flats`: raw DEM to D8 accumulation in which flats drain.
-lsdtt3 runs `barnes2014` with `fill_min_slope: 0.0001`, then D8, and its time is
-the sum of the fill, build and accumulation `Compute time:` lines. TopoToolbox runs
-`FlowObject(dem, method='d8', sink_resolution='carve')` on the raw DEM, which
-fills internally and routes across flats on least-cost carved auxiliary
-topography (Schwanghart et al. 2013, ESPL 38:1576-1586), then
-`flow_accumulation`. The flat rules differ, so the case is timing only.
+`route_d8_default` (added 2026-10-08) answers the user's question rather than
+the algorithm question: how long each package takes, with its defaults, to get
+from a raw DEM to a routed D8 accumulation surface. The algorithms are not
+matched and the rasters differ; no value is compared and no ratio is built.
+Every pipeline must return a **fully drained** surface, because that is what
+lsdtt3 provides. Checked 2026-10-08 on alpine_1000 and lakeland_1000: interior
+cells with no strictly lower neighbour (TopoToolbox: no receiver in the
+`FlowObject`) were 0 for all four engines, against 5,532 and 128,931 in the
+raw DEMs.
+
+| engine | pipeline |
+|---|---|
+| lsdtt3 | `lsdtt-drainage-analysis`, `raster_is_filled: false`, CLI defaults: `barnes2014` with `fill_min_slope` 1e-4, then D8. Time = sum of the fill, build and accumulation `Compute time:` lines |
+| TopoToolbox | `FlowObject(dem).flow_accumulation()`, all defaults: hybrid reconstruction fill, then least-cost carving across the flats of the filled DEM (every filled depression included; Schwanghart et al. 2013, ESPL 38:1576-1586). The DEM is unchanged |
+| RichDEM | `FillDepressions(epsilon=True)` + `FlowAccumulation(method="D8")`. `epsilon=True` is not RichDEM's default; the default fill leaves flats that its D8 does not route |
+| Whitebox | `fill_depressions()` defaults (`fix_flats=True`, `flat_increment` 1e-4) + `d8_flow_accum`. Not `breach_depressions_least_cost`, whose default `fill_deps=False` can leave depressions unresolved |
 
 `fill_spill_merge` measures lsdtt3's nested depression hierarchy (Barnes 2020)
 plus Fill-Spill-Merge (Barnes 2021), lsdtt3 only. It is recorded because the
