@@ -18,10 +18,17 @@
 // reference, and the results are compared bit for bit on DEMs with nodata holes,
 // nodata edges, flat areas and steep areas.
 //
+// Decision D7 (C18) then moved check_vertical_plausibility from std::hypot to
+// gradient_magnitude (sqrt(gx*gx + gy*gy)), the form median_interior_gradient
+// and the surface-metrics gradient use. Its reference below therefore carries
+// a use_hypot switch: the check is against the sqrt form, and the number of
+// report fields that differ from the old hypot form is printed for the record.
+//
 // Usage: lsdtt-test-raster-central-difference
 // Prints one line per check and a final "RESULT: PASS|FAIL".
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -60,9 +67,11 @@ bool same_bits(double a, double b)
 }
 
 // ---- reference: lsdtt_raster_cpu.cpp check_vertical_plausibility, verbatim ----
+// Verbatim apart from use_hypot (true = the code before D7).
 vertical_plausibility_report reference_check_vertical_plausibility(
     const lsdtt_raster_cpu& dem,
-    double                  median_slope_limit_deg)
+    double                  median_slope_limit_deg,
+    bool                    use_hypot)
 {
     vertical_plausibility_report rep;
 
@@ -95,7 +104,8 @@ vertical_plausibility_report reference_check_vertical_plausibility(
 
             const double dzdx = (static_cast<double>(d[e]) - d[w]) / (2.0 * cs);
             const double dzdy = (static_cast<double>(d[s]) - d[n]) / (2.0 * cs);
-            slopes.push_back(static_cast<float>(std::hypot(dzdx, dzdy)));
+            slopes.push_back(static_cast<float>(
+                use_hypot ? std::hypot(dzdx, dzdy) : std::sqrt(dzdx * dzdx + dzdy * dzdy)));
         }
     }
 
@@ -176,16 +186,38 @@ lsdtt_raster_cpu make_dem(int nr, int nc, double cell, std::uint64_t seed, doubl
     return lsdtt_raster_cpu(std::move(z), std::move(m), meta);
 }
 
+int g_fields_changed_by_d7 = 0;
+double g_max_rel_change_by_d7 = 0.0;
+
+bool same_report(const vertical_plausibility_report& a, const vertical_plausibility_report& b)
+{
+    return same_bits(a.median_slope_deg, b.median_slope_deg) && same_bits(a.p90_slope_deg, b.p90_slope_deg) &&
+           same_bits(a.p99_slope_deg, b.p99_slope_deg) && same_bits(a.relief_m, b.relief_m) &&
+           same_bits(a.median_slope_deg_if_feet, b.median_slope_deg_if_feet) &&
+           a.n_sampled == b.n_sampled && a.implausible == b.implausible;
+}
+
+void count_d7_change(double now, double before)
+{
+    if (same_bits(now, before)) return;
+    ++g_fields_changed_by_d7;
+    if (before != 0.0)
+        g_max_rel_change_by_d7 = std::max(g_max_rel_change_by_d7, std::abs(now - before) / std::abs(before));
+}
+
 void compare(const std::string& label, const lsdtt_raster_cpu& dem)
 {
     const vertical_plausibility_report a = check_vertical_plausibility(dem, 30.0);
-    const vertical_plausibility_report b = reference_check_vertical_plausibility(dem, 30.0);
-    check(label + ": check_vertical_plausibility report bit-identical (n_sampled " +
+    const vertical_plausibility_report b = reference_check_vertical_plausibility(dem, 30.0, false);
+    check(label + ": check_vertical_plausibility report bit-identical to the sqrt form (n_sampled " +
               std::to_string(b.n_sampled) + ")",
-          same_bits(a.median_slope_deg, b.median_slope_deg) && same_bits(a.p90_slope_deg, b.p90_slope_deg) &&
-              same_bits(a.p99_slope_deg, b.p99_slope_deg) && same_bits(a.relief_m, b.relief_m) &&
-              same_bits(a.median_slope_deg_if_feet, b.median_slope_deg_if_feet) &&
-              a.n_sampled == b.n_sampled && a.implausible == b.implausible);
+          same_report(a, b));
+    const vertical_plausibility_report old = reference_check_vertical_plausibility(dem, 30.0, true);
+    count_d7_change(a.median_slope_deg, old.median_slope_deg);
+    count_d7_change(a.p90_slope_deg, old.p90_slope_deg);
+    count_d7_change(a.p99_slope_deg, old.p99_slope_deg);
+    count_d7_change(a.median_slope_deg_if_feet, old.median_slope_deg_if_feet);
+    if (a.implausible != old.implausible) ++g_fields_changed_by_d7;
     check(label + ": median_interior_gradient bit-identical",
           same_bits(median_interior_gradient(dem), reference_median_interior_gradient(dem)));
 }
@@ -203,6 +235,9 @@ int main()
     compare("odd cell size, many holes", make_dem(97, 61, 0.3048, 99, 0.30, 5.0));
     compare("3x3", make_dem(3, 3, 1.0, 7, 0.0, 1.0));
     compare("all holes", make_dem(20, 20, 1.0, 8, 1.0, 1.0));
+    std::cout << "INFO D7: report slope fields that differ from the old std::hypot form: "
+              << g_fields_changed_by_d7 << " of " << 15 * 5 << ", largest relative change "
+              << g_max_rel_change_by_d7 << "\n";
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;
 }

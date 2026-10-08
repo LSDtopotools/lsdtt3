@@ -12,9 +12,10 @@
 //
 //   - manning_velocity is bit-identical to the local copy that
 //     lsdtt_hydro_velocity_field_cpu had (kept below verbatim).
-//   - manning_discharge (lsdtt_manning_hydraulics_cpu) is bit-identical to its
-//     own expression (kept below verbatim), including its zero return for a
-//     non-positive n, slope or area.
+//   - manning_discharge (lsdtt_manning_hydraulics_cpu) is, by decision D7,
+//     area * manning_velocity(n, R, S) behind its zero return for a
+//     non-positive n, slope or area. It used to be (1/n) * A * R^(2/3) * sqrt(S)
+//     (kept below verbatim); how many draws differ from that is printed.
 //
 // Inputs span the ranges the hydrology code sees (n 0.01-0.2, R 1e-3-50 m,
 // S 1e-6-1, A 1e-3-1e4 m^2) plus the guard cases.
@@ -23,6 +24,7 @@
 // Prints one line per check and a final "RESULT: PASS|FAIL".
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -63,7 +65,7 @@ double reference_manning_velocity(double roughness, double hydraulic_radius, dou
            std::sqrt(slope);
 }
 
-// ---- reference: lsdtt_manning_hydraulics_cpu.cpp manning_discharge, verbatim ----
+// ---- the old manning_discharge (before D7), verbatim ----
 double reference_manning_discharge(
     double area_m2, double hydraulic_radius_m,
     double slope, double manning_n)
@@ -85,7 +87,8 @@ int main()
     std::cout << "== C20 Manning formula ==\n";
     random::splitmix64_stream rng(2026);
     const int n_draws = 1000000;
-    int v_mismatch = 0, q_mismatch = 0;
+    int v_mismatch = 0, q_mismatch = 0, q_changed_by_d7 = 0;
+    double q_max_rel = 0.0;
     for (int i = 0; i < n_draws; ++i)
     {
         const double n = log_uniform(rng, 0.01, 0.2);
@@ -93,13 +96,23 @@ int main()
         const double S = log_uniform(rng, 1e-6, 1.0);
         const double A = log_uniform(rng, 1e-3, 1e4);
         if (!same_bits(manning_velocity(n, R, S), reference_manning_velocity(n, R, S))) ++v_mismatch;
-        if (!same_bits(manning_discharge(A, R, S, n), reference_manning_discharge(A, R, S, n))) ++q_mismatch;
+        const double q = manning_discharge(A, R, S, n);
+        if (!same_bits(q, A * reference_manning_velocity(n, R, S))) ++q_mismatch;
+        const double q_old = reference_manning_discharge(A, R, S, n);
+        if (!same_bits(q, q_old))
+        {
+            ++q_changed_by_d7;
+            q_max_rel = std::max(q_max_rel, std::abs(q - q_old) / q_old);
+        }
     }
     check("manning_velocity bit-identical to the hydro_velocity_field copy over " + std::to_string(n_draws) +
               " draws",
           v_mismatch == 0, std::to_string(v_mismatch) + " mismatches");
-    check("manning_discharge bit-identical to its expression over " + std::to_string(n_draws) + " draws",
+    check("manning_discharge bit-identical to area * manning_velocity over " + std::to_string(n_draws) +
+              " draws",
           q_mismatch == 0, std::to_string(q_mismatch) + " mismatches");
+    std::cout << "INFO D7: manning_discharge differs from the old (1/n) * A * R^(2/3) * sqrt(S) in "
+              << q_changed_by_d7 << " of " << n_draws << " draws, largest relative change " << q_max_rel << "\n";
 
     bool guards = true;
     for (double bad : {0.0, -1.0})

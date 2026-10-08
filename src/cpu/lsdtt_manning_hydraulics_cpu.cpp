@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_manning_hydraulics_cpu.hpp"
+#include "lsdtt_manning_formula_cpu.hpp"
 #include "../utils/lsdtt_output_file.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../core/lsdtt_csv_table.hpp"
@@ -656,8 +657,7 @@ double manning_discharge(
     double slope, double manning_n)
 {
     if (manning_n <= 0.0 || slope <= 0.0 || area_m2 <= 0.0) return 0.0;
-    return (1.0 / manning_n) * area_m2 *
-           std::pow(hydraulic_radius_m, 2.0 / 3.0) * std::sqrt(slope);
+    return area_m2 * manning_velocity(manning_n, hydraulic_radius_m, slope);
 }
 
 bool solve_connected_bankfull_depth(

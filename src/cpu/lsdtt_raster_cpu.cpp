@@ -330,7 +330,7 @@ vertical_plausibility_report check_vertical_plausibility(
 
             double dzdx = 0.0, dzdy = 0.0;
             if (!cardinal_central_gradient(d, m, nc, i, cs, dzdx, dzdy)) continue;
-            slopes.push_back(static_cast<float>(std::hypot(dzdx, dzdy)));
+            slopes.push_back(static_cast<float>(gradient_magnitude(dzdx, dzdy)));
         }
     }
 
