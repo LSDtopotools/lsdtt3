@@ -1,6 +1,7 @@
 // lsdtt_graphflood_optimised_cpu.cpp
 
 #include "lsdtt_graphflood_optimised_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
@@ -175,16 +176,13 @@ private:
             initial_water_depth.size() != n_cells_ ||
             (use_v2_ && !prescribed_qin.empty() && prescribed_qin.size() != n_cells_))
             throw std::invalid_argument("run_graphflood_optimised: forcing shape mismatch");
-        if (options_.boundary_conditions.size() != 4)
+        const lsdtt_boundary_parse bcp =
+            parse_boundary_codes(options_.boundary_conditions, "onp", /*fold_case=*/false);
+        if (bcp.result == lsdtt_boundary_parse::status::wrong_length)
             throw std::invalid_argument("run_graphflood_optimised: boundary conditions must be NESW");
-
-        for (const char code : options_.boundary_conditions)
-            if (code != 'o' && code != 'n' && code != 'p')
-                throw std::invalid_argument("run_graphflood_optimised: boundaries use o, n, or p");
-        if ((options_.boundary_conditions[0] == 'p') !=
-                (options_.boundary_conditions[2] == 'p') ||
-            (options_.boundary_conditions[1] == 'p') !=
-                (options_.boundary_conditions[3] == 'p'))
+        if (bcp.result == lsdtt_boundary_parse::status::invalid_code)
+            throw std::invalid_argument("run_graphflood_optimised: boundaries use o, n, or p");
+        if (bcp.periodic_ns_mismatch || bcp.periodic_ew_mismatch)
             throw std::invalid_argument("run_graphflood_optimised: periodic boundaries must be paired");
         if (!(options_.mfd_exponent > 0.0f) ||
             !(options_.fill_slope_epsilon >= 0.0f) ||

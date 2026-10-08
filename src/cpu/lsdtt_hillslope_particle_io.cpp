@@ -1,4 +1,5 @@
 #include "lsdtt_hillslope_particle_io.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 
 #include <fstream>
 #include <iomanip>
@@ -13,8 +14,8 @@ void write_hillslope_particles_csv(
     const std::string& path,
     const lsdtt_hillslope_particle_tracker& p)
 {
-    std::ofstream out(path);
-    if (!out) throw std::runtime_error("cannot write particle CSV: " + path);
+    std::ofstream out = open_output_file(
+        path, "cannot write particle CSV: ");
     out << "id,cell,weight,source_id,age_yr,distance_cells,status,"
            "mixing_depth,seed,substep_index\n";
     out << std::setprecision(17);

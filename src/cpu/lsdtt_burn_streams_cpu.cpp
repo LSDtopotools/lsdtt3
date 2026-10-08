@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_burn_streams_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
@@ -2134,12 +2135,8 @@ void write_burned_stream_profiles_csv(
     const std::string&                        filename
 )
 {
-    std::ofstream ofs(filename);
-    if (!ofs)
-        throw std::runtime_error(
-            "write_burned_stream_profiles_csv: cannot open output file: "
-            + filename);
-
+    std::ofstream ofs = open_output_file(
+        filename, "write_burned_stream_profiles_csv: cannot open output file: ");
     ofs << "feature_id,flow_distance,x,y,dem_elevation,burned_elevation\n";
     ofs.precision(6);
     ofs << std::fixed;
@@ -4874,11 +4871,8 @@ void write_junction_repair_log(
     const std::vector<JunctionRepairRecord>& records,
     const std::string&                       filename)
 {
-    std::ofstream f(filename);
-    if (!f)
-        throw std::runtime_error(
-            "write_junction_repair_log: cannot open " + filename);
-
+    std::ofstream f = open_output_file(
+        filename, "write_junction_repair_log: cannot open ");
     f << "repair_index,phase,basin_outlet_junction,vector_junction_id,"
          "dem_junction_id,vector_x,vector_y,dem_x,dem_y,"
          "distance_m,post_distance_m,fix_type,n_burned,success,"

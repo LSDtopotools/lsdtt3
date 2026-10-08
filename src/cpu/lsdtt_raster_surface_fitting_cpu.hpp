@@ -81,6 +81,22 @@ struct lsdtt_plane_fit_result
 };
 
 // -----------------------------------------------------------------------------
+// fit_plane_least_squares
+//
+// Ordinary least-squares plane z = a x + b y + c through (x, y, z) triples, in
+// centred coordinates (2x2 normal equations). Invalid (valid = false) for fewer
+// than three points or when the geometry is degenerate: |det| below
+// 1e-10 * max(Sxx * Syy, 1). rmse is over all points.
+//
+// The fit fit_plane_to_mask and the RANSAC and per-label fits use, exposed so
+// other modules need not keep their own copy.
+// -----------------------------------------------------------------------------
+lsdtt_plane_fit_result fit_plane_least_squares(
+    const std::vector<double>& xs,
+    const std::vector<double>& ys,
+    const std::vector<double>& zs);
+
+// -----------------------------------------------------------------------------
 // fit_plane_to_mask
 //
 // Ordinary least-squares plane fit to all pixels where mask > 0.5.

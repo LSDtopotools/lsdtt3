@@ -28,6 +28,7 @@
 //     Environmental Modelling & Software 133: 104804.
 
 #include "lsdtt_flowgraph_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "../core/lsdtt_data_loader.hpp"
@@ -247,59 +248,48 @@ std::vector<std::int64_t> lsdtt_flowgraph_cpu::outlet_indices() const
 // =============================================================================
 
 lsdtt_flowgraph_cpu::boundary_flags
-lsdtt_flowgraph_cpu::parse_boundary_conditions(const std::string& bc) const 
+lsdtt_flowgraph_cpu::parse_boundary_conditions(const std::string& bc) const
 {
-    if (bc.size() != 4)
+    const lsdtt_boundary_parse p = parse_boundary_codes(bc, "onpb", /*fold_case=*/true);
+
+    if (p.result == lsdtt_boundary_parse::status::wrong_length)
     {
         throw std::invalid_argument(
             "lsdtt_flowgraph_cpu: boundary_conditions must have exactly 4 characters "
             "(north, east, south, west)");
     }
 
-    auto is_allowed = [](char c) -> bool
+    if (p.result == lsdtt_boundary_parse::status::invalid_code)
     {
-        return c == 'o' || c == 'O' ||
-               c == 'n' || c == 'N' ||
-               c == 'p' || c == 'P' ||
-               c == 'b' || c == 'B';
-    };
-
-    for (char c : bc)
-    {
-        if (!is_allowed(c))
-        {
-            throw std::invalid_argument(
-                "lsdtt_flowgraph_cpu: boundary_conditions contains an invalid character. "
-                "Allowed values are o, n, p, b.");
-        }
+        throw std::invalid_argument(
+            "lsdtt_flowgraph_cpu: boundary_conditions contains an invalid character. "
+            "Allowed values are o, n, p, b.");
     }
 
     boundary_flags f;
-    auto is_periodic = [](char c) { return c == 'p' || c == 'P'; };
-    auto is_forced   = [](char c) { return c == 'b' || c == 'B'; };
 
-    f.north_periodic = is_periodic(bc[0]);
-    f.north_forced   = is_forced(bc[0]);
+    f.north_periodic = p.codes[0] == 'p';
+    f.north_forced   = p.codes[0] == 'b';
 
-    f.east_periodic  = is_periodic(bc[1]);
-    f.east_forced    = is_forced(bc[1]);
+    f.east_periodic  = p.codes[1] == 'p';
+    f.east_forced    = p.codes[1] == 'b';
 
-    f.south_periodic = is_periodic(bc[2]);
-    f.south_forced   = is_forced(bc[2]);
+    f.south_periodic = p.codes[2] == 'p';
+    f.south_forced   = p.codes[2] == 'b';
 
-    f.west_periodic  = is_periodic(bc[3]);
-    f.west_forced    = is_forced(bc[3]);
+    f.west_periodic  = p.codes[3] == 'p';
+    f.west_forced    = p.codes[3] == 'b';
 
     // Periodic boundaries must be symmetric pairs:
     // north <-> south and east <-> west.
-    if (f.north_periodic != f.south_periodic)
+    if (p.periodic_ns_mismatch)
     {
         throw std::invalid_argument(
             "lsdtt_flowgraph_cpu: north and south periodic boundary flags "
             "must match");
     }
 
-    if (f.east_periodic != f.west_periodic)
+    if (p.periodic_ew_mismatch)
     {
         throw std::invalid_argument(
             "lsdtt_flowgraph_cpu: east and west periodic boundary flags "

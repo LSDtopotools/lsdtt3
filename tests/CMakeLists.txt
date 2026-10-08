@@ -3614,6 +3614,27 @@ add_test(NAME unit_grid_geodesic COMMAND lsdtt-test-grid-geodesic)
 lsdtt_set_tests_properties(unit_grid_geodesic PROPERTIES
     LABELS "unit;raster")
 
+# Stage 8: boundary-condition string parsing (C09).
+add_executable(lsdtt-test-boundary-conditions cpp/test_boundary_conditions.cpp)
+target_link_libraries(lsdtt-test-boundary-conditions PRIVATE lsdtt3_cpu)
+add_test(NAME unit_boundary_conditions COMMAND lsdtt-test-boundary-conditions)
+lsdtt_set_tests_properties(unit_boundary_conditions PROPERTIES
+    LABELS "unit;flow")
+
+# Stage 8: open-for-write helper (C14).
+add_executable(lsdtt-test-output-file cpp/test_output_file.cpp)
+add_test(NAME unit_output_file COMMAND lsdtt-test-output-file
+         ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
+lsdtt_set_tests_properties(unit_output_file PROPERTIES
+    LABELS "unit;core")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
+
+# Stage 8: splitmix64 copies replaced by lsdtt_random.hpp (C15).
+add_executable(lsdtt-test-splitmix-copies cpp/test_splitmix_copies.cpp)
+add_test(NAME unit_splitmix_copies COMMAND lsdtt-test-splitmix-copies)
+lsdtt_set_tests_properties(unit_splitmix_copies PROPERTIES
+    LABELS "unit;core")
+
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
@@ -6467,6 +6488,7 @@ set(LSDTT_DOMAIN_RULES
     "grid_neighbours"        "raster"
     "vector_layer_transform" "gdal"
     "connected_components|grid_geodesic" "raster"
+    "boundary_conditions|output_file|splitmix" "core"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"

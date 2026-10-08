@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "../utils/lsdtt_random.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
@@ -624,17 +625,10 @@ bootstrap_summary bootstrap_k(
         std::max(2, request.k_bootstrap_max_sample));
     const std::size_t draw = std::min(values.size(), cap);
 
-    std::uint64_t state = seed ? seed : 1u;
-    auto next = [&state]() -> std::uint64_t
-    {
-        // splitmix64: cheap, well-distributed, and fully specified here so the
-        // sequence does not depend on the standard library.
-        state += 0x9E3779B97F4A7C15ull;
-        std::uint64_t z = state;
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        return z ^ (z >> 31);
-    };
+    // splitmix64: cheap, well-distributed, and fully specified (lsdtt_random)
+    // so the sequence does not depend on the standard library.
+    random::splitmix64_stream rng(seed ? seed : 1u);
+    auto next = [&rng]() -> std::uint64_t { return rng.next(); };
 
     std::vector<int> ks;
     ks.reserve(static_cast<std::size_t>(request.k_bootstrap));

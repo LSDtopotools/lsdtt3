@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_data_loader.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 #include "lsdtt_pixel_type_gdal.hpp"
 #include "lsdtt_gdal_init.hpp"
 
@@ -1628,14 +1629,8 @@ void lsdtt_data_loader::write_csv(
     const std::vector<std::vector<std::string>>& rows
 )
 {
-    std::ofstream ofs(out_path);
-    if (!ofs.is_open())
-    {
-        throw std::runtime_error(
-            "lsdtt_data_loader: could not open CSV for writing: " + out_path
-        );
-    }
-
+    std::ofstream ofs = open_output_file(
+        out_path, "lsdtt_data_loader: could not open CSV for writing: ");
     auto write_row = [&](const std::vector<std::string>& fields)
     {
         for (std::size_t i = 0; i < fields.size(); ++i)

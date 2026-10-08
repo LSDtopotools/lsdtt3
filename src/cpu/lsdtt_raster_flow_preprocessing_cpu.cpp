@@ -21,6 +21,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
@@ -927,27 +928,19 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
     if (!std::isfinite(fill_slope_epsilon) || fill_slope_epsilon < 0.0f)
         throw std::invalid_argument(
             "fill_hydraulic_surface: fill_slope_epsilon must be finite and >= 0");
-    if (boundary_conditions.size() != 4)
+    const lsdtt_boundary_parse bcp =
+        parse_boundary_codes(boundary_conditions, "onp", /*fold_case=*/true);
+    if (bcp.result == lsdtt_boundary_parse::status::wrong_length)
         throw std::invalid_argument(
             "fill_hydraulic_surface: boundary_conditions must contain NESW codes");
-
-    const auto normalise_bc = [](char c) -> char
-    {
-        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    };
-    const char bn = normalise_bc(boundary_conditions[0]);
-    const char be = normalise_bc(boundary_conditions[1]);
-    const char bs = normalise_bc(boundary_conditions[2]);
-    const char bw = normalise_bc(boundary_conditions[3]);
-    for (const char b : {bn, be, bs, bw})
-    {
-        if (b != 'o' && b != 'n' && b != 'p')
-            throw std::invalid_argument(
-                "fill_hydraulic_surface: hydraulic boundaries allow only o, n, or p");
-    }
-    if ((bn == 'p') != (bs == 'p') || (be == 'p') != (bw == 'p'))
+    if (bcp.result == lsdtt_boundary_parse::status::invalid_code)
+        throw std::invalid_argument(
+            "fill_hydraulic_surface: hydraulic boundaries allow only o, n, or p");
+    if (bcp.periodic_ns_mismatch || bcp.periodic_ew_mismatch)
         throw std::invalid_argument(
             "fill_hydraulic_surface: periodic boundaries must occur in opposite pairs");
+    const char bn = bcp.codes[0];
+    const char be = bcp.codes[1];
 
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_flowinfo_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_point_input.hpp"
@@ -843,7 +844,10 @@ void lsdtt_flowinfo::require_valid_cell(std::int64_t flat) const
 
 void lsdtt_flowinfo::parse_boundary_conditions(const std::string& boundary_conditions)
 {
-    if (boundary_conditions.size() != 4)
+    const lsdtt_boundary_parse p =
+        parse_boundary_codes(boundary_conditions, "onpb", /*fold_case=*/true);
+
+    if (p.result == lsdtt_boundary_parse::status::wrong_length)
     {
         throw std::runtime_error(
             "lsdtt_flowinfo: boundary_conditions must have length 4 "
@@ -851,32 +855,27 @@ void lsdtt_flowinfo::parse_boundary_conditions(const std::string& boundary_condi
         );
     }
 
-    for (std::size_t i = 0; i < 4; ++i)
+    if (p.result == lsdtt_boundary_parse::status::invalid_code)
     {
-        const char c = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(boundary_conditions[i]))
+        // The codes before the bad one are stored before the throw, as always.
+        for (std::size_t i = 0; i < p.bad_index; ++i) boundary_conditions_[i] = p.codes[i];
+        throw std::runtime_error(
+            "lsdtt_flowinfo: invalid boundary code '" +
+            std::string(1, boundary_conditions[p.bad_index]) + "'"
         );
-
-        if (!is_valid_boundary_code(c))
-        {
-            throw std::runtime_error(
-                "lsdtt_flowinfo: invalid boundary code '" +
-                std::string(1, boundary_conditions[i]) + "'"
-            );
-        }
-
-        boundary_conditions_[i] = c;
     }
 
+    for (std::size_t i = 0; i < 4; ++i) boundary_conditions_[i] = p.codes[i];
+
     // Periodic boundaries must be symmetric in each axis.
-    if ((boundary_conditions_[0] == 'p') != (boundary_conditions_[2] == 'p'))
+    if (p.periodic_ns_mismatch)
     {
         throw std::runtime_error(
             "lsdtt_flowinfo: north and south periodic boundary flags must match"
         );
     }
 
-    if ((boundary_conditions_[1] == 'p') != (boundary_conditions_[3] == 'p'))
+    if (p.periodic_ew_mismatch)
     {
         throw std::runtime_error(
             "lsdtt_flowinfo: east and west periodic boundary flags must match"

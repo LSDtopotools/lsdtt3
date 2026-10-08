@@ -22,6 +22,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_network_analysis_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 
@@ -1283,11 +1284,8 @@ void write_chi_network_fit_nodes_csv(
     const std::string& filename,
     const lsdtt_chi_network_fit_node_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_network_fit_nodes_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_network_fit_nodes_csv: cannot open ");
     out << "basin_index,outlet_flat,flat,receiver_flat,chi,observed_elevation,"
            "fitted_elevation,residual_elevation,abs_residual_elevation,branch_id,"
            "is_main_stem,is_source,is_junction,is_split_point\n";
@@ -1316,11 +1314,8 @@ void write_chi_network_fit_segments_csv(
     const std::string& filename,
     const lsdtt_chi_network_fit_segment_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_network_fit_segments_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_network_fit_segments_csv: cannot open ");
     out << "basin_index,outlet_flat,segment_id,parent_segment_id,branch_id,"
            "downstream_flat,upstream_flat,downstream_chi,upstream_chi,"
            "downstream_elevation,upstream_elevation,k_sn,max_abs_residual,n_nodes\n";
@@ -1431,11 +1426,8 @@ void write_chi_ksn_basin_summary_csv(
     const std::string& filename,
     const lsdtt_chi_ksn_basin_summary_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_ksn_basin_summary_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_ksn_basin_summary_csv: cannot open ");
     out << "basin_index,outlet_flat,n_segments,n_main_stem_segments,"
            "total_chi_length,mean_k_sn,median_k_sn,min_k_sn,max_k_sn,"
            "chi_weighted_mean_k_sn,main_stem_mean_k_sn,main_stem_median_k_sn\n";

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_rasterise_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
 
@@ -1083,14 +1084,8 @@ void write_macrostrat_lookup_csv(
     const std::vector<macrostrat_lookup_entry>& lookup_table,
     const std::string&                          out_csv_path)
 {
-    std::ofstream ofs(out_csv_path);
-    if (!ofs.is_open())
-    {
-        throw std::runtime_error(
-            "write_macrostrat_lookup_csv: could not open CSV for writing: " +
-            out_csv_path);
-    }
-
+    std::ofstream ofs = open_output_file(
+        out_csv_path, "write_macrostrat_lookup_csv: could not open CSV for writing: ");
     ofs << "code,value\n";
     for (const auto& entry : lookup_table)
     {

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_manning_hydraulics_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
@@ -923,10 +924,8 @@ std::size_t write_manning_widths_csv(
     const std::vector<lsdtt_manning_width_record>& results,
     const std::string&                              out_path)
 {
-    std::ofstream out(out_path);
-    if (!out.is_open())
-        throw std::runtime_error("write_manning_widths_csv: could not open " + out_path);
-
+    std::ofstream out = open_output_file(
+        out_path, "write_manning_widths_csv: could not open ");
     out << "cross_id,distance_from_source_m,centre_x,centre_y,slope_m_per_m,drainage_area_m2,"
         << "thalweg_s,thalweg_z,solved_depth_m,"
         << "water_surface_elevation_m,left_bank_s,right_bank_s,"
@@ -1066,10 +1065,8 @@ void write_channel_profile_csv(
     const std::vector<lsdtt_channel_profile_row>& rows,
     const std::string&                            out_path)
 {
-    std::ofstream out(out_path);
-    if (!out.is_open())
-        throw std::runtime_error("write_channel_profile_csv: could not open " + out_path);
-
+    std::ofstream out = open_output_file(
+        out_path, "write_channel_profile_csv: could not open ");
     out << "cross_id,distance_from_source_m,drainage_area_m2,"
         << "thalweg_elevation_m,slope_m_per_m,slope_valid\n";
     out << std::fixed << std::setprecision(4);

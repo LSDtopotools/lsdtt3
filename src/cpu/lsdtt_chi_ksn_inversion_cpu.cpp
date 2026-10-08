@@ -56,6 +56,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_ksn_inversion_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
@@ -1212,11 +1213,8 @@ void write_chi_ksn_inversion_trials_csv(
     const std::string& filename,
     const lsdtt_chi_ksn_inversion_collection_result& results)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_ksn_inversion_trials_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_ksn_inversion_trials_csv: cannot open ");
     out << "basin_index,outlet_flat,trial_index,m_over_n,mean_absolute_error,"
            "root_mean_square_error,n_nodes,n_parameters,n_constrained_parameters\n";
 
@@ -1243,11 +1241,8 @@ void write_chi_ksn_inversion_best_summary_csv(
     const std::string& filename,
     const lsdtt_chi_ksn_inversion_collection_result& results)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_ksn_inversion_best_summary_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_ksn_inversion_best_summary_csv: cannot open ");
     out << "basin_index,outlet_flat,best_trial_index,best_m_over_n,"
            "best_mean_absolute_error,best_root_mean_square_error,"
            "n_nodes_best,n_parameters_best,n_constrained_parameters_best\n";

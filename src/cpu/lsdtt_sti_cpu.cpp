@@ -1,4 +1,5 @@
 #include "lsdtt_sti_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
@@ -957,12 +958,8 @@ void write_sti_lookup_csv(
     const std::vector<sti_lookup_row>& rows,
     const std::string& out_csv_path)
 {
-    std::ofstream ofs(out_csv_path);
-    if (!ofs.is_open())
-    {
-        throw std::runtime_error("write_sti_lookup_csv: could not open CSV for writing: " + out_csv_path);
-    }
-
+    std::ofstream ofs = open_output_file(
+        out_csv_path, "write_sti_lookup_csv: could not open CSV for writing: ");
     ofs << "series_code,land_use,n_profiles,ln_kd_median,spr_prc,spr_term,source\n";
     for (const auto& row : rows)
     {

@@ -19,6 +19,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_depression_hierarchy_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
@@ -63,27 +64,23 @@ constexpr std::array<uint8_t, 8> k_dinverse{{ 4, 5, 6, 7, 0, 1, 2, 3 }};
 // symmetric (as in lsdtt_flowinfo).
 std::array<char, 4> parse_boundary_conditions(const std::string& bc_str)
 {
-    if (bc_str.size() != 4)
+    const lsdtt_boundary_parse p = parse_boundary_codes(bc_str, "obnp", /*fold_case=*/true);
+
+    if (p.result == lsdtt_boundary_parse::status::wrong_length)
     {
         throw std::runtime_error(
             "depression_hierarchy: boundary_conditions must be 4 characters "
             "(north, east, south, west)");
     }
 
-    std::array<char, 4> bc{};
-    for (int i = 0; i < 4; ++i)
+    if (p.result == lsdtt_boundary_parse::status::invalid_code)
     {
-        const char c = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(
-                bc_str[static_cast<std::size_t>(i)])));
-        if (c != 'o' && c != 'b' && c != 'n' && c != 'p')
-        {
-            throw std::runtime_error(
-                std::string("depression_hierarchy: invalid boundary code '") +
-                c + "' (must be o, b, n or p)");
-        }
-        bc[static_cast<std::size_t>(i)] = c;
+        throw std::runtime_error(
+            std::string("depression_hierarchy: invalid boundary code '") +
+            p.codes[p.bad_index] + "' (must be o, b, n or p)");
     }
+
+    std::array<char, 4> bc = p.codes;
 
     // Periodic boundaries must be symmetric on each axis.
     if (bc[0] == 'p') bc[2] = 'p';
