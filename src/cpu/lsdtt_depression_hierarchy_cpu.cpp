@@ -466,8 +466,7 @@ lsdtt_depression_hierarchy build_depression_hierarchy(
     // the standard library version and the container's reserve size. That is not
     // acceptable for a scientific code.
     //
-    // This deliberately does not reproduce upstream's arbitrary order; see
-    // docs/plan_docs/depression_hierarchy_fix_plan.md 4.2d/4.3a.
+    // This deliberately does not reproduce upstream's arbitrary order.
     std::sort(outlets.begin(), outlets.end(),
               [](const depression_outlet& a, const depression_outlet& b)
               {

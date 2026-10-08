@@ -2,7 +2,7 @@
 # P_lsdtt = basin-mean Stone-2000 production SCALING from lsdtt-cosmo-tool _BASIN_PROD.csv
 # (stone2000sp, Fsp=1), averaged over the EXACT upslope set the inversion uses. NO P0 multiply:
 # OCTOPUS BEPROD is itself a P0-normalised scaling in the same units (lsdtt mean-S == BEPROD
-# to ~1%); the plan's 'x P0_ref' over-scales by ~4.3x and is a units error (tester 2026-07-24).
+# to ~1%); the specified 'x P0_ref' over-scales by ~4.3x and is a units error (tester 2026-07-24).
 # BEPROD/BETOTS/BETOPO/ELEV_AVE harvested from OCTOPUS WFS (STUDYID S169), NOT fabricated.
 # pct_a = 100*(P_lsdtt-BEPROD)/BEPROD ; pct_b = 100*(P_lsdtt*BETOPO-BETOTS)/BETOTS ; d_elev_m = lsdtt_mean - ELEV_AVE ;
 # erate_pct = 100*(lsdtt EBE - OCTOPUS EBE_GCMYR)/EBE_GCMYR (inversion residual, same basin).

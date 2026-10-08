@@ -144,7 +144,7 @@ set(LSDTT_TEST_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cli_smoke.py")
 #
 # An unmarked test is classified tier_native. A Python test that forgets to mark
 # itself is therefore mislabelled rather than rejected; the inventory audit
-# (plan Phase 4) is what catches that.
+# is what catches that.
 #
 # lsdtt_mark_test_needs(gdal_tools <test>) records that a test shells out to the
 # GDAL command-line programs (gdalinfo, ogrinfo, gdal_translate). On Ubuntu they
@@ -288,6 +288,13 @@ set(LSDTT_STREAM_BURNING_FIXTURE_DIR
 
 set(LSDTT_BASIN_STATS_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/basin_stats_fixture")
+
+# Written by lsdtt-test-hype-cli-fixture (the fixture_hype_cli CTest fixture):
+# a 60x60 projected Y-network DEM, land-use and soil rasters, the four HYPE
+# parameter tables (plus three broken ones), 120 days of forcing and an outlet
+# CSV, read by the column_model: hype tests of lsdtt-distributed-hydrology.
+set(LSDTT_HYPE_CLI_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/hype_cli_fixture")
 
 set(LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/fluvial_surfaces_fixture")
@@ -776,8 +783,8 @@ lsdtt_set_tests_properties(rigorous_drainage_analysis_threshold_equivalence PROP
 # both STI P95 Jenks call sites. The raster and diagnostic oracles were frozen
 # against the original CLI-local classify_jenks_categories implementation.
 # Pins the TWI raster byte-for-byte across the lift of the TWI computation out
-# of cli/lsdtt-drainage-analysis.cpp and into lsdtt_wetness_index_cpu
-# (plan_raster_topmodel.md Phase 0). The checksum was captured from the
+# of cli/lsdtt-drainage-analysis.cpp and into lsdtt_wetness_index_cpu.
+# The checksum was captured from the
 # pre-refactor CLI; the move is a pure refactor and must not change it.
 #
 # rigorous_drainage_sti_jenks below guards the same computation indirectly,
@@ -828,7 +835,7 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
-# lsdtt-distributed-hydrology (plan_raster_topmodel.md Phase 10)
+# lsdtt-distributed-hydrology
 #
 # The physics is all in the modules and is tested by the C++ drivers
 # (unit_topmodel_column, unit_hydro_velocity_field, unit_hydro_routing,
@@ -917,6 +924,214 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "Conductivity is NOT a land-cover property here"
     --stderr-contains "set 'soil=' instead"
 )
+
+# --- column_model: hype ------------------------------------------------------
+#
+# The HYPE numerics are tested by the C++ drivers (unit_hype_parameters,
+# unit_hype_column, unit_hype_routing, unit_hype_model against the HYPE 5.36.0
+# oracle; unit_subbasin_partition and unit_hype_raster_setup for the set-up from
+# rasters). These carry only what is CLI: the parameter plumbing, the outlet
+# modes, the output tables and the failure paths.
+#
+# They read the generated input set of fixture_hype_cli (a 60x60 Y-network DEM,
+# land use, soil, the four parameter tables and 120 days of forcing with snow),
+# so --read-path overrides the tests/data default the function supplies:
+# run_cli_smoke.py keeps the last --read-path it is given.
+
+# User outlets: a gauge on the west arm and one on the trunk, snapped downstream,
+# make a chain of two sub-basins (1 drains to 2). The trunk gauge is ten rows
+# above the southern edge, so the 9 rows below it (540 pixels) are outside the
+# model and must be reported. Observed PET. Also writes the sub-basin raster
+# (ids 1 and 2, nodata elsewhere) and the HYPE-format GeoData/GeoClass.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_outlets
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_outlets.param.in
+    hypeout_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --expect hypeout_hype_subbasins.csv
+    --expect hypeout_hype_water_balance.csv
+    --expect hypeout_hype_subbasins.tif
+    --expect hypeout_hype_geodata/GeoData.txt
+    --expect hypeout_hype_geodata/GeoClass.txt
+    --expect-file-contains "hypeout_hype_discharge.csv:timestep,date,cout_1,cout_2,crun_1,crun_2"
+    # 120 daily rows from 2001-01-01: the date column is the day count, not a copy.
+    --expect-file-contains "hypeout_hype_discharge.csv:120,2001-04-30,"
+    --expect-file-contains "hypeout_hype_subbasins.csv:subid,maindown,outlet_x,outlet_y,area_m2,elev_mean_m,elev_std_m,slope_mean_percent,loc_rivlen_m,rivlen_m,n_classes"
+    --expect-file-contains "hypeout_hype_water_balance.csv:quantity,value,units"
+    --expect-file-contains "hypeout_hype_water_balance.csv:closure_error,"
+    --expect-file-not-contains "hypeout_hype_discharge.csv:nan"
+    --expect-file-not-contains "hypeout_hype_subbasins.csv:nan"
+    --expect-raster-size hypeout_hype_subbasins.tif:60x60
+    --expect-raster-values hypeout_hype_subbasins.tif:1,2
+    --stdout-contains "Column model: HYPE"
+    --stdout-contains "Sub-basins         : 2"
+    --stdout-contains "Unassigned pixels  : 540 of 3600 valid"
+    --stdout-contains "PET                : observed, 120 days"
+    --stdout-contains "HYPE water balance closure error:"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_outlets PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# Strahler order: every first-order junction basin, i.e. the two arms of the Y,
+# each its own domain outlet. HYPE's calculated PET (no pet_fname).
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_order
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_order.param.in
+    hypeorder_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --expect hypeorder_hype_subbasins.csv
+    --expect hypeorder_hype_water_balance.csv
+    --expect-file-contains "hypeorder_hype_discharge.csv:timestep,date,cout_1,cout_2,crun_1,crun_2"
+    --expect-file-contains "hypeorder_hype_subbasins.csv:subid,maindown,outlet_x,outlet_y,area_m2"
+    --expect-file-contains "hypeorder_hype_water_balance.csv:closure_error,"
+    --expect-file-not-contains "hypeorder_hype_discharge.csv:nan"
+    --expect-file-not-contains "hypeorder_hype_subbasins.csv:nan"
+    --stdout-contains "Column model: HYPE"
+    --stdout-contains "Outlet mode        : select_all_basins_of_stream_order (1)"
+    --stdout-contains "Sub-basins         : 2"
+    --stdout-contains "Domain outlets     : 2"
+    --stdout-contains "PET                : calculated by HYPE"
+    --stdout-contains "HYPE water balance closure error:"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_order PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# Strahler order range 1..: the trunk reaches the DEM edge, so the selection
+# holds a base-level outlet whose own sub-basin would be only the edge strip
+# (all-nodata gradient, NaN slope). The outlet helper merges it with the
+# sub-basin above (decided 2026-10-04), so this must RUN, with finite values.
+# The param file leaves dt_seconds unset: the HYPE path defaults to daily.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_order_range
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_order_range.param.in
+    hypeorderrange_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --expect hypeorderrange_hype_subbasins.csv
+    --expect hypeorderrange_hype_water_balance.csv
+    --expect-file-not-contains "hypeorderrange_hype_discharge.csv:nan"
+    --expect-file-not-contains "hypeorderrange_hype_subbasins.csv:nan"
+    --stdout-contains "dt_seconds not set: using 86400 (daily)"
+    --stdout-contains "HYPE water balance closure error:"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_order_range PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# Snapping. hype_outlets_offset.csv puts both gauges 3 columns east of the
+# channel. expanding_square moves each to the nearest channel pixel; downstream
+# follows flow, which lands lower on the west arm (row 18 rather than 16), so
+# its sub-basin 1 is larger (54200 m2 against 45300 m2). Snapping 'none' is a
+# failure case below.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_snap_square
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_snap_square.param.in
+    hypesnapsq_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Outlet 1: row=16 col=21"
+    --stdout-contains "Outlet 2: row=50 col=30"
+    --stdout-contains "Sub-basins         : 2"
+    --expect-file-contains "hypesnapsq_hype_subbasins.csv:,45300,"
+    --expect-file-not-contains "hypesnapsq_hype_discharge.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_snap_square PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_snap_downstream
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_snap_downstream.param.in
+    hypesnapds_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Outlet 1: row=18 col=22"
+    --stdout-contains "Outlet 2: row=50 col=30"
+    --stdout-contains "Sub-basins         : 2"
+    --expect-file-contains "hypesnapds_hype_subbasins.csv:,54200,"
+    --expect-file-not-contains "hypesnapds_hype_discharge.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_snap_downstream PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# Nodata in a class raster. A 10 x 5 block of nodata soil straddles the soil
+# boundary inside the trunk sub-basin (25 pixels each of classes 2 and 3). The
+# 50 pixels stay in the sub-basin area (262500 m2) but leave the class
+# fractions, which renormalise over 2575 pixels. The expected fractions were
+# checked against an independent pixel count of the rasters (2026-10-04):
+# 465/2575, 875/2575, 605/2575, 630/2575.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_class_holes
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_class_holes.param.in
+    hypeholes_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Pixels with no class: 50"
+    --expect-file-contains "hypeholes_hype_subbasins.csv:,262500,"
+    --expect-file-contains "hypeholes_hype_geodata/GeoData.txt:0.1805825243\t0.3398058252\t0.2349514563\t0.2446601942"
+    --expect-file-not-contains "hypeholes_hype_discharge.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_class_holes PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# n_timesteps shorter than the forcing runs only those days.
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_hype_short_run
+    lsdtt-distributed-hydrology
+    distributed_hydrology_hype_short_run.param.in
+    hypeshort_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Steps to run       : 30"
+    --expect-file-contains "hypeshort_hype_discharge.csv:30,2001-01-30,"
+    --expect-file-not-contains "hypeshort_hype_discharge.csv:31,2001-01-31,"
+)
+lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_short_run PROPERTIES
+    LABELS "smoke;cli;distributed_hydrology"
+    FIXTURES_REQUIRED hype_cli_fixture)
+
+# Failure paths. Each asserts the FATAL text, not just the exit code: the
+# messages are what tell the user which restriction of the first version
+# they hit, and the library errors must arrive with their own
+# message (file, column, pair) intact.
+set(_hype_failures
+    "missing_temperature|FATAL: temperature_fname is required for column_model hype"
+    "hourly|FATAL: column_model hype requires dt_seconds: 86400"
+    "fsceff|but the first version supports only fsceff = 0"
+    "unknown_parameter|unknown column \"cmelt\""
+    "missing_class_pair|has no class for these (land use, soil) pairs found in the rasters: (1, 2)"
+    "bad_column_model|FATAL: column_model must be 'topmodel' or 'hype'. Got: hbv"
+    "no_outlet_mode|FATAL: column_model hype needs exactly one outlet mode"
+    "snap_none_off_channel|basin outlet at row 15, col 23 is not on the channel network"
+    "class_nodata_subbasin|sub-basin 1 (outlet flat 920) has no pixel with a valid class"
+    "forcing_length|FATAL: the forcing series differ in length (rainfall 120, temperature 119, PET 120 rows)"
+    "n_timesteps_too_long|FATAL: n_timesteps (121) is longer than the forcing (120 rows)"
+    "bad_date_invalid|FATAL: hype_start_date must be the date of the first forcing row as YYYY-MM-DD (e.g. 2001-10-01). Got: '2001-02-30'"
+    "bad_date_format|FATAL: hype_start_date must be the date of the first forcing row as YYYY-MM-DD (e.g. 2001-10-01). Got: '01/01/2001'"
+)
+foreach(_case IN LISTS _hype_failures)
+    string(FIND "${_case}" "|" _bar)
+    string(SUBSTRING "${_case}" 0 ${_bar} _name)
+    math(EXPR _msg_at "${_bar} + 1")
+    string(SUBSTRING "${_case}" ${_msg_at} -1 _msg)
+    add_lsdtt_cli_smoke_test(
+        failure_distributed_hydrology_hype_${_name}
+        lsdtt-distributed-hydrology
+        distributed_hydrology_hype_${_name}.param.in
+        hypefail_${_name}_hype_discharge.csv
+        --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+        --expect-failure
+        --stderr-contains "${_msg}"
+    )
+    lsdtt_set_tests_properties(failure_distributed_hydrology_hype_${_name} PROPERTIES
+        LABELS "failure;cli;distributed_hydrology"
+        FIXTURES_REQUIRED hype_cli_fixture)
+endforeach()
 
 # lsdtt-mountain-front and lsdtt-feature-finder had NO tests at all until
 # 2026-09-10. That was found when the B7 extraction (write_masked_pixels_as_points)
@@ -1173,8 +1388,8 @@ lsdtt_set_tests_properties(smoke_linear_stats PROPERTIES
 # lsdtt-stream-burning
 #
 # No tests at all until 2026-09-10. The largest CLI in the repo (~2981 lines)
-# and the highest-risk extraction in the remediation plan (C4, the
-# inward-draining edge carve), which the plan says to do "with the burn tests
+# and the highest-risk extraction of the CLI clean-up (C4, the
+# inward-draining edge carve), which was to be done "with the burn tests
 # green" -- so C4 was blocked on this fixture existing.
 #
 # The vector network is COMMITTED rather than derived from the DEM. A network
@@ -1499,7 +1714,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "FATAL: outlet cluster value 'alpha' is not an integer"
 )
 
-# --- divide-migration end to end (plan §11.1I) -------------------------------
+# --- divide-migration end to end -------------------------------
 #
 # These run the whole pipeline on the synthetic three-valley DEM written by
 # unit_divide_migration, so they need the fixture directory rather than
@@ -1624,7 +1839,7 @@ lsdtt_set_tests_properties(failure_divide_migration_single_unit PROPERTIES
     LABELS "failure;cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
-# --- divide-fragment merging end to end (plan §11.1E) -------------------------
+# --- divide-fragment merging end to end -------------------------
 #
 # A second fixture DEM: one E-W ridge with a single valley draining north and
 # two draining south, so the northern basin faces BOTH southern basins. The
@@ -1670,7 +1885,7 @@ lsdtt_set_tests_properties(smoke_divide_migration_merge_fragments PROPERTIES
     LABELS "smoke;cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
-# --- pair-summary statistics end to end (plan §11.2 L/M) ----------------------
+# --- pair-summary statistics end to end ------------------------------------
 #
 # The same ridge fixture and clustering as the merge test above, so the topology
 # is known: exactly two units bordering along one merged divide. The pair
@@ -2112,7 +2327,7 @@ add_lsdtt_cli_smoke_test(
 )
 
 # -----------------------------------------------------------------------------
-# hillslope_channel_coupling: naming the two coupling regimes (plan section 6).
+# hillslope_channel_coupling: naming the two coupling regimes.
 #
 # lsdtt3 has always contained BOTH couplings, and which one ran was an
 # unreported side effect of incision_threshold_area. These pin the naming, the
@@ -2338,8 +2553,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
         endforeach()
     endforeach()
 
-    # Surface-metrics SPEED benchmark vs TopoToolbox (surface-metrics plan,
-    # Phases 3-4).  TopoToolbox is a PERFORMANCE reference here, not a
+    # Surface-metrics SPEED benchmark vs TopoToolbox.  TopoToolbox is a PERFORMANCE reference here, not a
     # correctness one -- correctness comes from the Tier A analytic oracle in
     # lsdtt-test-surface-metrics, which needs no network.  So --check enforces
     # ONLY the rank-correlation guard: it fails when the two tools turn out not
@@ -2408,7 +2622,7 @@ if(LSDTT_ENABLE_BENCHMARKS)
         PROPERTIES LABELS "benchmark;chi" SKIP_RETURN_CODE 77 TIMEOUT 1800)
     endif()
 
-    # Hydraulic DAGGER parity benchmark (plan Phases 3-4).
+    # Hydraulic DAGGER parity benchmark.
     # In --check mode it enforces mask agreement and pinned parity tolerances.
     # Prefer launching through pixi's benchmark env when available so GDAL/PROJ
     # and Python deps match the documented benchmark path.
@@ -2471,13 +2685,82 @@ endif()
 # Image-filter primitives and splitmix64: border mapping, box mean with
 # OpenCV's rounding rules, Gaussian kernels, separable and fixed-point filters,
 # Otsu, Sobel, Bresenham.
-# Phase 2 of plan_raster_topmodel.md: TOPMODEL column physics, index mode.
+# TOPMODEL column physics, index mode.
 add_executable(lsdtt-test-topmodel-column cpp/test_topmodel_column.cpp)
 target_link_libraries(lsdtt-test-topmodel-column PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_column COMMAND lsdtt-test-topmodel-column)
 lsdtt_set_tests_properties(unit_topmodel_column PROPERTIES LABELS "unit;network")
 
-# Phase 6 of plan_raster_topmodel.md: the channel mask ladder. Takes an output
+# HYPE port. The oracle under
+# tests/expected/hype is generated by tests/scripts/generate_hype_oracle.py;
+# these tests only read committed files.
+add_executable(lsdtt-test-distributed-hydrology-forcing cpp/test_distributed_hydrology_forcing.cpp)
+target_link_libraries(lsdtt-test-distributed-hydrology-forcing PRIVATE lsdtt3_cpu)
+add_test(NAME unit_distributed_hydrology_forcing
+         COMMAND lsdtt-test-distributed-hydrology-forcing
+                 "${CMAKE_CURRENT_BINARY_DIR}/distributed_hydrology_forcing_output")
+lsdtt_set_tests_properties(unit_distributed_hydrology_forcing PROPERTIES LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-hype-parameters cpp/test_hype_parameters.cpp)
+target_link_libraries(lsdtt-test-hype-parameters PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_parameters
+         COMMAND lsdtt-test-hype-parameters "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype"
+                 "${CMAKE_CURRENT_BINARY_DIR}/hype_parameters_output")
+lsdtt_set_tests_properties(unit_hype_parameters PROPERTIES LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-hype-column cpp/test_hype_column.cpp)
+target_link_libraries(lsdtt-test-hype-column PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_column
+         COMMAND lsdtt-test-hype-column "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
+lsdtt_set_tests_properties(unit_hype_column PROPERTIES LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-hype-routing cpp/test_hype_routing.cpp)
+target_link_libraries(lsdtt-test-hype-routing PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_routing
+         COMMAND lsdtt-test-hype-routing "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
+lsdtt_set_tests_properties(unit_hype_routing PROPERTIES LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-hype-model cpp/test_hype_model.cpp)
+target_link_libraries(lsdtt-test-hype-model PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_model
+         COMMAND lsdtt-test-hype-model "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
+lsdtt_set_tests_properties(unit_hype_model PROPERTIES LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-hype-raster-setup cpp/test_hype_raster_setup.cpp)
+target_link_libraries(lsdtt-test-hype-raster-setup PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_raster_setup
+         COMMAND lsdtt-test-hype-raster-setup "${CMAKE_CURRENT_BINARY_DIR}/hype_raster_setup_output")
+lsdtt_set_tests_properties(unit_hype_raster_setup PROPERTIES LABELS "unit;distributed_hydrology")
+
+# The generated input set for the column_model: hype CLI tests (smoke and
+# failure tests under lsdtt-distributed-hydrology). Generated in C++, never
+# committed.
+add_executable(lsdtt-test-hype-cli-fixture cpp/test_hype_cli_fixture.cpp)
+target_link_libraries(lsdtt-test-hype-cli-fixture PRIVATE lsdtt3_cpu)
+add_test(NAME fixture_hype_cli
+         COMMAND lsdtt-test-hype-cli-fixture "${LSDTT_HYPE_CLI_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_hype_cli PROPERTIES
+    LABELS "fixture;distributed_hydrology"
+    FIXTURES_SETUP hype_cli_fixture)
+
+# HYPE thread-count invariance: 1 thread
+# vs N threads must be bitwise identical. Guards the Stage B parallel steps.
+add_executable(lsdtt-test-hype-thread-invariance cpp/test_hype_thread_invariance.cpp)
+target_link_libraries(lsdtt-test-hype-thread-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hype_thread_invariance COMMAND lsdtt-test-hype-thread-invariance)
+lsdtt_set_tests_properties(unit_hype_thread_invariance PROPERTIES LABELS "unit;distributed_hydrology")
+
+# HYPE timing harness. Built always so it
+# can be run by hand; registered only under LSDTT_ENABLE_PERF_TESTS below.
+add_executable(lsdtt-test-hype-performance cpp/test_hype_performance.cpp)
+target_link_libraries(lsdtt-test-hype-performance PRIVATE lsdtt3_cpu)
+
+add_executable(lsdtt-test-subbasin-partition cpp/test_subbasin_partition.cpp)
+target_link_libraries(lsdtt-test-subbasin-partition PRIVATE lsdtt3_cpu)
+add_test(NAME unit_subbasin_partition COMMAND lsdtt-test-subbasin-partition)
+lsdtt_set_tests_properties(unit_subbasin_partition PROPERTIES LABELS "unit;distributed_hydrology")
+
+# The channel mask ladder. Takes an output
 # directory for the small GeoJSON fixture it writes at run time, so nothing is
 # committed to tests/data.
 add_executable(lsdtt-test-channel-extent cpp/test_channel_extent.cpp)
@@ -2487,32 +2770,32 @@ add_test(NAME unit_channel_extent
 lsdtt_set_tests_properties(unit_channel_extent PROPERTIES LABELS "unit;network")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/channel_extent_output")
 
-# Phase 5 of plan_raster_topmodel.md: the routing ladder.
+# The routing ladder.
 add_executable(lsdtt-test-hydro-routing cpp/test_hydro_routing.cpp)
 target_link_libraries(lsdtt-test-hydro-routing PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_routing COMMAND lsdtt-test-hydro-routing)
 lsdtt_set_tests_properties(unit_hydro_routing PROPERTIES LABELS "unit;network")
 
-# Phase 4 of plan_raster_topmodel.md: canopy interception.
+# Canopy interception.
 add_executable(lsdtt-test-canopy-interception cpp/test_canopy_interception.cpp)
 target_link_libraries(lsdtt-test-canopy-interception PRIVATE lsdtt3_cpu)
 add_test(NAME unit_canopy_interception COMMAND lsdtt-test-canopy-interception)
 lsdtt_set_tests_properties(unit_canopy_interception PROPERTIES LABELS "unit;network")
 
-# Phase 3 of plan_raster_topmodel.md: the roughness partition and the channel-n
+# The roughness partition and the channel-n
 # ladder.
 add_executable(lsdtt-test-hydro-roughness cpp/test_hydro_roughness.cpp)
 target_link_libraries(lsdtt-test-hydro-roughness PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_roughness COMMAND lsdtt-test-hydro-roughness)
 lsdtt_set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "unit;network")
 
-# Phase 9 of plan_raster_topmodel.md: land-cover scenarios.
+# Land-cover scenarios.
 add_executable(lsdtt-test-landcover-scenario cpp/test_landcover_scenario.cpp)
 target_link_libraries(lsdtt-test-landcover-scenario PRIVATE lsdtt3_cpu)
 add_test(NAME unit_landcover_scenario COMMAND lsdtt-test-landcover-scenario)
 lsdtt_set_tests_properties(unit_landcover_scenario PROPERTIES LABELS "unit;network")
 
-# Phase 8 of plan_raster_topmodel.md: infiltration excess (exp-K Green-Ampt).
+# Infiltration excess (exp-K Green-Ampt).
 # Series, closed-form capacity, water balance and dimensional-form checks; no
 # external reference input.
 add_executable(lsdtt-test-infiltration-excess cpp/test_infiltration_excess.cpp)
@@ -2520,13 +2803,13 @@ target_link_libraries(lsdtt-test-infiltration-excess PRIVATE lsdtt3_cpu)
 add_test(NAME unit_infiltration_excess COMMAND lsdtt-test-infiltration-excess)
 lsdtt_set_tests_properties(unit_infiltration_excess PROPERTIES LABELS "unit;network")
 
-# Phase 7 of plan_raster_topmodel.md: the dynamic (prognostic) saturated zone.
+# The dynamic (prognostic) saturated zone.
 add_executable(lsdtt-test-topmodel-dynamic cpp/test_topmodel_dynamic.cpp)
 target_link_libraries(lsdtt-test-topmodel-dynamic PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_dynamic COMMAND lsdtt-test-topmodel-dynamic)
 lsdtt_set_tests_properties(unit_topmodel_dynamic PROPERTIES LABELS "unit;network")
 
-# Phase 1 of plan_raster_topmodel.md: velocity field, travel time, width
+# Velocity field, travel time, width
 # function. "hydro" is claimed by the wetness_index -> network domain rule
 # below, so this stays in the network compartment with its Phase 0 sibling.
 add_executable(lsdtt-test-hydro-velocity-field cpp/test_hydro_velocity_field.cpp)
@@ -2534,7 +2817,7 @@ target_link_libraries(lsdtt-test-hydro-velocity-field PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_velocity_field COMMAND lsdtt-test-hydro-velocity-field)
 lsdtt_set_tests_properties(unit_hydro_velocity_field PROPERTIES LABELS "unit;network")
 
-# Phase 0 of plan_raster_topmodel.md: the shared TWI. Guards the core function
+# The shared TWI. Guards the core function
 # directly, including the float precision contract that the CLI checksum test
 # was MEASURED not to discriminate -- see the header of test_wetness_index.cpp.
 add_executable(lsdtt-test-wetness-index cpp/test_wetness_index.cpp)
@@ -2612,7 +2895,7 @@ lsdtt_set_tests_properties(unit_gdal_init_fallthrough PROPERTIES LABELS "unit;gd
 # violation compiles perfectly well, it just quietly undoes the facade, so
 # nothing but an explicit check will catch it.
 # Chunk 2a of the GDAL/PROJ friction work: the format contract. Asserts every
-# driver in the plan's §5.2 set is registered and that lsdtt3 can read a raster
+# driver in the required set is registered and that lsdtt3 can read a raster
 # written by each. Written against the system GDAL; re-run unchanged against the
 # vendored GDAL in Phase 2, where it is the acceptance gate for the trimmed
 # driver set.
@@ -2644,8 +2927,7 @@ lsdtt_set_tests_properties(unit_gdal_init_boundary PROPERTIES
     LABELS "unit;gdal;conventions")
 
 # -----------------------------------------------------------------------------
-# Phase 2 of the CLI consistency remediation plan
-# (docs/plan_docs/cli_consistency_remediation_plan.md §4 Phase 2).
+# Phase 2 of the CLI consistency clean-up.
 #
 # Each of these pins a helper that was extracted out of one or more cli/*.cpp
 # files into a library home. They are registered here, ahead of the extraction,
@@ -2720,7 +3002,7 @@ target_link_libraries(lsdtt-test-raster-transform PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-step-change cpp/test_step_change.cpp)
 target_link_libraries(lsdtt-test-step-change PRIVATE lsdtt3_cpu)
 
-# Landslide size distribution (plan Phase 0): the imposed magnitude-frequency
+# Landslide size distribution: the imposed magnitude-frequency
 # distribution and the area-volume scaling, with no landscape involved.
 # Synthetic only -- no DEM, no network.
 add_executable(lsdtt-test-landslide-size cpp/test_landslide_size.cpp)
@@ -2742,21 +3024,21 @@ target_link_libraries(lsdtt-test-quartz-fertility PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-landslide-step-change cpp/test_landslide_step_change.cpp)
 target_link_libraries(lsdtt-test-landslide-step-change PRIVATE lsdtt3_cpu)
 
-# Landslide placement (plan Phase 1): eligible hosts and the s_vector footprint.
+# Landslide placement: eligible hosts and the s_vector footprint.
 # Synthetic ridge-and-valley fixture, no network.
 add_executable(lsdtt-test-landslide-placement cpp/test_landslide_placement.cpp)
 target_link_libraries(lsdtt-test-landslide-placement PRIVATE lsdtt3_cpu)
 
-# Landslide event (plan Phase 2): budget -> N -> placed scars, with mass balance.
+# Landslide event: budget -> N -> placed scars, with mass balance.
 add_executable(lsdtt-test-landslide-event cpp/test_landslide_event.cpp)
 target_link_libraries(lsdtt-test-landslide-event PRIVATE lsdtt3_cpu)
 
-# Landslide -> CRN coupling (plan Phase 4, T16). Composes existing crn_column
+# Landslide -> CRN coupling (T16). Composes existing crn_column
 # calls only; no new cosmogenic physics.
 add_executable(lsdtt-test-landslide-crn cpp/test_landslide_crn.cpp)
 target_link_libraries(lsdtt-test-landslide-crn PRIVATE lsdtt3_cpu)
 
-# Landslide series (plan Phases 3 and 5): multi-event integration, plus the
+# Landslide series: multi-event integration, plus the
 # Niemi rate-closure and Yanites depth-regime reproductions.
 add_executable(lsdtt-test-landslide-series cpp/test_landslide_series.cpp)
 target_link_libraries(lsdtt-test-landslide-series PRIVATE lsdtt3_cpu)
@@ -2821,8 +3103,7 @@ add_test(NAME unit_mountain_front_outlet_pruning
 lsdtt_set_tests_properties(unit_mountain_front_outlet_pruning PROPERTIES
                      LABELS "unit;flow;mountain_front")
 
-# Depression hierarchy, phase 0
-# (docs/plan_docs/depression_hierarchy_fix_plan.md section 4.1): pins the
+# Depression hierarchy, phase 0: pins the
 # dangling-reference defect in outlet_link -- copy semantics, outlet_db across a
 # rehash, and the algorithm on a pit field dense enough to force one.
 #
@@ -2844,8 +3125,8 @@ lsdtt_set_tests_properties(unit_depression_hierarchy PROPERTIES
     LABELS "unit;depression_hierarchy"
     RUN_SERIAL TRUE)
 
-# Oracle comparison against the upstream Barnes implementation
-# (docs/plan_docs/depression_hierarchy_fix_plan.md phase 3). The expected files
+# Oracle comparison against the upstream Barnes implementation. The expected
+# files
 # were generated ONCE from upstream and are committed; upstream is NOT built by
 # lsdtt3 and is not needed to run this. Provenance, including the commit hashes
 # pinned, is in tests/expected/depression_hierarchy/PROVENANCE.md.
@@ -2856,8 +3137,7 @@ add_test(NAME unit_depression_hierarchy_oracle
 lsdtt_set_tests_properties(unit_depression_hierarchy_oracle PROPERTIES
     LABELS "unit;depression_hierarchy")
 
-# Internal drainage, phases 0, 1 and 3
-# (docs/plan_docs/internal_drainage_plan.md section 6.1): the crater-field
+# Internal drainage, phases 0, 1 and 3: the crater-field
 # oracle, fill_pits_with_sinks, forced_outlet_flats, hole punching and sink
 # tagging in both routing modes.
 # Synthetic surfaces generated in process, so there is no fixture on disk.
@@ -2976,7 +3256,7 @@ add_internal_drainage_cli_test(
 
 # sink_leaves_only means nothing to fill_difference: each filled patch is one
 # sink, with no nesting to take the leaves of. Asking for it must WARN and carry
-# on, not fail and not be silently ignored (plan 7.4 Q2a).
+# on, not fail and not be silently ignored.
 add_internal_drainage_cli_test(
     smoke_internal_drainage_leaves_only_warning
     internal_drainage_leaves_only_warning.param.in
@@ -3011,14 +3291,12 @@ lsdtt_set_tests_properties(smoke_internal_drainage_help PROPERTIES
     LABELS "smoke;cli;internal_drainage"
     PASS_REGULAR_EXPRESSION "sink_leaves_only")
 
-# Internal drainage, phase 2b
-# (docs/plan_docs/internal_drainage_plan.md sections 4.3, 5 and 6.1): the
-# detection module src/cpu/lsdtt_internal_drainage_cpu.  Covers both detection
+# Internal drainage, phase 2b: the detection module src/cpu/lsdtt_internal_drainage_cpu.  Covers both detection
 # methods against the crater generator's analytic oracle, the binary-tree node
 # count of a nested depression group, the shared pit cell of a meta-depression,
 # the four size filters, the symmetric CSV / FlatGeobuf / GeoPackage review
 # round-trip including a write with the FlatGeobuf spatial index ON (which
-# reorders features, plan 5.7), and the depression footprint polygons.  Kept
+# reorders features), and the depression footprint polygons.  Kept
 # separate from unit_internal_drainage because it writes vector fixtures and
 # therefore needs an output directory; the two together are the internal
 # drainage compartment.  Fixtures are written at run time, so nothing is
@@ -3034,9 +3312,7 @@ lsdtt_set_tests_properties(unit_internal_drainage_detect PROPERTIES
     LABELS "unit;internal_drainage")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_detect_output)
 
-# Internal drainage, phase 2a
-# (docs/plan_docs/internal_drainage_plan.md sections 6.3 and 6.4): the
-# point-input attribute reader in src/core/lsdtt_point_input.  Guards the
+# Internal drainage, phase 2a: the point-input attribute reader in src/core/lsdtt_point_input.  Guards the
 # load_drainage_injection_points contract (message text, silent skipping,
 # point_id counting skipped features) for its two live callers, cross-format
 # equivalence of load_point_layer_with_attributes across .fgb / .gpkg / .csv,
@@ -3090,8 +3366,7 @@ add_test(NAME unit_raster_active_masks COMMAND lsdtt-test-raster-active-masks)
 lsdtt_set_tests_properties(unit_raster_active_masks PROPERTIES
     LABELS "unit;raster;mask")
 
-# Divide-migration compute layer (docs/plan_docs/divide_migration_cli_plan.md
-# §11.1I).  Covers the routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
+# Divide-migration compute layer.  Covers the routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
 # nearest-divide geometry (mid-segment projection, zero-distance guard, negative
 # relief, nodata sampling, and the PER-UNIT index that stops a head being matched
 # to a divide between two other units), the common-base-level chi rebasing,
@@ -3115,8 +3390,8 @@ target_link_libraries(lsdtt-test-paired-flowpaths PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-landscape-equilibration cpp/test_landscape_equilibration.cpp)
 target_link_libraries(lsdtt-test-landscape-equilibration PRIVATE lsdtt3_cpu)
 
-# The factor-of-two ambiguity in "mean hillslope length" (plan_lem_hillslope_
-# length_targeting.md section 3): ridge_mean is L where the all-pixel mean is L/2.
+# The factor-of-two ambiguity in "mean hillslope length":
+# ridge_mean is L where the all-pixel mean is L/2.
 add_executable(lsdtt-test-hillslope-length-statistic cpp/test_hillslope_length_statistic.cpp)
 target_link_libraries(lsdtt-test-hillslope-length-statistic PRIVATE lsdtt3_cpu)
 
@@ -3274,7 +3549,7 @@ lsdtt_set_tests_properties(unit_hilltop_flow_routing_integration PROPERTIES
     LABELS "unit;hilltop_flow_routing")
 
 # --------------------------------------------------------------------------
-# lsdtt-hillslope-channel-coupling (Phase 4 of the coupling plan)
+# lsdtt-hillslope-channel-coupling
 #
 # The CLI runs on the SAME ridge-and-valley surface the integration driver
 # asserts against, so the tool is exercised on a landscape whose behaviour is
@@ -3372,11 +3647,11 @@ add_hilltop_coupling_cli_test(
     --expect-failure
     --stderr-contains "no channel")
 
-# SCAFFOLDING for the E*-R* validation workflow (plan section 4.8): runs the
+# SCAFFOLDING for the E*-R* validation workflow: runs the
 # hilltop pipeline on a supplied DEM. Not a test - it is built but never
 # registered with CTest, and it exists only until the Phase 4 CLI replaces it.
 # What incision_threshold_area is compared against: specific area in METRES
-# under divide_area_by_dx, map area in m^2 without it (plan section 4.4).
+# under divide_area_by_dx, map area in m^2 without it.
 add_executable(lsdtt-test-channel-threshold-units cpp/test_channel_threshold_units.cpp)
 target_link_libraries(lsdtt-test-channel-threshold-units PRIVATE lsdtt3_cpu)
 
@@ -3385,7 +3660,7 @@ add_test(NAME unit_channel_threshold_units
 lsdtt_set_tests_properties(unit_channel_threshold_units PROPERTIES
     LABELS "unit;lem")
 
-# Pathway A (plan_lem_hillslope_length_targeting.md section 4): the channel
+# Pathway A: the channel
 # threshold search, and the ways its objective can be plausibly wrong.
 add_executable(lsdtt-test-hillslope-length-search cpp/test_hillslope_length_search.cpp)
 target_link_libraries(lsdtt-test-hillslope-length-search PRIVATE lsdtt3_cpu)
@@ -3416,7 +3691,7 @@ endif()
 lsdtt_set_tests_properties(smoke_multipart_cli_sweep PROPERTIES
     LABELS "smoke;cli;raster" TIMEOUT 1200)
 
-# Longitudinal profile from the points output (plan_multilinestring... phase 4).
+# Longitudinal profile from the points output.
 add_executable(lsdtt-test-channel-profile-attributes cpp/test_channel_profile_attributes.cpp)
 target_link_libraries(lsdtt-test-channel-profile-attributes PRIVATE lsdtt3_cpu)
 
@@ -3426,7 +3701,7 @@ add_test(NAME unit_channel_profile_attributes
                  ${CMAKE_CURRENT_BINARY_DIR}/profile_output)
 lsdtt_set_tests_properties(unit_channel_profile_attributes PROPERTIES LABELS "unit;network")
 
-# link_length under periodic boundaries (plan_multilinestring... phase 2).
+# link_length under periodic boundaries.
 add_executable(lsdtt-test-link-length-periodic cpp/test_link_length_periodic.cpp)
 target_link_libraries(lsdtt-test-link-length-periodic PRIVATE lsdtt3_cpu)
 
@@ -3436,7 +3711,7 @@ add_test(NAME unit_link_length_periodic
                  ${CMAKE_CURRENT_BINARY_DIR}/link_length_output)
 lsdtt_set_tests_properties(unit_link_length_periodic PROPERTIES LABELS "unit;network")
 
-# Multipart geometry on read (plan_multilinestring_channel_outputs.md phase 1).
+# Multipart geometry on read.
 add_executable(lsdtt-test-multipart-geometry cpp/test_multipart_geometry.cpp)
 target_link_libraries(lsdtt-test-multipart-geometry PRIVATE lsdtt3_core)
 
@@ -3455,7 +3730,7 @@ target_link_libraries(find-threshold-for-hillslope-length PRIVATE lsdtt3_cpu)
 add_executable(emergent-hillslope-length-driver cpp/emergent_hillslope_length_driver.cpp)
 target_link_libraries(emergent-hillslope-length-driver PRIVATE lsdtt3_cpu)
 
-# Pathway B (plan section 5): K and D from a target relief and hillslope length.
+# Pathway B: K and D from a target relief and hillslope length.
 add_executable(lsdtt-test-hillslope-peclet cpp/test_hillslope_peclet.cpp)
 target_link_libraries(lsdtt-test-hillslope-peclet PRIVATE lsdtt3_cpu)
 
@@ -3632,19 +3907,19 @@ target_link_libraries(lsdtt-test-hillslope-steady-state PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_steady_state COMMAND lsdtt-test-hillslope-steady-state)
 lsdtt_set_tests_properties(unit_hillslope_steady_state PROPERTIES LABELS "unit;hillslope")
 
-# chi at the channel head, as distinct from domain-wide MaxChi (plan 2.2a).
+# chi at the channel head, as distinct from domain-wide MaxChi.
 add_executable(lsdtt-test-chi-channel-head cpp/test_chi_channel_head.cpp)
 target_link_libraries(lsdtt-test-chi-channel-head PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_chi_channel_head COMMAND lsdtt-test-chi-channel-head)
 lsdtt_set_tests_properties(unit_chi_channel_head PROPERTIES LABELS "unit;lem")
 
-# chi_c against domain-wide MaxChi (plan section 2.2a): the size of the relief
+# chi_c against domain-wide MaxChi: the size of the relief
 # error relief-mode carries for a landscape that will have hillslopes.
 add_executable(chi-c-ratio-driver cpp/chi_c_ratio_driver.cpp)
 target_link_libraries(chi-c-ratio-driver PRIVATE lsdtt3_cpu)
 
-# Phase 1b of plan_lem_hillslope_length_targeting.md: writes the D8
+# Writes the D8
 # distance-to-channel field so it can be compared against the streamline
 # tracer's Lh on the same source pixels. A driver, not a CTest entry.
 add_executable(hillslope-length-comparison-driver cpp/hillslope_length_comparison_driver.cpp)
@@ -4051,7 +4326,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
             PROPERTIES LABELS "performance;surface_metrics" SKIP_RETURN_CODE 77
                        TIMEOUT 3600)
     endif()
-    # Per-pixel LSDn production cost (LSDn plan Sec3.8). Four cases: Stone vs
+    # Per-pixel LSDn production cost. Four cases: Stone vs
     # LSDn at age 0; LSDn age 0 vs 20 ka vs 1 Ma (1 Ma pulls in the long record);
     # the time-averaged surface vs the direct per-pixel loop, both driven
     # explicitly, with the measured crossover pixel count; and the PRE-Phase-8
@@ -4065,6 +4340,17 @@ if(LSDTT_ENABLE_PERF_TESTS)
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --performance)
     lsdtt_set_tests_properties(perf_cosmo_lsdn_production
         PROPERTIES LABELS "performance;cosmo" TIMEOUT 1800)
+
+    # HYPE model timing: set-up, per-step
+    # and per-unit-step cost, phase split, peak RSS on synthetic in-memory
+    # workloads. REPORTED, NEVER ASSERTED -- fails only on a water-balance or
+    # non-finite-flow error. --quick runs the small workload only; run the
+    # binary directly, without --quick, for the three-size baseline.
+    add_test(NAME performance_hype_model
+             COMMAND lsdtt-test-hype-performance
+                     ${CMAKE_CURRENT_BINARY_DIR}/perf_output --quick)
+    lsdtt_set_tests_properties(performance_hype_model
+        PROPERTIES LABELS "performance;distributed_hydrology" TIMEOUT 1800)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/perf_output)
 endif()
@@ -4176,7 +4462,7 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
 endif()
 
 # Arguments: output dir, Stone sentinel, LSDn sentinel (a SEPARATE file with its
-# own gated regeneration flag; plan Sec3b), and the tests/data fixture dir (the
+# own gated regeneration flag), and the tests/data fixture dir (the
 # pre-LSDn crn_parameters.nc used by L5).
 # Step-change rasters. Checks the analytic algebra (ksn, celerity, knickpoint
 # position, the A_0 dependence) and then the rasters themselves: time-since-change
@@ -4191,7 +4477,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/step_change_test_output)
 
 # Landslide size distribution T1-T5b. Emits landslide_truncation.csv, which
 # tabulates how much of the distribution the A_max cutoff removes by number and
-# by volume (plan Sec 2.5).
+# by volume.
 add_test(NAME unit_landslide_size
          COMMAND lsdtt-test-landslide-size
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
@@ -4229,7 +4515,7 @@ lsdtt_set_tests_properties(unit_landslide_step_change PROPERTIES
     LABELS "unit;landslide;step_change")
 
 # Landslide placement T6-T10d. Emits landslide_host_fill.csv, which records how
-# completely landslides of each size fill their host basin (plan Sec 3.2).
+# completely landslides of each size fill their host basin.
 add_test(NAME unit_landslide_placement
          COMMAND lsdtt-test-landslide-placement
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
@@ -4283,7 +4569,7 @@ lsdtt_set_tests_properties(unit_cosmo_physics PROPERTIES LABELS "unit;cosmo")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output)
 
 # -----------------------------------------------------------------------------
-# Cosmo CLI integration tests (plan Phase 4; docs/developer_notes/testing_and_benchmarking.md)
+# Cosmo CLI integration tests (docs/developer_notes/testing_and_benchmarking.md)
 #
 # Offline: they exercise parameter-file parsing, help rendering, and the
 # projected-CRS guard on the three cosmo CLIs. The help tests also drive the
@@ -4304,7 +4590,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(failure_cosmo_tool_geographic_crs
     PROPERTIES LABELS "failure;cli;cosmo")
 
-# --- LSDn scaling scheme through the CLI (LSDn plan L8) ----------------------
+# --- LSDn scaling scheme through the CLI (L8) -----------------
 #
 # tiny_dem.asc is a 5x5 tilted plane in EPSG:32630 (UTM 30N) with its origin at
 # easting/northing 0, which places it near the equator at about 7.489 deg W;
@@ -4382,7 +4668,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(failure_cosmo_tool_bad_self_consistent_tol
     PROPERTIES LABELS "failure;cli;cosmo")
 
-# The forward -> inverse CLI BRIDGE (cosmo CLI test plan Phase 4), plus knob
+# The forward -> inverse CLI BRIDGE, plus knob
 # coverage. lsdtt-cosmo-prediction forward-models a concentration for a known
 # erosion rate and writes the points CSV it advertises as ingestible;
 # lsdtt-cosmo-tool inverts that CSV; the imposed rate must come back. This is
@@ -4557,7 +4843,7 @@ lsdtt_set_tests_properties(failure_cosmo_tool_lsdn_without_grids
 # Help must render every parameter without a parameter file and without
 # touching the DEM or the network. Guards that the parameter declarations for
 # each cosmo CLI stay well-formed.
-# lsdtt-cosmo-landslides (plan Phase 6).
+# lsdtt-cosmo-landslides.
 add_test(NAME smoke_cosmo_landslides_help COMMAND lsdtt-cosmo-landslides -h)
 lsdtt_set_tests_properties(smoke_cosmo_landslides_help PROPERTIES
     LABELS "smoke;cli;landslide"
@@ -4644,7 +4930,7 @@ add_lsdtt_cli_smoke_test(
 )
 
 # ---------------------------------------------------------------------------
-# Cosmogenic parameter validation in lsdtt-cosmo-landslides (plan R2b).
+# Cosmogenic parameter validation in lsdtt-cosmo-landslides.
 #
 # Until 2026-08-05 a bad muon_scheme or nuclide was caught inside the CRN block,
 # downgraded to a stderr warning, and the tool exited **0** having written no
@@ -4776,7 +5062,7 @@ lsdtt_set_tests_properties(regression_cosmo_multi_landslide_coupling PROPERTIES
     LABELS "cli;cosmo;landslide;step_change")
 
 # ---------------------------------------------------------------------------
-# The REFACTOR ORACLE (plan R0a).
+# The REFACTOR ORACLE.
 #
 # tests/data/cosmo_oracle.csv holds a bitwise hash of every raster and CSV the
 # four cosmogenic CLIs produce across a matrix of scaling scheme, muon scheme,
@@ -4841,7 +5127,7 @@ lsdtt_set_tests_properties(regression_cosmo_oracle_heavy PROPERTIES
 # Two prediction modes that write the SAME filenames must not both run: the
 # transient goes first and the step change overwrote all five of its outputs,
 # so the run reported success having produced half its results. Found while
-# promoting the ratio helper (plan SA1); guarded rather than renamed, because
+# promoting the ratio helper; guarded rather than renamed, because
 # changing shipped output filenames is a separate decision.
 add_lsdtt_cli_smoke_test(
     failure_cosmo_prediction_both_multi_modes
@@ -4892,8 +5178,8 @@ lsdtt_set_tests_properties(smoke_cosmo_column_tool_help PROPERTIES
     PASS_REGULAR_EXPRESSION "nuclide")
 
 # -----------------------------------------------------------------------------
-# Real-landscape cosmogenic validation tier (plan Phase 6 / §5b;
-# tests/expected/cosmo/published/README.md)
+# Real-landscape cosmogenic validation tier
+# (tests/expected/cosmo/published/README.md)
 #
 # "download -> run -> delete": run_cosmo_validation.py fetches a DEM KEYLESS via
 # lsdtt-fetch-raster (Copernicus GLO-30 / Planetary Computer -- no API key),
@@ -4996,7 +5282,7 @@ endif()
 lsdtt_set_tests_properties(cosmo_realworld_dibiase2010 PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
-# LSDn tier of the same three datasets (lsdn plan Phase 6 deliverable (iii)): the
+# LSDn tier of the same three datasets: the
 # END-TO-END PER-PIXEL LSDn run, (a) per-pixel LSDn basin mean vs (c) OCTOPUS EBEL.
 # Each <name>_lsdn manifest REUSES its St counterpart's bbox, run knobs and SAMPLE
 # TABLE -- there is exactly one copy of every measured concentration in the repo --
@@ -5083,8 +5369,8 @@ endif()
 lsdtt_set_tests_properties(cosmo_realworld_production_isolation PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
-# L13 GENERATION STEP -- the PER-PIXEL side of per-pixel-vs-lumped LSDn (lsdn plan
-# Phase 6 deliverable (ii); cosmo plan §6f row L13). Fetches each of the three
+# L13 GENERATION STEP -- the PER-PIXEL side of per-pixel-vs-lumped LSDn
+# (test L13). Fetches each of the three
 # tracked datasets' keyless COP30 DEMs and records lsdtt-cosmo-tool's basin-mean
 # production scaling (Stone, and LSDn at three sample ages) over the exact upslope
 # node set the inversion uses.
@@ -5116,7 +5402,7 @@ lsdtt_set_tests_properties(cosmo_realworld_lsdn_pixel_vs_lumped PROPERTIES
     LABELS "cosmo_realworld" SKIP_RETURN_CODE 77 TIMEOUT 3600)
 
 # =============================================================================
-# REDUNDANCY GUARD: no hand-written metre <-> g/cm2 conversion (plan R0b)
+# REDUNDANCY GUARD: no hand-written metre <-> g/cm2 conversion
 #
 # `x * rho * 0.1` was open-coded at nine sites across the library and two CLIs,
 # each independently choosing WHICH density to use. That is not a style
@@ -5179,7 +5465,7 @@ endif()
 # =============================================================================
 # lsdtt-flat-surface-finder and lsdtt-valley-centreline
 #
-# Phase 0a of docs/plan_docs/plan_fluvial_surfaces_cli_split.md. Both CLIs
+# Phase 0a of the fluvial-surfaces split. Both CLIs
 # shipped with no coverage of any kind, so there was nothing to refactor
 # against. These tests exist to pin CURRENT behaviour before the split moves it.
 #
@@ -5197,7 +5483,7 @@ add_test(NAME unit_fluvial_surfaces_fixture
 lsdtt_set_tests_properties(unit_fluvial_surfaces_fixture PROPERTIES
     LABELS "unit")
 
-# Phase 0c. T2, T4, T5 and T7 of the plan's section 7: the resolvability floor
+# Phase 0c. Tests T2, T4, T5 and T7: the resolvability floor
 # reports UNRESOLVED rather than fabricating levels, labels are a globally
 # unique running counter whose band map is single-valued, k = 2 reproduces the
 # legacy valley cut bit-for-bit, and k selection is a constraint with an
@@ -5333,8 +5619,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_band_then_label PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# The label is the join key for everything band-then-label emits (plan section
-# 4.3), and that is exactly the property no per-file assertion can see: the
+# The label is the join key for everything band-then-label emits, and that is exactly the property no per-file assertion can see: the
 # smoke test pins each table's SCHEMA, but a schema says nothing about whether a
 # label in the raster has a row in the patch table, or whether the two agree
 # about which band it is in. So these two run the CLI and then check ACROSS the
@@ -5478,7 +5763,7 @@ lsdtt_set_tests_properties(unit_param_parser_deprecation PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
 # =============================================================================
-# lsdtt-fluvial-surfaces (phase 3 of the plan: the new CLI)
+# lsdtt-fluvial-surfaces
 #
 # The tool between lsdtt-flat-surface-finder (which ground is flat?) and
 # lsdtt-valley-centreline (trace this valley): it does everything that needs a
@@ -5700,10 +5985,9 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_flat_surface_finder_label_baseline PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Phase 0d of docs/plan_docs/cli_consistency_remediation_plan.md: the durable
-# guard on parameter naming. Walks every built lsdtt-* CLI, reads its declared
+# The durable guard on parameter naming. Walks every built lsdtt-* CLI, reads its declared
 # parameters from the help registry (`<cli> -h json`) and applies the mechanical
-# rules of plan section 3 -- no `_m`/`_px`/`_deg` suffixes, no `print_*` that
+# naming rules -- no `_m`/`_px`/`_deg` suffixes, no `print_*` that
 # writes a file, bool raster outputs ending `_raster`/`_rasters`, one raster and
 # one vector format parameter per CLI, no `minimum_` (outside the documented
 # `<subject>_minimum_contributing_pixels` family) and no `tol`.
@@ -5815,14 +6099,14 @@ set(LSDTT_DOMAIN_RULES
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
     "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
-    # The shared Topographic Wetness Index (plan_raster_topmodel.md Phase 0),
+    # The shared Topographic Wetness Index,
     # pointed at "network" ON PURPOSE rather than given its own domain: the
     # existing TWI/STI tests already live in the network compartment, and
     # splitting them off now would quietly remove them from `ctest -L network`
     # for anyone working on drainage. When lsdtt-distributed-hydrology lands and
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
-    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover|distributed_hydrology"          "network"
+    "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover|distributed_hydrology|hype"          "network"
     "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
     # performance_flow_routines (LSDTT_ENABLE_PERF_TESTS) matched no rule, so
     # configuring with that option ON failed until 2026-09-18 -- the same trap

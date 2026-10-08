@@ -183,6 +183,44 @@ CSV. Generated in C++, never committed.
 - `failure_divide_migration_single_unit` — all outlets in one cluster is rejected
   with `outlets=3, units=1` rather than silently producing no divides.
 
+## Distributed hydrology: the S-HYPE column
+
+`column_model: hype` of `lsdtt-distributed-hydrology` is tested against
+**HYPE 5.36.0's own output**. The files are committed under `tests/expected/hype/`
+and were written by `tests/scripts/generate_hype_oracle.py`. That script is run
+by hand: CTest only reads its files and never downloads or compiles HYPE.
+
+```bash
+ctest -R "hype|subbasin_partition|distributed_hydrology_forcing" -LE heavy
+```
+
+**Library suites** (C++ drivers):
+
+- `unit_hype_parameters`, `unit_hype_column`, `unit_hype_routing`,
+  `unit_hype_model`: compare against the oracle within a tolerance about five
+  times the measured single-vs-double precision floor of HYPE itself (1.08e-4 mm).
+- `unit_subbasin_partition`, `unit_hype_raster_setup`: the set-up from rasters.
+- `unit_hype_thread_invariance`: the model must be bitwise identical at 1 and 8
+  threads.
+
+**CLI tests:**
+
+- `fixture_hype_cli` generates the input set (a 60×60 Y-network DEM, land use,
+  soil, parameter tables and 120 days of forcing with snow). Nothing is committed.
+- The `smoke_distributed_hydrology_hype_*` tests cover:
+  - the three outlet modes;
+  - `expanding_square` and `downstream` snapping of off-channel gauges;
+  - nodata holes in the soil raster;
+  - a run shorter than the forcing;
+  - the daily default for `dt_seconds`.
+- The `failure_distributed_hydrology_hype_*` tests assert the FATAL message for
+  each rejected input.
+
+The timing harness (`lsdtt-test-hype-performance`) is always built, but
+it is registered as the test `performance_hype_model` only under
+`LSDTT_ENABLE_PERF_TESTS`. What each suite asserts, and the measured numbers,
+are in §10q of `docs/developer_notes/testing_and_benchmarking.md`.
+
 ## lsdtt-lem
 
 `smoke_lem_strip_fixture` generates the hillslope strip through
@@ -273,8 +311,8 @@ than a crash or a silent wrong-units run.
 
 `unit_cosmo_validation_harness` (labels `unit;cosmo`) runs the **offline**
 self-test of `tests/scripts/run_cosmo_validation.py` — the "download → run →
-delete" harness for published-basin validation (plan §5b/§6c(B),
-`tests/expected/cosmo/published/README.md`). The self-test proves the cleanup
+delete" harness for published-basin validation
+(`tests/expected/cosmo/published/README.md`). The self-test proves the cleanup
 trap removes the temporary working directory on a *failed* run (with a mock
 workdir, no network), that `--keep` is honoured, that the manifest/sample-table
 schema guards trip, and that summary-append leaves the frozen skeleton
@@ -319,7 +357,7 @@ regenerated CSV should be committed with a note explaining why it moved.
 
 `unit_raster_fetch` (labels `unit;fetch`) runs `tests/cpp/test_raster_fetch.cpp`
 in offline mode: 31 checks over `src/core/lsdtt_raster_fetch.*`, needing no
-network. Plan: `docs/developer_notes/testing_and_benchmarking.md` Phase 1.
+network. See `docs/developer_notes/testing_and_benchmarking.md`.
 
 - UTM zone derivation, including zone boundaries and the ±180 antimeridian
   (an off-by-one silently reprojects into the neighbouring zone rather than
@@ -347,7 +385,7 @@ are plausible alpine values, and exits 77 (skip) when the source is unreachable.
 
 `unit_secret` (labels `unit;fetch`) runs `tests/cpp/test_secret.cpp` — 24
 offline checks over `src/core/lsdtt_secret.*`, the only place in lsdtt3 that
-handles secrets. Plan: `docs/developer_notes/testing_and_benchmarking.md` §1.
+handles secrets. See `docs/developer_notes/testing_and_benchmarking.md`.
 
 These are security properties, not conveniences:
 
@@ -419,7 +457,7 @@ written to disk. This matters — the `lsdtt_seconds` column of
 `benchmark_results.csv` is whole-process CLI wall time (startup, parameter
 parsing, GDAL open and write) and is **not** comparable with RichDEM's
 in-routine numbers. Timed properly, lsdtt3 is 1.8–6.6× *faster* than RichDEM
-across every routine (plan §7e).
+across every routine.
 
 ## Flow-routing property tests
 
@@ -433,7 +471,7 @@ so it needs no network, no downloaded DEM, and no RichDEM:
   non-triviality check that the fixture *had* depressions to begin with)
 - **P2** fill never lowers the surface
 - **P3** breaching raises only pit/flat cells, and never above the lowest
-  original neighbour (see plan §7a Finding 1 — `breach_depressions`
+  original neighbour (`breach_depressions`
   pit-flattens before carving, so a plain "never raises" assertion is wrong)
 - **P4** total D8 accumulation reaching outlets equals the valid-cell area
 - **P5** accumulation increases downstream
@@ -443,7 +481,7 @@ so it needs no network, no downloaded DEM, and no RichDEM:
   south rather than diagonally — an analytic oracle needing no reference
   implementation. This is the check that distinguishes true steepest descent
   (drop ÷ distance) from "lowest neighbour by elevation"; RichDEM fails it, which
-  is why accumulation is validated here rather than by comparison (plan §7d).
+  is why accumulation is validated here rather than by comparison.
 
 It also writes `fill_algorithm_characterisation.csv` (timings and divergence
 between fill algorithms) into its output directory. That table is reported, not

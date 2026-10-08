@@ -47,7 +47,7 @@
 //
 // No iteration on K and D themselves. But chi_c depends on the channel
 // threshold, which depends on L_h, so the OUTER problem is a fixed point --
-// see the plan's section 5.2 and, when it is wired up, the CLI.
+// see the CLI, when it is wired up.
 //
 // -----------------------------------------------------------------------------
 // `c` IS NOT KNOWN

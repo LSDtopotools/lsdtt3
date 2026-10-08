@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real-landscape cosmogenic validation harness (cosmo plan Phase 6 / §5b).
+"""Real-landscape cosmogenic validation harness.
 
 "Download -> run -> delete" tier. For each dataset it:
 
@@ -33,8 +33,7 @@ Usage:
       # offline; exercises the cleanup-trap + manifest/schema logic with a mock
       # workdir and proves the trap fires on failure. Needs no network or key.
 
-See docs/plan_docs/cosmo_cli_testing_plan.md §5b and tests/expected/cosmo/
-published/README.md.
+See tests/expected/cosmo/published/README.md.
 """
 
 import argparse
@@ -103,7 +102,7 @@ def read_sample_table(path: Path) -> list:
     """Read the per-sample table, skipping '#' comment lines.
 
     Raises if the table still carries the TODO sentinel: an un-populated
-    template must never silently drive a comparison (plan §5b, README).
+    template must never silently drive a comparison (see the README).
     """
     if not path.is_file():
         raise FileNotFoundError(f"sample table not found: {path}")
@@ -118,7 +117,7 @@ def read_sample_table(path: Path) -> list:
             f"sample table {path} is still a TEMPLATE (contains the "
             f"'{TODO_SENTINEL}' sentinel). Populate it from the data repository "
             f"named in the manifest before running validation -- do NOT invent "
-            f"or paper-scrape the numbers (plan §5b)."
+            f"or paper-scrape the numbers."
         )
     return rows
 
@@ -297,7 +296,7 @@ def write_crn_input(samples: list, workdir: Path) -> Path:
     concentration to 07KNSTD by multiplying by be10_std_map_[standard]; feeding it
     the already-07KNSTD BE10NC together with the native BESTND label made it apply
     that factor a SECOND time, inflating erate by exactly 1/factor-1 on every
-    non-07KNSTD basin (the whole ~+4-5% tier "residual"; see plan 6e). Since BE10NC
+    non-07KNSTD basin (the whole ~+4-5% tier "residual"). Since BE10NC
     is already 07KNSTD, we pass 07KNSTD (factor 1.0) so no conversion is applied.
     The original standard stays in the tracked samples CSV for traceability."""
     points_csv = workdir / "points.csv"
@@ -438,7 +437,7 @@ CHECK_REL_TOL = 0.02
 
 def check_against_frozen(new_rows: list, summary_path: Path) -> int:
     """Compare a fresh run against the frozen tracked summary WITHOUT modifying it
-    (the plan's cheap tracked regression check). Returns EXIT_OK / EXIT_FAIL."""
+    (the cheap tracked regression check). Returns EXIT_OK / EXIT_FAIL."""
     frozen = read_frozen_summary(summary_path)
     if not frozen:
         print("CHECK: no frozen rows to compare against; run once without --check "
@@ -622,7 +621,7 @@ def self_test() -> int:
     check("sample table: a TODO template is refused (no fabricated comparison)",
           rejected)
 
-    # 5c. The `_lsdn` tier (lsdn plan Phase 6 deliverable (iii)) must SHARE the St
+    # 5c. The `_lsdn` tier must SHARE the St
     #     tier's sample tables rather than duplicate 50 basins of concentrations,
     #     must reuse the same bbox + run knobs, and must differ ONLY by
     #     scaling_scheme: lsdn and the published-target override. Two copies of the

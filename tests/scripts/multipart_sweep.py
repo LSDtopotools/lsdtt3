@@ -2,8 +2,7 @@
 """Phase 5 sweep: every CLI that ingests vector data, against multipart input.
 
 Until 2026-08-26 lsdtt3 had no branch for ANY multipart geometry and discarded
-it silently, with a zero exit code. The tables in
-docs/plan_docs/plan_multilinestring_channel_outputs.md audit the CALL SITES;
+it silently, with a zero exit code. An audit of the CALL SITES is one thing;
 this script audits the BEHAVIOUR, which is not the same thing.
 
 THE FAILURE MODE IS SILENCE, so every case here asserts a positive result --
@@ -132,7 +131,7 @@ def case_stream_burning(build, work):
             f"run_stream_burn: true\n", f"sb_{k}")
         # `_vector_edges.fgb` is the WRONG probe: it is produced by
         # lsdtt_vector_to_junction_network, which has handled MultiLineString
-        # since before this work (plan section 2.2), so it passes either way and
+        # since before this work, so it passes either way and
         # proves nothing about lsdtt_burn_streams_cpu.
         #
         # `_burned_profiles.csv` comes from the burn itself, which is what

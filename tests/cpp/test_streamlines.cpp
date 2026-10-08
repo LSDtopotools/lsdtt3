@@ -11,7 +11,7 @@
 //
 // The module implements Lea (1992) sub-pixel kinematic routing with Tarboton
 // (1997) edge routing.  It shipped as "draft" with no tests and no caller, and
-// the whole hilltop-flow-routing plan rests on it, so this driver exists to
+// hilltop flow routing rests on it, so this driver exists to
 // establish what it actually does before anything is built on top.
 //
 // THE ANALYTIC CONSTRUCTION

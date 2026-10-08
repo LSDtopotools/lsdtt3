@@ -1,6 +1,6 @@
 // cellular_hillslope_face_stats.cpp
 //
-// Research driver for the cellular hillslope plan. Reports unique face-slope
+// Research driver for cellular hillslope transport. Reports unique face-slope
 // occupancy and connected high-slope regions from an existing DEM.
 
 #include <algorithm>

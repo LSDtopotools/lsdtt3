@@ -126,7 +126,7 @@ opts.ocean_level         = -9999.0f;
 ```
 
 so both implementations are asked the same question with no fixture surgery.
-Those options were added for exactly this reason (plan section 4.2b); they are
+Those options were added for exactly this reason; they are
 also useful in their own right, since a DEM whose sea is a nodata region or a
 constant elevation could not previously be described at all.
 

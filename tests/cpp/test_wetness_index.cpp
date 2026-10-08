@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Unit tests for src/cpu/lsdtt_wetness_index_cpu -- the shared Topographic
-// Wetness Index (plan_raster_topmodel.md Phase 0).
+// Wetness Index.
 //
 // WHY THIS EXISTS ALONGSIDE rigorous_drainage_twi_refactor_identical
 // ------------------------------------------------------------------

@@ -119,7 +119,7 @@ hillslope_peclet_inversion_result invert_for_K_and_D(
     // THIS GUARD IS UNREACHABLE AS THE FORMULA STANDS, and that is worth stating
     // rather than leaving as apparent protection.
     //
-    // The plan asked for a check that the hillslope does not demand more relief
+    // The design asked for a check that the hillslope does not demand more relief
     // than the total budget. In a formulation where R_hillslope is computed
     // independently from (U, D, L_h) and then subtracted, that check is
     // necessary. In THIS closed form it cannot fail, because K is DERIVED from

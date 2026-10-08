@@ -17,7 +17,7 @@
 //
 //   O  oracle: native output vs OpenCV, pixel for pixel. Exact for every input
 //      without nodata. For inputs with nodata the native code deliberately
-//      differs (valid-pixel normalisation, plan D3); the difference is reported
+//      differs (valid-pixel normalisation); the difference is reported
 //      as a measurement, and I4/I5 check the corrected behaviour directly.
 //   P  primitives: the native primitives' own 8-bit / 16-bit images vs OpenCV
 //      on a large random image (hash comparison; every rounding decision counts)

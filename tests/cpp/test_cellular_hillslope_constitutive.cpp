@@ -1,6 +1,6 @@
 // test_cellular_hillslope_constitutive.cpp
 //
-// Phase P1 of plan_cellular_hillslope_transport.md: test the proposed
+// Phase P1 of the cellular hillslope transport work: test the proposed
 // soft-critical mobility without implementing a raster transport solver, and
 // turn its tangent modulus into an explicit whole-grid pass-cost envelope.
 

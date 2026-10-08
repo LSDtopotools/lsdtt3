@@ -7,8 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Unit tests for src/core/lsdtt_point_input
-// (docs/plan_docs/internal_drainage_plan.md, sections 6.3 and 6.4).
+// Unit tests for src/core/lsdtt_point_input.
 //
 // Phase 2a factored the point-input module into one CSV parser and one OGR read
 // loop, added load_point_layer_with_attributes(), and rewrote
@@ -35,7 +34,7 @@
 //     every accepted as_bool spelling, and failure-by-return-value rather than
 //     by exception on junk input
 //
-//   the deliberate divergences of plan section 6.4
+//   the deliberate divergences between formats
 //     6.4(1) a non-numeric string-typed drainage_area is now SKIPPED
 //     6.4(4) attribute kind is not identical across formats
 //
@@ -357,7 +356,7 @@ void write_injection_layer(const lsdtt::lsdtt_raster_meta& meta,
 }
 
 // A layer whose drainage_area is a STRING field.  Feature 1 holds text that is
-// not a number; feature 2 holds numeric text.  This is the plan 6.4(1) case.
+// not a number; feature 2 holds numeric text.  This is divergence (1).
 void write_text_area_layer(const lsdtt::lsdtt_raster_meta& meta,
                            const std::string&              path)
 {
@@ -456,7 +455,7 @@ void write_attribute_layer(const lsdtt::lsdtt_raster_meta& meta,
 
     const attribute_fixture_feature features[] = {
         {k_ax, k_ay, 7, 1234.5, "alpha"},
-        // area_m2 = 0 is the plan 6.4(4) case: whole numbers come back
+        // area_m2 = 0 is divergence (4): whole numbers come back
         // kind::integer from CSV and kind::real from OGR.
         {k_bx, k_by, 8,    0.0, "beta"},
         {k_cx, k_cy, 9,  99.25, "gamma"}
@@ -576,7 +575,7 @@ void test_injection_skips_and_point_ids(const lsdtt::lsdtt_raster_meta& meta,
 }
 
 // -----------------------------------------------------------------------------
-// D. The pinned divergence, plan section 6.4(1)
+// D. The pinned divergence (1)
 //
 // DELIBERATE BEHAVIOUR CHANGE, DO NOT "FIX" THIS BACK.  The pre-phase-2a
 // implementation read the drainage area with OGRFeature::GetFieldAsDouble(),
@@ -617,7 +616,7 @@ void test_injection_non_numeric_string_area_is_skipped(
 // =============================================================================
 
 // Pulls the three attributes through the accessors.  Values are NEVER compared
-// via kind: plan 6.4(4) says a whole number is kind::integer from CSV and
+// via kind: divergence (4) is that a whole number is kind::integer from CSV and
 // kind::real from OGR by design, so comparing type across formats would be
 // asserting the wrong thing.
 struct attribute_triplet
@@ -692,7 +691,7 @@ void test_cross_format_equivalence(const lsdtt::lsdtt_raster_meta& meta,
     }
 
     // Empty field_names reads every field in the layer.  For the CSV this also
-    // proves plan 6.4(3): latitude and longitude are geometry, not attributes,
+    // proves divergence (3): latitude and longitude are geometry, not attributes,
     // so the CSV attribute set is the same size as the OGR one.
     bool schema_ok = true;
     for (std::size_t i = 0; i < 3; ++i)
@@ -771,7 +770,7 @@ void test_cross_format_equivalence(const lsdtt::lsdtt_raster_meta& meta,
               csv_source_text) && csv_source_text == "007",
           "source text = " + csv_source_text);
 
-    // Plan 6.4(4), pinned so nobody starts comparing kind across formats: the
+    // Divergence (4), pinned so nobody starts comparing kind across formats: the
     // whole number 0 is typed by inspection from CSV (integer) and by schema
     // from OGR (real).  as_double bridges them; as_int64 accepts both because
     // the real is exactly integral.
@@ -1213,7 +1212,7 @@ int main(int argc, char** argv)
         (argc > 1) ? std::string(argv[1]) : std::string("point_input_test_output");
 
     std::cout << "lsdtt3 point-input unit tests "
-                 "(internal-drainage plan sections 6.3 and 6.4)\n\n";
+                 "\n\n";
 
     try
     {

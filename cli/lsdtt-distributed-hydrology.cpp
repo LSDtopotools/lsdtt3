@@ -32,6 +32,18 @@
 // offered: it sends all of a cell's area to one neighbour, which stripes the
 // wetness index and therefore the deficit field built on it.
 //
+// column_model: hype runs a second, separate model: a simplified S-HYPE on
+// sub-basins x classes (see docs/design_and_algorithms/hydrological_modelling.md).
+// It branches off right
+// after parameter parsing into run_hype_model() and shares no TOPMODEL stage:
+//
+//   lsdtt_subbasin_partition_cpu   outlets, incremental sub-basins, GeoData
+//   lsdtt_hype_raster_setup_cpu    class raster, set-up from rasters
+//   lsdtt_hype_model_cpu           the HYPE column and river routing
+//
+// That path DOES use D8 (through lsdtt_flow_base), because an incremental
+// sub-basin partition needs every pixel to drain to exactly one sub-basin.
+//
 // Usage:
 //   lsdtt-distributed-hydrology <path> <parameter_file>
 //   lsdtt-distributed-hydrology <parameter_file>   (path assumed to be ./)
@@ -43,6 +55,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -57,24 +71,35 @@
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_distributed_hydrology_forcing.hpp"
+#include "../src/core/lsdtt_flow_base.hpp"
+#include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_canopy_interception_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_extent_cpu.hpp"
+#include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_hydro_roughness_cpu.hpp"
 #include "../src/cpu/lsdtt_hydro_routing_cpu.hpp"
 #include "../src/cpu/lsdtt_hydro_velocity_field_cpu.hpp"
+#include "../src/cpu/lsdtt_hype_column_cpu.hpp"
+#include "../src/cpu/lsdtt_hype_model_cpu.hpp"
+#include "../src/cpu/lsdtt_hype_parameters.hpp"
+#include "../src/cpu/lsdtt_hype_raster_setup_cpu.hpp"
 #include "../src/cpu/lsdtt_infiltration_excess_cpu.hpp"
 #include "../src/cpu/lsdtt_landcover_scenario_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_sti_cpu.hpp"
+#include "../src/cpu/lsdtt_subbasin_partition_cpu.hpp"
 #include "../src/cpu/lsdtt_topmodel_cpu.hpp"
 #include "../src/cpu/lsdtt_topmodel_dynamic_cpu.hpp"
 #include "../src/cpu/lsdtt_wetness_index_cpu.hpp"
 #include "../src/utils/lsdtt_array2d.hpp"
+#include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_version   = "0.1.0";
@@ -105,66 +130,6 @@ static void print_banner()
         << "|| Citation : " << k_citation << "\n"
         << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n\n";
-}
-
-// -----------------------------------------------------------------------------
-// load_depth_series
-//
-// Read a forcing time series from a CSV. One row per timestep, in order.
-//
-// Two column spellings are accepted for each quantity -- metres and
-// millimetres -- because rain gauge and reanalysis products are published in
-// millimetres while everything inside the model is in metres. Converting at
-// the door is better than letting a user multiply by 1000 in a spreadsheet and
-// get it wrong; there is no way to detect that mistake downstream, because a
-// millimetre of rain read as a metre is a perfectly plausible storm.
-// -----------------------------------------------------------------------------
-static std::vector<double> load_depth_series(
-    const std::string& path,
-    const std::string& column_metres,
-    const std::string& column_mm)
-{
-    const lsdtt::lsdtt_csv_table table = lsdtt::load_csv_table(path);
-
-    const bool have_metres = lsdtt::csv_has_column(table, column_metres);
-    const bool have_mm     = lsdtt::csv_has_column(table, column_mm);
-
-    if (!have_metres && !have_mm)
-    {
-        throw std::runtime_error(
-            "forcing file '" + path + "' has no column '" + column_metres +
-            "' and no column '" + column_mm + "'. One of the two is required, "
-            "holding the depth for each timestep, one row per step.");
-    }
-
-    const std::string key   = have_metres ? column_metres : column_mm;
-    const double      scale = have_metres ? 1.0 : 0.001;
-
-    std::vector<double> series;
-    series.reserve(table.rows.size());
-
-    for (std::size_t i = 0; i < table.rows.size(); ++i)
-    {
-        const double v = lsdtt::csv_row_double_required(
-            table.rows[i], key, path, static_cast<int>(i) + 1);
-
-        if (!(v >= 0.0) || !std::isfinite(v))
-        {
-            throw std::runtime_error(
-                "forcing file '" + path + "' row " + std::to_string(i + 1) +
-                ": '" + key + "' is negative or non-finite (" +
-                std::to_string(v) + "). A depth per timestep cannot be either.");
-        }
-        series.push_back(v * scale);
-    }
-
-    if (series.empty())
-    {
-        throw std::runtime_error(
-            "forcing file '" + path + "' has a header but no data rows.");
-    }
-
-    return series;
 }
 
 // -----------------------------------------------------------------------------
@@ -223,6 +188,843 @@ static lsdtt::lsdtt_raster_cpu raster_from_cell_values(
 }
 
 // =============================================================================
+// column_model: hype
+//
+// Everything below up to main() serves the HYPE path only. The model, its
+// set-up from rasters and the sub-basin partition are all library modules
+// (lsdtt_hype_model_cpu, lsdtt_hype_raster_setup_cpu,
+// lsdtt_subbasin_partition_cpu); as for TOPMODEL, this file only assembles
+// them and reports what it assembled. The model, its first-version
+// restrictions and its equations are described in
+// docs/design_and_algorithms/hydrological_modelling.md.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// hype_calendar_date
+//
+// A proleptic Gregorian date. HYPE needs only the day of year of each step, and
+// the run is daily, so a date that advances one day per forcing row is all the
+// calendar this path needs; no time zone or time of day is involved.
+// -----------------------------------------------------------------------------
+struct hype_calendar_date
+{
+    int year  = 0;
+    int month = 0;
+    int day   = 0;
+};
+
+static bool hype_is_leap_year(int y)
+{
+    return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+}
+
+static int hype_days_in_month(int y, int m)
+{
+    static const int k_days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    return (m == 2 && hype_is_leap_year(y)) ? 29 : k_days[m - 1];
+}
+
+// Strict YYYY-MM-DD: four-digit year, two-digit month and day, a real date.
+static bool parse_hype_date(const std::string& s, hype_calendar_date& out)
+{
+    if (s.size() != 10 || s[4] != '-' || s[7] != '-') return false;
+    for (std::size_t i = 0; i < s.size(); ++i)
+    {
+        if (i == 4 || i == 7) continue;
+        if (s[i] < '0' || s[i] > '9') return false;
+    }
+    out.year  = std::stoi(s.substr(0, 4));
+    out.month = std::stoi(s.substr(5, 2));
+    out.day   = std::stoi(s.substr(8, 2));
+    return out.month >= 1 && out.month <= 12 &&
+           out.day >= 1 && out.day <= hype_days_in_month(out.year, out.month);
+}
+
+static void advance_hype_date_one_day(hype_calendar_date& d)
+{
+    if (++d.day > hype_days_in_month(d.year, d.month))
+    {
+        d.day = 1;
+        if (++d.month > 12) { d.month = 1; ++d.year; }
+    }
+}
+
+static int hype_day_of_year(const hype_calendar_date& d)
+{
+    int doy = d.day;
+    for (int m = 1; m < d.month; ++m) doy += hype_days_in_month(d.year, m);
+    return doy;
+}
+
+static std::string format_hype_date(const hype_calendar_date& d)
+{
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", d.year, d.month, d.day);
+    return buf;
+}
+
+// -----------------------------------------------------------------------------
+// read_and_snap_hype_outlets
+//
+// select_basins_from_outlets for the HYPE path: read basin_outlet_fname into the
+// raster CRS and snap each point with basin_outlet_snapping_method, with the
+// same library calls and the same snap keys as lsdtt-basin-extraction. A point
+// that does not map into the raster or cannot be snapped is skipped with a
+// warning, as there. Throws if no usable outlet is left.
+// -----------------------------------------------------------------------------
+static std::vector<std::int64_t> read_and_snap_hype_outlets(
+    const lsdtt::lsdtt_flow_base&        flow,
+    const std::string&                   outlet_path,
+    const lsdtt::lsdtt_raster_meta&      meta,
+    const std::string&                   snapping_method,
+    std::map<std::string, int>&          ifs)
+{
+    const std::vector<lsdtt::lsdtt_input_point> points =
+        lsdtt::load_points_in_raster_crs(outlet_path, meta);
+    std::cout << "Read " << points.size() << " basin outlet point(s) from "
+              << outlet_path << "\n";
+
+    lsdtt::lsdtt_square_snap_options square_opts;
+    square_opts.contributing_pixels_threshold = static_cast<std::uint64_t>(
+        ifs["basin_outlet_contributing_pixels_threshold"]);
+    square_opts.min_search_radius_pixels =
+        ifs["basin_outlet_snap_min_search_radius_pixels"];
+    square_opts.max_search_radius_pixels =
+        ifs["basin_outlet_snap_max_search_radius_pixels"];
+
+    lsdtt::lsdtt_downstream_snap_options downstream_opts;
+    downstream_opts.contributing_pixels_threshold = static_cast<std::uint64_t>(
+        ifs["basin_outlet_contributing_pixels_threshold"]);
+
+    std::vector<std::int64_t> flats;
+    for (const auto& pt : points)
+    {
+        if (pt.status != lsdtt::lsdtt_point_input_status::success)
+        {
+            std::cerr << "Warning: basin outlet " << pt.point_id
+                      << " did not map to an in-bounds raster pixel; skipping.\n";
+            continue;
+        }
+        const lsdtt::lsdtt_snap_result snapped = lsdtt::snap_pixel_by_method(
+            flow, pt.row, pt.col, snapping_method, square_opts, downstream_opts);
+        if (snapped.status != lsdtt::lsdtt_snap_status::success)
+        {
+            std::cerr << "Warning: basin outlet " << pt.point_id
+                      << " could not be snapped ("
+                      << lsdtt::snap_status_to_string(snapped.status)
+                      << "); skipping.\n";
+            continue;
+        }
+        std::cout << "  Outlet " << pt.point_id << ": row=" << snapped.snapped_row
+                  << " col=" << snapped.snapped_col << "\n";
+        flats.push_back(snapped.snapped_flat);
+    }
+    if (flats.empty())
+    {
+        throw std::runtime_error("no valid basin outlet flat indices were produced "
+                                 "from " + outlet_path);
+    }
+    return flats;
+}
+
+// -----------------------------------------------------------------------------
+// run_hype_model
+//
+// The whole column_model: hype path, from parsed parameters to written outputs.
+// Returns the process exit code. Every library exception (table validation, a
+// (land use, soil) pair with no class, set-up and model failures) is reported
+// as a FATAL line carrying the library's own message.
+// -----------------------------------------------------------------------------
+static int run_hype_model(
+    lsdtt::lsdtt_param_parser&            pp,
+    std::map<std::string, bool>&          bf,
+    std::map<std::string, float>&         ff,
+    std::map<std::string, int>&           ifs,
+    std::map<std::string, std::string>&   sf,
+    const lsdtt::lsdtt_help_registry&     help_map,
+    lsdtt::raster_output_format           out_fmt)
+{
+    std::cout << "--- Column model: HYPE (simplified S-HYPE, sub-basins x classes, "
+                 "daily) ---\n";
+
+    // -------------------------------------------------------------------------
+    // Cross-parameter logic. All of it before any work, as on the TOPMODEL path.
+    // -------------------------------------------------------------------------
+    // dt_seconds defaults to 3600 for TOPMODEL. HYPE is daily, so when the
+    // user has not set dt_seconds the HYPE path uses 86400; an explicit value
+    // other than 86400 is still an error.
+    const bool dt_supplied = pp.parameter_supplied("dt_seconds");
+    const double dt_seconds = dt_supplied ? static_cast<double>(ff["dt_seconds"]) : 86400.0;
+    if (!dt_supplied)
+    {
+        std::cout << "dt_seconds not set: using 86400 (daily), the only step HYPE supports here\n";
+    }
+    if (dt_seconds != 86400.0)
+    {
+        std::cerr << "FATAL: column_model hype requires dt_seconds: 86400. HYPE's "
+                     "parameters are per day (cmlt, mperc1, mactrinf, ...) and the "
+                     "first version is daily only. Got: " << dt_seconds << "\n";
+        return 1;
+    }
+    if (ifs["n_timesteps"] < 0)
+    {
+        std::cerr << "FATAL: n_timesteps cannot be negative. Got: "
+                  << ifs["n_timesteps"] << "\n";
+        return 1;
+    }
+
+    if (sf["rainfall_fname"].empty())
+    {
+        std::cerr << "FATAL: rainfall_fname is required. This CLI is a "
+                     "rainfall-driven simulation; there is no default storm.\n";
+        return 1;
+    }
+    if (sf["temperature_fname"].empty())
+    {
+        std::cerr << "FATAL: temperature_fname is required for column_model hype "
+                     "(a CSV with a temperature_c column, one row per day). HYPE "
+                     "needs temperature for snow, the rain/snow split and PET.\n";
+        return 1;
+    }
+    for (const char* key : {"landcover_fname", "hype_soil_class_fname",
+                            "hype_general_parameters_fname",
+                            "hype_landuse_parameters_fname",
+                            "hype_soil_parameters_fname", "hype_classes_fname"})
+    {
+        if (sf[key].empty())
+        {
+            std::cerr << "FATAL: " << key << " is required for column_model hype.\n";
+            return 1;
+        }
+    }
+
+    hype_calendar_date start_date;
+    if (sf["hype_start_date"].empty() || !parse_hype_date(sf["hype_start_date"], start_date))
+    {
+        std::cerr << "FATAL: hype_start_date must be the date of the first forcing "
+                     "row as YYYY-MM-DD (e.g. 2001-10-01). Got: '"
+                  << sf["hype_start_date"] << "'\n";
+        return 1;
+    }
+
+    // Outlets: exactly one of lsdtt-basin-extraction's three modes.
+    const bool from_outlets   = bf["select_basins_from_outlets"];
+    const bool order_exact    = bf["select_all_basins_of_stream_order"];
+    const bool order_range    = bf["filter_basins_by_stream_order"];
+    const int  n_outlet_modes = static_cast<int>(from_outlets) +
+                                static_cast<int>(order_exact) +
+                                static_cast<int>(order_range);
+    if (n_outlet_modes != 1)
+    {
+        std::cerr << "FATAL: column_model hype needs exactly one outlet mode: "
+                     "select_basins_from_outlets, select_all_basins_of_stream_order "
+                     "or filter_basins_by_stream_order. Got " << n_outlet_modes
+                  << ".\n";
+        return 1;
+    }
+    if (ifs["threshold_contributing_pixels"] <= 0)
+    {
+        std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
+        return 1;
+    }
+    if (order_exact && ifs["selected_stream_order"] <= 0)
+    {
+        std::cerr << "FATAL: selected_stream_order must be > 0 when "
+                     "select_all_basins_of_stream_order is true.\n";
+        return 1;
+    }
+    const std::string snapping_method =
+        lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
+    if (from_outlets)
+    {
+        if (sf["basin_outlet_fname"].empty() || sf["basin_outlet_fname"] == "NULL")
+        {
+            std::cerr << "FATAL: basin_outlet_fname is required when "
+                         "select_basins_from_outlets is true.\n";
+            return 1;
+        }
+        if (snapping_method != "none" && snapping_method != "expanding_square" &&
+            snapping_method != "downstream")
+        {
+            std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
+                         "none, expanding_square, downstream. Got: "
+                      << sf["basin_outlet_snapping_method"] << "\n";
+            return 1;
+        }
+        if (ifs["basin_outlet_snap_min_search_radius_pixels"] < 0 ||
+            ifs["basin_outlet_snap_max_search_radius_pixels"] <
+                ifs["basin_outlet_snap_min_search_radius_pixels"])
+        {
+            std::cerr << "FATAL: basin_outlet_snap_min_search_radius_pixels must be "
+                         ">= 0 and basin_outlet_snap_max_search_radius_pixels must "
+                         "be >= it.\n";
+            return 1;
+        }
+    }
+
+    // TOPMODEL-only stages are bypassed, not combined: a model that
+    // mixed them would be neither HYPE nor TOPMODEL and checkable against
+    // neither. Say so rather than ignore the switch silently.
+    for (const char* key : {"run_interception", "run_infiltration_excess"})
+    {
+        if (bf[key])
+        {
+            std::cout << "NOTE: " << key << " is a TOPMODEL stage and is not used "
+                         "with column_model hype.\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Parameter tables. Read and checked before the DEM is touched, so a typo
+    // in a table costs a second rather than a pit fill.
+    // -------------------------------------------------------------------------
+    lsdtt::hype_setup parameters;
+    try
+    {
+        parameters.general = lsdtt::load_hype_general_parameters(
+            pp.add_read_path_if_needed(sf["hype_general_parameters_fname"]));
+        parameters.landuse = lsdtt::load_hype_landuse_parameters(
+            pp.add_read_path_if_needed(sf["hype_landuse_parameters_fname"]));
+        parameters.soils = lsdtt::load_hype_soil_parameters(
+            pp.add_read_path_if_needed(sf["hype_soil_parameters_fname"]));
+        parameters.classes = lsdtt::load_hype_classes(
+            pp.add_read_path_if_needed(sf["hype_classes_fname"]));
+        lsdtt::validate_hype_column_options(parameters.general);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: reading the HYPE parameter tables failed: "
+                  << e.what() << "\n";
+        return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Forcing. Depths come in metres from the shared loader and go into the
+    // model in mm: the conversion happens once, here, at the model boundary.
+    // -------------------------------------------------------------------------
+    std::vector<double> rainfall_m;
+    std::vector<double> temperature_c;
+    std::vector<double> pet_m;
+    try
+    {
+        rainfall_m = lsdtt::load_distributed_hydrology_depth_series(
+            pp.add_read_path_if_needed(sf["rainfall_fname"]),
+            "rainfall_metres", "rainfall_mm");
+        temperature_c = lsdtt::load_distributed_hydrology_temperature_series(
+            pp.add_read_path_if_needed(sf["temperature_fname"]), "temperature_c");
+        if (!sf["pet_fname"].empty())
+        {
+            pet_m = lsdtt::load_distributed_hydrology_depth_series(
+                pp.add_read_path_if_needed(sf["pet_fname"]), "pet_metres", "pet_mm");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: reading the forcing failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    if (temperature_c.size() != rainfall_m.size() ||
+        (!pet_m.empty() && pet_m.size() != rainfall_m.size()))
+    {
+        std::cerr << "FATAL: the forcing series differ in length (rainfall "
+                  << rainfall_m.size() << ", temperature " << temperature_c.size();
+        if (!pet_m.empty()) std::cerr << ", PET " << pet_m.size();
+        std::cerr << " rows). column_model hype needs one row per day in each.\n";
+        return 1;
+    }
+
+    // n_timesteps 0 runs the whole series. Unlike TOPMODEL, HYPE cannot be run
+    // past the end with zero rainfall: there is no temperature to continue with.
+    const int n_forcing = static_cast<int>(rainfall_m.size());
+    const int n_steps   = (ifs["n_timesteps"] > 0) ? ifs["n_timesteps"] : n_forcing;
+    if (n_steps > n_forcing)
+    {
+        std::cerr << "FATAL: n_timesteps (" << n_steps << ") is longer than the "
+                     "forcing (" << n_forcing << " rows). column_model hype cannot "
+                     "run past the end of the temperature series.\n";
+        return 1;
+    }
+
+    std::cout << "\n--- Forcing ---\n";
+    std::cout << "Rainfall series    : " << rainfall_m.size() << " days\n";
+    std::cout << "Temperature series : " << temperature_c.size() << " days\n";
+    std::cout << "PET                : "
+              << (pet_m.empty() ? std::string("calculated by HYPE")
+                                : "observed, " + std::to_string(pet_m.size()) + " days")
+              << "\n";
+    std::cout << "Start date         : " << format_hype_date(start_date)
+              << " (day of year " << hype_day_of_year(start_date) << ")\n";
+    std::cout << "Steps to run       : " << n_steps << "\n";
+
+    // -------------------------------------------------------------------------
+    // DEM, filled as on the TOPMODEL path
+    // -------------------------------------------------------------------------
+    const std::string input_path = pp.get_full_read_path();
+    std::cout << "\nOpening DEM: " << input_path << "\n";
+
+    lsdtt::lsdtt_data_loader loader;
+    try
+    {
+        loader.open_raster(input_path);
+        loader.print_raster_info();
+        loader.get_meta().check_projected_metres();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: opening the DEM failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    lsdtt::lsdtt_raster_cpu dem(loader);
+    lsdtt::lsdtt_raster_cpu routed_dem = dem;
+    if (!bf["raster_is_filled"])
+    {
+        std::cout << "\n--- Pit filling ---\n";
+        std::cout << "Minimum slope: " << ff["fill_min_slope"] << "\n";
+        try
+        {
+            routed_dem = lsdtt::fill_pits(dem, ff["fill_min_slope"],
+                                          sf["boundary_conditions"], ifs["n_threads"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
+            return 1;
+        }
+    }
+    else
+    {
+        std::cout << "\nRaster is marked as already filled. Skipping fill.\n";
+    }
+    const lsdtt::lsdtt_raster_meta meta = routed_dem.get_meta();
+    const double cell_area_m2 = meta.cell_size * meta.cell_size;
+
+    // -------------------------------------------------------------------------
+    // Land use and soil rasters -> class raster
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_raster_cpu class_raster;
+    try
+    {
+        std::cout << "\n--- HYPE classes ---\n";
+        const lsdtt::lsdtt_raster_cpu landuse_raster = load_grid_matched_raster(
+            pp.add_read_path_if_needed(sf["landcover_fname"]), "landcover_fname", meta);
+        const lsdtt::lsdtt_raster_cpu soil_raster = load_grid_matched_raster(
+            pp.add_read_path_if_needed(sf["hype_soil_class_fname"]),
+            "hype_soil_class_fname", meta);
+        class_raster = lsdtt::make_hype_class_raster(landuse_raster, soil_raster,
+                                                     parameters.classes);
+        std::cout << "Classes in table   : " << parameters.classes.size() << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: building the HYPE class raster failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // D8 flow, channel network and outlets. The partition needs single-receiver
+    // flow, so this is the D8 flow base, not the D-inf/MFD graph
+    // the TOPMODEL path routes on.
+    // -------------------------------------------------------------------------
+    std::unique_ptr<lsdtt::lsdtt_flow_base> flow;
+    std::vector<std::int64_t> outlet_flats;
+    try
+    {
+        std::cout << "\n--- Flow routing (D8) and sub-basin outlets ---\n";
+        lsdtt::lsdtt_flowinfo_options fi_opts;
+        fi_opts.boundary_conditions       = sf["boundary_conditions"];
+        fi_opts.interior_nodata_is_outlet = true;
+        fi_opts.require_acyclic_graph     = true;
+        fi_opts.build_topological_order   = true;
+        fi_opts.build_s_vector            = true;
+        fi_opts.n_threads                 = ifs["n_threads"];
+        flow = lsdtt::make_flow_base(routed_dem.get_data_array(),
+                                     routed_dem.get_mask_array(), meta, fi_opts);
+
+        std::cout << "Contributing-pixel threshold: "
+                  << ifs["threshold_contributing_pixels"] << "\n";
+        const std::vector<std::int64_t> source_flats =
+            flow->get_sources_index_threshold(ifs["threshold_contributing_pixels"]);
+        if (source_flats.empty())
+        {
+            throw std::runtime_error("source extraction returned no source pixels. "
+                                     "Try lowering threshold_contributing_pixels.");
+        }
+        lsdtt::lsdtt_junction_network_options jn_opts;
+        jn_opts.build_topological_order = true;
+        jn_opts.build_s_vector          = true;
+        const std::unique_ptr<lsdtt::lsdtt_junction_network_base> network =
+            lsdtt::make_junction_network_base(*flow, source_flats, jn_opts);
+        std::cout << "Channel sources    : " << source_flats.size() << "\n";
+
+        if (from_outlets)
+        {
+            std::cout << "Outlet mode        : select_basins_from_outlets ("
+                      << snapping_method << " snapping)\n";
+            const std::vector<std::int64_t> snapped = read_and_snap_hype_outlets(
+                *flow, pp.add_read_path_if_needed(sf["basin_outlet_fname"]),
+                dem.get_meta(), snapping_method, ifs);
+            // A sub-basin outlet must sit on the channel network. With snapping
+            // 'none' a point is used as given, so a gauge a few pixels off the
+            // channel would otherwise fail deep in the junction code.
+            for (std::size_t i = 0; i < snapped.size(); ++i)
+            {
+                if (network->is_channel(snapped[i])) continue;
+                throw std::runtime_error(
+                    "basin outlet at row " + std::to_string(snapped[i] / meta.n_cols) +
+                    ", col " + std::to_string(snapped[i] % meta.n_cols) +
+                    " is not on the channel network (threshold_contributing_pixels " +
+                    std::to_string(ifs["threshold_contributing_pixels"]) +
+                    "). basin_outlet_snapping_method '" + snapping_method +
+                    "' left it there; use expanding_square or downstream to move "
+                    "outlets onto the channel, or lower threshold_contributing_pixels");
+            }
+            outlet_flats = lsdtt::subbasin_outlets_from_user_flats(*flow, *network,
+                                                                   snapped);
+        }
+        else if (order_exact)
+        {
+            std::cout << "Outlet mode        : select_all_basins_of_stream_order ("
+                      << ifs["selected_stream_order"] << ")\n";
+            outlet_flats = lsdtt::subbasin_outlets_by_stream_order(
+                *flow, *network, ifs["selected_stream_order"],
+                ifs["selected_stream_order"]);
+        }
+        else
+        {
+            std::cout << "Outlet mode        : filter_basins_by_stream_order ("
+                      << ifs["basins_min_stream_order"] << " to "
+                      << ifs["basins_max_stream_order"] << ")\n";
+            outlet_flats = lsdtt::subbasin_outlets_by_stream_order(
+                *flow, *network, ifs["basins_min_stream_order"],
+                ifs["basins_max_stream_order"]);
+        }
+        if (outlet_flats.empty())
+        {
+            throw std::runtime_error("outlet selection produced no sub-basin outlets");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: selecting the HYPE sub-basin outlets failed: "
+                  << e.what() << "\n";
+        return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Set-up from rasters: partition, GeoData, class fractions, river lengths.
+    // Slope is the dimensionless gradient; the library turns it into HYPE's
+    // percent (100 x gradient). No angle is computed.
+    // -------------------------------------------------------------------------
+    lsdtt::hype_raster_setup_result built;
+    try
+    {
+        const lsdtt::lsdtt_raster_cpu gradient =
+            lsdtt::compute_gradient_magnitude_3x3_square(routed_dem);
+        built = lsdtt::build_hype_setup_from_rasters(
+            *flow, routed_dem, gradient, class_raster, outlet_flats,
+            ifs["threshold_contributing_pixels"], parameters);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: building the HYPE set-up from rasters failed: "
+                  << e.what() << "\n";
+        return 1;
+    }
+    const lsdtt::hype_setup& setup = built.setup;
+    const lsdtt::subbasin_partition_result& partition = built.partition;
+
+    // A GeoData statistic with no valid pixel in a sub-basin is NaN
+    // (lsdtt_subbasin_partition_cpu), and validate_hype_setup does not look at
+    // GeoData values, so a NaN would reach the column and surface there as an
+    // unrelated-looking water-removal error. Stop here instead and say why.
+    for (const lsdtt::hype_subbasin& sb : setup.subbasins)
+    {
+        const char* bad = nullptr;
+        if      (!std::isfinite(sb.elev_mean_m))        bad = "elev_mean_m";
+        else if (!std::isfinite(sb.elev_std_m))         bad = "elev_std_m";
+        else if (!std::isfinite(sb.slope_mean_percent)) bad = "slope_mean_percent";
+        else if (!std::isfinite(sb.loc_rivlen_m))       bad = "loc_rivlen_m";
+        else if (!std::isfinite(sb.rivlen_m))           bad = "rivlen_m";
+        if (bad == nullptr) continue;
+
+        const std::int64_t flat =
+            partition.outlet_flat[static_cast<std::size_t>(sb.subid - 1)];
+        std::cerr << "FATAL: HYPE sub-basin " << sb.subid << " (outlet at row "
+                  << flat / meta.n_cols << ", col " << flat % meta.n_cols << "; "
+                  << partition.n_pixels[static_cast<std::size_t>(sb.subid - 1)]
+                  << " pixels) has no valid " << bad << ".";
+        if (std::string(bad) == "slope_mean_percent")
+        {
+            std::cerr << " Every one of its pixels is on the DEM edge or next to "
+                         "nodata, where the 3x3 gradient is undefined. Stream-order "
+                         "selection makes such a sub-basin at a channel's "
+                         "base-level pixel when the channel leaves the DEM; choose "
+                         "outlets inside the DEM (select_basins_from_outlets) or "
+                         "an order range that does not end at the edge.";
+        }
+        std::cerr << "\n";
+        return 1;
+    }
+
+    std::vector<int> n_classes_in(setup.subbasins.size(), 0);
+    std::vector<int> classes_found;
+    {
+        std::map<int, std::size_t> index_of;
+        for (std::size_t s = 0; s < setup.subbasins.size(); ++s)
+            index_of[setup.subbasins[s].subid] = s;
+        std::map<int, bool> seen;
+        for (const auto& sc : setup.subbasin_classes)
+        {
+            if (sc.fraction <= 0.0) continue;
+            ++n_classes_in[index_of.at(sc.subid)];
+            seen[sc.class_id] = true;
+        }
+        for (const auto& kv : seen) classes_found.push_back(kv.first);
+    }
+
+    std::cout << "\n--- HYPE set-up ---\n";
+    std::cout << "Sub-basins         : " << setup.subbasins.size() << "\n";
+    if (partition.n_duplicate_outlets > 0)
+    {
+        std::cout << "Duplicate outlets  : " << partition.n_duplicate_outlets
+                  << " (merged)\n";
+    }
+    std::cout << "Units (sub-basin x class): " << setup.subbasin_classes.size() << "\n";
+    std::cout << "Classes found      :";
+    for (int c : classes_found) std::cout << ' ' << c;
+    std::cout << " (" << classes_found.size() << " of " << setup.classes.size() << ")\n";
+    std::cout << "Unassigned pixels  : " << partition.n_unassigned << " of "
+              << partition.n_valid_pixels << " valid ("
+              << lsdtt::csv_number(static_cast<double>(partition.n_unassigned) *
+                                   cell_area_m2, 10)
+              << " m2 drains to base level without passing a selected outlet and "
+                 "is outside the model)\n";
+
+    // Modelled pixels that are nodata in the land-use or soil raster have no
+    // class. They still count in their sub-basin's area, but not in its class
+    // fractions, so they take on the class mix of the rest of the sub-basin.
+    {
+        const std::vector<std::uint8_t>& class_mask = class_raster.get_mask();
+        std::int64_t n_no_class = 0;
+        for (std::size_t i = 0; i < partition.subbasin_id.size(); ++i)
+            if (partition.subbasin_id[i] >= 0 && class_mask[i] == 0u) ++n_no_class;
+        std::cout << "Pixels with no class: " << n_no_class;
+        if (n_no_class > 0)
+        {
+            std::cout << " (nodata in landcover_fname or hype_soil_class_fname; "
+                         "counted in sub-basin area, left out of class fractions)";
+        }
+        std::cout << "\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // Set-up outputs. Written BEFORE the run: they describe the set-up, not the
+    // run, and a run that fails in the model still leaves them for diagnosis.
+    // -------------------------------------------------------------------------
+    const std::size_t n_sub = setup.subbasins.size();
+    try
+    {
+        {
+            const std::string path = pp.make_output_path("_hype_subbasins", ".csv");
+            std::cout << "\nWriting: " << path << "\n";
+            std::ofstream out(path);
+            if (!out) throw std::runtime_error("cannot open " + path);
+            out << "subid,maindown,outlet_x,outlet_y,area_m2,elev_mean_m,elev_std_m,"
+                   "slope_mean_percent,loc_rivlen_m,rivlen_m,n_classes\n";
+            for (std::size_t s = 0; s < n_sub; ++s)
+            {
+                const lsdtt::hype_subbasin& sb = setup.subbasins[s];
+                // subid is partition index + 1 (build_hype_setup_from_rasters).
+                const std::int64_t flat =
+                    partition.outlet_flat[static_cast<std::size_t>(sb.subid - 1)];
+                const int row = static_cast<int>(flat / meta.n_cols);
+                const int col = static_cast<int>(flat % meta.n_cols);
+                out << sb.subid << ',' << sb.maindown << ','
+                    << lsdtt::csv_number(lsdtt::cell_centre_x(meta, col)) << ','
+                    << lsdtt::csv_number(lsdtt::cell_centre_y(meta, row)) << ','
+                    << lsdtt::csv_number(sb.area_m2) << ','
+                    << lsdtt::csv_number(sb.elev_mean_m) << ','
+                    << lsdtt::csv_number(sb.elev_std_m) << ','
+                    << lsdtt::csv_number(sb.slope_mean_percent) << ','
+                    << lsdtt::csv_number(sb.loc_rivlen_m) << ','
+                    << lsdtt::csv_number(sb.rivlen_m) << ','
+                    << n_classes_in[s] << '\n';
+            }
+        }
+
+        if (bf["write_hype_subbasin_raster"])
+        {
+            const std::string path = pp.make_output_path(
+                "_hype_subbasins", lsdtt::output_extension(out_fmt, pp.get_read_ext()));
+            std::cout << "Writing: " << path << "\n";
+            // The partition raster holds the 0-based partition index; HYPE's
+            // subid is that index + 1 (build_hype_setup_from_rasters). Written
+            // as subid so the raster and the CSV columns name the same thing.
+            lsdtt::lsdtt_raster_result ids = lsdtt::get_subbasin_id_raster(partition);
+            for (std::size_t i = 0; i < ids.data.size(); ++i)
+                if (ids.mask[i] != 0) ids.data[i] += 1.0f;
+            loader.write_full(ids, path, out_fmt);
+        }
+
+        if (bf["write_hype_geodata"])
+        {
+            const std::string dir = pp.make_output_path("_hype_geodata");
+            std::filesystem::create_directories(dir);
+            std::cout << "Writing: " << dir << "/GeoData.txt, GeoClass.txt\n";
+            lsdtt::write_hype_geodata_files(setup, dir);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: writing outputs failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Run. The balance's storage pass is a full sweep over units and rivers
+    // every step, so it runs only when the balance is written. No output of
+    // this first version needs per-unit fluxes. The discharge table is
+    // streamed, one row per step, so a long run holds no per-step history.
+    // -------------------------------------------------------------------------
+    const bool track_balance   = bf["write_water_balance_csv"];
+    const bool write_discharge = bf["write_discharge_csv"];
+    std::ofstream discharge_out;
+    std::string discharge_path;
+    if (write_discharge)
+    {
+        discharge_path = pp.make_output_path("_hype_discharge", ".csv");
+        discharge_out.open(discharge_path);
+        if (!discharge_out)
+        {
+            std::cerr << "FATAL: writing outputs failed: cannot open "
+                      << discharge_path << "\n";
+            return 1;
+        }
+    }
+
+    // Outflow at the domain outlets (maindown 0), for the run summary.
+    std::vector<std::size_t> domain_outlets;
+    for (std::size_t s = 0; s < n_sub; ++s)
+        if (setup.subbasins[s].maindown == 0) domain_outlets.push_back(s);
+    double outlet_q_sum = 0.0;
+    double outlet_q_max = 0.0;
+    int    outlet_q_max_step = 0;
+
+    std::unique_ptr<lsdtt::lsdtt_hype_model_cpu> model;
+    try
+    {
+        std::cout << "\n--- Running HYPE ---\n";
+        model = std::make_unique<lsdtt::lsdtt_hype_model_cpu>(setup, dt_seconds,
+                                                              track_balance);
+        model->set_store_unit_fluxes(false);
+        const std::vector<int>& subids = model->subids();
+
+        if (write_discharge)
+        {
+            discharge_out << "timestep,date";
+            for (int id : subids) discharge_out << ",cout_" << id;
+            for (int id : subids) discharge_out << ",crun_" << id;
+            discharge_out << '\n';
+        }
+
+        hype_calendar_date date = start_date;
+        for (int t = 0; t < n_steps; ++t)
+        {
+            const double obs_pet_mm = pet_m.empty()
+                ? std::numeric_limits<double>::quiet_NaN()
+                : 1000.0 * pet_m[static_cast<std::size_t>(t)];
+            model->step(1000.0 * rainfall_m[static_cast<std::size_t>(t)],
+                        temperature_c[static_cast<std::size_t>(t)],
+                        hype_day_of_year(date), obs_pet_mm);
+
+            const std::vector<double>& cout_m3s = model->outflow_m3s();
+            double q_domain = 0.0;
+            for (std::size_t s : domain_outlets) q_domain += cout_m3s[s];
+            outlet_q_sum += q_domain;
+            if (q_domain > outlet_q_max) { outlet_q_max = q_domain; outlet_q_max_step = t + 1; }
+
+            if (write_discharge)
+            {
+                discharge_out << (t + 1) << ',' << format_hype_date(date);
+                for (double q : cout_m3s) discharge_out << ',' << lsdtt::csv_number(q);
+                for (double r : model->runoff_mm()) discharge_out << ',' << lsdtt::csv_number(r);
+                discharge_out << '\n';
+            }
+            advance_hype_date_one_day(date);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: running the HYPE model failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    const lsdtt::hype_model_balance& wb = model->balance();
+    std::cout << "Domain outlets     : " << domain_outlets.size() << "\n";
+    std::cout << "Outlet discharge   : mean "
+              << (n_steps > 0 ? outlet_q_sum / n_steps : 0.0) << " m3/s, peak "
+              << outlet_q_max << " m3/s (step " << outlet_q_max_step << ")\n";
+    std::cout << "Precipitation      : " << wb.precipitation_m3 << " m3\n";
+    std::cout << "Evaporation        : " << wb.evaporation_m3 << " m3\n";
+    std::cout << "Outflow            : " << wb.outflow_m3 << " m3\n";
+    if (wb.storage_tracked)
+    {
+        std::cout << "HYPE water balance closure error: " << wb.closure_error_m3()
+                  << " m3 (" << (wb.precipitation_m3 > 0.0
+                                     ? wb.closure_error_m3() / wb.precipitation_m3
+                                     : 0.0)
+                  << " of precipitation)\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // Run outputs
+    // -------------------------------------------------------------------------
+    try
+    {
+        if (write_discharge)
+        {
+            discharge_out.close();
+            if (!discharge_out) throw std::runtime_error("error writing " + discharge_path);
+            std::cout << "\nWriting: " << discharge_path << "\n";
+        }
+
+        if (bf["write_water_balance_csv"])
+        {
+            const std::string path = pp.make_output_path("_hype_water_balance", ".csv");
+            std::cout << "Writing: " << path << "\n";
+            std::ofstream out(path);
+            if (!out) throw std::runtime_error("cannot open " + path);
+            out << "quantity,value,units\n";
+            out << "total_precipitation," << lsdtt::csv_number(wb.precipitation_m3)
+                << ",cubic_metres\n";
+            out << "total_evaporation," << lsdtt::csv_number(wb.evaporation_m3)
+                << ",cubic_metres\n";
+            out << "total_outflow," << lsdtt::csv_number(wb.outflow_m3)
+                << ",cubic_metres\n";
+            out << "initial_storage," << lsdtt::csv_number(wb.storage_start_m3)
+                << ",cubic_metres\n";
+            out << "final_storage," << lsdtt::csv_number(wb.storage_m3)
+                << ",cubic_metres\n";
+            out << "closure_error," << lsdtt::csv_number(wb.closure_error_m3())
+                << ",cubic_metres\n";
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: writing outputs failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    pp.print_help(help_map, pp.get_write_fname() + "_README", k_version, k_citation);
+    pp.print_parameters();
+
+    std::cout << "\nlsdtt-distributed-hydrology: done.\n";
+    return 0;
+}
+
+// =============================================================================
 // main
 // =============================================================================
 int main(int argc, char* argv[])
@@ -249,6 +1051,28 @@ int main(int argc, char* argv[])
     lsdtt::declare_fill_min_slope_parameter(float_default_map, help_map);
 
     // --- Model structure ---
+    string_default_map["column_model"] = "topmodel";
+    help_map["column_model"] = {"string","topmodel",
+        "Which column model to run: topmodel or hype.",
+        "topmodel: the raster TOPMODEL on every pixel, routed down the flow "
+        "network (everything else in this help that is not marked HYPE). "
+        "Choose it for storm events at sub-daily steps, for per-pixel "
+        "saturation and runoff maps, and for land-cover scenarios such as "
+        "interception or infiltration changes. "
+        "hype: a simplified S-HYPE model on sub-basins x classes. The DEM is "
+        "split into incremental sub-basins between the selected outlets, each "
+        "sub-basin is split into classes (land use x soil), every class runs "
+        "HYPE's soil column, and sub-basins are routed through HYPE's local and "
+        "main rivers. Choose it for seasonal to multi-year daily flows "
+        "(snow accumulation and melt, summer evapotranspiration, low flows) "
+        "reported per sub-basin at gauges, or for a set-up that can be checked "
+        "in HYPE itself. hype is daily only (dt_seconds 86400) and needs "
+        "temperature_fname, landcover_fname, hype_soil_class_fname, the four "
+        "hype_*_fname parameter tables, hype_start_date and exactly one outlet "
+        "mode. The TOPMODEL-only stages (canopy, Green-Ampt, per-cell routing) "
+        "are not used with hype.",
+        "Model structure", "switch", ""};
+
     string_default_map["saturated_zone_mode"] = "index";
     help_map["saturated_zone_mode"] = {"string","index",
         "How the saturated zone is represented.",
@@ -467,7 +1291,10 @@ int main(int argc, char* argv[])
         "Integer class codes matching the code= field of landcover_table. "
         "Drives LAI and the hillslope/floodplain roughness, and selects which "
         "measured soil profile supplies transmissivity. It does NOT set "
-        "channel roughness, which is grain-size controlled.",
+        "channel roughness, which is grain-size controlled. With column_model "
+        "hype it is the land-use raster: its codes key "
+        "hype_landuse_parameters_fname and, with hype_soil_class_fname, the "
+        "classes; landcover_table is not used.",
         "Interception", "param", ""};
 
     string_default_map["landcover_table"] = "";
@@ -828,13 +1655,24 @@ int main(int argc, char* argv[])
         "seasonal run.",
         "Forcing and time", "param", ""};
 
+    string_default_map["temperature_fname"] = "";
+    help_map["temperature_fname"] = {"string","",
+        "CSV of the air temperature series, one row per timestep (HYPE only).",
+        "Must carry a column named temperature_c, in degrees C; negative values "
+        "are fine. Required when column_model is hype, where it drives snow, "
+        "the rain/snow split and calculated PET. Must have the same number of "
+        "rows as rainfall_fname (and pet_fname, if given). Ignored by topmodel.",
+        "Forcing and time", "param", "column_model"};
+
     float_default_map["dt_seconds"] = 3600.0f;
     help_map["dt_seconds"] = {"float","3600.0",
         "The outer timestep (seconds).",
         "The forcing and the reporting both live on this step and it never "
         "moves: there is no adaptive stepping, because the routing schemes have "
         "no stability limit to dodge. Sub-cycling inside the routing operator "
-        "is available separately.",
+        "is available separately. With column_model hype the step must be "
+        "daily: leave it unset (the run uses 86400 and says so) or set 86400; "
+        "any other value is an error.",
         "Forcing and time", "param", ""};
 
     int_default_map["n_timesteps"] = 0;
@@ -842,7 +1680,8 @@ int main(int argc, char* argv[])
         "Number of timesteps to run.",
         "0 runs the length of the rainfall series. A larger value continues "
         "past the end of the series with zero rainfall, which is how you let a "
-        "recession play out.",
+        "recession play out. With column_model hype it may not exceed the "
+        "forcing length, because there is no temperature to continue with.",
         "Forcing and time", "param", ""};
 
     int_default_map["routing_substeps"] = 0;
@@ -857,7 +1696,9 @@ int main(int argc, char* argv[])
     bool_default_map["write_discharge_csv"] = true;
     help_map["write_discharge_csv"] = {"bool","true",
         "Write the outlet hydrograph and the per-step fluxes to a CSV table.",
-        "Output file: <write_fname>_discharge.csv.",
+        "Output file: <write_fname>_discharge.csv. With column_model hype: "
+        "<write_fname>_hype_discharge.csv, the outflow (cout_<subid>, m3/s) and "
+        "runoff (crun_<subid>, mm) of every sub-basin per step.",
         "Outputs", "switch", ""};
 
     bool_default_map["write_water_balance_csv"] = true;
@@ -866,7 +1707,9 @@ int main(int argc, char* argv[])
         "Output file: <write_fname>_water_balance.csv. The closure error is a "
         "small difference of large numbers and is the best single tripwire "
         "this model has for a structural mistake, so it is a first-class "
-        "output and not a line of console text.",
+        "output and not a line of console text. With column_model hype: "
+        "<write_fname>_hype_water_balance.csv, the domain balance in m3; the "
+        "storage pass that closes it runs only when this is true.",
         "Outputs", "switch", ""};
 
     bool_default_map["write_saturation_raster"] = false;
@@ -911,6 +1754,134 @@ int main(int argc, char* argv[])
         "instantaneous unit hydrograph and it integrates to one.",
         "Outputs", "switch", ""};
 
+    // --- HYPE column ---
+    //
+    // HYPE's general parameters are not .param keys. The first version reads
+    // them from a CSV table instead (name,value), the same
+    // table the oracle cases use (tests/expected/hype/*/lsdtt_input), so one
+    // set of readers and one validation path serves the oracle tests and the
+    // CLI, and a parameter set can be moved between the two unchanged.
+    string_default_map["hype_soil_class_fname"] = "";
+    help_map["hype_soil_class_fname"] = {"string","",
+        "Raster of integer soil codes, on the DEM grid (HYPE only).",
+        "Together with the land-use codes in landcover_fname it defines the "
+        "classes: every (land use, soil) pair present must have a row in "
+        "hype_classes_fname. Soil data is user-supplied; codes must match "
+        "hype_soil_parameters_fname. Nodata pixels are left out of the class "
+        "fractions.",
+        "HYPE column", "param", "column_model"};
+
+    string_default_map["hype_general_parameters_fname"] = "";
+    help_map["hype_general_parameters_fname"] = {"string","",
+        "CSV of HYPE's general parameters, columns name,value (HYPE only).",
+        "Names are HYPE's own (ttpd, ttpi, tcalt, lp, epotdist, fsceff, "
+        "whcsnow, rrcs3, rivvel, damp, cevpam, cevpph). A parameter that is "
+        "absent is 0, as in HYPE; an unrecognised name is an error rather "
+        "than silently ignored. The first version requires fsceff = 0.",
+        "HYPE column", "param", "column_model"};
+
+    string_default_map["hype_landuse_parameters_fname"] = "";
+    help_map["hype_landuse_parameters_fname"] = {"string","",
+        "CSV of HYPE land-use parameters, one row per land-use code (HYPE only).",
+        "Columns: code, then any of ttmp, cmlt, cevp, srrcs, pcluse. The codes "
+        "are those of landcover_fname. Absent columns are 0; unknown columns "
+        "are an error.",
+        "HYPE column", "param", "column_model"};
+
+    string_default_map["hype_soil_parameters_fname"] = "";
+    help_map["hype_soil_parameters_fname"] = {"string","",
+        "CSV of HYPE soil parameters, one row per soil code (HYPE only).",
+        "Columns: code, then any of wcwp, wcfc, wcep, rrcs1, rrcs2, mperc1, "
+        "mperc2, macrate, srrate, mactrinf, mactrsm. wcwp, wcfc and wcep are "
+        "STACKED volume fractions (wilting point; wilting point to field "
+        "capacity; above field capacity), not cumulative contents.",
+        "HYPE column", "param", "column_model"};
+
+    string_default_map["hype_classes_fname"] = "";
+    help_map["hype_classes_fname"] = {"string","",
+        "CSV of HYPE classes (GeoClass rows), one row per class (HYPE only).",
+        "Columns class_id, landuse, soil, n_layers, layer1_bottom_m required; "
+        "layer2_bottom_m, layer3_bottom_m, stream_depth_m, tile_depth_m "
+        "optional. Each (landuse, soil) pair may appear once.",
+        "HYPE column", "param", "column_model"};
+
+    string_default_map["hype_start_date"] = "";
+    help_map["hype_start_date"] = {"string","",
+        "Date of the first forcing row, as YYYY-MM-DD (HYPE only).",
+        "Required for hype. The model needs the day of year of every step "
+        "(seasonal PET correction), and it is counted from this date one day "
+        "per row. The forcing CSVs need no date column; one that is present "
+        "is ignored.",
+        "HYPE column", "param", "column_model"};
+
+    // --- HYPE sub-basin outlets ---
+    //
+    // The keys and their meaning are lsdtt-basin-extraction's, so a set of
+    // outlets chosen there can be carried straight across.
+    bool_default_map["select_basins_from_outlets"] = false;
+    help_map["select_basins_from_outlets"] = {"bool","false",
+        "HYPE outlets from supplied outlet points (one of three outlet modes).",
+        "Reads basin_outlet_fname, snaps each point with "
+        "basin_outlet_snapping_method, and uses the junction basins at those "
+        "points as sub-basin outlets, as lsdtt-basin-extraction does. Gauges "
+        "along one river become a chain of sub-basins.",
+        "HYPE sub-basin outlets", "switch", "column_model"};
+
+    bool_default_map["select_all_basins_of_stream_order"] = false;
+    help_map["select_all_basins_of_stream_order"] = {"bool","false",
+        "HYPE outlets at every junction basin of one stream order.",
+        "One of three outlet modes. The order is selected_stream_order, on "
+        "the channel network defined by threshold_contributing_pixels.",
+        "HYPE sub-basin outlets", "switch", "column_model"};
+
+    int_default_map["selected_stream_order"] = -1;
+    help_map["selected_stream_order"] = {"int","-1",
+        "Exact stream order used by select_all_basins_of_stream_order.",
+        "Must be > 0 when select_all_basins_of_stream_order is true.",
+        "HYPE sub-basin outlets", "param", "select_all_basins_of_stream_order"};
+
+    bool_default_map["filter_basins_by_stream_order"] = false;
+    help_map["filter_basins_by_stream_order"] = {"bool","false",
+        "HYPE outlets at every junction basin within a stream-order range.",
+        "One of three outlet modes. Junction basins between "
+        "basins_min_stream_order and basins_max_stream_order are kept. Use -1 "
+        "for either bound to ignore that bound.",
+        "HYPE sub-basin outlets", "switch", "column_model"};
+
+    int_default_map["basins_min_stream_order"] = -1;
+    help_map["basins_min_stream_order"] = {"int","-1",
+        "Minimum stream order to keep when filtering basins.",
+        "Inclusive. Defaults to -1, which means ignore minimum.",
+        "HYPE sub-basin outlets", "param", "filter_basins_by_stream_order"};
+
+    int_default_map["basins_max_stream_order"] = -1;
+    help_map["basins_max_stream_order"] = {"int","-1",
+        "Maximum stream order to keep when filtering basins.",
+        "Inclusive. Defaults to -1, which means ignore maximum.",
+        "HYPE sub-basin outlets", "param", "filter_basins_by_stream_order"};
+
+    lsdtt::declare_basin_outlet_parameters(bool_default_map, int_default_map,
+                                           float_default_map, string_default_map,
+                                           help_map);
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
+
+    // --- HYPE outputs ---
+    bool_default_map["write_hype_subbasin_raster"] = false;
+    help_map["write_hype_subbasin_raster"] = {"bool","false",
+        "Write the HYPE sub-basin id raster.",
+        "Output file: <write_fname>_hype_subbasins.tif (extension follows "
+        "write_output_format). Each pixel carries its sub-basin id (subid); "
+        "pixels outside every sub-basin are nodata.",
+        "HYPE outputs", "switch", "column_model"};
+
+    bool_default_map["write_hype_geodata"] = false;
+    help_map["write_hype_geodata"] = {"bool","false",
+        "Write the derived set-up as HYPE GeoData.txt and GeoClass.txt.",
+        "Output directory: <write_fname>_hype_geodata/. These are HYPE's own "
+        "tab-separated input tables, so the DEM-derived set-up can be run in "
+        "HYPE itself.",
+        "HYPE outputs", "switch", "column_model"};
+
     lsdtt::declare_raster_output_format_parameter(string_default_map, help_map);
 
     // -------------------------------------------------------------------------
@@ -947,6 +1918,25 @@ int main(int argc, char* argv[])
 
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
+
+    // -------------------------------------------------------------------------
+    // Column model
+    //
+    // The HYPE path branches off HERE, before any TOPMODEL mode is resolved or
+    // any TOPMODEL work is done, and never comes back: it shares the parameter
+    // file and the DEM preparation conventions, and nothing else.
+    // -------------------------------------------------------------------------
+    const std::string column_model_str = lsdtt::to_lower_ascii(sf["column_model"]);
+    if (column_model_str == "hype")
+    {
+        return run_hype_model(pp, bf, ff, ifs, sf, help_map, out_fmt);
+    }
+    if (column_model_str != "topmodel")
+    {
+        std::cerr << "FATAL: column_model must be 'topmodel' or 'hype'. Got: "
+                  << sf["column_model"] << "\n";
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Cross-parameter logic
@@ -1246,13 +2236,13 @@ int main(int argc, char* argv[])
     std::vector<double> pet_series;
     try
     {
-        rainfall_series = load_depth_series(
+        rainfall_series = lsdtt::load_distributed_hydrology_depth_series(
             pp.add_read_path_if_needed(sf["rainfall_fname"]),
             "rainfall_metres", "rainfall_mm");
 
         if (!sf["pet_fname"].empty())
         {
-            pet_series = load_depth_series(
+            pet_series = lsdtt::load_distributed_hydrology_depth_series(
                 pp.add_read_path_if_needed(sf["pet_fname"]),
                 "pet_metres", "pet_mm");
         }

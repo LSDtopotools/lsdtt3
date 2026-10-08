@@ -59,7 +59,7 @@ namespace lsdtt
 struct valley_centreline_request
 {
     // -------------------------------------------------------------------------
-    // Supplied valley mask (phase 5 of the fluvial-surfaces plan)
+    // Supplied valley mask
     //
     // When non-null, the engine does NOT identify the valley. It skips the
     // corridor HAND break search entirely and takes each channel's valley as

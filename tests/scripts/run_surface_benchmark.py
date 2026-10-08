@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Surface-metrics SPEED benchmark driver: lsdtt-surface-metrics vs TopoToolbox.
 
-Phases 3 and 4 of the surface-metrics testing plan. Sibling of
+Phases 3 and 4 of the surface-metrics testing. Sibling of
 run_flow_benchmark.py, and deliberately built the same way: --fixture,
 --comparison, --check, --work-dir, and exit 77 (CTest's skip code) whenever a
 dependency or the network is missing, so an optional benchmark can never turn
@@ -11,7 +11,7 @@ WHAT THIS IS AND IS NOT
 -----------------------
 **TopoToolbox is a PERFORMANCE reference here, not a correctness reference.**
 Correctness for the polyfit chain is handled by the analytic Taylor oracle in
-`lsdtt_raster_synthetic_surfaces_cpu.hpp` (plan Tier A), which is exact, offline
+`lsdtt_raster_synthetic_surfaces_cpu.hpp` (Tier A), which is exact, offline
 and covers all 27 derived metrics -- 23 of which have no TopoToolbox
 counterpart at all.
 
@@ -23,7 +23,7 @@ near-zero correlation means the two tools computed unrelated things and the
 timing is between unlike computations, so it must not be published. A high
 correlation with the opposite sign is fine and expected.
 
-EQUIVALENCE OF WORK (plan Sec2) -- a timing number that violates these is invalid
+EQUIVALENCE OF WORK -- a timing number that violates these is invalid
 -------------------------------------------------------------------------------
 1. Same window support. lsdtt3's half-width is
    `W = max(1, round(polyfit_lambda_metres / (2 * cell_size)))`, giving a
@@ -348,8 +348,8 @@ def band_dtype(path: pathlib.Path) -> str:
 
     load_raster casts everything to float64 for comparison arithmetic, so
     asking it for the dtype would report float64 for every raster and quietly
-    hide a genuine precision difference between the two tools -- which plan
-    Sec2.5 requires be stated next to the timing.
+    hide a genuine precision difference between the two tools -- which must
+    be stated next to the timing.
     """
     from osgeo import gdal
     gdal.UseExceptions()
@@ -369,7 +369,7 @@ def window_half_width(lambda_m: float, cell_size: float) -> int:
 
     Duplicated here on purpose so the driver can REPORT the window it believes
     lsdtt3 used. If the C++ formula ever changes, this comparison silently
-    stops being like-for-like, so the plan asks for a separate unit test
+    stops being like-for-like, so it needs a separate unit test
     asserting W == 1 at 30 m / lambda 70 rather than relying on this copy.
     """
     return max(1, int(round(lambda_m / (2.0 * cell_size))))
@@ -659,7 +659,7 @@ def study_window_scaling(exe, fixture, work_dir, cell_size, repeats, row0):
     not depend on the window. W = 40 is an 81x81 window; a naive per-pixel fit
     would be thousands of times slower there than at W = 1, so if the curve is
     anywhere near flat the claim holds, and if it is not, the documentation is
-    wrong. Reported, never asserted -- see the plan.
+    wrong. Reported, never asserted.
     """
     rows = []
     for W in WINDOW_HALF_WIDTHS:
@@ -775,7 +775,7 @@ def main() -> int:
     print("               curvature are single-threaded scipy convolutions, so "
           "only the n_threads=1 ratio is an algorithmic statement.")
     if args.repeats < 5:
-        print("WARNING: --repeats below 5; the plan asks for N >= 5.")
+        print("WARNING: --repeats below 5; N >= 5 is required for a stable median.")
 
     names = list(COMPARISONS) if args.comparison == "all" else [args.comparison]
 

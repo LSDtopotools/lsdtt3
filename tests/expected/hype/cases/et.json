@@ -1,0 +1,114 @@
+{
+  "name": "et",
+  "description": "Potential evaporation (option 0, seasonal coefficient) and actual evapotranspiration from the top two layers, with the PET layer split. No snow (temperature always above ttmp); diversion, percolation and soil runoff off.",
+  "processes": [
+    "class_forcing",
+    "pet",
+    "aet"
+  ],
+  "dates": {
+    "start": "2001-01-01",
+    "end": "2001-04-30"
+  },
+  "general": {
+    "rivvel": 1.0,
+    "damp": 0.5,
+    "ttpd": 0.0,
+    "ttpi": 1.0,
+    "lp": 0.7,
+    "epotdist": 4.0,
+    "cevpam": 0.4,
+    "cevpph": 30.0
+  },
+  "landuse": {
+    "1": {
+      "ttmp": -10.0,
+      "cmlt": 0.0,
+      "cevp": 0.25,
+      "srrcs": 0.0,
+      "pcluse": 0.0
+    }
+  },
+  "soil": {
+    "1": {
+      "wcwp": 0.08,
+      "wcfc": 0.22,
+      "wcep": 0.12,
+      "mperc1": 0.0,
+      "mperc2": 0.0,
+      "macrate": 0.0,
+      "srrate": 0.0,
+      "mactrinf": 0.0,
+      "mactrsm": 0.0,
+      "rrcs1": 0.0,
+      "rrcs2": 0.0
+    }
+  },
+  "classes": {
+    "1": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.15,
+        0.5,
+        1.2
+      ],
+      "stream_depth_m": 0.0
+    }
+  },
+  "subbasins": [
+    {
+      "subid": 1,
+      "maindown": 0,
+      "area_m2": 1000000.0,
+      "elev_mean_m": 100,
+      "slope_mean_percent": 5,
+      "loc_rivlen_m": 1000,
+      "rivlen_m": 2000,
+      "classes": {
+        "1": {
+          "fraction": 1.0,
+          "dh_m": 0
+        }
+      }
+    }
+  ],
+  "forcing": {
+    "precip_pattern_mm": [
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      0,
+      0,
+      10,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      6
+    ],
+    "temp_mean_c": 8.0,
+    "temp_amp_c": 9.0,
+    "temp_period_steps": 120,
+    "temp_phase_steps": 30
+  },
+  "class_outputs": [
+    "epot",
+    "evap",
+    "sml1",
+    "sml2",
+    "sml3"
+  ],
+  "basin_outputs": []
+}

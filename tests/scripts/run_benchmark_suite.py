@@ -424,7 +424,7 @@ CASES: dict[str, dict[str, Any]] = {
                  "matched to fill_min_slope * cell size"),
         # Whitebox: the Wang & Liu tool, not `fill_epsilon` (its Barnes-style
         # fill_depressions), which disagrees with three other implementations
-        # by up to 9.78 m (benchmarking plan section 2.2) -- and until
+        # by up to 9.78 m -- and until
         # 2026-09-13 it also ran at Whitebox's default flat_increment of 1e-4 m
         # per cell against lsdtt3's 1e-4 GRADIENT (3e-3 m per cell at 30 m),
         # a 30x different amount of flat work. The increment is now matched
@@ -1854,6 +1854,31 @@ def read_mem_total_kb() -> int | None:
     return None
 
 
+def usable_cores() -> int:
+    """CPUs this PROCESS may run on, which is not the machine's CPU count.
+
+    `os.cpu_count()` reports the cores the machine has and ignores affinity
+    entirely. A process pinned with `taskset`, confined by a cpuset, or handed
+    a partial allocation by a scheduler still sees the full number -- so a
+    thread sweep can run its "8 thread" rows on two CPUs while every guard in
+    this file reports the machine as idle and unoversubscribed.
+
+    That is not hypothetical. A 2026-09-21 server campaign on a 192-core EPYC
+    recorded `logical_cores: 192` and `oversubscribed: false` while the login
+    session held `Cpus_allowed_list: 1,97` -- two hyperthread siblings of one
+    physical core. OpenMP saw 2. Every scaling row above 2 threads was
+    time-slicing, and the manifest positively asserted it was fine.
+
+    `sched_getaffinity` respects taskset and cpuset and is what OpenMP itself
+    ends up honouring. It is Linux-only, hence the fallback; on macOS and
+    Windows `cpu_count()` remains the best available answer.
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
 def detect_cpu_governors() -> dict[str, Any]:
     """CPU frequency governors, one of the few things that silently invalidates
     a timing campaign.
@@ -1966,7 +1991,13 @@ def capture_hardware_manifest(build_dir: pathlib.Path,
             "python": sys.version,
         },
         "cpu": {
+            # BOTH numbers, because their disagreement is the finding.
+            # `logical_cores` is what the machine has; `usable_cores` is what
+            # this process was allowed. A campaign where they differ had its
+            # thread sweep run inside the smaller number.
             "logical_cores": os.cpu_count(),
+            "usable_cores": usable_cores(),
+            "affinity_restricted": usable_cores() != (os.cpu_count() or 1),
             "lscpu": run_capture(["lscpu"]).get("stdout", ""),
             "governors": detect_cpu_governors(),
         },
@@ -2119,7 +2150,10 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append(f"# lsdtt3 benchmark campaign - {manifest['profile']}")
     L.append("")
     L.append(f"- host: `{hw['hostname']}` ({hw['machine']}, "
-             f"{cpu.get('logical_cores')} logical cores)")
+             f"{cpu.get('logical_cores')} logical cores"
+             + (f", **{cpu.get('usable_cores')} usable by this process**"
+                if cpu.get("affinity_restricted") else "")
+             + ")")
     L.append(f"- platform: {hw['platform']}")
     L.append(f"- lsdtt3 git: `{manifest['hardware']['toolchain']['git']['sha']}`"
              f"{' **(dirty tree)**' if manifest['hardware']['toolchain']['git'].get('dirty') else ''}")
@@ -2132,6 +2166,17 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
                  f"`{cmake.get('CMAKE_BUILD_TYPE') or 'unset'}`, not Release.** "
                  "These numbers measure a non-optimised build and must not be "
                  "quoted as lsdtt3's performance.")
+    if cpu.get("affinity_restricted"):
+        L.append("")
+        L.append(f"> **This process was restricted to "
+                 f"{cpu.get('usable_cores')} of {cpu.get('logical_cores')} "
+                 f"CPUs by an affinity mask or cpuset.** Any scaling row above "
+                 f"{cpu.get('usable_cores')} threads was time-slicing, not "
+                 "parallelism, and is a mislabelled result rather than a slow "
+                 "one. Single-thread throughput and peak memory are "
+                 "unaffected. Check `taskset -cp $$`; on a scheduler, run in "
+                 "an allocation rather than on a login node.")
+        L.append("")
     L.append(f"- references: richdem `{pkgs.get('richdem')}`, "
              f"topotoolbox `{pkgs.get('topotoolbox')}`, "
              f"whitebox_workflows `{pkgs.get('whitebox_workflows')}`")
@@ -2678,14 +2723,28 @@ def main() -> int:
     # mislabelled one, and it is indistinguishable from a genuine scaling
     # ceiling. The Slurm wrapper enforces this for its allocation; enforce it
     # here too, because most runs will not go through Slurm.
-    cores = os.cpu_count() or 1
+    cores = usable_cores()
+    machine_cores = os.cpu_count() or 1
     if max(profile["threads"]) > cores:
         print(f"WARNING: --threads goes up to {max(profile['threads'])} but "
-              f"this machine reports {cores} logical cores.\n"
+              f"this process may use {cores} CPUs.\n"
               f"         Rows above {cores} threads will be oversubscribed and "
               f"their scaling figures are not meaningful.\n"
               f"         Pass --threads with a smaller list to avoid this.",
               file=sys.stderr)
+        # Say WHY when the limit is affinity rather than hardware. "2 CPUs" on
+        # a machine with 192 reads as a mistake in this script unless the
+        # message names the mask, and the fix is a different one: widen the
+        # affinity or get a real allocation, not shorten the sweep.
+        if cores < machine_cores:
+            print(f"         NOTE: this machine has {machine_cores} logical "
+                  f"cores but the process is restricted to {cores}.\n"
+                  f"         Check `grep Cpus_allowed_list /proc/self/status` "
+                  f"and `taskset -cp $$`.\n"
+                  f"         On a scheduler, run the campaign in an allocation "
+                  f"(see tests/scripts/slurm_benchmark.sbatch), not on a "
+                  f"login node.",
+                  file=sys.stderr)
 
     build_dir = pathlib.Path(args.build_dir)
     if not build_dir.is_absolute():
@@ -2896,7 +2955,13 @@ def main() -> int:
         "hardware": hardware,
         "filesystems": filesystems,
         "min_trustworthy_factor": MIN_TRUSTWORTHY_FACTOR,
-        "logical_cores": cores,
+        # `cores` is the AFFINITY-aware count, so `oversubscribed` now means
+        # what it claims. `logical_cores` keeps the machine's number under its
+        # existing name so older campaigns stay comparable, and the two new
+        # keys make the restriction explicit rather than inferable.
+        "logical_cores": machine_cores,
+        "usable_cores": cores,
+        "affinity_restricted": cores < machine_cores,
         "oversubscribed": max(profile["threads"]) > cores,
     }
 

@@ -11,7 +11,7 @@
 // The format contract: every driver lsdtt3 declares support for is present, and
 // lsdtt3 can actually read a raster written in it.
 //
-// Chunk 2a of the GDAL/PROJ friction work (docs/plan_docs, §5.0). Phase 2 will
+// Chunk 2a of the GDAL/PROJ friction work. Phase 2 will
 // build GDAL from source with a TRIMMED driver set. The whole risk of that is
 // quietly dropping a format users feed in, and a trimmed build fails in exactly
 // the same way as a correct one -- silently, until someone's DEM will not open.
@@ -22,7 +22,7 @@
 // It is therefore a HARD failure when a required driver is missing, not a skip.
 // A skip here would defeat the entire purpose.
 //
-// The required set is §5.2 of the plan, which is Simon's D2/D6 answers:
+// The required set, which is Simon's D2/D6 answers:
 //   write: GTiff, COG, PNG, MEM, VRT, GPKG, FlatGeobuf
 //   read:  all of the above plus GeoJSON, AAIGrid, ENVI, EHdr, HFA, netCDF,
 //          HDF5, SRTMHGT, PDS4, ISIS3, Zarr, ESRI Shapefile

@@ -217,8 +217,7 @@ struct lsdtt_streamline_options
     int n_threads = 0;
 
     // -------------------------------------------------------------------------
-    // Reuse instrumentation (plan_hillslope_channel_coupling_cli.md section 4.3,
-    // Step 0).  OFF by default and guarded in the hot loop.
+    // Reuse instrumentation.  OFF by default and guarded in the hot loop.
     //
     // The trace is iteration of a pure map on the 3-tuple
     // (cell, inlet face, entry coordinate p in [0,1]), so any two traces that

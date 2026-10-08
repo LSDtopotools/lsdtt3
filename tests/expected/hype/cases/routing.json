@@ -1,0 +1,132 @@
+{
+  "name": "routing",
+  "description": "Local and main river translation plus damping in two sub-basins in series (1 -> 2), with fractional translation steps (rivvel 0.5 m/s, damp 0.4). Column as in soil_runoff without snow.",
+  "processes": [
+    "column",
+    "routing"
+  ],
+  "dates": {
+    "start": "2001-01-01",
+    "end": "2001-04-30"
+  },
+  "general": {
+    "rivvel": 0.5,
+    "damp": 0.4,
+    "ttpd": 0.0,
+    "ttpi": 1.0,
+    "lp": 0.8,
+    "epotdist": 4.0,
+    "rrcs3": 0.002
+  },
+  "landuse": {
+    "1": {
+      "ttmp": -10.0,
+      "cmlt": 0.0,
+      "cevp": 0.1,
+      "srrcs": 0.1,
+      "pcluse": 0.0
+    }
+  },
+  "soil": {
+    "1": {
+      "wcwp": 0.1,
+      "wcfc": 0.2,
+      "wcep": 0.2,
+      "mperc1": 10.0,
+      "mperc2": 5.0,
+      "macrate": 0.0,
+      "srrate": 0.1,
+      "mactrinf": 10.0,
+      "mactrsm": 0.5,
+      "rrcs1": 0.3,
+      "rrcs2": 0.05
+    }
+  },
+  "classes": {
+    "1": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.1,
+        0.4,
+        1.2
+      ],
+      "stream_depth_m": 0.8
+    }
+  },
+  "subbasins": [
+    {
+      "subid": 1,
+      "maindown": 2,
+      "area_m2": 50000000.0,
+      "elev_mean_m": 200,
+      "slope_mean_percent": 8,
+      "loc_rivlen_m": 30000,
+      "rivlen_m": 60000,
+      "classes": {
+        "1": {
+          "fraction": 1.0,
+          "dh_m": 0
+        }
+      }
+    },
+    {
+      "subid": 2,
+      "maindown": 0,
+      "area_m2": 30000000.0,
+      "elev_mean_m": 80,
+      "slope_mean_percent": 3,
+      "loc_rivlen_m": 20000,
+      "rivlen_m": 100000,
+      "classes": {
+        "1": {
+          "fraction": 1.0,
+          "dh_m": 0
+        }
+      }
+    }
+  ],
+  "forcing": {
+    "precip_pattern_mm": [
+      0,
+      0,
+      25,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      40,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      5,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "temp_mean_c": 10.0,
+    "temp_amp_c": 6.0,
+    "temp_period_steps": 120,
+    "temp_phase_steps": 30
+  },
+  "class_outputs": [],
+  "basin_outputs": [
+    "cout",
+    "cloc",
+    "crun"
+  ]
+}

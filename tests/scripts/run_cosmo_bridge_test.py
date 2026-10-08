@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Forward -> inverse CLI bridge, plus knob coverage (cosmo CLI test plan Phase 4).
+"""Forward -> inverse CLI bridge, plus knob coverage.
 
 THE POINT OF THIS TEST. Every other cosmo test drives the LIBRARY. This one
 drives the two CLIs against each other: lsdtt-cosmo-prediction forward-models a
@@ -154,7 +154,7 @@ CASES = [
     ("muon_Granger",  0.01,   {"muon_scheme": "Granger"}),
     ("muon_Schaller", 0.01,   {"muon_scheme": "Schaller"}),
     ("muon_newCRONUS", 0.01,  {"muon_scheme": "newCRONUS"}),
-    # CRONUS v3 emulator (plan Phase 3).  These take a DIFFERENT code path from
+    # CRONUS v3 emulator.  These take a DIFFERENT code path from
     # every case above -- a dedicated per-pixel branch in the forward raster and
     # a per-pixel basin precompute in the inversion, because their muon terms
     # are pressure-dependent.  The generic reset_scaling()/scale_F_values() path

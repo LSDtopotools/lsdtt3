@@ -317,7 +317,7 @@ double seconds_since(std::chrono::steady_clock::time_point t0)
 
 
 // =============================================================================
-// NC -- sample_at_nearest_channel (plan item A0)
+// NC -- sample_at_nearest_channel
 //
 // The value of a raster AT the nearest downstream channel pixel. Distinct from
 // get_distance_to_channel_raster, which is the distance TO it -- the two are

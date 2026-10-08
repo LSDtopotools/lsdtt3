@@ -165,7 +165,7 @@ struct flat_surface_classify_request
     // from carrying the terrace class across the whole interfluve.
     bool   terrace_corridor_per_pixel         = true;
 
-    // --- Band-then-label (phase 1 of the fluvial-surfaces plan) -------------
+    // --- Band-then-label --------------------------------------------------
     //
     // When true the incoming labels are DISCARDED and rebuilt: the HAND field
     // is stratified by the reference-field ladder, and connected components are

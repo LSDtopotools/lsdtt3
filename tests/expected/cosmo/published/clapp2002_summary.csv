@@ -1,4 +1,4 @@
-# Clapp et al. (2002) Yuma Wash validation SUMMARY -- FROZEN (cosmo plan Phase 6).
+# Clapp et al. (2002) Yuma Wash validation SUMMARY -- FROZEN.
 #
 # Written/refreshed by tests/scripts/run_cosmo_validation.py. Each accepted run
 # appends one row per basin: the lsdtt3 inverted rate vs the OCTOPUS-published

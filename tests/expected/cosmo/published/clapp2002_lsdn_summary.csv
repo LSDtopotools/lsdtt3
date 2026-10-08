@@ -1,6 +1,6 @@
 # Clapp et al. (2002) Yuma Wash -- LSDn tier validation SUMMARY (FROZEN).
 #
-# lsdn plan Phase 6 deliverable (iii): the END-TO-END PER-PIXEL LSDn tier.
+# The END-TO-END PER-PIXEL LSDn tier.
 # Written by tests/scripts/run_cosmo_validation.py from the manifest
 # clapp2002_lsdn_manifest.json (same bbox, same run knobs and the SAME sample table as
 # the Stone tier's clapp2002; the only changes are scaling_scheme: lsdn and the

@@ -8,8 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Phase 2 of the triggered landslide module: turning a volume budget into a
-// number of landslides and placing them. Tests T11-T13b of
-// docs/plan_docs/landslide_event_module_plan.md:
+// number of landslides and placing them. Tests T11-T13b:
 //
 //   T11  achieved volume within tolerance of requested, over many seeds
 //   T12  non-convergence is REPORTED, not silently accepted
@@ -317,7 +316,7 @@ int main(int argc, char** argv)
     // -------------------------------------------------------------------------
     // T13b -- N responds to A_max. Pinned so nobody "fixes" it later.
     // -------------------------------------------------------------------------
-    std::cout << "\nT13b: landslide count responds to A_max (plan 2.5)\n";
+    std::cout << "\nT13b: landslide count responds to A_max\n";
     {
         const std::string csv = outdir + "/landslide_budget_vs_amax.csv";
         FILE* f = std::fopen(csv.c_str(), "w");
@@ -363,7 +362,7 @@ int main(int argc, char** argv)
 
         check(n_at_100 > n_at_400,
               "a smaller A_max needs MORE landslides for the same budget "
-              "(E[V] falls) -- intended, see plan 2.5");
+              "(E[V] falls) -- intended");
     }
 
     // -------------------------------------------------------------------------

@@ -11,7 +11,7 @@
 #
 # EXPECTED, NOT ZERO residual (Simon 2026-07-24): lsdtt3 has diverged from stock
 # CAIRN -- updated production-rate parameters + a HIGH-ELEVATION production-scaling
-# fix this suite found (S_tot>=1 clamp, plan §9b). Residual is ELEVATION-DEPENDENT;
+# fix this suite found (S_tot>=1 clamp). Residual is ELEVATION-DEPENDENT;
 # the cluster below deliberately spans 1962-3480 m so the trend is visible.
 # elevation_ave_m is carried through to the summary for exactly this reason.
 #

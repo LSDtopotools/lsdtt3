@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fit a 3-exponential lsdtt-style muon approximation to Balco v3 tabulated 1A.
 
-This is an offline analysis helper for Phase 4 of the muon-scheme isolation plan.
+This is an offline analysis helper for the muon-scheme isolation work.
 It reads the frozen `balco_v3_nmu_reference.csv`, fits shared attenuation lengths
 with a shared muon split ratio, and writes a frozen fit report CSV.
 """

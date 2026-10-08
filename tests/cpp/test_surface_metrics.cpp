@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Offline validation driver for the lsdtt-surface-metrics compute core
-// (Phases 1 and 2 of the surface-metrics testing plan).
+// (Phases 1 and 2 of the surface-metrics testing).
 //
 // Everything here is generated in-process: no network, no committed data, no
 // test framework.  One PASS/FAIL line per check, a final "N / M checks passed"
@@ -388,7 +388,7 @@ void test_window_support()
 //   elevations propagates to roughly eps*Z/(W*L)^2 on z_xx.  With Z ~ 1e3 m,
 //   eps ~ 1.2e-7, W = 1 and L = 10 m that is ~1e-7 * 1e3 / 100 ~ 1e-6 in
 //   absolute terms, against true curvatures of order 1e-3 -- i.e. ~1e-3
-//   relative.  The plan's hoped-for 1e-6 relative on the curvature
+//   relative.  The hoped-for 1e-6 relative on the curvature
 //   coefficients is therefore NOT reachable from a float32 DEM at W = 1; it is
 //   reachable for the first-derivative and constant coefficients, which are not
 //   divided by the window size squared.

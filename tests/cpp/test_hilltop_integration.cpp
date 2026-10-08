@@ -487,7 +487,7 @@ int main(int argc, char** argv)
 
 
     // =========================================================================
-    // Optional artefacts for visual inspection (plan section 4.7 group A/B).
+    // Optional artefacts for visual inspection (groups A/B).
     //
     // CSV here, deliberately: these are DIAGNOSTIC artefacts for a matplotlib
     // script, not the CLI's product outputs, which default to FlatGeobuf.
@@ -568,8 +568,8 @@ int main(int argc, char** argv)
         }
 
         {
-            // Thinned trace geometry: the plan requires written traces to be
-            // thinned (section 4.4) because full-resolution geometry is
+            // Thinned trace geometry: written traces are
+            // thinned because full-resolution geometry is
             // unplottable and unreadable.
             const int thin = 5;
             std::ofstream f(dir + "/trace_paths.csv");

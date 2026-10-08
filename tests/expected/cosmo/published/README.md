@@ -1,8 +1,7 @@
-# Real-landscape cosmogenic validation tier (plan §5b / Phase 6)
+# Real-landscape cosmogenic validation tier
 
 This directory holds the **small, tracked** artefacts of the "download → run →
-delete" real-landscape validation tier for the cosmogenic-nuclide CLIs. See
-`docs/plan_docs/cosmo_cli_testing_plan.md` §5b and §6c(B).
+delete" real-landscape validation tier for the cosmogenic-nuclide CLIs.
 
 **This tier is NOT in CI.** It needs network and time (the DEM fetch is
 **keyless** — Copernicus GLO-30 via lsdtt-fetch-raster — so no API key). It is
@@ -143,7 +142,7 @@ excluded from the band — a delineation limit, not a numeric bug.
 
 ## The LSDn tier — `dethier2014_lsdn`, `clapp2002_lsdn`, `dibiase2010_lsdn`
 
-Added **2026-07-26** (LSDn plan Phase 6 deliverable (iii)): the same three landscapes
+Added **2026-07-26**: the same three landscapes
 run with `scaling_scheme: lsdn` and compared against OCTOPUS's **`EBEL`** (LSDn)
 instead of `EBE_*` (Stone/Lal).
 
@@ -194,4 +193,4 @@ label, so lsdtt3 (correctly, like CAIRN `LSDCosmoData.cpp:313`) applied the AMS 
 scatter to the clean uniform muon offset above. The three *calculator* differences
 (muon 5.65 %, topo −0.7 %, atmosphere +0.64 %) remain real but small; see each
 manifest's `residual_expectation`, the pilot `calculator_differences` +
-`standardisation_convention` + `decisive_result` blocks, and the plan §6e / §9b log.
+`standardisation_convention` + `decisive_result` blocks.

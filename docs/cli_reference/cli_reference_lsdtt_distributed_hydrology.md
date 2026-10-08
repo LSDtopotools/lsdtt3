@@ -1,6 +1,11 @@
 # CLI reference: lsdtt-distributed-hydrology
 
-Runs a time-evolving distributed hydrological model combining TOPMODEL saturation-excess routing with optional interception, infiltration excess, and channel routing. Simulates the full water balance from rainfall through groundwater and surface routing to outlet discharge.
+Runs a time-evolving hydrological model with a full water balance, from rainfall to outlet discharge. `column_model` selects one of two models:
+
+- **`topmodel`** (default): a raster TOPMODEL on every pixel, combining saturation-excess runoff with optional interception, infiltration excess and channel routing. Suited to storm events at any time step.
+- **`hype`**: a simplified S-HYPE on sub-basins split into land-use × soil classes, with snow, seasonal evapotranspiration and HYPE's river routing. Daily steps only. See [column_model: hype](#column_model-hype-simplified-s-hype).
+
+The sections from Overview to Outputs describe the TOPMODEL model.
 
 This CLI is **hydrological** (generates discharge from rainfall), not hydraulic. For inundation mapping or hydraulic routing of a known discharge, see [`lsdtt-graphflood`](cli_reference_lsdtt_graphflood.md). For static drainage-related metrics (TWI, STI, connectivity), see [`lsdtt-drainage-analysis`](cli_reference_lsdtt_drainage_analysis.md).
 
@@ -25,7 +30,7 @@ key: value
 
 ---
 
-## Overview
+## Overview (TOPMODEL)
 
 The model runs on a regular raster grid and follows a column-based approach:
 
@@ -344,13 +349,220 @@ write_traveltime_raster: true
 
 ---
 
+## column_model: hype (simplified S-HYPE)
+
+With `column_model: hype` the CLI runs a reimplementation of the land and river processes of HYPE, the hydrological model of the Swedish Meteorological and Hydrological Institute (SMHI; Lindström et al. 2010), using HYPE's default model options. The equations are written from the HYPE 5.36.0 Fortran source and tested against output from HYPE itself. The governing equations, provenance and testing are in [Hydrological modelling in lsdtt3](../design_and_algorithms/hydrological_modelling.md#s-hype).
+
+None of the TOPMODEL sections above apply to this model, apart from:
+
+- the input/output keys;
+- the DEM preparation keys;
+- `rainfall_fname`, `pet_fname`, `landcover_fname`, `dt_seconds` and `n_timesteps`.
+
+`run_interception` and `run_infiltration_excess` are TOPMODEL stages. If either is set, the run prints a note and ignores it.
+
+### How the domain is built
+
+The model does not run on pixels. Its unit is a **sub-basin × class** pair:
+
+1. **D8 flow routing** on the filled DEM, and a channel network from `threshold_contributing_pixels`.
+2. **Sub-basin outlets**, chosen by exactly one of three modes. The keys are those of [`lsdtt-basin-extraction`](cli_reference_lsdtt_basin_extraction.md):
+    - `select_basins_from_outlets: true`: points from `basin_outlet_fname`, snapped with `basin_outlet_snapping_method`.
+        - `expanding_square` moves a point to the nearest pixel above `basin_outlet_contributing_pixels_threshold`.
+        - `downstream` follows flow until it reaches such a pixel.
+        - `none` uses the pixel as given. That pixel must already be on the channel network, or the run stops and names the outlet.
+    - `select_all_basins_of_stream_order: true` with `selected_stream_order`: every junction basin of that Strahler order.
+    - `filter_basins_by_stream_order: true` with `basins_min_stream_order` / `basins_max_stream_order`: every junction basin in that order range.
+
+    In the stream-order modes, a channel that leaves the DEM yields an extra junction basin made of only its edge strip. That strip is merged with the sub-basin above it.
+
+3. **Incremental sub-basins**: each pixel belongs to the first selected outlet downstream of it. Pixels that reach the DEM edge without passing an outlet are outside the model; the run reports how many.
+4. **Classes**: each pixel's (land use, soil) pair is looked up in `hype_classes_fname`. Land use comes from `landcover_fname` and soil from `hype_soil_class_fname`.
+    - Every pair present in the rasters must have a class, or the run stops and lists the missing pairs.
+    - A pixel that is nodata in either raster has no class. It still counts in its sub-basin's area, but not in the class fractions, so it takes on the class mix of the rest of the sub-basin. The run reports the count as `Pixels with no class`.
+    - A sub-basin with no class pixel at all is an error.
+5. **Sub-basin properties** (HYPE's GeoData), all derived from the DEM:
+    - area;
+    - mean and standard deviation of elevation;
+    - each class's area fraction, and its elevation offset from the sub-basin mean;
+    - mean slope, `slope_mean = 100 × mean gradient (m/m)`, from the 3×3 gradient (no angle is computed);
+    - main-river length: the D8 flow distance along the sub-basin's trunk;
+    - local-river length: the mean flow distance from the sub-basin's pixels to that trunk.
+
+Each class runs HYPE's soil column with its own snow and soil-water state (up to three layers). Class runoff is area-weighted into its sub-basin. Sub-basins are routed upstream-first through HYPE's local and main rivers: a translation delay followed by a linear damping box.
+
+### Required inputs
+
+| Key | What it is |
+|---|---|
+| `rainfall_fname` | CSV, one row per day, with `rainfall_mm` or `rainfall_metres`: precipitation depth that day. One series drives the whole domain. A date column, if present, is ignored. |
+| `temperature_fname` | CSV, one row per day, with `temperature_c` (°C; negative values are fine). It must have the same number of rows as the rainfall series. |
+| `pet_fname` | Optional. CSV of observed PET (`pet_mm` or `pet_metres`), same length. If omitted, HYPE's temperature-index PET with its seasonal factor is used. |
+| `hype_start_date` | Date of the first forcing row, `YYYY-MM-DD`. Each step's day of year (needed for the seasonal PET factor) is counted from it, one day per row. |
+| `landcover_fname` | Integer land-use raster on the DEM grid. Its codes key the land-use parameter table. |
+| `hype_soil_class_fname` | Integer soil-code raster on the DEM grid. Its codes key the soil parameter table. |
+| `hype_general_parameters_fname` | Table of general parameters, below. |
+| `hype_landuse_parameters_fname` | Table of land-use parameters, below. |
+| `hype_soil_parameters_fname` | Table of soil parameters, below. |
+| `hype_classes_fname` | Table of classes, below. |
+
+**Rules for all four parameter tables:**
+
+- They are CSV, and parameter names are HYPE's own.
+- An absent parameter is 0, as in HYPE.
+- An unrecognised name is an error, so a typo cannot pass silently.
+- Negative values are rejected, as are out-of-range fractions.
+
+**General parameters** (`name,value` rows):
+
+| Name | Meaning | Units |
+|---|---|---|
+| `ttpd` | Offset of the rain/snow threshold from `ttmp` | °C |
+| `ttpi` | Half-width of the mixed rain/snow interval | °C |
+| `tcalt` | Temperature lapse rate for class elevation offsets | °C per 100 m |
+| `lp` | Fraction of field capacity below which evapotranspiration is reduced | – |
+| `epotdist` | Depth decay of the evapotranspiration split between layers | m⁻¹ |
+| `fsceff` | Effect of fractional snow cover; **must be 0** in this version | – |
+| `whcsnow` | Liquid-water holding capacity of snow, in [0, 1) | – |
+| `rrcs3` | Slope term of the soil-runoff recession coefficient | per % slope per day |
+| `rivvel` | River velocity | m s⁻¹ |
+| `damp` | Fraction of river travel time spent in the damping box, in [0, 1] | – |
+| `cevpam`, `cevpph` | Amplitude and phase of the seasonal PET factor | –, days |
+
+**Land-use parameters** (`code` then any of the columns below; one row per land-use code):
+
+| Column | Meaning | Units |
+|---|---|---|
+| `ttmp` | Threshold temperature for melt and evaporation | °C |
+| `cmlt` | Degree-day melt factor | mm °C⁻¹ day⁻¹ |
+| `cevp` | Temperature-index PET coefficient | mm °C⁻¹ day⁻¹ |
+| `srrcs` | Saturation-excess surface-runoff coefficient | day⁻¹ |
+| `pcluse` | Fraction of precipitation lost as interception, in [0, 1] | – |
+
+**Soil parameters** (`code` then any of the columns below; one row per soil code):
+
+| Column | Meaning | Units |
+|---|---|---|
+| `wcwp`, `wcfc`, `wcep` | **Stacked** volume fractions: below wilting point; wilting point to field capacity; above field capacity. Their sum must not exceed 1 | – |
+| `rrcs1`, `rrcs2` | Soil-runoff recession coefficients, top and bottom layer | day⁻¹ |
+| `mperc1`, `mperc2` | Maximum percolation, layer 1→2 and 2→3 | mm day⁻¹ |
+| `macrate`, `srrate` | Fractions of excess input diverted to macropores and to surface runoff | – |
+| `mactrinf` | Input-rate threshold for that diversion | mm day⁻¹ |
+| `mactrsm` | Soil-moisture threshold for that diversion, as a fraction of layer-1 field capacity | – |
+
+**Classes** (HYPE's GeoClass; one row per class):
+
+- Required columns: `class_id`, `landuse`, `soil`, `n_layers` (1 to 3) and `layer1_bottom_m`.
+- Optional columns: `layer2_bottom_m`, `layer3_bottom_m`, `stream_depth_m` (soil runoff needs it above zero) and `tile_depth_m`.
+- Each (land use, soil) pair may appear once.
+
+### Outputs
+
+| File | Content |
+|---|---|
+| `<write_fname>_hype_discharge.csv` | One row per day: `timestep`, `date`, then `cout_<subid>` (sub-basin outflow, m³ s⁻¹) and `crun_<subid>` (sub-basin runoff, mm) for every sub-basin. |
+| `<write_fname>_hype_subbasins.csv` | One row per sub-basin: `subid`, `maindown` (the sub-basin it drains to; 0 at a domain outlet), outlet coordinates, `area_m2`, `elev_mean_m`, `elev_std_m`, `slope_mean_percent`, `loc_rivlen_m`, `rivlen_m`, `n_classes`. |
+| `<write_fname>_hype_water_balance.csv` | Domain totals in m³: precipitation, evaporation, outflow, initial and final storage, and the closure error. |
+| `<write_fname>_hype_subbasins.tif` | With `write_hype_subbasin_raster: true`: each pixel's sub-basin id; nodata outside the model. |
+| `<write_fname>_hype_geodata/` | With `write_hype_geodata: true`: the derived set-up as HYPE `GeoData.txt` and `GeoClass.txt`, so it can be run in HYPE itself. |
+
+### Restrictions of this version
+
+All of these are enforced at start-up:
+
+- **Time step:** daily steps only. `dt_seconds` defaults to 86400 when not set; any other value is an error. `n_timesteps` may not run past the end of the forcing.
+- **Options fixed:** `fsceff = 0` (no fractional snow cover).
+- **Processes not included:**
+    - snow sublimation;
+    - tile drainage;
+    - frozen soil;
+    - lakes;
+    - regional groundwater;
+    - nutrients;
+    - regional parameter corrections.
+- **Forcing:** one precipitation and one temperature series for the whole domain.
+
+### Soil data
+
+No soil data ships with lsdtt3; you supply the soil-code raster and the soil table.
+
+**Approximate starting values from texture class.** These come from Rawls, Brakensiek & Saxton (1982): total porosity *n*, field capacity at 33 kPa and wilting point at 1500 kPa. In HYPE's stacked form:
+
+- `wcwp` = θ_wp;
+- `wcfc` = θ_fc − θ_wp;
+- `wcep` = *n* − θ_fc.
+
+| USDA texture | `wcwp` | `wcfc` | `wcep` |
+|---|---|---|---|
+| Sand | 0.033 | 0.058 | 0.346 |
+| Loamy sand | 0.055 | 0.070 | 0.312 |
+| Sandy loam | 0.095 | 0.112 | 0.246 |
+| Loam | 0.117 | 0.153 | 0.193 |
+| Silt loam | 0.133 | 0.197 | 0.171 |
+| Sandy clay loam | 0.148 | 0.107 | 0.143 |
+| Clay loam | 0.197 | 0.121 | 0.146 |
+| Silty clay loam | 0.208 | 0.158 | 0.105 |
+| Sandy clay | 0.239 | 0.100 | 0.091 |
+| Silty clay | 0.250 | 0.137 | 0.092 |
+| Clay | 0.272 | 0.124 | 0.079 |
+
+HYPE set-ups calibrate these parameters, so treat the table as a starting point.
+
+**UK sources:**
+
+- **Scotland:** the James Hutton Institute soil maps (<https://www.hutton.ac.uk/soil-maps/>, also via Scotland's Soils, <https://soils.environment.gov.scot/>). The national 1:250,000 soil map, soil texture maps and available water capacity are downloadable. Texture maps can key the table above.
+- **England and Wales:** Cranfield University's LandIS (<https://portal.landis.org.uk/>). The NATMAP soil associations, with HORIZON Hydraulics (<https://www.landis.org.uk/data/horhydraulics.cfm>), give per-horizon water content at saturation (`THV0`), 5 kPa (`THV5`) and 1500 kPa (`THV1500`). From these:
+    - `wcwp` = `THV1500`;
+    - `wcfc` = `THV5` − `THV1500`;
+    - `wcep` = `THV0` − `THV5`.
+
+    Horizons then have to be aggregated to HYPE's layers.
+
+- **Both nations:** EU-SoilHydroGrids (<https://esdac.jrc.ec.europa.eu/content/3d-soil-hydraulic-database-europe-1-km-and-250-m-resolution>) gives saturated water content, field capacity and wilting point at seven depths on a 250 m grid.
+
+**Field-capacity definitions differ.** LandIS uses 5 kPa (10 kPa for sands); Rawls and EU-SoilHydroGrids use about 33 kPa. The lower suction gives a larger `wcfc` and a smaller `wcep` for the same soil. Record which definition a table uses, and do not mix tables from different sources without converting.
+
+### Example: HYPE run with gauged sub-basins
+
+```yaml
+read_fname: dem.tif
+write_fname: hype_run
+write_output_format: gtiff
+
+column_model: hype
+hype_start_date: 2001-10-01
+rainfall_fname: precip_daily.csv        # rainfall_mm
+temperature_fname: temp_daily.csv       # temperature_c
+# pet_fname omitted: HYPE's temperature-index PET is used
+
+landcover_fname: landuse.tif
+hype_soil_class_fname: soil_codes.tif
+hype_general_parameters_fname: hype_general.csv
+hype_landuse_parameters_fname: hype_landuse.csv
+hype_soil_parameters_fname: hype_soil.csv
+hype_classes_fname: hype_classes.csv
+
+threshold_contributing_pixels: 500
+select_basins_from_outlets: true
+basin_outlet_fname: gauges.csv          # latitude,longitude,point_id
+basin_outlet_snapping_method: expanding_square
+basin_outlet_contributing_pixels_threshold: 500
+
+write_hype_subbasin_raster: true
+write_hype_geodata: true
+```
+
+---
+
 ## Known limitations and workarounds
 
 1. **Experimental tool:** Version 0.1.0 has unit, smoke, water-balance, and reference-model tests, but it has not been calibrated or evaluated against an observed catchment hydrograph. Treat a study-site result as a model experiment until it has been independently evaluated.
 
 2. **Index-mode assumption:** `saturated_zone_mode: index` follows TOPMODEL's quasi-steady topographic-index relation. Use `dynamic` when a per-cell prognostic deficit is needed, and test timestep sensitivity for the study site.
 
-3. **Forcing is depth per timestep:** A rain-gauge value in millimetres belongs in `rainfall_mm`; do not pre-convert it to a rate. The model converts millimetres to metres at input.
+3. **HYPE column (`column_model: hype`):** the model has been tested against HYPE 5.36.0's own output, but, like TOPMODEL here, it has not been calibrated against an observed catchment. It is daily only, so it does not resolve storm hydrographs.
+
+4. **Forcing is depth per timestep:** A rain-gauge value in millimetres belongs in `rainfall_mm`; do not pre-convert it to a rate. The model converts millimetres to metres at input.
 
 ---
 
@@ -391,6 +603,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
+| `column_model` | `string` | `topmodel` | `switch` | - | Which column model to run: topmodel or hype. | topmodel: the raster TOPMODEL on every pixel, routed down the flow network (everything else in this help that is not marked HYPE). Choose it for storm events at sub-daily steps, for per-pixel saturation and runoff maps, and for land-cover scenarios such as interception or infiltration changes. hype: a simplified S-HYPE model on sub-basins x classes. The DEM is split into incremental sub-basins between the selected outlets, each sub-basin is split into classes (land use x soil), every class runs HYPE's soil column, and sub-basins are routed through HYPE's local and main rivers. Choose it for seasonal to multi-year daily flows (snow accumulation and melt, summer evapotranspiration, low flows) reported per sub-basin at gauges, or for a set-up that can be checked in HYPE itself. hype is daily only (dt_seconds 86400) and needs temperature_fname, landcover_fname, hype_soil_class_fname, the four hype_*_fname parameter tables, hype_start_date and exactly one outlet mode. The TOPMODEL-only stages (canopy, Green-Ampt, per-cell routing) are not used with hype. |
 | `saturated_zone_mode` | `string` | `index` | `param` | - | How the saturated zone is represented. | index: the local deficit is derived every step from the catchment mean and the topographic index, D_i = S_bar + m(lambda - TWI_i). This is classic TOPMODEL and it is the only configuration with an external reference, so it is the validation mode. dynamic: each cell carries its own deficit as a state and the subsurface flux is routed down the flow graph, so cells wet and dry at different rates. |
 | `routing_method` | `string` | `width_function` | `param` | - | How runoff is routed to the outlet. | width_function: pure translation through the travel-time distribution, i.e. the geomorphological instantaneous unit hydrograph. Exact for a static velocity field and the default. linear_reservoir: a store per cell with k = dx/v. muskingum_cunge: explicit, with numerical diffusion matched to the physical hydraulic diffusivity. kinematic_wave: implicit four-point, one scalar Newton solve per cell, unconditionally stable. |
 | `velocity_mode` | `string` | `hydraulic_geometry` | `param` | - | How the per-cell velocity is derived. | hydraulic_geometry: v = scale (1/n) R^(2/3) S^(1/2) with R from downstream hydraulic geometry, so low-order channels come out slower without any order lookup. roughness_raster: as above but the supplied roughness_fname overrides the hillslope/floodplain/channel partition entirely. strahler_table: one velocity per Strahler order, from strahler_order_fname and strahler_velocity_table. constant: one channel and one hillslope velocity. |
@@ -431,7 +644,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `run_interception` | `bool` | `false` | `switch` | - | Run the canopy interception store above the root zone. | Interception is not a skim off the top: wet-canopy evaporation runs at the potential rate and suppresses transpiration, so only the residual demand reaches the root zone. Needs LAI, from lai_fname or from landcover_fname plus landcover_table. |
-| `landcover_fname` | `string` | - | `param` | - | Land-cover class raster. | Integer class codes matching the code= field of landcover_table. Drives LAI and the hillslope/floodplain roughness, and selects which measured soil profile supplies transmissivity. It does NOT set channel roughness, which is grain-size controlled. |
+| `landcover_fname` | `string` | - | `param` | - | Land-cover class raster. | Integer class codes matching the code= field of landcover_table. Drives LAI and the hillslope/floodplain roughness, and selects which measured soil profile supplies transmissivity. It does NOT set channel roughness, which is grain-size controlled. With column_model hype it is the land-use raster: its codes key hype_landuse_parameters_fname and, with hype_soil_class_fname, the classes; landcover_table is not used. |
 | `landcover_table` | `string` | - | `param` | - | Land-cover class definitions. | Format, with NO SPACES anywhere (a parameter value is a single token): 'grazing:code=1,lai=1.5,n=0.30,soil=CULT;woodland:code=2,lai=5.0,n=0.60,soil=SEMI'. code, lai and n are required; soil is the land-use key used against the measured profile table. A ks= or kv= field is a hard error: conductivity is not a land-cover property here. |
 | `lai_fname` | `string` | - | `param` | - | Leaf area index raster. | Overrides the lai= values of landcover_table when supplied, so a measured or remotely sensed LAI can be swapped in by configuration rather than by code. |
 | `canopy_storage_mm_per_lai` | `float` | `0.2` | `param` | `run_interception` | Canopy storage capacity per unit LAI (millimetres). | C = k_S * LAI, with k_S about 0.2 mm (Dickinson 1984; van Dijk &amp; Bruijnzeel 2001). |
@@ -514,22 +727,68 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `rainfall_fname` | `string` | - | `param` | - | CSV of the rainfall time series, one row per timestep. | Must carry a column named rainfall_metres or rainfall_mm, holding the depth falling during each step. Required: there is no default storm. |
 | `pet_fname` | `string` | - | `param` | - | CSV of the potential evapotranspiration series, one row per timestep. | Must carry a column named pet_metres or pet_mm. Leave empty for zero PET, which is reasonable for a single winter storm and not for a seasonal run. |
-| `dt_seconds` | `float` | `3600.0` | `param` | - | The outer timestep (seconds). | The forcing and the reporting both live on this step and it never moves: there is no adaptive stepping, because the routing schemes have no stability limit to dodge. Sub-cycling inside the routing operator is available separately. |
-| `n_timesteps` | `int` | `0` | `param` | - | Number of timesteps to run. | 0 runs the length of the rainfall series. A larger value continues past the end of the series with zero rainfall, which is how you let a recession play out. |
+| `temperature_fname` | `string` | - | `param` | `column_model` | CSV of the air temperature series, one row per timestep (HYPE only). | Must carry a column named temperature_c, in degrees C; negative values are fine. Required when column_model is hype, where it drives snow, the rain/snow split and calculated PET. Must have the same number of rows as rainfall_fname (and pet_fname, if given). Ignored by topmodel. |
+| `dt_seconds` | `float` | `3600.0` | `param` | - | The outer timestep (seconds). | The forcing and the reporting both live on this step and it never moves: there is no adaptive stepping, because the routing schemes have no stability limit to dodge. Sub-cycling inside the routing operator is available separately. With column_model hype the step must be daily: leave it unset (the run uses 86400 and says so) or set 86400; any other value is an error. |
+| `n_timesteps` | `int` | `0` | `param` | - | Number of timesteps to run. | 0 runs the length of the rainfall series. A larger value continues past the end of the series with zero rainfall, which is how you let a recession play out. With column_model hype it may not exceed the forcing length, because there is no temperature to continue with. |
 | `routing_substeps` | `int` | `0` | `param` | - | Sub-steps within one outer step for the surface routing. | 0 chooses the count from a Courant estimate and snaps it to a power of two, which keeps it deterministic. 1 disables sub-cycling. This is an accuracy control, not a stability one. |
 
 ### Outputs
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_discharge_csv` | `bool` | `true` | `switch` | - | Write the outlet hydrograph and the per-step fluxes to a CSV table. | Output file: &lt;write_fname&gt;_discharge.csv. |
-| `write_water_balance_csv` | `bool` | `true` | `switch` | - | Write the run water balance to a CSV table. | Output file: &lt;write_fname&gt;_water_balance.csv. The closure error is a small difference of large numbers and is the best single tripwire this model has for a structural mistake, so it is a first-class output and not a line of console text. |
+| `write_discharge_csv` | `bool` | `true` | `switch` | - | Write the outlet hydrograph and the per-step fluxes to a CSV table. | Output file: &lt;write_fname&gt;_discharge.csv. With column_model hype: &lt;write_fname&gt;_hype_discharge.csv, the outflow (cout_&lt;subid&gt;, m3/s) and runoff (crun_&lt;subid&gt;, mm) of every sub-basin per step. |
+| `write_water_balance_csv` | `bool` | `true` | `switch` | - | Write the run water balance to a CSV table. | Output file: &lt;write_fname&gt;_water_balance.csv. The closure error is a small difference of large numbers and is the best single tripwire this model has for a structural mistake, so it is a first-class output and not a line of console text. With column_model hype: &lt;write_fname&gt;_hype_water_balance.csv, the domain balance in m3; the storage pass that closes it runs only when this is true. |
 | `write_saturation_raster` | `bool` | `false` | `switch` | - | Write a raster of the saturated cells at the end of the run. | Output file: &lt;write_fname&gt;_saturation.tif. 1 where the local saturation deficit has reached zero, 0 elsewhere. |
 | `write_water_table_raster` | `bool` | `false` | `switch` | - | Write a raster of the local saturation deficit at the end of the run. | Output file: &lt;write_fname&gt;_water_table.tif, in metres below saturation. |
 | `write_velocity_raster` | `bool` | `false` | `switch` | - | Write the velocity field as a raster. | Output file: &lt;write_fname&gt;_velocity.tif, in metres per second. |
 | `write_traveltime_raster` | `bool` | `false` | `switch` | - | Write the travel time to the outlet as a raster. | Output file: &lt;write_fname&gt;_traveltime.tif, in seconds. |
 | `write_twi_raster` | `bool` | `false` | `switch` | - | Write the Topographic Wetness Index as a raster. | Output file: &lt;write_fname&gt;_twi.tif. Deliberately the same switch name as in lsdtt-drainage-analysis: both CLIs call one shared TWI implementation, so for the same DEM and the same window radius they produce the same raster. |
 | `write_iuh_csv` | `bool` | `false` | `switch` | - | Write the width-function unit hydrograph to a CSV table. | Output file: &lt;write_fname&gt;_iuh.csv. This is the geomorphological instantaneous unit hydrograph and it integrates to one. |
+
+### HYPE column
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `hype_soil_class_fname` | `string` | - | `param` | `column_model` | Raster of integer soil codes, on the DEM grid (HYPE only). | Together with the land-use codes in landcover_fname it defines the classes: every (land use, soil) pair present must have a row in hype_classes_fname. Soil data is user-supplied; codes must match hype_soil_parameters_fname. Nodata pixels are left out of the class fractions. |
+| `hype_general_parameters_fname` | `string` | - | `param` | `column_model` | CSV of HYPE's general parameters, columns name,value (HYPE only). | Names are HYPE's own (ttpd, ttpi, tcalt, lp, epotdist, fsceff, whcsnow, rrcs3, rivvel, damp, cevpam, cevpph). A parameter that is absent is 0, as in HYPE; an unrecognised name is an error rather than silently ignored. The first version requires fsceff = 0. |
+| `hype_landuse_parameters_fname` | `string` | - | `param` | `column_model` | CSV of HYPE land-use parameters, one row per land-use code (HYPE only). | Columns: code, then any of ttmp, cmlt, cevp, srrcs, pcluse. The codes are those of landcover_fname. Absent columns are 0; unknown columns are an error. |
+| `hype_soil_parameters_fname` | `string` | - | `param` | `column_model` | CSV of HYPE soil parameters, one row per soil code (HYPE only). | Columns: code, then any of wcwp, wcfc, wcep, rrcs1, rrcs2, mperc1, mperc2, macrate, srrate, mactrinf, mactrsm. wcwp, wcfc and wcep are STACKED volume fractions (wilting point; wilting point to field capacity; above field capacity), not cumulative contents. |
+| `hype_classes_fname` | `string` | - | `param` | `column_model` | CSV of HYPE classes (GeoClass rows), one row per class (HYPE only). | Columns class_id, landuse, soil, n_layers, layer1_bottom_m required; layer2_bottom_m, layer3_bottom_m, stream_depth_m, tile_depth_m optional. Each (landuse, soil) pair may appear once. |
+| `hype_start_date` | `string` | - | `param` | `column_model` | Date of the first forcing row, as YYYY-MM-DD (HYPE only). | Required for hype. The model needs the day of year of every step (seasonal PET correction), and it is counted from this date one day per row. The forcing CSVs need no date column; one that is present is ignored. |
+
+### HYPE sub-basin outlets
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `select_basins_from_outlets` | `bool` | `false` | `switch` | `column_model` | HYPE outlets from supplied outlet points (one of three outlet modes). | Reads basin_outlet_fname, snaps each point with basin_outlet_snapping_method, and uses the junction basins at those points as sub-basin outlets, as lsdtt-basin-extraction does. Gauges along one river become a chain of sub-basins. |
+| `select_all_basins_of_stream_order` | `bool` | `false` | `switch` | `column_model` | HYPE outlets at every junction basin of one stream order. | One of three outlet modes. The order is selected_stream_order, on the channel network defined by threshold_contributing_pixels. |
+| `selected_stream_order` | `int` | `-1` | `param` | `select_all_basins_of_stream_order` | Exact stream order used by select_all_basins_of_stream_order. | Must be &gt; 0 when select_all_basins_of_stream_order is true. |
+| `filter_basins_by_stream_order` | `bool` | `false` | `switch` | `column_model` | HYPE outlets at every junction basin within a stream-order range. | One of three outlet modes. Junction basins between basins_min_stream_order and basins_max_stream_order are kept. Use -1 for either bound to ignore that bound. |
+| `basins_min_stream_order` | `int` | `-1` | `param` | `filter_basins_by_stream_order` | Minimum stream order to keep when filtering basins. | Inclusive. Defaults to -1, which means ignore minimum. |
+| `basins_max_stream_order` | `int` | `-1` | `param` | `filter_basins_by_stream_order` | Maximum stream order to keep when filtering basins. | Inclusive. Defaults to -1, which means ignore maximum. |
+
+### Basin outlets
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_outlet_fname` | `string` | `NULL` | `param` | - | File of requested basin outlet points (CSV, FlatGeobuf or GeoPackage). | Format is auto-detected from the file extension: *.csv is read as a text file with latitude and longitude columns (WGS84 / EPSG:4326 decimal degrees); *.fgb or *.gpkg is read as a point vector layer in its own CRS, which is then transformed to the raster CRS. For CSV inputs the file must contain columns named exactly 'latitude' and 'longitude'. For vector inputs all features must be point geometry. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | How outlet points are snapped onto the channel network. | Allowed values: none, expanding_square, downstream. none: use the mapped raster pixel directly. expanding_square: search outward ring-by-ring until a pixel exceeding basin_outlet_contributing_pixels_threshold is found. downstream: follow the D8 receiver chain until a qualifying pixel is found. |
+| `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold a pixel must exceed to accept an outlet. | This is the total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Used only when basin_outlet_snapping_method is not none. It is a separate quantity from threshold_contributing_pixels, which sets where the channel network begins. |
+| `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. 0 means the mapped input pixel is tested first. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. The search stops at the first radius containing one or more qualifying pixels. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### HYPE outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_hype_subbasin_raster` | `bool` | `false` | `switch` | `column_model` | Write the HYPE sub-basin id raster. | Output file: &lt;write_fname&gt;_hype_subbasins.tif (extension follows write_output_format). Each pixel carries its sub-basin id (subid); pixels outside every sub-basin are nodata. |
+| `write_hype_geodata` | `bool` | `false` | `switch` | `column_model` | Write the derived set-up as HYPE GeoData.txt and GeoClass.txt. | Output directory: &lt;write_fname&gt;_hype_geodata/. These are HYPE's own tab-separated input tables, so the DEM-derived set-up can be run in HYPE itself. |
 
 ### Output
 

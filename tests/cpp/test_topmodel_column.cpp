@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Unit tests for src/cpu/lsdtt_topmodel_cpu -- Phase 2 of the
-// distributed-hydrology work (plan_raster_topmodel.md section 8, phase 2).
+// distributed-hydrology work.
 //
 // What is under test
 // ------------------
@@ -41,7 +41,7 @@
 //
 // ON "BINNED EQUALS RASTER"
 // -------------------------
-// The plan called for `rigorous_topmodel_binned_equals_lumped`. It is written
+// The design called for `rigorous_topmodel_binned_equals_lumped`. It is written
 // here as a CONVERGENCE test instead, because equality is false: 95.02's
 // histogram rule interpolates the saturated fraction linearly inside a partly
 // saturated bin, which is a quadrature approximation of the integral the

@@ -7,10 +7,10 @@
 # upstream source_sha256: af0bb19e3d84e72a0732c4f39a7437701214495b5710bfc25e514c17126956d5
 # upstream Nmu.version: 3.2
 #
-# Plan Phase 1 exit criterion: max |rel| < 1% (Be10), < 2% (Al26, C14).
+# Phase 1 exit criterion: max |rel| < 1% (Be10), < 2% (Al26, C14).
 # rel = N_fit/N_tab - 1 over the full 20 pressure x 28 erosion-rate grid.
 #
-# ANCHOR QUESTION (plan 4.3) RESOLVED: 'free' is frozen for every
+# ANCHOR QUESTION RESOLVED: 'free' is frozen for every
 # nuclide.  Compare fit_surface_vs_balco_max_pct against
 # table_surface_vs_balco_max_pct: the TABLE itself already departs from
 # Balco's P_mu,0(p) formula by that much, and the free fit departs by the

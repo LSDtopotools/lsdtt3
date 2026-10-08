@@ -10,12 +10,12 @@
 // Measuring hillslope length on a COUPLED landscape, where there is no channel
 // threshold to measure to.
 //
-// Phase 6 of plan_lem_hillslope_length_targeting.md calibrates the Peclet
+// This driver calibrates the Peclet
 // prefactor c by running the coupled model to steady state and fitting
 //
 //     L_h = c * [ D^n U^(1-n) / K ]^(1/p)
 //
-// The plan says to "measure L_h with the same statistic (section 3)". That
+// The design says to "measure L_h with the same statistic". That
 // statistic needs a channel mask -- and the coupled regime deliberately has
 // none: drainage density is the thing that EMERGES. Supplying an area threshold
 // to measure it would reintroduce exactly the arbitrariness the coupled

@@ -1,0 +1,174 @@
+{
+  "name": "soil_runoff",
+  "description": "Soil-layer runoff with depth-decaying recession coefficients, stream depth in layer 1, 2 and 3 (one class each), two sub-basin slopes (2 % and 25 %) for the slope term; saturation-excess surface runoff; macropore placement and the second percolation call. ET on; no snow. Sub-basins are not connected.",
+  "processes": [
+    "class_forcing",
+    "pet",
+    "aet",
+    "diversion",
+    "percolation",
+    "soil_runoff",
+    "saturation_excess",
+    "macropore"
+  ],
+  "dates": {
+    "start": "2001-01-01",
+    "end": "2001-04-30"
+  },
+  "general": {
+    "rivvel": 1.0,
+    "damp": 0.5,
+    "ttpd": 0.0,
+    "ttpi": 1.0,
+    "lp": 0.8,
+    "epotdist": 4.0,
+    "rrcs3": 0.004
+  },
+  "landuse": {
+    "1": {
+      "ttmp": -10.0,
+      "cmlt": 0.0,
+      "cevp": 0.15,
+      "srrcs": 0.2,
+      "pcluse": 0.0
+    }
+  },
+  "soil": {
+    "1": {
+      "wcwp": 0.1,
+      "wcfc": 0.2,
+      "wcep": 0.15,
+      "mperc1": 15.0,
+      "mperc2": 8.0,
+      "macrate": 0.2,
+      "srrate": 0.1,
+      "mactrinf": 10.0,
+      "mactrsm": 0.5,
+      "rrcs1": 0.25,
+      "rrcs2": 0.03
+    }
+  },
+  "classes": {
+    "1": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.1,
+        0.4,
+        1.5
+      ],
+      "stream_depth_m": 0.05
+    },
+    "2": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.1,
+        0.4,
+        1.5
+      ],
+      "stream_depth_m": 0.3
+    },
+    "3": {
+      "landuse": 1,
+      "soil": 1,
+      "vegtype": 1,
+      "layer_bottoms_m": [
+        0.1,
+        0.4,
+        1.5
+      ],
+      "stream_depth_m": 1.0
+    }
+  },
+  "subbasins": [
+    {
+      "subid": 1,
+      "maindown": 0,
+      "area_m2": 1000000.0,
+      "elev_mean_m": 100,
+      "slope_mean_percent": 2,
+      "loc_rivlen_m": 1000,
+      "rivlen_m": 2000,
+      "classes": {
+        "1": {
+          "fraction": 0.3,
+          "dh_m": 0
+        },
+        "2": {
+          "fraction": 0.3,
+          "dh_m": 0
+        },
+        "3": {
+          "fraction": 0.4,
+          "dh_m": 0
+        }
+      }
+    },
+    {
+      "subid": 2,
+      "maindown": 0,
+      "area_m2": 1000000.0,
+      "elev_mean_m": 100,
+      "slope_mean_percent": 25,
+      "loc_rivlen_m": 1000,
+      "rivlen_m": 2000,
+      "classes": {
+        "1": {
+          "fraction": 0.3,
+          "dh_m": 0
+        },
+        "2": {
+          "fraction": 0.3,
+          "dh_m": 0
+        },
+        "3": {
+          "fraction": 0.4,
+          "dh_m": 0
+        }
+      }
+    }
+  ],
+  "forcing": {
+    "precip_pattern_mm": [
+      0,
+      12,
+      30,
+      5,
+      0,
+      0,
+      0,
+      18,
+      0,
+      0,
+      45,
+      2,
+      0,
+      0,
+      0,
+      0,
+      8,
+      0,
+      0,
+      0
+    ],
+    "temp_mean_c": 10.0,
+    "temp_amp_c": 6.0,
+    "temp_period_steps": 120,
+    "temp_phase_steps": 30
+  },
+  "class_outputs": [
+    "crun",
+    "cro1",
+    "cro2",
+    "cro3",
+    "ros1",
+    "ros2",
+    "sml1",
+    "sml2",
+    "sml3"
+  ],
+  "basin_outputs": []
+}

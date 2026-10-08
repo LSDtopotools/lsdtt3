@@ -472,8 +472,7 @@ int main(int argc, char* argv[])
     // fixed age cannot serve the range of tau that a sample set spans.  This is
     // advisory, not fatal: a fixed-age LSDn run is a legitimate thing to ask for
     // (the L13 regression tier does exactly that), it just is not the way to get
-    // agreement with v3.  Measured at Sulawasi, 10 samples, Be10:
-    // docs/plan_docs/cronus_to_lsdtt3_emulator_plan.md section 6.1.
+    // agreement with v3 (measured on 10 Be10 samples from Sulawasi).
     if (muon_scheme == "cronusEmulatorLSDn" && !self_consistent_age)
     {
         std::cerr

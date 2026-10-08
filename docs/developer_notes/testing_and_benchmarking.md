@@ -1427,6 +1427,16 @@ allocation count.
 
 #### Current fused-loop result and leading candidates (2026-09-01)
 
+!!! warning "Superseded on 2026-09-21"
+    The server measurements in this section were taken on a session restricted
+    to two CPUs by a login-node affinity mask, which was not known at the time.
+    The fused loop **does** scale: 3.22× at 4000² on four threads, measured in
+    a real allocation. See
+    [Server campaign 2026-09-21](#server-campaign-2026-09-21-forth01-release-052-thread-scaling-measured).
+    The laptop measurements below are unaffected — that machine was never
+    restricted — and the investigation order at the end of this section is
+    still the right order for the residual gap between 3.2× and 4×.
+
 The bounded-prefix and fused-strip changes were bit-identical on all 324
 reference rasters. They made `direct_polyfit` 20-73% faster and reduced peak
 memory by 13-25%, but did not produce useful thread scaling: one and four
@@ -1448,7 +1458,7 @@ Changing `RSTRIP` from 256 to 64 improved best complete profiled time by 18-36%
 at 1000² and 16-26% at 4000² across one and four threads. Generated outputs were
 byte-identical at 1/2/4 threads and the five surface-metric tests passed.
 `RSTRIP=64` is now provisional pending the full 324-raster exact-comparison
-matrix; see the plan's §9.5f for the measurements and validation caveat.
+matrix.
 
 The following serial-memory step removed the redundant `H` zero-fill, initialized
 the independent output arrays concurrently, and copied the five required masks
@@ -1490,8 +1500,8 @@ Current investigation order:
 4. Test padded carry storage last. Static scheduling limits cross-thread carry
    sharing to partition boundaries, and carries are written only once per strip.
 
-These are outstanding work rather than findings, so they are tracked in the
-benchmarking plan (uncommitted scratch) rather than here. This document records
+These are outstanding work rather than findings, so they are tracked
+elsewhere rather than here. This document records
 what was measured; it is not a to-do list.
 
 #### Sequential cases are no longer swept (changed 2026-09-01)
@@ -2170,6 +2180,110 @@ peak memory. This is the first campaign in which that is visible.
 `cpu.max` / `Cpus_allowed_list` / load on the node, and one direct
 `/usr/bin/time -v` run of a surface CLI at `n_threads: 8` outside the harness),
 then re-run `--suites surface` where 8 threads really get 8 cores.
+
+> **Resolved 2026-09-21.** The cause was a login-node CPU affinity mask, not a
+> code or harness fault. See the next section.
+
+### Server campaign 2026-09-21 (forth01, release 0.5.2): thread scaling measured
+
+`server` profile (1000/2000/4000², threads 1/2/4/8, 5 repeats) at `b8b6cdf`,
+**clean tree**, on **forth01**. `b8b6cdf` is the commit tagged `v0.5.2`, so
+this is the first campaign that measures a tagged release rather than a
+development tree. 318 rows, all `ok`. Raw data:
+`../data/benchmarking/server_forth01.geos.ed.ac.uk_20260921_153611`.
+
+Note that the suite records the git SHA and not the release version, so the
+"0.5.2" in this heading is asserted here by hand; `git rev-parse
+"v0.5.2^{commit}"` resolves to `b8b6cdf` and is the check.
+
+#### What had been limiting the earlier campaigns
+
+An interactive session on forth01 is restricted to **two CPUs** —
+`Cpus_allowed_list: 1,97`, the two SMT siblings of a single physical core —
+while `lscpu` and `os.cpu_count()` both report 192. forth01 is a Slurm head
+node and this is ordinary login-node policy. Every campaign run from an
+interactive shell therefore swept 1/2/4/8 threads on two CPUs, which is why the
+09-13 job appeared to have "about 1.5 cores".
+
+It was identified with `tests/scripts/omp_ceiling.cpp`, which reported
+`logical cores reported by OpenMP: 2` and an identical 1.62× at **both** 2 and
+4 threads for a pure-arithmetic kernel containing no lsdtt3 code. In an
+allocation the same kernel gives 2.00× and 3.99×.
+
+Two consequences, both acted on:
+
+- The suite's oversubscription guard used `os.cpu_count()`, which ignores
+  affinity. It now uses `len(os.sched_getaffinity(0))`, records `usable_cores`
+  and `affinity_restricted` alongside `logical_cores`, and warns in
+  `SUMMARY.md`. **This campaign predates that change**, so its manifest carries
+  no `usable_cores` field; the evidence that it had real cores is in the data
+  below rather than in the manifest.
+- `docs/what_is_lsdtt3/running_benchmarks.md` documents the check and the
+  `srun --cpus-per-task=8` route.
+
+#### Thread scaling (lsdtt3, alpine; lakeland within 0.03× throughout)
+
+| case | rung | 1t | 2t | 4t | 8t |
+|---|---|---|---|---|---|
+| `slope_only` | 1000² | 1.00× | 1.85× | 1.96× | 0.50× |
+| | 2000² | 1.00× | 1.87× | 1.96× | 2.13× |
+| | 4000² | 1.00× | 1.87× | **3.18×** | **3.62×** |
+| `polyfit_all` | 1000² | 1.00× | 1.77× | 1.99× | 1.01× |
+| | 2000² | 1.00× | 1.91× | 2.02× | 2.74× |
+| | 4000² | 1.00× | 1.85× | **3.22×** | **3.48×** |
+| `hillshade` | 1000² | 1.00× | 1.50× | 1.49× | 0.76× |
+| | 2000² | 1.00× | 1.52× | 1.61× | 1.04× |
+| | 4000² | 1.00× | 1.52× | **2.05×** | **2.09×** |
+
+The previous campaign measured 1.07× at 4000², four threads, for
+`polyfit_all`. The polyfit kernel is byte-identical between the two runs — the
+only source difference between `a8529f6` and `b8b6cdf` in
+`lsdtt_raster_surface_metrics_cpu.cpp` is two comment paths.
+
+Scaling **improves with grid size**, which reverses the behaviour recorded for
+the historical two-pass implementation. The small rungs still lose at 8
+threads (0.50× at 1000²); there is not enough work per thread to amortise the
+parallel region, and this is the expected shape rather than a finding.
+
+#### The 1-thread rows are the control
+
+lsdtt3's single-thread times are unchanged from the affinity-limited campaign
+six hours earlier — `polyfit_all` 4000² 2.042 s → 2.064 s, `slope_only` 0.805 s
+→ 0.805 s. Across all 1-thread rows over 50 ms, every lsdtt3, RichDEM and
+TopoToolbox case moved by ≤1.5% (median). Same machine, same binaries, same
+work: only the threaded rows changed.
+
+Peak RSS is identical to the previous campaign — **zero rows differ by more
+than 10%**, on any engine — so the memory table from 09-21 10:43 stands
+unchanged, and memory figures are insensitive to the affinity problem.
+
+#### Whitebox's thread pinning does not take effect
+
+The 09-13 section already refused to quote Whitebox's multi-threaded tools.
+This campaign gives the mechanism. `whitebox_reference.py:504` sets
+`wbe.max_procs = int(args.threads)` and the suite does pass `--threads 1`, but
+five cases ran **40-72% faster** at "1 thread" once the allocation had more
+CPUs, while every other engine reproduced to within 1.5%:
+
+| case | 1-thread change, 2 CPUs → allocation |
+|---|---|
+| `slope_only` | −72.3% |
+| `hillshade` | −59.8% |
+| `polyfit_all` | −55.3% |
+| `accum_d8`, `accum_d8_no_svector` | −41.9% |
+
+Whole-process CPU seconds are unchanged across both runs and both thread counts
+(22.9 s for `slope_only` 4000² at 1 and 2 threads, in both campaigns). The work
+is constant; only the wall time moved, because more cores were available to
+absorb it. `max_procs` is not constraining these tools in
+whitebox_workflows 2.0.6.
+
+**`accum_d8` and `accum_d8_no_svector` are in the like-for-like ratio table**,
+where Whitebox now reports 15.95-24.68 Mcells/s against lsdtt3's 9.25-11.75.
+That comparison is one-thread lsdtt3 against many-thread Whitebox and **must
+not be quoted**. The other three affected cases are `report_only` and carry no
+ratio. Until the pinning is understood, treat every Whitebox row for slope,
+hillshade, curvature and D8 accumulation as an unpinned measurement.
 
 ## 7. Cosmogenic nuclide testing
 
@@ -3692,7 +3806,7 @@ simply is not covered. Worth a case when the landslide coupling next changes.
 ### 7.10b Validity is not capability (`lsdtt-cosmo-landslides`, 2026-08-05)
 
 A shipped defect, found while planning the cosmogenic CLI rationalisation and
-fixed under plan phase R2b. It is recorded because the *shape* of it recurs.
+fixed as part of that rationalisation. It is recorded because the *shape* of it recurs.
 
 **What it was.** `lsdtt-cosmo-landslides` caught any failure inside its cosmogenic
 block, printed a stderr warning, and fell through to **exit 0** having written
@@ -6761,9 +6875,99 @@ this section imply otherwise when it is written.
   hydrology path. The design doc claims mass conservation is checked; this
   document does not say to what tolerance.
 - **No cross-implementation reference.** Unlike flow routing (TopoToolbox,
-  RichDEM, Whitebox) and cosmogenics (CRONUS, OCTOPUS), the hydrology stack has
-  no external oracle. Whether one is worth building is an open question given
+  RichDEM, Whitebox) and cosmogenics (CRONUS, OCTOPUS), the TOPMODEL stack has
+  no external oracle. (The S-HYPE column does: HYPE itself, §10q.) Whether one
+  is worth building is an open question given
   the intended use.
+
+---
+
+## 10q. The S-HYPE column (`column_model: hype`, 2026-10-04)
+
+`lsdtt-distributed-hydrology` with `column_model: hype` reimplements the land and river processes of HYPE 5.36.0 (SMHI; Lindström et al. 2010), with HYPE's default options. Unlike the TOPMODEL stack in §10p, it has an **external oracle**: HYPE itself. The equations are in `docs/design_and_algorithms/hydrological_modelling.md`. As with TOPMODEL, nothing here is evidence of predictive skill: **the model has not been calibrated against any observed catchment**.
+
+### 10q.1 The oracle, and why CTest never touches Fortran
+
+`tests/expected/hype/` holds output written by HYPE 5.36.0 itself, compiled from the release source (SHA-256 and git commit in `tests/expected/hype/README.md`).
+
+- `tests/scripts/generate_hype_oracle.py` downloads, builds and runs HYPE. It is run by hand, never by CTest. `--check` regenerates the files and confirms they are byte-identical. It stops if a newer HYPE release appears, until rerun with `--accept-new-version`.
+- CTest reads only the committed files. No test downloads, compiles or links third-party code.
+- There are seven cases. Six each isolate one process with the others switched off: `snow`, `et`, `diversion`, `percolation`, `soil_runoff`, `routing`. The seventh, `default_all`, runs everything together over two sub-basins in series. Each case is a short daily run with a compressed seasonal cycle. Every case is defined once, in `cases/<case>.json`, and both the HYPE input files and the lsdtt3 tables are generated from that definition.
+- SourceForge serves an HTML page instead of the archive to a browser user-agent. The script therefore sends a tool user-agent and checks for the gzip magic number.
+
+### 10q.2 The tolerance has a measured basis
+
+The released HYPE build is single precision; lsdtt3 runs in double. Each case was also run through a double-precision HYPE build (`-fdefault-real-8`), and the largest single-vs-double difference per variable is recorded in the oracle README. That difference is the **floor**: below it, a double-precision reimplementation cannot be judged against the single-precision oracle. The largest floor over all cases is **1.08e-4 mm** (layer-3 soil water in `default_all`, which holds about 440 mm).
+
+The column, routing and model tests pass a value when |lsdtt − HYPE| ≤ 5e-4 + 2e-5·|HYPE|, about five times the floor, in mm, or in m³ s⁻¹ for flows. Each run prints the largest difference actually seen for every variable, so drift is visible before it fails. The largest measured differences are 1.08e-4 mm for the column, equal to the floor, and 2.8e-6 m³ s⁻¹ for sub-basin outflow.
+
+### 10q.3 What each suite asserts
+
+| Suite | Module | Checks | What it asserts |
+|---|---|---|---|
+| `unit_distributed_hydrology_forcing` | `lsdtt_distributed_hydrology_forcing` | 18 | Rain/PET loaders (moved out of the CLI unchanged), and the signed temperature loader |
+| `unit_hype_parameters` | `lsdtt_hype_parameters` | 95 | Table readers: an absent parameter is 0, unknown names are errors. Validation: negative values, fractions out of [0, 1], `wcwp+wcfc+wcep > 1` and non-finite GeoData are rejected. Downstream ordering. The oracle cases' tables load as written |
+| `unit_hype_column` | `lsdtt_hype_column_cpu` | 102 | Every class variable of the six process cases and `default_all` against HYPE within the tolerance above. Per-unit water balance on every step. The rain/snow ramp in its three regimes. Percolation never fills a receiving layer beyond its pore volume |
+| `unit_hype_routing` | `lsdtt_hype_routing_cpu` | 41 | Translation shift and volume, and the damping box against the exact linear-reservoir solution. `cloc`/`cout` of the `routing` case against HYPE. The ring-buffer queue is bitwise equal to a reference copy of the original shifting queue |
+| `unit_hype_model` | `lsdtt_hype_model_cpu` | 95 | `default_all` and `routing` through the assembled model against HYPE. Domain balance closure (about 3e-16 relative). Turning off balance tracking or per-unit flux storage changes no flow or state, bitwise. A unit's exception thrown inside the parallel land loop surfaces as the lowest-index failure at any thread count |
+| `unit_subbasin_partition` | `lsdtt_subbasin_partition_cpu` | 113 | Outlet selection (user points, Strahler order and order range, with the base-level edge-strip merge). The incremental partition, GeoData statistics and class fractions. Flow-distance river lengths, all on synthetic DEMs whose answers are known by hand |
+| `unit_hype_raster_setup` | `lsdtt_hype_raster_setup_cpu` | 18 | Class raster from land-use × soil, set-up from rasters, and the HYPE-format `GeoData.txt`/`GeoClass.txt` writer |
+| `unit_hype_thread_invariance` | the model | 5 | 2,000 sub-basins × 8 classes × 365 steps: sub-basin runoff and local and total outflow on every step, the final unit states and the balance terms are **bitwise identical** at 1 and 8 threads |
+
+**CLI tests** (`smoke_`/`failure_distributed_hydrology_hype_*`) run on a generated fixture (`fixture_hype_cli`), never on committed rasters. The fixture is a 60×60, 10 m DEM with a Y-shaped network, two land uses × two soils and 120 days of forcing with snow.
+
+- **Smoke tests:**
+  - all three outlet modes;
+  - both snapping methods that move a point, with gauges placed three columns off the channel: `expanding_square` lands at (16, 21) and `downstream` at (18, 22). Each lands in a different place, so the sub-basin areas differ (45,300 against 54,200 m²);
+  - the daily default for `dt_seconds`;
+  - a run shorter than the forcing;
+  - nodata in the soil raster.
+- **The nodata case:** a 50-pixel block of nodata soil straddles a class boundary. The test pins the renormalised fractions in `GeoData.txt`, and these were checked against an independent pixel count of the rasters. The pixels stay in the sub-basin area but leave the class fractions.
+- **Failure tests** (each asserts the message, not only the exit code):
+  - missing temperature;
+  - non-daily step;
+  - `fsceff ≠ 0`;
+  - unknown parameter;
+  - missing class pair;
+  - bad `column_model`;
+  - no outlet mode;
+  - snapping `none` on an off-channel gauge;
+  - a sub-basin with no class pixel;
+  - forcing series of different lengths;
+  - `n_timesteps` past the end of the forcing;
+  - an impossible and a malformed `hype_start_date`.
+
+When the HYPE path was added to the CLI, the TOPMODEL outputs were compared before and after for four configurations. Discharge, balance, IUH and rasters were byte-identical. That was a one-off check, not a registered test.
+
+### 10q.4 Speed: what was changed, and the measured effect
+
+Every speed-up kept the tests above unchanged, and thread invariance had to hold bitwise. The timing harness is `lsdtt-test-hype-performance` (always built; registered as `performance_hype_model` under `LSDTT_ENABLE_PERF_TESTS`; synthetic workloads small 100×5, medium 2,000×8 and large 10,000×10 sub-basins×classes). It reports ns per unit-step.
+
+| Change | Effect (medians, interleaved runs) |
+|---|---|
+| Balance tracking made optional | −35 % at medium, −13 % at large (1 thread). At large it had been 23 % of step time |
+| OpenMP over units | 1.35× at 4 threads (large); no gain from 4 to 8 threads |
+| Ring-buffer translation queue | Bitwise equal; not measurable (routing is about 3 % of step time) |
+| PET seasonal factor computed once per step; units slimmed from 664 to 360 bytes; per-unit flux records optional | −48 % at medium (1 thread) |
+| All of the above, large workload, 4 threads | **157 → 48 ns per unit-step** against the serial baseline |
+
+Scaling stops at about 4 threads, and cost per unit-step rises with unit count (91 → 130 → 157 ns serial). Both point at memory traffic rather than compute, which is why slimming the unit paid more than threads did.
+
+!!! warning "Laptop timings"
+
+    These numbers come from one thermally and power-limited laptop
+    (Intel i5-1145G7, 4 cores / 8 threads, WSL2, g++ 11.4, `-O3`), where
+    run-to-run spread reached about 1.5×. Only differences within an
+    interleaved pair of runs are meaningful. Treat them as direction and rough
+    size, and re-measure on a server before quoting a speed-up. For threaded
+    runs, the harness's phase split (land / aggregation / routing / balance)
+    is not valid; only the total per unit-step is.
+
+### 10q.5 Not tested
+
+- **No real catchment:** there is no comparison against an observed hydrograph.
+- **Not run in HYPE:** no lsdtt3-derived set-up has been run in HYPE, although the GeoData writer makes this possible.
+- **Disabled options:** the HYPE options switched off in this version (fractional snow cover, sublimation, tile drainage, frozen soil, lakes) are rejected at start-up rather than tested.
 
 ---
 

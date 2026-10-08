@@ -900,7 +900,7 @@ void run_routing_fidelity_checks(const std::string& case_name)
 }
 
 // -----------------------------------------------------------------------------
-// Energy correctness (§5.3 of the testing plan)
+// Energy correctness
 //
 // delta_energy_() is the highest-risk function in the module and its output is
 // NOT directly observable: run() overwrites the incrementally accumulated
@@ -924,7 +924,7 @@ void run_routing_fidelity_checks(const std::string& case_name)
 // step and that the changed link is still a D8 neighbour of a terminating walk.
 //
 // This cannot catch a dE that is wrong in magnitude but right in sign; that
-// needs an in-engine audit hook (plan §3d(B)) which is not implemented.
+// needs an in-engine audit hook which is not implemented.
 // -----------------------------------------------------------------------------
 // Recompute the energy from the PUBLIC areas and receivers, independently of
 // the engine's own accumulator. `cell_size <= 0` selects the unweighted OCNet
@@ -1210,7 +1210,7 @@ void run_energy_checks(const std::string& case_name)
 }
 
 // -----------------------------------------------------------------------------
-// Annealing behaviour (§5.4 of the testing plan)
+// Annealing behaviour
 //
 // TRAP, measured 2026-08-13: anneal LENGTH dominates temperature. Every
 // comparison here holds n_iter FIXED, otherwise a "temperature effect" is
@@ -1344,8 +1344,8 @@ void run_annealing_checks(const std::string& case_name)
 // the same pixels base level under D8: the two boundary conventions then agree
 // by construction.
 //
-// TWO SCOPING CORRECTIONS, both measured 2026-08-13, both to the plan as
-// written rather than to the code:
+// TWO SCOPING CORRECTIONS, both measured 2026-08-13, both to the original
+// design rather than to the code:
 //
 //  1. Path matching is NOT sufficient for the elevations to agree. chi at a
 //     pixel is an integral of A^(-m/n) along the downstream path, and A at each

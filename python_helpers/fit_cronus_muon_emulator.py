@@ -2,7 +2,7 @@
 """Fit lsdtt3's three-exponential muon model to the CRONUS v3 tabulated
 model-1A muon inventory.
 
-Phase 1 of docs/plan_docs/cronus_to_lsdtt3_emulator_plan.md.
+Phase 1 of the CRONUS v3 emulator work.
 
 Model (lsdtt3's own kernel form, so no change to lsdtt_crn_particle):
 
@@ -21,8 +21,7 @@ diffable.  18 coefficients per nuclide.
 Fitting is done on log(N), so relative error is minimised uniformly across the
 five decades of erosion rate the table spans.
 
-Two variants are fitted and compared, resolving the open question in plan
-section 4.3:
+Two variants are fitted and compared, resolving the anchor question:
   * free     -- no constraint on the surface production
   * anchored -- soft penalty pulling sum_k P_k(p) onto Balco's
                 P_mu,0(p) = Pmu0 exp((1013.25 - p)/L_mu_atm), which section 2.3
@@ -61,7 +60,7 @@ N_EXP = 3
 P_REF = 1013.25
 P_SCALE = 100.0
 
-# Plan section 5, Phase 1 exit criterion.
+# Phase 1 exit criterion.
 EXIT_MAX_REL_PCT = {"Be10": 1.0, "Al26": 2.0, "C14": 2.0}
 
 
@@ -233,7 +232,7 @@ def main():
                   f"rms {s['rms_pct']:6.3f}%   "
                   f"surface vs Balco max {s['surface_vs_balco_max_pct']:6.3f}%")
 
-    # ANCHOR QUESTION RESOLVED (plan section 4.3, measured 2026-08-01): reject
+    # ANCHOR QUESTION RESOLVED (measured 2026-08-01): reject
     # the anchor, freeze 'free' for every nuclide.
     #
     # The tabulated inventory is the ground truth, and the table's OWN eps->0
@@ -298,10 +297,10 @@ def main():
         f.write("# lsdtt3 CRONUS v3 muon emulator: fit quality\n")
         provenance(f)
         f.write("#\n")
-        f.write("# Plan Phase 1 exit criterion: max |rel| < 1% (Be10), < 2% (Al26, C14).\n")
+        f.write("# Phase 1 exit criterion: max |rel| < 1% (Be10), < 2% (Al26, C14).\n")
         f.write("# rel = N_fit/N_tab - 1 over the full 20 pressure x 28 erosion-rate grid.\n")
         f.write("#\n")
-        f.write("# ANCHOR QUESTION (plan 4.3) RESOLVED: 'free' is frozen for every\n")
+        f.write("# ANCHOR QUESTION RESOLVED: 'free' is frozen for every\n")
         f.write("# nuclide.  Compare fit_surface_vs_balco_max_pct against\n")
         f.write("# table_surface_vs_balco_max_pct: the TABLE itself already departs from\n")
         f.write("# Balco's P_mu,0(p) formula by that much, and the free fit departs by the\n")

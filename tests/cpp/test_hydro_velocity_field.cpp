@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Unit tests for src/cpu/lsdtt_hydro_velocity_field_cpu -- Phase 1 of the
-// distributed-hydrology work (plan_raster_topmodel.md section 8, phase 1).
+// distributed-hydrology work.
 //
 // What is under test
 // ------------------
@@ -34,7 +34,7 @@
 //
 // ON THE "LOW-ORDER CHANNELS ARE SLOWER" CLAIM
 // --------------------------------------------
-// The plan's gate for this phase was stated as "mean velocity increases with
+// The gate for this phase was stated as "mean velocity increases with
 // Strahler order". That is tested here in two parts rather than by computing
 // Strahler orders, and it is worth being explicit about why.
 //

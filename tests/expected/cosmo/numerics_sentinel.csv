@@ -1,4 +1,4 @@
-# COSMO NUMERICS SENTINEL - see docs/developer_notes/testing_and_benchmarking.md
+# COSMO NUMERICS SENTINEL - see docs/testing_and_benchmarking.md
 # These values encode years of manual verification of the CAIRN
 # and step-change analytical solutions.  DO NOT regenerate this
 # file to silence a test failure.  Any change requires review

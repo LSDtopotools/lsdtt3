@@ -535,7 +535,7 @@ std::int64_t attach_channel_properties(
     int                                n_cols);
 
 // Writes the metrics table as CSV.  The product CLI writes FlatGeobuf by
-// default (plan section 4.4); this is the plain-table path used by tests and by
+// default; this is the plain-table path used by tests and by
 // the development driver.
 void write_hilltop_metrics_csv(
     const lsdtt_hillslope_metrics_result& result,

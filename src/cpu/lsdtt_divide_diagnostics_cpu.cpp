@@ -80,7 +80,7 @@ bool is_valid_for_divide(
 // Decides whether an adjacent pair (a, b) sits across a divide, i.e. whether
 // their flow paths deliver to different points in the network.
 //
-// The test is the path-set test of the plan (§3.3.1a): store, for every valid
+// The test is a path-set test: store, for every valid
 // cell, its forward path
 //
 //     P_K[i] = ( i, r(i), r^2(i), ..., r^K(i) )
