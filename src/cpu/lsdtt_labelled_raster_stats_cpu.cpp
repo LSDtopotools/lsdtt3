@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_labelled_raster_stats_cpu.hpp"
+#include "../utils/lsdtt_string_utils.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -52,11 +53,12 @@ void validate_request(const labelled_raster_stats_request& request)
 // -----------------------------------------------------------------------------
 // number_to_string
 // -----------------------------------------------------------------------------
+// csv_number at this table's precision (17): the same text for every finite
+// value, and nan / inf / -inf spelled the same on every platform (decision D7,
+// 2026-10-08; a negative NaN used to stream as "-nan").
 std::string number_to_string(double v)
 {
-    std::ostringstream ss;
-    ss << std::setprecision(17) << v;
-    return ss.str();
+    return csv_number(v, 17);
 }
 
 // -----------------------------------------------------------------------------

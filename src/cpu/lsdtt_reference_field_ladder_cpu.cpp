@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "lsdtt_raster_surface_fitting_cpu.hpp"
 #include "../utils/lsdtt_random.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_statistics.hpp"
@@ -1468,50 +1469,33 @@ banded_label_result label_components_within_bands(
             rec.area_m2  = static_cast<double>(members.size()) * cell_area;
 
             std::vector<double> vals;
+            std::vector<double> xs, ys;
             vals.reserve(members.size());
-            double sx = 0.0, sy = 0.0, sz = 0.0;
+            xs.reserve(members.size());
+            ys.reserve(members.size());
             for (const std::size_t m : members)
             {
                 if (!std::isfinite(fv[m])) continue;
                 const int r = static_cast<int>(m / static_cast<std::size_t>(n_cols));
                 const int c = static_cast<int>(m % static_cast<std::size_t>(n_cols));
-                const double x = static_cast<double>(c) * meta.cell_size;
-                const double y = -static_cast<double>(r) * meta.cell_size;
-                const double z = static_cast<double>(fv[m]);
-                vals.push_back(z);
-                sx += x;
-                sy += y;
-                sz += z;
+                xs.push_back(static_cast<double>(c) * meta.cell_size);
+                ys.push_back(-static_cast<double>(r) * meta.cell_size);
+                vals.push_back(static_cast<double>(fv[m]));
             }
             rec.median_field = compute_median_of_copy(vals, 0.0);
 
+            // Patch tilt from the shared least-squares plane (decision D7,
+            // 2026-10-08): it uses a relative degeneracy test,
+            // |det| < 1e-10 * max(Sxx * Syy, 1), where this code had its own
+            // fit with an absolute |det| > 1e-12.
             if (vals.size() >= 3)
             {
-                const double inv_n = 1.0 / static_cast<double>(vals.size());
-                const double mx = sx * inv_n;
-                const double my = sy * inv_n;
-                const double mz = sz * inv_n;
-                double sxx = 0.0, sxy = 0.0, syy = 0.0;
-                double sxz = 0.0, syz = 0.0;
-                for (const std::size_t m : members)
+                const lsdtt_plane_fit_result plane =
+                    fit_plane_least_squares(xs, ys, vals);
+                if (plane.valid)
                 {
-                    if (!std::isfinite(fv[m])) continue;
-                    const int r = static_cast<int>(m / static_cast<std::size_t>(n_cols));
-                    const int c = static_cast<int>(m % static_cast<std::size_t>(n_cols));
-                    const double x = static_cast<double>(c) * meta.cell_size - mx;
-                    const double y = -static_cast<double>(r) * meta.cell_size - my;
-                    const double z = static_cast<double>(fv[m]) - mz;
-                    sxx += x * x;
-                    sxy += x * y;
-                    syy += y * y;
-                    sxz += x * z;
-                    syz += y * z;
-                }
-                const double det = sxx * syy - sxy * sxy;
-                if (std::abs(det) > 1e-12)
-                {
-                    const double a = (sxz * syy - syz * sxy) / det;
-                    const double b = (syz * sxx - sxz * sxy) / det;
+                    const double a = plane.coeffs.a;
+                    const double b = plane.coeffs.b;
                     if (std::hypot(a, b) > 1e-12)
                     {
                         constexpr double rad_to_deg =
