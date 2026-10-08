@@ -17,7 +17,9 @@
 //
 //   binary_mask   label_binary_components_by_size: output labels (as float) and
 //                 mask after the size filter and renumbering, D4 and D8
-//   slope_break   label_components: the int label image
+//   slope_break   label_components: the int label image. Under decision D3 it
+//                 now counts only valid cells; it must equal the removed fill
+//                 run on the grid with invalid cells zeroed
 //   terrace       label_centreline_components_d8_: labels AND the per-component
 //                 member lists in their breadth-first order
 //   synthetic     keep_largest_land_component: the resulting mask
@@ -351,14 +353,19 @@ void new_binary_mask(const std::vector<float>& in_data, const std::vector<std::u
     }
 }
 
-std::vector<int> new_slope_break(const std::vector<float>& data, int nrows, int ncols)
+// D3 (Simon, 2026-10-05; applied 2026-10-08): the slope-break labelling now
+// takes only VALID cells (mask set, not nodata, finite) above 0.5, as
+// raster_cell_is_foreground does. Written out here as the migrated site does it.
+std::vector<int> new_slope_break(const std::vector<float>& data, const std::vector<std::uint8_t>& mask,
+                                 float nodata_value, int nrows, int ncols)
 {
     std::vector<std::int32_t> label;
     std::vector<std::int64_t> size;
-    // Written as !(<= 0.5f), not > 0.5f: the old fill skipped cells with
-    // data <= 0.5f, which is false for NaN, so NaN counted as foreground.
     label_connected_components(nrows, ncols, 8,
-        [&](std::size_t i) { return !(data[i] <= 0.5f); }, label, size);
+        [&](std::size_t i) {
+            return mask[i] != 0 && !(data[i] == nodata_value) && std::isfinite(data[i]) &&
+                   data[i] > 0.5f; },
+        label, size);
     return std::vector<int>(label.begin(), label.end());
 }
 
@@ -480,11 +487,22 @@ int main()
                       bad == 0, static_cast<long long>(cases.size()));
             }
 
-        long long bad_sb = 0, bad_te = 0, bad_sd = 0;
+        long long bad_sb = 0, bad_te = 0, bad_sd = 0, n_sb_changed_by_d3 = 0;
         for (const auto& g : cases)
         {
-            if (old_slope_break_label_components(g.data, g.r, g.c) != new_slope_break(g.data, g.r, g.c))
+            // D3: identical to the removed fill run on the grid with every
+            // invalid cell (masked, nodata, NaN) set to 0, i.e. the change is
+            // exactly the masking and nothing else.
+            std::vector<float> sanitised = g.data;
+            for (std::size_t i = 0; i < sanitised.size(); ++i)
+                if (!(g.mask[i] != 0 && !(g.data[i] == nodata) && std::isfinite(g.data[i])))
+                    sanitised[i] = 0.0f;
+            if (old_slope_break_label_components(sanitised, g.r, g.c) !=
+                new_slope_break(g.data, g.mask, nodata, g.r, g.c))
                 ++bad_sb;
+            if (old_slope_break_label_components(g.data, g.r, g.c) !=
+                new_slope_break(g.data, g.mask, nodata, g.r, g.c))
+                ++n_sb_changed_by_d3;
 
             std::vector<std::vector<std::size_t>> cp_old, cp_new;
             const auto lo = old_terrace_labels(g.data, g.mask, nodata, g.r, g.c, cp_old);
@@ -498,7 +516,9 @@ int main()
             new_keep_largest(m_new, g.r, g.c);
             if (m_old != m_new) ++bad_sd;
         }
-        check("slope_break label image" + tag, bad_sb == 0, static_cast<long long>(cases.size()));
+        check("slope_break label image == old fill on the masked grid (D3); D3 changed " +
+                  std::to_string(n_sb_changed_by_d3) + " of them" + tag,
+              bad_sb == 0, static_cast<long long>(cases.size()));
         check("terrace labels and member lists in order" + tag, bad_te == 0, static_cast<long long>(cases.size()));
         check("synthetic_domain keep-largest mask (incl. no-land and ties)" + tag, bad_sd == 0,
               static_cast<long long>(cases.size()));
