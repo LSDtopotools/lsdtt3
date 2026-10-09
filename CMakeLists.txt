@@ -360,6 +360,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_surface_texture_cpu.cpp
     src/cpu/lsdtt_raster_surface_fitting_cpu.cpp
     src/cpu/lsdtt_raster_flow_preprocessing_cpu.cpp
+    src/cpu/lsdtt_raster_flat_resolution_cpu.cpp
     src/cpu/lsdtt_raster_nodata_filling_cpu.cpp
     src/cpu/lsdtt_raster_spectral_cpu.cpp
     src/cpu/lsdtt_raster_synthetic_surfaces_cpu.cpp

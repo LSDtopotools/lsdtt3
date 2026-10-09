@@ -3321,6 +3321,12 @@ target_link_libraries(lsdtt-test-flow-d8-identity PRIVATE lsdtt3_cpu)
 add_test(NAME unit_flow_d8_identity COMMAND lsdtt-test-flow-d8-identity)
 lsdtt_set_tests_properties(unit_flow_d8_identity PROPERTIES LABELS "unit;flow")
 
+# Barnes et al. (2014b) flat resolution. Hermetic: in-process inputs only.
+add_executable(lsdtt-test-flat-resolution cpp/test_flat_resolution.cpp)
+target_link_libraries(lsdtt-test-flat-resolution PRIVATE lsdtt3_cpu)
+add_test(NAME unit_flat_resolution COMMAND lsdtt-test-flat-resolution)
+lsdtt_set_tests_properties(unit_flat_resolution PROPERTIES LABELS "unit;flow")
+
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
 lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
 
@@ -6521,7 +6527,7 @@ set(LSDTT_DOMAIN_RULES
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
     "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover|distributed_hydrology|hype"          "network"
-    "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
+    "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length|flat_resolution"  "network"
     # performance_flow_routines (LSDTT_ENABLE_PERF_TESTS) matched no rule, so
     # configuring with that option ON failed until 2026-09-18 -- the same trap
     # as the benchmark rule at the top, hidden by the option's OFF default.
