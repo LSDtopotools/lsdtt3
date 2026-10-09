@@ -4480,7 +4480,109 @@ add_lsdtt_cli_smoke_test(
     unused_expected_output
     --expect-failure
     --stderr-contains "cannot impose a gradient across flats"
+    --stderr-contains "or set fill_flat_resolution_choice: barnes2014b_gradient"
 )
+
+# fill_flat_resolution_choice (Barnes et al. 2014b flat resolution) in
+# lsdtt-raster-preprocessing. The resolver numerics are covered by
+# unit_flat_resolution; these carry the CLI wiring: both options run and
+# write, the three refusals are exact, the diagnostics reach stdout, and the
+# rim-pit warning reaches stderr. tiny_dem.asc has no flats once filled, so
+# the first two are plumbing only; flat_valley_dem.asc (11 x 24 valley, one
+# flat floor) is where the options differ from the default fill.
+add_lsdtt_cli_smoke_test(
+    smoke_fill_flat_resolution_float_step
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_float_step.param.in
+    tinyfs_fill.tif
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fill_flat_resolution_gradient
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_gradient.param.in
+    tinygr_fill.tif
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fill_flat_resolution_unknown_choice
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_unknown.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice must be one of inline_gradient, barnes2014b_gradient, barnes2014b_float_step\; got 'barnes2014b_gradiant'"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fill_flat_resolution_gradient_zero_slope
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_gradient_zero_slope.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice = barnes2014b_gradient needs fill_min_slope > 0 (it sets the gradient imposed across flats)\; got 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fill_flat_resolution_fill_spill_merge
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_fsm.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice = barnes2014b_float_step applies to the barnes2014 and vincent1993 fills, not barnesetal2021"
+)
+
+# Bands on the fill difference, not oracles of the whole surface: the largest
+# raise on the valley is 48 x 2^-17 m (float step) and 48 u_q = 0.0681 m
+# (gradient), against 0.0255 m for the default fill, so each band also fails
+# if the option silently falls back to the default.
+add_lsdtt_cli_smoke_test(
+    rigorous_fill_flat_resolution_valley_float_step
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_valley_float_step.param.in
+    valleyfs_fill.tif
+    --expect valleyfs_fill_diff.tif
+    --expect-raster-stat valleyfs_fill_diff.tif:max:0.000366:0.000367
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max mask: 48"
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "NOTE: fill_min_slope (0.0001) is ignored"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fill_flat_resolution_valley_gradient
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_valley_gradient.param.in
+    valleygr_fill.tif
+    --expect valleygr_fill_diff.tif
+    --expect-raster-stat valleygr_fill_diff.tif:max:0.0681:0.0682
+    --stdout-contains "Capped flats: 0"
+    --stdout-contains "Float-step fallbacks: 0"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fill_flat_resolution_rim_warning
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_rim_warning.param.in
+    valleyknob_fill.tif
+    --stdout-contains "Rim cells without descent: 1"
+    --stderr-contains "WARNING: 1 rim cell(s) have no lower neighbour after flat resolution"
+)
+
+lsdtt_set_tests_properties(
+    smoke_fill_flat_resolution_float_step
+    smoke_fill_flat_resolution_gradient
+    smoke_fill_flat_resolution_rim_warning
+    PROPERTIES LABELS "smoke;cli;flow")
+lsdtt_set_tests_properties(
+    failure_fill_flat_resolution_unknown_choice
+    failure_fill_flat_resolution_gradient_zero_slope
+    failure_fill_flat_resolution_fill_spill_merge
+    PROPERTIES LABELS "failure;cli;flow")
+lsdtt_set_tests_properties(
+    rigorous_fill_flat_resolution_valley_float_step
+    rigorous_fill_flat_resolution_valley_gradient
+    PROPERTIES LABELS "rigorous;cli;flow")
 
 # lsdtt-surface-metrics.  Uses tiny_dem.asc (UTM 30N) rather than tiny30_dem.tif,
 # which is EPSG:4326 and is rejected by the CLI's projected-CRS check - that

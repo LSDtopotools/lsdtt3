@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tinygr
+
+# fill_flat_resolution_choice wiring: barnes2014b_gradient must run and
+# write the filled DEM. tiny_dem.asc has no flats once filled, so this checks
+# the plumbing only; flat_valley_dem.asc carries the numerics.
+
+enforce_projection: false
+write_output_format: gtiff
+
+write_fill_raster: true
+fill_flat_resolution_choice: barnes2014b_gradient

@@ -56,8 +56,10 @@
 //   write_fill_raster: true
 // -----------------------------------------------------------------------------
 
+#include <cmath>
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -660,6 +662,10 @@ int main(int argc, char* argv[])
         "This does not apply to fill-spill-merge.",
         "Pit filling", "param", "write_fill_raster"};
 
+    // inline_gradient (default) | barnes2014b_gradient | barnes2014b_float_step.
+    // The barnes2014b options apply to the barnes2014 and vincent1993 fills.
+    lsdtt::declare_fill_flat_resolution_parameter(string_default_map, help_map);
+
     float_default_map["fill_spill_merge_rainfall_rate"] = 0.1f;
     help_map["fill_spill_merge_rainfall_rate"] = {"float", "0.1",
         "Uniform rainfall depth in elevation units per cell for "
@@ -1020,6 +1026,49 @@ int main(int argc, char* argv[])
  
 
     int n_threads = ifs["n_threads"];
+
+    // Flat resolution for pit filling. Checked here, before any raster work,
+    // so a bad value or combination fails without loading anything.
+    // inline_gradient keeps the fill exactly as it was; the barnes2014b
+    // options fill to the spill level and then resolve the flats (Barnes et
+    // al. 2014b), so they only make sense for the barnes2014 and vincent1993
+    // fills.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
+    if ((bf["write_fill_raster"] || bf["write_fill_diff_raster"]) &&
+        flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+    {
+        if (sf["fill_algorithm_choice"] == "barnesetal2021")
+        {
+            std::cerr << "FATAL: fill_flat_resolution_choice = "
+                      << lsdtt::flat_resolution_choice_name(flat_choice)
+                      << " applies to the barnes2014 and vincent1993 fills, "
+                         "not barnesetal2021\n";
+            return 1;
+        }
+
+        const float fill_slope = ff["fill_min_slope"];
+        if (flat_choice == lsdtt::flat_resolution_choice::barnes2014b_gradient &&
+            !(std::isfinite(fill_slope) && fill_slope > 0.0f))
+        {
+            std::cerr << "FATAL: fill_flat_resolution_choice = "
+                         "barnes2014b_gradient needs fill_min_slope > 0 (it "
+                         "sets the gradient imposed across flats); got "
+                      << fill_slope << "\n";
+            return 1;
+        }
+    }
 
     // Resolve output format
     lsdtt::raster_output_format out_fmt = lsdtt::raster_output_format::cog;
@@ -1854,6 +1903,106 @@ int main(int argc, char* argv[])
             throw std::invalid_argument(
                 "priority_flood_queue must be 'binary' or 'radix'");
 
+        // Under a barnes2014b option the fill runs to the spill level by
+        // reconstruction (identical to barnes2014 at min_slope 0) and the
+        // flats are then resolved, so the spill queue is never used and
+        // barnes2014b_float_step has no use for fill_min_slope.
+        const bool barnes2014b_flats =
+            flat_choice != lsdtt::flat_resolution_choice::inline_gradient;
+        if (barnes2014b_flats && algo != "barnesetal2021")
+        {
+            if (queue_name != "binary")
+            {
+                std::cout << "NOTE: priority_flood_queue is ignored by "
+                             "fill_flat_resolution_choice = "
+                          << lsdtt::flat_resolution_choice_name(flat_choice)
+                          << ".\n";
+            }
+            if (flat_choice ==
+                    lsdtt::flat_resolution_choice::barnes2014b_float_step &&
+                ff["fill_min_slope"] != 0.0f)
+            {
+                std::cout << "NOTE: fill_min_slope (" << ff["fill_min_slope"]
+                          << ") is ignored by fill_flat_resolution_choice = "
+                             "barnes2014b_float_step; flats are raised by "
+                             "float32 steps.\n";
+            }
+        }
+
+        // Fill to the spill level, resolve the flats (Barnes et al. 2014b)
+        // and print what the resolver did. Used by barnes2014 and vincent1993
+        // under a barnes2014b option.
+        auto fill_and_resolve_flats = [&]() -> lsdtt::lsdtt_raster_cpu
+        {
+            lsdtt::flat_resolution_result fr =
+                lsdtt::fill_pits_with_flat_resolution(
+                    working_dem, ff["fill_min_slope"], flat_choice, n_threads);
+            const lsdtt::barnes2014b_flat_mask& md = fr.mask_diagnostics;
+
+            // Earlier stages can leave std::cout in fixed 4-decimal mode,
+            // which would print a 1e-4 gradient or a sub-mm raise as 0.0001
+            // or 0.0000. Print the diagnostics in default notation and put
+            // the stream back afterwards.
+            const std::ios_base::fmtflags cout_flags = std::cout.flags();
+            const std::streamsize cout_precision = std::cout.precision();
+            std::cout << std::defaultfloat << std::setprecision(6);
+
+            std::cout << "Flat resolution: Barnes et al. (2014b), "
+                         "https://doi.org/10.1016/j.cageo.2013.01.009, "
+                         "method "
+                      << lsdtt::flat_resolution_choice_name(flat_choice)
+                      << "\n"
+                      << "  Flat regions: " << md.n_flat_regions
+                      << ", flat cells: " << md.n_flat_cells
+                      << ", NO_FLOW cells: " << md.n_no_flow << "\n"
+                      << "  Max mask: " << md.max_mask << "\n"
+                      << "  Max raise: " << fr.max_raise_m << " m\n"
+                      << "  Near-zero-guarded regions: "
+                      << fr.n_flats_near_zero_guarded << "\n"
+                      << "  Raised above surroundings: "
+                      << fr.n_pairs_raised_above_surroundings << " pair(s), "
+                      << fr.n_cells_raised_above_surroundings << " cell(s)\n"
+                      << "  Rim cells without descent: "
+                      << fr.n_rim_cells_without_descent << "\n";
+
+            if (flat_choice ==
+                lsdtt::flat_resolution_choice::barnes2014b_gradient)
+            {
+                std::cout << "  Capped flats: " << fr.n_flats_gradient_capped
+                          << "\n"
+                          << "  Float-step fallbacks: "
+                          << fr.n_flats_float_fallback << "\n"
+                          << "  Quantised-up flats: "
+                          << fr.n_flats_unit_quantised_up << "\n"
+                          << "  Max unit inflation: "
+                          << fr.max_unit_inflation << "\n"
+                          << "  Min effective gradient: ";
+                if (std::isinf(fr.min_effective_gradient))
+                {
+                    std::cout << "n/a\n";
+                }
+                else
+                {
+                    std::cout << fr.min_effective_gradient << " m/m\n";
+                }
+            }
+
+            std::cout.flags(cout_flags);
+            std::cout.precision(cout_precision);
+
+            // A rim cell overtopped by the raise and left with no lower
+            // neighbour is a pit in the output; the D8 router refuses it.
+            if (fr.n_rim_cells_without_descent > 0)
+            {
+                std::cerr << "WARNING: " << fr.n_rim_cells_without_descent
+                          << " rim cell(s) have no lower neighbour after flat "
+                             "resolution; routing this surface will fail with "
+                             "\"could not assign a receiver\" at those cells.\n";
+            }
+
+            return std::move(fr.resolved);
+        };
+
         // Timed so the cost of the fill itself can be separated from process
         // startup, GDAL raster I/O and every other stage this CLI runs. The
         // "Compute time:"/"Write time:" wording matches lsdtt-surface-metrics
@@ -1870,12 +2019,19 @@ int main(int argc, char* argv[])
                 std::cout << "Algorithm: Barnes et al. (2014) "
                              "Priority-Flood\n";
 
-                filled_dem = lsdtt::fill_pits_priority_flood(
-                    working_dem,
-                    ff["fill_min_slope"],
-                    n_threads,
-                    queue_backend
-                );
+                if (barnes2014b_flats)
+                {
+                    filled_dem = fill_and_resolve_flats();
+                }
+                else
+                {
+                    filled_dem = lsdtt::fill_pits_priority_flood(
+                        working_dem,
+                        ff["fill_min_slope"],
+                        n_threads,
+                        queue_backend
+                    );
+                }
             }
             else if (algo == "vincent1993")
             {
@@ -1883,8 +2039,8 @@ int main(int argc, char* argv[])
                 // mechanism for a gradient across flats. Refusing is better
                 // than silently ignoring fill_min_slope and handing back a
                 // surface with undrainable flats that the D8 router will then
-                // reject.
-                if (ff["fill_min_slope"] > 0.0f)
+                // reject. A barnes2014b option supplies that mechanism.
+                if (!barnes2014b_flats && ff["fill_min_slope"] > 0.0f)
                 {
                     std::cerr << "FATAL: fill_algorithm_choice = vincent1993 "
                                  "cannot impose a gradient across flats, but "
@@ -1892,17 +2048,26 @@ int main(int argc, char* argv[])
                               << ff["fill_min_slope"] << ".\n"
                               << "Set fill_min_slope: 0 to use it, or use "
                                  "barnes2014 (the default), which is what "
-                                 "imposes the gradient.\n";
+                                 "imposes the gradient, or set "
+                                 "fill_flat_resolution_choice: "
+                                 "barnes2014b_gradient.\n";
                     return 1;
                 }
 
                 std::cout << "Algorithm: Vincent (1993) grayscale morphological "
                              "reconstruction\n";
 
-                filled_dem = lsdtt::fill_pits_reconstruction(
-                    working_dem,
-                    n_threads
-                );
+                if (barnes2014b_flats)
+                {
+                    filled_dem = fill_and_resolve_flats();
+                }
+                else
+                {
+                    filled_dem = lsdtt::fill_pits_reconstruction(
+                        working_dem,
+                        n_threads
+                    );
+                }
             }
             else if (algo == "barnesetal2021"){
                 std::cout << "Algorithm: Barnes et al. (2021), "

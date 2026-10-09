@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: flatfsm
+
+# Fill-Spill-Merge does not fill to the spill level, so the barnes2014b flat
+# resolvers do not apply to it and the combination is refused.
+
+enforce_projection: false
+write_output_format: gtiff
+
+write_fill_raster: true
+fill_algorithm_choice: barnesetal2021
+fill_flat_resolution_choice: barnes2014b_float_step

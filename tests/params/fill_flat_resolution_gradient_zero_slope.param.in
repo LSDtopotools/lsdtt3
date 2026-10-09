@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: flatzero
+
+# barnes2014b_gradient takes its gradient from fill_min_slope, so 0 is
+# refused before any work.
+
+enforce_projection: false
+write_output_format: gtiff
+
+write_fill_raster: true
+fill_flat_resolution_choice: barnes2014b_gradient
+fill_min_slope: 0
