@@ -17,6 +17,7 @@
 #include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -46,6 +47,19 @@ constexpr std::uint8_t kHighEdge = 2;
 
 constexpr const auto& k_dr = grid::d8_clockwise_row;
 constexpr const auto& k_dc = grid::d8_clockwise_col;
+
+// Near-zero guard: one mask increment is 2^-23 m (the ULP of 1.0f) on flats
+// with |z| < 1 m, valid while the result stays below 2 m (see the header).
+constexpr double k_guard_unit  = 1.0 / 8388608.0;   // 2^-23, exact
+constexpr float  k_guard_limit = 2.0f;
+
+// The guarded raise without the checks; near_zero_guard_step adds them. The
+// sum is formed in double and rounded to float once.
+inline float guard_step_unchecked(float z, std::int32_t mask) noexcept
+{
+    return static_cast<float>(static_cast<double>(z) +
+                              static_cast<double>(mask) * k_guard_unit);
+}
 
 }  // namespace
 
@@ -350,6 +364,172 @@ barnes2014b_flat_mask compute_barnes2014b_flat_mask(const lsdtt_raster_cpu& fill
     {
         out.max_mask = std::max(out.max_mask, mask[k]);
     }
+
+    return out;
+}
+
+
+float near_zero_guard_step(float z, std::int32_t mask)
+{
+    if (!(std::fabs(z) < 1.0f))
+    {
+        throw std::logic_error(
+            "lsdtt::near_zero_guard_step: the guard applies to |z| < 1 m only; got z = " +
+            std::to_string(z));
+    }
+    if (mask < 0)
+    {
+        throw std::logic_error(
+            "lsdtt::near_zero_guard_step: mask must be >= 0; got " + std::to_string(mask));
+    }
+    const float out = guard_step_unchecked(z, mask);
+    if (out >= k_guard_limit)
+    {
+        throw std::logic_error(
+            "lsdtt::near_zero_guard_step: z = " + std::to_string(z) + " raised by mask " +
+            std::to_string(mask) + " x 2^-23 m reaches 2 m or more, where consecutive"
+            " steps can round to the same float32 value");
+    }
+    return out;
+}
+
+
+flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
+                                                 const flat_resolution_options& options)
+{
+    switch (options.method)
+    {
+        case flat_resolution_choice::barnes2014b_float_step:
+            break;
+        case flat_resolution_choice::barnes2014b_gradient:
+            throw std::logic_error(
+                "lsdtt::resolve_flats_barnes2014b: barnes2014b_gradient is not implemented yet");
+        case flat_resolution_choice::inline_gradient:
+        default:
+            throw std::invalid_argument(
+                "lsdtt::resolve_flats_barnes2014b: inline_gradient is the Priority-Flood fill"
+                " (fill_pits with min_slope > 0), not a flat resolver; choose"
+                " barnes2014b_float_step or barnes2014b_gradient");
+    }
+
+    // Throws the no-outlet error (and the invalid-metadata error) itself.
+    barnes2014b_flat_mask fm = compute_barnes2014b_flat_mask(filled, options.n_threads);
+
+    const lsdtt_raster_meta& meta    = filled.get_meta();
+    const int                nrows   = meta.n_rows;
+    const int                ncols   = meta.n_cols;
+    const std::int64_t       n_cells = static_cast<std::int64_t>(nrows) * ncols;
+    const int                threads = resolve_thread_count(options.n_threads);
+    const bool               guard   = options.float_step_near_zero_guard;
+
+    flat_resolution_result out;
+    out.resolved = filled;
+
+    const float*        Z  = filled.get_data().data();          // original z
+    const std::uint8_t* V  = filled.get_mask().data();          // validity
+    float*              Zr = out.resolved.get_data().data();    // z'
+    const std::int32_t* label = fm.flat_region_label.data();
+    const std::int32_t* mask  = fm.mask.data();
+
+    auto on_border = [nrows, ncols](int r, int c)
+    {
+        return r == 0 || r == nrows - 1 || c == 0 || c == ncols - 1;
+    };
+
+    // ---------------------------------------------------------------------
+    // Raise. Each cell is written only by its own iteration. An exception
+    // cannot leave an OpenMP region, so a guarded value past the bound is
+    // only flagged here and thrown (with the helper's message) afterwards.
+    // ---------------------------------------------------------------------
+    int bound_exceeded = 0;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(threads) reduction(max:bound_exceeded)
+#endif
+    for (std::int64_t k = 0; k < n_cells; ++k)
+    {
+        if (label[k] <= 0 || mask[k] <= 0) continue;
+        if (on_border(static_cast<int>(k / ncols), static_cast<int>(k % ncols))) continue;
+        const float z = Z[k];
+        if (guard && std::fabs(z) < 1.0f)
+        {
+            Zr[k] = guard_step_unchecked(z, mask[k]);
+            if (Zr[k] >= k_guard_limit) bound_exceeded = 1;
+        }
+        else
+        {
+            Zr[k] = step_up_float32(z, mask[k]);
+        }
+    }
+    if (bound_exceeded)
+    {
+        for (std::int64_t k = 0; k < n_cells; ++k)
+        {
+            if (label[k] > 0 && mask[k] > 0 && std::fabs(Z[k]) < 1.0f &&
+                !on_border(static_cast<int>(k / ncols), static_cast<int>(k % ncols)))
+            {
+                (void)near_zero_guard_step(Z[k], mask[k]);   // throws on the first offender
+            }
+        }
+    }
+
+    // Guarded regions: every cell of a region has the same z, and every region
+    // holds at least one NO_FLOW (interior, hence raised) cell.
+    if (guard && fm.n_flat_regions > 0)
+    {
+        std::vector<std::uint8_t> guarded(static_cast<std::size_t>(fm.n_flat_regions) + 1, 0);
+        for (std::int64_t k = 0; k < n_cells; ++k)
+        {
+            if (label[k] > 0 && std::fabs(Z[k]) < 1.0f) guarded[label[k]] = 1;
+        }
+        for (const std::uint8_t g : guarded) out.n_flats_near_zero_guarded += g;
+    }
+
+    // The per-cell mask arrays are not needed beyond this point.
+    std::vector<std::int32_t>().swap(fm.flat_region_label);
+    std::vector<std::int32_t>().swap(fm.mask);
+    out.mask_diagnostics = std::move(fm);
+
+    // ---------------------------------------------------------------------
+    // Diagnostics on z and z'. Integer sums and a max: independent of the
+    // thread count.
+    // ---------------------------------------------------------------------
+    std::int64_t n_pairs = 0;
+    std::int64_t n_cells_above = 0;
+    std::int64_t n_rim = 0;
+    double       max_raise = 0.0;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(threads) \
+        reduction(+:n_pairs, n_cells_above, n_rim) reduction(max:max_raise)
+#endif
+    for (std::int64_t k = 0; k < n_cells; ++k)
+    {
+        if (V[k] == 0) continue;
+        const int r = static_cast<int>(k / ncols);
+        const int c = static_cast<int>(k % ncols);
+
+        max_raise = std::max(max_raise, static_cast<double>(Zr[k]) - static_cast<double>(Z[k]));
+
+        bool exit_cell  = on_border(r, c);
+        bool has_lower  = false;
+        std::int64_t pairs_here = 0;
+        for (int d = 0; d < 8; ++d)
+        {
+            const int nr = r + k_dr[d];
+            const int nc = c + k_dc[d];
+            if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
+            const std::int64_t n = static_cast<std::int64_t>(nr) * ncols + nc;
+            if (V[n] == 0) { exit_cell = true; continue; }
+            if (Z[n] > Z[k] && Zr[k] >= Zr[n]) ++pairs_here;
+            if (Zr[n] < Zr[k]) has_lower = true;
+        }
+        n_pairs += pairs_here;
+        if (pairs_here > 0) ++n_cells_above;
+        if (!exit_cell && !has_lower) ++n_rim;
+    }
+    out.n_pairs_raised_above_surroundings = n_pairs;
+    out.n_cells_raised_above_surroundings = n_cells_above;
+    out.n_rim_cells_without_descent       = n_rim;
+    out.max_raise_m                       = max_raise;
 
     return out;
 }

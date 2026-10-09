@@ -136,4 +136,131 @@ struct barnes2014b_flat_mask
 barnes2014b_flat_mask compute_barnes2014b_flat_mask(const lsdtt_raster_cpu& filled,
                                                     int n_threads = 0);
 
+
+// flat_resolution_choice
+//
+// How flats left by a min_slope 0 fill are made drainable.
+//   inline_gradient         the default: the Priority-Flood fill imposes
+//                           min_slope during the flood (fill_pits). It is not
+//                           a resolver and resolve_flats_barnes2014b refuses it.
+//   barnes2014b_gradient    Barnes mask scaled to a physical gradient
+//                           (not implemented yet).
+//   barnes2014b_float_step  Barnes mask applied as float32 steps (RichDEM
+//                           ResolveFlats on float32).
+enum class flat_resolution_choice : std::uint8_t
+{
+    inline_gradient,
+    barnes2014b_gradient,
+    barnes2014b_float_step
+};
+
+struct flat_resolution_options
+{
+    flat_resolution_choice method = flat_resolution_choice::barnes2014b_float_step;
+    float min_slope = 1.0e-4f;                // m/m; barnes2014b_gradient only
+    // Near-zero guard (see near_zero_guard_step). Always on in every caller;
+    // it is an option only so that the tests can show what it prevents.
+    bool  float_step_near_zero_guard = true;
+    int   n_threads = 0;                      // 0 = all
+};
+
+// Result of resolve_flats_barnes2014b. mask_diagnostics carries the counts of
+// compute_barnes2014b_flat_mask; its flat_region_label and mask vectors are
+// released (empty) to save 8 B per cell. Call compute_barnes2014b_flat_mask
+// directly if the per-cell arrays are needed.
+struct flat_resolution_result
+{
+    lsdtt_raster_cpu      resolved;
+    barnes2014b_flat_mask mask_diagnostics;
+
+    std::int64_t n_flats_near_zero_guarded = 0;  // flat REGIONS raised by the guard
+    double       max_raise_m               = 0.0;  // max of double(z') - double(z)
+
+    // Ordered 8-neighbour pairs (c, n), both valid, with z(n) > z(c) before
+    // and z'(c) >= z'(n) after. RichDEM prints this count as "Cells
+    // inappropriately raised above surrounding terrain" (it counts pairs).
+    std::int64_t n_pairs_raised_above_surroundings = 0;
+    // Cells c that are the first member of at least one such pair.
+    std::int64_t n_cells_raised_above_surroundings = 0;
+    // Valid cells that are not exits (not on the raster border, no nodata
+    // neighbour) and have no strictly lower valid neighbour in z'. These are
+    // the cells the D8 router will refuse ("could not assign a receiver").
+    std::int64_t n_rim_cells_without_descent = 0;
+};
+
+
+// near_zero_guard_step
+//
+// The near-zero guard of the float-step option: for a flat region at
+// elevation |z| < 1 m, each mask increment is a fixed 2^-23 m (the ULP of 1.0f)
+// instead of one float32 ULP:
+//   z' = float(double(z) + mask * 2^-23)
+//
+// Why: one float32 ULP at 0 m is 1.4e-45 m. lsdtt3's D8 router compares in
+// double and still routes such a flat, but any consumer that forms the slope
+// in float32, (z - z_r) / dist, gets exactly 0 (and TWI gets +inf). With the
+// guard every D8 step on the flat is at least 2^-23 m, i.e. a float32 slope of
+// at least 2^-23 / (sqrt(2) L). At |z| = 1 the native ULP is 2^-23, so the
+// step size is continuous across the switch.
+//
+// Bound: consecutive values stay distinct only while z' < 2 m, where the ULP
+// is <= 2^-23. Beyond that, two masks can round to the same float. So
+// std::logic_error is thrown if the result is >= 2.0f, i.e. for mask >=
+// (2 - z) * 2^23 (>= 8.4e6 for any z < 1). Real flats do not come near it.
+//
+// Preconditions (std::logic_error if violated): |z| < 1, mask >= 0.
+float near_zero_guard_step(float z, std::int32_t mask);
+
+
+// resolve_flats_barnes2014b
+//
+// Makes every flat of a depression-filled DEM drain, using the Barnes et al.
+// (2014b) mask (compute_barnes2014b_flat_mask): flow converges across flats
+// towards their outlets and away from the higher ground around them.
+//
+// method:
+//   barnes2014b_float_step  implemented; see below.
+//   barnes2014b_gradient    throws std::logic_error (not implemented yet).
+//   inline_gradient         throws std::invalid_argument with the message
+//     lsdtt::resolve_flats_barnes2014b: inline_gradient is the Priority-Flood
+//     fill (fill_pits with min_slope > 0), not a flat resolver; choose
+//     barnes2014b_float_step or barnes2014b_gradient
+//
+// Precondition: as compute_barnes2014b_flat_mask. Its no-outlet
+// std::invalid_argument (prefix "lsdtt::compute_barnes2014b_flat_mask: ")
+// propagates unchanged.
+//
+// Float step. Every cell with a flat-region label and mask > 0 that is NOT on
+// the raster border is raised:
+//   z' = step_up_float32(z, mask)            (mask float32 ULPs)
+//   z' = near_zero_guard_step(z, mask)       if |z| < 1 and the guard is on
+// Every cell of a flat region has the same z, so the choice is per region.
+// Raster-border cells are never raised, whatever their mask (RichDEM never
+// modifies them; they are exits anyway). Cells next to interior nodata are
+// raised. Other cells are copied bitwise.
+//
+// RichDEM equivalence: on flats with |z| >= 1 m the output is bitwise equal to
+// RichDEM ResolveFlats on a float32 raster, border included (checked on hand
+// fixtures cell by cell). On guarded flats (|z| < 1 m) it differs by design.
+//
+// Rim violations (decision D6): the raise is not capped. Where a flat sits
+// within mask-count ULPs of a higher neighbour, the flat can reach or pass it.
+// This is reported in n_pairs/n_cells_raised_above_surroundings, not
+// prevented. If it leaves a non-exit cell with no lower neighbour
+// (n_rim_cells_without_descent > 0), the D8 router's existing "could not
+// assign a receiver" error fires on that cell.
+//
+// What the slopes mean: a float-step drop is one or a few ULP(z), so the
+// gradient on a resolved flat is about ULP(z) / L. It depends on elevation
+// (it doubles at every power of two: 512, 1024, 2048, 4096 m) and has no
+// physical meaning; it exists only to give the router a direction. Most
+// physics consumers floor slope at 1e-5 to 1e-3, so to them a float-step flat
+// is still flat. On large high flats the total raise (mask x ULP) can reach
+// decimetres to metres; see max_raise_m.
+//
+// n_threads: OpenMP threads for the mask scans, the raise and the diagnostics
+// (0 = all). The output and every diagnostic are bitwise independent of it.
+flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
+                                                 const flat_resolution_options& options);
+
 }  // namespace lsdtt
