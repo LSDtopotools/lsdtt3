@@ -44,6 +44,20 @@
 //   F10 Idempotence; F12 n_threads 1 vs 4 bitwise; F13 interior nodata hole;
 //   F16 border cells never raised; F17 edge cases through the resolver;
 //   F18 near_zero_guard_step bound; method dispatch; no-outlet message.
+//   Pair rule: a cell two ULPs up ends level with a neighbour; RichDEM's 8
+//       pairs (>=), not 7.
+//
+// Resolver checks (barnes2014b_gradient):
+//   F6  Valley: every D8 step on the flat has S >= min_slope EXACTLY (double,
+//       router path lengths); raise == mask * u_q with u_q = ceil(u/q) q by
+//       hand; towards drops in [u_q, 3 u_q]; nothing capped or fallen back.
+//   F7  A 60 x 60 flat under an interior rim 0.01 m higher: capped, gradient
+//       below min_slope, the rim never reached, routable. F7b: a rim 3 ULPs
+//       up gives a quantised cap of 0 and the float-step result bitwise.
+//   F19 Quantisation: 1 m cells at 4000 m (u < ULP, u_q = q); a raise across
+//       1024 m (reported min_effective_gradient == measured).
+//   F4/F5/F10/F12/F16/F17 re-run for this option; the min_slope error
+//       message; fractal statistics.
 //
 // Usage: lsdtt-test-flat-resolution
 // Prints one PASS/FAIL line per check and a final "RESULT: PASS|FAIL".
@@ -317,17 +331,20 @@ void check_counts(const std::string& name, const lsdtt::barnes2014b_flat_mask& m
 }
 
 // -----------------------------------------------------------------------------
-// Independent reference for the descent check (F3). Recomputes drain status,
-// low edges and the towards distance t from the raster, with validity from the
-// mask array, then checks the returned mask against them:
-//   * every NO_FLOW cell has a same-label neighbour that is a low edge or has a
-//     mask at least 1 lower;
-//   * the step to every NO_FLOW towards-parent (same label, t one less) is in
-//     {1, 2, 3}, and the step to a low-edge parent is at least 2;
-//   * every NO_FLOW cell is labelled and has mask >= 4 (t >= 2).
+// Independent reference for the descent checks (F3, F6): drain status, low
+// edges and the towards distance t, recomputed from the raster with validity
+// from the mask array. t is a plain FIFO BFS from the low edges through
+// same-label NO_FLOW cells.
 // -----------------------------------------------------------------------------
-void check_descent(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
-                   const lsdtt::barnes2014b_flat_mask& m)
+struct towards_reference
+{
+    std::vector<std::uint8_t> no_flow;
+    std::vector<std::uint8_t> low;
+    std::vector<std::int32_t> t;
+};
+
+towards_reference compute_towards_reference(const lsdtt::lsdtt_raster_cpu& dem,
+                                            const std::vector<std::int32_t>& label)
 {
     const int nr = dem.get_meta().n_rows;
     const int nc = dem.get_meta().n_cols;
@@ -337,7 +354,11 @@ void check_descent(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
     const auto& dr = lsdtt::grid::d8_clockwise_row;
     const auto& dc = lsdtt::grid::d8_clockwise_col;
 
-    std::vector<std::uint8_t> no_flow(n, 0), low(n, 0);
+    towards_reference ref;
+    std::vector<std::uint8_t>& no_flow = ref.no_flow;
+    std::vector<std::uint8_t>& low     = ref.low;
+    no_flow.assign(n, 0);
+    low.assign(n, 0);
     for (int r = 0; r < nr; ++r)
         for (int c = 0; c < nc; ++c)
         {
@@ -367,8 +388,8 @@ void check_descent(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
             }
         }
 
-    // Reference towards distance (plain FIFO BFS).
-    std::vector<std::int32_t> t(n, 0);
+    std::vector<std::int32_t>& t = ref.t;
+    t.assign(n, 0);
     std::vector<std::size_t> queue;
     for (std::size_t k = 0; k < n; ++k)
         if (low[k]) { t[k] = 1; queue.push_back(k); }
@@ -381,12 +402,32 @@ void check_descent(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
             const int rr = r + dr[d], cc = c + dc[d];
             if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
             const std::size_t q = static_cast<std::size_t>(rr) * nc + cc;
-            if (!no_flow[q] || t[q] != 0 || m.flat_region_label[q] != m.flat_region_label[k])
-                continue;
+            if (!no_flow[q] || t[q] != 0 || label[q] != label[k]) continue;
             t[q] = t[k] + 1;
             queue.push_back(q);
         }
     }
+    return ref;
+}
+
+// F3 checks against the reference:
+//   * every NO_FLOW cell has a same-label neighbour that is a low edge or has a
+//     mask at least 1 lower;
+//   * the step to every NO_FLOW towards-parent (same label, t one less) is in
+//     {1, 2, 3}, and the step to a low-edge parent is at least 2;
+//   * every NO_FLOW cell is labelled and has mask >= 4 (t >= 2).
+void check_descent(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
+                   const lsdtt::barnes2014b_flat_mask& m)
+{
+    const int nr = dem.get_meta().n_rows;
+    const int nc = dem.get_meta().n_cols;
+    const auto& dr = lsdtt::grid::d8_clockwise_row;
+    const auto& dc = lsdtt::grid::d8_clockwise_col;
+
+    const towards_reference ref = compute_towards_reference(dem, m.flat_region_label);
+    const std::vector<std::uint8_t>& no_flow = ref.no_flow;
+    const std::vector<std::uint8_t>& low     = ref.low;
+    const std::vector<std::int32_t>& t       = ref.t;
 
     std::int64_t n_checked = 0, n_no_lower = 0, n_bad_step = 0, n_bad_low_step = 0,
                  n_unlabelled = 0;
@@ -958,7 +999,12 @@ bool same_diagnostics(const lsdtt::flat_resolution_result& a, const lsdtt::flat_
            a.max_raise_m == b.max_raise_m &&
            a.n_pairs_raised_above_surroundings == b.n_pairs_raised_above_surroundings &&
            a.n_cells_raised_above_surroundings == b.n_cells_raised_above_surroundings &&
-           a.n_rim_cells_without_descent == b.n_rim_cells_without_descent;
+           a.n_rim_cells_without_descent == b.n_rim_cells_without_descent &&
+           a.n_flats_gradient_capped == b.n_flats_gradient_capped &&
+           a.n_flats_float_fallback == b.n_flats_float_fallback &&
+           a.n_flats_unit_quantised_up == b.n_flats_unit_quantised_up &&
+           a.max_unit_inflation == b.max_unit_inflation &&
+           a.min_effective_gradient == b.min_effective_gradient;
 }
 
 std::string result_string(const lsdtt::flat_resolution_result& r)
@@ -969,6 +1015,26 @@ std::string result_string(const lsdtt::flat_resolution_result& r)
        << r.n_rim_cells_without_descent << ", guarded regions " << r.n_flats_near_zero_guarded
        << ", max_raise_m " << std::setprecision(9) << r.max_raise_m;
     return os.str();
+}
+
+std::string gradient_string(const lsdtt::flat_resolution_result& r)
+{
+    std::ostringstream os;
+    os << result_string(r) << ", capped " << r.n_flats_gradient_capped << ", fallback "
+       << r.n_flats_float_fallback << ", quantised up " << r.n_flats_unit_quantised_up
+       << ", max_unit_inflation " << std::setprecision(9) << r.max_unit_inflation
+       << ", min_effective_gradient " << r.min_effective_gradient;
+    return os.str();
+}
+
+lsdtt::flat_resolution_result resolve_gradient(const lsdtt::lsdtt_raster_cpu& dem,
+                                               int n_threads = 0, float min_slope = 1.0e-4f)
+{
+    lsdtt::flat_resolution_options opt;
+    opt.method    = lsdtt::flat_resolution_choice::barnes2014b_gradient;
+    opt.min_slope = min_slope;
+    opt.n_threads = n_threads;
+    return lsdtt::resolve_flats_barnes2014b(dem, opt);
 }
 
 lsdtt::lsdtt_flowinfo build_d8(const lsdtt::lsdtt_raster_cpu& dem)
@@ -1044,29 +1110,32 @@ std::string vector_string(const std::vector<double>& v)
     return os.str();
 }
 
-// Every raised (label > 0, mask > 0, not on the border) cell's z' is the same
-// for equal masks and strictly increasing with the mask.
+// Within each flat region, every raised (label > 0, mask > 0, not on the
+// border) cell's z' is the same for equal masks and strictly increasing with
+// the mask.
 bool raise_strictly_increasing_with_mask(const lsdtt::lsdtt_raster_cpu& dem,
                                          const lsdtt::lsdtt_raster_cpu& resolved)
 {
     const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(dem);
     const int nr = dem.get_meta().n_rows;
     const int nc = dem.get_meta().n_cols;
-    std::vector<std::pair<std::int32_t, float>> raised;
+    struct raised_cell { std::int32_t label; std::int32_t mask; float z; };
+    std::vector<raised_cell> raised;
     for (int r = 1; r < nr - 1; ++r)
         for (int c = 1; c < nc - 1; ++c)
         {
             const std::size_t k = static_cast<std::size_t>(r) * nc + c;
             if (m.flat_region_label[k] > 0 && m.mask[k] > 0)
-                raised.emplace_back(m.mask[k], resolved.get_data()[k]);
+                raised.push_back({m.flat_region_label[k], m.mask[k], resolved.get_data()[k]});
         }
-    std::sort(raised.begin(), raised.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::sort(raised.begin(), raised.end(), [](const raised_cell& a, const raised_cell& b)
+              { return a.label != b.label ? a.label < b.label : a.mask < b.mask; });
     for (std::size_t i = 1; i < raised.size(); ++i)
     {
-        const bool same_mask = raised[i].first == raised[i - 1].first;
-        if (same_mask && bits_of(raised[i].second) != bits_of(raised[i - 1].second)) return false;
-        if (!same_mask && !(raised[i].second > raised[i - 1].second)) return false;
+        if (raised[i].label != raised[i - 1].label) continue;
+        const bool same_mask = raised[i].mask == raised[i - 1].mask;
+        if (same_mask && bits_of(raised[i].z) != bits_of(raised[i - 1].z)) return false;
+        if (!same_mask && !(raised[i].z > raised[i - 1].z)) return false;
     }
     return !raised.empty();
 }
@@ -1494,9 +1563,8 @@ void run_f18_and_api_checks()
     };
     const lsdtt::lsdtt_raster_cpu valley = make_valley().raster();
     const std::string grad = what_of(lsdtt::flat_resolution_choice::barnes2014b_gradient, valley);
-    check("API barnes2014b_gradient throws std::logic_error (not implemented yet)",
-          grad == "logic_error: lsdtt::resolve_flats_barnes2014b: barnes2014b_gradient is not"
-                  " implemented yet", grad);
+    check("API barnes2014b_gradient with the default min_slope (1e-4) does not throw",
+          grad.empty(), grad);
     const std::string inl = what_of(lsdtt::flat_resolution_choice::inline_gradient, valley);
     check("API inline_gradient throws std::invalid_argument",
           inl.rfind("invalid_argument: lsdtt::resolve_flats_barnes2014b: inline_gradient", 0) == 0,
@@ -1508,6 +1576,509 @@ void run_f18_and_api_checks()
         what_of(lsdtt::flat_resolution_choice::barnes2014b_float_step, closed.raster());
     check("API no-outlet input: the mask's message propagates unchanged",
           no_outlet == "invalid_argument: " + no_outlet_message(198, 1), no_outlet);
+}
+
+
+// =============================================================================
+// Resolver (Step 4): barnes2014b_gradient
+// =============================================================================
+
+// Steepest-descent D8 slope of cell k in the router's arithmetic (lsdtt_flowinfo:
+// dz in double, cardinal L, diagonal L * sqrt(2) in double), over valid in-grid
+// neighbours. 0 if no neighbour is lower.
+double steepest_d8_slope(const lsdtt::lsdtt_raster_cpu& dem, std::int64_t k)
+{
+    const int    nr   = dem.get_meta().n_rows;
+    const int    nc   = dem.get_meta().n_cols;
+    const double L    = dem.get_meta().cell_size;
+    const double diag = L * lsdtt::grid::k_sqrt2_d;
+    const std::vector<float>&        Z = dem.get_data();
+    const std::vector<std::uint8_t>& V = dem.get_mask();
+    const int r = static_cast<int>(k / nc), c = static_cast<int>(k % nc);
+    double best = 0.0;
+    for (int d = 0; d < 8; ++d)
+    {
+        const int rr = r + lsdtt::grid::d8_clockwise_row[d];
+        const int cc = c + lsdtt::grid::d8_clockwise_col[d];
+        if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
+        const std::size_t q = static_cast<std::size_t>(rr) * nc + cc;
+        if (!V[q]) continue;
+        const double dz = static_cast<double>(Z[k]) - static_cast<double>(Z[q]);
+        if (dz <= 0.0) continue;
+        best = std::max(best, dz / (lsdtt::grid::d8_clockwise_is_diagonal(d) ? diag : L));
+    }
+    return best;
+}
+
+// Independent measurement of min_effective_gradient when every region is
+// gradient-resolved: min over the input's NO_FLOW cells of the steepest D8
+// slope on the output.
+double measured_min_gradient(const lsdtt::lsdtt_raster_cpu& before,
+                             const lsdtt::lsdtt_raster_cpu& after)
+{
+    const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(before);
+    const towards_reference ref = compute_towards_reference(before, m.flat_region_label);
+    double out = std::numeric_limits<double>::infinity();
+    for (std::size_t k = 0; k < ref.no_flow.size(); ++k)
+        if (ref.no_flow[k]) out = std::min(out, steepest_d8_slope(after, static_cast<std::int64_t>(k)));
+    return out;
+}
+
+// The gradient option's unit by hand: u = min_slope * sqrt(2) * L, and
+// u_q = ceil(u / q) * q.
+double hand_u(float min_slope, double L)
+{
+    return static_cast<double>(min_slope) * (L * lsdtt::grid::k_sqrt2_d);
+}
+double hand_u_q(double u, double q) { return std::ceil(u / q) * q; }
+
+// Exact-gradient checks on a single-region fixture at z_f with no binade
+// crossing (F6, F19(i)):
+//   * every raised cell's raise is exactly mask * u_q (so u_q is derivable);
+//   * every NO_FLOW cell's steepest D8 slope (double) is >= min_slope, no
+//     tolerance;
+//   * every drop to a NO_FLOW towards-parent is in [u_q, 3 u_q] (slope at most
+//     3 u_q / L), and every drop to a low-edge parent is >= 2 u_q.
+void check_exact_gradient(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
+                          const lsdtt::flat_resolution_result& res, float z_f, double u_q,
+                          float min_slope)
+{
+    const int nr = dem.get_meta().n_rows;
+    const int nc = dem.get_meta().n_cols;
+    const double L = dem.get_meta().cell_size;
+    const std::vector<float>& Zr = res.resolved.get_data();
+    const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(dem);
+    const towards_reference ref = compute_towards_reference(dem, m.flat_region_label);
+
+    std::int64_t n_raised = 0, n_raise_bad = 0;
+    for (int r = 1; r < nr - 1; ++r)
+        for (int c = 1; c < nc - 1; ++c)
+        {
+            const std::size_t k = static_cast<std::size_t>(r) * nc + c;
+            if (m.flat_region_label[k] <= 0 || m.mask[k] <= 0) continue;
+            ++n_raised;
+            if (static_cast<double>(Zr[k]) - static_cast<double>(z_f) != m.mask[k] * u_q) ++n_raise_bad;
+        }
+    check("F6/F19 " + name + ": every raised cell (" + std::to_string(n_raised) +
+              ") is raised by exactly mask * u_q",
+          n_raised > 0 && n_raise_bad == 0, std::to_string(n_raise_bad) + " differ");
+
+    std::int64_t n_nf = 0, n_below = 0, n_bad_interior = 0, n_bad_low = 0;
+    double min_slope_seen = std::numeric_limits<double>::infinity();
+    double max_interior_drop = 0.0, max_low_drop = 0.0;
+    for (int r = 1; r < nr - 1; ++r)
+        for (int c = 1; c < nc - 1; ++c)
+        {
+            const std::size_t k = static_cast<std::size_t>(r) * nc + c;
+            if (!ref.no_flow[k]) continue;
+            ++n_nf;
+            const double s = steepest_d8_slope(res.resolved, static_cast<std::int64_t>(k));
+            min_slope_seen = std::min(min_slope_seen, s);
+            if (!(s >= static_cast<double>(min_slope))) ++n_below;
+            for (int d = 0; d < 8; ++d)
+            {
+                const std::size_t q =
+                    static_cast<std::size_t>(r + lsdtt::grid::d8_clockwise_row[d]) * nc +
+                    (c + lsdtt::grid::d8_clockwise_col[d]);
+                if (m.flat_region_label[q] != m.flat_region_label[k] || ref.t[q] != ref.t[k] - 1)
+                    continue;
+                const double drop = static_cast<double>(Zr[k]) - static_cast<double>(Zr[q]);
+                if (ref.low[q])
+                {
+                    max_low_drop = std::max(max_low_drop, drop);
+                    if (drop < 2.0 * u_q) ++n_bad_low;
+                }
+                else
+                {
+                    max_interior_drop = std::max(max_interior_drop, drop);
+                    if (drop < u_q || drop > 3.0 * u_q) ++n_bad_interior;
+                }
+            }
+        }
+    std::cout << "      " << name << ": min steepest D8 slope " << std::setprecision(9)
+              << min_slope_seen << " (min_slope " << static_cast<double>(min_slope)
+              << "), max interior towards drop " << max_interior_drop / u_q
+              << " u_q (slope " << max_interior_drop / L << " <= 3 u_q / L = " << 3.0 * u_q / L
+              << "), max low-edge drop " << max_low_drop / u_q << " u_q\n";
+    check("F6/F19 " + name + ": every NO_FLOW cell (" + std::to_string(n_nf) +
+              ") has a steepest D8 slope >= min_slope EXACTLY",
+          n_nf > 0 && n_below == 0, std::to_string(n_below) + " below; min " +
+                                        std::to_string(min_slope_seen));
+    check("F6/F19 " + name + ": drops to NO_FLOW towards-parents in [u_q, 3 u_q]"
+              " (slope <= 3 u_q / L), to low-edge parents >= 2 u_q",
+          n_bad_interior == 0 && n_bad_low == 0,
+          std::to_string(n_bad_interior) + " interior, " + std::to_string(n_bad_low) + " low-edge");
+}
+
+// Every raised cell's raise is strictly increasing in the mask, every border
+// cell is unchanged, and the raised set equals the float-step one.
+bool same_raised_cells(const lsdtt::lsdtt_raster_cpu& dem, const lsdtt::lsdtt_raster_cpu& a,
+                       const lsdtt::lsdtt_raster_cpu& b)
+{
+    const std::vector<float>& z0 = dem.get_data();
+    for (std::size_t k = 0; k < z0.size(); ++k)
+    {
+        if (!dem.get_mask()[k]) continue;
+        const bool ra = bits_of(a.get_data()[k]) != bits_of(z0[k]);
+        const bool rb = bits_of(b.get_data()[k]) != bits_of(z0[k]);
+        if (ra != rb) return false;
+    }
+    return true;
+}
+
+
+// -----------------------------------------------------------------------------
+// F6: exact gradient on the valley
+// -----------------------------------------------------------------------------
+void run_f6_checks()
+{
+    std::cout << "\n=== F6: barnes2014b_gradient on the valley (10 m cells, floor 100) ===\n";
+
+    const lsdtt::lsdtt_raster_cpu dem = make_valley().raster();
+    const lsdtt::flat_resolution_result res = resolve_gradient(dem);
+    std::cout << "      " << gradient_string(res) << "\n";
+
+    // By hand: ULP at 100 is 2^-17 (binade [64, 128)); the top 100 + 48 u_q
+    // stays in it.
+    const double u   = hand_u(1.0e-4f, 10.0);
+    const double q   = std::ldexp(1.0, -17);
+    const double u_q = hand_u_q(u, q);
+    std::cout << "      u = " << std::setprecision(12) << u << " m, q = " << q << " m, u_q = "
+              << u_q << " m (" << u_q / q << " q)\n";
+
+    check("F6 valley: nothing capped, nothing fell back, unit not quantised up",
+          res.n_flats_gradient_capped == 0 && res.n_flats_float_fallback == 0 &&
+              res.n_flats_unit_quantised_up == 0,
+          gradient_string(res));
+    check_exact_gradient("valley 100 m", dem, res, 100.0f, u_q, 1.0e-4f);
+    check("F6 valley: max_raise_m == max_mask (48) * u_q",
+          res.mask_diagnostics.max_mask == 48 && res.max_raise_m == 48.0 * u_q,
+          std::to_string(res.max_raise_m) + " vs " + std::to_string(48.0 * u_q));
+    check("F6 valley: max_unit_inflation == u_q / u (hand)",
+          res.max_unit_inflation == u_q / u, std::to_string(res.max_unit_inflation));
+    const double measured = measured_min_gradient(dem, res.resolved);
+    check("F6 valley: min_effective_gradient >= min_slope and == the measured minimum",
+          res.min_effective_gradient >= static_cast<double>(1.0e-4f) &&
+              res.min_effective_gradient == measured,
+          std::to_string(res.min_effective_gradient) + " vs " + std::to_string(measured));
+    check("F6 valley: no rim violations",
+          res.n_pairs_raised_above_surroundings == 0 && res.n_rim_cells_without_descent == 0,
+          gradient_string(res));
+    check_routable("gradient valley", res.resolved);
+}
+
+
+// -----------------------------------------------------------------------------
+// F7 / F7b: rim protection
+// -----------------------------------------------------------------------------
+
+// 64 x 64: a one-cell surround at 120 on the raster border, an INTERIOR rim
+// ring at `rim` (rows/cols 1 and 62), the 60 x 60 flat at 100 inside it, and
+// one outlet: (31, 0) = 99 with the rim cell (31, 1) cut down to 99.5. The rim
+// cells drain only into the flat, so raising the flat to the rim would leave
+// them without descent.
+grid_f make_rimmed_flat(float rim)
+{
+    grid_f g(64, 64, 120.0f);
+    g.fill_box(1, 62, 1, 62, rim);
+    g.fill_box(2, 61, 2, 61, 100.0f);
+    g.at(31, 0) = 99.0f;
+    g.at(31, 1) = 99.5f;
+    return g;
+}
+
+void run_f7_checks()
+{
+    std::cout << "\n=== F7: rim protection (60 x 60 flat at 100, interior rim at 100.01) ===\n";
+
+    const float rim = 100.01f;
+    const lsdtt::lsdtt_raster_cpu dem = make_rimmed_flat(rim).raster();
+    const lsdtt::flat_resolution_result res = resolve_gradient(dem);
+    std::cout << "      " << gradient_string(res) << "\n";
+    std::cout << "      " << counts_string(res.mask_diagnostics) << "\n";
+
+    float max_flat = -std::numeric_limits<float>::infinity();
+    for (int r = 2; r <= 61; ++r)
+        for (int c = 2; c <= 61; ++c)
+            max_flat = std::max(max_flat, res.resolved.get_data()[static_cast<std::size_t>(r) * 64 + c]);
+    std::cout << "      highest flat cell " << std::setprecision(9) << max_flat << " (rim " << rim
+              << ")\n";
+
+    check("F7 one region, capped, not fallen back",
+          res.mask_diagnostics.n_flat_regions == 1 && res.n_flats_gradient_capped == 1 &&
+              res.n_flats_float_fallback == 0,
+          gradient_string(res));
+    check("F7 0 < min_effective_gradient < 1e-4 (capped flats fall below min_slope)",
+          res.min_effective_gradient > 0.0 && res.min_effective_gradient < 1.0e-4,
+          std::to_string(res.min_effective_gradient));
+    check("F7 min_effective_gradient == the measured minimum",
+          res.min_effective_gradient == measured_min_gradient(dem, res.resolved));
+    check("F7 no flat cell reaches the rim value", max_flat < rim);
+    check("F7 no pair raised above surroundings, no rim cell without descent",
+          res.n_pairs_raised_above_surroundings == 0 && res.n_rim_cells_without_descent == 0,
+          gradient_string(res));
+    check_routable("rimmed flat, gradient", res.resolved);
+
+    const lsdtt::flat_resolution_result r1 = resolve_gradient(dem, 1);
+    const lsdtt::flat_resolution_result r4 = resolve_gradient(dem, 4);
+    check("F12 gradient rimmed flat: n_threads 1 vs 4 bitwise-identical raster and diagnostics",
+          same_raster_bits(r1.resolved, r4.resolved) && same_diagnostics(r1, r4) &&
+              same_raster_bits(r1.resolved, res.resolved));
+
+    std::cout << "\n=== F7b: rim 3 ULPs above the flat: quantised cap 0 -> float-step fallback ===\n";
+    const float rim3 = lsdtt::step_up_float32(100.0f, 3);
+    const lsdtt::lsdtt_raster_cpu dem3 = make_rimmed_flat(rim3).raster();
+    const lsdtt::flat_resolution_result g3 = resolve_gradient(dem3);
+    const lsdtt::flat_resolution_result f3 = resolve(dem3);
+    std::cout << "      gradient:   " << gradient_string(g3) << "\n";
+    std::cout << "      float step: " << result_string(f3) << "\n";
+    check("F7b one region, capped and fallen back",
+          g3.n_flats_gradient_capped == 1 && g3.n_flats_float_fallback == 1, gradient_string(g3));
+    check("F7b output bitwise equal to the float-step option",
+          same_raster_bits(g3.resolved, f3.resolved));
+    check("F7b violations reported as under float step (D6): pairs > 0, same pair, cell and"
+          " rim counts",
+          g3.n_pairs_raised_above_surroundings > 0 &&
+              g3.n_pairs_raised_above_surroundings == f3.n_pairs_raised_above_surroundings &&
+              g3.n_cells_raised_above_surroundings == f3.n_cells_raised_above_surroundings &&
+              g3.n_rim_cells_without_descent == f3.n_rim_cells_without_descent &&
+              g3.n_rim_cells_without_descent > 0,
+          gradient_string(g3));
+    check("F7b no gradient-resolved region left: min_effective_gradient is +inf, inflation 1",
+          std::isinf(g3.min_effective_gradient) && g3.max_unit_inflation == 1.0,
+          gradient_string(g3));
+}
+
+
+// -----------------------------------------------------------------------------
+// F19: quantisation
+// -----------------------------------------------------------------------------
+void run_f19_checks()
+{
+    std::cout << "\n=== F19(i): 1 m cells at 4000 m (u < ULP) ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu dem = make_valley(4000.0f).raster(1.0);
+        const lsdtt::flat_resolution_result res = resolve_gradient(dem);
+        std::cout << "      " << gradient_string(res) << "\n";
+        const double u = hand_u(1.0e-4f, 1.0);
+        const double q = std::ldexp(1.0, -12);   // ULP in [2048, 4096)
+        std::cout << "      u = " << std::setprecision(12) << u << " m < q = " << q << " m\n";
+        check("F19(i) u < q, u_q == q: n_flats_unit_quantised_up == 1, max_unit_inflation == q/u",
+              u < q && hand_u_q(u, q) == q && res.n_flats_unit_quantised_up == 1 &&
+                  res.max_unit_inflation == q / u && res.n_flats_gradient_capped == 0 &&
+                  res.n_flats_float_fallback == 0,
+              gradient_string(res));
+        check_exact_gradient("valley 4000 m, 1 m cells", dem, res, 4000.0f, q, 1.0e-4f);
+        check("F19(i) min_effective_gradient >= min_slope and == the measured minimum",
+              res.min_effective_gradient >= static_cast<double>(1.0e-4f) &&
+                  res.min_effective_gradient == measured_min_gradient(dem, res.resolved),
+              gradient_string(res));
+        check_routable("gradient valley 4000 m, 1 m cells", res.resolved);
+    }
+
+    std::cout << "\n=== F19(ii): valley floor 1023.95, raise crosses 1024 ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu dem = make_valley(1023.95f).raster();
+        const lsdtt::flat_resolution_result res = resolve_gradient(dem);
+        float max_flat = -std::numeric_limits<float>::infinity();
+        for (int r = 1; r <= 9; ++r)
+            for (int c = 1; c <= 22; ++c)
+                max_flat = std::max(max_flat, res.resolved.get_data()[static_cast<std::size_t>(r) * 24 + c]);
+        const double measured = measured_min_gradient(dem, res.resolved);
+        std::cout << "      " << gradient_string(res) << "\n      highest flat cell "
+                  << std::setprecision(9) << max_flat << ", measured min steepest slope "
+                  << measured << "\n";
+        check("F19(ii) the raise crosses 1024.0 (fixture does what it claims)", max_flat > 1024.0f);
+        if (res.n_flats_float_fallback == 0)
+        {
+            check("F19(ii) gradient-resolved: reported min_effective_gradient == measured minimum",
+                  res.min_effective_gradient == measured, gradient_string(res));
+        }
+        else
+        {
+            check("F19(ii) fell back: one region, float steps", res.n_flats_float_fallback == 1,
+                  gradient_string(res));
+        }
+        check_routable("gradient valley crossing 1024", res.resolved);
+    }
+}
+
+
+// -----------------------------------------------------------------------------
+// The Step 3 checks re-run for the gradient option: F4, F5, F10, F12, F16, F17,
+// the min_slope error; the fractal stats; and the float-step pair-rule pin.
+// -----------------------------------------------------------------------------
+void run_gradient_rerun_checks()
+{
+    std::cout << "\n=== Gradient option: F4 / F16 on the Step 0 fixtures ===\n";
+    {
+        struct fixture { std::string name; grid_f g; bool border_low_edges; };
+        const std::vector<fixture> fixtures = {
+            {"fixture 1 valley",            make_valley(),           false},
+            {"fixture 2 open flat edge",    make_open_flat_edge(),   true},
+            {"fixture 3 interior nodata",   make_valley_with_hole(), false},
+            {"fixture 4 two terraces",      make_two_terraces(),     false},
+            {"fixture 5 mesa",              make_mesa(),             true},
+            {"fixture 6 rim 1 ULP",         make_rim_1ulp(),         false},
+            {"fixture 7 valley floor -50",  make_valley(-50.0f),     false},
+            {"fixture 7 valley floor 0",    make_valley(0.0f),       false},
+            {"fixture 7 valley floor 4000", make_valley(4000.0f),    false},
+        };
+        for (const fixture& fx : fixtures)
+        {
+            const lsdtt::lsdtt_raster_cpu dem = fx.g.raster();
+            const lsdtt::flat_resolution_result res = resolve_gradient(dem);
+            const lsdtt::flat_resolution_result fs  = resolve(dem);
+            std::cout << "      " << fx.name << ": " << gradient_string(res) << "\n";
+            check("gradient " + fx.name + ": same raised cells as float step, raise strictly"
+                      " increasing with mask, border unchanged",
+                  same_raised_cells(dem, res.resolved, fs.resolved) &&
+                      raise_strictly_increasing_with_mask(dem, res.resolved) &&
+                      border_unchanged(dem, res.resolved));
+            if (fx.border_low_edges)
+            {
+                check("F16 gradient " + fx.name + ": border cells with mask > 0 bitwise unchanged",
+                      border_unchanged(dem, res.resolved));
+            }
+            check_routable("gradient " + fx.name, res.resolved);
+        }
+    }
+
+    std::cout << "\n=== Gradient option: F5 convergence on the valley ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu valley = make_valley().raster();
+        const std::vector<double> acc = d8_accumulation_cells(resolve_gradient(valley).resolved);
+        std::vector<double> profile;
+        for (int r = 1; r <= 9; ++r) profile.push_back(acc[static_cast<std::size_t>(r) * 24 + 12]);
+        std::cout << "      gradient D8 accumulation (cells) at col 12, rows 1-9: "
+                  << vector_string(profile) << "\n";
+        const auto argmax = std::max_element(profile.begin(), profile.end()) - profile.begin();
+        check("F5 gradient: argmax at row 5 and acc(5,12) >= 89",
+              argmax == 4 && profile[4] >= 89.0, vector_string(profile));
+        const std::vector<double> pinned = {2, 3, 4, 5, 104, 5, 4, 3, 2};
+        check("F5 gradient: profile == pinned {" + vector_string(pinned) + "}",
+              profile == pinned, vector_string(profile));
+    }
+
+    std::cout << "\n=== Gradient option: fractal, F10, F12, F17 ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu fractal = make_quantised_fractal(/*filled=*/true);
+        const lsdtt::flat_resolution_result r1 = resolve_gradient(fractal, 1);
+        const lsdtt::flat_resolution_result r4 = resolve_gradient(fractal, 4);
+        std::cout << "      filled fractal: " << gradient_string(r1) << "\n";
+        check_routable("gradient filled fractal", r1.resolved);
+        check("F12 gradient filled fractal: n_threads 1 vs 4 bitwise-identical raster and"
+              " diagnostics",
+              same_raster_bits(r1.resolved, r4.resolved) && same_diagnostics(r1, r4));
+        const double measured = measured_min_gradient(fractal, r1.resolved);
+        check("gradient filled fractal: no rim violations; min_effective_gradient == measured",
+              r1.n_pairs_raised_above_surroundings == 0 && r1.n_rim_cells_without_descent == 0 &&
+                  (r1.n_flats_float_fallback > 0 || r1.min_effective_gradient == measured),
+              gradient_string(r1) + "; measured " + std::to_string(measured));
+        if (r1.n_flats_gradient_capped == 0 && r1.n_flats_float_fallback == 0)
+        {
+            check("gradient filled fractal (nothing capped): min_effective_gradient >= min_slope",
+                  r1.min_effective_gradient >= static_cast<double>(1.0e-4f), gradient_string(r1));
+        }
+
+        for (const auto& [name, once] : std::vector<std::pair<std::string, lsdtt::lsdtt_raster_cpu>>{
+                 {"valley", resolve_gradient(make_valley().raster()).resolved},
+                 {"filled fractal", r1.resolved}})
+        {
+            const lsdtt::flat_resolution_result twice = resolve_gradient(once);
+            check("F10 gradient " + name + ": resolving again is bitwise unchanged with no"
+                  " NO_FLOW cells",
+                  same_raster_bits(once, twice.resolved) && twice.mask_diagnostics.n_no_flow == 0 &&
+                      twice.max_raise_m == 0.0 && twice.n_flats_float_fallback == 0,
+                  counts_string(twice.mask_diagnostics));
+        }
+    }
+    {
+        auto no_throw = [](const lsdtt::lsdtt_raster_cpu& dem, lsdtt::flat_resolution_result& out)
+        {
+            try { out = resolve_gradient(dem); }
+            catch (const std::exception& e) { return std::string(e.what()); }
+            return std::string();
+        };
+        grid_f all_nd(5, 6, 0.0f);
+        for (int r = 0; r < 5; ++r)
+            for (int c = 0; c < 6; ++c) all_nd.set_nodata(r, c, static_cast<float>(k_nodata));
+        for (const auto& [name, g] : std::vector<std::pair<std::string, grid_f>>{
+                 {"1x1", grid_f(1, 1, 50.0f)}, {"2x2", grid_f(2, 2, 50.0f)}, {"all nodata", all_nd}})
+        {
+            const lsdtt::lsdtt_raster_cpu dem = g.raster();
+            lsdtt::flat_resolution_result res;
+            const std::string err = no_throw(dem, res);
+            check("F17 gradient " + name + ": no throw, output bitwise unchanged",
+                  err.empty() && same_raster_bits(dem, res.resolved), err);
+        }
+
+        grid_f two_flats(9, 15, 110.0f);
+        two_flats.fill_box(1, 7, 1, 3, 100.0f);  two_flats.at(4, 0)  = 99.0f;
+        two_flats.fill_box(1, 7, 5, 13, 100.0f); two_flats.at(4, 14) = 99.0f;
+        grid_f diagonal(9, 12, 0.0f);
+        for (int r = 0; r < 9; ++r)
+            for (int c = 0; c < 12; ++c) diagonal.at(r, c) = 200.0f + r + c;
+        diagonal.fill_box(1, 3, 1, 4, 100.0f);
+        diagonal.fill_box(4, 7, 5, 10, 100.0f);
+        diagonal.at(2, 0) = 99.0f;
+        grid_f two_outlets = make_valley();
+        two_outlets.at(5, 23) = 99.0f;
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const std::vector<std::pair<std::string, lsdtt::lsdtt_raster_cpu>> cases = {
+            {"3x3 all equal",            grid_f(3, 3, 50.0f).raster()},
+            {"one elevation everywhere", grid_f(6, 7, 7.0f).raster()},
+            {"two same-elevation flats", two_flats.raster()},
+            {"diagonal-only join",       diagonal.raster()},
+            {"two outlets",              two_outlets.raster()},
+            {"NaN nodata hole",
+             make_valley_with_hole(nan).raster(10.0, std::numeric_limits<double>::quiet_NaN())},
+        };
+        for (const auto& [name, dem] : cases)
+        {
+            lsdtt::flat_resolution_result res;
+            const std::string err = no_throw(dem, res);
+            check("F17 gradient " + name + ": no throw, no rim cell without descent, no fallback",
+                  err.empty() && res.n_rim_cells_without_descent == 0 &&
+                      res.n_flats_float_fallback == 0,
+                  err + " " + gradient_string(res));
+            if (err.empty()) check_routable("gradient " + name, res.resolved);
+        }
+    }
+
+    std::cout << "\n=== Gradient option: min_slope must be finite and > 0 ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu valley = make_valley().raster();
+        for (const auto& [value, shown] : std::vector<std::pair<float, std::string>>{
+                 {0.0f, "0"}, {-1.0e-4f, "-0.0001"},
+                 {std::numeric_limits<float>::quiet_NaN(), "nan"},
+                 {std::numeric_limits<float>::infinity(), "inf"}})
+        {
+            std::string err;
+            try { (void)resolve_gradient(valley, 0, value); }
+            catch (const std::invalid_argument& e) { err = e.what(); }
+            catch (...) { err = "<other>"; }
+            const std::string want =
+                "lsdtt::resolve_flats_barnes2014b: barnes2014b_gradient needs min_slope > 0 (it"
+                " sets the gradient imposed across flats); got " + shown;
+            check("API gradient min_slope " + shown + " throws std::invalid_argument, exact message",
+                  err == want, err);
+        }
+    }
+
+    std::cout << "\n=== Pair-rule pin (float step, Appendix A): >= counts a level pair ===\n";
+    {
+        // Valley fixture 1 with (3,2) two float steps above the floor. Its
+        // mask is 7, so it ends level with one neighbour: RichDEM prints 8
+        // (count with >=), not 7 (count with >).
+        grid_f g = make_valley();
+        g.at(3, 2) = lsdtt::step_up_float32(100.0f, 2);
+        const lsdtt::flat_resolution_result res = resolve(g.raster());
+        std::cout << "      " << result_string(res) << "\n";
+        check("pair rule: (3,2) two float steps up gives n_pairs_raised_above_surroundings == 8"
+              " (RichDEM)",
+              res.n_pairs_raised_above_surroundings == 8, result_string(res));
+    }
 }
 
 }  // namespace
@@ -1633,6 +2204,11 @@ int main()
     run_f13_checks();
     run_f17_resolver_checks();
     run_f18_and_api_checks();
+
+    run_f6_checks();
+    run_f7_checks();
+    run_f19_checks();
+    run_gradient_rerun_checks();
 
     std::cout << "\n" << g_n_checks << " checks, " << g_n_failed << " failed\n";
     std::cout << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

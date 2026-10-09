@@ -20,6 +20,8 @@
 // ULPs (the Barnes mask value), which is what RichDEM's ResolveFlats does on a
 // float32 raster. The mask reaches thousands of steps on large flats, so the
 // step is done in O(1) by step_up_float32 rather than by a nextafter loop.
+// The gradient variant scales the same mask to a physical gradient (min_slope),
+// with a per-flat rim cap and a per-flat float-step fallback.
 //
 // Naming: in lsdtt3 "flat" on its own means a row-major cell index
 // (flat_index, sink_flats). Equal-elevation regions are therefore called
@@ -29,6 +31,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -144,7 +147,7 @@ barnes2014b_flat_mask compute_barnes2014b_flat_mask(const lsdtt_raster_cpu& fill
 //                           min_slope during the flood (fill_pits). It is not
 //                           a resolver and resolve_flats_barnes2014b refuses it.
 //   barnes2014b_gradient    Barnes mask scaled to a physical gradient
-//                           (not implemented yet).
+//                           (min_slope); see resolve_flats_barnes2014b.
 //   barnes2014b_float_step  Barnes mask applied as float32 steps (RichDEM
 //                           ResolveFlats on float32).
 enum class flat_resolution_choice : std::uint8_t
@@ -157,7 +160,7 @@ enum class flat_resolution_choice : std::uint8_t
 struct flat_resolution_options
 {
     flat_resolution_choice method = flat_resolution_choice::barnes2014b_float_step;
-    float min_slope = 1.0e-4f;                // m/m; barnes2014b_gradient only
+    float min_slope = 1.0e-4f;                // m/m; barnes2014b_gradient only (> 0)
     // Near-zero guard (see near_zero_guard_step). Always on in every caller;
     // it is an option only so that the tests can show what it prevents.
     bool  float_step_near_zero_guard = true;
@@ -186,6 +189,30 @@ struct flat_resolution_result
     // neighbour) and have no strictly lower valid neighbour in z'. These are
     // the cells the D8 router will refuse ("could not assign a receiver").
     std::int64_t n_rim_cells_without_descent = 0;
+
+    // barnes2014b_gradient only. Under barnes2014b_float_step they keep the
+    // defaults below. Each count is of flat REGIONS.
+    //
+    // Regions whose rim cap bound the unit (u_q > cap). A capped region whose
+    // quantised cap is 0 goes straight to the float-step fallback, so it is
+    // counted here AND in n_flats_float_fallback.
+    std::int64_t n_flats_gradient_capped    = 0;
+    // Regions raised by float steps in the end: quantised cap 0, or failed
+    // verification.
+    std::int64_t n_flats_float_fallback     = 0;
+    // Regions where the requested unit u is below the quantum q (the float32
+    // spacing over the region's range), so u_q = q > u. Counted over every
+    // region, before any fallback.
+    std::int64_t n_flats_unit_quantised_up  = 0;
+    // Max u_q / u over regions that were gradient-resolved and not capped.
+    // 1.0 if there are none.
+    double       max_unit_inflation         = 1.0;
+    // MEASURED on the float32 output: over the raised NO_FLOW cells of
+    // gradient-resolved (not fallback) regions, the steepest-descent D8 slope
+    // in double with the router's path lengths (dz / L, dz / (sqrt(2) L));
+    // then the minimum over those cells. +infinity if there are no such cells
+    // (float-step option, no flats, or every region fell back).
+    double       min_effective_gradient     = std::numeric_limits<double>::infinity();
 };
 
 
@@ -219,8 +246,11 @@ float near_zero_guard_step(float z, std::int32_t mask);
 // towards their outlets and away from the higher ground around them.
 //
 // method:
-//   barnes2014b_float_step  implemented; see below.
-//   barnes2014b_gradient    throws std::logic_error (not implemented yet).
+//   barnes2014b_float_step  see "Float step" below.
+//   barnes2014b_gradient    see "Gradient" below. options.min_slope must be
+//     finite and > 0, else std::invalid_argument with the message
+//     lsdtt::resolve_flats_barnes2014b: barnes2014b_gradient needs min_slope > 0
+//     (it sets the gradient imposed across flats); got <min_slope>
 //   inline_gradient         throws std::invalid_argument with the message
 //     lsdtt::resolve_flats_barnes2014b: inline_gradient is the Priority-Flood
 //     fill (fill_pits with min_slope > 0), not a flat resolver; choose
@@ -257,6 +287,60 @@ float near_zero_guard_step(float z, std::int32_t mask);
 // physics consumers floor slope at 1e-5 to 1e-3, so to them a float-step flat
 // is still flat. On large high flats the total raise (mask x ULP) can reach
 // decimetres to metres; see max_raise_m.
+//
+// Gradient. The same mask and the same raised cells as the float step, but
+// one mask increment is a physical length:
+//   u = min_slope x (longest D8 step) = min_slope x sqrt(2) x L
+// with L = cell_size and sqrt(2) L the router's own diagonal path length
+// (lsdtt_flowinfo). Every raised NO_FLOW cell has a neighbour at least one
+// increment lower (the mask's descent guarantee) at most sqrt(2) L away, so
+// every D8 step on an uncapped flat has S >= min_slope, in the router's double
+// arithmetic, with no tolerance. Inside a flat the steps span 1 to 3
+// increments (S from min_slope to 3 sqrt(2) min_slope on a cardinal).
+//
+// Quantised unit. Rounding z_f + mask x u to float32 cell by cell does not
+// keep the guarantee: one-increment drops were measured at 0.978 u (1500-4000 m,
+// L 30), and when u is below the float32 spacing (1 m cells at 4000 m:
+// u = 1.4e-4 m, ULP 2.4e-4 m) many drops are ZERO, i.e. the flat survives.
+// So per region, with z_f its elevation and M its largest raised mask:
+//   q   = max(ULP(|z_f|), ULP(|float(z_f + M u_q)|))   (a power of two; the
+//         spacing at the largest magnitude the region spans; iterated until
+//         stable, because u_q >= u can push the top into a coarser binade)
+//   u_q = ceil(u / q) x q                              (u_q >= u, u_q >= q)
+// Every z_f + m u_q is then exact unless the raise crosses a power-of-two
+// elevation, so every one-increment drop is exactly u_q. Where u < q the
+// gradient is coarser than asked (u_q = q), never below min_slope; see
+// n_flats_unit_quantised_up and max_unit_inflation.
+//
+// Rim cap (Simon's decision D2). Barnes increments are large (a 3 km lake at
+// 30 m rises by about 3 m), and a flat cell raised to or above a formerly
+// higher neighbour h can leave h with no lower neighbour. So per region
+//   cap = min over (raised c, valid neighbour h with z(h) > z_f) of
+//         (z(h) - z_f) / (mask(c) + 1)
+// from the ORIGINAL elevations; if u_q > cap the unit is quantised DOWN,
+// u_eff = floor(cap / q) x q, and the region is counted as capped. A capped
+// region keeps the Barnes ordering but falls BELOW min_slope; that is reported
+// (n_flats_gradient_capped, min_effective_gradient), not hidden. If the
+// quantised cap is 0, the region goes straight to the float-step fallback.
+// The raise is z' = float(double(z_f) + mask x u_eff).
+//
+// Verification and fallback. Every gradient-resolved region (capped or not)
+// is checked on the float32 output: every NO_FLOW cell has a strictly lower
+// final neighbour, and no raised cell c has z'(c) >= z'(h) for a neighbour h
+// with z(h) > z_f (the >= pair rule used for the float-step report). A region
+// that fails is re-raised with float steps, exactly as the float-step option
+// (near-zero guard included), and counted in n_flats_float_fallback. If the
+// fallback also overtops its rim, the region is left float-stepped and shows
+// up in n_pairs/n_cells_raised_above_surroundings and
+// n_rim_cells_without_descent, as under the float-step option (D6). No third
+// method is tried.
+//
+// Consequences. Each flat drains onto its low edges with a step of up to
+// (H + 1) increments, i.e. a local slope of up to (H + 1) sqrt(2) min_slope at
+// every flat outlet (it can show as a ksn spike where a floodplain meets its
+// channel). Flats are raised about 3-4 x more than by the inline method at the
+// same min_slope (up to (2T + H) x sqrt(2) x min_slope x L); see max_raise_m.
+// Raster-border cells are never raised, as for the float step.
 //
 // n_threads: OpenMP threads for the mask scans, the raise and the diagnostics
 // (0 = all). The output and every diagnostic are bitwise independent of it.

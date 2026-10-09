@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -59,6 +61,24 @@ inline float guard_step_unchecked(float z, std::int32_t mask) noexcept
 {
     return static_cast<float>(static_cast<double>(z) +
                               static_cast<double>(mask) * k_guard_unit);
+}
+
+// A float-step raise: mask float32 ULPs, or the near-zero guard's fixed step
+// on |z| < 1 (unchecked; the caller flags results past the bound).
+inline float float_step_raise(float z, std::int32_t mask, bool guard) noexcept
+{
+    return (guard && std::fabs(z) < 1.0f) ? guard_step_unchecked(z, mask)
+                                          : step_up_float32(z, mask);
+}
+
+// The float32 spacing above |x|, as a double: a power of two for every finite
+// x (2^-149 at zero and in the denormals). Taken upwards from the magnitude,
+// so at an exact power of two it is the larger of the two spacings.
+inline double ulp_up(float x) noexcept
+{
+    const float ax = std::fabs(x);
+    return static_cast<double>(std::nextafter(ax, std::numeric_limits<float>::infinity())) -
+           static_cast<double>(ax);
 }
 
 }  // namespace
@@ -397,13 +417,22 @@ float near_zero_guard_step(float z, std::int32_t mask)
 flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
                                                  const flat_resolution_options& options)
 {
+    bool gradient = false;
     switch (options.method)
     {
         case flat_resolution_choice::barnes2014b_float_step:
             break;
         case flat_resolution_choice::barnes2014b_gradient:
-            throw std::logic_error(
-                "lsdtt::resolve_flats_barnes2014b: barnes2014b_gradient is not implemented yet");
+            if (!(std::isfinite(options.min_slope) && options.min_slope > 0.0f))
+            {
+                std::ostringstream os;
+                os << options.min_slope;
+                throw std::invalid_argument(
+                    "lsdtt::resolve_flats_barnes2014b: barnes2014b_gradient needs min_slope > 0"
+                    " (it sets the gradient imposed across flats); got " + os.str());
+            }
+            gradient = true;
+            break;
         case flat_resolution_choice::inline_gradient:
         default:
             throw std::invalid_argument(
@@ -415,12 +444,18 @@ flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
     // Throws the no-outlet error (and the invalid-metadata error) itself.
     barnes2014b_flat_mask fm = compute_barnes2014b_flat_mask(filled, options.n_threads);
 
-    const lsdtt_raster_meta& meta    = filled.get_meta();
-    const int                nrows   = meta.n_rows;
-    const int                ncols   = meta.n_cols;
-    const std::int64_t       n_cells = static_cast<std::int64_t>(nrows) * ncols;
-    const int                threads = resolve_thread_count(options.n_threads);
-    const bool               guard   = options.float_step_near_zero_guard;
+    const lsdtt_raster_meta& meta     = filled.get_meta();
+    const int                nrows    = meta.n_rows;
+    const int                ncols    = meta.n_cols;
+    const std::int64_t       n_cells  = static_cast<std::int64_t>(nrows) * ncols;
+    const int                threads  = resolve_thread_count(options.n_threads);
+    const bool               guard    = options.float_step_near_zero_guard;
+    const std::int32_t       n_labels = static_cast<std::int32_t>(fm.n_flat_regions);
+
+    // The router's D8 path lengths (lsdtt_flowinfo): cardinal L, diagonal
+    // sqrt(2) L, both in double.
+    const double cardinal_length = meta.cell_size;
+    const double diagonal_length = meta.cell_size * grid::k_sqrt2_d;
 
     flat_resolution_result out;
     out.resolved = filled;
@@ -435,11 +470,99 @@ flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
     {
         return r == 0 || r == nrows - 1 || c == 0 || c == ncols - 1;
     };
+    auto raised = [&](std::int64_t k)
+    {
+        return label[k] > 0 && mask[k] > 0 &&
+               !on_border(static_cast<int>(k / ncols), static_cast<int>(k % ncols));
+    };
+
+    // Per region (index = label): the increment in metres for the gradient
+    // option, or 0 for float steps. Under barnes2014b_float_step every region
+    // is 0.
+    std::vector<double> unit(static_cast<std::size_t>(n_labels) + 1, 0.0);
+    std::vector<double> unit_quantised(static_cast<std::size_t>(n_labels) + 1, 0.0);  // u_q
+    std::vector<std::uint8_t> capped(static_cast<std::size_t>(n_labels) + 1, 0);
+
+    // ---------------------------------------------------------------------
+    // Gradient: plan the increment of every region (header: "Quantised unit"
+    // and "Rim cap"). One serial scan collects z_f, the largest raised mask M
+    // and the rim cap from the ORIGINAL elevations; minima and maxima do not
+    // depend on the scan order.
+    // ---------------------------------------------------------------------
+    const double u = static_cast<double>(options.min_slope) * diagonal_length;
+    if (gradient && n_labels > 0)
+    {
+        std::vector<float>        z_f(static_cast<std::size_t>(n_labels) + 1, 0.0f);
+        std::vector<std::int32_t> M(static_cast<std::size_t>(n_labels) + 1, 0);
+        std::vector<double>       cap(static_cast<std::size_t>(n_labels) + 1,
+                                      std::numeric_limits<double>::infinity());
+        for (std::int64_t k = 0; k < n_cells; ++k)
+        {
+            const std::int32_t lab = label[k];
+            if (lab <= 0) continue;
+            z_f[lab] = Z[k];
+            if (!raised(k)) continue;
+            M[lab] = std::max(M[lab], mask[k]);
+            const int r = static_cast<int>(k / ncols);
+            const int c = static_cast<int>(k % ncols);
+            for (int d = 0; d < 8; ++d)   // not on the border: every neighbour is in the grid
+            {
+                const std::int64_t n =
+                    static_cast<std::int64_t>(r + k_dr[d]) * ncols + (c + k_dc[d]);
+                if (V[n] == 0 || !(Z[n] > Z[k])) continue;
+                cap[lab] = std::min(cap[lab],
+                                    (static_cast<double>(Z[n]) - static_cast<double>(Z[k])) /
+                                        (static_cast<double>(mask[k]) + 1.0));
+            }
+        }
+
+        const double min_slope = static_cast<double>(options.min_slope);
+        for (std::int32_t lab = 1; lab <= n_labels; ++lab)
+        {
+            if (M[lab] == 0) continue;   // nothing raised (every region has a NO_FLOW cell, so unused)
+            const double zf = static_cast<double>(z_f[lab]);
+            const double Md = static_cast<double>(M[lab]);
+
+            // q: the float32 spacing at the largest magnitude the region spans.
+            // u_q >= u can lift the top into a coarser binade, so iterate until
+            // q is stable (q only grows; real flats settle in one or two passes).
+            double q = std::max(ulp_up(z_f[lab]), ulp_up(static_cast<float>(zf + Md * u)));
+            double u_q = std::ceil(u / q) * q;
+            for (int it = 0; it < 64; ++it)
+            {
+                const double q_next = std::max(q, ulp_up(static_cast<float>(zf + Md * u_q)));
+                if (q_next == q) break;
+                q   = q_next;
+                u_q = std::ceil(u / q) * q;
+            }
+            // u_q >= u, but the guarantee is stated in the router's arithmetic,
+            // dz / (sqrt(2) L) with dz >= u_q. If u was already a multiple of q,
+            // the round trip u * D / D could land one double below min_slope.
+            if (u_q / diagonal_length < min_slope) u_q += q;
+
+            if (u < q) ++out.n_flats_unit_quantised_up;
+            unit_quantised[lab] = u_q;
+            if (u_q > cap[lab])
+            {
+                // Quantised DOWN, so the raise stays within the cap. 0 means the
+                // rim is within one quantum per increment: float steps.
+                capped[lab] = 1;
+                ++out.n_flats_gradient_capped;
+                unit[lab] = std::floor(cap[lab] / q) * q;
+            }
+            else
+            {
+                unit[lab] = u_q;
+            }
+        }
+    }
 
     // ---------------------------------------------------------------------
     // Raise. Each cell is written only by its own iteration. An exception
     // cannot leave an OpenMP region, so a guarded value past the bound is
     // only flagged here and thrown (with the helper's message) afterwards.
+    // The gradient sum is formed in double (exact: mask x unit is an integer
+    // multiple of a power of two) and rounded to float once.
     // ---------------------------------------------------------------------
     int bound_exceeded = 0;
 #ifdef _OPENMP
@@ -447,39 +570,162 @@ flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
 #endif
     for (std::int64_t k = 0; k < n_cells; ++k)
     {
-        if (label[k] <= 0 || mask[k] <= 0) continue;
-        if (on_border(static_cast<int>(k / ncols), static_cast<int>(k % ncols))) continue;
-        const float z = Z[k];
-        if (guard && std::fabs(z) < 1.0f)
+        if (!raised(k)) continue;
+        const float  z      = Z[k];
+        const double unit_k = unit[label[k]];
+        if (unit_k > 0.0)
         {
-            Zr[k] = guard_step_unchecked(z, mask[k]);
-            if (Zr[k] >= k_guard_limit) bound_exceeded = 1;
+            Zr[k] = static_cast<float>(static_cast<double>(z) +
+                                       static_cast<double>(mask[k]) * unit_k);
         }
         else
         {
-            Zr[k] = step_up_float32(z, mask[k]);
+            Zr[k] = float_step_raise(z, mask[k], guard);
+            if (guard && std::fabs(z) < 1.0f && Zr[k] >= k_guard_limit) bound_exceeded = 1;
         }
     }
+
+    if (gradient && n_labels > 0)
+    {
+        // -----------------------------------------------------------------
+        // Verification of every gradient-resolved region on the float32
+        // output: (a) every NO_FLOW cell has a strictly lower final
+        // neighbour; (b) no raised cell c has z'(c) >= z'(h) for a neighbour h
+        // with z(h) > z(c) (the >= pair rule of the float-step report).
+        //
+        // One pass is enough. (a) for region A involves only A's own cells: a
+        // NO_FLOW cell has no originally lower neighbour, and its
+        // equal-elevation neighbours are all in A, so its lower final
+        // neighbours are A cells. (b) compares A's cells with ORIGINALLY
+        // HIGHER neighbours, and every raise (gradient or fallback, in any
+        // region) only moves a cell up, so re-raising another region can only
+        // widen A's margin. So a region that passes here still passes after
+        // any other region falls back, and the regions can be checked in any
+        // order, once.
+        // -----------------------------------------------------------------
+        std::vector<std::uint8_t> failed(static_cast<std::size_t>(n_labels) + 1, 0);
+        std::uint8_t* failed_p = failed.data();
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) num_threads(threads)
+#endif
+        for (std::int64_t k = 0; k < n_cells; ++k)
+        {
+            const std::int32_t lab = label[k];
+            if (lab <= 0 || unit[lab] == 0.0) continue;
+            const int r = static_cast<int>(k / ncols);
+            const int c = static_cast<int>(k % ncols);
+            if (on_border(r, c)) continue;   // never raised; an exit, never NO_FLOW
+
+            const bool is_raised    = mask[k] > 0;
+            bool       exit_cell    = false;
+            bool       lower_before = false;
+            bool       lower_after  = false;
+            bool       overtops     = false;
+            for (int d = 0; d < 8; ++d)
+            {
+                const std::int64_t n =
+                    static_cast<std::int64_t>(r + k_dr[d]) * ncols + (c + k_dc[d]);
+                if (V[n] == 0) { exit_cell = true; continue; }
+                if (Z[n] < Z[k])   lower_before = true;
+                if (Zr[n] < Zr[k]) lower_after  = true;
+                if (is_raised && Z[n] > Z[k] && Zr[k] >= Zr[n]) overtops = true;
+            }
+            const bool no_flow = !exit_cell && !lower_before;
+            if (overtops || (no_flow && !lower_after))
+            {
+#ifdef _OPENMP
+                #pragma omp atomic write
+#endif
+                failed_p[lab] = 1;
+            }
+        }
+
+        // Fallback: failed regions are re-raised with float steps, exactly as
+        // the float-step option. Terminal policy (D6): they are not checked
+        // again; any overtopped rim shows up in the global diagnostics below.
+        for (std::int32_t lab = 1; lab <= n_labels; ++lab)
+        {
+            if (failed[lab]) unit[lab] = 0.0;
+        }
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) num_threads(threads) reduction(max:bound_exceeded)
+#endif
+        for (std::int64_t k = 0; k < n_cells; ++k)
+        {
+            if (!raised(k) || !failed[label[k]]) continue;
+            const float z = Z[k];
+            Zr[k] = float_step_raise(z, mask[k], guard);
+            if (guard && std::fabs(z) < 1.0f && Zr[k] >= k_guard_limit) bound_exceeded = 1;
+        }
+
+        // Per-region outcomes. Every region has a raised NO_FLOW cell, so
+        // unit == 0 here means float steps.
+        for (std::int32_t lab = 1; lab <= n_labels; ++lab)
+        {
+            if (unit[lab] == 0.0)
+            {
+                ++out.n_flats_float_fallback;
+            }
+            else if (!capped[lab])
+            {
+                out.max_unit_inflation = std::max(out.max_unit_inflation, unit_quantised[lab] / u);
+            }
+        }
+
+        // Measured minimum gradient: steepest-descent D8 slope of every raised
+        // NO_FLOW cell of a gradient-resolved region, in the router's
+        // arithmetic, on the final raster.
+        double min_gradient = std::numeric_limits<double>::infinity();
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) num_threads(threads) reduction(min:min_gradient)
+#endif
+        for (std::int64_t k = 0; k < n_cells; ++k)
+        {
+            const std::int32_t lab = label[k];
+            if (lab <= 0 || unit[lab] == 0.0) continue;
+            const int r = static_cast<int>(k / ncols);
+            const int c = static_cast<int>(k % ncols);
+            if (on_border(r, c)) continue;
+
+            bool   no_flow = true;
+            double best    = 0.0;
+            for (int d = 0; d < 8 && no_flow; ++d)
+            {
+                const std::int64_t n =
+                    static_cast<std::int64_t>(r + k_dr[d]) * ncols + (c + k_dc[d]);
+                if (V[n] == 0 || Z[n] < Z[k]) { no_flow = false; continue; }
+                const double dz = static_cast<double>(Zr[k]) - static_cast<double>(Zr[n]);
+                if (dz <= 0.0) continue;
+                const double path_length =
+                    grid::d8_clockwise_is_diagonal(d) ? diagonal_length : cardinal_length;
+                best = std::max(best, dz / path_length);
+            }
+            if (no_flow) min_gradient = std::min(min_gradient, best);
+        }
+        out.min_effective_gradient = min_gradient;
+    }
+
     if (bound_exceeded)
     {
         for (std::int64_t k = 0; k < n_cells; ++k)
         {
-            if (label[k] > 0 && mask[k] > 0 && std::fabs(Z[k]) < 1.0f &&
-                !on_border(static_cast<int>(k / ncols), static_cast<int>(k % ncols)))
+            if (raised(k) && unit[label[k]] == 0.0 && std::fabs(Z[k]) < 1.0f)
             {
                 (void)near_zero_guard_step(Z[k], mask[k]);   // throws on the first offender
             }
         }
     }
 
-    // Guarded regions: every cell of a region has the same z, and every region
-    // holds at least one NO_FLOW (interior, hence raised) cell.
-    if (guard && fm.n_flat_regions > 0)
+    // Guarded regions: float-stepped regions with |z| < 1. Every cell of a
+    // region has the same z, and every region holds at least one NO_FLOW
+    // (interior, hence raised) cell.
+    if (guard && n_labels > 0)
     {
-        std::vector<std::uint8_t> guarded(static_cast<std::size_t>(fm.n_flat_regions) + 1, 0);
+        std::vector<std::uint8_t> guarded(static_cast<std::size_t>(n_labels) + 1, 0);
         for (std::int64_t k = 0; k < n_cells; ++k)
         {
-            if (label[k] > 0 && std::fabs(Z[k]) < 1.0f) guarded[label[k]] = 1;
+            if (label[k] > 0 && unit[label[k]] == 0.0 && std::fabs(Z[k]) < 1.0f)
+                guarded[label[k]] = 1;
         }
         for (const std::uint8_t g : guarded) out.n_flats_near_zero_guarded += g;
     }
@@ -490,8 +736,8 @@ flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
     out.mask_diagnostics = std::move(fm);
 
     // ---------------------------------------------------------------------
-    // Diagnostics on z and z'. Integer sums and a max: independent of the
-    // thread count.
+    // Diagnostics on z and z' (both options, final raster). Integer sums and
+    // a max: independent of the thread count.
     // ---------------------------------------------------------------------
     std::int64_t n_pairs = 0;
     std::int64_t n_cells_above = 0;
