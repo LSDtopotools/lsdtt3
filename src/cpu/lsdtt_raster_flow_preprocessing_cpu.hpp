@@ -77,6 +77,7 @@
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_flat_resolution_cpu.hpp"
 
 namespace lsdtt {
 
@@ -148,6 +149,91 @@ lsdtt_raster_cpu fill_pits(
     const lsdtt_raster_cpu& raster,
     float                   min_slope,
     const std::string&      boundary_conditions,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits (flat-resolution overloads)
+//
+// The two fill_pits above with an explicit choice of how flats are made
+// drainable (the fill_flat_resolution_choice parameter; see
+// lsdtt_raster_flat_resolution_cpu.hpp):
+//
+//   inline_gradient         forwards to the overload above with the same
+//                           arguments, unchanged, so the result is bitwise the
+//                           same as calling it without a choice. This is the
+//                           default everywhere.
+//   barnes2014b_gradient    fill_pits_reconstruction() (true flats), then
+//                           resolve_flats_barnes2014b() with min_slope as the
+//                           gradient across flats. min_slope must be > 0; the
+//                           resolver's std::invalid_argument propagates.
+//   barnes2014b_float_step  the same, with float32 steps (RichDEM ResolveFlats
+//                           on float32). min_slope is ignored.
+// For the barnes2014b options queue_backend is ignored (there is no
+// priority queue) and the resolver runs with the near-zero guard on and the
+// given n_threads.
+//
+// Boundary conditions: the fill above treats only 'p' (periodic) specially;
+// every other code ('o', 'n', 'b', ...) leaves the border as a spill point,
+// so the raster border is an exit for the fill whatever the code. The barnes
+// path uses the same exit rule (every border cell, and every cell touching
+// nodata), so for non-periodic strings it agrees with the fill and the string
+// is not otherwise used. A periodic edge would need the resolver to wrap,
+// which it does not, so a barnes2014b option with any 'p' edge throws
+// std::invalid_argument with the message
+//   lsdtt::fill_pits: fill_flat_resolution_choice '<choice>' does not support
+//   periodic boundary_conditions ('<bc>'); use inline_gradient
+// (one line). inline_gradient keeps the periodic fill and its checks.
+//
+// The enum class does not convert from an integer or a string, so these do not
+// compete with the overloads above in any existing call.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits_with_flat_resolution
+//
+// The flat-resolution fill_pits overloads, returning the flat-resolution
+// diagnostics as well, for callers that report them. The filled raster is in
+// .resolved and is bitwise the same as the matching fill_pits overload.
+// For barnes2014b_* the result is resolve_flats_barnes2014b's, unchanged.
+// For inline_gradient there is no resolver, so every diagnostic keeps its
+// default (zero counts, max_unit_inflation 1, min_effective_gradient +inf).
+// Rules and messages are those of fill_pits above.
+// -----------------------------------------------------------------------------
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
     int                     n_threads = 0,
     priority_flood_queue_backend queue_backend =
         priority_flood_queue_backend::binary_heap

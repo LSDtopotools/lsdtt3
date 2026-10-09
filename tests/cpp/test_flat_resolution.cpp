@@ -56,8 +56,26 @@
 //       up gives a quantised cap of 0 and the float-step result bitwise.
 //   F19 Quantisation: 1 m cells at 4000 m (u < ULP, u_q = q); a raise across
 //       1024 m (reported min_effective_gradient == measured).
+//   F20 A ramp across 1024 m from a floor that is an odd multiple of q/2:
+//       half-ULP ties round level, verification (a) fails and the region falls
+//       back to float steps, uncapped (capped 0, fallback 1) and with a
+//       positive cap (capped 1, fallback 1); even-multiple controls verify.
 //   F4/F5/F10/F12/F16/F17 re-run for this option; the min_slope error
 //       message; fractal statistics.
+//
+// Dispatch and shared parameter (Step 5):
+//   F14 fill_pits(r, s, inline_gradient) is bitwise fill_pits(r, s) (and the
+//       same through n_threads, the radix queue, the non-periodic
+//       boundary-conditions overload, min_slope 0, and the
+//       diagnostics-returning variant) on the valley, the unfilled fractal and
+//       two fixtures with interior nodata; periodic + inline_gradient is still
+//       the periodic fill.
+//   Barnes dispatch: fill_pits(r, 1e-4, barnes2014b_*) is bitwise
+//       resolve_flats_barnes2014b(fill_pits_reconstruction(r)); the
+//       diagnostics variant returns the resolver's diagnostics; routable.
+//   F11b A periodic edge with a barnes2014b option throws the exact message.
+//   parse_flat_resolution_choice round trip and exact error;
+//       declare_fill_flat_resolution_parameter's key and default.
 //
 // Usage: lsdtt-test-flat-resolution
 // Prints one PASS/FAIL line per check and a final "RESULT: PASS|FAIL".
@@ -74,11 +92,13 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "lsdtt_common_parameters.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_flat_resolution_cpu.hpp"
@@ -1905,6 +1925,251 @@ void run_f19_checks()
 
 
 // -----------------------------------------------------------------------------
+// F20: a gradient ramp that fails the float32 verification and falls back.
+//
+// Mechanism. q is the float32 ULP at the largest magnitude the region spans.
+// When the ramp crosses a power of two (here 1024.0, ULP 2^-14 below and
+// q = 2^-13 above) and z_f is an ODD multiple of q/2 (i.e. of its own ULP
+// 2^-14), every exact value z_f + m*q above 1024 lies exactly halfway between
+// two float32 neighbours. Round-half-to-even sends m and m+1 to the same float
+// for every other m, so half of the one-unit mask steps above 1024 become ZERO
+// drops. Where every lower-mask neighbour of a NO_FLOW cell is exactly one
+// unit down and rounds level with it, the cell has no strictly lower final
+// neighbour: verification condition (a) fails and the region is re-raised with
+// float steps. With z_f an EVEN multiple of q/2 every z_f + m*q is a float
+// and nothing rounds (controls).
+//
+// Fixture: the Step 0 valley (11 x 24, max_mask 48) with 1 m cells, so the
+// ramp (48 q = 5.9e-3 m) crosses 1024 from a floor just below it.
+//   (i)   uncapped: walls at floor + 10, min_slope 5e-5. u = 7.07e-5 m < q, so
+//         u_q = q; u_q / (sqrt(2) L) = 8.6e-5 >= 5e-5, so the "one extra q"
+//         rule does not fire. Floor 1024 - 2^-14 (odd): verification fails.
+//         Counters: capped 0, fallback 1 (this is the only path that gives
+//         fallback without capped), quantised up 1 (counted before fallback),
+//         max_unit_inflation 1 (fallback regions excluded),
+//         min_effective_gradient +inf.
+//   (ii)  control: floor 1024 - 2^-13 (even), same everything: capped 0,
+//         fallback 0, raise == mask * q exactly although it crosses 1024.
+//   (iii) POSITIVE cap: walls at 1024 + 73 q, min_slope 1e-4 (u = 1.41e-4 m,
+//         u_q = 2q). The highest raised mask next to a wall is 48, so the cap
+//         is (wall - z_f) / 49 = 73.5 q / 49 = 1.5 q: capped, u_eff = q > 0,
+//         and the ramp is the same as (i), so (a) fails again. Counters:
+//         capped 1, fallback 1 -- the SAME counters as a cap that quantises
+//         to 0 (F7b); the two are told apart only by the cap computed by hand.
+//   (iv)  control for (iii): floor 1024 - 2^-13 (cap 74 q / 49, u_eff = q):
+//         capped 1, fallback 0.
+//
+// Why only (a) can fail on a capped region. For a raised cell c and an
+// originally higher neighbour h, mask(c) * u_eff <= mask(c) * cap
+// <= (z_h - z_f) - cap, so x = z_f + mask(c) u_eff <= z_h - u_eff <= z_h - q.
+// q >= the ULP of every float up to float(z_f + M u_q) >= x. If the float
+// below z_h is within q of it, it is >= x; otherwise z_h lies in a binade whose
+// spacing exceeds q, which starts above x. Either way a float < z_h is >= x,
+// so round-to-nearest gives float(x) < z_h <= z'_h: condition (b) cannot fail
+// on a capped region even with half-ULP rounding. Condition (a) can, as (iii)
+// shows.
+// -----------------------------------------------------------------------------
+
+// The valley with every border cell (except the outlet) at `wall`.
+grid_f make_valley_walls(float floor, float wall)
+{
+    grid_f g = make_valley(floor);
+    for (int c = 0; c < g.nc; ++c) { g.at(0, c) = wall; g.at(g.nr - 1, c) = wall; }
+    for (int r = 0; r < g.nr; ++r) { g.at(r, 0) = wall; g.at(r, g.nc - 1) = wall; }
+    g.at(g.nr / 2, 0) = floor - 1.0f;
+    return g;
+}
+
+// The ramp the gradient option builds before verification, by hand: every
+// raised cell (labelled, mask > 0, not on the border) at
+// float(double(z_f) + mask * unit), everything else unchanged.
+lsdtt::lsdtt_raster_cpu hand_ramp(const lsdtt::lsdtt_raster_cpu& dem, double unit)
+{
+    const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(dem);
+    const int nr = dem.get_meta().n_rows;
+    const int nc = dem.get_meta().n_cols;
+    lsdtt::lsdtt_raster_cpu out = dem;
+    std::vector<float>& Z = out.get_data();
+    for (int r = 1; r < nr - 1; ++r)
+        for (int c = 1; c < nc - 1; ++c)
+        {
+            const std::size_t k = static_cast<std::size_t>(r) * nc + c;
+            if (m.flat_region_label[k] > 0 && m.mask[k] > 0)
+                Z[k] = static_cast<float>(static_cast<double>(Z[k]) + m.mask[k] * unit);
+        }
+    return out;
+}
+
+// Input NO_FLOW cells that have no strictly lower neighbour on `after`
+// (verification condition (a), measured independently).
+std::int64_t n_no_flow_without_descent(const lsdtt::lsdtt_raster_cpu& before,
+                                       const lsdtt::lsdtt_raster_cpu& after)
+{
+    const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(before);
+    const towards_reference ref = compute_towards_reference(before, m.flat_region_label);
+    std::int64_t n = 0;
+    for (std::size_t k = 0; k < ref.no_flow.size(); ++k)
+        if (ref.no_flow[k] && steepest_d8_slope(after, static_cast<std::int64_t>(k)) == 0.0) ++n;
+    return n;
+}
+
+// Largest mask among raised cells next to the border walls (rows 1 and nr-2,
+// cols 1 and nc-2): the denominator of the rim cap is this + 1.
+std::int32_t max_mask_next_to_walls(const lsdtt::lsdtt_raster_cpu& dem)
+{
+    const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(dem);
+    const int nr = dem.get_meta().n_rows;
+    const int nc = dem.get_meta().n_cols;
+    std::int32_t out = 0;
+    for (int r = 1; r < nr - 1; ++r)
+        for (int c = 1; c < nc - 1; ++c)
+        {
+            if (r != 1 && r != nr - 2 && c != 1 && c != nc - 2) continue;
+            const std::size_t k = static_cast<std::size_t>(r) * nc + c;
+            if (m.flat_region_label[k] > 0) out = std::max(out, m.mask[k]);
+        }
+    return out;
+}
+
+void run_f20_checks()
+{
+    const double q        = std::ldexp(1.0, -13);                  // ULP in [1024, 2048)
+    const float  z_odd    = std::nextafter(1024.0f, 0.0f);         // 1024 - 2^-14 = 1024 - q/2
+    const float  z_even   = static_cast<float>(1024.0 - q);        // 1024 - 2^-13 = 1024 - 2 (q/2)
+    const float  slope_lo = 5.0e-5f;
+    const double u_lo     = hand_u(slope_lo, 1.0);
+
+    std::cout << "\n=== F20(i): uncapped ramp across 1024 from an odd half-q floor: fails"
+                 " verification, float-step fallback ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu dem = make_valley(z_odd).raster(1.0);
+        const lsdtt::flat_resolution_result g = resolve_gradient(dem, 0, slope_lo);
+        const lsdtt::flat_resolution_result f = resolve(dem);
+        const lsdtt::lsdtt_raster_cpu ramp = hand_ramp(dem, q);
+        const std::int64_t n_flat_ramp = n_no_flow_without_descent(dem, ramp);
+        float ramp_top = -std::numeric_limits<float>::infinity();
+        for (int r = 1; r <= 9; ++r)
+            for (int c = 1; c <= 22; ++c)
+                ramp_top = std::max(ramp_top, ramp.get_data()[static_cast<std::size_t>(r) * 24 + c]);
+        std::cout << "      gradient:   " << gradient_string(g) << "\n";
+        std::cout << "      float step: " << result_string(f) << "\n";
+        std::cout << "      u = " << std::setprecision(12) << u_lo << " m, q = " << q
+                  << " m; hand ramp z_f + mask q: top " << std::setprecision(9) << ramp_top
+                  << ", NO_FLOW cells without descent " << n_flat_ramp << "\n";
+
+        check("F20(i) fixture: u < q, u_q == q, extra-q rule silent (q / (sqrt2 L) >= min_slope)",
+              u_lo < q && hand_u_q(u_lo, q) == q &&
+                  !(q / lsdtt::grid::k_sqrt2_d < static_cast<double>(slope_lo)));
+        check("F20(i) fixture: one region, max_mask 48, the hand ramp crosses 1024",
+              g.mask_diagnostics.n_flat_regions == 1 && g.mask_diagnostics.max_mask == 48 &&
+                  ramp_top > 1024.0f && z_odd < 1024.0f);
+        check("F20(i) fixture: the hand ramp leaves NO_FLOW cells without a strictly lower"
+              " neighbour (verification (a) must fail)",
+              n_flat_ramp > 0, std::to_string(n_flat_ramp));
+        check("F20(i) uncapped and fallen back: capped 0, fallback 1, quantised up 1,"
+              " max_unit_inflation 1, min_effective_gradient +inf",
+              g.n_flats_gradient_capped == 0 && g.n_flats_float_fallback == 1 &&
+                  g.n_flats_unit_quantised_up == 1 && g.max_unit_inflation == 1.0 &&
+                  std::isinf(g.min_effective_gradient),
+              gradient_string(g));
+        check("F20(i) output bitwise equal to the float-step option",
+              same_raster_bits(g.resolved, f.resolved));
+        check("F20(i) same pair / cell / rim diagnostics as float step, all 0",
+              g.n_pairs_raised_above_surroundings == f.n_pairs_raised_above_surroundings &&
+                  g.n_cells_raised_above_surroundings == f.n_cells_raised_above_surroundings &&
+                  g.n_rim_cells_without_descent == f.n_rim_cells_without_descent &&
+                  g.n_pairs_raised_above_surroundings == 0 && g.n_rim_cells_without_descent == 0,
+              gradient_string(g));
+        check("F20(i) every input NO_FLOW cell has a strictly lower final neighbour",
+              n_no_flow_without_descent(dem, g.resolved) == 0);
+        check_routable("F20(i) uncapped fallback", g.resolved);
+
+        const lsdtt::flat_resolution_result r1 = resolve_gradient(dem, 1, slope_lo);
+        const lsdtt::flat_resolution_result r4 = resolve_gradient(dem, 4, slope_lo);
+        check("F20(i) n_threads 1 vs 4 bitwise-identical raster and diagnostics",
+              same_raster_bits(r1.resolved, r4.resolved) && same_diagnostics(r1, r4) &&
+                  same_raster_bits(r1.resolved, g.resolved));
+    }
+
+    std::cout << "\n=== F20(ii): control, even half-q floor: the same ramp verifies ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu dem = make_valley(z_even).raster(1.0);
+        const lsdtt::flat_resolution_result g = resolve_gradient(dem, 0, slope_lo);
+        std::cout << "      gradient:   " << gradient_string(g) << "\n";
+        check("F20(ii) the hand ramp has no NO_FLOW cell without descent",
+              n_no_flow_without_descent(dem, hand_ramp(dem, q)) == 0);
+        check("F20(ii) capped 0, fallback 0, quantised up 1, max_unit_inflation == q / u",
+              g.n_flats_gradient_capped == 0 && g.n_flats_float_fallback == 0 &&
+                  g.n_flats_unit_quantised_up == 1 && g.max_unit_inflation == q / u_lo,
+              gradient_string(g));
+        check("F20(ii) the raise crosses 1024 (max_raise 48 q from 1024 - q)",
+              g.max_raise_m == 48.0 * q && z_even + 48.0 * q > 1024.0, gradient_string(g));
+        check_exact_gradient("F20(ii) valley across 1024, even floor", dem, g, z_even, q, slope_lo);
+        check("F20(ii) min_effective_gradient == the measured minimum",
+              g.min_effective_gradient == measured_min_gradient(dem, g.resolved),
+              gradient_string(g));
+        check_routable("F20(ii) control", g.resolved);
+    }
+
+    const float wall = static_cast<float>(1024.0 + 73.0 * q);
+
+    std::cout << "\n=== F20(iii): POSITIVE cap (u_eff = q) on the same ramp: fails (a),"
+                 " fallback ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu dem = make_valley_walls(z_odd, wall).raster(1.0);
+        const lsdtt::flat_resolution_result g = resolve_gradient(dem);
+        const lsdtt::flat_resolution_result f = resolve(dem);
+        const double u     = hand_u(1.0e-4f, 1.0);
+        const double u_q   = hand_u_q(u, q);
+        const std::int32_t m_wall = max_mask_next_to_walls(dem);
+        const double cap   = (static_cast<double>(wall) - static_cast<double>(z_odd)) / (m_wall + 1.0);
+        const double u_eff = std::floor(cap / q) * q;
+        std::cout << "      gradient:   " << gradient_string(g) << "\n";
+        std::cout << "      u_q = " << u_q / q << " q, mask next to walls " << m_wall << ", cap = "
+                  << std::setprecision(9) << cap / q << " q, u_eff = " << u_eff / q << " q\n";
+        check("F20(iii) fixture: u_q == 2q > cap, quantised cap u_eff == q > 0 (mask next to"
+              " walls 48)",
+              u_q == 2.0 * q && m_wall == 48 && cap < u_q && u_eff == q);
+        check("F20(iii) fixture: the capped hand ramp leaves NO_FLOW cells without descent",
+              n_no_flow_without_descent(dem, hand_ramp(dem, u_eff)) > 0);
+        check("F20(iii) capped 1, fallback 1 (same counters as a zero cap), min_effective_gradient"
+              " +inf",
+              g.n_flats_gradient_capped == 1 && g.n_flats_float_fallback == 1 &&
+                  std::isinf(g.min_effective_gradient),
+              gradient_string(g));
+        check("F20(iii) output bitwise equal to the float-step option",
+              same_raster_bits(g.resolved, f.resolved));
+        check("F20(iii) no pair above surroundings, no rim cell without descent",
+              g.n_pairs_raised_above_surroundings == 0 && g.n_rim_cells_without_descent == 0,
+              gradient_string(g));
+        check("F20(iii) every input NO_FLOW cell has a strictly lower final neighbour",
+              n_no_flow_without_descent(dem, g.resolved) == 0);
+        check_routable("F20(iii) positive-cap fallback", g.resolved);
+    }
+
+    std::cout << "\n=== F20(iv): control for (iii), even half-q floor: capped ramp verifies ===\n";
+    {
+        const lsdtt::lsdtt_raster_cpu dem = make_valley_walls(z_even, wall).raster(1.0);
+        const lsdtt::flat_resolution_result g = resolve_gradient(dem);
+        std::cout << "      gradient:   " << gradient_string(g) << "\n";
+        check("F20(iv) capped 1, fallback 0", g.n_flats_gradient_capped == 1 &&
+                                                  g.n_flats_float_fallback == 0,
+              gradient_string(g));
+        check("F20(iv) output equals the hand ramp at u_eff = q bitwise",
+              same_raster_bits(g.resolved, hand_ramp(dem, q)));
+        check("F20(iv) min_effective_gradient == the measured minimum, > 0",
+              g.min_effective_gradient > 0.0 &&
+                  g.min_effective_gradient == measured_min_gradient(dem, g.resolved),
+              gradient_string(g));
+        check("F20(iv) no pair above surroundings, no rim cell without descent",
+              g.n_pairs_raised_above_surroundings == 0 && g.n_rim_cells_without_descent == 0,
+              gradient_string(g));
+        check_routable("F20(iv) control", g.resolved);
+    }
+}
+
+
+// -----------------------------------------------------------------------------
 // The Step 3 checks re-run for the gradient option: F4, F5, F10, F12, F16, F17,
 // the min_slope error; the fractal stats; and the float-step pair-rule pin.
 // -----------------------------------------------------------------------------
@@ -2081,6 +2346,253 @@ void run_gradient_rerun_checks()
     }
 }
 
+
+// =============================================================================
+// Dispatch (Step 5): fill_pits(..., flat_resolution_choice), the
+// diagnostics-returning variant, the periodic refusal, parse/name, and the
+// shared parameter declaration
+// =============================================================================
+
+// The unfilled fractal with a 6 x 6 nodata hole and a nodata cell on the
+// border: interior nodata seeds the fill and the flat mask alike.
+lsdtt::lsdtt_raster_cpu make_fractal_with_holes()
+{
+    const lsdtt::lsdtt_raster_cpu base = make_quantised_fractal(false);
+    std::vector<float>        z = base.get_data();
+    std::vector<std::uint8_t> v = base.get_mask();
+    const int nc = base.get_meta().n_cols;
+    for (int r = 100; r < 106; ++r)
+        for (int c = 140; c < 146; ++c)
+        {
+            z[static_cast<std::size_t>(r) * nc + c] = static_cast<float>(k_nodata);
+            v[static_cast<std::size_t>(r) * nc + c] = 0;
+        }
+    z[static_cast<std::size_t>(0) * nc + 77] = static_cast<float>(k_nodata);
+    v[static_cast<std::size_t>(0) * nc + 77] = 0;
+    lsdtt::lsdtt_raster_cpu out;
+    out.set_from_vectors(std::move(z), std::move(v), base.get_meta());
+    return out;
+}
+
+// Runs f and returns "<type>: <what()>", or "" if nothing was thrown.
+template <typename F>
+std::string thrown_by(F&& f)
+{
+    try { f(); }
+    catch (const std::invalid_argument& e) { return std::string("invalid_argument: ") + e.what(); }
+    catch (const std::runtime_error& e)    { return std::string("runtime_error: ") + e.what(); }
+    catch (const std::exception& e)        { return std::string("exception: ") + e.what(); }
+    return std::string();
+}
+
+void run_f14_checks()
+{
+    std::cout << "\n=== F14: fill_pits(..., inline_gradient) is the existing fill, bitwise ===\n";
+
+    using lsdtt::flat_resolution_choice;
+    const flat_resolution_choice inl = flat_resolution_choice::inline_gradient;
+    const auto radix = lsdtt::priority_flood_queue_backend::radix_hybrid;
+
+    const std::vector<std::pair<std::string, lsdtt::lsdtt_raster_cpu>> fixtures = {
+        {"valley", make_valley().raster()},
+        {"unfilled fractal", make_quantised_fractal(false)},
+        {"valley with interior nodata hole", make_valley_with_hole().raster()},
+        {"unfilled fractal with nodata holes", make_fractal_with_holes()}};
+
+    for (const auto& [name, r] : fixtures)
+    {
+        for (const float s : {1.0e-4f, 0.0f})
+        {
+            const std::string tag = name + ", min_slope " + (s > 0.0f ? "1e-4" : "0");
+            check("F14 " + tag + ": plain overload",
+                  same_raster_bits(lsdtt::fill_pits(r, s, inl), lsdtt::fill_pits(r, s)));
+            check("F14 " + tag + ": n_threads 2",
+                  same_raster_bits(lsdtt::fill_pits(r, s, inl, 2), lsdtt::fill_pits(r, s, 2)));
+            check("F14 " + tag + ": radix_hybrid queue",
+                  same_raster_bits(lsdtt::fill_pits(r, s, inl, 0, radix),
+                                   lsdtt::fill_pits(r, s, 0, radix)));
+            for (const std::string bc : {"oooo", "nnnn", "onon"})
+                check("F14 " + tag + ": boundary_conditions '" + bc + "'",
+                      same_raster_bits(lsdtt::fill_pits(r, s, bc, inl),
+                                       lsdtt::fill_pits(r, s, bc)));
+            check("F14 " + tag + ": boundary_conditions 'nnnn', radix_hybrid",
+                  same_raster_bits(lsdtt::fill_pits(r, s, std::string("nnnn"), inl, 0, radix),
+                                   lsdtt::fill_pits(r, s, std::string("nnnn"), 0, radix)));
+
+            const lsdtt::flat_resolution_result d =
+                lsdtt::fill_pits_with_flat_resolution(r, s, inl);
+            const lsdtt::flat_resolution_result defaults{};
+            check("F14 " + tag + ": fill_pits_with_flat_resolution(inline_gradient) is the "
+                  "fill, diagnostics at their defaults",
+                  same_raster_bits(d.resolved, lsdtt::fill_pits(r, s)) &&
+                      same_diagnostics(d, defaults),
+                  result_string(d));
+        }
+    }
+
+    // Periodic + inline_gradient: still the periodic fill (it differs from the
+    // open-edge fill on the fractal, so this is not trivially equal).
+    const lsdtt::lsdtt_raster_cpu fr = make_quantised_fractal(false);
+    const lsdtt::lsdtt_raster_cpu periodic = lsdtt::fill_pits(fr, 1.0e-4f, std::string("popo"));
+    check("F14 periodic 'popo' + inline_gradient equals the periodic fill",
+          same_raster_bits(lsdtt::fill_pits(fr, 1.0e-4f, std::string("popo"), inl), periodic) &&
+              same_raster_bits(
+                  lsdtt::fill_pits_with_flat_resolution(fr, 1.0e-4f, std::string("popo"), inl)
+                      .resolved,
+                  periodic));
+    check("F14 (control) the periodic fill differs from the open-edge fill on the fractal",
+          !same_raster_bits(periodic, lsdtt::fill_pits(fr, 1.0e-4f)));
+    const std::string both = thrown_by(
+        [&] { (void)lsdtt::fill_pits(fr, 1.0e-4f, std::string("pppp"), inl); });
+    check("F14 'pppp' + inline_gradient keeps the existing periodic error",
+          both.rfind("runtime_error: lsdtt::fill_pits: boundary_conditions 'pppp' is periodic "
+                     "in BOTH directions", 0) == 0,
+          both);
+}
+
+void run_barnes_dispatch_checks()
+{
+    std::cout << "\n=== Dispatch: fill_pits(..., barnes2014b_*) ===\n";
+
+    using lsdtt::flat_resolution_choice;
+    const std::vector<std::pair<std::string, lsdtt::lsdtt_raster_cpu>> fixtures = {
+        {"valley", make_valley().raster()},
+        {"unfilled fractal", make_quantised_fractal(false)},
+        {"unfilled fractal with nodata holes", make_fractal_with_holes()}};
+
+    for (const flat_resolution_choice method : {flat_resolution_choice::barnes2014b_gradient,
+                                                flat_resolution_choice::barnes2014b_float_step})
+    {
+        const std::string mname = lsdtt::flat_resolution_choice_name(method);
+        for (const auto& [name, r] : fixtures)
+        {
+            const std::string tag = mname + ", " + name;
+            lsdtt::flat_resolution_options opt;
+            opt.method    = method;
+            opt.min_slope = 1.0e-4f;
+            const lsdtt::flat_resolution_result ref =
+                lsdtt::resolve_flats_barnes2014b(lsdtt::fill_pits_reconstruction(r), opt);
+
+            const lsdtt::lsdtt_raster_cpu got = lsdtt::fill_pits(r, 1.0e-4f, method);
+            check("dispatch " + tag + ": fill_pits == resolve(fill_pits_reconstruction)",
+                  same_raster_bits(got, ref.resolved));
+            check("dispatch " + tag + ": the result differs from the default fill",
+                  !same_raster_bits(got, lsdtt::fill_pits(r, 1.0e-4f)));
+
+            const lsdtt::flat_resolution_result d =
+                lsdtt::fill_pits_with_flat_resolution(r, 1.0e-4f, method);
+            check("dispatch " + tag + ": fill_pits_with_flat_resolution raster and diagnostics "
+                  "== the resolver's",
+                  same_raster_bits(d.resolved, ref.resolved) && same_diagnostics(d, ref),
+                  gradient_string(d) + " vs " + gradient_string(ref));
+
+            // The non-periodic boundary-conditions overload is the same path;
+            // the queue backend and n_threads do not change the result.
+            check("dispatch " + tag + ": 'nnnn' / 'oooo' overloads, radix queue, n_threads 3",
+                  same_raster_bits(lsdtt::fill_pits(r, 1.0e-4f, std::string("nnnn"), method),
+                                   ref.resolved) &&
+                      same_raster_bits(
+                          lsdtt::fill_pits(r, 1.0e-4f, std::string("oooo"), method, 3,
+                                           lsdtt::priority_flood_queue_backend::radix_hybrid),
+                          ref.resolved) &&
+                      same_diagnostics(lsdtt::fill_pits_with_flat_resolution(
+                                           r, 1.0e-4f, std::string("onon"), method), ref));
+            check_routable("dispatch " + tag, got);
+        }
+    }
+
+    // min_slope: ignored by the float step, required > 0 by the gradient.
+    const lsdtt::lsdtt_raster_cpu fr = make_quantised_fractal(false);
+    check("dispatch barnes2014b_float_step ignores min_slope (0 and 1e-2 give the 1e-4 result)",
+          same_raster_bits(lsdtt::fill_pits(fr, 0.0f, flat_resolution_choice::barnes2014b_float_step),
+                           lsdtt::fill_pits(fr, 1.0e-4f, flat_resolution_choice::barnes2014b_float_step)) &&
+              same_raster_bits(
+                  lsdtt::fill_pits(fr, 1.0e-2f, flat_resolution_choice::barnes2014b_float_step),
+                  lsdtt::fill_pits(fr, 1.0e-4f, flat_resolution_choice::barnes2014b_float_step)));
+    const std::string zero = thrown_by(
+        [&] { (void)lsdtt::fill_pits(fr, 0.0f, flat_resolution_choice::barnes2014b_gradient); });
+    check("dispatch barnes2014b_gradient with min_slope 0: the resolver's message propagates",
+          zero == "invalid_argument: lsdtt::resolve_flats_barnes2014b: barnes2014b_gradient needs "
+                  "min_slope > 0 (it sets the gradient imposed across flats); got 0",
+          zero);
+}
+
+void run_f11b_checks()
+{
+    std::cout << "\n=== F11b: periodic boundary_conditions with a barnes2014b option ===\n";
+
+    using lsdtt::flat_resolution_choice;
+    const lsdtt::lsdtt_raster_cpu r = make_valley().raster();
+    for (const flat_resolution_choice method : {flat_resolution_choice::barnes2014b_gradient,
+                                                flat_resolution_choice::barnes2014b_float_step})
+    {
+        const std::string mname = lsdtt::flat_resolution_choice_name(method);
+        // 'pPpP' (mixed case, the fill folds case) and 'popo' are accepted by
+        // the periodic fill; 'pooo' (mismatched) and 'pppp' it would reject
+        // with its own message. All are refused here before any fill.
+        for (const std::string bc : {"popo", "opop", "pPpP", "pooo", "pppp"})
+        {
+            const std::string want =
+                "invalid_argument: lsdtt::fill_pits: fill_flat_resolution_choice '" + mname +
+                "' does not support periodic boundary_conditions ('" + bc +
+                "'); use inline_gradient";
+            const std::string got1 = thrown_by([&] { (void)lsdtt::fill_pits(r, 1.0e-4f, bc, method); });
+            const std::string got2 = thrown_by(
+                [&] { (void)lsdtt::fill_pits_with_flat_resolution(r, 1.0e-4f, bc, method); });
+            check("F11b " + mname + " with '" + bc + "' throws the exact message (both entry points)",
+                  got1 == want && got2 == want, got1 + " | " + got2);
+        }
+    }
+}
+
+void run_parse_and_parameter_checks()
+{
+    std::cout << "\n=== parse_flat_resolution_choice / declare_fill_flat_resolution_parameter ===\n";
+
+    using lsdtt::flat_resolution_choice;
+    for (const flat_resolution_choice c : {flat_resolution_choice::inline_gradient,
+                                           flat_resolution_choice::barnes2014b_gradient,
+                                           flat_resolution_choice::barnes2014b_float_step})
+    {
+        const std::string name = lsdtt::flat_resolution_choice_name(c);
+        check("parse round trip: " + name, lsdtt::parse_flat_resolution_choice(name) == c);
+    }
+    for (const std::string bad : {"barnes2014b", "Inline_gradient", "", "barnes2014b_float_step "})
+    {
+        const std::string got =
+            thrown_by([&] { (void)lsdtt::parse_flat_resolution_choice(bad); });
+        check("parse rejects '" + bad + "' with the exact message",
+              got == "invalid_argument: fill_flat_resolution_choice must be one of "
+                     "inline_gradient, barnes2014b_gradient, barnes2014b_float_step; got '" +
+                         bad + "'",
+              got);
+    }
+
+    std::map<std::string, std::string> strings;
+    lsdtt::lsdtt_help_registry          help;
+    lsdtt::declare_fill_flat_resolution_parameter(strings, help);
+    const auto& entries = help.entries();
+    check("declare_fill_flat_resolution_parameter registers fill_flat_resolution_choice = "
+          "inline_gradient (default map and help)",
+          strings.size() == 1 && strings.count("fill_flat_resolution_choice") == 1 &&
+              strings.at("fill_flat_resolution_choice") == "inline_gradient" &&
+              entries.size() == 1 && entries.count("fill_flat_resolution_choice") == 1 &&
+              lsdtt::lsdtt_help_registry::field(entries.at("fill_flat_resolution_choice"), 0) ==
+                  "string" &&
+              lsdtt::lsdtt_help_registry::field(entries.at("fill_flat_resolution_choice"), 1) ==
+                  "inline_gradient");
+    check("the declared default parses",
+          lsdtt::parse_flat_resolution_choice(strings.at("fill_flat_resolution_choice")) ==
+              flat_resolution_choice::inline_gradient);
+
+    std::map<std::string, std::string> pstrings;
+    lsdtt::lsdtt_help_registry          phelp;
+    lsdtt::declare_fill_flat_resolution_parameter(pstrings, phelp, "coarse_");
+    check("prefix 'coarse_' gives coarse_fill_flat_resolution_choice",
+          pstrings.count("coarse_fill_flat_resolution_choice") == 1 &&
+              phelp.entries().count("coarse_fill_flat_resolution_choice") == 1);
+}
+
 }  // namespace
 
 int main()
@@ -2208,7 +2720,13 @@ int main()
     run_f6_checks();
     run_f7_checks();
     run_f19_checks();
+    run_f20_checks();
     run_gradient_rerun_checks();
+
+    run_f14_checks();
+    run_barnes_dispatch_checks();
+    run_f11b_checks();
+    run_parse_and_parameter_checks();
 
     std::cout << "\n" << g_n_checks << " checks, " << g_n_failed << " failed\n";
     std::cout << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

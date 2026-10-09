@@ -186,6 +186,14 @@ void declare_fill_min_slope_parameter(
     lsdtt_help_registry&          help_map,
     const std::string&            prefix = "");
 
+// How flats are made drainable after filling (fill_flat_resolution_choice,
+// string, default inline_gradient = the existing Priority-Flood behaviour).
+// Parse the value with lsdtt::parse_flat_resolution_choice.
+void declare_fill_flat_resolution_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
 // Channel-initiation threshold.
 void declare_channel_initiation_parameters(
     std::map<std::string, int>& int_default_map,

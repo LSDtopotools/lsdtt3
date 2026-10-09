@@ -140,6 +140,32 @@ void declare_fill_min_slope_parameter(
 }
 
 // -----------------------------------------------------------------------------
+void declare_fill_flat_resolution_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Pit filling");
+    const std::string key =
+        prefixed_parameter_key(prefix, "fill_flat_resolution_choice");
+    string_default_map[key] = "inline_gradient";
+    help_map[key] = {"string", "inline_gradient",
+        "How flats are made drainable: inline_gradient, barnes2014b_gradient or "
+        "barnes2014b_float_step.",
+        "inline_gradient (default, unchanged): the Priority-Flood fill imposes "
+        "fill_min_slope during the flood. The barnes2014b options make flow "
+        "converge across flats (Barnes et al. 2014, "
+        "doi:10.1016/j.cageo.2013.01.009). barnes2014b_gradient uses "
+        "fill_min_slope (m/m, must be > 0) as the minimum gradient; flats are "
+        "raised about 3-4x more, capped below their rims, and capped flats "
+        "are reported. barnes2014b_float_step is equivalent to RichDEM "
+        "ResolveFlats on float32: it ignores fill_min_slope, its slopes depend "
+        "on elevation (of order ULP(z) / cell size), and rim violations are "
+        "reported.",
+        group, "param", ""};
+}
+
+// -----------------------------------------------------------------------------
 void declare_channel_initiation_parameters(
     std::map<std::string, int>& int_default_map,
     lsdtt_help_registry&        help_map,

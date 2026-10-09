@@ -32,6 +32,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -156,6 +157,18 @@ enum class flat_resolution_choice : std::uint8_t
     barnes2014b_gradient,
     barnes2014b_float_step
 };
+
+// parse_flat_resolution_choice / flat_resolution_choice_name
+//
+// The parameter-file spelling of a flat_resolution_choice (the value of
+// fill_flat_resolution_choice) is the enumerator name, exactly, in lower case.
+// parse_flat_resolution_choice throws std::invalid_argument for anything else,
+// with the message
+//   fill_flat_resolution_choice must be one of inline_gradient,
+//   barnes2014b_gradient, barnes2014b_float_step; got '<text>'
+// (one line). flat_resolution_choice_name is its inverse.
+flat_resolution_choice parse_flat_resolution_choice(const std::string& text);
+const char* flat_resolution_choice_name(flat_resolution_choice choice);
 
 struct flat_resolution_options
 {

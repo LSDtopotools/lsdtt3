@@ -83,6 +83,30 @@ inline double ulp_up(float x) noexcept
 
 }  // namespace
 
+flat_resolution_choice parse_flat_resolution_choice(const std::string& text)
+{
+    for (const flat_resolution_choice c : {flat_resolution_choice::inline_gradient,
+                                           flat_resolution_choice::barnes2014b_gradient,
+                                           flat_resolution_choice::barnes2014b_float_step})
+    {
+        if (text == flat_resolution_choice_name(c)) return c;
+    }
+    throw std::invalid_argument(
+        "fill_flat_resolution_choice must be one of inline_gradient, barnes2014b_gradient, "
+        "barnes2014b_float_step; got '" + text + "'");
+}
+
+const char* flat_resolution_choice_name(flat_resolution_choice choice)
+{
+    switch (choice)
+    {
+        case flat_resolution_choice::inline_gradient:        return "inline_gradient";
+        case flat_resolution_choice::barnes2014b_gradient:   return "barnes2014b_gradient";
+        case flat_resolution_choice::barnes2014b_float_step: return "barnes2014b_float_step";
+    }
+    return "unknown";
+}
+
 float step_up_float32(float z, std::int32_t k) noexcept
 {
     if (k == 0) return z;
