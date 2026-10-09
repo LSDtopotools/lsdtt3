@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -644,6 +645,22 @@ void lsdtt_flowgraph_cpu::build_dinf(
 //
 // exponent = 1.0 reproduces Quinn et al. (1991).
 // exponent = 1.1 is Freeman (1991)'s recommendation for natural terrain.
+//
+// Float underflow / overflow fallback: weights are computed in float.  On
+// very gentle surfaces (e.g. a flat resolved by one-ULP float steps, where
+// S ~ ULP(z)/L ~ 1e-7) a large exponent makes slope^exponent underflow:
+// S = 1e-7 with exponent >= 6.5 gives S^p < 1.4e-45, i.e. zero.  If the
+// summed weight is then zero the cell silently becomes a sink; if it is
+// subnormal the weights lose precision, and below ~2.9e-39 1/total_w
+// overflows to +inf (inf/NaN weights, which the graph check rejects).  In
+// that case only, the cell's weights are recomputed as (S_k / S_max)^exponent.
+// This is
+// the same set of weights after normalisation (the common factor
+// S_max^exponent cancels), but each ratio lies in (0, 1] and the steepest
+// receiver's term is exactly 1, so the sum is in [1, 8].  The same fallback
+// catches slope^exponent overflowing to +inf.  The branch is taken only when
+// total_w is not a normal finite float, so every cell the original formula
+// handles is computed exactly as before (bitwise).
 // =============================================================================
 
 void lsdtt_flowgraph_cpu::build_mfd(
@@ -693,6 +710,12 @@ void lsdtt_flowgraph_cpu::build_mfd(
             cell_rec& cr = cell_data[flat];
             float total_w = 0.0f;
 
+            // Per-receiver slopes, kept (before the duplicate merge) for the
+            // underflow fallback below.
+            std::int64_t pre_rec[8];
+            float        pre_slope[8];
+            int          pre_n = 0;
+
             for (int k = 0; k < 8; ++k)
             {
                 const lsdtt_pixel_rc nb =
@@ -720,6 +743,10 @@ void lsdtt_flowgraph_cpu::build_mfd(
                     cr.w[cr.n]   = w;
                     total_w += w;
                     ++cr.n;
+
+                    pre_rec[pre_n]   = cr.rec[cr.n - 1];
+                    pre_slope[pre_n] = slope;
+                    ++pre_n;
                 }
             }
 
@@ -760,6 +787,38 @@ void lsdtt_flowgraph_cpu::build_mfd(
             total_w = 0.0f;
             for (int k = 0; k < cr.n; ++k)
                 total_w += cr.w[k];
+
+            // Underflow / overflow fallback (see the header comment): only
+            // when total_w is zero, subnormal or non-finite.  Rescale every
+            // slope by the steepest one so the largest weight is exactly 1.
+            if (cr.n > 0 &&
+                (!(total_w >= std::numeric_limits<float>::min()) ||
+                 !std::isfinite(total_w)))
+            {
+                float s_max = 0.0f;
+                for (int k = 0; k < pre_n; ++k)
+                    s_max = std::max(s_max, pre_slope[k]);
+
+                for (int k = 0; k < cr.n; ++k) cr.w[k] = 0.0f;
+
+                for (int k = 0; k < pre_n; ++k)
+                {
+                    const float ratio = pre_slope[k] / s_max;   // in (0, 1]
+                    const float w = unit_exp ? ratio : std::pow(ratio, exponent);
+                    for (int kk = 0; kk < cr.n; ++kk)
+                    {
+                        if (cr.rec[kk] == pre_rec[k])
+                        {
+                            cr.w[kk] += w;   // merged duplicates sum, as above
+                            break;
+                        }
+                    }
+                }
+
+                total_w = 0.0f;
+                for (int k = 0; k < cr.n; ++k)
+                    total_w += cr.w[k];
+            }
 
             // Normalise so weights sum to 1.0
             if (total_w > 0.0f)

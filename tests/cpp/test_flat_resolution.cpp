@@ -77,6 +77,15 @@
 //   parse_flat_resolution_choice round trip and exact error;
 //       declare_fill_flat_resolution_parameter's key and default.
 //
+// MFD weights (Step 9):
+//   F15 MFD with exponent 8 on the float-step valley (floor 100 m, 10 m cells):
+//       the graph builds, every weight is finite, each cell's weights sum to 1
+//       within 1e-6, no spurious sinks, and all area reaches the outlets. Single
+//       cells where the old float sum of S^p underflowed to 0 (S ~ 1e-7),
+//       was subnormal (1/total_w = +inf) or overflowed (S = 1e5) now match
+//       (S_k/S_max)^p normalised in double; an ordinary cell is bitwise
+//       unchanged.
+//
 // Usage: lsdtt-test-flat-resolution
 // Prints one PASS/FAIL line per check and a final "RESULT: PASS|FAIL".
 // -----------------------------------------------------------------------------
@@ -99,6 +108,7 @@
 #include <vector>
 
 #include "lsdtt_common_parameters.hpp"
+#include "lsdtt_flowgraph_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_flat_resolution_cpu.hpp"
@@ -2593,6 +2603,283 @@ void run_parse_and_parameter_checks()
               phelp.entries().count("coarse_fill_flat_resolution_choice") == 1);
 }
 
+// =============================================================================
+// F15 (Step 9): MFD weights with a large exponent on float-step slopes
+// =============================================================================
+
+// The MFD routing on a raster: oooo edges, interior nodata as outlets (the
+// flowgraph defaults the CLIs use).
+lsdtt::lsdtt_flowgraph_cpu build_mfd(const lsdtt::lsdtt_raster_cpu& dem, float exponent)
+{
+    lsdtt::lsdtt_flowgraph_options opts;
+    opts.boundary_conditions = "oooo";
+    opts.method              = lsdtt::lsdtt_flowgraph_method::mfd;
+    opts.mfd_exponent        = exponent;
+    opts.n_threads           = 1;
+    return lsdtt::lsdtt_flowgraph_cpu(dem.get_data_array(), dem.get_mask_array(), dem.meta(),
+                                      opts);
+}
+
+// The pre-Step-9 weight sum for one cell, in float exactly as build_mfd
+// computed it: sum over lower neighbours of pow(S, p), S = dz / L.
+float old_mfd_total_w(const lsdtt::lsdtt_raster_cpu& dem, int r, int c, float exponent)
+{
+    const int nr = dem.get_meta().n_rows;
+    const int nc = dem.get_meta().n_cols;
+    const float cell = static_cast<float>(dem.get_meta().cell_size);
+    const float diag = cell * 1.41421356237309504880f;
+    const std::vector<float>&        Z = dem.get_data();
+    const std::vector<std::uint8_t>& V = dem.get_mask();
+    const float e0 = Z[static_cast<std::size_t>(r) * nc + c];
+    // lsdtt_flowgraph's neighbour order (cardinals first), so the float sum
+    // is accumulated in the same order.
+    float total_w = 0.0f;
+    for (int k = 0; k < 8; ++k)
+    {
+        const int rr = r + lsdtt::grid::d8_cardinal_first_row[k];
+        const int cc = c + lsdtt::grid::d8_cardinal_first_col[k];
+        if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
+        const std::size_t q = static_cast<std::size_t>(rr) * nc + cc;
+        if (!V[q]) continue;
+        const float slope = (e0 - Z[q]) / (k < 4 ? cell : diag);
+        if (slope > 0.0f) total_w += std::pow(slope, exponent);
+    }
+    return total_w;
+}
+
+// All weights finite and >= 0; each cell's weights sum to 1 within 1e-6; and
+// no spurious sinks: every valid non-exit cell (not on the border, no nodata
+// neighbour) with a strictly lower neighbour has a receiver of positive weight.
+void check_mfd_weights(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
+                       const lsdtt::lsdtt_flowgraph_cpu& fg)
+{
+    const int nr = dem.get_meta().n_rows;
+    const int nc = dem.get_meta().n_cols;
+    const std::vector<float>&        Z = dem.get_data();
+    const std::vector<std::uint8_t>& V = dem.get_mask();
+
+    std::int64_t n_bad_w = 0, n_bad_sum = 0, n_sinks = 0, n_checked = 0;
+    double worst_sum_err = 0.0;
+    std::string first_sink;
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+        {
+            const std::int64_t flat = static_cast<std::int64_t>(r) * nc + c;
+            if (!V[static_cast<std::size_t>(flat)]) continue;
+            const std::int64_t n = fg.n_receivers(flat);
+            const float* w = fg.receiver_weight_begin(flat);
+            double sum = 0.0;
+            bool positive = false;
+            for (std::int64_t k = 0; k < n; ++k)
+            {
+                if (!std::isfinite(w[k]) || w[k] < 0.0f) ++n_bad_w;
+                sum += w[k];
+                if (w[k] > 0.0f) positive = true;
+            }
+            if (n > 0)
+            {
+                worst_sum_err = std::max(worst_sum_err, std::abs(sum - 1.0));
+                if (!(std::abs(sum - 1.0) <= 1.0e-6)) ++n_bad_sum;
+            }
+
+            if (r == 0 || r == nr - 1 || c == 0 || c == nc - 1) continue;
+            bool exit_cell = false, lower = false;
+            for (int d = 0; d < 8; ++d)
+            {
+                const std::size_t q =
+                    static_cast<std::size_t>(r + lsdtt::grid::d8_clockwise_row[d]) * nc +
+                    (c + lsdtt::grid::d8_clockwise_col[d]);
+                if (!V[q]) exit_cell = true;
+                else if (Z[q] < Z[static_cast<std::size_t>(flat)]) lower = true;
+            }
+            if (exit_cell || !lower) continue;
+            ++n_checked;
+            if (!positive)
+            {
+                if (n_sinks == 0)
+                    first_sink = "(" + std::to_string(r) + "," + std::to_string(c) + ")";
+                ++n_sinks;
+            }
+        }
+
+    check("F15 " + name + ": every weight finite and >= 0", n_bad_w == 0,
+          std::to_string(n_bad_w) + " bad");
+    std::ostringstream es;
+    es << std::setprecision(3) << worst_sum_err;
+    check("F15 " + name + ": every cell's weights sum to 1 within 1e-6 (worst " + es.str() + ")",
+          n_bad_sum == 0, std::to_string(n_bad_sum) + " cells off");
+    check("F15 " + name + ": no spurious sinks (" + std::to_string(n_checked) +
+              " non-exit cells with a lower neighbour all have a positive-weight receiver)",
+          n_sinks == 0, std::to_string(n_sinks) + " sinks; first " + first_sink);
+}
+
+// A 3 x 3 raster: the centre at z0 and the eight neighbours set from dz (drop
+// below z0; negative = higher). Neighbour order N, E, S, W, NE, SE, SW, NW.
+lsdtt::lsdtt_raster_cpu make_mfd_star(float z0, const std::array<float, 8>& z_nb,
+                                      double cell_size)
+{
+    grid_f g(3, 3, z0);
+    const int dr[8] = {-1, 0, 1, 0, -1, 1, 1, -1};
+    const int dc[8] = {0, 1, 0, -1, 1, 1, -1, -1};
+    for (int k = 0; k < 8; ++k) g.at(1 + dr[k], 1 + dc[k]) = z_nb[static_cast<std::size_t>(k)];
+    return g.raster(cell_size);
+}
+
+// The centre cell's weights against slope^p normalised in double.
+void check_star_weights(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
+                        float exponent)
+{
+    std::string err;
+    lsdtt::lsdtt_flowgraph_cpu fg;
+    try { fg = build_mfd(dem, exponent); }
+    catch (const std::exception& e) { err = e.what(); }
+    check("F15 " + name + ": the MFD flowgraph builds", err.empty(), err);
+    if (!err.empty()) return;
+
+    const int nc = 3;
+    const std::int64_t centre = 1 * nc + 1;
+    const double cell = dem.get_meta().cell_size;
+    const std::vector<float>& Z = dem.get_data();
+
+    std::map<std::int64_t, double> want;
+    double total = 0.0, s_max = 0.0;
+    for (std::int64_t q = 0; q < 9; ++q)
+    {
+        if (q == centre) continue;
+        const int r = static_cast<int>(q / nc), c = static_cast<int>(q % nc);
+        const double L = (r == 1 || c == 1) ? cell : cell * std::sqrt(2.0);
+        const double s = (static_cast<double>(Z[centre]) - Z[static_cast<std::size_t>(q)]) / L;
+        if (s > 0.0) { want[q] = s; s_max = std::max(s_max, s); }
+    }
+    for (auto& kv : want) { kv.second = std::pow(kv.second / s_max, exponent); total += kv.second; }
+    for (auto& kv : want) kv.second /= total;
+
+    const std::int64_t n = fg.n_receivers(centre);
+    double worst = 0.0;
+    bool all_present = n == static_cast<std::int64_t>(want.size());
+    for (std::int64_t k = 0; k < n; ++k)
+    {
+        const auto it = want.find(fg.receiver_index_at(centre, k));
+        if (it == want.end()) { all_present = false; continue; }
+        const float w = fg.receiver_weight_at(centre, k);
+        if (!std::isfinite(w)) { worst = std::numeric_limits<double>::infinity(); continue; }
+        worst = std::max(worst, std::abs(static_cast<double>(w) - it->second));
+    }
+    std::ostringstream es;
+    es << std::setprecision(3) << worst;
+    check("F15 " + name + ": centre has " + std::to_string(want.size()) +
+              " receivers, weights == (S_k/S_max)^p normalised (double) within 1e-6 (worst " +
+              es.str() + ")",
+          all_present && worst <= 1.0e-6,
+          "n " + std::to_string(n) + " want " + std::to_string(want.size()));
+    check_mfd_weights(name, dem, fg);
+}
+
+void run_f15_checks()
+{
+    std::cout << "\n=== F15: MFD exponent 8 on float-step slopes (Step 9) ===\n";
+
+    // (a) The valley (floor 100 m, 10 m cells) resolved by float steps:
+    // S ~ ULP(100)/10 ~ 7.6e-7, and S^8 underflows float32.
+    const lsdtt::lsdtt_raster_cpu valley = resolve(make_valley().raster()).resolved;
+    {
+        // Demonstrate the old formula fails here: on how many interior cells
+        // is the float sum of S^8 not a normal float (zero or subnormal)?
+        std::int64_t n_underflow = 0;
+        for (int r = 1; r < 10; ++r)
+            for (int c = 1; c < 23; ++c)
+            {
+                const float tw = old_mfd_total_w(valley, r, c, 8.0f);
+                if (!(tw >= std::numeric_limits<float>::min())) ++n_underflow;
+            }
+        check("F15 float-step valley: the old float sum of S^8 underflows (zero or "
+              "subnormal) on " + std::to_string(n_underflow) + " floor cells",
+              n_underflow > 0);
+    }
+    {
+        std::string err;
+        lsdtt::lsdtt_flowgraph_cpu fg;
+        try { fg = build_mfd(valley, 8.0f); }
+        catch (const std::exception& e) { err = e.what(); }
+        check("F15 float-step valley, p = 8: the MFD flowgraph builds", err.empty(), err);
+        if (err.empty())
+        {
+            check_mfd_weights("float-step valley, p = 8", valley, fg);
+
+            // Mass: everything reaches an outlet. The weights are float32, so
+            // each cell's sum is 1 to ~1e-7 and the total drifts by about that.
+            const std::vector<double> acc = fg.accumulate();
+            double at_outlets = 0.0;
+            for (std::int64_t f = 0; f < 11 * 24; ++f)
+                if (fg.is_outlet_flat(f)) at_outlets += acc[static_cast<std::size_t>(f)];
+            const double want = 11.0 * 24.0 * 100.0;
+            check("F15 float-step valley, p = 8: area at the outlets == total area (1e-6 relative)",
+                  std::abs(at_outlets - want) <= 1.0e-6 * want,
+                  std::to_string(at_outlets) + " vs " + std::to_string(want));
+        }
+    }
+
+    // (b) Direct cases on one cell. z0 = 100 (ULP 7.63e-6) and 50 m cells:
+    // one-ULP drops give S ~ 1.5e-7 and S^8 ~ 2.6e-55, far below denorm_min.
+    {
+        const float z0  = 100.0f;
+        const float up  = 101.0f;
+        const float d1  = std::nextafter(z0, 0.0f);
+        const float d2  = std::nextafter(d1, 0.0f);
+        const float d3  = std::nextafter(d2, 0.0f);
+        //                  N   E   S   W   NE  SE  SW  NW
+        const lsdtt::lsdtt_raster_cpu star =
+            make_mfd_star(z0, {d1, d2, up, up, up, d3, up, up}, 50.0);
+        const float tw = old_mfd_total_w(star, 1, 1, 8.0f);
+        check("F15 S ~ 1e-7, p = 8: the old float sum of S^8 underflows to exactly 0 "
+              "(the cell was a silent sink)",
+              tw == 0.0f, "old total_w " + std::to_string(tw));
+        check_star_weights("S ~ 1e-7, p = 8", star, 8.0f);
+    }
+    {
+        // 1 m cells, one-ULP drops: S ~ 7.6e-6 and 5.4e-6, S^8 ~ 1e-41 is
+        // subnormal, and 1/total_w is +inf (the old weights were inf and the
+        // graph build threw).
+        const float z0 = 100.0f;
+        const float d1 = std::nextafter(z0, 0.0f);
+        //                  N   E       S   W       NE      SE  SW      NW
+        const lsdtt::lsdtt_raster_cpu star =
+            make_mfd_star(z0, {d1, 101.0f, d1, 101.0f, 101.0f, d1, 101.0f, 101.0f}, 1.0);
+        const float tw = old_mfd_total_w(star, 1, 1, 8.0f);
+        check("F15 S ~ 8e-6, p = 8: the old float sum is subnormal and 1/total_w overflows",
+              tw > 0.0f && tw < std::numeric_limits<float>::min() && std::isinf(1.0f / tw),
+              "old total_w " + std::to_string(tw));
+        check_star_weights("S ~ 8e-6, p = 8", star, 8.0f);
+    }
+    {
+        // The other end: S = 1e5 with p = 8 overflows (S^8 = 1e40 > FLT_MAX).
+        const lsdtt::lsdtt_raster_cpu star =
+            make_mfd_star(1.0e5f, {0.0f, 5.0e4f, 2.0e5f, 2.0e5f, 2.0e5f, 2.0e5f, 2.0e5f, 2.0e5f},
+                          1.0);
+        const float tw = old_mfd_total_w(star, 1, 1, 8.0f);
+        check("F15 S = 1e5, p = 8: the old float sum overflows to +inf", std::isinf(tw),
+              "old total_w " + std::to_string(tw));
+        check_star_weights("S = 1e5, p = 8", star, 8.0f);
+    }
+    {
+        // Control: an ordinary cell (S = 0.1, 0.05) takes the common path and
+        // its weights equal the old formula's bitwise.
+        const lsdtt::lsdtt_raster_cpu star =
+            make_mfd_star(10.0f, {9.0f, 9.5f, 11.0f, 11.0f, 11.0f, 11.0f, 11.0f, 11.0f}, 10.0);
+        const lsdtt::lsdtt_flowgraph_cpu fg = build_mfd(star, 8.0f);
+        const float s_n = (10.0f - 9.0f) / 10.0f;
+        const float s_e = (10.0f - 9.5f) / 10.0f;
+        const float w_n = std::pow(s_n, 8.0f), w_e = std::pow(s_e, 8.0f);
+        const float total = w_n + w_e;
+        const float inv = 1.0f / total;
+        const bool same = fg.n_receivers(4) == 2 &&
+                          bits_of(fg.receiver_weight_at(4, 0)) == bits_of(w_n * inv) &&
+                          bits_of(fg.receiver_weight_at(4, 1)) == bits_of(w_e * inv);
+        check("F15 control S = 0.1 / 0.05, p = 8: weights bitwise equal the unrescaled formula",
+              same);
+    }
+}
+
 }  // namespace
 
 int main()
@@ -2727,6 +3014,8 @@ int main()
     run_barnes_dispatch_checks();
     run_f11b_checks();
     run_parse_and_parameter_checks();
+
+    run_f15_checks();
 
     std::cout << "\n" << g_n_checks << " checks, " << g_n_failed << " failed\n";
     std::cout << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
