@@ -2745,8 +2745,13 @@ if(LSDTT_ENABLE_BENCHMARKS)
     # uses the same steepest-descent rule as lsdtt3. The RichDEM row for the
     # same comparison is recorded but not asserted -- see REPORT_ONLY in the
     # driver and docs/developer_notes/testing_and_benchmarking.md.
+    #
+    # flats_float_step is a VALUE comparison: fill_flat_resolution_choice:
+    # barnes2014b_float_step against RichDEM FillDepressions + ResolveFlats,
+    # asserted bit for bit on float32 outside lsdtt3's |z| < 1 m near-zero
+    # guard -- oracle O1 (benchmark_flat_resolution_richdem) on real terrain.
     foreach(bench_fixture alpine_small lakeland_small)
-        foreach(bench_case fill fill_epsilon breach accum_d8)
+        foreach(bench_case fill fill_epsilon breach accum_d8 flats_float_step)
             add_test(
                 NAME benchmark_${bench_case}_${bench_fixture}
                 COMMAND ${LSDTT_BENCHMARK_LAUNCHER}

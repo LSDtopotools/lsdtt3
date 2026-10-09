@@ -31,7 +31,10 @@ import shutil
 import subprocess
 import sys
 import time
-import lsdtt_test_env
+
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))  # python -I does not add it
+import lsdtt_test_env  # noqa: E402
 
 SKIP_EXIT = 77
 
@@ -84,7 +87,6 @@ REFERENCE_SCRIPTS = {
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 FIXTURE_DIR = REPO_ROOT / "tests" / "data" / "dem_cache"
-SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 
 # -----------------------------------------------------------------------------
 # Fixture registry
@@ -233,6 +235,46 @@ COMPARISONS = {
         "kind": "elevation",
         "note": "both implementations pit-flatten before carving",
     },
+    "flats_float_step": {
+        # Fill, then Barnes, Lehman and Mulla (2014b) flat resolution with
+        # float32 nextafter steps, against RichDEM FillDepressions
+        # (epsilon=False) + ResolveFlats on the same float32 raster. The
+        # synthetic oracle check_flat_resolution_vs_richdem.py proves the two
+        # are equal BIT FOR BIT; this extends that to real terrain, whose flats
+        # (lake surfaces, quantised plateaus, filled depressions) are messier
+        # than anything generated there.
+        #
+        # ASSERTED BITWISE, zero tolerance: `n_differing_unguarded`, the number
+        # of valid cells whose float32 bit patterns differ, is pinned at 0. The
+        # one exemption is lsdtt3's near-zero guard: on a flat with |z| < 1 m a
+        # float32 step is subnormal and rounds away in slope arithmetic, so
+        # lsdtt3 steps by 2^-23 m per mask unit there instead, by design. Those
+        # cells are counted separately (`n_guarded`) and not asserted. Neither
+        # fixture has a cell below 1 m, so on these the exemption is empty.
+        #
+        # Flats are found on the true-flat fill (`fill` params above, itself
+        # pinned bit-exact against RichDEM), run as a second lsdtt3 stage.
+        #
+        # ELEVATIONS, NOT D8 DIRECTIONS: RichDEM's D8 picks the lowest
+        # neighbour rather than the steepest descent (see accum_d8 below), so
+        # comparing directions would score that rule difference as lsdtt3
+        # error. Identical elevations mean any steepest-descent router sees the
+        # same surface.
+        #
+        # min_elevation stays at its default (0, which masks cells at or below
+        # 0 m): both fixtures' minima are well above it (alpine 1177 m,
+        # lakeland 74.9 m), and the always-enforced mask check would catch any
+        # cell one side dropped.
+        "references": {"richdem": "fill_resolve_flats"},
+        "lsdtt_suffix": "_fill.tif",
+        "params": {"write_fill_raster": "true", "fill_min_slope": "0",
+                   "fill_flat_resolution_choice": "barnes2014b_float_step"},
+        "flat_baseline_params": {"write_fill_raster": "true",
+                                 "fill_min_slope": "0"},
+        "kind": "elevation",
+        "metric": "float32_bits",
+        "note": "Barnes 2014b float32 steps vs RichDEM ResolveFlats -- bitwise",
+    },
 
     # -------------------------------------------------------------------------
     # Flow accumulation (docs/developer_notes/testing_and_benchmarking.md, Phase 4)
@@ -352,6 +394,9 @@ TOLERANCES = {
                                   "volume_ratio_max": 1.001},
         "breach@richdem":       {"max_abs": 0.0,  "frac_differing": 0.0,
                                  "volume_ratio_max": 1.0},
+        # Float32 bits identical on every valid cell outside the near-zero
+        # guard (see COMPARISONS). Zero is the claim, not a measurement margin.
+        "flats_float_step@richdem": {"n_differing_unguarded": 0},
         # D8 accumulation is IDENTICAL to TopoToolbox on this fixture -- same
         # steepest-descent rule, and steep terrain leaves almost no ties to
         # break. Pinned tight so any divergence fails.
@@ -391,6 +436,7 @@ TOLERANCES = {
                                   "volume_ratio_max": 1.40},
         "breach@richdem":       {"max_abs": 0.95, "frac_differing": 0.032,
                                  "volume_ratio_max": 4.0},
+        "flats_float_step@richdem": {"n_differing_unguarded": 0},
         # Low relief does NOT reproduce exactly, and that is expected rather
         # than alarming: after epsilon filling, flat ground still leaves many
         # near-ties, and D8 must pick one neighbour. Tie-breaking moves WHICH
@@ -511,6 +557,136 @@ def elevation_metrics(a_path, b_path, original_path=None, tol=0.01):
         "signed_min": float(d.min()),
         "signed_max": float(d.max()),
         "volume_ratio": volume_ratio,
+    }
+
+
+# lsdtt3's near-zero guard for barnes2014b_float_step: flats with |z| below
+# this are raised by 2^-23 m per mask unit instead of by float32 steps.
+FLAT_GUARD_LIMIT_M = 1.0
+
+
+def load_raster_float32(path: pathlib.Path):
+    """Return (array, valid_mask) as float32 / bool, refusing any other band
+    type: a bitwise comparison of a raster that went through another dtype
+    would compare the conversion, not the algorithm."""
+    import numpy as np
+    from osgeo import gdal
+    gdal.UseExceptions()
+
+    ds = gdal.Open(str(path))
+    if ds is None:
+        raise RuntimeError(f"could not open {path}")
+    band = ds.GetRasterBand(1)
+    if band.DataType != gdal.GDT_Float32:
+        raise RuntimeError(f"{path.name}: band type "
+                           f"{gdal.GetDataTypeName(band.DataType)}, not Float32")
+    arr = band.ReadAsArray().astype(np.float32, copy=False)
+    nodata = band.GetNoDataValue()
+    valid = ~np.isnan(arr)
+    if nodata is not None:
+        valid &= (arr != np.float32(nodata))
+    return arr, valid
+
+
+def _ordered_key(a):
+    """float32 -> int64, monotone in value, with -0.0 and +0.0 both 0, so
+    key(b) - key(a) is the number of nextafter steps from a up to b."""
+    import numpy as np
+    i = np.asarray(a, np.float32).view(np.int32).astype(np.int64)
+    return np.where(i < 0, -(i & 0x7FFFFFFF), i)
+
+
+def _shifted(a, dr: int, dc: int, fill):
+    """out[r, c] = a[r + dr, c + dc], `fill` where that is off the raster."""
+    import numpy as np
+    out = np.full_like(a, fill)
+    R, C = a.shape
+    rs, re_ = max(0, -dr), min(R, R - dr)
+    cs, ce = max(0, -dc), min(C, C - dc)
+    out[rs:re_, cs:ce] = a[rs + dr:re_ + dr, cs + dc:ce + dc]
+    return out
+
+
+def _flat_cells(z, valid):
+    """Cells Barnes (2014b) raises: NO_FLOW cells (no lower neighbour, not
+    draining) plus low edges (draining cells next to a NO_FLOW cell of equal
+    elevation). Raster-border and nodata-adjacent cells drain. Same definition
+    as check_flat_resolution_vs_richdem.py."""
+    import numpy as np
+    R, C = z.shape
+    n8 = [(dr, dc) for dr in (-1, 0, 1) for dc in (-1, 0, 1) if dr or dc]
+    drains = np.zeros((R, C), bool)
+    drains[0, :] = drains[-1, :] = drains[:, 0] = drains[:, -1] = True
+    for dr, dc in n8:
+        nv = _shifted(valid, dr, dc, True)
+        nz = _shifted(z, dr, dc, np.float32(np.inf))
+        drains |= ~nv | (nv & (nz < z))
+    noflow = valid & ~drains
+    low_edge = np.zeros((R, C), bool)
+    for dr, dc in n8:
+        nnf = _shifted(noflow, dr, dc, False)
+        nz = _shifted(z, dr, dc, np.float32(np.nan))
+        low_edge |= valid & drains & nnf & (nz == z)
+    return noflow | low_edge
+
+
+def float32_bit_metrics(lsdtt_path, ref_path, flat_baseline_path):
+    """Bitwise comparison of two flat-resolved float32 DEMs.
+
+    `flat_baseline_path` is the true-flat fill both resolved; it locates the
+    flats (for the near-zero guard) and is the zero point for the raise in
+    ULPs. A cell is GUARDED when it lies on a flat (off the raster border,
+    which Barnes 2014b never raises) with |z| < FLAT_GUARD_LIMIT_M; every
+    other valid cell must carry the same bits in both outputs.
+    """
+    import numpy as np
+
+    L, vL = load_raster_float32(lsdtt_path)
+    R, vR = load_raster_float32(ref_path)
+    F, vF = load_raster_float32(flat_baseline_path)
+    if not (L.shape == R.shape == F.shape):
+        raise RuntimeError(f"shape mismatch: lsdtt3 {L.shape}, reference "
+                           f"{R.shape}, flat baseline {F.shape}")
+
+    # Validity must agree three ways: the two outputs, and the fill both
+    # started from. Folded into mask_identical, which is always enforced.
+    mask_identical = bool(np.array_equal(vL, vR) and np.array_equal(vL, vF))
+    valid = vL & vR & vF
+    n = int(valid.sum())
+    if n == 0:
+        raise RuntimeError("no overlapping valid cells")
+
+    border = np.zeros(F.shape, bool)
+    border[0, :] = border[-1, :] = border[:, 0] = border[:, -1] = True
+    flats = _flat_cells(F, vF) & ~border & valid
+    guarded = flats & (np.abs(F) < FLAT_GUARD_LIMIT_M)
+    differ = valid & (L.view(np.uint32) != R.view(np.uint32))
+    unguarded = differ & ~guarded
+
+    raise_L = (_ordered_key(L) - _ordered_key(F))[valid]
+    raise_R = (_ordered_key(R) - _ordered_key(F))[valid]
+
+    first = ""
+    if unguarded.any():
+        r, c = (int(x) for x in np.argwhere(unguarded)[0])
+
+        def show(z):    # 9 significant digits round-trip a float32
+            return f"{float(z[r, c]):.9g} (0x{int(z.view(np.uint32)[r, c]):08x})"
+        first = (f"row {r} col {c}: fill {show(F)}, lsdtt3 {show(L)}, "
+                 f"reference {show(R)}")
+
+    return {
+        "mask_identical": mask_identical,
+        "n_valid": n,
+        "n_flat": int(flats.sum()),
+        "n_differing": int(differ.sum()),
+        "n_guarded": int(guarded.sum()),
+        "n_differing_unguarded": int(unguarded.sum()),
+        "max_ulp_raise_lsdtt": int(raise_L.max()),
+        "max_ulp_raise_reference": int(raise_R.max()),
+        "max_abs": float(np.abs(L[valid].astype(np.float64)
+                                - R[valid].astype(np.float64)).max()),
+        "first_unguarded_cell": first,
     }
 
 
@@ -783,7 +959,7 @@ def main() -> int:
 
     if args.list:
         for name, spec in COMPARISONS.items():
-            print(f"{name:14s} {spec['note']}")
+            print(f"{name:18s} {spec['note']}")
         return 0
 
     try:
@@ -791,6 +967,13 @@ def main() -> int:
         from osgeo import gdal  # noqa: F401
     except ImportError:
         die_skip("numpy/GDAL not importable. Use `pixi run -e benchmark ...`")
+
+    # Rebind the module global before anything can fetch: ensure_fixture()
+    # reads it at call time, so this redirects both the lookup and the
+    # download.
+    if args.fixture_dir:
+        global FIXTURE_DIR
+        FIXTURE_DIR = pathlib.Path(args.fixture_dir).resolve()
 
     fetch_exe = pathlib.Path(args.fetch_exe).resolve() if args.fetch_exe else \
         (REPO_ROOT / "build" / "lsdtt-fetch-raster")
@@ -818,13 +1001,6 @@ def main() -> int:
     exe = pathlib.Path(args.exe).resolve()
     if not exe.exists():
         die_skip(f"executable {exe} not found; build lsdtt3 first")
-
-    # Rebind the module global before anything can fetch: ensure_fixture()
-    # reads it at call time, so this redirects both the lookup and the
-    # download.
-    if args.fixture_dir:
-        global FIXTURE_DIR
-        FIXTURE_DIR = pathlib.Path(args.fixture_dir).resolve()
 
     work_dir = pathlib.Path(args.out_dir).resolve() if args.out_dir else \
         REPO_ROOT / "build" / "flow_benchmark"
@@ -862,6 +1038,18 @@ def main() -> int:
 
         # Depression-free property is a property of the lsdtt3 output alone,
         # so it is computed once, not per reference.
+        # The true-flat fill the flats were resolved from, for the bitwise
+        # comparison's guard and ULP count. Same lsdtt3 executable and input.
+        flat_baseline = None
+        if spec.get("metric") == "float32_bits":
+            base_dir = case_dir / "flat_baseline"
+            run_lsdtt(stage_exe, stage_input, base_dir,
+                      spec["flat_baseline_params"])
+            flat_baseline = base_dir / f"{stage_input.stem}_fill.tif"
+            if not flat_baseline.exists():
+                raise RuntimeError(f"expected flat baseline {flat_baseline} "
+                                   f"not written")
+
         minima = None
         if spec["kind"] == "elevation" and name in ("fill", "fill_epsilon"):
             minima = count_interior_minima(lsdtt_out)
@@ -914,6 +1102,8 @@ def main() -> int:
             if spec["kind"] == "accumulation":
                 m = accumulation_metrics(lsdtt_out, ref_out,
                                          cell_area_of(stage_input))
+            elif spec.get("metric") == "float32_bits":
+                m = float32_bit_metrics(lsdtt_out, ref_out, flat_baseline)
             else:
                 m = elevation_metrics(lsdtt_out, ref_out, original_path=fixture)
 
@@ -926,6 +1116,19 @@ def main() -> int:
                 print(f"       total accum:      {100.0 * m['total_rel']:.6f} % rel")
                 print(f"       max cells:        lsdtt3 {m['max_cells_lsdtt']:.0f}"
                       f" / {reference} {m['max_cells_richdem']:.0f}")
+            elif spec.get("metric") == "float32_bits":
+                print(f"       cells compared:   {m['n_valid']}")
+                print(f"       flat cells:       {m['n_flat']}")
+                print(f"       bits differing:   {m['n_differing']}"
+                      f"  (guarded |z| < {FLAT_GUARD_LIMIT_M:g} m: "
+                      f"{m['n_guarded']} cells on flats)")
+                print(f"       differing outside guard: "
+                      f"{m['n_differing_unguarded']}  (must be 0)")
+                print(f"       max ULP raise:    lsdtt3 {m['max_ulp_raise_lsdtt']}"
+                      f" / {reference} {m['max_ulp_raise_reference']}")
+                print(f"       max |diff|:       {m['max_abs']:.9g} m")
+                if m["first_unguarded_cell"]:
+                    print(f"       first unguarded:  {m['first_unguarded_cell']}")
             else:
                 print(f"       max |diff|:       {m['max_abs']:.4f} m")
                 print(f"       cells >1cm:       {100.0 * m['frac_differing']:.4f} %")
@@ -977,8 +1180,11 @@ def main() -> int:
                     value = m[metric]
 
                 if value > limit:
+                    detail = (f"; first at {m['first_unguarded_cell']}"
+                              if m.get("first_unguarded_cell") else "")
                     failures.append(
-                        f"{key}: {metric} = {value:.6g} exceeds pinned {limit:g}")
+                        f"{key}: {metric} = {value:.6g} exceeds pinned "
+                        f"{limit:g}{detail}")
 
     csv_path = work_dir / "benchmark_results.csv"
     write_header = not csv_path.exists()
