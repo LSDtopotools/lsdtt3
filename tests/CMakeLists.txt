@@ -2830,6 +2830,31 @@ if(LSDTT_ENABLE_BENCHMARKS)
     lsdtt_mark_test_runtime(pixi benchmark_chi_value_topotoolbox)
     lsdtt_set_tests_properties(benchmark_chi_value_topotoolbox
         PROPERTIES LABELS "benchmark;chi" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+    # -------------------------------------------------------------------------
+    # Flat resolution VALUE comparison against RichDEM (oracle O1).
+    #
+    # fill_flat_resolution_choice: barnes2014b_float_step is meant to equal
+    # RichDEM's ResolveFlats on float32 bit for bit. The driver fills its own
+    # synthetic fixtures (no network, no committed raster) with vincent1993 at
+    # fill_min_slope 0, resolves the flats with both tools and asserts equal
+    # float32 bits on every valid cell, except on flats with |z| < 1 m, where
+    # lsdtt3's near-zero guard replaces subnormal steps by design (the driver
+    # asserts the differences are exactly those cells, in RichDEM's order).
+    # It also asserts the "raised above surroundings" PAIR counts agree.
+    # Elevations are compared, not D8 directions: RichDEM's D8 is not steepest
+    # descent (see run_flow_benchmark.py). Exits 77 without richdem.
+    # -------------------------------------------------------------------------
+    add_test(
+        NAME benchmark_flat_resolution_richdem
+        COMMAND ${LSDTT_BENCHMARK_LAUNCHER} -I
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_flat_resolution_vs_richdem.py"
+                --bin-dir "$<TARGET_FILE_DIR:lsdtt-raster-preprocessing>"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flat_resolution_richdem"
+    )
+    lsdtt_mark_test_runtime(pixi benchmark_flat_resolution_richdem)
+    lsdtt_set_tests_properties(benchmark_flat_resolution_richdem
+        PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77 TIMEOUT 600)
     endif()
 
     # Hydraulic DAGGER parity benchmark.
