@@ -60,6 +60,7 @@
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 #include "../src/utils/lsdtt_numeric_utils.hpp"
 #include "../src/cpu/lsdtt_outlet_resolution_cpu.hpp"
@@ -198,9 +199,14 @@ int main(int argc, char* argv[])
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
-        "Minimum slope imposed by pit filling.",
-        "Used only when raster_is_filled is false.",
+        "Minimum slope (m/m) imposed by pit filling or flat resolution.",
+        "inline_gradient (default): imposed during the Priority-Flood fill, so "
+        "used only when raster_is_filled is false. barnes2014b_gradient: the "
+        "minimum gradient across flats, also on a raster_is_filled input. "
+        "barnes2014b_float_step: ignored.",
         "DEM preparation", "param", ""};
+
+    lsdtt::declare_fill_flat_resolution_parameter(string_default_map, help_map);
 
     // --- Basin outlet input ---
     string_default_map["basin_outlet_fname"] = "NULL";
@@ -609,6 +615,25 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // How flats are made drainable (Barnes et al. 2014b options). Checked
+    // here, before any raster work. A barnes2014b option either fills and
+    // resolves, or, with raster_is_filled: true, resolves the input's flats,
+    // so the gradient check applies either way.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+        lsdtt::check_fill_flat_resolution_min_slope(
+            flat_choice, ff["fill_min_slope"]);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
 #if !defined(LSDTT_HAS_EIGEN)
     if (bf["run_inversion"])
     {
@@ -659,9 +684,18 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Pit filling ---\n";
         try
         {
-            routed_dem = lsdtt::fill_pits(
-                dem, ff["fill_min_slope"],
-                sf["boundary_conditions"], ifs["n_threads"]);
+            if (flat_choice == lsdtt::flat_resolution_choice::inline_gradient)
+            {
+                routed_dem = lsdtt::fill_pits(
+                    dem, ff["fill_min_slope"],
+                    sf["boundary_conditions"], ifs["n_threads"]);
+            }
+            else
+            {
+                routed_dem = lsdtt::fill_pits_reporting_flat_resolution(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
         }
         catch (const std::exception& e)
         {
@@ -672,6 +706,24 @@ int main(int argc, char* argv[])
     else
     {
         std::cout << "\nRaster is marked as already filled. Skipping fill step.\n";
+
+        // A filled input can still hold true flats (a min_slope 0 fill);
+        // a barnes2014b option resolves them rather than being ignored.
+        if (flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+        {
+            try
+            {
+                routed_dem = lsdtt::resolve_flats_of_filled_raster_reporting(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: flat resolution failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

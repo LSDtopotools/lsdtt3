@@ -4614,6 +4614,329 @@ lsdtt_set_tests_properties(
     rigorous_fill_flat_resolution_valley_gradient
     PROPERTIES LABELS "rigorous;cli;flow")
 
+# fill_flat_resolution_choice in the routing CLIs. The parameter check, the
+# fill-and-resolve path, the raster_is_filled: true resolve-only path and the
+# report are one shared implementation
+# (src/cpu/lsdtt_fill_flat_resolution_reporting_cpu), so one CLI carries the
+# raster_is_filled cases and each CLI family gets one run with an option on
+# the valley. The "Flat regions" line shows the resolver ran on the valley's
+# floor; under the default fill that line is never printed.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_flat_resolution_gradient
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_gradient.param.in
+    chivg_chi_fit_nodes_mn_0p500.csv
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+)
+
+# raster_is_filled: true (the input is not filled again). The valley is a
+# filled surface with a true flat: a barnes2014b option resolves it and the
+# run succeeds; inline_gradient routes it as it is and the router refuses it.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_flat_resolution_filled_float_step
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_filled_float_step.param.in
+    chivf_chi_fit_nodes_mn_0p500.csv
+    --stdout-contains "Raster is marked as already filled. Skipping fill step."
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max raise: 0.000366211 m"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_analysis_flat_resolution_filled_inline
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_filled_inline.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "could not assign a receiver"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_analysis_flat_resolution_unfilled_input
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_unfilled_input.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: flat resolution failed: lsdtt::compute_barnes2014b_flat_mask: 1 flat cell(s) in 1 flat region(s) have no outlet"
+    --stderr-contains "\; set raster_is_filled: false"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_flat_resolution_gradient
+    lsdtt-channel-extraction
+    channel_extraction_flat_resolution_gradient.param.in
+    chanvg_channel_network_lines.fgb
+    --expect-vector-feature-min chanvg_channel_network_lines.fgb:1
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_drainage_analysis_flat_resolution_float_step
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_float_step.param.in
+    drainvf_d8_drainage_area.tif
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max raise: 0.000366211 m"
+)
+
+# Two CLIs call their routing fill slope fill_min_slope_for_routing; the
+# gradient refusal names the parameter the user actually set.
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_flat_resolution_gradient_zero_slope
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_resolution_gradient_zero_slope.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice = barnes2014b_gradient needs fill_min_slope_for_routing > 0 (it sets the gradient imposed across flats)\; got 0"
+)
+
+lsdtt_set_tests_properties(
+    smoke_chi_analysis_flat_resolution_gradient
+    smoke_chi_analysis_flat_resolution_filled_float_step
+    smoke_channel_extraction_flat_resolution_gradient
+    smoke_drainage_analysis_flat_resolution_float_step
+    PROPERTIES LABELS "smoke;cli;flow")
+lsdtt_set_tests_properties(
+    failure_chi_analysis_flat_resolution_filled_inline
+    failure_chi_analysis_flat_resolution_unfilled_input
+    failure_fluvial_surfaces_flat_resolution_gradient_zero_slope
+    PROPERTIES LABELS "failure;cli;flow")
+
+# One run with an option per remaining wired CLI, the two options alternating
+# across CLIs. Each asserts the "Flat resolution:" block (printed only on the
+# barnes path, so the test fails if the option silently falls back to the
+# default) and, where the valley's flat reaches an output cheaply, a value the
+# default fill does not give (stated in each param file). The extra inputs are
+# flat_valley_outlets.csv (the floor cell next to the spill, row 5, col 1),
+# flat_valley_source.csv (the head of the valley axis, row 5, col 22) and
+# flat_valley_mask.asc (the floor plus the spill cell).
+add_lsdtt_cli_smoke_test(
+    smoke_basin_extraction_flat_resolution_gradient
+    lsdtt-basin-extraction
+    basin_extraction_flat_resolution_gradient.param.in
+    bevg_junction_basin_outlines.fgb
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Junctions     : 105"
+)
+
+# raster_is_filled: true in a second CLI family (chi-analysis carries the
+# first): the resolve-only path resolves the valley's flat and routing
+# succeeds; inline_gradient leaves the flat for the router, which refuses it.
+add_lsdtt_cli_smoke_test(
+    smoke_basin_extraction_flat_resolution_filled_float_step
+    lsdtt-basin-extraction
+    basin_extraction_flat_resolution_filled_float_step.param.in
+    bevf_junction_basin_outlines.fgb
+    --stdout-contains "Raster is marked as already filled. Skipping fill step."
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max raise: 0.000366211 m"
+    --stdout-contains "Junctions     : 105"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_basin_extraction_flat_resolution_filled_inline
+    lsdtt-basin-extraction
+    basin_extraction_flat_resolution_filled_inline.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "could not assign a receiver"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_basin_stats_flat_resolution_float_step
+    lsdtt-basin-stats
+    basin_stats_flat_resolution_float_step.param.in
+    bsvf_basin_stats.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Basin pixels  : 207"
+)
+
+# fill_before_routing: false (the two CLIs that have it). The NOTE is the
+# assertion; the router's refusal shows the option really was not applied.
+add_lsdtt_cli_smoke_test(
+    failure_basin_stats_flat_resolution_no_fill_note
+    lsdtt-basin-stats
+    basin_stats_flat_resolution_no_fill.param.in
+    unused_expected_output
+    --expect-failure
+    --stdout-contains "NOTE: fill_flat_resolution_choice (barnes2014b_gradient) is ignored because fill_before_routing is false."
+    --stderr-contains "could not assign a receiver"
+    --stderr-not-contains "needs fill_min_slope > 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_basin_surface_metrics_flat_resolution_gradient
+    lsdtt-basin-surface-metrics
+    basin_surface_metrics_flat_resolution_gradient.param.in
+    bsmvg_slope_area_stats.csv
+    --expect bsmvg_outline_curvature_flips.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --expect-file-contains "bsmvg_slope_area_stats.csv:121,45,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_channel_network_analysis_flat_resolution_float_step
+    lsdtt-channel-network-analysis
+    channel_network_analysis_flat_resolution_float_step.param.in
+    cnavf_tokunaga_summary_fit.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Junctions     : 105"
+    --stdout-contains "Strahler channels           : 80"
+)
+
+# The section geometry does not depend on the choice on this fixture (see the
+# param file), so this is the block and the outputs only.
+add_lsdtt_cli_smoke_test(
+    smoke_cross_sections_flat_resolution_gradient
+    lsdtt-cross-sections
+    cross_sections_flat_resolution_gradient.param.in
+    xsvg_cross_sections.fgb
+    --expect xsvg_cross_section_sample_points.fgb
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --stdout-contains "Cross sections written from 23 channel centres."
+)
+
+# lsdtt-bankfull-width's low-slope WARNING has one sentence per choice; one
+# test per branch, each asserting the whole WARNING. The barnes runs also show
+# the routing change: the second section's drainage area is 20700 m2 on the
+# resolved floor against 2300 m2 under the default fill.
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_inline_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_inline.param.in
+    bfvi_channel_profile.csv
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). Pit filling imposes fill_min_slope on flats, so on these low-gradient reaches the slope (and Manning discharge, which scales as sqrt(slope)) is materially set by the fill. Reduce fill_min_slope or supply a pre-filled DEM."
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_gradient_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_gradient.param.in
+    bfvg_channel_profile.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). The barnes2014b_gradient flat resolver gives flats at least fill_min_slope (more on quantised-up flats, less on capped flats\; see the flat-resolution report above), so on these low-gradient reaches the slope (and Manning discharge, which scales as sqrt(slope)) is materially set by the flat resolution. Reduce fill_min_slope."
+    --expect-file-contains "bfvg_channel_profile.csv:1,210.0000,20700.0000,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_float_step_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_float_step.param.in
+    bfvf_channel_profile.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). Under barnes2014b_float_step, flat slopes come from float32 steps of order ULP(z) / cell size and fill_min_slope does not apply, so on these low-gradient reaches the slope (and Manning discharge, which scales as sqrt(slope)) is set by elevation precision, not the terrain."
+    --expect-file-contains "bfvf_channel_profile.csv:1,210.0000,20700.0000,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_filled_float_step_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_filled_float_step.param.in
+    bfvff_channel_profile.csv
+    --stdout-contains "Raster marked as already filled. Skipping."
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). Under barnes2014b_float_step, flat slopes come from float32 steps of order ULP(z) / cell size and fill_min_slope does not apply"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_flat_resolution_hype_gradient
+    lsdtt-distributed-hydrology
+    distributed_hydrology_flat_resolution_hype_gradient.param.in
+    hypevg_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Column model: HYPE"
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Flat regions: 0, flat cells: 0, NO_FLOW cells: 0"
+    --expect-file-contains "hypevg_hype_discharge.csv:30,2001-01-30,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_flat_resolution_topmodel_float_step
+    lsdtt-distributed-hydrology
+    distributed_hydrology_flat_resolution_topmodel_float_step.param.in
+    tmvf_twi.tif
+    --expect tmvf_discharge.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --expect-raster-stat tmvf_twi.tif:mean:11.50:11.57
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_flat_resolution_float_step
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_resolution_float_step.param.in
+    fsvf_surface_class.csv
+    --expect fsvf_hand.tif
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "  3 channel source(s) in scope"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_flat_resolution_no_fill_note
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_resolution_no_fill.param.in
+    unused_expected_output
+    --expect-failure
+    --stdout-contains "NOTE: fill_flat_resolution_choice (barnes2014b_gradient) is ignored because fill_before_routing is false."
+    --stderr-contains "could not assign a receiver"
+    --stderr-not-contains "needs fill_min_slope_for_routing > 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_ridgeline_flat_resolution_gradient
+    lsdtt-ridgeline-analysis
+    ridgeline_flat_resolution_gradient.param.in
+    rlvg_basin_outlines.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --stdout-contains "Filtering initial selection (55 basins)..."
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_valley_centreline_flat_resolution_float_step
+    lsdtt-valley-centreline
+    valley_centreline_flat_resolution_float_step.param.in
+    vcvf_valley_centreline.fgb
+    --expect vcvf_valley_centreline_nodes.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "centreline 21 nodes, 2 px upstream of the head excluded from the trough"
+)
+
+lsdtt_set_tests_properties(
+    smoke_basin_extraction_flat_resolution_gradient
+    smoke_basin_extraction_flat_resolution_filled_float_step
+    smoke_basin_stats_flat_resolution_float_step
+    smoke_basin_surface_metrics_flat_resolution_gradient
+    smoke_channel_network_analysis_flat_resolution_float_step
+    smoke_cross_sections_flat_resolution_gradient
+    smoke_bankfull_width_flat_resolution_inline_warning
+    smoke_bankfull_width_flat_resolution_gradient_warning
+    smoke_bankfull_width_flat_resolution_float_step_warning
+    smoke_bankfull_width_flat_resolution_filled_float_step_warning
+    smoke_distributed_hydrology_flat_resolution_hype_gradient
+    smoke_distributed_hydrology_flat_resolution_topmodel_float_step
+    smoke_fluvial_surfaces_flat_resolution_float_step
+    smoke_ridgeline_flat_resolution_gradient
+    smoke_valley_centreline_flat_resolution_float_step
+    PROPERTIES LABELS "smoke;cli;flow")
+lsdtt_set_tests_properties(
+    failure_basin_extraction_flat_resolution_filled_inline
+    failure_basin_stats_flat_resolution_no_fill_note
+    failure_fluvial_surfaces_flat_resolution_no_fill_note
+    PROPERTIES LABELS "failure;cli;flow")
+lsdtt_set_tests_properties(smoke_distributed_hydrology_flat_resolution_hype_gradient
+    PROPERTIES FIXTURES_REQUIRED hype_cli_fixture)
+
 # lsdtt-surface-metrics.  Uses tiny_dem.asc (UTM 30N) rather than tiny30_dem.tif,
 # which is EPSG:4326 and is rejected by the CLI's projected-CRS check - that
 # rejection is itself covered by failure_surface_metrics_geographic_crs below.

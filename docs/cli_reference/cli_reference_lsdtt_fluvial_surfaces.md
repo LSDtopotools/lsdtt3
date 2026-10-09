@@ -529,12 +529,13 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `fill_before_routing` | `bool` | `true` | `switch` | - | Choose whether to pit-fill the DEM before building the flow network. | ASKS: should the DEM be filled at all? Filling is OPTIONAL here and this is a genuine analytical choice. True (the default) routes over a pit-free surface. False builds the flow network on the UNFILLED surface, so flow paths terminate at sinks instead of being carried through them. Do not confuse this with raster_is_filled, which is an assertion that the input is already filled. |
+| `fill_flat_resolution_choice` | `string` | `inline_gradient` | `param` | - | How flats are made drainable: inline_gradient, barnes2014b_gradient or barnes2014b_float_step. | inline_gradient (default, unchanged): the Priority-Flood fill imposes fill_min_slope_for_routing during the flood. The barnes2014b options make flow converge across flats (Barnes et al. 2014, doi:10.1016/j.cageo.2013.01.009). barnes2014b_gradient uses fill_min_slope_for_routing (m/m, must be &gt; 0) as the minimum gradient; flats are raised about 3-4x more, capped below their rims, and capped flats are reported. barnes2014b_float_step is equivalent to RichDEM ResolveFlats on float32: it ignores fill_min_slope_for_routing, its slopes depend on elevation (of order ULP(z) / cell size), and rim violations are reported. |
 
 ### Flow routing
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `fill_min_slope_for_routing` | `float` | `0.0001` | `param` | `fill_before_routing` | Minimum imposed slope when filling for routing [m/m]. | Barnes et al. 2014 Priority-Flood. |
+| `fill_min_slope_for_routing` | `float` | `0.0001` | `param` | `fill_before_routing` | Minimum imposed slope when filling for routing [m/m]. | Used only when fill_before_routing is true. inline_gradient (default): imposed during the Barnes et al. 2014 Priority-Flood. barnes2014b_gradient: the minimum gradient across flats. barnes2014b_float_step: ignored. |
 | `boundary_conditions` | `string` | `oooo` | `param` | - | Edge boundary codes, north east south west. | o = open, n = no-flux, p = periodic, b = forced outlet. |
 
 ### Channel network

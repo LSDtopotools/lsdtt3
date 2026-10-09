@@ -92,6 +92,7 @@
 #include "../src/cpu/lsdtt_landcover_scenario_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_sti_cpu.hpp"
 #include "../src/cpu/lsdtt_subbasin_partition_cpu.hpp"
@@ -342,7 +343,8 @@ static int run_hype_model(
     std::map<std::string, int>&           ifs,
     std::map<std::string, std::string>&   sf,
     const lsdtt::lsdtt_help_registry&     help_map,
-    lsdtt::raster_output_format           out_fmt)
+    lsdtt::raster_output_format           out_fmt,
+    lsdtt::flat_resolution_choice         flat_choice)
 {
     std::cout << "--- Column model: HYPE (simplified S-HYPE, sub-basins x classes, "
                  "daily) ---\n";
@@ -584,8 +586,17 @@ static int run_hype_model(
         std::cout << "Minimum slope: " << ff["fill_min_slope"] << "\n";
         try
         {
-            routed_dem = lsdtt::fill_pits(dem, ff["fill_min_slope"],
-                                          sf["boundary_conditions"], ifs["n_threads"]);
+            if (flat_choice == lsdtt::flat_resolution_choice::inline_gradient)
+            {
+                routed_dem = lsdtt::fill_pits(dem, ff["fill_min_slope"],
+                                              sf["boundary_conditions"], ifs["n_threads"]);
+            }
+            else
+            {
+                routed_dem = lsdtt::fill_pits_reporting_flat_resolution(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
         }
         catch (const std::exception& e)
         {
@@ -596,6 +607,24 @@ static int run_hype_model(
     else
     {
         std::cout << "\nRaster is marked as already filled. Skipping fill.\n";
+
+        // A filled input can still hold true flats (a min_slope 0 fill);
+        // a barnes2014b option resolves them rather than being ignored.
+        if (flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+        {
+            try
+            {
+                routed_dem = lsdtt::resolve_flats_of_filled_raster_reporting(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: flat resolution failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+        }
     }
     const lsdtt::lsdtt_raster_meta meta = routed_dem.get_meta();
     const double cell_area_m2 = meta.cell_size * meta.cell_size;
@@ -1049,6 +1078,7 @@ int main(int argc, char* argv[])
     // --- DEM preparation ---
     lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
     lsdtt::declare_fill_min_slope_parameter(float_default_map, help_map);
+    lsdtt::declare_fill_flat_resolution_parameter(string_default_map, help_map);
 
     // --- Model structure ---
     string_default_map["column_model"] = "topmodel";
@@ -1919,6 +1949,24 @@ int main(int argc, char* argv[])
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
 
+    // How flats are made drainable (Barnes et al. 2014b options). Checked
+    // here, before either column model does any raster work; both fill (or,
+    // with raster_is_filled: true, resolve) the DEM they route on the same way.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+        lsdtt::check_fill_flat_resolution_min_slope(
+            flat_choice, ff["fill_min_slope"]);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
     // -------------------------------------------------------------------------
     // Column model
     //
@@ -1929,7 +1977,8 @@ int main(int argc, char* argv[])
     const std::string column_model_str = lsdtt::to_lower_ascii(sf["column_model"]);
     if (column_model_str == "hype")
     {
-        return run_hype_model(pp, bf, ff, ifs, sf, help_map, out_fmt);
+        return run_hype_model(pp, bf, ff, ifs, sf, help_map, out_fmt,
+                              flat_choice);
     }
     if (column_model_str != "topmodel")
     {
@@ -2291,9 +2340,18 @@ int main(int argc, char* argv[])
         std::cout << "Minimum slope: " << ff["fill_min_slope"] << "\n";
         try
         {
-            routed_dem = lsdtt::fill_pits(dem, ff["fill_min_slope"],
-                                          sf["boundary_conditions"],
-                                          ifs["n_threads"]);
+            if (flat_choice == lsdtt::flat_resolution_choice::inline_gradient)
+            {
+                routed_dem = lsdtt::fill_pits(dem, ff["fill_min_slope"],
+                                              sf["boundary_conditions"],
+                                              ifs["n_threads"]);
+            }
+            else
+            {
+                routed_dem = lsdtt::fill_pits_reporting_flat_resolution(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
         }
         catch (const std::exception& e)
         {
@@ -2304,6 +2362,24 @@ int main(int argc, char* argv[])
     else
     {
         std::cout << "\nRaster is marked as already filled. Skipping fill.\n";
+
+        // A filled input can still hold true flats (a min_slope 0 fill);
+        // a barnes2014b option resolves them rather than being ignored.
+        if (flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+        {
+            try
+            {
+                routed_dem = lsdtt::resolve_flats_of_filled_raster_reporting(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: flat resolution failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+        }
     }
 
     const lsdtt::lsdtt_raster_meta meta = routed_dem.get_meta();

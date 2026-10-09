@@ -66,6 +66,7 @@
 #include "../src/cpu/lsdtt_cross_sections_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_manning_hydraulics_cpu.hpp"
 
 static const std::string k_version   = "0.1.0";
@@ -124,6 +125,7 @@ int main(int argc, char* argv[])
     // --- Pit filling ---
     lsdtt::declare_raster_is_filled_parameter(bool_default_map, help_map);
     lsdtt::declare_fill_min_slope_parameter(float_default_map, help_map);
+    lsdtt::declare_fill_flat_resolution_parameter(string_default_map, help_map);
 
     // --- Source points ---
     string_default_map["source_points_path"] = "";
@@ -457,6 +459,25 @@ int main(int argc, char* argv[])
         }
     }
 
+    // How flats are made drainable (Barnes et al. 2014b options). Checked
+    // here, before any raster work. A barnes2014b option either fills and
+    // resolves, or, with raster_is_filled: true, resolves the input's flats,
+    // so the gradient check applies either way.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+        lsdtt::check_fill_flat_resolution_min_slope(
+            flat_choice, ff["fill_min_slope"]);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
@@ -517,8 +538,17 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Pit filling ---\n";
         try
         {
-            routed_dem = lsdtt::fill_pits(
-                dem, ff["fill_min_slope"], sf["boundary_conditions"], ifs["n_threads"]);
+            if (flat_choice == lsdtt::flat_resolution_choice::inline_gradient)
+            {
+                routed_dem = lsdtt::fill_pits(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"], ifs["n_threads"]);
+            }
+            else
+            {
+                routed_dem = lsdtt::fill_pits_reporting_flat_resolution(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
         }
         catch (const std::exception& e)
         {
@@ -529,6 +559,24 @@ int main(int argc, char* argv[])
     else
     {
         std::cout << "\nRaster marked as already filled. Skipping.\n";
+
+        // A filled input can still hold true flats (a min_slope 0 fill);
+        // a barnes2014b option resolves them rather than being ignored.
+        if (flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+        {
+            try
+            {
+                routed_dem = lsdtt::resolve_flats_of_filled_raster_reporting(
+                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
+                    flat_choice, ifs["n_threads"]);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: flat resolution failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -709,16 +757,50 @@ int main(int argc, char* argv[])
             std::cout << "Cross sections with valid slope: " << n_slope_valid
                       << " of " << profile_rows.size() << "\n";
 
-            if (!bf["raster_is_filled"] && n_near_imposed > 0)
+            // The fitted slope feeds Manning discharge (Q ~ sqrt(S)), so warn
+            // where it may be set by how flats were made drainable rather
+            // than by the terrain. inline_gradient only touches the DEM when
+            // this CLI fills it; the barnes2014b options also resolve the
+            // flats of a raster_is_filled input.
+            const bool flats_modified =
+                !bf["raster_is_filled"] ||
+                flat_choice != lsdtt::flat_resolution_choice::inline_gradient;
+            if (flats_modified && n_near_imposed > 0)
             {
                 std::cerr << "WARNING: " << n_near_imposed << " section(s) have "
                           << "fitted slope below 10 x fill_min_slope ("
                           << 10.0 * static_cast<double>(ff["fill_min_slope"])
-                          << "). Pit filling imposes fill_min_slope on flats, so "
-                          << "on these low-gradient reaches the slope (and "
-                          << "Manning discharge, which scales as sqrt(slope)) is "
-                          << "materially set by the fill. Reduce fill_min_slope "
-                          << "or supply a pre-filled DEM.\n";
+                          << "). ";
+                if (flat_choice ==
+                    lsdtt::flat_resolution_choice::barnes2014b_gradient)
+                {
+                    std::cerr << "The barnes2014b_gradient flat resolver gives "
+                              << "flats at least fill_min_slope (more on "
+                              << "quantised-up flats, less on capped flats; see "
+                              << "the flat-resolution report above), so on these "
+                              << "low-gradient reaches the slope (and Manning "
+                              << "discharge, which scales as sqrt(slope)) is "
+                              << "materially set by the flat resolution. Reduce "
+                              << "fill_min_slope.\n";
+                }
+                else if (flat_choice ==
+                         lsdtt::flat_resolution_choice::barnes2014b_float_step)
+                {
+                    std::cerr << "Under barnes2014b_float_step, flat slopes come "
+                              << "from float32 steps of order ULP(z) / cell size "
+                              << "and fill_min_slope does not apply, so on these "
+                              << "low-gradient reaches the slope (and Manning "
+                              << "discharge, which scales as sqrt(slope)) is set "
+                              << "by elevation precision, not the terrain.\n";
+                }
+                else
+                {
+                    std::cerr << "Pit filling imposes fill_min_slope on flats, so "
+                              << "on these low-gradient reaches the slope (and "
+                              << "Manning discharge, which scales as sqrt(slope)) is "
+                              << "materially set by the fill. Reduce fill_min_slope "
+                              << "or supply a pre-filled DEM.\n";
+                }
             }
 
             const std::string out_path = pp.make_output_path("_channel_profile", ".csv");

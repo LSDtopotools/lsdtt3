@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: fsvz
+
+# barnes2014b_gradient takes its gradient from this CLI's routing fill slope,
+# which is called fill_min_slope_for_routing here (not fill_min_slope); the
+# refusal must name it.
+
+fill_before_routing: true
+fill_min_slope_for_routing: 0
+fill_flat_resolution_choice: barnes2014b_gradient

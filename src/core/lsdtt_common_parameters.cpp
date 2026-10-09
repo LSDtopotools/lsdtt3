@@ -133,9 +133,12 @@ void declare_fill_min_slope_parameter(
     const std::string key = prefixed_parameter_key(prefix, "fill_min_slope");
     float_default_map[key] = 0.0001f;
     help_map[key] = {"float", "0.0001",
-        "Minimum slope (m/m) imposed by pit filling.",
-        "Passed to fill_pits() to gently enforce downstream descent across "
-        "filled depressions and flats. Only used when filling actually happens.",
+        "Minimum slope (m/m) imposed by pit filling or flat resolution.",
+        "inline_gradient (default): imposed during the Priority-Flood fill "
+        "across filled depressions and flats, so used only when "
+        "raster_is_filled is false. barnes2014b_gradient: the minimum gradient "
+        "across flats, also on a raster_is_filled input. "
+        "barnes2014b_float_step: ignored.",
         group, "param", ""};
 }
 
@@ -143,7 +146,8 @@ void declare_fill_min_slope_parameter(
 void declare_fill_flat_resolution_parameter(
     std::map<std::string, std::string>& string_default_map,
     lsdtt_help_registry&                help_map,
-    const std::string&                  prefix)
+    const std::string&                  prefix,
+    const std::string&                  min_slope_key)
 {
     const std::string group = prefixed_group_label(prefix, "Pit filling");
     const std::string key =
@@ -153,13 +157,13 @@ void declare_fill_flat_resolution_parameter(
         "How flats are made drainable: inline_gradient, barnes2014b_gradient or "
         "barnes2014b_float_step.",
         "inline_gradient (default, unchanged): the Priority-Flood fill imposes "
-        "fill_min_slope during the flood. The barnes2014b options make flow "
+        + min_slope_key + " during the flood. The barnes2014b options make flow "
         "converge across flats (Barnes et al. 2014, "
         "doi:10.1016/j.cageo.2013.01.009). barnes2014b_gradient uses "
-        "fill_min_slope (m/m, must be > 0) as the minimum gradient; flats are "
+        + min_slope_key + " (m/m, must be > 0) as the minimum gradient; flats are "
         "raised about 3-4x more, capped below their rims, and capped flats "
         "are reported. barnes2014b_float_step is equivalent to RichDEM "
-        "ResolveFlats on float32: it ignores fill_min_slope, its slopes depend "
+        "ResolveFlats on float32: it ignores " + min_slope_key + ", its slopes depend "
         "on elevation (of order ULP(z) / cell size), and rim violations are "
         "reported.",
         group, "param", ""};
