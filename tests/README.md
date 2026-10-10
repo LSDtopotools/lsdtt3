@@ -544,6 +544,108 @@ fixtures — no interior minima after filling — with or without `--check`. Tha
 check needs no reference, so it still has teeth if both implementations were
 wrong in the same way.
 
+## Flat resolution: Barnes et al. (2014b)
+
+The opt-in `fill_flat_resolution_choice` options, `barnes2014b_gradient` and
+`barnes2014b_float_step` (the default `inline_gradient` is covered by the
+existing fill tests). The method is in
+`docs/design_and_algorithms/flow_routing.md`, and the test record is in
+`docs/developer_notes/testing_and_benchmarking.md` (section 10r).
+
+```bash
+ctest --test-dir build -R 'flat_resolution' -LE '^heavy$' --output-on-failure
+```
+
+**C++ drivers** (`tests/cpp/test_flat_resolution.cpp`, hermetic, in-process):
+
+- `unit_flat_resolution` (`unit;flow`): the mask, the step, both resolvers, the
+  rounds and the final pass. Groups F1-F27 and F29 (there is no F28); F1 is the
+  bitwise `step_up_float32` check, F5 pins the valley profile, F6 the exact
+  gradient, F21-F23 the stranding cases (interior rim, two flats a few ULPs
+  apart, cascades) and F29 the single-pass output frozen as hashes.
+- `unit_flat_resolution_real_terrain` (`unit;flow`): the same executable in
+  `--real-terrain <crop>` mode, on `tests/data/flat_resolution_lakeland_crop_dem.tif`.
+  The single pass strands cells there and the router refuses them. The defaults
+  must route.
+
+**Fill CLI, `lsdtt-raster-preprocessing`:**
+
+- `smoke_fill_flat_resolution_float_step` and `smoke_fill_flat_resolution_gradient`:
+  both options run and write (plumbing only; `tiny_dem.asc` has no flats).
+- `failure_fill_flat_resolution_unknown_choice`,
+  `failure_fill_flat_resolution_gradient_zero_slope` and
+  `failure_fill_flat_resolution_fill_spill_merge`: the exact refusal messages.
+- `rigorous_fill_flat_resolution_valley_float_step` and
+  `rigorous_fill_flat_resolution_valley_gradient`: exact fill-difference ranges
+  and report lines on the valley fixture (`flat_valley_dem.asc`).
+- `rigorous_fill_flat_resolution_knob_rounds`: the one-ULP knob
+  (`flat_valley_knob_dem.asc`) needs two rounds, and the result routes.
+
+**Routing CLIs with a barnes option:**
+
+- `smoke_chi_analysis_flat_resolution_gradient`,
+  `smoke_channel_extraction_flat_resolution_gradient` and
+  `smoke_drainage_analysis_flat_resolution_float_step`: one run each, asserting
+  a line only the barnes path prints.
+- `smoke_chi_analysis_flat_resolution_filled_float_step`: `raster_is_filled: true`
+  takes the resolve-only path.
+- `failure_chi_analysis_flat_resolution_filled_inline`: the control; the default
+  on the same filled input must fail with "could not assign a receiver".
+- `failure_chi_analysis_flat_resolution_unfilled_input`: a valley with a pit
+  (`flat_valley_pit_dem.asc`) and `raster_is_filled: true` is refused with the
+  no-outlet message.
+- `smoke_basin_extraction_flat_resolution_gradient`,
+  `smoke_basin_extraction_flat_resolution_filled_float_step` and
+  `failure_basin_extraction_flat_resolution_filled_inline`.
+- `smoke_basin_stats_flat_resolution_float_step` and
+  `failure_basin_stats_flat_resolution_no_fill_note` (the
+  `fill_before_routing: false` NOTE, on `flat_valley_dem.asc`).
+- `smoke_basin_surface_metrics_flat_resolution_gradient` (outlets in
+  `flat_valley_outlets.csv`).
+- `smoke_channel_network_analysis_flat_resolution_float_step`.
+- `smoke_cross_sections_flat_resolution_gradient`.
+- `smoke_bankfull_width_flat_resolution_inline_warning`,
+  `smoke_bankfull_width_flat_resolution_gradient_warning`,
+  `smoke_bankfull_width_flat_resolution_float_step_warning` and
+  `smoke_bankfull_width_flat_resolution_filled_float_step_warning`: the bankfull
+  WARNING, one per branch (source points in `flat_valley_source.csv`).
+- `smoke_distributed_hydrology_flat_resolution_hype_gradient` and
+  `smoke_distributed_hydrology_flat_resolution_topmodel_float_step`.
+- `smoke_fluvial_surfaces_flat_resolution_float_step`,
+  `failure_fluvial_surfaces_flat_resolution_no_fill_note` and
+  `failure_fluvial_surfaces_flat_resolution_gradient_zero_slope` (the latter names
+  `fill_min_slope_for_routing` in its message).
+- `smoke_ridgeline_flat_resolution_gradient`.
+- `smoke_valley_centreline_flat_resolution_float_step` (mask in
+  `flat_valley_mask.asc`).
+
+**Real terrain, through `lsdtt-drainage-analysis`** (the committed crop, the
+command that failed before the rounds were added):
+
+- `rigorous_drainage_analysis_flat_resolution_real_terrain_float_step` and
+  `rigorous_drainage_analysis_flat_resolution_real_terrain_gradient`: exit 0, a
+  D8 raster, `Rim cells without descent: 0`, the pinned rounds and final pass,
+  and no "could not assign a receiver".
+- `smoke_drainage_analysis_flat_resolution_real_terrain_inline_gradient`: the
+  control on the same crop.
+- `smoke_flat_resolution_real_terrain_routing`: a network-tier script,
+  `tests/scripts/check_flat_resolution_real_terrain_routing.py`. It runs the three
+  options on the flow-benchmark alpine and lakeland small and medium fixtures (fetched
+  when not cached) and on the 500 and 1000 m benchmark rasters when cached. Every
+  run must exit 0 with no cell without descent. Registered only with
+  `-DLSDTT_ENABLE_NETWORK_TESTS=ON`; it skips (77) offline.
+
+**RichDEM oracles** (tier `pixi`, `-DLSDTT_ENABLE_BENCHMARKS=ON`):
+
+- `benchmark_flat_resolution_richdem` (O1,
+  `tests/scripts/check_flat_resolution_vs_richdem.py`): the first round of
+  `barnes2014b_float_step` against RichDEM `ResolveFlats` on float32, bit for bit
+  except on near-zero-guarded flats and on the cells the later rounds changed. It
+  runs on synthetic fixtures and the committed crop.
+- `benchmark_flats_float_step_alpine_small` and
+  `benchmark_flats_float_step_lakeland_small` (O2, `run_flow_benchmark.py`
+  comparison `flats_float_step`): the same comparison on the fetched small DEMs.
+
 ## Run locally
 
 ```bash
@@ -594,6 +696,28 @@ Committed, tiny, offline:
   the DEMs behind the smoke and failure tests.
 - `tests/data/tiny30_dem.tif` — 30x30 GeoTIFF clipped from
   `../data/scotland/scotland.tif`.
+- `tests/data/flat_valley_*` — the 11 × 24 valley at 10 m used by the
+  flat-resolution tests. `flat_valley_dem.asc` is the valley after a
+  `min_slope: 0` fill (a flat floor at 100 m, walls at 110 m, outlet at row 5,
+  column 0); `flat_valley_knob_dem.asc` raises one floor cell by one float32
+  ULP; `flat_valley_pit_dem.asc` is unfilled, with one floor cell at 99.5 m.
+  `flat_valley_outlets.csv`, `flat_valley_source.csv` and `flat_valley_mask.asc`
+  give the outlet, source and mask inputs of the routing CLIs that take them.
+- `tests/data/flat_resolution_lakeland_crop_dem.tif` — 128x128 float32 GeoTIFF
+  (DEFLATE, predictor 3), 30 m, WGS 84 / UTM 15N, no nodata cells; Canadian
+  Shield lakeland, northwestern Ontario (origin 564930 E, 5604600 N). It is
+  pixel window xoff 256, yoff 192 of the benchmark suite's `lakeland_500` rung
+  (`run_benchmark_suite.py`: the centred 500 px crop of the `lakeland` 1000 px
+  source fetched from Copernicus GLO-30 on AWS by `lsdtt-fetch-raster`), i.e.
+  window xoff 506, yoff 442 of that source; cut with no resampling.
+  sha256 `95864d0f08bcb2fce2ba72ee9b948aff4bc358ed43ee58a501cf367bf14cc4fc`.
+  Lake surfaces a few float32 ULPs apart, on which a single Barnes et al.
+  (2014b) flat-resolution pass leaves cells without a lower neighbour; used by
+  `unit_flat_resolution_real_terrain` and the
+  `*_drainage_analysis_flat_resolution_real_terrain_*` CLI tests.
+  Attribution: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and
+  © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the
+  European Union and ESA; all rights reserved.
 - `tests/expected/cosmo/` — frozen CRONUS v3 reference, raw XML, and the
   numerics sentinel.
 

@@ -791,6 +791,111 @@ lsdtt_raster_cpu fill_pits(
 }
 
 // -----------------------------------------------------------------------------
+// fill_pits / fill_pits_with_flat_resolution (flat-resolution overloads)
+// -----------------------------------------------------------------------------
+
+// The barnes2014b path: true flats from the reconstruction, then the Barnes
+// mask. The queue backend has no meaning here.
+static flat_resolution_result fill_then_resolve_barnes2014b(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads)
+{
+    flat_resolution_options options;
+    options.method                     = flat_resolution;
+    options.min_slope                  = min_slope;  // gradient option only
+    options.float_step_near_zero_guard = true;
+    options.n_threads                  = n_threads;
+    return resolve_flats_barnes2014b(fill_pits_reconstruction(raster, n_threads),
+                                     options);
+}
+
+// Refuses a periodic edge under a barnes2014b option. Only 'p' changes the
+// fill's exit rule (see the header), so every other string is accepted.
+static void check_barnes2014b_boundary_conditions(
+    const std::string&     boundary_conditions,
+    flat_resolution_choice flat_resolution)
+{
+    const std::string& bc = boundary_conditions;
+    for (std::size_t i = 0; i < 4 && i < bc.size(); ++i)
+    {
+        if (bc[i] == 'p' || bc[i] == 'P')
+            throw std::invalid_argument(
+                std::string("lsdtt::fill_pits: fill_flat_resolution_choice '") +
+                flat_resolution_choice_name(flat_resolution) +
+                "' does not support periodic boundary_conditions ('" + bc +
+                "'); use inline_gradient");
+    }
+}
+
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+    {
+        flat_resolution_result out;
+        out.resolved = fill_pits(raster, min_slope, n_threads, queue_backend);
+        return out;
+    }
+    return fill_then_resolve_barnes2014b(raster, min_slope, flat_resolution, n_threads);
+}
+
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+    {
+        flat_resolution_result out;
+        out.resolved = fill_pits(raster, min_slope, boundary_conditions, n_threads,
+                                 queue_backend);
+        return out;
+    }
+    check_barnes2014b_boundary_conditions(boundary_conditions, flat_resolution);
+    return fill_then_resolve_barnes2014b(raster, min_slope, flat_resolution, n_threads);
+}
+
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+        return fill_pits(raster, min_slope, n_threads, queue_backend);
+    // A member of a prvalue is an xvalue, so this moves.
+    return fill_then_resolve_barnes2014b(
+        raster, min_slope, flat_resolution, n_threads).resolved;
+}
+
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+        return fill_pits(raster, min_slope, boundary_conditions, n_threads,
+                         queue_backend);
+    check_barnes2014b_boundary_conditions(boundary_conditions, flat_resolution);
+    // A member of a prvalue is an xvalue, so this moves.
+    return fill_then_resolve_barnes2014b(
+        raster, min_slope, flat_resolution, n_threads).resolved;
+}
+
+// -----------------------------------------------------------------------------
 // fill_pits_priority_flood
 // -----------------------------------------------------------------------------
 

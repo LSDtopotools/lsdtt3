@@ -1,0 +1,21 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: bsvf
+
+# fill_flat_resolution_choice in lsdtt-basin-stats (C6). The valley (11 x 24,
+# 10 m cells, one flat floor at 100, outlet 99 at row 5, col 0) is filled and
+# its floor resolved by barnes2014b_float_step before routing. The outlet,
+# flat_valley_outlets.csv, is the floor cell next to the spill (row 5, col 1).
+# On the resolved floor the whole valley drains through it (207 basin
+# pixels); the default fill's parallel flow gives it 23.
+
+write_output_format: gtiff
+fill_before_routing: true
+fill_flat_resolution_choice: barnes2014b_float_step
+threshold_contributing_pixels: 1
+
+basin_outlet_fname: __READ_PATH__/flat_valley_outlets.csv
+basin_outlet_snapping_method: none
+reject_nodata_edge_basins: false
+calculate_channel_stats: true

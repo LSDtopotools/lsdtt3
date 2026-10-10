@@ -349,7 +349,10 @@ Measured on a 1000×1000 Copernicus tile (Himalaya), `fill_min_slope: 0`:
 - **`fill_min_slope > 0`** → `barnes2014`, and there is no choice.
   Reconstruction fills to exactly the spill level and has no mechanism for
   imposing a gradient across the resulting flats. Priority-flood applies the
-  increment inline as it floods.
+  increment inline as it floods. Flats left by a `min_slope: 0` fill can
+  instead be resolved with the opt-in Barnes et al. (2014b) options, which
+  make flow converge across the flat; see
+  [Flat resolution: Barnes et al. (2014b)](#flat-resolution-barnes-et-al-2014b).
 - **Periodic boundaries** → `barnes2014`. The reconstruction fast path has its
   own neighbour walk and does not wrap.
 
@@ -381,6 +384,308 @@ avoid** — an early version of the benchmark suite ran lsdtt3's default (heap)
 against TopoToolbox's default (reconstruction) and reported lsdtt3 2.9× slower,
 which measured the choice of algorithm rather than the quality of either
 implementation. See `docs/developer_notes/testing_and_benchmarking.md`.
+
+---
+
+## Flat resolution: Barnes et al. (2014b)
+
+The default, `fill_flat_resolution_choice: inline_gradient`, imposes
+`fill_min_slope` during the Priority-Flood fill, as described above. Two opt-in
+options replace the imposed ramp on flats with the flat-resolution method of
+Barnes, Lehman and Mulla (2014b):
+
+| `fill_flat_resolution_choice` | what it does on flats left by a `fill_min_slope: 0` fill |
+|---|---|
+| `inline_gradient` (default) | nothing separate: the Priority-Flood fill imposes `fill_min_slope` as it floods |
+| `barnes2014b_gradient` | the Barnes mask scaled to a physical gradient set by `fill_min_slope` |
+| `barnes2014b_float_step` | the Barnes mask applied as float32 steps: RichDEM `ResolveFlats` on float32 in its first pass |
+
+The option is a parameter of `lsdtt-raster-preprocessing` and of the routing
+CLIs that run a fill (see their CLI reference pages). With the default, the
+output is unchanged, bit for bit. The implementation is in
+`src/cpu/lsdtt_raster_flat_resolution_cpu.{hpp,cpp}`.
+
+### Why the default gives parallel flow on flats
+
+The inline ramp raises each flat cell by `fill_min_slope × cell size` (times
+√2 on a diagonal) for each step it takes from the outlet. On an 8-neighbour grid
+every cell of a cross-valley column is the same number of steps from the
+outlet, so the ramp has no cross-valley component. Flow on the flat then runs in
+parallel lines, with no convergence towards the outlet.
+
+The valley test case is 11 × 24 cells at 10 m, with a floor at 100 m, walls at
+110 m, and the outlet at row 5, column 0. D8 accumulation, in cells, across the
+valley at column 12, rows 1-9:
+
+| method | rows 1-9 |
+|---|---|
+| default `fill_pits`, `fill_min_slope` 1e-4 | 24 12 12 12 12 12 12 12 24 |
+| `barnes2014b_float_step` | 2 3 4 5 **104** 5 4 3 2 |
+
+With the Barnes mask, the flow from the whole flat converges on the centre line
+(row 5) and runs to the outlet. The default spreads the same area evenly across
+the floor. This is test F5 in `tests/cpp/test_flat_resolution.cpp`.
+
+### The Barnes 2014b mask
+
+The mask is computed on a depression-free DEM (the output of
+`fill_pits_reconstruction`). Each valid cell is classified as follows.
+
+* **Draining** if it has a strictly lower valid neighbour, or if it is an
+  **exit**. An exit is a cell on the raster border, or a cell touching interior
+  nodata. This is the same exit rule as the fill, so a flat next to an interior
+  hole drains into it.
+* **NO_FLOW** otherwise.
+* A **low edge** is a draining cell with an equal-elevation NO_FLOW neighbour.
+* A **high edge** is a NO_FLOW cell with a strictly higher neighbour.
+
+A flat region is the set of 8-connected, equal-elevation cells connected to a
+low edge. Within each region two breadth-first distances are measured over
+NO_FLOW cells:
+
+* `a`, the distance from the high edges (`a = 1` on a high edge), and `H`, the
+  largest `a` in the region;
+* `t`, the distance from the low edges (`t = 1` on a low edge).
+
+The mask of a NO_FLOW cell is `2t + H - a` in a region with high edges, and
+`2t` otherwise. Low edges get 2, which is the RichDEM convention. Every NO_FLOW
+cell has a neighbour at least one mask unit lower, so every cell drains. The
+step onto a low edge can be up to `H + 1` units.
+
+Two rules follow from the reference implementation:
+
+* **Border cells are never raised**, whatever their mask. RichDEM's
+  `ResolveFlats` never modifies them, and the same rule is used here so that the
+  two agree. Cells next to interior nodata are raised.
+* The distances and maxima are taken over a fixed graph, so the mask does not
+  depend on scan order, queue order or thread count.
+
+Reference: Barnes, R., Lehman, C., Mulla, D. (2014). An efficient assignment of
+drainage direction over flat surfaces in raster digital elevation models.
+*Computers & Geosciences* 62, 128-135. doi:10.1016/j.cageo.2013.01.009. The code
+calls it `barnes2014b`, to keep it apart from the Priority-Flood paper
+(`barnes2014`).
+
+### Option 1: `barnes2014b_float_step`
+
+Each flat cell is raised by its mask in float32 steps: `nextafter` applied
+`mask` times. The steps are computed in O(1) by `step_up_float32`, which is
+bit-identical to the loop. This is RichDEM's `ResolveFlats` on a float32 raster.
+On flats at |z| ≥ 1 m the first round is bit-for-bit equal to RichDEM, border
+cells included, on the hand-built fixtures (oracle O1). On the fetched alpine and
+lakeland small DEMs (oracle O2), the only cells that differ from RichDEM are those
+that the later rounds changed, and none is below RichDEM's value.
+
+**The slopes are not physical.** A float-step drop is one or a few ULPs of the
+elevation, so the gradient across a resolved flat is about ULP(z) / cell size.
+It depends on elevation and jumps by a factor of two at 512, 1024, 2048 and
+4096 m. On a 30 m grid (D8 diagonal) it is about 2e-7 m/m at 100 m, 1.4e-6 m/m
+at 1000 m and 2.3e-5 m/m at 8848 m. The consequences:
+
+* lsdtt3's D8 router compares elevations in double precision, so it routes any
+  positive drop, even at 0 m.
+* Most physics consumers floor slope at 1e-5 to 1e-3 (channel extent, GIUH,
+  sediment routing, the hydraulic graph). To them a float-step flat is still flat.
+* Any consumer that forms the slope in float32, or takes its logarithm, sees a
+  small number that depends on elevation. At 0 m it sees zero.
+
+**The elevation change can be large.** The raise is `mask × ULP`. The float32
+ULP is 7.6e-6 m on [64, 128) m, 1.22e-4 m on [1024, 2048) m and 4.88e-4 m on
+[4096, 8192) m. For a 30 m flat the raise is:
+
+| flat (30 m grid) | at 100 m | at 1500 m | at 3700 m | at 4700 m |
+|---|---|---|---|---|
+| floodplain, mask 350 (5 km × 1 km) | 2.7 mm | 4.3 cm | 8.5 cm | 17 cm |
+| lake, mask 720 (10 km × 3 km) | 5.5 mm | 8.8 cm | 18 cm | 35 cm |
+| salar or high lake, mask 5000-7500 | 4-6 cm | 0.6-0.9 m | 1.2-1.8 m | 2.4-3.7 m |
+| lidar 1 m floodplain, mask 4150 | 3.2 cm | 0.5 m | 1.0 m | 2.0 m |
+
+On most flats the change is millimetres to centimetres. On large high flats it
+can be metres, and a rim a few ULPs above a flat can be overtopped. The rounds
+described below repair those rims.
+
+**The near-zero guard.** The float32 ULP shrinks towards zero elevation. At 0 m
+it is 1.4e-45 m, a denormal number, so a flat at 0 m would get steps that
+float32 consumers see as zero slope (TWI becomes +inf and the MFD drops the
+receiver). For flats with |z| < 1 m each mask unit is therefore a fixed
+2^-23 m (1.19e-7 m): `z' = float(z + mask × 2^-23)`. Above 1 m the native ULP
+is already at least 2^-23 m, so the step is continuous at |z| = 1 m. The guard
+keeps the Barnes ordering exactly and is always on; it is not a parameter. It
+is bit-equal to RichDEM everywhere except on those flats. The step stays
+distinct only while z' < 2 m, and the code throws beyond that bound (a mask of
+about 8.4 million at |z| < 1 m). On a 30 m grid the smallest float32 slope it
+leaves is 2^-23 / (√2 × 30 m) = 2.8e-9 m/m.
+
+In `lsdtt-raster-preprocessing` and `lsdtt-basin-stats`, `min_elevation`
+(default 0) sets cells at or below that elevation to nodata before the fill.
+By default, flats at or below 0 m are therefore removed, and the guard acts on
+flats between 0 and 1 m. Lowering `min_elevation` below 0 brings sea-level
+flats into the fill, and then the guard acts on them.
+
+### Option 2: `barnes2014b_gradient`
+
+The same mask and the same raised cells, but one mask unit is a physical length:
+
+    u = fill_min_slope × √2 × L
+
+where √2 L is the router's own diagonal path length. Every raised NO_FLOW cell
+has a neighbour one unit lower at most √2 L away, so every D8 step on an
+uncapped flat has slope at least `fill_min_slope`, in the router's double
+arithmetic. Inside a flat the steps are one to three units, so the slopes run
+from `fill_min_slope` to 3√2 × `fill_min_slope` on a cardinal step. The unit
+includes the √2 because a unit of `fill_min_slope × L` would guarantee only
+0.71 × `fill_min_slope` on a diagonal drop.
+
+Four measures make the gradient hold on real float32 data.
+
+1. **Quantised unit.** Rounding `z_f + m × u` to float32 cell by cell can
+   shorten a drop. Measured on synthetic flats during development: one-unit drops
+   of 0.978 u at 1500-4000 m on a 30 m grid, and, on 1 m cells at 4000 m (u =
+   1.4e-4 m, below the float32 ULP of 2.4e-4 m), 1262 of 3000 one-unit drops were
+   zero.
+   So for each flat, `q` is the float32 spacing (a power of two) at the top of its
+   raise, and `u_q = ceil(u / q) × q`. Where `u < q` the gradient is coarser than
+   requested (`u_q = q`), but it is never below `fill_min_slope`.
+2. **Rim cap.** A raised cell that reaches or passes a formerly higher neighbour
+   leaves that neighbour with no lower cell. Each flat's unit is therefore capped
+   at the minimum, over raised cells `c` and higher neighbours `h`, of
+   `(z_h - z_f) / (mask(c) + 1)`, quantised down to a multiple of `q`. A capped
+   flat keeps the Barnes ordering but falls below `fill_min_slope`. That is
+   reported, not hidden.
+3. **Verification and fallback.** Each gradient-resolved flat is checked on the
+   float32 output: every NO_FLOW cell needs a strictly lower final neighbour, and
+   no raised cell may reach a formerly higher neighbour. A flat that fails, or
+   whose capped unit quantises to zero, is raised with float steps instead. That
+   fallback is counted in the report.
+4. **Across rounds.** A later round can change the neighbourhood of a gradient
+   cell (see the next section), so the gradient guarantee holds within the round
+   that resolved the flat (see "What is guaranteed").
+
+The raise is larger than the inline ramp's. Its upper bound per flat is
+`(2T + H) × √2 × fill_min_slope × L`, where `T` and `H` are the towards and
+away distances of the flat, against about `fill_min_slope × path length` for the
+inline ramp. The measured maxima on the real DEMs are in the table below.
+
+### Real terrain: one pass is not routable
+
+On real float32 DEMs a single Barnes pass leaves cells without a lower neighbour.
+They are rim cells that a flat has overtopped by a few ULPs or millimetres, and
+low edges whose neighbouring lower flat was raised past them. The counts below
+are the cells left without descent after one pass, from
+`lsdtt-raster-preprocessing` with `fill_min_slope` 1e-4:
+
+| fixture | gradient | float step |
+|---|---|---|
+| alpine_500 | 27 | 28 |
+| alpine_1000 | 20 | 21 |
+| lakeland_500 | 918 | 918 |
+| lakeland_1000 | 2469 | 2475 |
+
+The D8 router then fails with `could not assign a receiver`. Synthetic fixtures,
+whose rims sit metres above their flats, did not show this. RichDEM's
+`ResolveFlats` also leaves cells without a lower neighbour on the fetched small
+DEMs (oracle O2 counts 1 on alpine_small and 41 on lakeland_small).
+
+The resolver runs up to four rounds:
+
+1. **Round 1** is the Barnes pass described above.
+2. If any cell still has no lower neighbour, the **whole surface is refilled**
+   with `fill_pits_reconstruction`. That only raises pits and the cells that
+   drain into them, to their spill level. A cell that already drains is not
+   changed.
+3. The flats are **resolved again** on the refilled surface, with the same
+   method, unit, cap, verification and guard. From round 2, **low edges are not
+   raised**; only NO_FLOW cells (mask 4 or more) are. Raising a low edge that
+   belongs to an already resolved flat would strand that flat again.
+4. Repeat from step 2 until no cell lacks a lower neighbour, or four rounds have
+   run.
+5. **Final pass.** If cells remain after the last round, one priority-flood pass,
+   seeded at the exits, raises only a cell that is not above the cell it is
+   reached from. It raises it by one float32 step (2^-23 m below 1 m, with the
+   guard). A cell with a strictly descending path to an exit is not changed.
+
+No cell is ever lowered, by any round or by the final pass. The resolver checks
+this and throws if it does not hold. Measured by `lsdtt-raster-preprocessing` on
+the real DEMs (one run per row, deterministic counts):
+
+| fixture | option | rounds (cells without descent after each round) | changed after round 1 (max extra raise) | final pass cells (max raise) | max raise | capped / float-step fallback | min effective gradient (m/m) | cells below min slope / NO_FLOW |
+|---|---|---|---|---|---|---|---|---|
+| alpine_500 | gradient | 4 (27, 16, 9, 2) | 60 (0.042 m) | 2 (0.98 mm) | 0.220 m | 90 / 19 | 1.15e-5 | 835 / 8260 |
+| alpine_500 | float step | 4 (28, 15, 9, 2) | 62 (0.042 m) | 2 (0.98 mm) | 0.096 m | - | - | - |
+| alpine_1000 | gradient | 2 (20, 0) | 20 (0.028 m) | 0 | 0.352 m | 261 / 56 | 1.15e-5 | 4784 / 24338 |
+| alpine_1000 | float step | 2 (21, 0) | 25 (0.028 m) | 0 | 0.096 m | - | - | - |
+| lakeland_500 | gradient | 4 (918, 388, 489, 374) | 10199 (0.020 m) | 5898 (3.1 mm) | 0.159 m | 1222 / 314 | 7.2e-7 | 21775 / 66374 |
+| lakeland_500 | float step | 4 (918, 386, 488, 373) | 10199 (0.012 m) | 5912 (5.0 mm) | 0.014 m | - | - | - |
+| lakeland_1000 | gradient | 4 (2469, 403, 642, 480) | 11209 (0.046 m) | 5618 (2.6 mm) | 0.192 m | 4969 / 1722 | 7.2e-7 | 67029 / 275305 |
+| lakeland_1000 | float step | 4 (2475, 406, 642, 487) | 11260 (0.043 m) | 5629 (2.6 mm) | 0.044 m | - | - | - |
+
+The final pass ran on alpine_500 and on both lakeland DEMs. On alpine_1000 the
+rounds alone were enough.
+
+### What is guaranteed
+
+**Routable.** With the defaults (four rounds and the final pass), both barnes
+options return a surface in which no valid cell, other than an exit, lacks a
+strictly lower valid neighbour. The D8 router accepts it. This is tested on the
+hermetic real-terrain crop and on the fetched real DEMs through
+`lsdtt-drainage-analysis`, which exits 0.
+
+**Gradient, within a round.** Every D8 step of every uncapped gradient-resolved
+flat has slope at least `fill_min_slope`, in the round that resolved it. The
+guarantee is not complete overall:
+
+* capped flats fall below `fill_min_slope` by design;
+* a later round, or the final pass, can raise the receiver of a gradient cell
+  and reduce its slope.
+
+So the report counts the gradient cells below `fill_min_slope` (`Cells below min
+slope`) and gives the minimum gradient measured on the final surface. On the real
+DEMs above, 10 % to 33 % of the NO_FLOW cells end below `fill_min_slope`, and the
+minimum measured gradient is 1.15e-5 m/m on the alpine DEMs and 7.2e-7 m/m on
+the lakeland DEMs. In short, the gradient is at least `fill_min_slope` where the
+rim allows it, and the cells where it does not are counted.
+
+**Float step, elevations.** Elevation changes are as in the table in Option 1:
+millimetres to centimetres on most flats, metres on large high flats.
+
+**Interior nodata.** A flat next to an interior hole drains into it, and the
+hole's neighbours are never stranded. This assumes `interior_nodata_is_outlet`
+is true, which is the flow-routing default and what all the CLIs set. With it
+false, a flat next to a hole can be a sink.
+
+### Relation to RichDEM
+
+* On flats at |z| ≥ 1 m, round 1 of `barnes2014b_float_step` is bit-for-bit
+  RichDEM `ResolveFlats` on float32. On guarded flats (|z| < 1 m) it differs by
+  design.
+* The later rounds and the final pass do work that RichDEM does not do. On the
+  lakeland 500 and 1000 DEMs they change 10,199 to 11,260 cells after round 1 (the
+  table above). The final output therefore equals RichDEM only where no later
+  round changed a cell.
+* RichDEM's "Cells inappropriately raised above surrounding terrain" counts
+  ordered neighbour pairs (c, n) with z(n) > z(c) before and z'(c) ≥ z'(n) after,
+  so the count uses `≥`. Where two raised flats touch, RichDEM's printed count
+  depends on its loop order. On one real crop it prints 367 where a recount from
+  its own output gives 364. The round-1 count of lsdtt3 is compared with the
+  recount.
+
+### Large MFD exponents (underflow fallback)
+
+The MFD weight of each receiver is a power of its slope, computed in float32.
+On gentle surfaces with a large exponent the float32 power underflows (a slope of
+about 1e-7 with an exponent of 6.5 or more). The weights can then sum to zero, in
+which case the cell silently becomes a sink, or to a subnormal number, or
+`1 / total` overflows. This failure is not specific to the float step. With the
+default fill at exponent 8 the earlier code already failed on the alpine and
+lakeland small fixtures, and it left silent sinks on the lakeland fixture.
+
+The fix applies only when the summed weight is not a normal, finite float. Then
+the cell's weights are recomputed as `(S_k / S_max)^p` and normalised. Normalisation
+removes the common factor, so the weights are the same. Every other cell is
+computed exactly as before. Outputs are bitwise unchanged at exponents 1 and 4 on
+the valley, alpine small and lakeland small fixtures, and at exponent 8 on the
+valley. The runs that failed before (exponent 8 on the two real fixtures) now
+complete.
 
 ---
 
@@ -794,6 +1099,10 @@ for D8 accumulation checks.
 - Barnes, R., Lehman, C., and Mulla, D. (2014). Priority-flood: An optimal
   depression-filling and watershed-labeling algorithm for digital elevation
   models. *Computers & Geosciences* 62, 117-127.
+- Barnes, R., Lehman, C., and Mulla, D. (2014). An efficient assignment of
+  drainage direction over flat surfaces in raster digital elevation models.
+  *Computers & Geosciences* 62, 128-135. doi:10.1016/j.cageo.2013.01.009. The
+  flat-resolution mask behind `barnes2014b_gradient` and `barnes2014b_float_step`.
 - Lindsay, J.B. (2016). Efficient hybrid breaching-filling sink removal methods
   for flow path enforcement in digital elevation models. *Hydrological
   Processes* 30(6), 846-857.

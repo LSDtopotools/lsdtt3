@@ -1,0 +1,15 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_knob_dem.asc
+write_path: __WRITE_PATH__
+write_fname: valleyknob
+
+# The valley with a one-cell knob one float32 step above the floor at
+# row 5, col 12. barnes2014b_float_step raises the floor round it to the
+# knob's level, leaving it with no lower neighbour, so the CLI must warn
+# that routing will fail there.
+
+enforce_projection: false
+write_output_format: gtiff
+
+write_fill_raster: true
+fill_flat_resolution_choice: barnes2014b_float_step

@@ -1,0 +1,19 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: chivi
+
+# The control for smoke_chi_analysis_flat_resolution_filled_float_step: the
+# same filled valley under the default inline_gradient. raster_is_filled: true
+# skips the fill, nothing resolves the flat floor, and the D8 router refuses it.
+
+raster_is_filled: true
+fill_flat_resolution_choice: inline_gradient
+threshold_contributing_pixels: 1
+min_channel_pixels: 1
+n_largest_basins: 0
+
+mn_min: 0.5
+mn_max: 0.5
+mn_step: 0.1
+run_inversion: false

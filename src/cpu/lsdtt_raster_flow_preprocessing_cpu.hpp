@@ -51,9 +51,42 @@
 // fill volume (measured 0.01 % on an Alpine DEM), and diverge substantially in
 // low relief, where it is not (29.5 % on a Finnish Lakeland DEM, giving a 40x
 // difference in material moved). Neither is wrong; they are answering the
-// question differently. The slope-based formulation here is deliberate -- 
-// the ULP approach was evaluated and rejected for lsdtt3 because of potential 
-// errors in data type and rasters that cross 0 elevation.
+// question differently.
+//
+// Flats left by a min_slope 0 fill (fill_flat_resolution_choice). The default,
+// inline_gradient, is the Priority-Flood above. Two opt-in options are in
+// lsdtt_raster_flat_resolution_cpu.{hpp,cpp}. Both use the Barnes, Lehman and
+// Mulla (2014b) mask, so flow converges across a flat instead of running in
+// parallel lines:
+//
+//   barnes2014b_gradient    scales the mask to a physical gradient: one mask
+//                           unit is fill_min_slope x sqrt(2) x cell size. Per
+//                           flat there is a cap at the rim and a float-step
+//                           fallback. Cells left below fill_min_slope are
+//                           counted and reported.
+//   barnes2014b_float_step  raises cells by float32 steps (nextafter), which is
+//                           RichDEM ResolveFlats on float32 in its first pass.
+//                           Its slopes are ULP(z) / cell size, so they depend
+//                           on elevation and are not physical. Flats with
+//                           |z| < 1 m use a fixed 2^-23 m step (near-zero guard).
+//
+// Both barnes options refill and re-resolve (up to 4 rounds), because on real
+// DEMs a single Barnes pass leaves cells without a lower neighbour: flats sit a
+// few float32 ULPs below their rims. Any cell still without a lower neighbour
+// then goes through a strict-rise priority-flood pass, so their output is always
+// routable. The method, the numerics and the measurements are in
+// docs/design_and_algorithms/flow_routing.md.
+//
+// The default stays inline_gradient for three reasons. Its slope is a physical
+// gradient, set by the fill_min_slope parameter, uniform across the raster and
+// independent of elevation and of the storage type. The ULP approach ties the
+// slope to elevation and data type: at 100 m and 1000 m on a 30 m grid it gives
+// about 2e-7 and 1.4e-6 m/m, and at 0 m it needs denormal steps (1.4e-45 m), so
+// it has to be guarded, and a float32 consumer then sees a zero slope (or, for
+// TWI, infinity). The barnes2014b_gradient option raises flats more than the
+// inline ramp and cannot always impose fill_min_slope (on the real DEMs
+// measured, 10-33 % of the NO_FLOW cells end below it). The default output is
+// unchanged by these options, bit for bit.
 // -----------------------------------------------------------------------------
 //
 // Breach algorithm:
@@ -77,6 +110,7 @@
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_flat_resolution_cpu.hpp"
 
 namespace lsdtt {
 
@@ -148,6 +182,91 @@ lsdtt_raster_cpu fill_pits(
     const lsdtt_raster_cpu& raster,
     float                   min_slope,
     const std::string&      boundary_conditions,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits (flat-resolution overloads)
+//
+// The two fill_pits above with an explicit choice of how flats are made
+// drainable (the fill_flat_resolution_choice parameter; see
+// lsdtt_raster_flat_resolution_cpu.hpp):
+//
+//   inline_gradient         forwards to the overload above with the same
+//                           arguments, unchanged, so the result is bitwise the
+//                           same as calling it without a choice. This is the
+//                           default everywhere.
+//   barnes2014b_gradient    fill_pits_reconstruction() (true flats), then
+//                           resolve_flats_barnes2014b() with min_slope as the
+//                           gradient across flats. min_slope must be > 0; the
+//                           resolver's std::invalid_argument propagates.
+//   barnes2014b_float_step  the same, with float32 steps (RichDEM ResolveFlats
+//                           on float32). min_slope is ignored.
+// For the barnes2014b options queue_backend is ignored (there is no
+// priority queue) and the resolver runs with the near-zero guard on and the
+// given n_threads.
+//
+// Boundary conditions: the fill above treats only 'p' (periodic) specially;
+// every other code ('o', 'n', 'b', ...) leaves the border as a spill point,
+// so the raster border is an exit for the fill whatever the code. The barnes
+// path uses the same exit rule (every border cell, and every cell touching
+// nodata), so for non-periodic strings it agrees with the fill and the string
+// is not otherwise used. A periodic edge would need the resolver to wrap,
+// which it does not, so a barnes2014b option with any 'p' edge throws
+// std::invalid_argument with the message
+//   lsdtt::fill_pits: fill_flat_resolution_choice '<choice>' does not support
+//   periodic boundary_conditions ('<bc>'); use inline_gradient
+// (one line). inline_gradient keeps the periodic fill and its checks.
+//
+// The enum class does not convert from an integer or a string, so these do not
+// compete with the overloads above in any existing call.
+// -----------------------------------------------------------------------------
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+// -----------------------------------------------------------------------------
+// fill_pits_with_flat_resolution
+//
+// The flat-resolution fill_pits overloads, returning the flat-resolution
+// diagnostics as well, for callers that report them. The filled raster is in
+// .resolved and is bitwise the same as the matching fill_pits overload.
+// For barnes2014b_* the result is resolve_flats_barnes2014b's, unchanged.
+// For inline_gradient there is no resolver, so every diagnostic keeps its
+// default (zero counts, max_unit_inflation 1, min_effective_gradient +inf).
+// Rules and messages are those of fill_pits above.
+// -----------------------------------------------------------------------------
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads = 0,
+    priority_flood_queue_backend queue_backend =
+        priority_flood_queue_backend::binary_heap
+);
+
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
     int                     n_threads = 0,
     priority_flood_queue_backend queue_backend =
         priority_flood_queue_backend::binary_heap

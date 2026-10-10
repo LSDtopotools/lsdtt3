@@ -1,0 +1,21 @@
+read_path: __READ_PATH__
+read_fname: flat_resolution_lakeland_crop_dem.tif
+write_path: __WRITE_PATH__
+write_fname: rtig
+
+# Control for the Step 11d real-terrain gate: the default flat handling
+# (fill_flat_resolution_choice: inline_gradient, set explicitly) routes the
+# same committed Copernicus GLO-30 lakeland crop, with the same command shape
+# as the two barnes2014b runs.
+
+raster_is_filled: false
+fill_flat_resolution_choice: inline_gradient
+fill_min_slope: 0.0001
+write_output_format: gtiff
+
+write_d8_drainage_area_raster: true
+write_dinf_drainage_area_raster: false
+write_mfd_drainage_area_raster: false
+write_twi_raster: false
+write_connectivity_raster: false
+write_height_above_channel_raster: false

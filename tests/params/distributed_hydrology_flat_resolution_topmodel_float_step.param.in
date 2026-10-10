@@ -1,0 +1,33 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tmvf
+
+# fill_flat_resolution_choice on the column_model: topmodel path of
+# lsdtt-distributed-hydrology (its second fill_pits call, which feeds the
+# D-inf flow graph, C6). The valley (11 x 24, 10 m cells, one flat floor at
+# 100, outlet 99 at row 5, col 0) is filled and its floor resolved by
+# barnes2014b_float_step. The TWI follows the routing: its mean is 11.54 here
+# against 8.82 for the default fill. Forcing as smoke_distributed_hydrology_run;
+# the TWI window is 20 m because the polyfit window must be at least one cell.
+
+raster_is_filled: false
+fill_flat_resolution_choice: barnes2014b_float_step
+write_output_format: gtiff
+twi_window_radius_metres: 20.0
+saturated_zone_mode: index
+flow_method: dinf
+channel_extent_mode: none
+velocity_mode: hydraulic_geometry
+channel_roughness_mode: constant
+dt_seconds: 3600
+rainfall_fname: tiny_rainfall.csv
+pet_fname: tiny_pet.csv
+write_discharge_csv: true
+write_water_balance_csv: true
+write_iuh_csv: false
+write_twi_raster: true
+write_velocity_raster: false
+write_traveltime_raster: false
+write_saturation_raster: false
+write_water_table_raster: false

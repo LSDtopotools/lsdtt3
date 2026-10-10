@@ -327,6 +327,10 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
     lsdtt3-only, and reuses identical reference rows instead of re-measuring
     them (a `reused_from` column in the CSV).
 
+!!! note "Two flat-resolution cases added on 2026-10-10 (`flow` suite, report-only)"
+    - `fill_flats_float_step` — fill + Barnes (2014b) flat resolution in float32 steps, lsdtt3 vs RichDEM `FillDepressions` + `ResolveFlats`.
+    - `fill_flats_gradient` — fill + Barnes (2014b) flat resolution with a 1e-4 gradient; lsdtt3 only.
+
 ### 3. Respect the flags
 
 - **`overhead_dominated`**: the measurement is within 3× of that engine's own
