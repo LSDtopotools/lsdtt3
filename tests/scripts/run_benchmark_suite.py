@@ -327,6 +327,38 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
                        "(fillsinks(bc, hybrid) takes no flat-increment "
                        "argument)",
     },
+    # fill_flats_*: verified 2026-10-10 against the same three versions.
+    "fill_flats_float_step": {
+        "topotoolbox": "not bound in the Python package 0.0.12 as a "
+                       "surface: GridObject offers fillsinks (no flat "
+                       "increment) and identifyflats (labels only); "
+                       "FlowObject resolves flats internally (carve/lcat) "
+                       "and returns flow directions, not a resolved DEM",
+        "whitebox": "no Barnes (2014b) flat resolution in whitebox_workflows "
+                    "2.0.6: fill_depressions(fix_flats) and "
+                    "fill_depressions_wang_and_liu add a fixed "
+                    "flat_increment per cell as they flood (an epsilon "
+                    "fill; see fill_epsilon), not the "
+                    "towards-low/away-from-high mask",
+    },
+    "fill_flats_gradient": {
+        "richdem": "no Barnes (2014b) mask with a physical gradient in "
+                   "richdem 2.3.0: rd.ResolveFlats(dem, in_place) takes no "
+                   "gradient and raises in dtype ULP steps (measured in "
+                   "fill_flats_float_step); FillDepressions(epsilon=True) is "
+                   "the epsilon fill measured in fill_epsilon",
+        "topotoolbox": "not bound in the Python package 0.0.12 as a "
+                       "surface: GridObject offers fillsinks (no flat "
+                       "increment) and identifyflats (labels only); "
+                       "FlowObject resolves flats internally (carve/lcat) "
+                       "and returns flow directions, not a resolved DEM",
+        "whitebox": "no Barnes (2014b) flat resolution in whitebox_workflows "
+                    "2.0.6: fill_depressions(fix_flats) and "
+                    "fill_depressions_wang_and_liu add a fixed "
+                    "flat_increment per cell as they flood (an epsilon "
+                    "fill; see fill_epsilon), not the "
+                    "towards-low/away-from-high mask",
+    },
     "hillshade": {
         "richdem": "no hillshade in richdem 2.3.0 (rd.TerrainAttribute's "
                    "attribute set is slope_*/aspect/curvature only)",
@@ -462,6 +494,70 @@ CASES: dict[str, dict[str, Any]] = {
                              "fill_min_slope": "0.0001",
                              "fill_algorithm_choice": "barnes2014"},
                   "output": "_fill.tif"},
+    },
+
+    # -- flat resolution: fill to the spill level, then Barnes et al. (2014b) --
+    #
+    # lsdtt-raster-preprocessing's `fill_flat_resolution_choice` decides how
+    # flats get a gradient. The default, `inline_gradient`, imposes it inside
+    # the priority flood: that is `fill_epsilon`'s lsdtt3 row. The two
+    # barnes2014b options instead fill to the spill level (reconstruction,
+    # min_slope 0 -- the `fill` case's work) and then resolve each flat with
+    # the Barnes, Lehman & Mulla (2014b) towards-low/away-from-high mask. Where
+    # one pass leaves cells with no lower neighbour, lsdtt3 refills and
+    # resolves again (up to 4 rounds) and then runs a strict-rise
+    # priority-flood pass, so the output is always routable.
+    #
+    # The lsdtt3 time is the CLI's single "Compute time:" line, which brackets
+    # the fill, every round and the final pass (timing_scope
+    # cli_reported_compute).
+    #
+    # `fill_pits_reconstruction_with_gradient` (reconstruction followed by the
+    # older towards-only gradient) is NOT measured here: no CLI reaches it,
+    # and a CLI is not written just to benchmark a routine.
+    "fill_flats_float_step": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("fill + Barnes (2014b) flat resolution in float32 steps. "
+                 "lsdtt3 barnes2014b_float_step vs RichDEM FillDepressions"
+                 "(epsilon=False) + ResolveFlats. Round 1 is the same "
+                 "algorithm, bitwise; RichDEM stops after that one pass and "
+                 "leaves cells undrained on real terrain, while lsdtt3 loops "
+                 "(refill + resolve, up to 4 rounds, then a strict-rise pass) "
+                 "to a routable surface -- extra work RichDEM does not do. "
+                 "TIMING ONLY"),
+        # report_only because the outputs differ by design after round 1 (see
+        # the note). run_flow_benchmark.py asserts round 1 bitwise.
+        "engines": {"richdem": "fill_resolve_flats"},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_fill_raster": "true",
+                             "fill_algorithm_choice": "barnes2014",
+                             # Unused by float_step; 0 keeps the CLI's
+                             # "fill_min_slope is ignored" NOTE out of the run.
+                             "fill_min_slope": "0",
+                             "fill_flat_resolution_choice":
+                                 "barnes2014b_float_step"},
+                  "output": "_fill.tif"},
+        "report_only": True,
+    },
+    "fill_flats_gradient": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("fill + Barnes (2014b) flat resolution with a physical "
+                 "gradient (fill_min_slope 1e-4, capped below the rim, "
+                 "float-step fallback, same loop and final pass as "
+                 "fill_flats_float_step). lsdtt3-only: the absolute cost. "
+                 "TIMING ONLY"),
+        # lsdtt3-ONLY; see NOT_IMPLEMENTED for why each reference is absent.
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_fill_raster": "true",
+                             "fill_algorithm_choice": "barnes2014",
+                             "fill_min_slope": "0.0001",
+                             "fill_flat_resolution_choice":
+                                 "barnes2014b_gradient"},
+                  "output": "_fill.tif"},
+        "report_only": True,
     },
     "breach": {
         "sequential": True,

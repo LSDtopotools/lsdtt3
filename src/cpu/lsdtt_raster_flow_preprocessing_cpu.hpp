@@ -51,9 +51,42 @@
 // fill volume (measured 0.01 % on an Alpine DEM), and diverge substantially in
 // low relief, where it is not (29.5 % on a Finnish Lakeland DEM, giving a 40x
 // difference in material moved). Neither is wrong; they are answering the
-// question differently. The slope-based formulation here is deliberate -- 
-// the ULP approach was evaluated and rejected for lsdtt3 because of potential 
-// errors in data type and rasters that cross 0 elevation.
+// question differently.
+//
+// Flats left by a min_slope 0 fill (fill_flat_resolution_choice). The default,
+// inline_gradient, is the Priority-Flood above. Two opt-in options are in
+// lsdtt_raster_flat_resolution_cpu.{hpp,cpp}. Both use the Barnes, Lehman and
+// Mulla (2014b) mask, so flow converges across a flat instead of running in
+// parallel lines:
+//
+//   barnes2014b_gradient    scales the mask to a physical gradient: one mask
+//                           unit is fill_min_slope x sqrt(2) x cell size. Per
+//                           flat there is a cap at the rim and a float-step
+//                           fallback. Cells left below fill_min_slope are
+//                           counted and reported.
+//   barnes2014b_float_step  raises cells by float32 steps (nextafter), which is
+//                           RichDEM ResolveFlats on float32 in its first pass.
+//                           Its slopes are ULP(z) / cell size, so they depend
+//                           on elevation and are not physical. Flats with
+//                           |z| < 1 m use a fixed 2^-23 m step (near-zero guard).
+//
+// Both barnes options refill and re-resolve (up to 4 rounds), because on real
+// DEMs a single Barnes pass leaves cells without a lower neighbour: flats sit a
+// few float32 ULPs below their rims. Any cell still without a lower neighbour
+// then goes through a strict-rise priority-flood pass, so their output is always
+// routable. The method, the numerics and the measurements are in
+// docs/design_and_algorithms/flow_routing.md.
+//
+// The default stays inline_gradient for three reasons. Its slope is a physical
+// gradient, set by the fill_min_slope parameter, uniform across the raster and
+// independent of elevation and of the storage type. The ULP approach ties the
+// slope to elevation and data type: at 100 m and 1000 m on a 30 m grid it gives
+// about 2e-7 and 1.4e-6 m/m, and at 0 m it needs denormal steps (1.4e-45 m), so
+// it has to be guarded, and a float32 consumer then sees a zero slope (or, for
+// TWI, infinity). The barnes2014b_gradient option raises flats more than the
+// inline ramp and cannot always impose fill_min_slope (on the real DEMs
+// measured, 10-33 % of the NO_FLOW cells end below it). The default output is
+// unchanged by these options, bit for bit.
 // -----------------------------------------------------------------------------
 //
 // Breach algorithm:

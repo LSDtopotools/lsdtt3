@@ -40,7 +40,8 @@
 //   F5  Convergence on the valley (pinned D8 accumulation profile), against
 //       the parallel flow of the default fill_pits(1e-4).
 //   F8  Rim one ULP above a big flat: RichDEM's 701 pairs, 232 cells; and a
-//       knob inside a flat that the router refuses (decision D6: report only).
+//       knob inside a flat that a single pass (max_rounds 1, no final pass)
+//       strands and the router refuses, while the default rounds route it.
 //   F9  Near zero: the guard keeps every float32 D8 slope >= 2^-23/(sqrt2 L);
 //       without it some are exactly 0. Floors -50 and -0.0.
 //   F10 Idempotence; F12 n_threads 1 vs 4 bitwise; F13 interior nodata hole;
