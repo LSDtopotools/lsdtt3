@@ -23,6 +23,7 @@
 #include <core/lsdtt_raster_meta.hpp>
 #include <cpu/lsdtt_raster_algebra.hpp>
 #include <cpu/lsdtt_raster_flow_preprocessing_cpu.hpp>
+#include <cpu/lsdtt_raster_breach_least_cost_cpu.hpp>
 #include <cpu/lsdtt_raster_nodata_filling_cpu.hpp>
 #include <cpu/lsdtt_raster_cpu.hpp>
 #include <cpu/lsdtt_raster_surface_metrics_cpu.hpp>

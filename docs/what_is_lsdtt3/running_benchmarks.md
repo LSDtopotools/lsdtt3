@@ -274,6 +274,46 @@ every later run, so put it somewhere persistent.
 
 ---
 
+## What the suite measures
+
+The cases fall into four groups.
+
+1. **Surface fitting**: `slope_only`, `polyfit_all` and `hillshade`. These are
+   report-only, because each package defines its metrics differently.
+2. **Fill speed, for information only**: `fill` (grayscale reconstruction,
+   lsdtt3 vs TopoToolbox), `fill_priority_flood` (priority flood, lsdtt3 vs
+   RichDEM vs Whitebox) and lsdtt3's `fill_priority_flood_radix`. These fills
+   leave flats, so their output is not a connected flow network. Treat them as
+   a speed check on the fill algorithm, not as a result you could route flow
+   over.
+3. **Complete breaching (Lindsay 2016)**: `breach`, lsdtt3 vs RichDEM.
+4. **Connected flow networks**: `fill_epsilon` (a priority flood that imposes
+   a gradient across flats), `fill_flats_float_step` and `fill_flats_gradient`
+   (Barnes 2014b flat resolution), lsdtt3's `fill_epsilon_radix`, the D8
+   accumulation cases, and `route_d8_default`.
+
+`SUMMARY.md` also includes a section called **lsdtt3 fill methods, fastest
+first**. For each DEM it ranks lsdtt3's own fill options by median time, and
+says whether each output is a connected flow network. This compares lsdtt3
+with itself on your machine, so the report-only flags from the cross-package
+tables do not apply to it.
+
+### What `route_d8_default` runs in each package
+
+`route_d8_default` times each package's **default** route from a raw DEM to a
+D8 flow accumulation grid. The packages handle flats differently, so their
+outputs differ, and the case is report-only.
+
+| package | fill | flats | real slope on flats in the DEM? | D8 picks |
+|---|---|---|---|---|
+| lsdtt3 (`lsdtt-drainage-analysis`) | Barnes (2014) priority flood, `fill_min_slope` 1e-4, `fill_flat_resolution_choice: inline_gradient` | a gradient is imposed during the fill: each cell sits at least 1e-4 × step length above the cell it was reached from, so flats drain in parallel lines | yes, at least 1e-4 m/m | steepest descent |
+| TopoToolbox (`FlowObject(dem)`) | Vincent (1993) hybrid reconstruction, no gradient | flats and filled depressions are routed by least-cost carving on an internal auxiliary surface (gwdt, with costs from fill depth) | no, the DEM is not modified, so flats keep zero slope | steepest descent; on flats, follows the auxiliary surface |
+| RichDEM (`FillDepressions(epsilon=True)`) | Barnes (2014) Priority-Flood+Epsilon. This is **not** RichDEM's default: its default leaves flats that its D8 does not route | each flat cell is raised by one floating-point step (`nextafter`) | no, slopes are of order ULP(z) / cell size | the **lowest** neighbour, not steepest descent |
+| Whitebox (`fill_depressions()`) | pit-centric fill: it finds interior pits and fills them one at a time | Garbrecht–Martz style: raised by 1e-4 m × a rank that leads towards lower terrain first, then away from higher terrain | yes, small but real (1e-4 m steps) | steepest descent (`d8_flow_accum`) |
+
+The sources each row was checked against are listed in
+[Testing and benchmarking](../developer_notes/testing_and_benchmarking.md).
+
 ## Reading the results
 
 `SUMMARY.md` is written to be read top to bottom. Four things decide whether a
@@ -310,9 +350,30 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
     - `fill_epsilon` for Whitebox now uses its Wang & Liu tool, with the flat
       increment matched to lsdtt3's gradient times the cell size. It previously
       imposed an increment 30x smaller on a 30 m grid.
-    - Whitebox's breach is least-cost (Lindsay 2020). It moved from `breach`
-      (Lindsay 2016, now lsdtt3 against RichDEM) to a new `breach_least_cost`
-      case against lsdtt3's own least-cost breach.
+    - Whitebox's breach is least-cost (Lindsay 2020), so it left `breach`
+      (Lindsay 2016, now lsdtt3 against RichDEM). The `breach_least_cost` case
+      that compared it with lsdtt3's least-cost breach was removed on
+      2026-10-10; breaching is benchmarked on Lindsay (2016) only.
+
+!!! warning "Whitebox changed tools in `fill_priority_flood` on 2026-10-10"
+    Whitebox's default `fill_depressions` works pit by pit rather than flooding
+    from the edges, returns a different surface and slows sharply on terrain
+    with many pits. `fill_priority_flood` now runs Whitebox's Wang & Liu fill,
+    the same edge-seeded priority flood as lsdtt3, and `fill_depressions` is
+    reported on its own as `fill_whitebox_default`. The `fill_wang_liu` and
+    `breach_least_cost` cases were removed.
+
+!!! warning "Suite restructured on 2026-10-10"
+    - `fill` and `fill_priority_flood` are now **report-only**: they leave
+      flats, so their output is not a connected flow network. They are
+      information about fill speed, not a headline ratio.
+    - New lsdtt3-only, report-only cases `fill_priority_flood_radix` and
+      `fill_epsilon_radix` run the same fills with lsdtt3's radix spill queue
+      (`priority_flood_queue: radix`).
+    - `fill_spill_merge` was removed: no other package benchmarked here
+      offers Fill-Spill-Merge.
+    - `SUMMARY.md` gained a section ranking lsdtt3's own fill methods, fastest
+      first.
 
 !!! warning "TopoToolbox left `fill_priority_flood` on 2026-10-08"
     TopoToolbox has no priority-flood fill. `fillsinks(hybrid=False)`, which
@@ -339,7 +400,8 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
 - **`report_only`**: the engines are not doing equivalent work, so a ratio
   would be a claim about the definitions rather than the implementations.
   Absolute times only. All surface-metric and multi-direction-flow rows are
-  report-only.
+  report-only, as are the flat-leaving fills (`fill`, `fill_priority_flood`)
+  and `route_d8_default`.
 
 RichDEM in particular carries ~10 ms of fixed cost per call, from a per-call
 array construction plus the citation block it prints on every invocation. On a

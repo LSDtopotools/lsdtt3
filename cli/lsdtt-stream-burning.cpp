@@ -70,6 +70,7 @@
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_vector_to_junction_network.hpp"

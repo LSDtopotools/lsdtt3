@@ -324,12 +324,14 @@ set(LSDTT3_UTILS_SOURCES
 add_library(lsdtt3_utils STATIC ${LSDTT3_UTILS_SOURCES})
 
 # The image-filter primitives reproduce OpenCV's float32 accumulation order bit
-# for bit. Compilers that target hardware with FMA (e.g. Apple Silicon) may
-# otherwise fuse a*b+c into one instruction and change the rounding.
+# for bit, and least-cost breaching reproduces Whitebox's f64 arithmetic (Rust
+# never contracts). Compilers that target hardware with FMA (e.g. Apple
+# Silicon) may otherwise fuse a*b+c into one instruction and change the rounding.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(
         src/utils/lsdtt_image_filters.cpp
         src/cpu/lsdtt_raster_image_ops_cpu.cpp
+        src/cpu/lsdtt_raster_breach_least_cost_cpu.cpp
         PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 
@@ -360,6 +362,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_surface_texture_cpu.cpp
     src/cpu/lsdtt_raster_surface_fitting_cpu.cpp
     src/cpu/lsdtt_raster_flow_preprocessing_cpu.cpp
+    src/cpu/lsdtt_raster_breach_least_cost_cpu.cpp
     src/cpu/lsdtt_raster_flat_resolution_cpu.cpp
     src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.cpp
     src/cpu/lsdtt_raster_nodata_filling_cpu.cpp

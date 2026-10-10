@@ -3370,6 +3370,16 @@ add_test(NAME unit_flat_resolution_real_terrain
                  "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
 lsdtt_set_tests_properties(unit_flat_resolution_real_terrain PROPERTIES LABELS "unit;flow")
 
+# Least-cost breaching (Lindsay 2020) against frozen float32 outputs of
+# Whitebox next-gen BreachDepressionsLeastCost (whitebox_workflows 2.0.6),
+# bitwise, on hand-built fixtures F0-F15, with edge_policy whitebox; plus the
+# Whitebox counters, max_dist validation and edge_policy outlet property checks.
+# Hermetic: in-process inputs only.
+add_executable(lsdtt-test-breach-least-cost cpp/test_breach_least_cost.cpp)
+target_link_libraries(lsdtt-test-breach-least-cost PRIVATE lsdtt3_cpu)
+add_test(NAME unit_breach_least_cost COMMAND lsdtt-test-breach-least-cost)
+lsdtt_set_tests_properties(unit_breach_least_cost PROPERTIES LABELS "unit;flow")
+
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
 lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
 
@@ -7080,6 +7090,9 @@ set(LSDTT_DOMAIN_RULES
     # configuring with that option ON failed until 2026-09-18 -- the same trap
     # as the benchmark rule at the top, hidden by the option's OFF default.
     "flow_routines"          "network"
+    # Depression breaching is flow preprocessing. Ahead of the raster rule
+    # because "fill" would otherwise claim breach tests that mention filling.
+    "breach"                 "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference|test_env|configure_contract" "core"
     "depression_hierarchy"   "network"
