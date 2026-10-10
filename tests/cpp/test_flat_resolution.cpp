@@ -10,7 +10,9 @@
 // Unit tests for Barnes et al. (2014b) flat resolution
 // (src/cpu/lsdtt_raster_flat_resolution_cpu.hpp).
 //
-// Hermetic: all inputs are built in-process, nothing is read from disk.
+// Hermetic: all inputs are built in-process, nothing is read from disk --
+// except in the real-terrain mode (--real-terrain <crop.tif>), which reads
+// the committed Copernicus GLO-30 crop from tests/data.
 //
 // Checks:
 //   F1  step_up_float32(z, k) is BITWISE equal to k looped
@@ -99,7 +101,14 @@
 //       the near-zero guard. F26: gradient diagnostics recounted from
 //       per-round outputs. F27: rounds >= 2 never raise low edges.
 //
-// Usage: lsdtt-test-flat-resolution
+// Real terrain (Step 11d; --real-terrain <crop.tif>, unit_flat_resolution_real_terrain):
+//   The committed lakeland crop: the single pass strands rim cells (a) and
+//       low edges (b) (pinned) and the router refuses it; the defaults take
+//       4 rounds plus the final pass (pinned) and route (F4, F10, F12, the
+//       round-1 equivalence); fill_pits dispatch == the resolver; gradient
+//       diagnostics recounted (F26); inline_gradient control routes.
+//
+// Usage: lsdtt-test-flat-resolution [--real-terrain <crop.tif>]
 // Prints one PASS/FAIL line per check and a final "RESULT: PASS|FAIL".
 // -----------------------------------------------------------------------------
 
@@ -121,6 +130,7 @@
 #include <vector>
 
 #include "lsdtt_common_parameters.hpp"
+#include "lsdtt_data_loader.hpp"
 #include "lsdtt_flowgraph_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
@@ -3576,6 +3586,132 @@ void run_f25_checks()
 // the final pass is flagged. (A gradient unit of exactly one ULP with no
 // binade crossing would be indistinguishable from float steps; no fixture
 // here has one: their units are 186 q or quantise to 0.)
+// The recount for one input and its default gradient result. Also checks
+// that the capped / fallback counts grow with max_rounds and end at the
+// default's.
+//
+// AMBIGUOUS cells: a float-stepped cell whose float-step raise equals
+// z + mask x ULP(z) (no binade crossing) is also what a region whose unit was
+// capped to exactly one quantum would produce, so the raster cannot say which
+// method the resolver used there. They are left out of min_g / n_below (as
+// above) and counted in the *_with_ambiguous bounds. The synthetic fixtures
+// have none; the real-terrain crop has capped regions that do.
+struct gradient_recount
+{
+    double       min_g   = std::numeric_limits<double>::infinity();
+    std::int64_t n_flag  = 0;
+    std::int64_t n_below = 0;
+    std::int64_t n_ambiguous = 0;
+    double       min_g_with_ambiguous   = std::numeric_limits<double>::infinity();
+    std::int64_t n_below_with_ambiguous = 0;
+    bool         counts_consistent = true;
+};
+
+gradient_recount recount_gradient_cells(const lsdtt::lsdtt_raster_cpu& dem,
+                                        const lsdtt::flat_resolution_result& res)
+{
+    const int nr = dem.get_meta().n_rows, nc = dem.get_meta().n_cols;
+    std::vector<std::uint8_t> flag(dem.get_data().size(), 0);
+    lsdtt::lsdtt_raster_cpu prev_out = dem;
+    gradient_recount out;
+    std::int64_t prev_capped = 0, prev_fallback = 0;
+    for (int r = 1; r <= res.n_rounds; ++r)
+    {
+        const lsdtt::flat_resolution_result rr = resolve_rounds(dem, k_grad, r, false);
+        const lsdtt::lsdtt_raster_cpu input = r == 1 ? dem : lsdtt::fill_pits_reconstruction(prev_out);
+        const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(input);
+        for (int y = 1; y < nr - 1; ++y)
+            for (int x = 1; x < nc - 1; ++x)
+            {
+                const std::size_t k = static_cast<std::size_t>(y) * nc + x;
+                if (m.flat_region_label[k] <= 0 || m.mask[k] <= 2) continue;
+                const float zi = input.get_data()[k];
+                const float fs = std::fabs(zi) < 1.0f
+                    ? static_cast<float>(static_cast<double>(zi) + m.mask[k] / 8388608.0)
+                    : lsdtt::step_up_float32(zi, m.mask[k]);
+                const float zo = rr.resolved.get_data()[k];
+                const double one_quantum =
+                    static_cast<double>(std::nextafter(zi, std::numeric_limits<float>::infinity())) -
+                    static_cast<double>(zi);
+                const bool ambiguous =
+                    bits_of(zo) == bits_of(fs) &&
+                    bits_of(fs) == bits_of(static_cast<float>(static_cast<double>(zi) +
+                                                              m.mask[k] * one_quantum));
+                flag[k] = bits_of(zo) != bits_of(fs) ? 1 : (ambiguous ? 2 : 0);
+            }
+        if (rr.n_flats_gradient_capped < prev_capped || rr.n_flats_float_fallback < prev_fallback)
+            out.counts_consistent = false;
+        prev_capped = rr.n_flats_gradient_capped;
+        prev_fallback = rr.n_flats_float_fallback;
+        prev_out = rr.resolved;
+    }
+    if (prev_capped != res.n_flats_gradient_capped || prev_fallback != res.n_flats_float_fallback)
+        out.counts_consistent = false;
+    // Final pass cells.
+    for (std::size_t k = 0; k < flag.size(); ++k)
+        if (dem.get_mask()[k] && bits_of(prev_out.get_data()[k]) != bits_of(res.resolved.get_data()[k]))
+            flag[k] = 1;
+
+    for (std::size_t k = 0; k < flag.size(); ++k)
+    {
+        if (!flag[k]) continue;
+        const double sl    = steepest_d8_slope(res.resolved, static_cast<std::int64_t>(k));
+        const bool   below = sl < static_cast<double>(1.0e-4f);
+        out.min_g_with_ambiguous = std::min(out.min_g_with_ambiguous, sl);
+        if (below) ++out.n_below_with_ambiguous;
+        if (flag[k] == 2) { ++out.n_ambiguous; continue; }
+        ++out.n_flag;
+        out.min_g = std::min(out.min_g, sl);
+        if (below) ++out.n_below;
+    }
+    return out;
+}
+
+// F26 assertions on one input (shared with the real-terrain mode). With no
+// ambiguous cell the recount is exact; otherwise the resolver's values must
+// lie between the recount without and with the ambiguous cells.
+void check_gradient_recount(const std::string& name, const lsdtt::lsdtt_raster_cpu& dem,
+                            const lsdtt::flat_resolution_result& res)
+{
+    const gradient_recount g = recount_gradient_cells(dem, res);
+    std::cout << "      " << name << ": " << g.n_flag << " gradient cells (+" << g.n_ambiguous
+              << " ambiguous), recount min " << std::setprecision(9) << g.min_g << " ("
+              << g.min_g_with_ambiguous << " with ambiguous), below " << g.n_below << " ("
+              << g.n_below_with_ambiguous << " with ambiguous); " << rounds_string(res) << "\n";
+    const std::string detail =
+        std::to_string(res.min_effective_gradient) + " vs " + std::to_string(g.min_g) + " / " +
+        std::to_string(g.min_g_with_ambiguous) + ", " +
+        std::to_string(res.n_gradient_cells_below_min_slope) + " vs " + std::to_string(g.n_below) +
+        " / " + std::to_string(g.n_below_with_ambiguous);
+    if (g.n_ambiguous == 0)
+    {
+        check("F26 " + name + ": min_effective_gradient and n_gradient_cells_below_min_slope =="
+                  " the independent recount on the final raster",
+              res.min_effective_gradient == g.min_g && res.n_gradient_cells_below_min_slope == g.n_below,
+              detail);
+    }
+    else
+    {
+        check("F26 " + name + ": min_effective_gradient and n_gradient_cells_below_min_slope lie"
+                  " within the recount without / with the " + std::to_string(g.n_ambiguous) +
+                  " ambiguous cells",
+              res.min_effective_gradient <= g.min_g &&
+                  res.min_effective_gradient >= g.min_g_with_ambiguous &&
+                  res.n_gradient_cells_below_min_slope >= g.n_below &&
+                  res.n_gradient_cells_below_min_slope <= g.n_below_with_ambiguous,
+              detail);
+    }
+    check("F26 " + name + ": capped / fallback counts grow with max_rounds and equal the"
+              " default's at max_rounds = n_rounds",
+          g.counts_consistent, rounds_string(res));
+    if (res.n_cells_final_pass > 0)
+    {
+        check("F26 " + name + ": every final-pass cell is below min_slope, so the count is at"
+                  " least n_cells_final_pass",
+              res.n_gradient_cells_below_min_slope >= res.n_cells_final_pass, rounds_string(res));
+    }
+}
+
 void run_f26_checks()
 {
     std::cout << "\n=== F26: min_effective_gradient and cells below min_slope across rounds ===\n";
@@ -3589,71 +3725,7 @@ void run_f26_checks()
         {"F7 rimmed flat", make_rimmed_flat(100.01f).raster()},
     };
     for (const auto& [name, dem] : fixtures)
-    {
-        const lsdtt::flat_resolution_result res = resolve_gradient(dem);
-        const int nr = dem.get_meta().n_rows, nc = dem.get_meta().n_cols;
-        std::vector<std::uint8_t> flag(dem.get_data().size(), 0);
-        lsdtt::lsdtt_raster_cpu prev_out = dem;
-        bool counts_monotone = true;
-        std::int64_t prev_capped = 0, prev_fallback = 0;
-        for (int r = 1; r <= res.n_rounds; ++r)
-        {
-            const lsdtt::flat_resolution_result rr = resolve_rounds(dem, k_grad, r, false);
-            const lsdtt::lsdtt_raster_cpu input = r == 1 ? dem : lsdtt::fill_pits_reconstruction(prev_out);
-            const lsdtt::barnes2014b_flat_mask m = lsdtt::compute_barnes2014b_flat_mask(input);
-            for (int y = 1; y < nr - 1; ++y)
-                for (int x = 1; x < nc - 1; ++x)
-                {
-                    const std::size_t k = static_cast<std::size_t>(y) * nc + x;
-                    if (m.flat_region_label[k] <= 0 || m.mask[k] <= 2) continue;
-                    const float zi = input.get_data()[k];
-                    const float fs = std::fabs(zi) < 1.0f
-                        ? static_cast<float>(static_cast<double>(zi) + m.mask[k] / 8388608.0)
-                        : lsdtt::step_up_float32(zi, m.mask[k]);
-                    flag[k] = bits_of(rr.resolved.get_data()[k]) == bits_of(fs) ? 0 : 1;
-                }
-            if (rr.n_flats_gradient_capped < prev_capped || rr.n_flats_float_fallback < prev_fallback)
-                counts_monotone = false;
-            prev_capped = rr.n_flats_gradient_capped;
-            prev_fallback = rr.n_flats_float_fallback;
-            prev_out = rr.resolved;
-        }
-        // Final pass cells.
-        for (std::size_t k = 0; k < flag.size(); ++k)
-            if (dem.get_mask()[k] && bits_of(prev_out.get_data()[k]) != bits_of(res.resolved.get_data()[k]))
-                flag[k] = 1;
-
-        double min_g = std::numeric_limits<double>::infinity();
-        std::int64_t n_flag = 0, n_below = 0;
-        for (std::size_t k = 0; k < flag.size(); ++k)
-        {
-            if (!flag[k]) continue;
-            ++n_flag;
-            const double sl = steepest_d8_slope(res.resolved, static_cast<std::int64_t>(k));
-            min_g = std::min(min_g, sl);
-            if (sl < static_cast<double>(1.0e-4f)) ++n_below;
-        }
-        std::cout << "      " << name << ": " << n_flag << " gradient cells, recount min "
-                  << std::setprecision(9) << min_g << ", below " << n_below << "; "
-                  << rounds_string(res) << "\n";
-        check("F26 " + name + ": min_effective_gradient and n_gradient_cells_below_min_slope =="
-                  " the independent recount on the final raster",
-              res.min_effective_gradient == min_g && res.n_gradient_cells_below_min_slope == n_below,
-              std::to_string(res.min_effective_gradient) + " vs " + std::to_string(min_g) + ", " +
-                  std::to_string(res.n_gradient_cells_below_min_slope) + " vs " +
-                  std::to_string(n_below));
-        check("F26 " + name + ": capped / fallback counts grow with max_rounds and equal the"
-                  " default's at max_rounds = n_rounds",
-              counts_monotone && prev_capped == res.n_flats_gradient_capped &&
-                  prev_fallback == res.n_flats_float_fallback,
-              rounds_string(res));
-        if (res.n_cells_final_pass > 0)
-        {
-            check("F26 " + name + ": every final-pass cell is below min_slope, so the count is at"
-                      " least n_cells_final_pass",
-                  res.n_gradient_cells_below_min_slope >= res.n_cells_final_pass, rounds_string(res));
-        }
-    }
+        check_gradient_recount(name, dem, resolve_gradient(dem));
     {
         const lsdtt::flat_resolution_result fs = resolve(make_cascade(8, 2).raster());
         check("F26 float step: n_gradient_cells_below_min_slope 0 and min_effective_gradient +inf"
@@ -3727,10 +3799,145 @@ void run_f27_and_options_checks()
     }
 }
 
+
+// -----------------------------------------------------------------------------
+// Real terrain (Step 11d): the committed Copernicus GLO-30 lakeland crop
+// -----------------------------------------------------------------------------
+//
+// tests/data/flat_resolution_lakeland_crop_dem.tif, 128 x 128 at 30 m, no
+// nodata (provenance in tests/README.md). Lake surfaces a few ULPs apart: a
+// single Barnes pass strands both rim cells (category a: not on a flat of the
+// filled input) and low edges (category b), so the D8 router refuses it -- the
+// failure the synthetic fixtures missed. Pins taken on the first run
+// (2026-10-10) and equal to the scratch measurement that chose the crop.
+void run_real_terrain_checks(const std::string& path)
+{
+    std::cout << "=== Real terrain: " << path << " ===\n";
+
+    lsdtt::lsdtt_raster_cpu dem;
+    try
+    {
+        lsdtt::lsdtt_data_loader loader;
+        loader.open_raster(path);
+        lsdtt::lsdtt_raster_tile tile = loader.read_full();
+        dem.set_from_vectors(std::move(tile.data), std::move(tile.mask), tile.meta);
+    }
+    catch (const std::exception& e)
+    {
+        check("RT the crop loads", false, e.what());
+        return;
+    }
+    const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
+    std::int64_t n_valid = 0;
+    for (const std::uint8_t v : dem.get_mask()) n_valid += v;
+    check("RT the crop is 128 x 128 at 30 m with every cell valid",
+          meta.n_rows == 128 && meta.n_cols == 128 && meta.cell_size == 30.0 && n_valid == 128 * 128,
+          std::to_string(meta.n_rows) + " x " + std::to_string(meta.n_cols) + ", " +
+              std::to_string(n_valid) + " valid");
+
+    // What the CLIs resolve: the true-flat fill (fill_pits dispatch).
+    const lsdtt::lsdtt_raster_cpu filled = lsdtt::fill_pits_reconstruction(dem);
+    const lsdtt::barnes2014b_flat_mask fmask = lsdtt::compute_barnes2014b_flat_mask(filled);
+
+    struct rt_case
+    {
+        flat_resolution_choice    m;
+        std::int64_t              n_rim, n_low_edge;   // round 1, categories (a) and (b)
+        std::vector<std::int64_t> per_round;
+        std::int64_t              n_final_pass, n_changed_after_round1;
+    };
+    const std::vector<rt_case> cases = {
+        {k_float, 34, 83, {117, 44, 26, 28}, 107, 419},
+        {k_grad,  34, 81, {115, 56, 43, 30}, 108, 412},
+    };
+    for (const rt_case& c : cases)
+    {
+        const std::string name = "RT lakeland crop (" + method_tag(c.m) + ")";
+
+        // The single pass (max_rounds 1, final pass off): RichDEM's result.
+        const lsdtt::flat_resolution_result one = single_pass(filled, c.m);
+        const std::vector<std::uint8_t> stranded = without_descent_cells(one.resolved);
+        std::int64_t n_a = 0, n_b = 0, n_other = 0;
+        // Mask 0 (unlabelled, or a draining cell of a flat region) is a rim
+        // cell, mask 2 a low edge, mask > 2 a NO_FLOW cell of the filled input.
+        for (std::size_t k = 0; k < stranded.size(); ++k)
+        {
+            if (!stranded[k]) continue;
+            if (fmask.flat_region_label[k] <= 0 || fmask.mask[k] == 0) ++n_a;
+            else if (fmask.mask[k] == 2) ++n_b;
+            else ++n_other;
+        }
+        const std::int64_t n_r1 = c.per_round.front();
+        check(name + ": single pass leaves " + std::to_string(n_r1) + " cells without descent: " +
+                  std::to_string(c.n_rim) + " rim (a), " + std::to_string(c.n_low_edge) +
+                  " low edge (b), 0 other (pinned)",
+              one.n_rim_cells_without_descent == n_r1 && count_set(stranded) == n_r1 &&
+                  n_a == c.n_rim && n_b == c.n_low_edge && n_other == 0,
+              std::to_string(count_set(stranded)) + ": " + std::to_string(n_a) + " / " +
+                  std::to_string(n_b) + " / " + std::to_string(n_other));
+        std::string err;
+        try { (void)build_d8(one.resolved); }
+        catch (const std::exception& e) { err = e.what(); }
+        check(name + ": the single pass is refused by the D8 router (\"could not assign a receiver\")",
+              err.find("could not assign a receiver") != std::string::npos, err);
+
+        // The defaults: 4 rounds, then the final pass.
+        const lsdtt::flat_resolution_result res = resolve_rounds(filled, c.m, 4, true);
+        std::cout << "      " << name << ": " << rounds_string(res) << "\n";
+        check(name + ": 4 rounds, per-round counts, final-pass cells and cells changed after"
+                     " round 1 pinned",
+              res.n_rounds == 4 && res.cells_without_descent_per_round == c.per_round &&
+                  res.n_cells_final_pass == c.n_final_pass &&
+                  res.n_cells_changed_after_round1 == c.n_changed_after_round1,
+              rounds_string(res));
+        // F4, F10, nothing lowered, unchanged-after-round-1 cells bitwise the
+        // single pass and changed ones strictly higher, round-1 fields.
+        check_loop_result(name, filled, res, one, c.m);
+
+        // The CLI path: fill_pits on the raw crop dispatches to the same result.
+        check(name + ": fill_pits(raw crop, 1e-4, option) is bitwise the resolver's output",
+              same_raster_bits(lsdtt::fill_pits(dem, 1.0e-4f, c.m), res.resolved));
+
+        const lsdtt::flat_resolution_result t1 = resolve_rounds(filled, c.m, 4, true, 1);
+        const lsdtt::flat_resolution_result t4 = resolve_rounds(filled, c.m, 4, true, 4);
+        check("F12 " + name + ": n_threads 1 vs 4 bitwise raster and every diagnostic",
+              same_raster_bits(t1.resolved, t4.resolved) && same_diagnostics(t1, t4) &&
+                  same_raster_bits(t1.resolved, res.resolved));
+
+        if (c.m == k_grad)
+        {
+            // Summed over rounds; pinned on the first run (2026-10-10).
+            check(name + ": capped 111, fallback 39, cells below min slope 1071 (pinned)",
+                  res.n_flats_gradient_capped == 111 && res.n_flats_float_fallback == 39 &&
+                      res.n_gradient_cells_below_min_slope == 1071,
+                  rounds_string(res));
+            check_gradient_recount(name, filled, res);
+        }
+    }
+
+    // Control: the default fill (inline_gradient) routes the crop.
+    check_routable("RT lakeland crop (inline_gradient control)", lsdtt::fill_pits(dem, 1.0e-4f));
+}
+
 }  // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    // Real-terrain mode (unit_flat_resolution_real_terrain): the committed
+    // crop only, so the hermetic default run stays free of file input.
+    if (argc == 3 && std::string(argv[1]) == "--real-terrain")
+    {
+        run_real_terrain_checks(argv[2]);
+        std::cout << "\n" << g_n_checks << " checks, " << g_n_failed << " failed\n";
+        std::cout << "RESULT: " << (g_n_failed == 0 && g_n_checks > 0 ? "PASS" : "FAIL") << "\n";
+        return g_n_failed == 0 && g_n_checks > 0 ? 0 : 1;
+    }
+    if (argc != 1)
+    {
+        std::cerr << "usage: lsdtt-test-flat-resolution [--real-terrain <crop.tif>]\n";
+        return 2;
+    }
+
     std::cout << "=== F1: step_up_float32 vs looped std::nextafter ===\n";
 
     const float inf        = std::numeric_limits<float>::infinity();

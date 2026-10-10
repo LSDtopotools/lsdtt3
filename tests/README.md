@@ -594,6 +594,21 @@ Committed, tiny, offline:
   the DEMs behind the smoke and failure tests.
 - `tests/data/tiny30_dem.tif` — 30x30 GeoTIFF clipped from
   `../data/scotland/scotland.tif`.
+- `tests/data/flat_resolution_lakeland_crop_dem.tif` — 128x128 float32 GeoTIFF
+  (DEFLATE, predictor 3), 30 m, WGS 84 / UTM 15N, no nodata cells; Canadian
+  Shield lakeland, northwestern Ontario (origin 564930 E, 5604600 N). It is
+  pixel window xoff 256, yoff 192 of the benchmark suite's `lakeland_500` rung
+  (`run_benchmark_suite.py`: the centred 500 px crop of the `lakeland` 1000 px
+  source fetched from Copernicus GLO-30 on AWS by `lsdtt-fetch-raster`), i.e.
+  window xoff 506, yoff 442 of that source; cut with no resampling.
+  sha256 `95864d0f08bcb2fce2ba72ee9b948aff4bc358ed43ee58a501cf367bf14cc4fc`.
+  Lake surfaces a few float32 ULPs apart, on which a single Barnes et al.
+  (2014b) flat-resolution pass leaves cells without a lower neighbour; used by
+  `unit_flat_resolution_real_terrain` and the
+  `*_drainage_analysis_flat_resolution_real_terrain_*` CLI tests.
+  Attribution: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and
+  © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the
+  European Union and ESA; all rights reserved.
 - `tests/expected/cosmo/` — frozen CRONUS v3 reference, raw XML, and the
   numerics sentinel.
 

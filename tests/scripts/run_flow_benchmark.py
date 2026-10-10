@@ -88,93 +88,18 @@ REFERENCE_SCRIPTS = {
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 FIXTURE_DIR = REPO_ROOT / "tests" / "data" / "dem_cache"
 
-# -----------------------------------------------------------------------------
-# Fixture registry
-#
-# Fixtures are fetched by the lsdtt3 CLI itself (`lsdtt-fetch-raster`), not by a
-# Python helper -- the Python fetcher was retired once the C++ path was shown to
-# produce byte-identical output. Two terrain regimes, because they
-# diverge very differently: see docs/developer_notes/testing_and_benchmarking.md
-#
-# Each fixture is a centre point plus a pixel count. The bounding box is widened
-# by a margin so the exact centre crop cannot run off the edge onto nodata after
-# reprojection.
-# -----------------------------------------------------------------------------
-FIXTURES = {
-    "alpine":   {"centre": (10.40, 46.50), "epsg": 32632,
-                 "description": "high relief, Italian Alps (Val Venosta / Ortler)"},
-    "lakeland": {"centre": (25.40, 61.50), "epsg": 32635,
-                 "description": "low relief, Finnish Lakeland (many closed basins)"},
-}
-
-SIZES = {"small": 256, "medium": 720, "large": 2400}
-
-GRID_SPACING_M = 30.0
-
-
-def fixture_bbox(name: str, size_px: int):
-    """WGS84 bbox for a fixture, wide enough to survive reprojection."""
-    import math
-    lon, lat = FIXTURES[name]["centre"]
-    half_m = 0.5 * size_px * GRID_SPACING_M * 1.25
-    dlat = half_m / 111_320.0
-    dlon = dlat / max(math.cos(math.radians(lat)), 1e-6)
-    return (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
+# Fixture registry and fetch: flow_benchmark_fixtures.py (stdlib only, so a
+# stdlib-tier test can share it). FIXTURE_DIR above is where this driver caches
+# them; main() rebinds it for --fixture-dir, and ensure_fixture() reads it at
+# call time.
+from flow_benchmark_fixtures import (  # noqa: E402
+    FIXTURES, GRID_SPACING_M, SIZES, fixture_bbox)
+import flow_benchmark_fixtures  # noqa: E402
 
 
 def ensure_fixture(fixture_key: str, fetch_exe: pathlib.Path) -> pathlib.Path:
     """Fetch a fixture with lsdtt-fetch-raster if it is not already cached."""
-    out_path = FIXTURE_DIR / f"{fixture_key}.tif"
-    if out_path.exists():
-        return out_path
-
-    if "_" not in fixture_key:
-        die_skip(f"fixture name {fixture_key!r} should be <name>_<size>")
-    name, size_name = fixture_key.rsplit("_", 1)
-
-    if name not in FIXTURES or size_name not in SIZES:
-        die_skip(f"unknown fixture {fixture_key!r}; "
-                 f"names={sorted(FIXTURES)} sizes={sorted(SIZES)}")
-
-    if not fetch_exe or not pathlib.Path(fetch_exe).exists():
-        die_skip(f"fixture {out_path} is missing and lsdtt-fetch-raster was not "
-                 f"found (looked for {fetch_exe}). Build it, or pass --fetch-exe.")
-
-    size_px = SIZES[size_name]
-    west, south, east, north = fixture_bbox(name, size_px)
-
-    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-    param_dir = FIXTURE_DIR / "_fetch_params"
-    param_dir.mkdir(parents=True, exist_ok=True)
-    param_path = param_dir / f"{fixture_key}.param"
-
-    param_path.write_text(
-        f"write_path: {FIXTURE_DIR}\n"
-        f"write_fname: {fixture_key}_raw\n"
-        f"west: {west:.10f}\n"
-        f"south: {south:.10f}\n"
-        f"east: {east:.10f}\n"
-        f"north: {north:.10f}\n"
-        f"dem_source: cop30_aws\n"
-        f"target_epsg: {FIXTURES[name]['epsg']}\n"
-        f"grid_spacing: {GRID_SPACING_M}\n"
-        f"size_pixels: {size_px}\n"
-    )
-
-    print(f"fetching fixture {fixture_key} ({FIXTURES[name]['description']})")
-    proc = lsdtt_test_env.run([str(fetch_exe), str(param_dir), param_path.name],
-                          capture_output=True, text=True, env=system_env())
-
-    if proc.returncode != 0:
-        # An unreachable source is a missing dependency, not a test failure.
-        die_skip(f"could not fetch fixture {fixture_key}:\n{proc.stdout[-1500:]}\n"
-                 f"{proc.stderr[-1500:]}")
-
-    written = FIXTURE_DIR / f"{fixture_key}_raw_DEM.tif"
-    if not written.exists():
-        die_skip(f"lsdtt-fetch-raster reported success but {written} is missing")
-    written.rename(out_path)
-    return out_path
+    return flow_benchmark_fixtures.ensure_fixture(fixture_key, fetch_exe, FIXTURE_DIR)
 
 # Comparison definitions.  `richdem_routine` names a routine in
 # richdem_reference.py; `lsdtt_suffix` is the output file lsdtt3 writes.
@@ -244,13 +169,22 @@ COMPARISONS = {
         # (lake surfaces, quantised plateaus, filled depressions) are messier
         # than anything generated there.
         #
-        # ASSERTED BITWISE, zero tolerance: `n_differing_unguarded`, the number
-        # of valid cells whose float32 bit patterns differ, is pinned at 0. The
-        # one exemption is lsdtt3's near-zero guard: on a flat with |z| < 1 m a
-        # float32 step is subnormal and rounds away in slope arithmetic, so
-        # lsdtt3 steps by 2^-23 m per mask unit there instead, by design. Those
-        # cells are counted separately (`n_guarded`) and not asserted. Neither
-        # fixture has a cell below 1 m, so on these the exemption is empty.
+        # ASSERTED BITWISE, zero tolerance, on ROUND 1. lsdtt3's first round
+        # is RichDEM's single pass; where that pass leaves cells without a
+        # lower neighbour (a D8 router refuses them), lsdtt3 refills and
+        # resolves again and, if needed, runs a final strict-rise pass, and
+        # prints "Changed after round 1: <n> cell(s)". Those cells are the
+        # only permitted differences: `n_unexplained_differences` (cells whose
+        # float32 bits differ, minus n) is pinned at 0, and so are
+        # `n_below_richdem` (cells where lsdtt3 is LOWER than RichDEM, by
+        # ordered float32 key) and `n_stranded_lsdtt` (cells left without a
+        # lower neighbour). `n_differing_unguarded` and `n_stranded_richdem`
+        # are reported. The one other exemption is lsdtt3's near-zero guard:
+        # on a flat with |z| < 1 m a float32 step is subnormal and rounds away
+        # in slope arithmetic, so lsdtt3 steps by 2^-23 m per mask unit there
+        # instead, by design. Those cells are counted separately (`n_guarded`)
+        # and not asserted. Neither fixture has a cell below 1 m, so on these
+        # the exemption is empty.
         #
         # Flats are found on the true-flat fill (`fill` params above, itself
         # pinned bit-exact against RichDEM), run as a second lsdtt3 stage.
@@ -395,8 +329,14 @@ TOLERANCES = {
         "breach@richdem":       {"max_abs": 0.0,  "frac_differing": 0.0,
                                  "volume_ratio_max": 1.0},
         # Float32 bits identical on every valid cell outside the near-zero
-        # guard (see COMPARISONS). Zero is the claim, not a measurement margin.
-        "flats_float_step@richdem": {"n_differing_unguarded": 0},
+        # guard and the cells lsdtt3 changed after round 1 (see COMPARISONS).
+        # Zero is the claim, not a measurement margin. Measured 2026-10-10:
+        # RichDEM leaves 1 cell without a lower neighbour; lsdtt3 takes 2
+        # rounds and changes 1 cell after round 1, so 1 cell differs (it
+        # was `n_differing_unguarded: 0` before the round loop).
+        "flats_float_step@richdem": {"n_unexplained_differences": 0,
+                                     "n_below_richdem": 0,
+                                     "n_stranded_lsdtt": 0},
         # D8 accumulation is IDENTICAL to TopoToolbox on this fixture -- same
         # steepest-descent rule, and steep terrain leaves almost no ties to
         # break. Pinned tight so any divergence fails.
@@ -436,7 +376,12 @@ TOLERANCES = {
                                   "volume_ratio_max": 1.40},
         "breach@richdem":       {"max_abs": 0.95, "frac_differing": 0.032,
                                  "volume_ratio_max": 4.0},
-        "flats_float_step@richdem": {"n_differing_unguarded": 0},
+        # As alpine_small. Measured 2026-10-10: RichDEM leaves 41 cells without
+        # a lower neighbour; lsdtt3 takes 2 rounds and changes 51 cells after
+        # round 1, which are exactly the 51 cells that differ.
+        "flats_float_step@richdem": {"n_unexplained_differences": 0,
+                                     "n_below_richdem": 0,
+                                     "n_stranded_lsdtt": 0},
         # Low relief does NOT reproduce exactly, and that is expected rather
         # than alarming: after epsilon filling, flat ground still leaves many
         # near-ties, and D8 must pick one neighbour. Tie-breaking moves WHICH
@@ -630,14 +575,46 @@ def _flat_cells(z, valid):
     return noflow | low_edge
 
 
-def float32_bit_metrics(lsdtt_path, ref_path, flat_baseline_path):
+def _without_descent(z, valid):
+    """Cells a D8 router cannot give a receiver: valid, off the border, no
+    nodata neighbour, no strictly lower neighbour. Same predicate as
+    check_flat_resolution_vs_richdem.py and lsdtt3's own count."""
+    import numpy as np
+    R, C = z.shape
+    n8 = [(dr, dc) for dr in (-1, 0, 1) for dc in (-1, 0, 1) if dr or dc]
+    drains = np.zeros((R, C), bool)
+    drains[0, :] = drains[-1, :] = drains[:, 0] = drains[:, -1] = True
+    for dr, dc in n8:
+        nv = _shifted(valid, dr, dc, True)
+        nz = _shifted(z, dr, dc, np.float32(np.inf))
+        drains |= ~nv | (nz < z)
+    return valid & ~drains
+
+
+CHANGED_AFTER_ROUND1_RE = r"Changed after round 1:\s*(\d+) cell\(s\)"
+
+
+def changed_after_round1(stdout_path: pathlib.Path) -> int:
+    """lsdtt3's "Changed after round 1: <n> cell(s)" from a saved stdout."""
+    import re
+    m = re.search(CHANGED_AFTER_ROUND1_RE, stdout_path.read_text())
+    if not m:
+        raise RuntimeError(f"'Changed after round 1' line not found in {stdout_path}")
+    return int(m.group(1))
+
+
+def float32_bit_metrics(lsdtt_path, ref_path, flat_baseline_path,
+                        n_changed_after_round1: int = 0):
     """Bitwise comparison of two flat-resolved float32 DEMs.
 
     `flat_baseline_path` is the true-flat fill both resolved; it locates the
     flats (for the near-zero guard) and is the zero point for the raise in
     ULPs. A cell is GUARDED when it lies on a flat (off the raster border,
     which Barnes 2014b never raises) with |z| < FLAT_GUARD_LIMIT_M; every
-    other valid cell must carry the same bits in both outputs.
+    other valid cell must carry the same bits in both outputs, except the
+    `n_changed_after_round1` cells lsdtt3 reports changing after its first
+    (RichDEM-equivalent) round: `n_unexplained_differences` is the differing
+    unguarded count minus that, and must be 0.
     """
     import numpy as np
 
@@ -663,6 +640,7 @@ def float32_bit_metrics(lsdtt_path, ref_path, flat_baseline_path):
     differ = valid & (L.view(np.uint32) != R.view(np.uint32))
     unguarded = differ & ~guarded
 
+    below = unguarded & (_ordered_key(L) < _ordered_key(R))
     raise_L = (_ordered_key(L) - _ordered_key(F))[valid]
     raise_R = (_ordered_key(R) - _ordered_key(F))[valid]
 
@@ -682,6 +660,11 @@ def float32_bit_metrics(lsdtt_path, ref_path, flat_baseline_path):
         "n_differing": int(differ.sum()),
         "n_guarded": int(guarded.sum()),
         "n_differing_unguarded": int(unguarded.sum()),
+        "n_changed_after_round1": int(n_changed_after_round1),
+        "n_unexplained_differences": int(unguarded.sum()) - int(n_changed_after_round1),
+        "n_below_richdem": int(below.sum()),
+        "n_stranded_lsdtt": int(_without_descent(L, vL).sum()),
+        "n_stranded_richdem": int(_without_descent(R, vR).sum()),
         "max_ulp_raise_lsdtt": int(raise_L.max()),
         "max_ulp_raise_reference": int(raise_R.max()),
         "max_abs": float(np.abs(L[valid].astype(np.float64)
@@ -886,6 +869,7 @@ def run_lsdtt(exe: pathlib.Path, fixture: pathlib.Path, out_dir: pathlib.Path,
     proc = lsdtt_test_env.run([str(exe), str(out_dir), param_path.name],
                           capture_output=True, text=True, env=system_env())
     elapsed = time.perf_counter() - t0
+    (out_dir / "lsdtt_stdout.txt").write_text(proc.stdout)
 
     if proc.returncode != 0:
         raise RuntimeError(
@@ -1103,7 +1087,9 @@ def main() -> int:
                 m = accumulation_metrics(lsdtt_out, ref_out,
                                          cell_area_of(stage_input))
             elif spec.get("metric") == "float32_bits":
-                m = float32_bit_metrics(lsdtt_out, ref_out, flat_baseline)
+                m = float32_bit_metrics(
+                    lsdtt_out, ref_out, flat_baseline,
+                    changed_after_round1(case_dir / "lsdtt_stdout.txt"))
             else:
                 m = elevation_metrics(lsdtt_out, ref_out, original_path=fixture)
 
@@ -1123,7 +1109,16 @@ def main() -> int:
                       f"  (guarded |z| < {FLAT_GUARD_LIMIT_M:g} m: "
                       f"{m['n_guarded']} cells on flats)")
                 print(f"       differing outside guard: "
-                      f"{m['n_differing_unguarded']}  (must be 0)")
+                      f"{m['n_differing_unguarded']}  (lsdtt3 changed "
+                      f"{m['n_changed_after_round1']} after round 1; unexplained "
+                      f"{m['n_unexplained_differences']}, must be 0)")
+                print(f"       lsdtt3 below {reference}: {m['n_below_richdem']}"
+                      f"  (must be 0)")
+                print(f"       without descent:  lsdtt3 {m['n_stranded_lsdtt']}"
+                      f" (must be 0) / {reference} {m['n_stranded_richdem']}")
+                if m["n_guarded"] and m["n_changed_after_round1"]:
+                    failures.append(f"{key}: fixture mixes guarded and loop-changed "
+                                    f"cells; extend the check")
                 print(f"       max ULP raise:    lsdtt3 {m['max_ulp_raise_lsdtt']}"
                       f" / {reference} {m['max_ulp_raise_reference']}")
                 print(f"       max |diff|:       {m['max_abs']:.9g} m")
@@ -1176,6 +1171,9 @@ def main() -> int:
                             f"{key}: rank_correlation = "
                             f"{m['rank_correlation']:.6g} below pinned {limit:g}")
                     continue
+                elif metric == "n_unexplained_differences":
+                    # Signed in the row; either sign is a failure.
+                    value = abs(m[metric])
                 else:
                     value = m[metric]
 

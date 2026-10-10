@@ -2749,7 +2749,10 @@ if(LSDTT_ENABLE_BENCHMARKS)
     # flats_float_step is a VALUE comparison: fill_flat_resolution_choice:
     # barnes2014b_float_step against RichDEM FillDepressions + ResolveFlats,
     # asserted bit for bit on float32 outside lsdtt3's |z| < 1 m near-zero
-    # guard -- oracle O1 (benchmark_flat_resolution_richdem) on real terrain.
+    # guard and the cells lsdtt3 reports changing after its first
+    # (RichDEM-equivalent) round, which must all lie above RichDEM's, with no
+    # cell left without a lower neighbour -- oracle O1
+    # (benchmark_flat_resolution_richdem) on real terrain.
     foreach(bench_fixture alpine_small lakeland_small)
         foreach(bench_case fill fill_epsilon breach accum_d8 flats_float_step)
             add_test(
@@ -2839,14 +2842,17 @@ if(LSDTT_ENABLE_BENCHMARKS)
     # -------------------------------------------------------------------------
     # Flat resolution VALUE comparison against RichDEM (oracle O1).
     #
-    # fill_flat_resolution_choice: barnes2014b_float_step is meant to equal
-    # RichDEM's ResolveFlats on float32 bit for bit. The driver fills its own
-    # synthetic fixtures (no network, no committed raster) with vincent1993 at
-    # fill_min_slope 0, resolves the flats with both tools and asserts equal
-    # float32 bits on every valid cell, except on flats with |z| < 1 m, where
-    # lsdtt3's near-zero guard replaces subnormal steps by design (the driver
-    # asserts the differences are exactly those cells, in RichDEM's order).
-    # It also asserts the "raised above surroundings" PAIR counts agree.
+    # The first round of fill_flat_resolution_choice: barnes2014b_float_step
+    # is meant to equal RichDEM's ResolveFlats on float32 bit for bit. The
+    # driver fills its own synthetic fixtures (no network) and the committed
+    # lakeland crop with vincent1993 at fill_min_slope 0, resolves the flats
+    # with both tools and asserts equal float32 bits on every valid cell,
+    # except (a) on flats with |z| < 1 m, where lsdtt3's near-zero guard
+    # replaces subnormal steps by design (the driver asserts the differences
+    # are exactly those cells, in RichDEM's order), and (b) on the cells
+    # lsdtt3 reports changing after round 1, which must all be above RichDEM.
+    # It asserts lsdtt3 leaves no cell without a lower neighbour, that RichDEM
+    # does on the fixtures chosen for it, and the round-1 PAIR counts.
     # Elevations are compared, not D8 directions: RichDEM's D8 is not steepest
     # descent (see run_flow_benchmark.py). Exits 77 without richdem.
     # -------------------------------------------------------------------------
@@ -3356,6 +3362,13 @@ add_executable(lsdtt-test-flat-resolution cpp/test_flat_resolution.cpp)
 target_link_libraries(lsdtt-test-flat-resolution PRIVATE lsdtt3_cpu)
 add_test(NAME unit_flat_resolution COMMAND lsdtt-test-flat-resolution)
 lsdtt_set_tests_properties(unit_flat_resolution PROPERTIES LABELS "unit;flow")
+# The same driver on the committed real-terrain crop (Step 11d): a Copernicus
+# GLO-30 lakeland window on which a single Barnes pass leaves cells the D8
+# router refuses. Reads tests/data only; no network, no skip path.
+add_test(NAME unit_flat_resolution_real_terrain
+         COMMAND lsdtt-test-flat-resolution --real-terrain
+                 "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
+lsdtt_set_tests_properties(unit_flat_resolution_real_terrain PROPERTIES LABELS "unit;flow")
 
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
 lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
@@ -4711,6 +4724,78 @@ lsdtt_set_tests_properties(
     failure_chi_analysis_flat_resolution_unfilled_input
     failure_fluvial_surfaces_flat_resolution_gradient_zero_slope
     PROPERTIES LABELS "failure;cli;flow")
+
+# Real-terrain gate. The committed 128 x 128 Copernicus GLO-30 lakeland crop
+# (tests/data/flat_resolution_lakeland_crop_dem.tif; provenance in
+# tests/README.md) is a surface on which a single Barnes pass -- RichDEM
+# ResolveFlats -- leaves rim cells without a lower neighbour, so before the
+# round loop these exact commands exited 1 with "could not assign a receiver".
+# Each barnes2014b run must now exit 0 with no cell left without descent; the
+# round and final-pass lines are pinned (2026-10-10). The synthetic valley
+# fixtures above strand nothing, which is why they missed that failure.
+# unit_flat_resolution_real_terrain checks the same crop at API level.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_analysis_flat_resolution_real_terrain_float_step
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_real_terrain_float_step.param.in
+    rtfs_d8_drainage_area.tif
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Rounds: 4 (cells without descent after each round: 117, 44, 26, 28)"
+    --stdout-contains "Round 1 (RichDEM-comparable): 364 pair(s), 191 cell(s) raised above surroundings, 117 cell(s) without descent"
+    --stdout-contains "Final priority-flood pass: 107 cell(s)"
+    --stderr-not-contains "could not assign a receiver"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_analysis_flat_resolution_real_terrain_gradient
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_real_terrain_gradient.param.in
+    rtgr_d8_drainage_area.tif
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Rounds: 4 (cells without descent after each round: 115, 56, 43, 30)"
+    --stdout-contains "Round 1 (RichDEM-comparable): 362 pair(s), 189 cell(s) raised above surroundings, 115 cell(s) without descent"
+    --stdout-contains "Final priority-flood pass: 108 cell(s)"
+    --stderr-not-contains "could not assign a receiver"
+)
+
+# Control: the default flat handling routes the same crop with the same
+# command shape (no "Flat resolution:" block on this path).
+add_lsdtt_cli_smoke_test(
+    smoke_drainage_analysis_flat_resolution_real_terrain_inline_gradient
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_real_terrain_inline_gradient.param.in
+    rtig_d8_drainage_area.tif
+)
+
+lsdtt_set_tests_properties(
+    rigorous_drainage_analysis_flat_resolution_real_terrain_float_step
+    rigorous_drainage_analysis_flat_resolution_real_terrain_gradient
+    PROPERTIES LABELS "rigorous;cli;flow")
+lsdtt_set_tests_properties(
+    smoke_drainage_analysis_flat_resolution_real_terrain_inline_gradient
+    PROPERTIES LABELS "smoke;cli;flow")
+
+# The same command on whole fetched Copernicus GLO-30 fixtures: the flow
+# benchmark's alpine/lakeland small and medium (fetched with
+# lsdtt-fetch-raster when not cached), plus the benchmark suite's
+# alpine/lakeland 500 and 1000 rungs when they are cached. inline_gradient,
+# barnes2014b_float_step and barnes2014b_gradient must each exit 0, and the
+# barnes runs must end with no cell without descent. Stdlib-only script.
+# NEEDS NETWORK; skips (77) when a fixture cannot be fetched.
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
+    add_test(NAME smoke_flat_resolution_real_terrain_routing
+             COMMAND ${Python3_EXECUTABLE} -I
+                     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_flat_resolution_real_terrain_routing.py"
+                     --bin-dir "$<TARGET_FILE_DIR:lsdtt-drainage-analysis>"
+                     --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flat_resolution_real_terrain_routing")
+    lsdtt_mark_test_runtime(python smoke_flat_resolution_real_terrain_routing)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network smoke_flat_resolution_real_terrain_routing)
+else()
+    lsdtt_mark_test_unregistered(python smoke_flat_resolution_real_terrain_routing)
+endif()
+lsdtt_set_tests_properties(smoke_flat_resolution_real_terrain_routing PROPERTIES
+    LABELS "smoke;flow" SKIP_RETURN_CODE 77 TIMEOUT 600)
 
 # One run with an option per remaining wired CLI, the two options alternating
 # across CLIs. Each asserts the "Flat resolution:" block (printed only on the
@@ -7373,6 +7458,7 @@ set(LSDTT_GDAL_TOOL_SCRIPT_TESTS
 set(LSDTT_NEEDS_NETWORK_PATTERN "^(network_|cosmo_realworld_|benchmark_)")
 set(LSDTT_NEEDS_NETWORK_TESTS
     performance_surface_metrics
+    smoke_flat_resolution_real_terrain_routing   # fetches its fixtures when not cached
 )
 
 # Native tests that are nevertheless not hermetic. Tests with a

@@ -8,13 +8,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 WHAT IT PROVES
 
-  `fill_flat_resolution_choice: barnes2014b_float_step` is meant to be
-  bit-for-bit RichDEM's `ResolveFlats` on a float32 DEM: Barnes, Lehman and
-  Mulla (2014b), "An efficient assignment of drainage direction over flat
-  surfaces in raster digital elevation models", Computers & Geosciences 62,
-  https://doi.org/10.1016/j.cageo.2013.01.009. Each flat cell is raised by
-  `mask` successive float32 steps (nextafter towards +inf), where the mask
-  combines the distance to the flat's low edges and away from its high edges.
+  The FIRST ROUND of `fill_flat_resolution_choice: barnes2014b_float_step`
+  is meant to be bit-for-bit RichDEM's `ResolveFlats` on a float32 DEM:
+  Barnes, Lehman and Mulla (2014b), "An efficient assignment of drainage
+  direction over flat surfaces in raster digital elevation models",
+  Computers & Geosciences 62, https://doi.org/10.1016/j.cageo.2013.01.009.
+  Each flat cell is raised by `mask` successive float32 steps (nextafter
+  towards +inf), where the mask combines the distance to the flat's low edges
+  and away from its high edges.
+
+  That single pass can leave cells with no lower neighbour (a rim cell a few
+  ULPs above a flat that the raise overtops, or a flat's low edge overtopped
+  by a lower flat's raise), and a D8 router refuses them. lsdtt3 therefore
+  refills and resolves again (rounds 2-4) and, if cells are still stranded,
+  runs a final strict-rise priority-flood pass. Those later changes are the
+  ONLY permitted differences from RichDEM, and lsdtt3 reports how many cells
+  they changed ("Changed after round 1: <n> cell(s)").
 
   For every fixture this script:
 
@@ -25,20 +34,41 @@ WHAT IT PROVES
     3. runs lsdtt-raster-preprocessing on F with barnes2014b_float_step
        (refilling F is a no-op), giving L, and parses its pair count;
     4. asserts L and R have the same bits (uint32 view) on every valid cell,
-       except on near-zero-guarded flats (below);
-    5. asserts lsdtt3's "Raised above surroundings: <n> pair(s)" equals
-       RichDEM's "Cells inappropriately raised above surrounding terrain",
-       and that each side's printed count equals a count recomputed here
-       from its own output;
+       except on near-zero-guarded flats (below) and on the cells lsdtt3
+       changed after round 1: the number of differing unguarded cells must
+       equal lsdtt3's "Changed after round 1" count (n_unexplained == 0), and
+       every one of them must be strictly higher in L than in R (ordered
+       float32 keys; no lsdtt3 cell is ever below RichDEM's);
+    5. asserts lsdtt3's ROUND-1 pair count ("Round 1 (RichDEM-comparable):
+       <p> pair(s), <c> cell(s) ...") equals the pair / cell recount from R,
+       and RichDEM's "Cells inappropriately raised above surrounding terrain"
+       too wherever that count is order independent (otherwise it must lie in
+       the range its in-place loop allows; see richdem_printed_pair_bound);
+       and that lsdtt3's final "Raised above surroundings" line equals the
+       recount from L;
+    5b. counts the cells without a lower neighbour (valid, off the border, no
+       nodata neighbour) in R and in L: R's count must equal lsdtt3's round-1
+       count, and L's must be 0 -- lsdtt3 always returns a routable surface;
     6. asserts both outputs have the same nodata cells, and that F, L and the
        fixture share raster size and geotransform.
 
-  Fixtures are generated here (no network, no committed rasters): hand-built
-  valleys, terraces, a mesa, an interior nodata hole, a big flat whose rim is
-  1 ULP above it, a valley with a 2-ULP bump (pins RichDEM's `>=` pair rule:
-  it prints 8, where a `>` rule would give 7), valley floors at +0, -0, -50
-  and 4000 m, and two fixed-seed 256 x 256 integer-metre fractal surfaces
-  around 300 m and 3000 m.
+  The count equality in 4 cannot see a round-1 bug confined to a cell the
+  loop later changed; the C++ driver (unit_flat_resolution, F21-F23 and F29:
+  round 1 equals max_rounds = 1, unchanged cells bitwise) covers that.
+
+  Fixtures are generated here (no network): hand-built valleys, terraces, a
+  mesa, an interior nodata hole, a big flat whose rim is 1 ULP above it, a
+  valley with a 2-ULP bump (pins RichDEM's `>=` pair rule: it prints 8, where
+  a `>` rule would give 7; RichDEM leaves the bump itself without a lower
+  neighbour, so lsdtt3's second round raises it and its final count is 7),
+  valley floors at +0, -0, -50 and 4000 m, and two fixed-seed 256 x 256
+  integer-metre fractal surfaces around 300 m and 3000 m.
+
+  Fixtures on which RichDEM itself strands cells (asserted: R has cells
+  without a lower neighbour, L has none): a knob 1 ULP above the valley floor,
+  two terraces 2 and 3 ULPs apart, a cascade of five terraces 2 ULPs apart,
+  and the committed Copernicus GLO-30 lakeland crop
+  (tests/data/flat_resolution_lakeland_crop_dem.tif).
 
 WHY ELEVATIONS, NOT D8 DIRECTIONS
 
@@ -114,6 +144,8 @@ CELL = 10.0                  # metres
 GUARD_STEP = 2.0 ** -23      # lsdtt3's near-zero guard step, metres per mask unit
 GUARD_LIMIT = 1.0            # flats with |z| < 1 m are guarded
 EXE_NAME = "lsdtt-raster-preprocessing"
+# Committed Copernicus GLO-30 crop (provenance in tests/README.md).
+REAL_TERRAIN_CROP = SCRIPT_DIR.parent / "data" / "flat_resolution_lakeland_crop_dem.tif"
 N8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
 
@@ -155,6 +187,30 @@ def count_raised_above(before: np.ndarray, after: np.ndarray,
     return pairs, int(cells.sum())
 
 
+def richdem_printed_pair_bound(before: np.ndarray, after: np.ndarray,
+                               valid: np.ndarray) -> int:
+    """Upper bound on the pair count RichDEM PRINTS for a given output.
+
+    RichDEM (flats/Barnes2014.hpp, ResolveFlatsEpsilon_Barnes2014) raises the
+    cells IN PLACE, in a parallel loop, and compares each raised cell with its
+    neighbours' CURRENT values: a neighbour on another flat that is processed
+    earlier has already been raised, one processed later has not. So its count
+    for a pair (c, n) uses v = after[n] or before[n], depending on the order:
+    hit if before[c] < v <= after[c]. With v = after[n] for every pair this is
+    count_raised_above() (the lower bound, which lsdtt3 reports); this is the
+    count when either value may be used. The two agree unless a raised cell
+    borders a raised cell of another flat (the lakeland crop: 364 vs 370)."""
+    pairs = 0
+    for dr, dc in N8:
+        nb = shifted(before, dr, dc, np.float32(np.nan))
+        na = shifted(after, dr, dc, np.float32(np.nan))
+        nv = shifted(valid, dr, dc, False)
+        hit_b = (before < nb) & (nb <= after)
+        hit_a = (before < na) & (na <= after) & (nb > before)
+        pairs += int((valid & nv & (hit_b | hit_a)).sum())
+    return pairs
+
+
 def flat_cells(z: np.ndarray, valid: np.ndarray) -> np.ndarray:
     """The cells Barnes (2014b) raises: NO_FLOW cells (no lower neighbour,
     not draining) plus low edges (draining cells next to a NO_FLOW cell of
@@ -173,6 +229,20 @@ def flat_cells(z: np.ndarray, valid: np.ndarray) -> np.ndarray:
         nz = shifted(z, dr, dc, np.float32(np.nan))
         low_edge |= valid & drains & nnf & (nz == z)
     return noflow | low_edge
+
+
+def without_descent(z: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Cells a D8 router cannot give a receiver: valid, off the border, no
+    nodata neighbour, and no strictly lower neighbour (the predicate of
+    lsdtt3's "cells without descent" count)."""
+    R, C = z.shape
+    drains = np.zeros((R, C), bool)
+    drains[0, :] = drains[-1, :] = drains[:, 0] = drains[:, -1] = True
+    for dr, dc in N8:
+        nv = shifted(valid, dr, dc, True)
+        nz = shifted(z, dr, dc, np.float32(np.inf))
+        drains |= ~nv | (nz < z)
+    return valid & ~drains
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +305,37 @@ def build_fixtures() -> dict[str, np.ndarray]:
         F[f"valley_{name}"] = valley(floor=fl)
     F["fractal_300m"] = fractal(seed=20141, base=300.0)
     F["fractal_3000m"] = fractal(seed=20142, base=3000.0)
+    return F
+
+
+def step_up(z: float, k: int) -> np.float32:
+    """k float32 steps above z (nextafter towards +inf)."""
+    v = np.float32(z)
+    for _ in range(k):
+        v = np.nextafter(v, np.float32(np.inf))
+    return v
+
+
+def build_stranding_fixtures() -> dict[str, np.ndarray | pathlib.Path]:
+    """Fixtures on which RichDEM ResolveFlats leaves cells without a lower
+    neighbour. The geometries are those of the C++ driver's F21-F23."""
+    F: dict[str, np.ndarray | pathlib.Path] = {}
+    z = valley()
+    z[5, 12] = step_up(100.0, 1)               # the knob, inside the floor
+    F["knob_1ulp"] = z
+    for gap in (2, 3):                         # upper terrace gap ULPs up
+        z = np.full((11, 24), np.float32(120.0), np.float32)
+        z[1:10, 1:12] = step_up(100.0, gap)
+        z[1:10, 12:23] = np.float32(100.0)
+        z[5, 23] = np.float32(99.0)
+        F[f"terraces_{gap}ulp"] = z
+    k, w = 5, 6                                # five terraces, 2 ULPs apart
+    z = np.full((11, k * w + 2), np.float32(120.0), np.float32)
+    for i in range(k):
+        z[1:10, 1 + i * w:(i + 1) * w + 1] = step_up(100.0, 2 * (k - 1 - i))
+    z[5, k * w + 1] = np.float32(99.0)
+    F["cascade_5"] = z
+    F["lakeland_crop"] = REAL_TERRAIN_CROP
     return F
 
 
@@ -335,16 +436,29 @@ def run_richdem(z: np.ndarray, log_path: pathlib.Path) -> tuple[np.ndarray, int]
 # one fixture
 # ---------------------------------------------------------------------------
 PAIR_RE = re.compile(r"Raised above surroundings:\s*(\d+) pair\(s\),\s*(\d+) cell\(s\)")
+ROUND1_RE = re.compile(r"Round 1 \(RichDEM-comparable\):\s*(\d+) pair\(s\),\s*(\d+) cell\(s\) "
+                       r"raised above surroundings,\s*(\d+) cell\(s\) without descent")
+CHANGED_RE = re.compile(r"Changed after round 1:\s*(\d+) cell\(s\)")
+ROUNDS_RE = re.compile(r"Rounds:\s*(\d+) \(cells without descent after each round: ([^)]*)\)")
+FINAL_PASS_RE = re.compile(r"Final priority-flood pass:\s*(?:(\d+) cell\(s\)|not needed)")
 
 
-def check_fixture(name: str, z0: np.ndarray, exe: pathlib.Path,
-                  root: pathlib.Path) -> tuple[bool, str]:
+def check_fixture(name: str, z0: np.ndarray | pathlib.Path, exe: pathlib.Path,
+                  root: pathlib.Path, richdem_strands: bool = False) -> tuple[bool, str]:
+    """One fixture. `z0` is an array (written here) or a GeoTIFF path (copied).
+    With `richdem_strands` the fixture must be one on which RichDEM leaves
+    cells without a lower neighbour."""
     d = root / name
     d.mkdir(parents=True, exist_ok=True)
     errors: list[str] = []
 
     src = d / f"{name}.tif"
-    write_tif(src, z0)
+    if isinstance(z0, pathlib.Path):
+        if not z0.is_file():
+            return False, f"{name}: fixture {z0} not found"
+        shutil.copyfile(z0, src)
+    else:
+        write_tif(src, z0)
     _, v0, info0 = read_tif(src)
 
     # 1. F: vincent1993 at fill_min_slope 0 keeps true flats.
@@ -362,9 +476,19 @@ def check_fixture(name: str, z0: np.ndarray, exe: pathlib.Path,
     (d / "lsdtt_stdout.txt").write_text(out)
     L, vL, infoL = read_tif(d / f"{name}_L_fill.tif")
     m = PAIR_RE.search(out)
-    if not m:
-        return False, f"{name}: 'Raised above surroundings' line not in lsdtt3 stdout"
+    m1 = ROUND1_RE.search(out)
+    mc = CHANGED_RE.search(out)
+    mr = ROUNDS_RE.search(out)
+    mf = FINAL_PASS_RE.search(out)
+    if not (m and m1 and mc and mr and mf):
+        return False, (f"{name}: a 'Raised above surroundings', 'Round 1', 'Changed after "
+                       f"round 1', 'Rounds' or 'Final priority-flood pass' line is missing "
+                       f"from lsdtt3 stdout")
     ls_pairs, ls_cells = int(m.group(1)), int(m.group(2))
+    r1_pairs, r1_cells, r1_stranded = int(m1.group(1)), int(m1.group(2)), int(m1.group(3))
+    n_changed_r1 = int(mc.group(1))
+    n_rounds = int(mr.group(1))
+    n_final_pass = int(mf.group(1)) if mf.group(1) else 0
 
     # 6. Geometry and validity.
     if not (info0 == infoF == infoL):
@@ -380,18 +504,32 @@ def check_fixture(name: str, z0: np.ndarray, exe: pathlib.Path,
                       f"R {int(vR.sum())} valid cells")
     valid = vF & vL & vR
 
-    # 4. Bits, outside the guard.
+    # 4. Bits, outside the guard: the differing cells are exactly the cells
+    # lsdtt3 changed after round 1 (by count), each strictly above RichDEM.
     border = np.zeros(F.shape, bool)
     border[0, :] = border[-1, :] = border[:, 0] = border[:, -1] = True
     flats = flat_cells(F, vF) & ~border
     guarded = flats & (np.abs(F) < GUARD_LIMIT)
     differ = valid & (L.view(np.uint32) != R.view(np.uint32))
-    unexpected = differ & ~guarded
-    if unexpected.any():
-        rr, cc = np.argwhere(unexpected)[0]
-        errors.append(f"{int(unexpected.sum())} cell(s) differ outside the guard; "
-                      f"first ({rr},{cc}): F {F[rr, cc]!r} L {L[rr, cc]!r} "
-                      f"R {R[rr, cc]!r}")
+    unguarded_diff = differ & ~guarded
+    n_unguarded_diff = int(unguarded_diff.sum())
+    n_unexplained = n_unguarded_diff - n_changed_r1
+    below = unguarded_diff & (ordered_key(L) < ordered_key(R))
+    if guarded.any() and n_changed_r1 > 0:
+        errors.append("fixture mixes guarded and loop-changed cells; extend the check")
+    if n_unexplained != 0:
+        first = ""
+        if unguarded_diff.any():
+            rr, cc = np.argwhere(unguarded_diff)[0]
+            first = (f"; first differing ({rr},{cc}): F {F[rr, cc]!r} L {L[rr, cc]!r} "
+                     f"R {R[rr, cc]!r}")
+        errors.append(f"{n_unguarded_diff} cell(s) differ outside the guard but lsdtt3 "
+                      f"changed {n_changed_r1} after round 1 (unexplained "
+                      f"{n_unexplained}){first}")
+    if below.any():
+        rr, cc = np.argwhere(below)[0]
+        errors.append(f"{int(below.sum())} cell(s) are BELOW RichDEM; first ({rr},{cc}): "
+                      f"L {L[rr, cc]!r} R {R[rr, cc]!r}")
 
     # Guarded cells: must ALL differ (both sides raise them), and L must be the
     # guard formula applied to RichDEM's mask, so the ordering is RichDEM's.
@@ -419,28 +557,57 @@ def check_fixture(name: str, z0: np.ndarray, exe: pathlib.Path,
                 errors.append("guarded cells ordered differently from RichDEM")
                 break
 
-    # 5. Pair counts. Each printed count must equal the count recomputed from
-    # that side's own output. Across the two tools they must agree except where
-    # the guard could change it: the guard raises by up to mask * 2^-23 m, much
-    # more than RichDEM's subnormal steps, so a guarded flat could overtop a
-    # rim RichDEM does not. The guarded fixtures here have rims 10 m above the
-    # floor and max masks below 100 (raise < 1.2e-5 m), so no pair can end
-    # level on either side and both counts are 0: they ARE compared.
-    py_R, _ = count_raised_above(F, R, valid)
+    # 5. Pair counts. lsdtt3's ROUND-1 count (round 1 is the RichDEM-equivalent
+    # pass) must equal the recount from R, and its final line the recount from
+    # L. RichDEM's PRINTED count is order dependent where two raised flats
+    # touch (richdem_printed_pair_bound), so it must lie between the recount
+    # from R and that bound; where they coincide (every synthetic fixture
+    # here) that is equality. Across the two tools they must
+    # agree except where the guard could change it: the guard raises by up to
+    # mask * 2^-23 m, much more than RichDEM's subnormal steps, so a guarded
+    # flat could overtop a rim RichDEM does not. The guarded fixtures here have
+    # rims 10 m above the floor and max masks below 100 (raise < 1.2e-5 m), so
+    # no pair can end level on either side and both counts are 0: they ARE
+    # compared.
+    py_R, py_R_cells = count_raised_above(F, R, valid)
+    py_R_hi = richdem_printed_pair_bound(F, R, valid)
     py_L, py_L_cells = count_raised_above(F, L, valid)
-    if py_R != rd_pairs:
-        errors.append(f"RichDEM printed {rd_pairs} pairs, recount gives {py_R}")
+    if not py_R <= rd_pairs <= py_R_hi:
+        errors.append(f"RichDEM printed {rd_pairs} pairs, outside its recount range "
+                      f"[{py_R}, {py_R_hi}]")
     if (py_L, py_L_cells) != (ls_pairs, ls_cells):
         errors.append(f"lsdtt3 printed {ls_pairs} pairs/{ls_cells} cells, "
                       f"recount gives {py_L}/{py_L_cells}")
-    if ls_pairs != rd_pairs:
-        errors.append(f"pair counts differ: lsdtt3 {ls_pairs}, RichDEM {rd_pairs}")
+    if (r1_pairs, r1_cells) != (py_R, py_R_cells):
+        errors.append(f"lsdtt3 round 1 printed {r1_pairs} pairs/{r1_cells} cells, the "
+                      f"recount from RichDEM's output gives {py_R} pairs/{py_R_cells} cells")
+
+    # 5b. Cells without a lower neighbour: RichDEM's must be lsdtt3's round-1
+    # count, and lsdtt3's final surface must have none.
+    s_R = int(without_descent(R, vR).sum())
+    s_L = int(without_descent(L, vL).sum())
+    if s_R != r1_stranded:
+        errors.append(f"RichDEM leaves {s_R} cell(s) without descent, lsdtt3 round 1 "
+                      f"reports {r1_stranded}")
+    if s_L != 0:
+        errors.append(f"lsdtt3 leaves {s_L} cell(s) without descent")
+    if richdem_strands and s_R == 0:
+        errors.append("RichDEM leaves no cell without descent on a fixture chosen "
+                      "because it does")
+    if s_R == 0 and (n_rounds != 1 or n_changed_r1 != 0):
+        errors.append(f"nothing stranded in round 1, yet {n_rounds} rounds and "
+                      f"{n_changed_r1} cells changed after round 1")
 
     max_ulp_R = int(mask_R[valid].max()) if valid.any() else 0
     max_ulp_L = int((ordered_key(L) - ordered_key(F))[valid].max()) if valid.any() else 0
-    line = (f"{name:22s} compared {int(valid.sum()):6d}  flat {int(flats.sum()):5d}  differing {int(differ.sum()):4d} "
-            f"(guarded {int(guarded.sum()):4d})  pairs lsdtt3 {ls_pairs:4d} "
-            f"RichDEM {rd_pairs:4d}  max ULP raise RichDEM {max_ulp_R} lsdtt3 {max_ulp_L}")
+    line = (f"{name:22s} compared {int(valid.sum()):6d}  flat {int(flats.sum()):5d}  "
+            f"differing {int(differ.sum()):4d} (guarded {int(guarded.sum()):4d}, "
+            f"changed after r1 {n_changed_r1:4d})  without descent RichDEM {s_R:4d} "
+            f"lsdtt3 {s_L}  rounds {n_rounds} final pass {n_final_pass:4d}  "
+            f"pairs RichDEM {rd_pairs:4d}"
+            + (f" (recount {py_R}-{py_R_hi})" if py_R_hi != py_R else "")
+            + f" lsdtt3 r1 {r1_pairs:4d} final {ls_pairs:4d}  "
+            f"max ULP raise RichDEM {max_ulp_R} lsdtt3 {max_ulp_L}")
     if errors:
         return False, line + "\n    FAIL: " + "\n    FAIL: ".join(errors)
     return True, line
@@ -467,9 +634,11 @@ def main() -> int:
     root.mkdir(parents=True)
 
     ok_all = True
-    for name, z in build_fixtures().items():
+    cases = [(n, z, False) for n, z in build_fixtures().items()]
+    cases += [(n, z, True) for n, z in build_stranding_fixtures().items()]
+    for name, z, strands in cases:
         try:
-            ok, line = check_fixture(name, z, exe, root)
+            ok, line = check_fixture(name, z, exe, root, richdem_strands=strands)
         except RuntimeError as exc:
             ok, line = False, f"{name}: ERROR {exc}"
         ok_all &= ok
@@ -477,7 +646,9 @@ def main() -> int:
 
     if ok_all:
         print("PASS  barnes2014b_float_step matches RichDEM ResolveFlats bit for "
-              "bit outside near-zero-guarded flats")
+              "bit outside near-zero-guarded flats and the cells lsdtt3 changed "
+              "after round 1 (all above RichDEM); lsdtt3 leaves no cell without "
+              "descent")
         if not args.keep:
             shutil.rmtree(root)
         return 0
