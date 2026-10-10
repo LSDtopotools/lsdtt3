@@ -4575,6 +4575,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
     --stdout-contains "Max mask: 48"
     --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Rounds: 1 ("
     --stdout-contains "NOTE: fill_min_slope (0.0001) is ignored"
 )
 
@@ -4588,21 +4589,27 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Capped flats: 0"
     --stdout-contains "Float-step fallbacks: 0"
     --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --stdout-contains "Rounds: 1 ("
 )
 
+# The knob 1 ULP above the valley floor: round 1 (RichDEM) leaves it without a
+# lower neighbour, round 2 refills and re-resolves it, and the result routes.
+# Pinned on the first run (2026-10-09).
 add_lsdtt_cli_smoke_test(
-    smoke_fill_flat_resolution_rim_warning
+    rigorous_fill_flat_resolution_knob_rounds
     lsdtt-raster-preprocessing
     fill_flat_resolution_rim_warning.param.in
     valleyknob_fill.tif
-    --stdout-contains "Rim cells without descent: 1"
-    --stderr-contains "WARNING: 1 rim cell(s) have no lower neighbour after flat resolution"
+    --stdout-contains "Rounds: 2 (cells without descent after each round: 1, 0)"
+    --stdout-contains "Round 1 (RichDEM-comparable): 8 pair(s), 8 cell(s) raised above surroundings, 1 cell(s) without descent"
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Final priority-flood pass: not needed"
+    --stderr-not-contains "WARNING:"
 )
 
 lsdtt_set_tests_properties(
     smoke_fill_flat_resolution_float_step
     smoke_fill_flat_resolution_gradient
-    smoke_fill_flat_resolution_rim_warning
     PROPERTIES LABELS "smoke;cli;flow")
 lsdtt_set_tests_properties(
     failure_fill_flat_resolution_unknown_choice
@@ -4612,6 +4619,7 @@ lsdtt_set_tests_properties(
 lsdtt_set_tests_properties(
     rigorous_fill_flat_resolution_valley_float_step
     rigorous_fill_flat_resolution_valley_gradient
+    rigorous_fill_flat_resolution_knob_rounds
     PROPERTIES LABELS "rigorous;cli;flow")
 
 # fill_flat_resolution_choice in the routing CLIs. The parameter check, the

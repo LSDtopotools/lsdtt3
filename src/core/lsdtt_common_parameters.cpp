@@ -163,9 +163,13 @@ void declare_fill_flat_resolution_parameter(
         + min_slope_key + " (m/m, must be > 0) as the minimum gradient; flats are "
         "raised about 3-4x more, capped below their rims, and capped flats "
         "are reported. barnes2014b_float_step is equivalent to RichDEM "
-        "ResolveFlats on float32: it ignores " + min_slope_key + ", its slopes depend "
-        "on elevation (of order ULP(z) / cell size), and rim violations are "
-        "reported.",
+        "ResolveFlats on float32 in its first pass: it ignores " + min_slope_key +
+        " and its slopes depend on elevation (of order ULP(z) / cell size). With "
+        "either barnes2014b option the result is always routable: cells the first "
+        "pass leaves without a lower neighbour are refilled and resolved again (up "
+        "to 4 rounds), and any still left are raised by a final priority-flood pass "
+        "by one float32 step each; the report gives the rounds and the cells "
+        "changed after the first pass.",
         group, "param", ""};
 }
 

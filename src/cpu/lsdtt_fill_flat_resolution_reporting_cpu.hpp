@@ -59,15 +59,24 @@ void check_fill_flat_resolution_min_slope(
 //   Flat resolution: Barnes et al. (2014b), <doi url>, method <choice>
 //     Flat regions, flat cells, NO_FLOW cells, max mask, max raise (m),
 //     near-zero-guarded regions, pairs/cells raised above surroundings, rim
-//     cells without descent; and for barnes2014b_gradient also capped flats,
-//     float-step fallbacks, quantised-up flats, max unit inflation and the
-//     min effective gradient (m/m, "n/a" if there is none).
+//     cells without descent (all final values); then
+//       Rounds: <n> (cells without descent after each round: <s1>, ...)
+//       Round 1 (RichDEM-comparable): <p> pair(s), <c> cell(s) raised above
+//         surroundings, <s1> cell(s) without descent
+//       Changed after round 1: <n> cell(s), max extra raise <x> m
+//       Final priority-flood pass: <n> cell(s), max raise <x> m | not needed
+//     (at most the first 10 per-round counts, then "...", then the last);
+//     and for barnes2014b_gradient also capped flats, float-step fallbacks,
+//     quantised-up flats, max unit inflation, the min effective gradient
+//     (m/m, "n/a" if there is none) and "Cells below min slope: <n>".
 // Numbers are printed in default notation, precision 6, whatever mode an
 // earlier stage left std::cout in; the stream's flags and precision are put
 // back afterwards.
 //
-// If any rim cell has no lower neighbour, a WARNING goes to std::cerr: the D8
-// router will refuse those cells with "could not assign a receiver".
+// If the final priority-flood pass raised cells, an informational WARNING
+// goes to std::cerr with their count and max raise (the surface is routable).
+// A second WARNING, for cells still without descent, is defensive only: the
+// resolver's final pass leaves none.
 // -----------------------------------------------------------------------------
 void print_flat_resolution_report(const flat_resolution_result& result,
                                   flat_resolution_choice        choice);

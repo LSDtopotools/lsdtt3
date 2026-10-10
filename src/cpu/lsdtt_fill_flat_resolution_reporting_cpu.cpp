@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace lsdtt {
 
@@ -73,6 +74,46 @@ void print_flat_resolution_report(const flat_resolution_result& result,
               << "  Rim cells without descent: "
               << result.n_rim_cells_without_descent << "\n";
 
+    // Rounds of refill and re-resolve, and the final pass (header of
+    // resolve_flats_barnes2014b: "Rounds", "Final pass"). At most the first
+    // 10 per-round counts are listed, then "...", then the last one.
+    const std::vector<std::int64_t>& per_round = result.cells_without_descent_per_round;
+    std::cout << "  Rounds: " << result.n_rounds;
+    if (!per_round.empty())
+    {
+        std::cout << " (cells without descent after each round: ";
+        for (std::size_t i = 0; i < per_round.size(); ++i)
+        {
+            if (i == 10 && per_round.size() > 11)
+            {
+                std::cout << ", ..., " << per_round.back();
+                break;
+            }
+            std::cout << (i ? ", " : "") << per_round[i];
+        }
+        std::cout << ")";
+    }
+    std::cout << "\n"
+              << "  Round 1 (RichDEM-comparable): "
+              << result.round1_n_pairs_raised_above_surroundings << " pair(s), "
+              << result.round1_n_cells_raised_above_surroundings
+              << " cell(s) raised above surroundings, "
+              << result.round1_rim_cells_without_descent
+              << " cell(s) without descent\n"
+              << "  Changed after round 1: "
+              << result.n_cells_changed_after_round1 << " cell(s), max extra raise "
+              << result.max_extra_raise_after_round1_m << " m\n"
+              << "  Final priority-flood pass: ";
+    if (result.n_cells_final_pass > 0)
+    {
+        std::cout << result.n_cells_final_pass << " cell(s), max raise "
+                  << result.max_raise_final_pass_m << " m\n";
+    }
+    else
+    {
+        std::cout << "not needed\n";
+    }
+
     if (choice == flat_resolution_choice::barnes2014b_gradient)
     {
         std::cout << "  Capped flats: " << result.n_flats_gradient_capped
@@ -92,19 +133,35 @@ void print_flat_resolution_report(const flat_resolution_result& result,
         {
             std::cout << result.min_effective_gradient << " m/m\n";
         }
+        std::cout << "  Cells below min slope: "
+                  << result.n_gradient_cells_below_min_slope << "\n";
+    }
+
+    // Informational: the rounds did not settle every flat, and the final pass
+    // raised the rest along a minimal gradient. The surface is routable.
+    if (result.n_cells_final_pass > 0)
+    {
+        std::cerr << "WARNING: " << result.n_cells_final_pass
+                  << " cell(s) still had no lower neighbour after "
+                  << result.n_rounds
+                  << " round(s) of flat resolution; the final priority-flood "
+                     "pass raised them by at most "
+                  << result.max_raise_final_pass_m
+                  << " m, so they drain along steps of one float32 ULP "
+                     "(2^-23 m below 1 m).\n";
     }
 
     std::cout.flags(cout_flags);
     std::cout.precision(cout_precision);
 
-    // A rim cell overtopped by the raise and left with no lower neighbour is
-    // a pit in the output; the D8 router refuses it.
+    // Defensive: with the final pass on (as in every CLI) this cannot happen.
     if (result.n_rim_cells_without_descent > 0)
     {
         std::cerr << "WARNING: " << result.n_rim_cells_without_descent
-                  << " rim cell(s) have no lower neighbour after flat "
-                     "resolution; routing this surface will fail with "
-                     "\"could not assign a receiver\" at those cells.\n";
+                  << " cell(s) still have no lower neighbour after "
+                  << result.n_rounds
+                  << " round(s) of flat resolution; routing this surface will "
+                     "fail with \"could not assign a receiver\" at those cells.\n";
     }
 }
 

@@ -170,6 +170,9 @@ enum class flat_resolution_choice : std::uint8_t
 flat_resolution_choice parse_flat_resolution_choice(const std::string& text);
 const char* flat_resolution_choice_name(flat_resolution_choice choice);
 
+// The round cap of resolve_flats_barnes2014b (see "Rounds" there).
+constexpr int k_flat_resolution_default_max_rounds = 4;
+
 struct flat_resolution_options
 {
     flat_resolution_choice method = flat_resolution_choice::barnes2014b_float_step;
@@ -178,18 +181,34 @@ struct flat_resolution_options
     // it is an option only so that the tests can show what it prevents.
     bool  float_step_near_zero_guard = true;
     int   n_threads = 0;                      // 0 = all
+
+    // Rounds of refill and re-resolve (see "Rounds" in resolve_flats_barnes2014b).
+    // Must be >= 1. 1 is the single Barnes pass (RichDEM ResolveFlats under
+    // barnes2014b_float_step).
+    int   max_rounds = k_flat_resolution_default_max_rounds;
+    // The strict-rise priority-flood pass after the last round. Always on in
+    // every caller; with it off (and max_rounds = 1) the output can keep cells
+    // without a lower neighbour, which the tests use to reproduce the
+    // single-pass result.
+    bool  final_priority_flood_pass = true;
 };
 
 // Result of resolve_flats_barnes2014b. mask_diagnostics carries the counts of
-// compute_barnes2014b_flat_mask; its flat_region_label and mask vectors are
+// compute_barnes2014b_flat_mask on the resolver's input (round 1, i.e. the
+// user's flats, not the loop's); its flat_region_label and mask vectors are
 // released (empty) to save 8 B per cell. Call compute_barnes2014b_flat_mask
 // directly if the per-cell arrays are needed.
+//
+// Unless marked "round 1", every field describes the FINAL output against the
+// resolver's input, or is summed over rounds. When only one round ran and the
+// final pass was not needed, each final field equals its round-1 field.
 struct flat_resolution_result
 {
     lsdtt_raster_cpu      resolved;
     barnes2014b_flat_mask mask_diagnostics;
 
-    std::int64_t n_flats_near_zero_guarded = 0;  // flat REGIONS raised by the guard
+    // Flat REGIONS raised by the guard, summed over rounds.
+    std::int64_t n_flats_near_zero_guarded = 0;
     double       max_raise_m               = 0.0;  // max of double(z') - double(z)
 
     // Ordered 8-neighbour pairs (c, n), both valid, with z(n) > z(c) before
@@ -200,11 +219,36 @@ struct flat_resolution_result
     std::int64_t n_cells_raised_above_surroundings = 0;
     // Valid cells that are not exits (not on the raster border, no nodata
     // neighbour) and have no strictly lower valid neighbour in z'. These are
-    // the cells the D8 router will refuse ("could not assign a receiver").
+    // the cells the D8 router would refuse ("could not assign a receiver").
+    // Always 0 with the final pass on (the default); see "Rounds".
     std::int64_t n_rim_cells_without_descent = 0;
 
+    // ---- Rounds (see "Rounds" in resolve_flats_barnes2014b) ----------------
+    // Rounds run, 1 to max_rounds; 0 if the resolver did not run (the
+    // diagnostics of fill_pits_with_flat_resolution under inline_gradient).
+    std::int32_t n_rounds = 0;
+    // Cells without descent after each round; [0] is round 1
+    // (round1_rim_cells_without_descent). The final pass is not a round.
+    std::vector<std::int64_t> cells_without_descent_per_round;
+    // Round 1 alone against the input: the RichDEM-comparable values
+    // (RichDEM prints round1_n_pairs_raised_above_surroundings).
+    std::int64_t round1_n_pairs_raised_above_surroundings = 0;
+    std::int64_t round1_n_cells_raised_above_surroundings = 0;
+    std::int64_t round1_rim_cells_without_descent         = 0;
+    // Cells whose final value differs (bitwise) from round 1's output, by
+    // rounds >= 2 or the final pass, and the largest double(final) -
+    // double(round 1). Never negative: no cell is ever lowered.
+    std::int64_t n_cells_changed_after_round1   = 0;
+    double       max_extra_raise_after_round1_m = 0.0;
+    // Flat regions resolved in rounds >= 2, summed.
+    std::int64_t n_flat_regions_after_round1    = 0;
+    // The final strict-rise priority-flood pass: cells it raised (0 if it was
+    // not needed) and the largest raise it made.
+    std::int64_t n_cells_final_pass             = 0;
+    double       max_raise_final_pass_m         = 0.0;
+
     // barnes2014b_gradient only. Under barnes2014b_float_step they keep the
-    // defaults below. Each count is of flat REGIONS.
+    // defaults below. Each count is of flat REGIONS, summed over rounds.
     //
     // Regions whose rim cap bound the unit (u_q > cap). A capped region whose
     // quantised cap is 0 goes straight to the float-step fallback, so it is
@@ -217,15 +261,22 @@ struct flat_resolution_result
     // spacing over the region's range), so u_q = q > u. Counted over every
     // region, before any fallback.
     std::int64_t n_flats_unit_quantised_up  = 0;
-    // Max u_q / u over regions that were gradient-resolved and not capped.
-    // 1.0 if there are none.
+    // Max u_q / u over regions (of any round) that were gradient-resolved and
+    // not capped. 1.0 if there are none.
     double       max_unit_inflation         = 1.0;
-    // MEASURED on the float32 output: over the raised NO_FLOW cells of
-    // gradient-resolved (not fallback) regions, the steepest-descent D8 slope
-    // in double with the router's path lengths (dz / L, dz / (sqrt(2) L));
-    // then the minimum over those cells. +infinity if there are no such cells
-    // (float-step option, no flats, or every region fell back).
+    // MEASURED on the FINAL float32 output over the "gradient cells": the
+    // NO_FLOW cells a round raised with a gradient unit (capped included, a
+    // float-step fallback excluded; a later float-step raise of the cell
+    // clears it), plus every cell the final pass raised. For each, the
+    // steepest-descent D8 slope in double with the router's path lengths
+    // (dz / L, dz / (sqrt(2) L)); then the minimum. +infinity if there are no
+    // such cells (float-step option, no flats, or every region fell back and
+    // no final pass ran).
     double       min_effective_gradient     = std::numeric_limits<double>::infinity();
+    // Gradient cells whose final steepest D8 slope is below min_slope: capped
+    // regions, cells whose receiver a later round raised, and every cell of
+    // the final pass. 0 under barnes2014b_float_step.
+    std::int64_t n_gradient_cells_below_min_slope = 0;
 };
 
 
@@ -271,7 +322,15 @@ float near_zero_guard_step(float z, std::int32_t mask);
 //
 // Precondition: as compute_barnes2014b_flat_mask. Its no-outlet
 // std::invalid_argument (prefix "lsdtt::compute_barnes2014b_flat_mask: ")
-// propagates unchanged.
+// propagates unchanged from round 1. options.max_rounds < 1 throws
+// std::invalid_argument with the message
+//   lsdtt::resolve_flats_barnes2014b: max_rounds must be >= 1; got <x>
+//
+// Contract (with the final pass on, the default): the output has no cell
+// without descent, i.e. every valid cell that is not an exit (raster border,
+// or touching nodata) has a strictly lower valid neighbour, so the D8 router
+// accepts it. No cell is ever lowered. Both are checked on the way out, and a
+// failure throws std::logic_error (a bug, not a property of the input).
 //
 // Float step. Every cell with a flat-region label and mask > 0 that is NOT on
 // the raster border is raised:
@@ -282,16 +341,50 @@ float near_zero_guard_step(float z, std::int32_t mask);
 // modifies them; they are exits anyway). Cells next to interior nodata are
 // raised. Other cells are copied bitwise.
 //
-// RichDEM equivalence: on flats with |z| >= 1 m the output is bitwise equal to
+// RichDEM equivalence: on flats with |z| >= 1 m ROUND 1 is bitwise equal to
 // RichDEM ResolveFlats on a float32 raster, border included (checked on hand
 // fixtures cell by cell). On guarded flats (|z| < 1 m) it differs by design.
+// The final output equals RichDEM only where no later round or final pass
+// changed a cell (n_cells_changed_after_round1 counts the others).
 //
-// Rim violations (decision D6): the raise is not capped. Where a flat sits
-// within mask-count ULPs of a higher neighbour, the flat can reach or pass it.
-// This is reported in n_pairs/n_cells_raised_above_surroundings, not
-// prevented. If it leaves a non-exit cell with no lower neighbour
-// (n_rim_cells_without_descent > 0), the D8 router's existing "could not
-// assign a receiver" error fires on that cell.
+// Rounds. The raise is not capped by the rim (float step). Where a flat sits
+// within mask-count ULPs of a higher neighbour (a rim a few ULPs up, or the
+// low edge of a flat a few ULPs above a lower one), the flat can reach or pass
+// it and leave that cell with no lower neighbour: a cell without descent. On
+// real float32 DEMs that is common. So, while such cells remain and fewer than
+// max_rounds rounds have run:
+//   1. the whole current surface is refilled with fill_pits_reconstruction
+//      (min_slope 0; the same exits as the mask). That is the identity on
+//      every cell with a non-increasing path to an exit, so it changes only
+//      the new pits and the cells draining into them, which it raises to
+//      their spill;
+//   2. its flats are resolved again as in round 1 (same method, unit, cap,
+//      verification, fallback and guard, from THAT round's input), except
+//      that only NO_FLOW cells (mask >= 4) are raised, never low edges
+//      (mask 2). Raising a low edge that is a cell of an already-resolved
+//      flat can strand it, which would undo that flat's resolution.
+// A flat that drained after the previous round has no NO_FLOW cell, gets no
+// label, and is not touched again. If a round >= 2 meets a flat with no
+// outlet (impossible after the refill), std::logic_error is thrown:
+//   lsdtt::resolve_flats_barnes2014b: round <k>: the refilled surface has a
+//   flat with no outlet (<inner message>); this is a bug
+// Real DEMs need 1-5 rounds on most terrain, but a float32 lake surface can
+// climb by a few ULPs per round for tens of rounds, so the loop stops at
+// max_rounds (default 4).
+//
+// Final pass. If cells without descent remain after the last round, one
+// strict-rise priority flood runs over the result: seeded at every exit,
+// it raises only a cell whose value is not above the cell it is reached
+// from, to the smallest step above it: one float32 ULP (nextafter), or
+// 2^-23 m where |z| < 1 m with the near-zero guard on (so every step it makes
+// is at least 2^-23 m, as for a guarded flat). Every cell with a strictly
+// descending path to an exit is left bitwise unchanged (the flood reaches it
+// from below before anything at or above its level), so only the remaining
+// pits and flats change, by a few ULPs. Every cell it reaches gets the cell
+// it was reached from as a strictly lower neighbour, so no cell without
+// descent can remain. The same pass serves both options; under
+// barnes2014b_gradient its cells count as gradient cells (see
+// n_gradient_cells_below_min_slope).
 //
 // What the slopes mean: a float-step drop is one or a few ULP(z), so the
 // gradient on a resolved flat is about ULP(z) / L. It depends on elevation
@@ -343,10 +436,17 @@ float near_zero_guard_step(float z, std::int32_t mask);
 // with z(h) > z_f (the >= pair rule used for the float-step report). A region
 // that fails is re-raised with float steps, exactly as the float-step option
 // (near-zero guard included), and counted in n_flats_float_fallback. If the
-// fallback also overtops its rim, the region is left float-stepped and shows
-// up in n_pairs/n_cells_raised_above_surroundings and
-// n_rim_cells_without_descent, as under the float-step option (D6). No third
-// method is tried.
+// fallback also overtops its rim, the cells it strands are handled by the
+// next round or the final pass, as under the float-step option.
+//
+// Across rounds. Every D8 step of an uncapped gradient-resolved flat has
+// S >= min_slope in the round that resolved it. A later round can raise the
+// receiver of such a cell (when the receiver was stranded and refilled), and
+// the final pass makes steps of one ULP, so the guarantee is: S >= min_slope
+// on every D8 step of every uncapped gradient-resolved flat, except where a
+// later round or the final pass changed its neighbourhood; the cells below it
+// are counted in n_gradient_cells_below_min_slope, and min_effective_gradient
+// is measured on the final raster.
 //
 // Consequences. Each flat drains onto its low edges with a step of up to
 // (H + 1) increments, i.e. a local slope of up to (H + 1) sqrt(2) min_slope at
@@ -356,7 +456,14 @@ float near_zero_guard_step(float z, std::int32_t mask);
 // Raster-border cells are never raised, as for the float step.
 //
 // n_threads: OpenMP threads for the mask scans, the raise and the diagnostics
-// (0 = all). The output and every diagnostic are bitwise independent of it.
+// (0 = all). The refill and the final pass are serial. The output and every
+// diagnostic are bitwise independent of it.
+//
+// Memory: the input, the current surface, the refilled surface and the mask
+// arrays of one round (about 25 B per cell), plus a copy of round 1's output
+// (4 B per cell) once a second round or the final pass runs, and a per-cell
+// flag under barnes2014b_gradient. The final pass adds a state byte and its
+// queues.
 flat_resolution_result resolve_flats_barnes2014b(const lsdtt_raster_cpu& filled,
                                                  const flat_resolution_options& options);
 
