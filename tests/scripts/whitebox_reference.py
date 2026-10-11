@@ -110,6 +110,7 @@ FLOW_ROUTINES = (
     "accum_dinf",
     "accum_mfd",
     "route_d8_default",  # raw DEM -> D8 accumulation, Whitebox defaults
+    "route_d8_wl_epsilon",  # raw DEM -> Wang & Liu epsilon fill -> D8
 )
 
 SURFACE_ROUTINES = (
@@ -292,6 +293,19 @@ def _make_call(wbe, routine: str, dem, args):
         fill_fn = H.fill_depressions
         acc_fn = H.d8_flow_accum
         return lambda: acc_fn(input=fill_fn(dem=dem), out_type="cells")
+
+    if routine == "route_d8_wl_epsilon":
+        # Raw DEM -> fill_depressions_wang_and_liu(fix_flats=True,
+        # flat_increment) -> d8_flow_accum: an edge-seeded priority flood with
+        # a constant gradient across flats, then steepest-descent D8. The
+        # like-for-like partner of lsdtt3's drainage pipeline (the caller
+        # passes --flat-increment = fill_min_slope x cell size).
+        fill_fn = H.fill_depressions_wang_and_liu
+        acc_fn = H.d8_flow_accum
+        return lambda: acc_fn(
+            input=fill_fn(dem=dem, fix_flats=True,
+                          flat_increment=args.flat_increment),
+            out_type="cells")
 
     # -- surface -----------------------------------------------------------
     if routine == "slope":

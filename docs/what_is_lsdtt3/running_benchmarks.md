@@ -125,8 +125,9 @@ Whitebox is measured at 1 and 2 threads only: on that campaign it scaled
 repeated the same number.
 
 The server runtime is an estimate: that same campaign spent 80 minutes on the
-1000-4000² rungs, and three reference pairings have since been added or
-corrected (see [Reading the results](#2-only-compare-like-with-like)). The
+1000-4000² rungs, and cases have since been added, removed and re-paired
+(see [Reading the results](#2-only-compare-like-with-like)); the plan is now
+354 measurements. The
 wrapper's default Slurm time limit is 12 hours.
 
 ```sh
@@ -276,27 +277,77 @@ every later run, so put it somewhere persistent.
 
 ## What the suite measures
 
-The cases fall into four groups.
+The suite compares lsdtt3 with other packages only where both run the same
+algorithm and produce the same kind of output. Everything else is either an
+lsdtt3-only case (lsdtt3 against itself) or marked report-only. The cases fall
+into five groups.
 
 1. **Surface fitting**: `slope_only`, `polyfit_all` and `hillshade`. These are
    report-only, because each package defines its metrics differently.
-2. **Fill speed, for information only**: `fill` (grayscale reconstruction,
-   lsdtt3 vs TopoToolbox), `fill_priority_flood` (priority flood, lsdtt3 vs
-   RichDEM vs Whitebox) and lsdtt3's `fill_priority_flood_radix`. These fills
-   leave flats, so their output is not a connected flow network. Treat them as
-   a speed check on the fill algorithm, not as a result you could route flow
-   over.
-3. **Complete breaching (Lindsay 2016)**: `breach`, lsdtt3 vs RichDEM.
+2. **Single-step fills**: `fill` (grayscale reconstruction, lsdtt3 vs
+   TopoToolbox) and `fill_priority_flood` (priority flood, lsdtt3 vs RichDEM vs
+   Whitebox Wang & Liu). The algorithms match and the outputs are identical
+   (asserted in the test suite), so these are real comparisons. They leave
+   flats, so their output is not a network you could route flow over.
+   lsdtt3's `fill_priority_flood_radix` is the same fill with a different
+   queue, lsdtt3 only.
+3. **Breaching**:
+    - `breach`: complete breaching (Lindsay 2016), lsdtt3 vs RichDEM.
+    - `breach_least_cost`: least-cost breaching (Lindsay 2020), lsdtt3 vs
+      Whitebox, with parameters matched so that both produce the same raster
+      bit for bit (see [below](#what-breach_least_cost-runs)).
+    - lsdtt3 only: `breach_least_cost_default` (least-cost breaching with
+      lsdtt3's own defaults), and `breach_then_fill_lindsay2016` and
+      `breach_then_fill_least_cost` (breach, then fill: the time to a
+      routable surface by each method).
 4. **Connected flow networks**: `fill_epsilon` (a priority flood that imposes
-   a gradient across flats), `fill_flats_float_step` and `fill_flats_gradient`
-   (Barnes 2014b flat resolution), lsdtt3's `fill_epsilon_radix`, the D8
-   accumulation cases, and `route_d8_default`.
+   a gradient across flats), the D8 accumulation cases, and
+   `route_d8_epsilon` (raw DEM to D8 accumulation by the same pipeline in
+   lsdtt3 and Whitebox). lsdtt3 only: `fill_epsilon_radix`,
+   `fill_flats_float_step` and `fill_flats_gradient` (Barnes 2014b flat
+   resolution). `route_d8_default` (each package's default pipeline) is
+   report-only.
+5. **Multi-direction flow**: `accum_dinf` and `accum_mfd`. Report-only: each
+   package splits flow by a different rule.
 
 `SUMMARY.md` also includes a section called **lsdtt3 fill methods, fastest
 first**. For each DEM it ranks lsdtt3's own fill options by median time, and
 says whether each output is a connected flow network. This compares lsdtt3
 with itself on your machine, so the report-only flags from the cross-package
 tables do not apply to it.
+
+### What `breach_least_cost` runs
+
+lsdtt3's least-cost breaching is a port of Whitebox's
+`breach_depressions_least_cost`. The case runs both with the same parameters:
+
+| parameter | lsdtt3 (`lsdtt-raster-preprocessing`) | Whitebox |
+|---|---|---|
+| raster edge | `breach_lc_edge_policy: whitebox` (the edge is not an outlet) | its only behaviour |
+| maximum path length | `breach_lc_max_dist: 100` | `max_dist=100` |
+| cost function | `breach_lc_minimize_dist: false` | `minimize_dist=False` |
+| drop per cell along a breach | `breach_lc_flat_increment: 0.001` | `flat_increment` = 0.001 rounded to float32 (lsdtt3 reads the parameter as float32) |
+| depressions left unbreached | `fill_remainder_after_breach: false` | `fill_deps=False` |
+
+Under these parameters the two outputs are identical bit for bit. The test
+suite checks this on two real DEMs and on 2400 random ones. lsdtt3's own
+defaults differ: the raster edge is an outlet and the maximum path length is
+1000 cells. `breach_least_cost_default` times that configuration.
+
+### What `route_d8_epsilon` runs
+
+The like-for-like route from a raw DEM to D8 flow accumulation:
+
+- **lsdtt3:** `lsdtt-drainage-analysis` on the raw DEM. A Barnes (2014)
+  priority flood with `fill_min_slope` 1e-4, then steepest-descent D8.
+- **Whitebox:** `fill_depressions_wang_and_liu(fix_flats=True)`, with
+  `flat_increment` set to 1e-4 × the cell size, then `d8_flow_accum`
+  (steepest descent).
+
+The one remaining difference is on diagonal steps. lsdtt3 raises them by √2 ×
+the increment, Whitebox by the increment itself. RichDEM and TopoToolbox are
+not in this case: RichDEM's D8 picks the lowest neighbour rather than the
+steepest descent, and TopoToolbox has no fill that imposes a gradient.
 
 ### What `route_d8_default` runs in each package
 
@@ -353,20 +404,22 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
     - Whitebox's breach is least-cost (Lindsay 2020), so it left `breach`
       (Lindsay 2016, now lsdtt3 against RichDEM). The `breach_least_cost` case
       that compared it with lsdtt3's least-cost breach was removed on
-      2026-10-10; breaching is benchmarked on Lindsay (2016) only.
+      2026-10-10, and re-instated on 2026-10-11 with matched parameters (see
+      the 2026-10-11 box below).
 
 !!! warning "Whitebox changed tools in `fill_priority_flood` on 2026-10-10"
     Whitebox's default `fill_depressions` works pit by pit rather than flooding
     from the edges, returns a different surface and slows sharply on terrain
     with many pits. `fill_priority_flood` now runs Whitebox's Wang & Liu fill,
     the same edge-seeded priority flood as lsdtt3, and `fill_depressions` is
-    reported on its own as `fill_whitebox_default`. The `fill_wang_liu` and
-    `breach_least_cost` cases were removed.
+    reported on its own as `fill_whitebox_default` (removed 2026-10-11). The
+    `fill_wang_liu` and `breach_least_cost` cases were removed
+    (`breach_least_cost` came back on 2026-10-11).
 
 !!! warning "Suite restructured on 2026-10-10"
-    - `fill` and `fill_priority_flood` are now **report-only**: they leave
-      flats, so their output is not a connected flow network. They are
-      information about fill speed, not a headline ratio.
+    - `fill` and `fill_priority_flood` became **report-only**: they leave
+      flats, so their output is not a connected flow network. This was
+      reversed on 2026-10-11.
     - New lsdtt3-only, report-only cases `fill_priority_flood_radix` and
       `fill_epsilon_radix` run the same fills with lsdtt3's radix spill queue
       (`priority_flood_queue: radix`).
@@ -389,8 +442,31 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
     them (a `reused_from` column in the CSV).
 
 !!! note "Two flat-resolution cases added on 2026-10-10 (`flow` suite, report-only)"
-    - `fill_flats_float_step` — fill + Barnes (2014b) flat resolution in float32 steps, lsdtt3 vs RichDEM `FillDepressions` + `ResolveFlats`.
+    - `fill_flats_float_step` — fill + Barnes (2014b) flat resolution in float32 steps, lsdtt3 vs RichDEM `FillDepressions` + `ResolveFlats` (lsdtt3 only since 2026-10-11).
     - `fill_flats_gradient` — fill + Barnes (2014b) flat resolution with a 1e-4 gradient; lsdtt3 only.
+
+!!! warning "Suite changes on 2026-10-11"
+    - `breach_least_cost` is back. lsdtt3's least-cost breach was ported from
+      Whitebox and validated against it bit for bit, so the pairing is now
+      like-for-like and its ratio can be quoted. The parameters are matched
+      (see [What `breach_least_cost` runs](#what-breach_least_cost-runs)).
+      Rows from the 2026-09-13 to 2026-10-10 campaigns compared different
+      parameters and an older lsdtt3 implementation: do not compare them with
+      new rows.
+    - New lsdtt3-only, report-only cases: `breach_least_cost_default`,
+      `breach_then_fill_lindsay2016` and `breach_then_fill_least_cost`.
+    - `fill` and `fill_priority_flood` are real comparisons again. The
+      algorithms match and their outputs are identical, so the ratio is
+      like-for-like even though the output still has flats.
+    - New case `route_d8_epsilon`: raw DEM to D8 accumulation by the same
+      pipeline in lsdtt3 and Whitebox (see
+      [What `route_d8_epsilon` runs](#what-route_d8_epsilon-runs)).
+      `route_d8_default` stays, report-only.
+    - `fill_flats_float_step` is lsdtt3 only. RichDEM's `ResolveFlats` matches
+      lsdtt3's first round, but lsdtt3 then keeps working until the surface
+      is routable, so the two times measured different work.
+    - `fill_whitebox_default` was removed. Whitebox's pit-centric
+      `fill_depressions` is not like-for-like with any lsdtt3 fill.
 
 ### 3. Respect the flags
 
@@ -400,8 +476,18 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
 - **`report_only`**: the engines are not doing equivalent work, so a ratio
   would be a claim about the definitions rather than the implementations.
   Absolute times only. All surface-metric and multi-direction-flow rows are
-  report-only, as are the flat-leaving fills (`fill`, `fill_priority_flood`)
-  and `route_d8_default`.
+  report-only, as is `route_d8_default`. The lsdtt3-only cases are flagged
+  report-only too: they have no reference to form a ratio with, and are there
+  to compare lsdtt3's own methods with each other.
+
+!!! note "Whitebox reads its input file inside the timed call"
+    A Whitebox raster keeps a handle to its file, and Whitebox's tools re-read
+    it, so a Whitebox time includes reading the DEM from disk. On a laptop,
+    least-cost breaching of a 1000² DEM measured 0.067 s with the file on a
+    Windows drive mounted in WSL, and 0.027 s with it on local disk. The suite
+    copies every fixture to local disk before measuring (see the header
+    check above). Do not turn this off with `--no-stage` for a run you intend
+    to quote.
 
 RichDEM in particular carries ~10 ms of fixed cost per call, from a per-call
 array construction plus the citation block it prints on every invocation. On a
@@ -473,7 +559,7 @@ Before submitting a long run:
    built for the old 8000² ladder works as-is.
 4. **Dry-run** to see exactly what will be measured (from the lsdtt3 checkout;
    it downloads and measures nothing). It lists every case, which engines run
-   it and at how many thread counts; the current `server` plan is 294
+   it and at how many thread counts; the current `server` plan is 354
    measurements:
    ```sh
    cd /path/to/lsdtt3

@@ -293,7 +293,7 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     "fill": {
         "whitebox": "no grayscale-reconstruction fill in whitebox_workflows "
                     "2.0.6 (hydrology offers fill_depressions [pit-centric, "
-                    "measured in fill_whitebox_default], "
+                    "not like-for-like, not measured], "
                     "fill_depressions_wang_and_liu [priority-flood, measured "
                     "in fill_priority_flood], "
                     "fill_depressions_planchon_and_darboux, fill_pits)",
@@ -339,6 +339,10 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     },
     # fill_flats_*: verified 2026-10-10 against the same three versions.
     "fill_flats_float_step": {
+        "richdem": "not paired (2026-10-11): rd.ResolveFlats is lsdtt3's "
+                   "round 1 only (bitwise; asserted in run_flow_benchmark.py), "
+                   "while lsdtt3 loops to a routable surface, so the times "
+                   "measure different work",
         "topotoolbox": "not bound in the Python package 0.0.12 as a "
                        "surface: GridObject offers fillsinks (no flat "
                        "increment) and identifyflats (labels only); "
@@ -438,8 +442,8 @@ CASES: dict[str, dict[str, Any]] = {
     "fill": {
         "sequential": True,
         "suite": "flow",
-        "note": ("INFORMATION ONLY: leaves flats, not a connected network. "
-                 "Grayscale fill speed. RECONSTRUCTION family: grayscale "
+        "note": ("Leaves flats, not a connected network (single step). "
+                 "RECONSTRUCTION family: grayscale "
                  "reconstruction by erosion (Vincent 1993 hybrid -- raster "
                  "scans + FIFO queue, O(N)). lsdtt3 vincent1993 vs "
                  "TopoToolbox hybrid=True"),
@@ -458,17 +462,15 @@ CASES: dict[str, dict[str, Any]] = {
                              # a gradient, hence min_slope 0.
                              "fill_algorithm_choice": "vincent1993"},
                   "output": "_fill.tif"},
-        # report_only since 2026-10-10 (Simon): a surface with flats is not a
-        # connected flow network, so this is information about grayscale fill
-        # speed, not a headline ratio. The connected-network comparison is
-        # fill_epsilon / fill_flats_* / route_d8_default.
-        "report_only": True,
+        # A real comparison since 2026-10-11 (Simon): it ends in flats, not a
+        # routed network, but it is the same algorithm on both sides with a
+        # value-asserted output (fill@topotoolbox, max_abs 0, in CTest), so
+        # the ratio is like-for-like. Report-only 2026-10-10 .. 2026-10-11.
     },
     "fill_priority_flood": {
         "sequential": True,
         "suite": "flow",
-        "note": ("INFORMATION ONLY: leaves flats, not a connected network. "
-                 "Grayscale fill speed. "
+        "note": ("Leaves flats, not a connected network (single step). "
                  "PRIORITY-FLOOD family: heap-based flood, O(N log N). "
                  "lsdtt3 barnes2014 vs RichDEM (Zhou 2016) vs Whitebox "
                  "Wang & Liu (2006). Same surface as the reconstruction case. "
@@ -481,9 +483,11 @@ CASES: dict[str, dict[str, Any]] = {
         # `fill_depressions`, which is PIT-CENTRIC (finds interior pits, sorts
         # them, works pit by pit), returns a different surface (6.45 m high on
         # alpine_small) and is pathological on many-pit terrain (0.63 s alpine
-        # vs 54.7 s lakeland, 4000^2, 2026-09-21) -- not like-for-like. It is
-        # still measured, report-only, in `fill_whitebox_default`. The former
-        # `fill_wang_liu` case duplicated this pairing and was removed.
+        # vs 54.7 s lakeland, 4000^2, 2026-09-21) -- not like-for-like. It was
+        # measured, report-only, in `fill_whitebox_default` until 2026-10-11,
+        # when that case was removed (not like-for-like with any lsdtt3 fill).
+        # The former `fill_wang_liu` case duplicated this pairing and was
+        # removed.
         #
         # TopoToolbox fillsinks(hybrid=False) was paired here until
         # 2026-10-08. It is Vincent's SEQUENTIAL reconstruction, not a heap
@@ -496,8 +500,8 @@ CASES: dict[str, dict[str, Any]] = {
                              "fill_min_slope": "0",
                              "fill_algorithm_choice": "barnes2014"},
                   "output": "_fill.tif"},
-        # report_only since 2026-10-10, for the same reason as `fill`.
-        "report_only": True,
+        # A real comparison since 2026-10-11, as `fill`: values asserted in
+        # CTest (fill@richdem and fill@whitebox, max_abs 0).
     },
     # -- lsdtt3 spill-queue variants (lsdtt3-only, report-only) ------------
     #
@@ -589,16 +593,14 @@ CASES: dict[str, dict[str, Any]] = {
         "sequential": True,
         "suite": "flow",
         "note": ("fill + Barnes (2014b) flat resolution in float32 steps. "
-                 "lsdtt3 barnes2014b_float_step vs RichDEM FillDepressions"
-                 "(epsilon=False) + ResolveFlats. Round 1 is the same "
-                 "algorithm, bitwise; RichDEM stops after that one pass and "
-                 "leaves cells undrained on real terrain, while lsdtt3 loops "
-                 "(refill + resolve, up to 4 rounds, then a strict-rise pass) "
-                 "to a routable surface -- extra work RichDEM does not do. "
-                 "TIMING ONLY"),
-        # report_only because the outputs differ by design after round 1 (see
-        # the note). run_flow_benchmark.py asserts round 1 bitwise.
-        "engines": {"richdem": "fill_resolve_flats"},
+                 "lsdtt3-only (the lsdtt3 fill ranking). TIMING ONLY"),
+        # lsdtt3-only since 2026-10-11 (Simon). RichDEM FillDepressions
+        # (epsilon=False) + ResolveFlats was paired here: round 1 is the same
+        # algorithm, bitwise (asserted in run_flow_benchmark.py,
+        # flats_float_step), but RichDEM stops after that pass while lsdtt3
+        # loops (refill + resolve, up to 4 rounds, then a strict-rise pass) to
+        # a routable surface, so the times measured different work.
+        "engines": {},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_algorithm_choice": "barnes2014",
@@ -862,6 +864,40 @@ CASES: dict[str, dict[str, Any]] = {
         "report_only": True,
     },
 
+    # Raw DEM -> routed D8 accumulation, LIKE-FOR-LIKE (2026-10-11, Simon:
+    # keep route_d8_default for the defaults question and add this beside it).
+    # Same pipeline on both sides: an edge-seeded priority-flood fill that
+    # imposes a gradient across flats, then steepest-descent D8.
+    #   lsdtt3    lsdtt-drainage-analysis on the raw DEM: Barnes (2014)
+    #             priority flood with fill_min_slope 1e-4 m/m per step length,
+    #             then steepest-descent D8 (route_d8_default's lsdtt3 row is
+    #             the same command; measured again so the case stands alone).
+    #   Whitebox  fill_depressions_wang_and_liu(fix_flats=True,
+    #             flat_increment = 1e-4 x cell size) -- an edge-seeded priority
+    #             flood with a constant per-cell increment -- then
+    #             d8_flow_accum (steepest descent, measured: see
+    #             check_whitebox_d8_rule.py).
+    # Remaining difference: lsdtt3 raises a diagonal step by sqrt(2) x the
+    # cardinal increment, Whitebox by the same increment (the fill_epsilon
+    # pairing; its values are pinned in run_flow_benchmark.py). RichDEM is not
+    # paired (its D8 picks the lowest neighbour, not the steepest descent), nor
+    # is TopoToolbox (no gradient fill).
+    "route_d8_epsilon": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("raw DEM -> routed D8 accumulation, like-for-like: priority "
+                 "flood with a gradient across flats (lsdtt3 1e-4 m/m per "
+                 "step length; Whitebox Wang & Liu, flat_increment 1e-4 x "
+                 "cell size) + steepest-descent D8"),
+        "engines": {"whitebox": "route_d8_wl_epsilon"},
+        "whitebox_flat_increment_from": "fill_min_slope",
+        "lsdtt": {"exe": "lsdtt-drainage-analysis",
+                  "params": {"write_d8_drainage_area_raster": "true",
+                             "raster_is_filled": "false",
+                             "fill_min_slope": "0.0001"},
+                  "output": "_d8_drainage_area.tif"},
+    },
+
     # -- suite: mfd --------------------------------------------------------
     # Multi-direction routing. Every implementation uses a different
     # proportioning rule (Tarboton D-inf vs Quinn MFD vs Freeman FD8), so these
@@ -1012,27 +1048,10 @@ CASES: dict[str, dict[str, Any]] = {
     # like-for-like algorithms only, and no binding benchmarked here offers
     # Fill-Spill-Merge. The suite name stays so --suites depression is still
     # accepted; it currently holds no case.
-    # Whitebox's DEFAULT fill tool, kept so its cost stays on record. It is
-    # pit-centric (scans interior pits, sorts them, works pit by pit), not an
-    # edge-seeded priority flood, and returns a different surface (6.45 m high
-    # on alpine_small): report-only, never a ratio. Its terrain sensitivity is
-    # the finding (0.63 s alpine vs 54.7 s lakeland at 4000^2, 2026-09-21).
-    # lsdtt3's row is copied from fill_priority_flood (same command).
-    "fill_whitebox_default": {
-        "sequential": True,
-        "suite": "flow",
-        "note": ("Whitebox fill_depressions(fix_flats=False), its default "
-                 "fill tool: pit-centric, different surface, report-only. "
-                 "lsdtt3 row reused from fill_priority_flood"),
-        "engines": {"whitebox": "fill"},
-        "reuse_from": {"lsdtt3": "fill_priority_flood"},
-        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
-                  "params": {"write_fill_raster": "true",
-                             "fill_min_slope": "0",
-                             "fill_algorithm_choice": "barnes2014"},
-                  "output": "_fill.tif"},
-        "report_only": True,
-    },
+    # `fill_whitebox_default` (Whitebox's pit-centric fill_depressions,
+    # report-only) was REMOVED 2026-10-11 (Simon): not like-for-like with any
+    # lsdtt3 fill. Its last measurement: 0.63 s alpine vs 54.7 s lakeland at
+    # 4000^2 (2026-09-21).
 }
 
 
