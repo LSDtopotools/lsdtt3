@@ -2445,13 +2445,119 @@ and 1.65 (slope) CPUs per process at `max_procs=1`. `run_benchmark_suite.py`
 now launches every Whitebox measurement under `taskset -c <cpus>`, with as many
 CPUs as the row's thread count, one per physical core first
 (`whitebox_cpu_pin()`). The mask is inherited by every thread Whitebox starts.
-A laptop check at 1000² after the change: Whitebox slope 130 ms at 1 thread and
+A laptop check at 1000² after the change (laptop, thermally limited: the
+direction is meaningful, the values are not): Whitebox slope 130 ms at 1 thread and
 82 ms at 2, hillshade 91 and 53 ms, so the tools do scale once the 1-thread row
 really is one core. `REFERENCE_MAX_THREADS` was emptied at the same time,
 because the cap at 2 threads rested on flat curves measured on a restricted
 mask. `SUMMARY.md` gained a CPU-use table that lists any engine and case
 above 1.2 CPUs at the baseline thread count, so an unpinned row cannot pass
 unnoticed.
+
+### Server campaign 2026-10-11 (forth01): Whitebox pinned, least-cost breach back
+
+`server` profile (1000/2000/4000², 5 repeats after a warm-up, medians) at
+`4d8d844`, clean tree, `--threads 1,2,4`. Raw data:
+`../data/benchmarking/server_forth01.geos.ed.ac.uk_20261011_140209`. 372 rows,
+all `ok`.
+
+- **Machine:** forth01 (AMD EPYC 9654P), GCC 13.3 `-O3`. The session had 8
+  logical CPUs (`Cpus_allowed_list: 75,90-92,171,186-188`), which are **4
+  physical cores** and their SMT siblings. **Not exclusive**; governor
+  `schedutil`.
+- **Whitebox pinned:** every Whitebox measurement ran under `taskset`, one
+  physical core per thread. The CPU-use table flags nothing: every 1-thread row
+  of every engine is at about 1.0 CPU/wall.
+- **Earlier run the same day** (`…_20261011_120654`, `a3d90e6`) had a 2-CPU
+  mask and unpinned Whitebox. Its lsdtt3, RichDEM and TopoToolbox 1-thread rows
+  agree with this campaign within 0.89-1.08 (median per case). Its Whitebox
+  rows do not: pinning made Whitebox's 1-thread times longer by 1.42×
+  (`accum_d8`, hillshade), 1.32× (`route_d8_epsilon`), 1.25× (fills), 1.19×
+  (slope, `route_d8_default`), 1.10-1.12× (polyfit, `breach_least_cost`) and
+  1.04-1.08× (D-inf, MFD). **Whitebox rows from any campaign before this one
+  are unpinned and must not be compared with these.**
+
+#### 1-thread comparison
+
+Reference time / lsdtt3 time, range over the six fixtures (above 1 means lsdtt3
+took less time). Report-only cases compare different work.
+
+| case | RichDEM | TopoToolbox | Whitebox |
+|---|---|---|---|
+| `accum_d8` (S-vector on) | 1.05-1.23 | 1.21-1.72 | 0.95-1.17 |
+| `accum_d8_no_svector` | 1.50-1.74 | 1.77-2.26 | 1.32-1.87 |
+| `fill_epsilon` | 0.92-0.99 | n/a | 1.03-2.75 |
+| `fill_priority_flood` | 0.52-0.80 | n/a | 1.05-2.10 |
+| `fill` (reconstruction) | n/a | 0.84-1.03 | n/a |
+| `breach` (Lindsay 2016) | 0.94-1.49 | n/a | n/a |
+| `breach_least_cost` (bitwise-equal output) | n/a | n/a | 0.69-0.83; 1.45 on alpine 4000² |
+| `route_d8_epsilon` | n/a | n/a | 0.99-2.00 |
+| `accum_dinf` (report-only) | 0.93-1.21 | n/a | 0.69-0.89 |
+| `accum_mfd` (report-only) | 0.57-0.63 | n/a | 0.51-0.63 |
+| `slope_only` (report-only) | 0.43-0.51 | 0.85-1.02 | 2.11-2.47 |
+| `hillshade` (report-only) | n/a | 0.45-0.59 | 9.7-12.2 |
+| `polyfit_all` (report-only) | 0.20-0.26 | 1.04-1.20 | 0.97-1.14 |
+
+Raw DEM to D8 accumulation with each package's defaults (`route_d8_default`,
+report-only), seconds:
+
+| package | alpine 1000² | lakeland 1000² | alpine 2000² | lakeland 2000² | alpine 4000² | lakeland 4000² |
+|---|---|---|---|---|---|---|
+| lsdtt3 | 0.241 | 0.240 | 1.103 | 1.100 | 4.909 | 5.310 |
+| RichDEM | 0.247 | 0.245 | 1.150 | 1.097 | 5.095 | 5.272 |
+| TopoToolbox | 0.147 | 0.285 | 0.578 | 1.335 | 2.790 | 6.729 |
+| Whitebox | 0.127 | 0.494 | 0.446 | 6.648 | 2.361 | 81.273 |
+
+The timings of every lsdtt3 conditioning option on the same campaign, and the
+decomposition of the TopoToolbox / lsdtt3 difference on alpine terrain (fill
+family about 1.7 s, S-vector about 0.5 s at 4000²), are in
+`docs/design_and_algorithms/flow_routing.md`, "From a raw DEM to a fully routed
+DEM".
+
+#### Least-cost breaching
+
+`breach_least_cost` runs lsdtt3 and Whitebox with matched parameters (edge
+policy `whitebox`, max_dist 100, increment float32(0.001), no remainder fill);
+the outputs are asserted bitwise in CTest. Seconds:
+
+| | alpine 1000² | lakeland 1000² | alpine 2000² | lakeland 2000² | alpine 4000² | lakeland 4000² |
+|---|---|---|---|---|---|---|
+| lsdtt3 | 0.040 | 0.263 | 0.135 | 1.051 | 0.498 | 4.695 |
+| Whitebox | 0.028 | 0.199 | 0.093 | 0.779 | 0.723 | 3.920 |
+| lsdtt3 / Whitebox | 1.41 | 1.32 | 1.45 | 1.35 | 0.69 | 1.20 |
+| lsdtt3, CLI defaults (`breach_least_cost_default`) | 0.035 | 0.196 | 0.133 | 0.931 | 0.491 | 10.055 |
+
+On identical output lsdtt3 took 1.20-1.45× Whitebox's time on five of six
+fixtures. A laptop profile (direction only) put 87-90% of lsdtt3's time in the
+search loop and found no algorithmic difference; heap reuse, int16 path
+lengths, no validity lookup, row/col carried in the heap node and
+`-march=native` each changed nothing beyond noise. The compiler (GCC here,
+LLVM for Whitebox's Rust) is the remaining untested candidate. Peak memory at
+4000²: lsdtt3 644-657 MiB, Whitebox 1759-1774 MiB.
+
+With the CLI defaults (edge policy `outlet`, max_dist 1000, automatic
+increment, remainder fill on) lakeland 4000² took 10.1 s against 4.7 s for the
+matched run: the longer searches cross large lakes.
+
+#### Thread scaling on 4 physical cores
+
+Speedup over each engine's own 1-thread time, 4000² (alpine and lakeland
+within 0.07× of each other):
+
+| case | lsdtt3 2t | lsdtt3 4t | Whitebox 2t | Whitebox 4t |
+|---|---|---|---|---|
+| `slope_only` | 1.80-1.82× | 2.14-2.21× | 1.00× | 2.40-2.42× |
+| `polyfit_all` | 1.83-1.85× | 2.12-2.13× | 1.02-1.03× | 1.80-1.83× |
+| `hillshade` | 1.48× | 1.50-1.53× | 1.01× | 2.05× |
+
+- Whitebox gains nothing from a second core and then 1.8-2.4× from four. That
+  fits a pool of n − 1 workers plus a coordinating thread; not verified (no
+  whitebox_workflows 2.0.6 source).
+- lsdtt3's 4-thread figures are below the 3.18-3.22× of the 2026-09-21
+  allocation. lsdtt3's OpenMP threads were not pinned here, so two can share a
+  physical core's SMT siblings, and the node was shared. Not separated.
+- lsdtt3's 4-thread rows at 1000² are bimodal (hillshade alpine repeats of 8 ms
+  and 20 ms); quote the 4000² rows.
 
 ## 7. Cosmogenic nuclide testing
 

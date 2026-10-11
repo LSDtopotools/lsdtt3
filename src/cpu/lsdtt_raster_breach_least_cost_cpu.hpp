@@ -180,14 +180,15 @@ lsdtt_raster_cpu breach_depressions_least_cost(
 
 // Positional form: forwards to the options overload with
 // max_cost >= FLT_MAX meaning unlimited, min_dist -> minimize_dist and the
-// the struct defaults for edge_policy (outlet), fill_min_slope (1e-4) and
-// fill_flat_resolution (inline_gradient). n_threads is ignored (the algorithm
-// is serial).
+// struct defaults for edge_policy (outlet), fill_min_slope (1e-4) and
+// fill_flat_resolution (inline_gradient). min_dist defaults to false, as
+// minimize_dist does in the struct and in Whitebox. n_threads is ignored (the
+// algorithm is serial).
 lsdtt_raster_cpu breach_depressions_least_cost(
     const lsdtt_raster_cpu& raster,
     int   max_dist       = 1000,
     float max_cost       = (std::numeric_limits<float>::max)(),
-    bool  min_dist       = true,
+    bool  min_dist       = false,
     float flat_increment = 0.0f,
     bool  fill_remainder = true,
     int   n_threads      = 0

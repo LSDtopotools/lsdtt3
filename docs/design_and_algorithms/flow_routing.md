@@ -324,6 +324,263 @@ operation.
 
 ---
 
+## From a raw DEM to a fully routed DEM
+
+A raw DEM cannot be routed directly. It has **depressions** (cells, or groups of
+cells, with no lower neighbour on the way out) and, once those are dealt with,
+**flats** (connected cells of equal elevation). lsdtt3's D8 router requires
+every interior cell to have a strictly lower neighbour; on a true flat it stops
+with `could not assign a receiver`. Getting to a routed DEM is therefore three
+steps, and the first two are what this section is about.
+
+1. **Depressions.** Raise them (fill), cut through their rims (breach), or
+   breach first and fill whatever the breach leaves.
+2. **Flats.** Give them a gradient. Either the fill imposes it while it floods
+   (the default), or a separate pass resolves the flats afterwards (Barnes et
+   al. 2014b).
+3. **Routing.** Build the D8 receivers, the topological order and, by default,
+   the S-vector; drainage area follows from them. See
+   [s_vector rationale](#s_vector-rationale-d8-only).
+
+A surface is **routable** when step 2 has run: every valid cell, other than
+one on the raster edge or next to nodata, has a strictly lower neighbour.
+
+### The defaults
+
+**Analysis CLIs** (`lsdtt-drainage-analysis`, `lsdtt-chi-analysis`,
+`lsdtt-basin-extraction`, `lsdtt-channel-extraction` and the other routing
+CLIs) do steps 1-3 in one run when `raster_is_filled: false`:
+
+| step | default | parameter |
+|---|---|---|
+| depressions | Priority-Flood fill (Barnes et al. 2014), binary heap. `fill_pits` switches to grayscale reconstruction when `fill_min_slope` is 0, which leaves flats the router rejects | `fill_min_slope` |
+| flats | gradient imposed during the fill: each cell ends at least `fill_min_slope` × step length above the cell it was reached from (× √2 on a diagonal) | `fill_min_slope: 0.0001`, `fill_flat_resolution_choice: inline_gradient` |
+| routing | D8 steepest descent, with the S-vector | `build_flow_s_vector: true` (exposed by `lsdtt-drainage-analysis` only; the other CLIs always build it) |
+
+No breaching runs in the analysis CLIs (`lsdtt-stream-burning` has its own
+carve-then-fill route). With `raster_is_filled: true` the fill is skipped and
+the DEM is routed as given; in the CLIs that take
+`fill_flat_resolution_choice`, a `barnes2014b_*` option still resolves any flats
+it holds.
+
+**`lsdtt-raster-preprocessing`** writes conditioned DEMs and exposes every
+option. Its defaults: `fill_algorithm_choice: barnes2014`, `fill_min_slope:
+0.0001`, `fill_flat_resolution_choice: inline_gradient`,
+`priority_flood_queue: binary`, `breach_before_fill: false`,
+`breach_algorithm_choice: lindsay2016`. So a fill-only run gives the same
+surface the analysis CLIs route.
+
+### The options
+
+| route | how to ask for it | routable? | what it does |
+|---|---|---|---|
+| **Priority-Flood with an imposed gradient** (default) | `fill_algorithm_choice: barnes2014`, `fill_min_slope` > 0 | yes | fills and imposes `fill_min_slope` across flats in one pass. Flow on a flat runs in parallel lines towards the outlet ([why](#why-the-default-gives-parallel-flow-on-flats)) |
+| same, radix queue | add `priority_flood_queue: radix` (raster-preprocessing, internal-drainage) | yes | same fill levels. At `fill_min_slope` > 0 the gradients on flats can differ, because ties between equal cells are broken in a different order |
+| **Grayscale reconstruction**, no gradient | `fill_algorithm_choice: vincent1993`, `fill_min_slope: 0` | **no** | the same surface as `barnes2014` at `fill_min_slope: 0`, faster, but flats stay flat. An endpoint, or an input to a flat-resolution step |
+| **Fill, then Barnes 2014b flat resolution** | `fill_flat_resolution_choice: barnes2014b_gradient` or `barnes2014b_float_step` | yes | fills to the spill level, then raises flats so flow converges towards the outlet. Up to four refill-and-resolve rounds plus a final pass on real terrain ([details](#flat-resolution-barnes-et-al-2014b)) |
+| **Complete breaching, then fill** | `breach_before_fill: true`, `breach_algorithm_choice: lindsay2016` | yes (the fill makes it so) | Lindsay (2016) complete breaching: every depression is cut through to a lower cell, then the default fill handles flats and anything left |
+| **Least-cost breaching** | `breach_algorithm_choice: least_cost`, `write_breached_raster: true` | yes, with the default remainder fill | Lindsay (2020) least-cost breaching ([below](#least-cost-breaching)). Cells the breach cannot solve, and flats, are filled by `fill_pits` with `fill_min_slope` |
+| least-cost breaching, then the fill | add `breach_before_fill: true`, `write_fill_raster: true` | yes | as above, then a full fill pass over the breached DEM |
+| Fill-Spill-Merge | `fill_algorithm_choice: barnesetal2021` | not guaranteed | distributes a finite rainfall volume (Barnes et al. 2021); not every depression is filled |
+
+Filling changes the DEM by raising cells only. Breaching lowers cells along a
+channel through the rim, which keeps lakes and closed basins closer to their
+original elevations but cuts trenches. Which is better is a modelling choice,
+not a speed one.
+
+### Least-cost breaching
+
+`breach_algorithm_choice: least_cost` is a port of Whitebox's
+`breach_depressions_least_cost` (whitebox_workflows 2.0.6), which implements
+Lindsay (2020). For each pit, lowest first, a least-cost search finds a path to
+a cell low enough to drain it, and the cells on the path are lowered to a
+channel that descends by a small increment per step. With
+`breach_lc_edge_policy: whitebox`, an explicit `breach_lc_flat_increment` and
+`fill_remainder_after_breach: false`, lsdtt3's output is bit-for-bit
+float32(Whitebox's output); the test suite checks this on two real DEMs and on
+2400 random ones.
+
+!!! warning "Changed after release 0.5.2"
+    Least-cost breaching was rewritten as this port on 2026-10-11. Its output
+    differs from releases up to 0.5.2 in `lsdtt-raster-preprocessing`,
+    `lsdtt-stream-burning` and the Python `breach_least_cost` /
+    `least_cost_carve_depth`. `max_dist` is now a path length in cells (it was a
+    search radius), the cost no longer includes distance unless
+    `breach_lc_minimize_dist` is true, and `lsdtt-stream-burning`'s
+    `breach_max_cost` is therefore total depth cut in metres. Re-run anything
+    that depends on least-cost output.
+
+lsdtt3's defaults differ from Whitebox's in four places, each for a reason:
+
+| parameter | lsdtt3 default | Whitebox | why |
+|---|---|---|---|
+| `breach_lc_edge_policy` | `outlet`: a search may leave the raster at any edge cell, exactly as it may drain into nodata | the edge drains only if an edge cell is already low enough | Whitebox's rule carved trenches across divides to reach a low edge cell (about 1760 m deep on a 500² alpine test DEM) |
+| `breach_lc_max_dist` | 1000 cells (`outlet`), 100 (`whitebox`) | 100 | long enough to cross large water bodies. At 100, a lake in a 1000² lakeland test DEM with no interior outlet in reach was carved 56 m deep to the raster edge |
+| `breach_lc_flat_increment` | automatic: 2 × the float32 spacing at the DEM's largest \|z\| (2.4e-4 m at 1024-2047 m) | about 1e-10 m in float64 | lsdtt3 stores float32, where Whitebox's increment would round away and leave the carved channel flat |
+| `fill_remainder_after_breach` | `true`, with `fill_min_slope` | `fill_deps: false` | without it the output is not routable when any pit is left unsolved |
+
+`breach_lc_minimize_dist` (default false, as in Whitebox) switches the cost from
+total depth cut (m) to depth × path length (m × cells).
+
+**The algorithm, step by step** (as in Whitebox; `δ` is the flat increment):
+
+1. **Find pits.** A pit is a valid cell whose 8 neighbours are all valid, on
+   the raster, and none strictly lower. One row-major pass finds them and
+   raises each, in place, to its lowest neighbour − δ. On a flat floor only
+   alternate cells therefore become pits. Cells on the raster edge or next to
+   nodata are never pits.
+2. **Order.** Pits are processed lowest original elevation first; among equal
+   elevations the last in scan order goes first. A pit that an earlier breach
+   has already given a lower neighbour is skipped.
+3. **Search.** From each pit, a least-cost search over a min-heap. A cell's
+   back-link and path length are fixed when it is first reached, with no later
+   relaxation. The target elevation `L` steps from the pit is
+   `z_pit − L·δ`. The first cell reached at or below its target, or a nodata
+   cell (and, with `edge_policy: outlet`, the raster edge), ends the search.
+4. **Cost.** Pushing a neighbour adds the depth it would have to be cut to
+   (`minimize_dist: false`), or the mean cut of the two cells × the step
+   length in cells (`minimize_dist: true`). Cells are pushed only up to
+   `max_dist` steps. The search gives up when the heap empties or the popped
+   cost exceeds `max_cost`; the pit is then **unsolved** and keeps its raised
+   value.
+5. **Carve.** The cells on the path are lowered to their targets, so the
+   channel descends by δ per step to the outlet. The outlet cell itself is not
+   changed.
+6. **Remainder fill** (`fill_remainder_after_breach: true`, the lsdtt3
+   default). If any interior cell is left without a strictly lower neighbour,
+   the breached DEM goes through `fill_pits` with `fill_min_slope` and
+   `fill_flat_resolution_choice`, which makes it routable.
+
+**The automatic increment.** With `breach_lc_flat_increment: 0`, δ is
+2 × ULP_f32(max(|z|max, 1)), where |z|max is the largest |z| over valid cells
+and ULP_f32 is the gap between adjacent float32 values at that magnitude. It
+is the smallest step that keeps a carved channel strictly descending once
+stored as float32: 1.2e-4 m for |z|max of 512-1023 m, 2.4e-4 m at 1024-2047 m,
+4.9e-4 m at 2048-4095 m. Whitebox's own automatic value (a few float64 ULPs,
+about 1e-10 m) would round away in float32 and leave the channel flat.
+
+**Numerics.** The working copy is float64 and is rounded to float32 once, at
+the end, as Whitebox computes in float64 and lsdtt3 stores float32. The search
+heap is a hand port of Rust's `BinaryHeap`, so equal-cost cells pop in
+Whitebox's order, and the source file is compiled with `-ffp-contract=off` so
+that no compiler fuses a multiply-add and changes the rounding. These three are
+what make the Whitebox comparison bitwise rather than approximate.
+
+**Memory.** A float64 copy of the DEM plus a few bytes per cell of search state:
+peak 644-657 MiB for the whole `lsdtt-raster-preprocessing` process on a 4000²
+DEM, against 1759-1774 MiB for the Whitebox process (same server campaign as
+below). The search is serial.
+
+The implementation notes are in `src/cpu/lsdtt_raster_breach_least_cost_cpu.cpp`.
+
+### Speed of the options
+
+!!! warning "What these numbers are"
+    One server campaign: forth01, AMD EPYC 9654P, 2026-10-11, lsdtt3 `4d8d844`
+    built with GCC 13 `-O3`. The node was **shared, not an exclusive
+    allocation**, and the governor was `schedutil`. Every row is 1 thread, the
+    median of 5 repeats after a warm-up, and the compute time the CLI prints
+    itself (no file I/O). Treat ratios as indicative of this machine and these
+    DEMs. Raw data and method: `docs/what_is_lsdtt3/running_benchmarks.md` and
+    `docs/developer_notes/testing_and_benchmarking.md`.
+
+The DEMs are Copernicus 30 m crops: an alpine region (steep, few depressions)
+and a lakeland region (low relief, many lakes), at 1000², 2000² and 4000²
+cells. Seconds to a conditioned DEM (steps 1-2 only):
+
+| route | routable? | alpine 1k | lakeland 1k | alpine 2k | lakeland 2k | alpine 4k | lakeland 4k |
+|---|---|---|---|---|---|---|---|
+| reconstruction, no gradient (`vincent1993`) | no | 0.049 | 0.084 | 0.211 | 0.419 | 1.398 | 2.184 |
+| Priority-Flood, no gradient | no | 0.135 | 0.129 | 0.640 | 0.599 | 3.044 | 3.721 |
+| **Priority-Flood + gradient (default)** | yes | 0.141 | 0.131 | 0.645 | 0.587 | 3.050 | 3.290 |
+| same, radix queue | yes | 0.198 | 0.158 | 0.835 | 0.641 | 3.552 | 3.034 |
+| fill + Barnes 2014b, gradient | yes | 0.213 | 0.776 | 2.179 | 3.629 | 11.812 | 18.529 |
+| least-cost breach, defaults (remainder fill on) | yes | 0.035 | 0.196 | 0.133 | 0.931 | 0.491 | 10.055 |
+| least-cost breach, then the default fill | yes | 0.175 | 0.353 | 0.784 | 1.668 | 3.641 | 15.014 |
+| Lindsay 2016 breach, then the default fill | yes | 0.301 | 0.336 | 1.390 | 1.582 | 6.814 | 9.852 |
+
+What the table shows, by terrain:
+
+- **Alpine:** least-cost breaching with the defaults is the fastest routable
+  option (4-6× faster than the default fill). Few pits, each solved by a short
+  search.
+- **Lakeland:** the default fill is the fastest routable option up to 2000²;
+  at 4000² the radix queue is (3.03 s against 3.29 s). Least-cost breaching
+  with `max_dist` 1000 takes 10.1 s at lakeland 4k: its searches cross large
+  lakes.
+- **Barnes 2014b** costs 1.5-6× the default fill. It is the option that makes
+  flow converge on flats; it is not the fast one.
+- **Breach then fill**, least-cost against Lindsay 2016: least-cost is faster on
+  alpine at every size, about equal on lakeland up to 2000², and slower on
+  lakeland 4k (15.0 s against 9.9 s).
+
+End to end, `lsdtt-drainage-analysis` on the raw DEM (default fill + D8 with
+S-vector + drainage area) took 0.24 / 0.24 / 1.10 / 1.10 / 4.91 / 5.31 s on the
+six DEMs. The fill is about 60% of that and the D8 build about 40%, of which
+the S-vector is 21-38% of the D8 step (`build_flow_s_vector: false` takes it
+from 1.88 s to 1.39 s at alpine 4k).
+
+### How lsdtt3 differs from RichDEM, TopoToolbox and Whitebox
+
+Each package's **default** route from a raw DEM to D8 flow accumulation:
+
+| package | depressions | flats | slope on flats in the output DEM | D8 picks |
+|---|---|---|---|---|
+| lsdtt3 | Priority-Flood fill (Barnes 2014) | gradient imposed during the fill | at least `fill_min_slope` (1e-4 m/m) | steepest descent (drop / distance) |
+| RichDEM 2.3.0 | Priority-Flood fill. The default leaves flats its D8 does not route; `FillDepressions(epsilon=True)` raises each flat cell by one floating-point step | one float step per cell | of order the float spacing / cell size | the **lowest** neighbour, not the steepest ([why](#why-richdems-d8-differs-from-lsdtt3-and-topotoolbox)) |
+| TopoToolbox (Python 0.0.12) | grayscale reconstruction (`fillsinks`, hybrid) | routed inside `FlowObject` by least-cost carving on an auxiliary surface; the DEM itself is not changed | zero: flats stay flat | steepest descent; on flats, the auxiliary surface |
+| Whitebox (whitebox_workflows 2.0.6) | pit-centric fill (`fill_depressions`), one pit at a time | raised in 1e-4 m steps by a rank that leads towards lower terrain | small but real | steepest descent |
+
+Where the same algorithm exists in more than one package, the test suite
+compares the outputs value for value (`docs/developer_notes/testing_and_benchmarking.md`):
+
+- Priority-Flood fill (no gradient): lsdtt3, RichDEM, Whitebox
+  (`fill_depressions_wang_and_liu`, Wang and Liu 2006).
+- Grayscale reconstruction: lsdtt3 `vincent1993`, TopoToolbox `fillsinks`.
+- Lindsay (2016) complete breaching: lsdtt3, RichDEM `BreachDepressions`.
+- Least-cost breaching: lsdtt3 (`edge_policy: whitebox`), Whitebox.
+- D8 steepest descent: lsdtt3, TopoToolbox (accumulation asserted equal).
+
+Two structural differences explain most of the speed differences between
+default pipelines:
+
+- **The S-vector.** lsdtt3's D8 build also builds the upstream ordering that
+  chi analysis, basin extraction and the cosmogenic routines rely on. No other
+  package builds it, and it is 21-38% of lsdtt3's D8 time. With it switched
+  off, lsdtt3's D8 accumulation took 0.53-0.76 of Whitebox's time and
+  0.58-0.67 of RichDEM's in the campaign above.
+- **Where flats are paid for.** lsdtt3 resolves flats inside the fill, at a
+  cost that hardly depends on terrain. TopoToolbox fills cheaply by
+  reconstruction and pays for flats in its routing step, at a cost that grows
+  with flat area.
+
+Seconds, raw DEM to D8 accumulation, each package's defaults (same campaign):
+
+| package | alpine 1k | lakeland 1k | alpine 2k | lakeland 2k | alpine 4k | lakeland 4k |
+|---|---|---|---|---|---|---|
+| lsdtt3 | 0.241 | 0.240 | 1.103 | 1.100 | 4.909 | 5.310 |
+| RichDEM (epsilon fill) | 0.247 | 0.245 | 1.150 | 1.097 | 5.095 | 5.272 |
+| TopoToolbox | 0.147 | 0.285 | 0.578 | 1.335 | 2.790 | 6.729 |
+| Whitebox | 0.127 | 0.494 | 0.446 | 6.648 | 2.361 | 81.273 |
+
+These pipelines do different work and produce different surfaces, so the table
+answers "how long does each package take with its defaults", not "which
+implementation is faster". On alpine 4k the TopoToolbox / lsdtt3 difference
+decomposes (from separately measured steps) into about 1.7 s for the fill
+family (reconstruction 1.33 s against Priority-Flood with a gradient 3.05 s;
+lsdtt3's own reconstruction takes 1.40 s) and about 0.5 s for the S-vector. On
+lakeland 4k TopoToolbox's flat routing took about 4.9 s and lsdtt3 was faster.
+Whitebox's pit-centric fill is fast where pits are few and slow where they are
+many (81 s at lakeland 4k).
+
+The same pipeline in lsdtt3 and Whitebox (a Priority-Flood fill with a gradient,
+Whitebox `fill_depressions_wang_and_liu` with `flat_increment` = 1e-4 × cell
+size, then steepest-descent D8) took, in Whitebox, 0.99-2.00 times lsdtt3's
+time across the six DEMs. Whitebox was launched pinned to one core: its
+`max_procs` setting alone did not keep it on one.
+
+---
+
 ## Depression filling: two algorithms, one result
 
 `lsdtt3` ships two depression-filling backends. They produce **bit-identical**
@@ -1103,6 +1360,17 @@ for D8 accumulation checks.
   drainage direction over flat surfaces in raster digital elevation models.
   *Computers & Geosciences* 62, 128-135. doi:10.1016/j.cageo.2013.01.009. The
   flat-resolution mask behind `barnes2014b_gradient` and `barnes2014b_float_step`.
+- Barnes, R., Callaghan, K.L., and Wickert, A.D. (2021). Computing water flow
+  through complex landscapes - Part 3: Fill-Spill-Merge: flow routing in
+  depression hierarchies. *Earth Surface Dynamics* 9, 105-121.
+  doi:10.5194/esurf-9-105-2021.
+- Vincent, L. (1993). Morphological grayscale reconstruction in image analysis:
+  applications and efficient algorithms. *IEEE Transactions on Image
+  Processing* 2(2), 176-201. The `vincent1993` fill.
+- Wang, L., and Liu, H. (2006). An efficient method for identifying and filling
+  surface depressions in digital elevation models for hydrologic analysis and
+  modelling. *International Journal of Geographical Information Science*
+  20(2), 193-213.
 - Lindsay, J.B. (2016). Efficient hybrid breaching-filling sink removal methods
   for flow path enforcement in digital elevation models. *Hydrological
   Processes* 30(6), 846-857.
