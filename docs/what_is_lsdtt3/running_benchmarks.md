@@ -120,14 +120,17 @@ D-infinity every engine's throughput at 8000² was within 0.95–1.04× of its
 size study. If the 8000 px source is already in your fixture cache it is reused
 rather than downloading a new one, and existing crops keep their hashes.
 
-Whitebox is measured at 1 and 2 threads only: on that campaign it scaled
-0.96–1.04× at every thread count on every surface case, so higher counts
-repeated the same number.
+Whitebox is swept over the same thread counts as lsdtt3. From 2026-09-13 to
+2026-10-10 it was measured at 1 and 2 threads only, because an earlier campaign
+showed it flat (0.96–1.04×) at every thread count. That evidence is no longer
+trusted: on 2026-10-11 Whitebox used 1.3–1.65 CPUs at `max_procs=1` on a
+machine that allowed the process only 2, so a flat curve there showed the
+mask, not Whitebox.
 
 The server runtime is an estimate: that same campaign spent 80 minutes on the
 1000-4000² rungs, and cases have since been added, removed and re-paired
 (see [Reading the results](#2-only-compare-like-with-like)); the plan is now
-354 measurements. The
+390 measurements. The
 wrapper's default Slurm time limit is 12 hours.
 
 ```sh
@@ -334,6 +337,28 @@ suite checks this on two real DEMs and on 2400 random ones. lsdtt3's own
 defaults differ: the raster edge is an outlet and the maximum path length is
 1000 cells. `breach_least_cost_default` times that configuration.
 
+### What `accum_d8` and `accum_d8_no_svector` measure
+
+Both cases time D8 flow accumulation on the same filled DEM, and give the same
+drainage-area raster. They differ in one thing that only lsdtt3 does.
+
+- **`accum_d8`** is what a user of lsdtt3 pays. `lsdtt-drainage-analysis`
+  also builds the S-vector: the upstream ordering that chi analysis, basin
+  extraction and the cosmogenic routines rely on. That is about 57% of
+  lsdtt3's build time. No reference package builds anything like it.
+- **`accum_d8_no_svector`** runs the same CLI with
+  `build_flow_s_vector: false`. This is the like-for-like comparison.
+
+The reference packages have no S-vector to switch off, so their call is
+identical in both cases. Their `accum_d8` rows are copied into
+`accum_d8_no_svector` rather than measured twice (`reused_from` in the CSV),
+which is why the reference columns of the two cases are identical.
+
+Quote both rows or neither. `accum_d8` alone charges lsdtt3 for work the
+references never do, and `accum_d8_no_svector` alone hides work lsdtt3's users
+do get. `SUMMARY.md` says this under the throughput table and in its
+**Case notes** section.
+
 ### What `route_d8_epsilon` runs
 
 The like-for-like route from a raw DEM to D8 flow accumulation:
@@ -467,6 +492,16 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
       is routable, so the two times measured different work.
     - `fill_whitebox_default` was removed. Whitebox's pit-centric
       `fill_depressions` is not like-for-like with any lsdtt3 fill.
+    - Whitebox is now swept over every thread count, not just 1 and 2
+      (390 `server` measurements, up from 354), and is pinned to that many
+      CPUs with `taskset`, because `max_procs` alone did not hold it to one
+      core. Earlier Whitebox rows for slope, hillshade, `polyfit_all` and
+      `accum_d8` are not comparable with new ones. See
+      [The two profiles](#the-two-profiles).
+    - `SUMMARY.md` gained a **Case notes** section, which lists what every
+      measured case runs and which reference rows are copied, and a
+      **CPU use at the baseline thread count** table (see
+      [Respect the flags](#3-respect-the-flags)).
 
 ### 3. Respect the flags
 
@@ -479,6 +514,24 @@ a ~279 ms process: spinup costs time but we wish to measure compute.
   report-only, as is `route_d8_default`. The lsdtt3-only cases are flagged
   report-only too: they have no reference to form a ratio with, and are there
   to compare lsdtt3's own methods with each other.
+
+!!! warning "A 1-thread Whitebox row is not always one core"
+    Whitebox runs its own thread pool, and `max_procs=1` does not hold every
+    tool to one core. On 2026-10-11 the Whitebox process used 1.48 CPUs on
+    hillshade, 1.54 on `polyfit_all`, 1.65 on slope and 1.30 on `accum_d8`
+    at `max_procs=1` (CPU time over wall time, lakeland 4000²). Its fills,
+    breaching, D-infinity and MFD stayed at about 1.0. A ratio between such a
+    row and a single-core lsdtt3 row is not like-for-like.
+
+    Since 2026-10-11 the suite launches Whitebox under `taskset`, confined to
+    as many CPUs as the row's thread count (one per physical core where the
+    mask allows it). Every thread Whitebox starts inherits that mask, so a
+    1-thread row is one core. If `taskset` is missing the row runs unpinned,
+    and `SUMMARY.md` lists every engine and case above 1.2 CPUs under
+    **CPU use at the baseline thread count**. Whitebox rows for slope,
+    hillshade, `polyfit_all` and `accum_d8` from earlier campaigns were
+    unpinned: do not compare them with new rows. RichDEM and TopoToolbox run
+    single-threaded in every routine the suite calls.
 
 !!! note "Whitebox reads its input file inside the timed call"
     A Whitebox raster keeps a handle to its file, and Whitebox's tools re-read
@@ -559,7 +612,7 @@ Before submitting a long run:
    built for the old 8000² ladder works as-is.
 4. **Dry-run** to see exactly what will be measured (from the lsdtt3 checkout;
    it downloads and measures nothing). It lists every case, which engines run
-   it and at how many thread counts; the current `server` plan is 354
+   it and at how many thread counts; the current `server` plan is 390
    measurements:
    ```sh
    cd /path/to/lsdtt3
@@ -1079,6 +1132,19 @@ pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
 
 Use `--threads` to override the ladder — but cap it at your **physical** core
 count, for the reason in [§4 above](#4-scaling-curves-need-a-ceiling-and-the-big-dems).
+
+Check first that the process may actually use that many CPUs. `nproc` must be
+at least the largest thread count, and the `- host:` line at the top of
+`SUMMARY.md` must not say "usable by this process". If it does, the rows above
+that number were time-slicing and the sweep has to be re-run:
+
+```sh
+nproc                                          # e.g. 8
+lscpu | grep -E '^Thread|^Core|^Socket'        # hyperthreads per core
+pixi run -e benchmark python tests/scripts/run_benchmark_suite.py \
+    --profile server --suites surface --threads 1,2,4,8 \
+    --out-dir /abs/path/campaigns --fixture-dir /abs/path/fixtures
+```
 
 ### Pick a rung with enough compute in it
 

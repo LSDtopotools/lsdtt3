@@ -2438,6 +2438,21 @@ not be quoted**. The other three affected cases are `report_only` and carry no
 ratio. Until the pinning is understood, treat every Whitebox row for slope,
 hillshade, curvature and D8 accumulation as an unpinned measurement.
 
+**Fixed 2026-10-11 by pinning the process, not the setting.** The forth01
+campaign of that date showed the same thing from the other side: on a 2-CPU
+mask, Whitebox used 1.30 (`accum_d8`), 1.48 (hillshade), 1.54 (`polyfit_all`)
+and 1.65 (slope) CPUs per process at `max_procs=1`. `run_benchmark_suite.py`
+now launches every Whitebox measurement under `taskset -c <cpus>`, with as many
+CPUs as the row's thread count, one per physical core first
+(`whitebox_cpu_pin()`). The mask is inherited by every thread Whitebox starts.
+A laptop check at 1000² after the change: Whitebox slope 130 ms at 1 thread and
+82 ms at 2, hillshade 91 and 53 ms, so the tools do scale once the 1-thread row
+really is one core. `REFERENCE_MAX_THREADS` was emptied at the same time,
+because the cap at 2 threads rested on flat curves measured on a restricted
+mask. `SUMMARY.md` gained a CPU-use table that lists any engine and case
+above 1.2 CPUs at the baseline thread count, so an unpinned row cannot pass
+unnoticed.
+
 ## 7. Cosmogenic nuclide testing
 
 > **The CRN numeric core is locked.** The analytical solutions exercised by

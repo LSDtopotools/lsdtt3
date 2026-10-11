@@ -196,7 +196,16 @@ SERIAL_REFERENCES = ("richdem", "topotoolbox")
 # neither. Measuring it at 4 and 8 threads repeated the same number under
 # larger labels for ~12 min per campaign. 2 threads is kept so the flat curve
 # stays visible in the scaling table rather than being assumed.
-REFERENCE_MAX_THREADS: dict[str, int] = {"whitebox": 2}
+#
+# CAP LIFTED 2026-10-11. The forth01 campaign of that date ran under a 2-CPU
+# affinity mask, and Whitebox used 1.3-1.65 CPUs per process at max_procs=1
+# (cpu_seconds_process / seconds_process, lakeland_4000). Under a 2-CPU mask
+# it had nothing left to gain at 2 threads, so a flat curve there says nothing
+# about Whitebox. Whether the forth02 campaign was also restricted is unknown,
+# so the evidence for the cap is not trusted: Whitebox is swept like lsdtt3.
+# The mechanism is kept; add an entry here only from a campaign whose
+# hardware manifest shows `affinity_restricted: false`.
+REFERENCE_MAX_THREADS: dict[str, int] = {}
 
 
 def _engine_thread_count(engine: str, case: dict, threads: list[int]) -> int:
@@ -1909,6 +1918,48 @@ def measure_lsdtt(case_name: str, case: dict, fixture: pathlib.Path,
     return info
 
 
+def physical_cpu_list(n: int) -> list[int]:
+    """Up to `n` CPUs this process may use, one per physical core first.
+
+    Hyperthread siblings are taken only once every allowed physical core has
+    one CPU, so `n` threads land on `n` cores wherever the mask allows it.
+    Returns [] where affinity cannot be read (non-Linux)."""
+    try:
+        allowed = sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return []
+    first, rest, seen = [], [], set()
+    for cpu in allowed:
+        sib = pathlib.Path(f"/sys/devices/system/cpu/cpu{cpu}/topology/"
+                           "thread_siblings_list")
+        try:
+            key = sib.read_text().strip()
+        except OSError:
+            key = str(cpu)
+        (rest if key in seen else first).append(cpu)
+        seen.add(key)
+    return (first + rest)[:n]
+
+
+def whitebox_cpu_pin(threads: int) -> list[str]:
+    """`taskset` prefix that confines Whitebox to `threads` CPUs.
+
+    whitebox_workflows 2.0.6 does not honour `max_procs` in every tool. At
+    max_procs=1 its slope, hillshade, polyfit and d8_flow_accum used 1.3-1.65
+    CPUs on a 2-CPU mask (forth01, 2026-10-11), and ran 40-72% faster at
+    "1 thread" once an allocation gave it more (2026-09-21; see
+    docs/developer_notes/testing_and_benchmarking.md). Without this, a
+    Whitebox "1 thread" row is a many-core row set against single-core lsdtt3.
+    The affinity mask is inherited by every thread Whitebox starts, so its
+    pool cannot leave these CPUs whatever it decides. Empty (no pinning) when
+    taskset or the affinity mask is unavailable; the row is then flagged in
+    the CPU-use table if it used more than one core."""
+    cpus = physical_cpu_list(threads)
+    if not cpus or shutil.which("taskset") is None:
+        return []
+    return ["taskset", "-c", ",".join(str(c) for c in cpus)]
+
+
 def reference_env(threads: int) -> dict[str, str]:
     """Environment for a reference subprocess, with thread counts pinned.
 
@@ -1984,6 +2035,8 @@ def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
         cmd += ["--threads", str(threads)]
     if extra_args:
         cmd += list(extra_args)
+    if engine == "whitebox":
+        cmd = whitebox_cpu_pin(threads) + cmd
 
     r = run_with_rusage(cmd, env=reference_env(threads), timeout=timeout)
     if r.get("timed_out"):
@@ -2609,8 +2662,15 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
 
     L.append("## Throughput (median, Mcells/s, higher is better)")
     L.append("")
-    L.append("Like-for-like only: every row here is an in-process timing of "
-             "the routine itself.")
+    L.append("Every row here is an in-process timing of the routine itself, "
+             "and each case is matched as closely as the bindings allow. Two cases "
+             "carry a caveat, stated in [Case notes](#case-notes): "
+             "`accum_d8` charges lsdtt3 for an S-vector that no reference "
+             "builds (quote it only beside `accum_d8_no_svector`), and the "
+             "reference columns of `accum_d8_no_svector` are COPIED from "
+             "`accum_d8`, because the reference call is identical. Check "
+             "[CPU use at the baseline thread count](#cpu-use-at-the-baseline-thread-count) "
+             "before reading a 1-thread row as single-core.")
     L.append("")
     L.append("`n/a` means the operation is NOT REACHABLE THROUGH THE INTERFACE "
              "BENCHMARKED HERE -- a result, not a gap. `-` means no comparable "
@@ -2678,6 +2738,7 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
         _plain_table(L, report_only)
 
     _fill_ranking(L, ok)
+    _case_notes(L, ok)
 
     L.append("")
     L.append("## Parallel scaling (lsdtt3 and whitebox)")
@@ -2693,6 +2754,7 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
                  "the correct answer, not a finding, so the sweep is not run.")
         L.append("")
     _scaling_table(L, ok)
+    _cpu_use_table(L, ok)
 
     L.append("")
     L.append("## Peak memory (MiB, whole child process)")
@@ -2777,7 +2839,9 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
              "separately in `seconds_read` / `seconds_write` in the CSV.")
     L.append("- RichDEM and TopoToolbox are serial for these routines; their "
              "rows exist only at 1 thread and are marked `serial_reference`. A "
-             "flat scaling curve for them is not a finding.")
+             "flat scaling curve for them is not a finding. Whitebox is not: "
+             "its thread pool can use more than one core at `max_procs=1`, "
+             "which the CPU-use table shows per case.")
     L.append("- Values are not asserted anywhere in this campaign. Correctness "
              "lives in the CTest suite; see `docs/developer_notes/testing_and_benchmarking.md`.")
     path.write_text("\n".join(L) + "\n")
@@ -2962,6 +3026,87 @@ def _scaling_table(L: list[str], rows: list[dict]) -> None:
                 if any(c != "-" for c in cells[1:]):
                     L.append(f"| {case_name} | {eng} | {fx} | "
                              + " | ".join(cells) + " |")
+
+
+# A process whose CPU time exceeds its wall time by more than this at the
+# baseline thread count used more than one core. Process-level figures include
+# serial startup and I/O, so a parallel routine is understated, never inflated.
+MULTI_CORE_CPU_RATIO = 1.2
+
+
+def _cpu_use_table(L: list[str], rows: list[dict]) -> None:
+    """CPU time / wall time per engine and case, at the baseline thread count.
+
+    A "1 thread" row is only single-core if the engine honours the setting.
+    Whitebox does not always: at max_procs=1 it used 1.3-1.65 CPUs on slope,
+    hillshade, polyfit and d8_flow_accum on forth01 (2026-10-11). A ratio
+    against single-core lsdtt3 is then uneven, and the reader has to see it.
+    Whole-process figures (cpu_seconds_process / seconds_process), median
+    over fixtures; startup and I/O are serial, so the routine's own figure is
+    higher, never lower.
+    """
+    base_rows = [r for r in rows if r.get("cpu_seconds_process")
+                 and r.get("seconds_process") and not r.get("reused_from")]
+    if not base_rows:
+        return
+    base = min(int(r["threads"]) for r in base_rows)
+    ratios: dict[tuple[str, str], list[float]] = {}
+    for r in base_rows:
+        if int(r["threads"]) != base or float(r["seconds_process"]) <= 0:
+            continue
+        ratios.setdefault((r["case"], r["engine"]), []).append(
+            float(r["cpu_seconds_process"]) / float(r["seconds_process"]))
+    multi = {k: statistics.median(v) for k, v in ratios.items()
+             if statistics.median(v) > MULTI_CORE_CPU_RATIO}
+    L.append("")
+    L.append("### CPU use at the baseline thread count")
+    L.append("")
+    L.append(f"Process CPU time divided by wall time, at {base} thread(s), "
+             "median over fixtures. Near 1.0 means one core. Startup and I/O "
+             "are serial, so a parallel routine reads LOW here, never high.")
+    L.append("")
+    if not multi:
+        L.append(f"No engine exceeded {MULTI_CORE_CPU_RATIO:g} on any case: "
+                 f"every {base}-thread row ran on about one core.")
+        return
+    L.append(f"These rows exceeded {MULTI_CORE_CPU_RATIO:g}, so their "
+             f"{base}-thread timings used more than one core. A ratio between "
+             "one of them and a single-core row is not like-for-like.")
+    L.append("")
+    L.append("| case | engine | CPU / wall |")
+    L.append("|---|---|---|")
+    for (case_name, eng), v in sorted(multi.items()):
+        L.append(f"| {case_name} | {eng} | {v:.2f} |")
+
+
+def _case_notes(L: list[str], rows: list[dict]) -> None:
+    """Every measured case's registry note, so the caveats travel with the
+    campaign instead of living only in the CSV and this script."""
+    cases = sorted({r["case"] for r in rows if r["case"] in CASES})
+    if not cases:
+        return
+    L.append("")
+    L.append("## Case notes")
+    L.append("")
+    L.append("What each case runs, as recorded in the case registry. Read the "
+             "note before quoting a row; `report_only` cases are in the "
+             "absolute-time table, not the throughput table.")
+    L.append("")
+    L.append("| case | suite | engines | report-only | note |")
+    L.append("|---|---|---|---|---|")
+    for c in cases:
+        case = CASES[c]
+        engines = ", ".join(["lsdtt3"] + sorted(case.get("engines", {})))
+        note = str(case.get("note", "")).replace("|", "\\|")
+        reuse = case.get("reuse_from") or {}
+        if reuse:
+            note = note.rstrip(". ") + ". "
+            note += ("Reference rows COPIED from "
+                     + ", ".join(f"{e}: `{src}`"
+                                 for e, src in sorted(reuse.items()))
+                     + " (identical call).")
+        L.append(f"| `{c}` | {case.get('suite', '')} | {engines} | "
+                 f"{'yes' if case.get('report_only') else 'no'} | {note} |")
 
 
 def _memory_table(L: list[str], rows: list[dict]) -> None:
