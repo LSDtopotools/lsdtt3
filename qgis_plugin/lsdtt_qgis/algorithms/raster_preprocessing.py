@@ -279,11 +279,12 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         self._add_advanced(
             QgsProcessingParameterNumber(
                 self.BREACH_LC_MAX_DIST,
-                "Least-cost breaching: maximum breach path length (cells)",
+                "Least-cost breaching: maximum breach path length (cells; "
+                "0 = edge-policy default: 1000 outlet, 100 whitebox)",
                 type=QgsProcessingParameterNumber.Integer,
-                minValue=1,
+                minValue=0,
                 maxValue=32767,
-                defaultValue=100,
+                defaultValue=0,
             )
         )
         self._add_advanced(
@@ -548,7 +549,6 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             "breach_algorithm_choice": self.BREACH_ALGORITHM_OPTIONS[
                 self.parameterAsEnum(parameters, self.BREACH_ALGORITHM, context)
             ],
-            "breach_lc_max_dist": self.parameterAsInt(parameters, self.BREACH_LC_MAX_DIST, context),
             "breach_lc_flat_increment": self.parameterAsDouble(
                 parameters, self.BREACH_LC_FLAT_INCREMENT, context
             ),
@@ -588,6 +588,12 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         breach_lc_max_cost = self.parameterAsDouble(parameters, self.BREACH_LC_MAX_COST, context)
         if breach_lc_max_cost > 0.0:
             param_values["breach_lc_max_cost"] = breach_lc_max_cost
+
+        # 0 leaves breach_lc_max_dist out, so the CLI applies the edge
+        # policy's default (1000 outlet, 100 whitebox).
+        breach_lc_max_dist = self.parameterAsInt(parameters, self.BREACH_LC_MAX_DIST, context)
+        if breach_lc_max_dist > 0:
+            param_values["breach_lc_max_dist"] = breach_lc_max_dist
 
         if mask_layer is not None:
             param_values["run_binary_mask"] = True

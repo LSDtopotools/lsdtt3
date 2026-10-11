@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -298,7 +300,7 @@ Raster fill_pits_boundary_aware(
 }
 
 lsdtt::breach_least_cost_options least_cost_options(
-    int max_distance,
+    std::optional<int> max_distance,
     float max_cost,
     bool prefer_shortest_path,
     float flat_increment,
@@ -307,7 +309,6 @@ lsdtt::breach_least_cost_options least_cost_options(
     float fill_min_slope)
 {
     lsdtt::breach_least_cost_options options;
-    options.max_dist       = max_distance;
     options.max_cost       = (max_cost >= (std::numeric_limits<float>::max)())
                            ? std::numeric_limits<double>::infinity()
                            : static_cast<double>(max_cost);
@@ -316,12 +317,17 @@ lsdtt::breach_least_cost_options least_cost_options(
     options.fill_remainder = fill_remainder;
     options.fill_min_slope = fill_min_slope;
     options.edge_policy    = lsdtt::parse_breach_lc_edge_policy(edge_policy, "edge_policy");
+    // None: the edge policy's default (1000 outlet, to bridge large water
+    // bodies; 100 whitebox), as in lsdtt-raster-preprocessing.
+    options.max_dist       = max_distance.has_value()
+                           ? *max_distance
+                           : lsdtt::default_breach_lc_max_dist(options.edge_policy);
     return options;
 }
 
 Raster breach_least_cost(
     const Raster& raster,
-    int max_distance,
+    std::optional<int> max_distance,
     float max_cost,
     bool prefer_shortest_path,
     float flat_increment,
@@ -338,7 +344,7 @@ Raster breach_least_cost(
 
 Raster least_cost_carve_depth(
     const Raster& raster,
-    int max_distance,
+    std::optional<int> max_distance,
     float max_cost,
     bool prefer_shortest_path,
     float flat_increment,
@@ -447,7 +453,7 @@ points : array-like, shape (n, 2)
         nb::arg("n_threads") = 0, nb::arg("priority_flood_backend") = "binary",
         "Fill pits with NESW open, closed, periodic, or base-level boundaries.");
     m.def("breach_least_cost", &breach_least_cost, nb::arg("raster"),
-        nb::arg("max_distance") = 100,
+        nb::arg("max_distance") = nb::none(),
         nb::arg("max_cost") = (std::numeric_limits<float>::max)(),
         nb::arg("prefer_shortest_path") = false, nb::arg("flat_increment") = 0.0f,
         nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0,
@@ -458,9 +464,11 @@ A port of WhiteboxTools BreachDepressionsLeastCost (whitebox_workflows 2.0.6).
 
 Parameters
 ----------
-max_distance : int, default=100
+max_distance : int or None, default=None
     Maximum breach path length in cells, counted in steps from the pit (a
-    diagonal step counts as one). 1 to 32767.
+    diagonal step counts as one). 1 to 32767. None selects the edge policy's
+    default: 1000 for ``outlet`` (long enough to bridge large water bodies)
+    and 100 for ``whitebox`` (the WhiteboxTools default).
 max_cost : float, optional
     A pit whose cheapest path costs more is left unbreached. The cost is the
     depth each path cell is lowered, summed: metres, or metres x cells when
@@ -483,7 +491,7 @@ fill_min_slope : float, default=0.0001
     Gradient (m/m) imposed by the remainder fill.
 )doc");
     m.def("least_cost_carve_depth", &least_cost_carve_depth, nb::arg("raster"),
-        nb::arg("max_distance") = 100,
+        nb::arg("max_distance") = nb::none(),
         nb::arg("max_cost") = (std::numeric_limits<float>::max)(),
         nb::arg("prefer_shortest_path") = false, nb::arg("flat_increment") = 0.0f,
         nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0,

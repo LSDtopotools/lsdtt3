@@ -879,7 +879,7 @@ def bandpass_filter(raster: lsdtt3.Raster, short_metres: float, long_metres: flo
 
 ## `breach_least_cost`
 
-breach_least_cost(raster: lsdtt3.Raster, max_distance: int = 100, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
     Parameters
     ----------
@@ -895,7 +895,7 @@ breach_least_cost(raster: lsdtt3.Raster, max_distance: int = 100, max_cost: floa
 
     Notes
     -----
-    breach_least_cost(raster: lsdtt3.Raster, max_distance: int = 100, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+    breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
 Breach depressions along least-cost paths (Lindsay 2020).
 
@@ -903,9 +903,11 @@ A port of WhiteboxTools BreachDepressionsLeastCost (whitebox_workflows 2.0.6).
 
 Parameters
 ----------
-max_distance : int, default=100
+max_distance : int or None, default=None
     Maximum breach path length in cells, counted in steps from the pit (a
-    diagonal step counts as one). 1 to 32767.
+    diagonal step counts as one). 1 to 32767. None selects the edge policy's
+    default: 1000 for ``outlet`` (long enough to bridge large water bodies)
+    and 100 for ``whitebox`` (the WhiteboxTools default).
 max_cost : float, optional
     A pit whose cheapest path costs more is left unbreached. The cost is the
     depth each path cell is lowered, summed: metres, or metres x cells when
@@ -933,7 +935,7 @@ fill_min_slope : float, default=0.0001
 
 
 ```python
-def breach_least_cost(raster: lsdtt3.Raster, max_distance: int = 100, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+def breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 ```
 
 ---
@@ -1740,7 +1742,7 @@ def invert_binary_mask(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 ## `least_cost_carve_depth`
 
-least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int = 100, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
     Parameters
     ----------
@@ -1756,7 +1758,7 @@ least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int = 100, max_cost:
 
     Notes
     -----
-    least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int = 100, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+    least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
 Return the non-negative elevation removed by least-cost breaching (parameters as breach_least_cost).
 
@@ -1766,7 +1768,7 @@ Return the non-negative elevation removed by least-cost breaching (parameters as
 
 
 ```python
-def least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int = 100, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+def least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 ```
 
 ---

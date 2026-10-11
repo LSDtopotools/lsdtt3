@@ -96,7 +96,28 @@
 // to 0 they fall back to the positional API only, explicit-increment W runs,
 // and NOT RUN for C and O.
 //
-// Usage: lsdtt-test-breach-least-cost
+// Real terrain (--real-terrain <crop.tif>, unit_breach_least_cost_real_terrain):
+//   the committed 128 x 128 lakeland crop (tests/data/
+//   flat_resolution_lakeland_crop_dem.tif).
+//   RT0  the crop loads (128 x 128, 30 m, every cell valid) and its float32
+//        values have the digest of the input Whitebox was run on.
+//   RT1  matched parameters (edge_policy whitebox, fill_remainder false,
+//        flat_increment float32(0.001) widened to double -- what the CLI
+//        passes for 0.001 -- max_dist 100 and 1000, minimize_dist false and
+//        true): the float32 output's FNV-1a-64 digest equals that of
+//        float32(Whitebox 2.0.6's f64 output) on the same input, computed
+//        from Whitebox itself (2026-10-11). The pit counters are pinned from
+//        the lsdtt3 run that matched.
+//   RT2  lsdtt3 defaults (edge_policy outlet, max_dist 1000, auto increment,
+//        remainder fill on) and whitebox mode at its default max_dist 100;
+//        and max_dist 3 (pits left
+//        unsolved, so the remainder fill must run) with inline_gradient and
+//        each barnes2014b option: every interior cell has a strictly lower
+//        neighbour.
+//   RT3  the same outputs: lsdtt_flowinfo (D8, boundary oooo) builds and
+//        validate() passes.
+//
+// Usage: lsdtt-test-breach-least-cost [--real-terrain <crop.tif>]
 // Prints one PASS/FAIL/NOT RUN line per check, a per-fixture table, and a
 // final "RESULT: PASS|FAIL". Exit code 1 on any failure.
 // -----------------------------------------------------------------------------
@@ -122,6 +143,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "lsdtt_data_loader.hpp"
+#include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "lsdtt_raster_breach_least_cost_cpu.hpp"
@@ -1967,6 +1990,14 @@ void test_outlet_policy(const std::map<std::string, grid>& fx)
         const lsdtt::breach_least_cost_options o{};
         check("O0 breach_least_cost_options default edge_policy is outlet",
               o.edge_policy == lsdtt::breach_lc_edge_policy::outlet);
+        // max_dist defaults by edge policy: 1000 outlet (bridges large water
+        // bodies), 100 whitebox (Whitebox's default); the struct carries the
+        // outlet one.
+        check("O0 default max_dist: 1000 outlet, 100 whitebox; the struct default is the outlet one",
+              lsdtt::default_breach_lc_max_dist(lsdtt::breach_lc_edge_policy::outlet) == 1000 &&
+                  lsdtt::default_breach_lc_max_dist(lsdtt::breach_lc_edge_policy::whitebox) == 100 &&
+                  o.max_dist == 1000,
+              "struct max_dist " + std::to_string(o.max_dist));
     }
 
     // O1: where Whitebox's searches never expand a border cell, outlet mode
@@ -2054,11 +2085,185 @@ void test_outlet_policy(const std::map<std::string, grid>& fx)
 #endif
 }
 
+
+// =============================================================================
+// RT -- real terrain: the committed lakeland crop
+// =============================================================================
+#if LSDTT_BREACH_LC_HAS_OPTIONS && LSDTT_BREACH_LC_HAS_DIAGNOSTICS
+std::string hex64(uint64_t h)
+{
+    std::ostringstream o;
+    o << "0x" << std::hex << std::setw(16) << std::setfill('0') << h;
+    return o.str();
+}
+
+void run_real_terrain_checks(const std::string& path)
+{
+    std::cout << "=== Real terrain: " << path << " ===\n";
+
+    lsdtt::lsdtt_raster_cpu dem;
+    try
+    {
+        lsdtt::lsdtt_data_loader loader;
+        loader.open_raster(path);
+        lsdtt::lsdtt_raster_tile tile = loader.read_full();
+        dem.set_from_vectors(std::move(tile.data), std::move(tile.mask), tile.meta);
+    }
+    catch (const std::exception& e)
+    {
+        check("RT0 the crop loads", false, e.what());
+        return;
+    }
+    const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
+    std::int64_t n_valid = 0;
+    for (const std::uint8_t v : dem.get_mask()) n_valid += v;
+    check("RT0 the crop is 128 x 128 at 30 m with every cell valid",
+          meta.n_rows == 128 && meta.n_cols == 128 && meta.cell_size == 30.0 && n_valid == 128 * 128,
+          std::to_string(meta.n_rows) + " x " + std::to_string(meta.n_cols) + ", " +
+              std::to_string(n_valid) + " valid");
+    // The float32 input Whitebox was run on (predictor-free copy of this file).
+    const uint64_t k_input_digest = 0x5ca1d7cd28291e35ULL;
+    check("RT0 the crop's float32 values are the Whitebox input: digest " + hex64(k_input_digest),
+          fnv1a64(dem.get_data()) == k_input_digest, "got " + hex64(fnv1a64(dem.get_data())));
+
+    // RT1 -- matched parameters vs Whitebox 2.0.6, frozen digests.
+    struct rt1_case
+    {
+        int          max_dist;
+        bool         minimize_dist;
+        uint64_t     whitebox_digest;   // FNV-1a-64 of float32(Whitebox f64 output)
+        std::int64_t detected, searched, skipped, solved, unsolved;
+    };
+    const std::vector<rt1_case> cases = {
+        {100,  false, 0xce3742d1cccf9d7fULL, 822, 564, 258, 564, 0},
+        {1000, false, 0xce3742d1cccf9d7fULL, 822, 564, 258, 564, 0},
+        {100,  true,  0xd3377851c2c5f3fdULL, 822, 614, 208, 614, 0},
+        {1000, true,  0xd3377851c2c5f3fdULL, 822, 614, 208, 614, 0},
+    };
+    for (const rt1_case& c : cases)
+    {
+        lsdtt::breach_least_cost_options o;
+        o.max_dist       = c.max_dist;
+        o.minimize_dist  = c.minimize_dist;
+        o.flat_increment = static_cast<double>(0.001f);
+        o.fill_remainder = false;
+        o.edge_policy    = lsdtt::breach_lc_edge_policy::whitebox;
+        lsdtt::breach_least_cost_diagnostics diag;
+        lsdtt::lsdtt_raster_cpu out;
+        {
+            cout_silencer quiet;
+            out = lsdtt::breach_depressions_least_cost(dem, o, &diag);
+        }
+        const uint64_t h = fnv1a64(out.get_data());
+        std::ostringstream lab, det;
+        lab << "RT1 crop, whitebox mode, max_dist " << c.max_dist << ", minimize_dist "
+            << (c.minimize_dist ? "true" : "false")
+            << ": float32 output == Whitebox 2.0.6 (digest " << hex64(c.whitebox_digest) << ")";
+        det << "got " << hex64(h);
+        check(lab.str(), h == c.whitebox_digest, det.str());
+
+        const std::int64_t unsolved = diag.pits_unsolved_exhausted + diag.pits_unsolved_max_cost;
+        std::ostringstream cl, cd;
+        cl << "RT1 crop counters, max_dist " << c.max_dist << ", minimize_dist "
+           << (c.minimize_dist ? "true" : "false") << ": detected/searched/skipped/solved/unsolved = "
+           << c.detected << "/" << c.searched << "/" << c.skipped << "/" << c.solved << "/" << c.unsolved;
+        cd << "got " << diag.pits_detected << "/" << diag.pits_searched << "/"
+           << diag.pits_skipped_not_pit << "/" << diag.pits_solved << "/" << unsolved;
+        check(cl.str(),
+              diag.pits_detected == c.detected && diag.pits_searched == c.searched &&
+                  diag.pits_skipped_not_pit == c.skipped && diag.pits_solved == c.solved &&
+                  unsolved == c.unsolved,
+              cd.str());
+    }
+
+    // RT2 / RT3 -- routable outputs.
+    // On the crop every pit breaches within either default max_dist, so the
+    // remainder fill does not run; the max_dist 3 rows leave pits unsolved
+    // (required below) so each fill is exercised on real terrain.
+    struct rt2_case
+    {
+        const char*                   name;
+        int                           max_dist;
+        lsdtt::breach_lc_edge_policy  edge;
+        lsdtt::flat_resolution_choice flat;
+    };
+    const std::vector<rt2_case> rcases = {
+        {"defaults (outlet, max_dist 1000, inline_gradient)", 1000,
+         lsdtt::breach_lc_edge_policy::outlet, lsdtt::flat_resolution_choice::inline_gradient},
+        {"whitebox, max_dist 100 (its default), inline_gradient", 100,
+         lsdtt::breach_lc_edge_policy::whitebox, lsdtt::flat_resolution_choice::inline_gradient},
+        {"outlet, max_dist 3, inline_gradient", 3,
+         lsdtt::breach_lc_edge_policy::outlet, lsdtt::flat_resolution_choice::inline_gradient},
+        {"outlet, max_dist 3, barnes2014b_gradient", 3,
+         lsdtt::breach_lc_edge_policy::outlet, lsdtt::flat_resolution_choice::barnes2014b_gradient},
+        {"outlet, max_dist 3, barnes2014b_float_step", 3,
+         lsdtt::breach_lc_edge_policy::outlet, lsdtt::flat_resolution_choice::barnes2014b_float_step},
+        {"whitebox, max_dist 3, barnes2014b_float_step", 3,
+         lsdtt::breach_lc_edge_policy::whitebox, lsdtt::flat_resolution_choice::barnes2014b_float_step},
+    };
+    for (const rt2_case& c : rcases)
+    {
+        lsdtt::breach_least_cost_options o;   // defaults otherwise
+        o.max_dist             = c.max_dist;
+        o.edge_policy          = c.edge;
+        o.fill_flat_resolution = c.flat;
+        lsdtt::breach_least_cost_diagnostics diag;
+        lsdtt::lsdtt_raster_cpu out;
+        {
+            cout_silencer quiet;
+            out = lsdtt::breach_depressions_least_cost(dem, o, &diag);
+        }
+        const int n_bad = count_without_descent(out);
+        check(std::string("RT2 crop, ") + c.name + ": every interior cell descends (breach left " +
+                  std::to_string(diag.cells_without_descent) + ", remainder fill " +
+                  (diag.remainder_filled ? "ran" : "not needed") + ")",
+              n_bad == 0 && (c.max_dist != 3 || diag.remainder_filled),
+              std::to_string(n_bad) + " interior cells without a strictly lower neighbour" +
+                  (c.max_dist == 3 && !diag.remainder_filled
+                       ? "; max_dist 3 left nothing for the fill to do" : ""));
+
+        std::string err;
+        try
+        {
+            lsdtt::lsdtt_flowinfo_options fo;
+            fo.boundary_conditions = "oooo";
+            const lsdtt::lsdtt_flowinfo fi(out.get_data_array(), out.get_mask_array(), out.meta(), fo);
+            fi.validate();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        check(std::string("RT3 crop, ") + c.name + ": D8 flowinfo builds and validate() passes",
+              err.empty(), err);
+    }
+}
+#endif
+
 } // namespace
 
 
-int main()
+int main(int argc, char** argv)
 {
+    // Real-terrain mode (unit_breach_least_cost_real_terrain): the committed
+    // crop only, so the hermetic default run stays free of file input.
+    if (argc == 3 && std::string(argv[1]) == "--real-terrain")
+    {
+#if LSDTT_BREACH_LC_HAS_OPTIONS && LSDTT_BREACH_LC_HAS_DIAGNOSTICS
+        run_real_terrain_checks(argv[2]);
+#else
+        not_run("RT real terrain", "breach_least_cost_options / diagnostics not available");
+#endif
+        std::cout << "\n" << g_n_checks << " checks, " << g_n_failed << " failed\n";
+        std::cout << "RESULT: " << (g_n_failed == 0 && g_n_checks > 0 ? "PASS" : "FAIL") << "\n";
+        return g_n_failed == 0 && g_n_checks > 0 ? 0 : 1;
+    }
+    if (argc != 1)
+    {
+        std::cerr << "usage: lsdtt-test-breach-least-cost [--real-terrain <crop.tif>]\n";
+        return 2;
+    }
+
     std::cout << "unit_breach_least_cost: least-cost breaching vs frozen Whitebox 2.0.6\n"
               << "options overload: " << (LSDTT_BREACH_LC_HAS_OPTIONS ? "yes" : "no (positional API)")
               << ", diagnostics: " << (LSDTT_BREACH_LC_HAS_DIAGNOSTICS ? "yes" : "no") << "\n\n";

@@ -694,6 +694,8 @@ add_lsdtt_cli_smoke_test(
 #             (2,4) 1.75, (3,5) 1.625, border (3,6) 1.5.
 #   whitebox: the edge is not an outlet and no border cell is low enough, so
 #             the pit is unsolved and the remainder fill raises the bowl.
+# Neither file sets breach_lc_max_dist, so each pins the edge policy's default
+# (1000 outlet, 100 whitebox); the max_dist failure test sets it explicitly.
 add_lsdtt_cli_smoke_test(
     smoke_raster_preprocessing_breach_least_cost
     lsdtt-raster-preprocessing
@@ -707,6 +709,7 @@ add_lsdtt_cli_smoke_test(
     lsdtt-raster-preprocessing
     raster_preprocessing_breach_lc_outlet.param.in
     breachlc_outlet_breached.tif
+    --stdout-contains "breach_lc_max_dist = 1000 (default for this edge policy), breach_lc_edge_policy = outlet"
     --stdout-contains "1 pits found, 0 skipped (no longer pits), 1 breached, 0 unsolved. flat_increment = 0.1250, edge_policy = outlet"
     --expect-raster-values "breachlc_outlet_breached.tif:1.5,1.625,1.75,1.875,2,6,9"
     --expect-raster-checksum breachlc_outlet_breached.tif:305
@@ -717,6 +720,7 @@ add_lsdtt_cli_smoke_test(
     lsdtt-raster-preprocessing
     raster_preprocessing_breach_lc_whitebox.param.in
     breachlc_whitebox_breached.tif
+    --stdout-contains "breach_lc_max_dist = 100 (default for this edge policy), breach_lc_edge_policy = whitebox"
     --stdout-contains "1 pits found, 0 skipped (no longer pits), 0 breached, 1 unsolved. flat_increment = 0.1250, edge_policy = whitebox"
     --stdout-contains "1 interior cells without descent - filling remainder with Priority-Flood, min_slope = 0.0001, flat resolution = inline_gradient."
     --expect-raster-checksum breachlc_whitebox_breached.tif:326
@@ -3457,6 +3461,14 @@ add_executable(lsdtt-test-breach-least-cost cpp/test_breach_least_cost.cpp)
 target_link_libraries(lsdtt-test-breach-least-cost PRIVATE lsdtt3_cpu)
 add_test(NAME unit_breach_least_cost COMMAND lsdtt-test-breach-least-cost)
 lsdtt_set_tests_properties(unit_breach_least_cost PROPERTIES LABELS "unit;flow")
+# The same driver on the committed lakeland crop: float32 output under matched
+# parameters equals Whitebox 2.0.6's (digests computed from Whitebox itself),
+# and lsdtt3's default output routes (every interior cell descends; D8
+# flowinfo validates). Reads tests/data only; no network, no skip path.
+add_test(NAME unit_breach_least_cost_real_terrain
+         COMMAND lsdtt-test-breach-least-cost --real-terrain
+                 "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
+lsdtt_set_tests_properties(unit_breach_least_cost_real_terrain PROPERTIES LABELS "unit;flow")
 
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
 lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")

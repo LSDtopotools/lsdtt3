@@ -93,10 +93,33 @@ breach_lc_edge_policy parse_breach_lc_edge_policy(
     const std::string& key = "edge_policy");
 const char* breach_lc_edge_policy_name(breach_lc_edge_policy policy);
 
+// Default max_dist (path length in cells) for each edge policy.
+//   outlet:   1000. Long enough to bridge large water bodies, so a pit far
+//             from any interior outlet still reaches one rather than being
+//             carved to the nearest raster edge. Selected after visual
+//             inspection of the test DEMs (alpine/lakeland 500 and 1000 and
+//             the lakeland crop, 2026-10-11): at 100, a lakeland_1000 lake
+//             with no interior outlet within 100 cells, but 93 cells from the
+//             north edge, was carved to the edge (56 m trench); at 1000 no pit
+//             on those DEMs was left unsolved and no maximum cut was deeper
+//             than at 100.
+//   whitebox: 100, the WhiteboxTools default. Larger values let Whitebox's
+//             rule carve across divides to a low edge cell (1762 m on
+//             alpine_500 at 1000).
+constexpr int k_breach_lc_default_max_dist_outlet   = 1000;
+constexpr int k_breach_lc_default_max_dist_whitebox = 100;
+constexpr int default_breach_lc_max_dist(breach_lc_edge_policy policy)
+{
+    return policy == breach_lc_edge_policy::whitebox ? k_breach_lc_default_max_dist_whitebox
+                                                     : k_breach_lc_default_max_dist_outlet;
+}
+
 struct breach_least_cost_options
 {
-    // Maximum breach path length in steps (cells). 1..32767.
-    int    max_dist       = 100;
+    // Maximum breach path length in steps (cells). 1..32767. The default is
+    // that of the default edge_policy (outlet); callers that switch to
+    // whitebox and want its default use default_breach_lc_max_dist().
+    int    max_dist       = k_breach_lc_default_max_dist_outlet;
     // Search stops when the popped accumulated cost exceeds this. Units: metres
     // (minimize_dist = false) or metres x cells (minimize_dist = true).
     double max_cost       = std::numeric_limits<double>::infinity();

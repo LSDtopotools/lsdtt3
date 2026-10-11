@@ -603,13 +603,19 @@ int main(int argc, char* argv[])
         "least_cost: Lindsay (2020) pit-centric least-cost breaching.",
         "Depression breaching", "param", "write_breached_raster"};
 
-    int_default_map["breach_lc_max_dist"] = 100;
-    help_map["breach_lc_max_dist"] = {"int","100",
+    // The declared default is the outlet-mode one; when the file does not
+    // set the key, the whitebox edge policy uses 100 instead (see the
+    // options block below and default_breach_lc_max_dist).
+    int_default_map["breach_lc_max_dist"] = lsdtt::k_breach_lc_default_max_dist_outlet;
+    help_map["breach_lc_max_dist"] = {"int","1000 (outlet) / 100 (whitebox)",
         "Maximum breach path length in cells for least-cost breaching.",
         "Counted in steps from the pit (a diagonal step counts as one), not "
         "as a radius. Pits that need a longer path are left unbreached (and "
-        "filled if fill_remainder_after_breach is true). 1 to 32767. The "
-        "default matches WhiteboxTools BreachDepressionsLeastCost. Only used "
+        "filled if fill_remainder_after_breach is true). 1 to 32767. If not "
+        "set, 1000 with breach_lc_edge_policy outlet (long enough to bridge "
+        "large water bodies, so a far-off pit is not carved to the nearest "
+        "raster edge instead) and 100 with whitebox (the WhiteboxTools "
+        "default; longer paths there can carve across divides). Only used "
         "when breach_algorithm_choice is least_cost.",
         "Depression breaching", "param", "write_breached_raster"};
 
@@ -1120,7 +1126,6 @@ int main(int argc, char* argv[])
     {
         try
         {
-            breach_lc_options.max_dist       = ifs["breach_lc_max_dist"];
             breach_lc_options.max_cost       =
                 (ff["breach_lc_max_cost"] >= std::numeric_limits<float>::max())
                     ? std::numeric_limits<double>::infinity()
@@ -1132,7 +1137,21 @@ int main(int argc, char* argv[])
             breach_lc_options.fill_flat_resolution = flat_choice;
             breach_lc_options.edge_policy    = lsdtt::parse_breach_lc_edge_policy(
                 sf["breach_lc_edge_policy"], "breach_lc_edge_policy");
+            // max_dist defaults by edge policy (1000 outlet, to bridge large
+            // water bodies; 100 whitebox, Whitebox's own) unless the file
+            // sets it. See default_breach_lc_max_dist.
+            const bool max_dist_given = pp.parameter_supplied("breach_lc_max_dist");
+            breach_lc_options.max_dist = max_dist_given
+                ? ifs["breach_lc_max_dist"]
+                : lsdtt::default_breach_lc_max_dist(breach_lc_options.edge_policy);
             lsdtt::validate_breach_least_cost_options(breach_lc_options);
+            std::cout << "Least-cost breaching: breach_lc_max_dist = "
+                      << breach_lc_options.max_dist
+                      << (max_dist_given ? " (from the parameter file)"
+                                         : " (default for this edge policy)")
+                      << ", breach_lc_edge_policy = "
+                      << lsdtt::breach_lc_edge_policy_name(breach_lc_options.edge_policy)
+                      << "\n";
         }
         catch (const std::invalid_argument& e)
         {
