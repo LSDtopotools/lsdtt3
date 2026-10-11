@@ -1531,10 +1531,10 @@ lsdtt3 or in any of the references.
 Sweeping threads over them measured nothing. It multiplied the campaign length
 and — worse — filled the scaling table with flat rows that invite a reader to
 conclude something is broken. These cases are marked `sequential` in the case
-registry (list as of 2026-10-10) and are **measured once, at the baseline thread
+registry (list as of 2026-10-11) and are **measured once, at the baseline thread
 count**:
 
-`fill`, `fill_priority_flood`, `fill_priority_flood_radix`, `fill_epsilon_radix`, `fill_epsilon`, `fill_flats_float_step`, `fill_flats_gradient`, `breach`, `accum_d8`, `accum_d8_no_svector`, `route_d8_default`, `accum_dinf`, `accum_mfd`, `fill_whitebox_default`
+`fill`, `fill_priority_flood`, `fill_priority_flood_radix`, `fill_epsilon_radix`, `fill_epsilon`, `fill_flats_float_step`, `fill_flats_gradient`, `breach`, `breach_least_cost`, `breach_least_cost_default`, `breach_then_fill_lindsay2016`, `breach_then_fill_least_cost`, `accum_d8`, `accum_d8_no_svector`, `route_d8_default`, `route_d8_epsilon`, `accum_dinf`, `accum_mfd`
 
 They carry `sequential_case = True` in the CSV, are excluded from the scaling
 table, and `SUMMARY.md` states why in that section. This cut the `laptop`
@@ -1568,33 +1568,44 @@ question, and an open one.
 
 ### What is compared, and what must never be
 
-The suite is organised in four parts (Simon, 2026-10-10):
+The suite (Simon, 2026-10-10; revised 2026-10-11) shows (a) which lsdtt3
+methods are fastest, lsdtt3 against itself, and (b) lsdtt3 against other
+packages only where the algorithm and the output are like-for-like.
 
-1. **Surface fitting** -- `slope_only`, `polyfit_all`, `hillshade`.
-2. **Grayscale fill speed, information only** -- `fill`, `fill_priority_flood`
-   (and lsdtt3's `fill_priority_flood_radix`). These leave flats, so the output
-   is not a connected flow network; all are report-only.
-3. **Lindsay (2016) breaching** -- `breach`, lsdtt3 vs RichDEM. Least-cost
-   breaching is not benchmarked until lsdtt3's implementation has passed
-   validation.
-4. **Connected flow networks** -- `fill_epsilon` (epsilon priority flood,
-   like-for-like where the references allow), `fill_flats_float_step` and
-   `fill_flats_gradient` (Barnes 2014b, Garbrecht-Martz style), lsdtt3's
-   `fill_epsilon_radix`, the D8 accumulation cases, and `route_d8_default`
-   (each package's default pipeline). `SUMMARY.md` also ranks lsdtt3's own fill
-   options against each other (below).
+1. **Surface fitting** -- `slope_only`, `polyfit_all`, `hillshade`
+   (report-only, kept).
+2. **Single-step fills** -- `fill` (vs TopoToolbox) and `fill_priority_flood`
+   (vs RichDEM and Whitebox Wang & Liu). Real comparisons since 2026-10-11:
+   same algorithm, outputs asserted identical (§4-5), even though the output
+   keeps its flats. lsdtt3's `fill_priority_flood_radix` is lsdtt3-only.
+3. **Breaching** -- `breach` (Lindsay 2016, vs RichDEM) and
+   `breach_least_cost` (Lindsay 2020, vs Whitebox 2.0.6 under matched
+   parameters, outputs asserted bitwise; re-instated 2026-10-11). lsdtt3-only:
+   `breach_least_cost_default`, `breach_then_fill_lindsay2016`,
+   `breach_then_fill_least_cost`.
+4. **Connected flow networks** -- `fill_epsilon`, the D8 accumulation cases
+   and `route_d8_epsilon` (raw DEM to D8 by the same pipeline in lsdtt3 and
+   Whitebox: epsilon priority flood + steepest descent). lsdtt3-only:
+   `fill_epsilon_radix`, `fill_flats_float_step`, `fill_flats_gradient`.
+   `route_d8_default` (each package's default pipeline) is report-only.
+   `SUMMARY.md` also ranks lsdtt3's own fill options against each other
+   (below).
+5. **Multi-direction flow** -- `accum_dinf`, `accum_mfd` (report-only).
 
 | Suite | Cases | Status |
 |---|---|---|
 | `flow` | fill_epsilon, breach, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
-| `flow` (information only) | fill, fill_priority_flood | **report-only since 2026-10-10.** Run at `fill_min_slope: 0`, so flats are left without a gradient and the output is **not a connected flow network**. Kept to show lsdtt3 runs at a similar speed to the same algorithm elsewhere; never quote them as a drained-surface comparison |
+| `flow` | fill, fill_priority_flood | timing; values asserted bit-exact in §4-5. Report-only 2026-10-10 .. 2026-10-11. Run at `fill_min_slope: 0`, so the output keeps its flats and is **not a connected flow network**: quote them as fill-algorithm comparisons, never as a drained-surface comparison |
+| `flow` | breach_least_cost | timing; lsdtt3 least_cost (edge policy whitebox, max_dist 100, minimize_dist false, increment 0.001, no remainder fill) vs Whitebox 2.0.6 with the same parameters (flat_increment = float32(0.001)); outputs asserted bitwise (`benchmark_breach_least_cost_*`, `benchmark_breach_least_cost_fuzz`, `unit_breach_least_cost_real_terrain`) |
+| `flow` | breach_least_cost_default, breach_then_fill_lindsay2016, breach_then_fill_least_cost | **timing only, report-only, lsdtt3-only** -- least_cost with the CLI defaults; and breach + barnes2014 fill (min_slope 1e-4) per breaching method, the time to a routable surface |
+| `flow` | route_d8_epsilon | timing -- raw DEM to routed D8 accumulation: lsdtt3 drainage-analysis (Barnes 2014 priority flood, fill_min_slope 1e-4, steepest-descent D8) vs Whitebox Wang & Liu (fix_flats, flat_increment 1e-4 × cell size) + d8_flow_accum. Differs only in the diagonal increment (√2 in lsdtt3) |
 | `flow` | fill_priority_flood_radix, fill_epsilon_radix | **timing only, report-only, lsdtt3-only** -- the `fill_priority_flood` and `fill_epsilon` lsdtt3 commands with `priority_flood_queue: radix` |
 | `flow` | route_d8_default | **timing only, report-only** -- raw DEM to routed D8 accumulation using each package's default pipeline; algorithms and outputs differ by design |
-| `flow` | fill_flats_float_step | **timing only, report-only** -- fill + Barnes (2014b) flat resolution in float32 steps (`barnes2014b_float_step`) vs RichDEM FillDepressions + ResolveFlats; RichDEM does one pass, lsdtt3 loops to a routable surface |
+| `flow` | fill_flats_float_step | **timing only, report-only, lsdtt3-only since 2026-10-11** -- fill + Barnes (2014b) flat resolution in float32 steps (`barnes2014b_float_step`). RichDEM FillDepressions + ResolveFlats was paired until then; it does one pass (bitwise equal to lsdtt3's round 1, asserted in §5), lsdtt3 loops to a routable surface |
 | `flow` | fill_flats_gradient | **timing only, report-only, lsdtt3-only** -- fill + Barnes (2014b) flat resolution with a 1e-4 gradient (`barnes2014b_gradient`); no reference implements it |
 | `mfd` | accum_dinf, accum_mfd | **timing only** -- Tarboton vs Quinn vs Freeman proportioning genuinely differ |
 | `surface` | slope_only, polyfit_all, hillshade | **timing only** -- curvature definitions and aspect handedness differ |
-| `flow` | fill_whitebox_default | **timing only, report-only** -- Whitebox's default `fill_depressions` (pit-centric, different surface); lsdtt3 row reused from fill_priority_flood |
+| ~~`flow`~~ | ~~fill_whitebox_default~~ | **removed 2026-10-11** -- Whitebox's default `fill_depressions` (pit-centric, different surface) is not like-for-like with any lsdtt3 fill |
 
 Two of these deserve their reasoning stated wherever they are quoted:
 
