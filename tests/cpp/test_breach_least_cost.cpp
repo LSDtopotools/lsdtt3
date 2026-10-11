@@ -54,6 +54,14 @@
 //       skipped / solved / unsolved) -- once the library exposes them.
 //   E   max_dist < 1 and max_dist > 32767 are rejected with a message naming
 //       max_dist; max_dist 32767 is accepted.
+//   A   lsdtt3's automatic flat increment (flat_increment <= 0):
+//       2 x ULP_f32(max(|z|max, 1)), pinned on F12's three elevation ranges,
+//       flat rasters, a power-of-two maximum and an all-nodata raster.
+//   R   with library defaults (auto increment, remainder fill at min_slope
+//       1e-4) in BOTH edge policies, every interior cell (all 8 neighbours in
+//       the raster and valid) has a strictly lower neighbour: F1, F7, F8,
+//       F10, F15, cell size 1 and 30 m; also F8 at increment 0.125 (16
+//       unsolved pits), and a control showing fill_min_slope 0 fails it.
 //   O   edge_policy = outlet (an off-grid neighbour is treated exactly as
 //       Whitebox treats a nodata neighbour: the search ends there): default
 //       is outlet; equal to Whitebox on every run whose Whitebox search never
@@ -69,6 +77,7 @@
 //       double flat_increment;    // MUST be double: auto runs pass 2e-14 etc.
 //       bool   fill_remainder;
 //       lsdtt::breach_lc_edge_policy edge_policy;   // { outlet, whitebox }
+//       float  fill_min_slope;    // remainder fill gradient (default 1e-4)
 //   };
 //   lsdtt_raster_cpu breach_depressions_least_cost(
 //       const lsdtt_raster_cpu&, const breach_least_cost_options&,
@@ -1657,6 +1666,191 @@ void test_errors(const std::map<std::string, grid>& fx)
     std::string msg;
     const bool threw = attempt(32767, msg);
     check("E max_dist 32767 is accepted", !threw, "threw: " + msg);
+
+#if LSDTT_BREACH_LC_HAS_OPTIONS
+    for (float bad : {-1.0e-4f, std::numeric_limits<float>::quiet_NaN(),
+                      std::numeric_limits<float>::infinity()})
+    {
+        lsdtt::breach_least_cost_options o;
+        o.fill_min_slope = bad;
+        std::string m;
+        bool t = false;
+        {
+            cout_silencer quiet;
+            try { (void)lsdtt::breach_depressions_least_cost(dem, o); }
+            catch (const std::exception& e) { m = e.what(); t = true; }
+        }
+        check("E fill_min_slope " + fmt_float(bad) + " is rejected with a message naming fill_min_slope",
+              t && m.find("fill_min_slope") != std::string::npos,
+              t ? "message: " + m : "did not throw");
+    }
+#endif
+}
+
+
+// =============================================================================
+// A -- lsdtt3's automatic flat increment
+// =============================================================================
+#if LSDTT_BREACH_LC_HAS_OPTIONS && LSDTT_BREACH_LC_HAS_DIAGNOSTICS
+double auto_increment_of(const grid& g)
+{
+    lsdtt::breach_least_cost_options o;   // flat_increment 0 -> auto
+    lsdtt::breach_least_cost_diagnostics diag;
+    cout_silencer quiet;
+    (void)lsdtt::breach_depressions_least_cost(make_raster(g, 1.0), o, &diag);
+    return diag.flat_increment;
+}
+#endif
+
+void test_auto_increment(const std::map<std::string, grid>& fx)
+{
+#if LSDTT_BREACH_LC_HAS_OPTIONS && LSDTT_BREACH_LC_HAS_DIAGNOSTICS
+    // 2 x ULP_f32(a), a = max(|z|max, 1), ULP_f32(a) = nextafterf(a, +inf) - a.
+    // The expected values are written out, not computed with the rule.
+    struct auto_case { const char* name; grid g; double want; };
+    const std::vector<auto_case> cases = {
+        // F1 - 1: z in [-1, 4]; |z|max 4 -> ULP 2^-21.
+        {"F12_0 (|z|max 4)",          fx.at("F12_0"),    0x1p-20},
+        // F1 - 51: z in [-51, -46]; |z|max 51 (the most negative) -> ULP 2^-18.
+        {"F12_m50 (|z|max 51)",       fx.at("F12_m50"),  0x1p-17},
+        // F1 + 3999: z in [3999, 4004] -> ULP 2^-12.
+        {"F12_4000 (|z|max 4004)",    fx.at("F12_4000"), 0x1p-11},
+        // Flat rasters: no special case.
+        {"flat 100",                  grid(6, 6, 100.0), 0x1p-16},
+        {"flat 0 (floor of 1)",       grid(6, 6, 0.0),   0x1p-22},
+        // A power of two takes the gap ABOVE it: ULP(1024) = 2^-13.
+        {"flat 1024 (binade above)",  grid(6, 6, 1024.0), 0x1p-12},
+        // All nodata: |z|max 0 -> the floor of 1.
+        {"all nodata (floor of 1)",   fx.at("F14_allnd"), 0x1p-22},
+    };
+    for (const auto_case& c : cases)
+    {
+        const double got = auto_increment_of(c.g);
+        std::ostringstream det;
+        det << std::hexfloat << "got " << got << " want " << c.want;
+        check(std::string("A auto flat_increment = 2 x ULP_f32: ") + c.name, got == c.want, det.str());
+    }
+    // An explicit increment is used as given.
+    {
+        lsdtt::breach_least_cost_options o;
+        o.flat_increment = 0.125;
+        lsdtt::breach_least_cost_diagnostics diag;
+        {
+            cout_silencer quiet;
+            (void)lsdtt::breach_depressions_least_cost(make_raster(fx.at("F12_4000"), 1.0), o, &diag);
+        }
+        check("A explicit flat_increment 0.125 is used as given", diag.flat_increment == 0.125);
+    }
+#else
+    (void)fx;
+    not_run("A auto flat_increment", "breach_least_cost_options / diagnostics not available");
+#endif
+}
+
+
+// =============================================================================
+// R -- routability after the remainder fill, library defaults
+// =============================================================================
+#if LSDTT_BREACH_LC_HAS_OPTIONS
+// Interior cells (all 8 neighbours in the raster and valid) with no strictly
+// lower neighbour.
+int count_without_descent(const lsdtt::lsdtt_raster_cpu& out)
+{
+    const auto& od = out.get_data();
+    const auto& om = out.get_mask_array().get_vector();
+    const int rows = static_cast<int>(out.get_meta().n_rows);
+    const int cols = static_cast<int>(out.get_meta().n_cols);
+    int n = 0;
+    for (int r = 1; r < rows - 1; ++r)
+        for (int c = 1; c < cols - 1; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * cols + c;
+            if (!om[i]) continue;
+            bool interior = true, lower = false;
+            for (int dr = -1; dr <= 1; ++dr)
+                for (int dc = -1; dc <= 1; ++dc)
+                {
+                    if (dr == 0 && dc == 0) continue;
+                    const std::size_t j = static_cast<std::size_t>(r + dr) * cols + (c + dc);
+                    if (!om[j]) interior = false;
+                    else if (od[j] < od[i]) lower = true;
+                }
+            if (interior && !lower) ++n;
+        }
+    return n;
+}
+#endif
+
+void test_routability(const std::map<std::string, grid>& fx)
+{
+#if LSDTT_BREACH_LC_HAS_OPTIONS && LSDTT_BREACH_LC_HAS_DIAGNOSTICS
+    for (const char* name : {"F1", "F7", "F8", "F10", "F15"})
+    {
+        const grid& g = fx.at(name);
+        for (edge_mode mode : {edge_mode::outlet, edge_mode::whitebox})
+        {
+            for (double cs : {1.0, 30.0})
+            {
+                lsdtt::breach_least_cost_options o;   // defaults
+                o.edge_policy = (mode == edge_mode::whitebox) ? lsdtt::breach_lc_edge_policy::whitebox
+                                                              : lsdtt::breach_lc_edge_policy::outlet;
+                lsdtt::breach_least_cost_diagnostics diag;
+                lsdtt::lsdtt_raster_cpu out;
+                {
+                    cout_silencer quiet;
+                    out = lsdtt::breach_depressions_least_cost(make_raster(g, cs), o, &diag);
+                }
+                const int n_bad = count_without_descent(out);
+                std::ostringstream lab, det;
+                lab << "R defaults, " << (mode == edge_mode::whitebox ? "whitebox" : "outlet")
+                    << ", cs " << cs << ": every interior cell descends: " << name
+                    << " (breach left " << diag.cells_without_descent << ", remainder fill "
+                    << (diag.remainder_filled ? "ran" : "not needed") << ")";
+                det << n_bad << " interior cells without a strictly lower neighbour";
+                check(lab.str(), n_bad == 0, det.str());
+            }
+        }
+    }
+
+    // A larger remainder: F8 at increment 0.125 leaves 16 pits unsolved
+    // (relief exhaustion, whitebox mode); the default fill must still leave
+    // every interior cell descending.
+    {
+        lsdtt::breach_least_cost_options o;
+        o.flat_increment = 0.125;
+        o.edge_policy    = lsdtt::breach_lc_edge_policy::whitebox;
+        lsdtt::breach_least_cost_diagnostics diag;
+        lsdtt::lsdtt_raster_cpu out;
+        {
+            cout_silencer quiet;
+            out = lsdtt::breach_depressions_least_cost(make_raster(fx.at("F8"), 1.0), o, &diag);
+        }
+        const int n_bad = count_without_descent(out);
+        check("R F8 whitebox, increment 0.125 (" + std::to_string(diag.pits_unsolved_exhausted) +
+              " unsolved): every interior cell descends after the remainder fill",
+              diag.remainder_filled && n_bad == 0,
+              std::to_string(n_bad) + " interior cells without a strictly lower neighbour");
+    }
+
+    // Control: with fill_min_slope 0 (the flat fill used before) the F10
+    // whitebox remainder is NOT routable, so the R checks can fail.
+    {
+        lsdtt::breach_least_cost_options o;
+        o.edge_policy    = lsdtt::breach_lc_edge_policy::whitebox;
+        o.fill_min_slope = 0.0f;
+        lsdtt::lsdtt_raster_cpu out;
+        {
+            cout_silencer quiet;
+            out = lsdtt::breach_depressions_least_cost(make_raster(fx.at("F10"), 1.0), o);
+        }
+        const int n_bad = count_without_descent(out);
+        check("R control: F10 whitebox with fill_min_slope 0 leaves cells without descent",
+              n_bad > 0, "0 cells without descent: the R checks cannot detect a flat fill");
+    }
+#else
+    (void)fx;
+    not_run("R routability after the remainder fill", "breach_least_cost_options not available");
+#endif
 }
 
 
@@ -1773,6 +1967,8 @@ int main()
     test_whitebox_literals(fx);
     test_counters(fx);
     test_errors(fx);
+    test_auto_increment(fx);
+    test_routability(fx);
     test_outlet_policy(fx);
 
     std::cout << "\nPer-fixture summary (W, edge_policy whitebox):\n"

@@ -87,12 +87,20 @@ struct breach_least_cost_options
     double max_cost       = std::numeric_limits<double>::infinity();
     // Distance-weighted (trapezoid) cost; see the algorithm above.
     bool   minimize_dist  = false;
-    // Drop per path step (m). <= 0 selects the automatic value:
-    // (max - min valid elevation) x 1e-6, or 0.001 on a flat raster.
+    // Drop per path step (m). <= 0 selects the automatic value,
+    // 2 x ULP_f32(max(|z|max, 1)) where |z|max is the largest |z| over valid
+    // cells and ULP_f32(a) = nextafterf(a, +inf) - a: the smallest step that
+    // keeps carved channels strictly descending once stored as float32
+    // (2.4e-4 m at 1024-2047 m, 4.9e-4 m at 2048-4095 m). Whitebox's own
+    // auto increment (~1e-10 m) is below float32 resolution.
     double flat_increment = 0.0;
-    // Fill what the breach leaves (flat Priority-Flood, min_slope 0) when any
-    // interior cell without a strictly lower neighbour remains.
+    // Fill what the breach leaves with Priority-Flood (fill_pits) at
+    // fill_min_slope when any interior cell without a strictly lower
+    // neighbour remains. With fill_min_slope > 0 every interior cell then has
+    // a strictly lower neighbour; 0 gives a flat fill.
     bool   fill_remainder = true;
+    // Gradient (m/m) imposed by the remainder fill across what it fills. >= 0.
+    float  fill_min_slope = 0.0001f;
     breach_lc_edge_policy edge_policy = breach_lc_edge_policy::outlet;
 };
 
@@ -126,7 +134,7 @@ lsdtt_raster_cpu breach_depressions_least_cost(
 
 // Positional form: forwards to the options overload with
 // max_cost >= FLT_MAX meaning unlimited, min_dist -> minimize_dist and the
-// default edge_policy (outlet). n_threads is ignored (the algorithm is serial).
+// default edge_policy (outlet) and fill_min_slope (1e-4). n_threads is ignored (the algorithm is serial).
 lsdtt_raster_cpu breach_depressions_least_cost(
     const lsdtt_raster_cpu& raster,
     int   max_dist       = 1000,

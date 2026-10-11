@@ -38,10 +38,17 @@
 //   * path length is int32;
 //   * edge_policy = outlet treats an off-grid neighbour as Whitebox treats a
 //     nodata neighbour.
+// Departures that do change the result, and so are off in every comparison
+// with Whitebox:
+//   * the automatic flat increment is 2 x ULP_f32(max |z|) (auto_flat_increment
+//     below), not Whitebox's digit rule, whose ~1e-10 m steps vanish in
+//     float32;
+//   * the remainder fill is lsdtt3's Priority-Flood with min_slope, not
+//     Whitebox's fill_deps (pit-centric fill with Garbrecht-Martz flats).
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_breach_least_cost_cpu.hpp"
-#include "lsdtt_raster_flow_preprocessing_cpu.hpp"  // fill_pits_priority_flood (remainder fill)
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"  // fill_pits (remainder fill)
 
 #include <algorithm>
 #include <cmath>
@@ -153,21 +160,38 @@ private:
     }
 };
 
-// The automatic flat increment used when flat_increment <= 0: relief x 1e-6,
-// or 0.001 on a flat raster. Computed in float as before the port.
+// The automatic flat increment used when flat_increment <= 0:
+//
+//   2 x ULP_f32(max(|z|max, 1))
+//
+// |z|max is the largest |z| over valid, finite cells (0 if there are none).
+// ULP_f32(a) is the gap from the float32 value a to the next float32 value
+// ABOVE it, nextafterf(a, +inf) - a, so at an exact power of two it is the
+// (larger) gap of the binade above. The floor of 1 keeps the increment at
+// 2^-22 m (~2.4e-7 m) on rasters whose elevations are all within 1 m of zero,
+// instead of descending into subnormal steps; an all-nodata raster gets the
+// same value. A flat raster is not a special case.
+//
+// Why 2 ULP: every breach target pit_z - L * small lies at or below |z|max in
+// magnitude (except below a negative minimum), where the float32 spacing is at
+// most one ULP, and rounding moves each value by at most half of it. Adjacent
+// path values differ by `small` before rounding, so by at least
+// small - ULP = ULP > 0 after it: carved channels stay strictly descending once
+// stored as float32.
 double auto_flat_increment(const std::vector<float>&   z,
                            const std::vector<uint8_t>& valid)
 {
-    float zmin =  std::numeric_limits<float>::max();
-    float zmax = -std::numeric_limits<float>::max();
+    float zabs = 0.0f;
     for (std::size_t i = 0; i < z.size(); ++i)
     {
-        if (!valid[i]) continue;
-        zmin = std::min(zmin, z[i]);
-        zmax = std::max(zmax, z[i]);
+        if (!valid[i] || !std::isfinite(z[i])) continue;
+        zabs = std::max(zabs, std::fabs(z[i]));
     }
-    if (zmax <= zmin) return static_cast<double>(0.001f);
-    return static_cast<double>((zmax - zmin) * 1e-6f);
+    const float a  = std::max(zabs, 1.0f);
+    const float up = std::nextafter(a, std::numeric_limits<float>::infinity());
+    // At FLT_MAX there is no float above; use the gap below instead.
+    const float ulp = std::isfinite(up) ? (up - a) : (a - std::nextafter(a, 0.0f));
+    return 2.0 * static_cast<double>(ulp);
 }
 
 // Interior cells (all 8 neighbours in the raster and valid) with no strictly
@@ -223,6 +247,12 @@ void validate_breach_least_cost_options(const breach_least_cost_options& options
         throw std::invalid_argument(
             "lsdtt::breach_depressions_least_cost: flat_increment must be finite "
             "(<= 0 selects the automatic value)");
+    }
+    if (!std::isfinite(options.fill_min_slope) || options.fill_min_slope < 0.0f)
+    {
+        throw std::invalid_argument(
+            "lsdtt::breach_depressions_least_cost: fill_min_slope must be finite "
+            "and >= 0; got " + std::to_string(options.fill_min_slope));
     }
 }
 
@@ -486,9 +516,14 @@ lsdtt_raster_cpu breach_depressions_least_cost(
                   << diag.cells_without_descent << " interior cells without descent";
         if (options.fill_remainder)
         {
-            std::cout << " - filling remainder with Priority-Flood.\n";
-            breached = fill_pits_priority_flood(
-                breached, 0.0f, 0, priority_flood_queue_backend::binary_heap);
+            std::cout << " - filling remainder with Priority-Flood, min_slope = "
+                      << options.fill_min_slope << ".\n";
+            // fill_pits: Priority-Flood with min_slope (Barnes et al. 2014);
+            // at min_slope 0 it dispatches to the bit-identical flat fill.
+            // Flats are resolved by min_slope only; the remainder fill does not
+            // take a fill_flat_resolution_choice.
+            breached = fill_pits(breached, options.fill_min_slope, 0,
+                                 priority_flood_queue_backend::binary_heap);
             diag.remainder_filled = true;
         }
         else
