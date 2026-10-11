@@ -101,6 +101,11 @@ def ensure_fixture(fixture_key: str, fetch_exe: pathlib.Path) -> pathlib.Path:
     """Fetch a fixture with lsdtt-fetch-raster if it is not already cached."""
     return flow_benchmark_fixtures.ensure_fixture(fixture_key, fetch_exe, FIXTURE_DIR)
 
+# float32(0.001) as a double: the flat increment the lsdtt3 CLI actually uses
+# when given 0.001 (see breach_least_cost below). Computed with the struct
+# module so the comparison table does not need numpy at import time.
+_F32_0P001 = __import__("struct").unpack("f", __import__("struct").pack("f", 0.001))[0]
+
 # Comparison definitions.  `richdem_routine` names a routine in
 # richdem_reference.py; `lsdtt_suffix` is the output file lsdtt3 writes.
 #
@@ -159,6 +164,45 @@ COMPARISONS = {
                    "breach_algorithm_choice": "lindsay2016"},
         "kind": "elevation",
         "note": "both implementations pit-flatten before carving",
+    },
+    "breach_least_cost": {
+        # Least-cost breaching, Lindsay (2020): lsdtt3's port of Whitebox
+        # BreachDepressionsLeastCost against whitebox_workflows 2.0.6 itself.
+        #
+        # ASSERTED BITWISE: float32(Whitebox's f64 output) == lsdtt3's float32
+        # output on every valid cell, and the nodata masks are identical.
+        # Whitebox writes Float64, so the comparison rounds it once to float32
+        # (`metric: float32_exact`) -- the same single rounding lsdtt3 does at
+        # the end of its double-precision core.
+        #
+        # Matched parameters, and why each one:
+        #   breach_lc_edge_policy whitebox  lsdtt3's default (outlet) treats
+        #       the raster edge as an outlet; Whitebox does not.
+        #   fill_remainder_after_breach false / fill_deps False  the two
+        #       remainder fills are different algorithms.
+        #   max_dist 100, minimize_dist false  Whitebox's defaults.
+        #   flat increment float32(0.001)  the lsdtt3 CLI reads the parameter
+        #       as float32, so Whitebox is handed that exact value
+        #       (0.0010000000474974513), not the double 0.001; the channel
+        #       targets pit_z - L * increment would otherwise differ. Explicit
+        #       on both sides: Whitebox's own auto increment (~1e-10 m) is
+        #       below float32 resolution and lsdtt3's auto rule is different
+        #       by design.
+        "references": {"whitebox": "breach"},
+        "lsdtt_suffix": "_breached.tif",
+        "params": {"write_breached_raster": "true",
+                   "breach_algorithm_choice": "least_cost",
+                   "breach_lc_max_dist": "100",
+                   "breach_lc_minimize_dist": "false",
+                   "breach_lc_flat_increment": "0.001",
+                   "breach_lc_edge_policy": "whitebox",
+                   "fill_remainder_after_breach": "false"},
+        "reference_args": {"whitebox": [
+            "--breach-max-dist", "100",
+            "--breach-flat-increment", repr(float(_F32_0P001))]},
+        "kind": "elevation",
+        "metric": "float32_exact",
+        "note": "Lindsay 2020 least-cost breach vs Whitebox 2.0.6 -- bitwise",
     },
     "flats_float_step": {
         # Fill, then Barnes, Lehman and Mulla (2014b) flat resolution with
@@ -337,6 +381,9 @@ TOLERANCES = {
         "flats_float_step@richdem": {"n_unexplained_differences": 0,
                                      "n_below_richdem": 0,
                                      "n_stranded_lsdtt": 0},
+        # Least-cost breach vs Whitebox 2.0.6: float32 bits identical on every
+        # valid cell. Zero is the claim (a port), not a measurement margin.
+        "breach_least_cost@whitebox": {"n_differing": 0, "max_abs": 0.0},
         # D8 accumulation is IDENTICAL to TopoToolbox on this fixture -- same
         # steepest-descent rule, and steep terrain leaves almost no ties to
         # break. Pinned tight so any divergence fails.
@@ -382,6 +429,8 @@ TOLERANCES = {
         "flats_float_step@richdem": {"n_unexplained_differences": 0,
                                      "n_below_richdem": 0,
                                      "n_stranded_lsdtt": 0},
+        # As alpine_small: bitwise.
+        "breach_least_cost@whitebox": {"n_differing": 0, "max_abs": 0.0},
         # Low relief does NOT reproduce exactly, and that is expected rather
         # than alarming: after epsilon filling, flat ground still leaves many
         # near-ties, and D8 must pick one neighbour. Tie-breaking moves WHICH
@@ -670,6 +719,61 @@ def float32_bit_metrics(lsdtt_path, ref_path, flat_baseline_path,
         "max_abs": float(np.abs(L[valid].astype(np.float64)
                                 - R[valid].astype(np.float64)).max()),
         "first_unguarded_cell": first,
+    }
+
+
+def float32_exact_metrics(lsdtt_path, ref_path, original_path):
+    """Bitwise comparison of two elevation rasters at float32.
+
+    The reference is rounded ONCE to float32 (Whitebox writes Float64; lsdtt3
+    rounds its double working copy once at the end), then the float32 bit
+    patterns are compared on every valid cell. Also reports which cells each
+    side changed relative to the input, and the Jaccard index of those sets,
+    so a failure says whether the two disagree on WHERE they carved or only on
+    the values.
+    """
+    import numpy as np
+    from osgeo import gdal
+    gdal.UseExceptions()
+
+    def read(path):
+        ds = gdal.Open(str(path))
+        band = ds.GetRasterBand(1)
+        arr = band.ReadAsArray()
+        nodata = band.GetNoDataValue()
+        valid = np.isfinite(arr)
+        if nodata is not None:
+            valid &= (arr != nodata)
+        return arr, valid
+
+    a, va = read(lsdtt_path)
+    b, vb = read(ref_path)
+    o, vo = read(original_path)
+    if a.shape != b.shape or a.shape != o.shape:
+        raise RuntimeError(f"shape mismatch {a.shape} / {b.shape} / {o.shape}")
+    a32 = a.astype(np.float32)
+    b32 = b.astype(np.float32)
+    o32 = o.astype(np.float32)
+
+    both = va & vb
+    differ = both & (a32.view(np.uint32) != b32.view(np.uint32))
+    diff = np.abs(a32.astype(np.float64) - b32.astype(np.float64))
+    mod_a = va & vo & (a32.view(np.uint32) != o32.view(np.uint32))
+    mod_b = vb & vo & (b32.view(np.uint32) != o32.view(np.uint32))
+    union = int((mod_a | mod_b).sum())
+    first = ""
+    if differ.any():
+        r, c = np.argwhere(differ)[0]
+        first = f"({r},{c}) lsdtt3 {a32[r, c]!r} vs ref {b32[r, c]!r}"
+    return {
+        "mask_identical": bool(np.array_equal(va, vb)),
+        "n_valid": int(both.sum()),
+        "n_differing": int(differ.sum()),
+        "max_abs": float(diff[both].max()) if both.any() else 0.0,
+        "n_modified_lsdtt": int(mod_a.sum()),
+        "n_modified_reference": int(mod_b.sum()),
+        "modified_jaccard": (float((mod_a & mod_b).sum()) / union) if union else 1.0,
+        "first_differing_cell": first,
     }
 
 
@@ -1066,13 +1170,13 @@ def main() -> int:
             # RichDEM is deliberately NOT converted: its epsilon=True steps by
             # one ULP of std::nextafter, which is not an increment in metres at
             # all and has no matching value.
-            extra: list[str] = []
+            extra: list[str] = list(spec.get("reference_args", {}).get(reference, []))
             if (reference == "whitebox"
                     and "fill_min_slope" in spec.get("params", {})):
                 min_slope = float(spec["params"]["fill_min_slope"])
                 if min_slope > 0.0:
                     cell = cell_size_of(stage_input)
-                    extra = ["--flat-increment", repr(min_slope * cell)]
+                    extra += ["--flat-increment", repr(min_slope * cell)]
 
             # Cache key must include the extra args, or a run with a different
             # increment silently reuses the previous raster.
@@ -1086,6 +1190,8 @@ def main() -> int:
             if spec["kind"] == "accumulation":
                 m = accumulation_metrics(lsdtt_out, ref_out,
                                          cell_area_of(stage_input))
+            elif spec.get("metric") == "float32_exact":
+                m = float32_exact_metrics(lsdtt_out, ref_out, stage_input)
             elif spec.get("metric") == "float32_bits":
                 m = float32_bit_metrics(
                     lsdtt_out, ref_out, flat_baseline,
@@ -1102,6 +1208,15 @@ def main() -> int:
                 print(f"       total accum:      {100.0 * m['total_rel']:.6f} % rel")
                 print(f"       max cells:        lsdtt3 {m['max_cells_lsdtt']:.0f}"
                       f" / {reference} {m['max_cells_richdem']:.0f}")
+            elif spec.get("metric") == "float32_exact":
+                print(f"       cells compared:   {m['n_valid']}")
+                print(f"       bits differing:   {m['n_differing']}  (must be 0)")
+                print(f"       max |diff|:       {m['max_abs']:.9g} m")
+                print(f"       cells modified:   lsdtt3 {m['n_modified_lsdtt']}"
+                      f" / {reference} {m['n_modified_reference']}"
+                      f"  (Jaccard {m['modified_jaccard']:.6f})")
+                if m["first_differing_cell"]:
+                    print(f"       first differing:  {m['first_differing_cell']}")
             elif spec.get("metric") == "float32_bits":
                 print(f"       cells compared:   {m['n_valid']}")
                 print(f"       flat cells:       {m['n_flat']}")
@@ -1178,8 +1293,8 @@ def main() -> int:
                     value = m[metric]
 
                 if value > limit:
-                    detail = (f"; first at {m['first_unguarded_cell']}"
-                              if m.get("first_unguarded_cell") else "")
+                    first = m.get("first_unguarded_cell") or m.get("first_differing_cell")
+                    detail = f"; first at {first}" if first else ""
                     failures.append(
                         f"{key}: {metric} = {value:.6g} exceeds pinned "
                         f"{limit:g}{detail}")

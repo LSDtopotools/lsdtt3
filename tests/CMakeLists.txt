@@ -2809,8 +2809,14 @@ if(LSDTT_ENABLE_BENCHMARKS)
     # (RichDEM-equivalent) round, which must all lie above RichDEM's, with no
     # cell left without a lower neighbour -- oracle O1
     # (benchmark_flat_resolution_richdem) on real terrain.
+    #
+    # breach_least_cost is a VALUE comparison too: lsdtt3's least-cost breach
+    # (Lindsay 2020, ported from Whitebox) against whitebox_workflows 2.0.6
+    # under matched parameters (edge policy whitebox, no remainder fill,
+    # max_dist 100, minimize_dist false, flat increment float32(0.001)),
+    # asserted bit for bit on float32.
     foreach(bench_fixture alpine_small lakeland_small)
-        foreach(bench_case fill fill_epsilon breach accum_d8 flats_float_step)
+        foreach(bench_case fill fill_epsilon breach breach_least_cost accum_d8 flats_float_step)
             add_test(
                 NAME benchmark_${bench_case}_${bench_fixture}
                 COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
@@ -2826,6 +2832,22 @@ if(LSDTT_ENABLE_BENCHMARKS)
                 PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77)
         endforeach()
     endforeach()
+
+    # Least-cost breach fuzz against Whitebox 2.0.6: 200 seeded random DEMs
+    # (integer and 0.125-step values, some with nodata blobs) x minimize_dist
+    # {false,true} x max_dist {3,10,100} x max_cost {unlimited,2.5}, every run
+    # bitwise on float32. No network: the DEMs are generated in the driver.
+    # Exits 77 without whitebox_workflows.
+    add_test(
+        NAME benchmark_breach_least_cost_fuzz
+        COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_breach_least_cost_vs_whitebox.py"
+                --exe "$<TARGET_FILE:lsdtt-raster-preprocessing>"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flow_benchmark"
+    )
+    lsdtt_mark_test_runtime(pixi benchmark_breach_least_cost_fuzz)
+    lsdtt_set_tests_properties(benchmark_breach_least_cost_fuzz
+        PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
     # Surface-metrics SPEED benchmark vs TopoToolbox.  TopoToolbox is a PERFORMANCE reference here, not a
     # correctness one -- correctness comes from the Tier A analytic oracle in

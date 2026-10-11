@@ -447,7 +447,7 @@ points : array-like, shape (n, 2)
         nb::arg("n_threads") = 0, nb::arg("priority_flood_backend") = "binary",
         "Fill pits with NESW open, closed, periodic, or base-level boundaries.");
     m.def("breach_least_cost", &breach_least_cost, nb::arg("raster"),
-        nb::arg("max_distance") = 1000,
+        nb::arg("max_distance") = 100,
         nb::arg("max_cost") = (std::numeric_limits<float>::max)(),
         nb::arg("prefer_shortest_path") = false, nb::arg("flat_increment") = 0.0f,
         nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0,
@@ -458,7 +458,7 @@ A port of WhiteboxTools BreachDepressionsLeastCost (whitebox_workflows 2.0.6).
 
 Parameters
 ----------
-max_distance : int, default=1000
+max_distance : int, default=100
     Maximum breach path length in cells, counted in steps from the pit (a
     diagonal step counts as one). 1 to 32767.
 max_cost : float, optional
@@ -483,7 +483,7 @@ fill_min_slope : float, default=0.0001
     Gradient (m/m) imposed by the remainder fill.
 )doc");
     m.def("least_cost_carve_depth", &least_cost_carve_depth, nb::arg("raster"),
-        nb::arg("max_distance") = 1000,
+        nb::arg("max_distance") = 100,
         nb::arg("max_cost") = (std::numeric_limits<float>::max)(),
         nb::arg("prefer_shortest_path") = false, nb::arg("flat_increment") = 0.0f,
         nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0,
