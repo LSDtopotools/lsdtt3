@@ -285,6 +285,10 @@ REFERENCE_SCRIPTS = {
 #
 # Verified 2026-09-08 against richdem 2.3.0, topotoolbox 0.0.12,
 # whitebox_workflows 2.0.6.
+# float32(0.001) as a double: the flat increment the lsdtt3 CLI uses when given
+# 0.001 (breach_least_cost hands Whitebox exactly this value).
+_F32_0P001 = __import__("struct").unpack("f", __import__("struct").pack("f", 0.001))[0]
+
 NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     "fill": {
         "whitebox": "no grayscale-reconstruction fill in whitebox_workflows "
@@ -305,8 +309,18 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     "breach": {
         "whitebox": "no Lindsay (2016) complete breaching in whitebox_workflows "
                     "2.0.6 (hydrology offers breach_depressions_least_cost "
-                    "[Lindsay 2020; not benchmarked, see the note on the "
-                    "breach case] and breach_single_cell_pits)",
+                    "[Lindsay 2020; measured in breach_least_cost] and "
+                    "breach_single_cell_pits)",
+    },
+    # breach_least_cost*: verified 2026-10-11 against the same three versions.
+    "breach_least_cost": {
+        "richdem": "no least-cost breaching in richdem 2.3.0: "
+                   "BreachDepressions is complete breaching (Lindsay 2016; "
+                   "measured in breach)",
+        "topotoolbox": "no breaching surface in the Python package 0.0.12: "
+                       "FlowObject's sink_resolution='carve' carves inside "
+                       "flow routing and returns flow directions, not a "
+                       "breached DEM",
     },
     "accum_dinf": {
         "topotoolbox": "not bound in the Python package 0.0.12 "
@@ -621,19 +635,104 @@ CASES: dict[str, dict[str, Any]] = {
         "note": "complete breaching, Lindsay (2016): lsdtt3 vs RichDEM",
         # Whitebox was paired here until 2026-09-13, but it runs
         # breach_depressions_least_cost -- Lindsay (2020), a different
-        # algorithm with a bounded search. A `breach_least_cost` case
-        # (lsdtt3 least_cost vs that tool) existed 2026-09-13 .. 2026-10-10 and
-        # was REMOVED: lsdtt3's least-cost outputs looked incorrect on
-        # inspection (Simon, 2026-10-10), and the pairing was not
-        # like-for-like anyway (cost function, flat increment ~7 orders of
-        # magnitude apart, max_dist radius vs path length). It returns only
-        # once lsdtt3's least-cost breach has passed validation. Breaching is
-        # compared on Lindsay (2016) only.
+        # algorithm with a bounded search. That pairing is the separate
+        # `breach_least_cost` case below (removed 2026-10-10, re-instated
+        # 2026-10-11 after lsdtt3's least-cost core was ported from Whitebox
+        # and validated bitwise against it).
         "engines": {"richdem": "breach"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_breached_raster": "true",
                              "breach_algorithm_choice": "lindsay2016"},
                   "output": "_breached.tif"},
+    },
+
+    # -- least-cost breaching, Lindsay (2020) -------------------------------
+    #
+    # Re-instated 2026-10-11 after validation: lsdtt3's least_cost is a port
+    # of Whitebox's BreachDepressionsLeastCost, and under the parameters below
+    # its output equals whitebox_workflows 2.0.6's bit for bit (float32 of
+    # Whitebox's f64 output) -- values asserted bitwise in CTest (benchmark
+    # tier: benchmark_breach_least_cost_*, benchmark_breach_least_cost_fuzz;
+    # hermetic: unit_breach_least_cost_real_terrain). So this IS like-for-like
+    # and its ratio may be quoted.
+    #
+    # Matched parameters: edge policy whitebox (lsdtt3's default, outlet,
+    # treats the raster edge as an outlet; Whitebox does not), max_dist 100,
+    # minimize_dist false, no remainder fill / fill_deps False, and the flat
+    # increment float32(0.001) on both sides -- the CLI reads 0.001 as
+    # float32, so Whitebox is handed exactly that value. Both implementations
+    # are serial.
+    "breach_least_cost": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("least-cost breaching, Lindsay (2020): lsdtt3 vs Whitebox "
+                 "2.0.6 under matched parameters (edge policy whitebox, "
+                 "max_dist 100, minimize_dist false, increment 0.001, no "
+                 "remainder fill); outputs bitwise equal, asserted in CTest"),
+        "engines": {"whitebox": "breach"},
+        "reference_args": {"whitebox": [
+            "--breach-max-dist", "100",
+            "--breach-flat-increment", repr(_F32_0P001)]},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_breached_raster": "true",
+                             "breach_algorithm_choice": "least_cost",
+                             "breach_lc_edge_policy": "whitebox",
+                             "breach_lc_max_dist": "100",
+                             "breach_lc_minimize_dist": "false",
+                             "breach_lc_flat_increment": "0.001",
+                             "fill_remainder_after_breach": "false"},
+                  "output": "_breached.tif"},
+    },
+    # lsdtt3's least_cost with its CLI defaults (edge policy outlet, max_dist
+    # 1000, auto increment, remainder fill on): what a user gets. lsdtt3-only;
+    # no reference runs these parameters.
+    "breach_least_cost_default": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("least-cost breaching with lsdtt3's CLI defaults (edge "
+                 "policy outlet, max_dist 1000, auto increment, remainder "
+                 "fill on). lsdtt3-only. TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_breached_raster": "true",
+                             "breach_algorithm_choice": "least_cost"},
+                  "output": "_breached.tif"},
+        "report_only": True,
+    },
+    # Raw DEM -> routable surface by each breaching method: breach, then the
+    # default fill (barnes2014, fill_min_slope 1e-4). The time is the sum of
+    # the breach and fill "Compute time:" lines. lsdtt3-only: compares the two
+    # breaching methods against each other, not against a reference.
+    "breach_then_fill_lindsay2016": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("lindsay2016 breach + barnes2014 fill (min_slope 1e-4): "
+                 "time to a routable surface. lsdtt3-only. TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"breach_before_fill": "true",
+                             "breach_algorithm_choice": "lindsay2016",
+                             "write_fill_raster": "true",
+                             "fill_min_slope": "0.0001",
+                             "fill_algorithm_choice": "barnes2014"},
+                  "output": "_fill.tif"},
+        "report_only": True,
+    },
+    "breach_then_fill_least_cost": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("least_cost breach (CLI defaults) + barnes2014 fill "
+                 "(min_slope 1e-4): time to a routable surface. lsdtt3-only. "
+                 "TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"breach_before_fill": "true",
+                             "breach_algorithm_choice": "least_cost",
+                             "write_fill_raster": "true",
+                             "fill_min_slope": "0.0001",
+                             "fill_algorithm_choice": "barnes2014"},
+                  "output": "_fill.tif"},
+        "report_only": True,
     },
     "accum_d8": {
         "sequential": True,
@@ -1818,6 +1917,9 @@ def reference_extra_args(engine: str, case: dict,
                          fixture: pathlib.Path) -> list[str]:
     """Per-fixture arguments a reference needs to do the SAME work as lsdtt3.
 
+    `reference_args: {engine: [...]}` passes fixed arguments (the least-cost
+    breach's matched max_dist and flat increment).
+
     `whitebox_flat_increment_from: <lsdtt3 param>` converts lsdtt3's flat
     GRADIENT into Whitebox's flat_increment, which is metres PER CELL:
     increment = gradient * cell size. Handing Whitebox the raw gradient (or
@@ -1825,9 +1927,10 @@ def reference_extra_args(engine: str, case: dict,
     grid -- a different amount of flat-resolution work. Same conversion as
     run_flow_benchmark.py uses for its value comparison.
     """
+    extra = list(case.get("reference_args", {}).get(engine, []))
     param = case.get("whitebox_flat_increment_from")
     if engine != "whitebox" or not param:
-        return []
+        return extra
     gradient = float(case["lsdtt"]["params"][param])
     try:
         from osgeo import gdal
@@ -1837,7 +1940,7 @@ def reference_extra_args(engine: str, case: dict,
     except Exception as exc:
         raise RuntimeError(f"cannot read cell size of {fixture} to match "
                            f"Whitebox flat_increment: {exc}") from exc
-    return ["--flat-increment", repr(gradient * cell)]
+    return extra + ["--flat-increment", repr(gradient * cell)]
 
 
 def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
