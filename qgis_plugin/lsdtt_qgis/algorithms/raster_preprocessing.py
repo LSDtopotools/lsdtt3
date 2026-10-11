@@ -60,6 +60,8 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
     BREACH_LC_MAX_DIST = "BREACH_LC_MAX_DIST"
     BREACH_LC_MAX_COST = "BREACH_LC_MAX_COST"
     BREACH_LC_FLAT_INCREMENT = "BREACH_LC_FLAT_INCREMENT"
+    BREACH_LC_MINIMIZE_DIST = "BREACH_LC_MINIMIZE_DIST"
+    BREACH_LC_EDGE_POLICY = "BREACH_LC_EDGE_POLICY"
     WRITE_CARVE_DIFF = "WRITE_CARVE_DIFF"
 
     # Advanced: filling
@@ -99,6 +101,7 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
     ]
     NODATA_FILL_OPTIONS = ["laplacian", "iterative_weighted_average"]
     BREACH_ALGORITHM_OPTIONS = ["lindsay2016", "least_cost"]
+    BREACH_LC_EDGE_POLICY_OPTIONS = ["outlet", "whitebox"]
     FILL_ALGORITHM_OPTIONS = ["barnes2014", "barnesetal2021"]
     VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg"]
 
@@ -276,10 +279,11 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         self._add_advanced(
             QgsProcessingParameterNumber(
                 self.BREACH_LC_MAX_DIST,
-                "Least-cost breaching: maximum search radius (pixels)",
+                "Least-cost breaching: maximum breach path length (cells)",
                 type=QgsProcessingParameterNumber.Integer,
                 minValue=1,
-                defaultValue=1000,
+                maxValue=32767,
+                defaultValue=100,
             )
         )
         self._add_advanced(
@@ -293,9 +297,24 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         self._add_advanced(
             QgsProcessingParameterNumber(
                 self.BREACH_LC_FLAT_INCREMENT,
-                "Least-cost breaching: flat path elevation increment",
+                "Least-cost breaching: elevation drop per cell along a breach (0 = auto)",
                 type=QgsProcessingParameterNumber.Double,
                 defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.BREACH_LC_MINIMIZE_DIST,
+                "Least-cost breaching: weight path cost by length",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.BREACH_LC_EDGE_POLICY,
+                "Least-cost breaching: raster edge policy",
+                options=self.BREACH_LC_EDGE_POLICY_OPTIONS,
+                defaultValue=0,
             )
         )
         self._add_advanced(
@@ -533,6 +552,12 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             "breach_lc_flat_increment": self.parameterAsDouble(
                 parameters, self.BREACH_LC_FLAT_INCREMENT, context
             ),
+            "breach_lc_minimize_dist": self.parameterAsBool(
+                parameters, self.BREACH_LC_MINIMIZE_DIST, context
+            ),
+            "breach_lc_edge_policy": self.BREACH_LC_EDGE_POLICY_OPTIONS[
+                self.parameterAsEnum(parameters, self.BREACH_LC_EDGE_POLICY, context)
+            ],
             # filling
             "write_fill_raster": write_fill,
             "write_fill_diff_raster": write_fill_diff,

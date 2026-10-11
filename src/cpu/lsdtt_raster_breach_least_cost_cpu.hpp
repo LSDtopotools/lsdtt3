@@ -21,8 +21,10 @@
 
 #include <cstdint>
 #include <limits>
+#include <string>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_flat_resolution_cpu.hpp"  // flat_resolution_choice
 
 namespace lsdtt {
 
@@ -78,6 +80,19 @@ enum class breach_lc_edge_policy : uint8_t
     whitebox,
 };
 
+// parse_breach_lc_edge_policy / breach_lc_edge_policy_name
+//
+// The parameter spelling is the enumerator name, exactly: "outlet" or
+// "whitebox". parse_breach_lc_edge_policy throws std::invalid_argument for
+// anything else, with the message (one line)
+//   <key> must be one of outlet, whitebox; got '<text>'
+// key is the caller's parameter name (breach_lc_edge_policy in
+// lsdtt-raster-preprocessing). breach_lc_edge_policy_name is the inverse.
+breach_lc_edge_policy parse_breach_lc_edge_policy(
+    const std::string& text,
+    const std::string& key = "edge_policy");
+const char* breach_lc_edge_policy_name(breach_lc_edge_policy policy);
+
 struct breach_least_cost_options
 {
     // Maximum breach path length in steps (cells). 1..32767.
@@ -94,13 +109,21 @@ struct breach_least_cost_options
     // (2.4e-4 m at 1024-2047 m, 4.9e-4 m at 2048-4095 m). Whitebox's own
     // auto increment (~1e-10 m) is below float32 resolution.
     double flat_increment = 0.0;
-    // Fill what the breach leaves with Priority-Flood (fill_pits) at
-    // fill_min_slope when any interior cell without a strictly lower
-    // neighbour remains. With fill_min_slope > 0 every interior cell then has
-    // a strictly lower neighbour; 0 gives a flat fill.
+    // Fill what the breach leaves when any interior cell without a strictly
+    // lower neighbour remains: fill_pits(fill_min_slope, fill_flat_resolution).
+    // With inline_gradient and fill_min_slope > 0, or with either barnes2014b
+    // option, every interior cell then has a strictly lower neighbour;
+    // inline_gradient with fill_min_slope 0 gives a flat fill.
     bool   fill_remainder = true;
-    // Gradient (m/m) imposed by the remainder fill across what it fills. >= 0.
+    // Gradient (m/m) imposed by the remainder fill. >= 0; must be > 0 under
+    // barnes2014b_gradient (when fill_remainder is set); ignored by
+    // barnes2014b_float_step.
     float  fill_min_slope = 0.0001f;
+    // How the remainder fill makes flats drainable (the CLI parameter
+    // fill_flat_resolution_choice). inline_gradient is Priority-Flood with
+    // min_slope; the barnes2014b options fill flat and then resolve the flats
+    // (Barnes et al. 2014b) and print the resolver's report.
+    flat_resolution_choice fill_flat_resolution = flat_resolution_choice::inline_gradient;
     breach_lc_edge_policy edge_policy = breach_lc_edge_policy::outlet;
 };
 
@@ -134,7 +157,9 @@ lsdtt_raster_cpu breach_depressions_least_cost(
 
 // Positional form: forwards to the options overload with
 // max_cost >= FLT_MAX meaning unlimited, min_dist -> minimize_dist and the
-// default edge_policy (outlet) and fill_min_slope (1e-4). n_threads is ignored (the algorithm is serial).
+// the struct defaults for edge_policy (outlet), fill_min_slope (1e-4) and
+// fill_flat_resolution (inline_gradient). n_threads is ignored (the algorithm
+// is serial).
 lsdtt_raster_cpu breach_depressions_least_cost(
     const lsdtt_raster_cpu& raster,
     int   max_dist       = 1000,

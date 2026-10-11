@@ -43,12 +43,14 @@
 //   * the automatic flat increment is 2 x ULP_f32(max |z|) (auto_flat_increment
 //     below), not Whitebox's digit rule, whose ~1e-10 m steps vanish in
 //     float32;
-//   * the remainder fill is lsdtt3's Priority-Flood with min_slope, not
-//     Whitebox's fill_deps (pit-centric fill with Garbrecht-Martz flats).
+//   * the remainder fill is lsdtt3's fill_pits (Priority-Flood with min_slope,
+//     or a Barnes et al. 2014b flat resolution), not Whitebox's fill_deps
+//     (pit-centric fill with Garbrecht-Martz flats).
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"  // fill_pits (remainder fill)
+#include "lsdtt_fill_flat_resolution_reporting_cpu.hpp"  // barnes2014b remainder fill
 
 #include <algorithm>
 #include <cmath>
@@ -225,6 +227,23 @@ std::int64_t count_cells_without_descent(const std::vector<float>&   z,
 } // namespace
 
 // -----------------------------------------------------------------------------
+// parse_breach_lc_edge_policy / breach_lc_edge_policy_name
+// -----------------------------------------------------------------------------
+breach_lc_edge_policy parse_breach_lc_edge_policy(const std::string& text,
+                                                  const std::string& key)
+{
+    if (text == "outlet")   return breach_lc_edge_policy::outlet;
+    if (text == "whitebox") return breach_lc_edge_policy::whitebox;
+    throw std::invalid_argument(
+        key + " must be one of outlet, whitebox; got '" + text + "'");
+}
+
+const char* breach_lc_edge_policy_name(breach_lc_edge_policy policy)
+{
+    return policy == breach_lc_edge_policy::whitebox ? "whitebox" : "outlet";
+}
+
+// -----------------------------------------------------------------------------
 // validate_breach_least_cost_options
 // -----------------------------------------------------------------------------
 void validate_breach_least_cost_options(const breach_least_cost_options& options)
@@ -253,6 +272,15 @@ void validate_breach_least_cost_options(const breach_least_cost_options& options
         throw std::invalid_argument(
             "lsdtt::breach_depressions_least_cost: fill_min_slope must be finite "
             "and >= 0; got " + std::to_string(options.fill_min_slope));
+    }
+    if (options.fill_remainder &&
+        options.fill_flat_resolution == flat_resolution_choice::barnes2014b_gradient &&
+        !(options.fill_min_slope > 0.0f))
+    {
+        throw std::invalid_argument(
+            "lsdtt::breach_depressions_least_cost: fill_flat_resolution "
+            "barnes2014b_gradient needs fill_min_slope > 0 (it sets the gradient "
+            "imposed across flats); got " + std::to_string(options.fill_min_slope));
     }
 }
 
@@ -506,7 +534,7 @@ lsdtt_raster_cpu breach_depressions_least_cost(
               << " skipped (no longer pits), " << diag.pits_solved << " breached, "
               << (diag.pits_unsolved_exhausted + diag.pits_unsolved_max_cost)
               << " unsolved. flat_increment = " << small << ", edge_policy = "
-              << (edge_is_outlet ? "outlet" : "whitebox") << "\n";
+              << breach_lc_edge_policy_name(options.edge_policy) << "\n";
 
     lsdtt_raster_cpu breached(std::move(out), std::move(valid), meta);
 
@@ -517,13 +545,23 @@ lsdtt_raster_cpu breach_depressions_least_cost(
         if (options.fill_remainder)
         {
             std::cout << " - filling remainder with Priority-Flood, min_slope = "
-                      << options.fill_min_slope << ".\n";
-            // fill_pits: Priority-Flood with min_slope (Barnes et al. 2014);
-            // at min_slope 0 it dispatches to the bit-identical flat fill.
-            // Flats are resolved by min_slope only; the remainder fill does not
-            // take a fill_flat_resolution_choice.
-            breached = fill_pits(breached, options.fill_min_slope, 0,
-                                 priority_flood_queue_backend::binary_heap);
+                      << options.fill_min_slope << ", flat resolution = "
+                      << flat_resolution_choice_name(options.fill_flat_resolution)
+                      << ".\n";
+            if (options.fill_flat_resolution == flat_resolution_choice::inline_gradient)
+            {
+                // Priority-Flood with min_slope (Barnes et al. 2014); at
+                // min_slope 0 it dispatches to the bit-identical flat fill.
+                breached = fill_pits(breached, options.fill_min_slope, 0,
+                                     priority_flood_queue_backend::binary_heap);
+            }
+            else
+            {
+                // Flat fill, then Barnes et al. (2014b) flat resolution, with
+                // the same report the CLIs print for their own fill.
+                breached = fill_pits_reporting_flat_resolution(
+                    breached, options.fill_min_slope, options.fill_flat_resolution, 0);
+            }
             diag.remainder_filled = true;
         }
         else

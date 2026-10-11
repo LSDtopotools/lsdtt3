@@ -684,6 +684,62 @@ add_lsdtt_cli_smoke_test(
     tiny30_fill.tif
 )
 
+# Least-cost breaching (Lindsay 2020, the Whitebox 2.0.6 port) through the CLI.
+# The numerics are asserted bitwise against Whitebox in unit_breach_least_cost;
+# these pin the parameter plumbing. tiny_breach_lc_dem.asc is a 7x7 bowl, pit
+# 1.0 at (3,3) inside a ring of 2s and a rim of 6s, with a 4 saddle at (3,5) and
+# a 3 on the east border at (3,6); breach_lc_flat_increment 0.125 keeps every
+# value dyadic.
+#   outlet:   the pit is raised to 1.875 and breached NE then E off the grid:
+#             (2,4) 1.75, (3,5) 1.625, border (3,6) 1.5.
+#   whitebox: the edge is not an outlet and no border cell is low enough, so
+#             the pit is unsolved and the remainder fill raises the bowl.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_breach_least_cost
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_outlet.param.in
+    breachlc_outlet_breached.tif
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 1 breached, 0 unsolved"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_raster_preprocessing_breach_least_cost
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_outlet.param.in
+    breachlc_outlet_breached.tif
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 1 breached, 0 unsolved. flat_increment = 0.1250, edge_policy = outlet"
+    --expect-raster-values "breachlc_outlet_breached.tif:1.5,1.625,1.75,1.875,2,6,9"
+    --expect-raster-checksum breachlc_outlet_breached.tif:305
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_raster_preprocessing_breach_lc_whitebox_edge
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_whitebox.param.in
+    breachlc_whitebox_breached.tif
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 0 breached, 1 unsolved. flat_increment = 0.1250, edge_policy = whitebox"
+    --stdout-contains "1 interior cells without descent - filling remainder with Priority-Flood, min_slope = 0.0001, flat resolution = inline_gradient."
+    --expect-raster-checksum breachlc_whitebox_breached.tif:326
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_breach_lc_max_dist
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_bad_max_dist.param.in
+    breachlc_bad_breached.tif
+    --expect-failure
+    --stderr-contains "FATAL: lsdtt::breach_depressions_least_cost: max_dist must be between 1 and 32767 (maximum breach path length in cells)\; got 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_breach_lc_edge_policy
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_bad_edge_policy.param.in
+    breachlc_badedge_breached.tif
+    --expect-failure
+    --stderr-contains "FATAL: breach_lc_edge_policy must be one of outlet, whitebox\; got 'Outlet'"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_channel_extraction
     lsdtt-channel-extraction

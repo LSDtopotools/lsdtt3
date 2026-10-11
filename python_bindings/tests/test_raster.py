@@ -229,6 +229,49 @@ class RasterTest(unittest.TestCase):
             lsdtt3.least_cost_carve_depth(depression, n_threads=1).to_numpy() >= 0.0
         ))
 
+    def test_breach_least_cost_edge_policy_and_errors(self):
+        # The 7x7 bowl of tests/data/tiny_breach_lc_dem.asc: pit 1.0 at (3, 3),
+        # a 4 saddle at (3, 5) and a 3 on the east border at (3, 6).
+        values = np.array([
+            [9, 9, 9, 9, 9, 9, 9],
+            [9, 6, 6, 6, 6, 6, 9],
+            [9, 6, 2, 2, 2, 6, 9],
+            [9, 6, 2, 1, 2, 4, 3],
+            [9, 6, 2, 2, 2, 6, 9],
+            [9, 6, 6, 6, 6, 6, 9],
+            [9, 9, 9, 9, 9, 9, 9],
+        ], dtype=np.float32)
+        metadata = lsdtt3.RasterMeta.from_shape(7, 7, x_min=0.0, y_min=0.0, cell_size=10.0)
+        dem = lsdtt3.Raster.from_numpy(values, np.ones((7, 7), dtype=bool), metadata)
+
+        # Default edge_policy "outlet": breached off the east edge.
+        outlet = lsdtt3.breach_least_cost(dem, flat_increment=0.125).to_numpy()
+        expected = values.copy()
+        expected[3, 3] = 1.875
+        expected[2, 4] = 1.75
+        expected[3, 5] = 1.625
+        expected[3, 6] = 1.5
+        np.testing.assert_array_equal(outlet, expected)
+
+        # "whitebox": the pit is unsolved; without the remainder fill only the
+        # pit raise remains.
+        wb = lsdtt3.breach_least_cost(
+            dem, flat_increment=0.125, fill_remainder=False, edge_policy="whitebox"
+        ).to_numpy()
+        expected_wb = values.copy()
+        expected_wb[3, 3] = 1.875
+        np.testing.assert_array_equal(wb, expected_wb)
+
+        carve = lsdtt3.least_cost_carve_depth(dem, flat_increment=0.125).to_numpy()
+        self.assertEqual(float(carve[3, 5]), 2.375)
+
+        with self.assertRaisesRegex(ValueError, "edge_policy must be one of outlet, whitebox"):
+            lsdtt3.breach_least_cost(dem, edge_policy="Outlet")
+        with self.assertRaisesRegex(ValueError, "max_dist must be between 1 and 32767"):
+            lsdtt3.breach_least_cost(dem, max_distance=0)
+        with self.assertRaisesRegex(ValueError, "fill_min_slope"):
+            lsdtt3.breach_least_cost(dem, fill_min_slope=-1.0)
+
     def test_geopandas_reprojection_mosaic_clipping_and_sampling(self):
         crs = gpd.GeoSeries([], crs=32612).crs
         metadata = lsdtt3.RasterMeta.from_shape(

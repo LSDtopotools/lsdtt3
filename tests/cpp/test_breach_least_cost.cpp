@@ -53,7 +53,10 @@
 //   C   per fixture: Whitebox's internal counters (pits detected / searched /
 //       skipped / solved / unsolved) -- once the library exposes them.
 //   E   max_dist < 1 and max_dist > 32767 are rejected with a message naming
-//       max_dist; max_dist 32767 is accepted.
+//       max_dist; max_dist 32767 is accepted. fill_min_slope < 0 / NaN / inf
+//       are rejected; barnes2014b_gradient with fill_min_slope 0 is rejected
+//       unless fill_remainder is false. The edge-policy spelling (outlet,
+//       whitebox) and its exact error message.
 //   A   lsdtt3's automatic flat increment (flat_increment <= 0):
 //       2 x ULP_f32(max(|z|max, 1)), pinned on F12's three elevation ranges,
 //       flat rasters, a power-of-two maximum and an all-nodata raster.
@@ -62,6 +65,9 @@
 //       the raster and valid) has a strictly lower neighbour: F1, F7, F8,
 //       F10, F15, cell size 1 and 30 m; also F8 at increment 0.125 (16
 //       unsolved pits), and a control showing fill_min_slope 0 fails it.
+//       The same with fill_flat_resolution barnes2014b_gradient and
+//       barnes2014b_float_step (whitebox mode), and on F8 at 0.125 each
+//       differs from inline_gradient (the option reaches the fill).
 //   O   edge_policy = outlet (an off-grid neighbour is treated exactly as
 //       Whitebox treats a nodata neighbour: the search ends there): default
 //       is outlet; equal to Whitebox on every run whose Whitebox search never
@@ -78,6 +84,7 @@
 //       bool   fill_remainder;
 //       lsdtt::breach_lc_edge_policy edge_policy;   // { outlet, whitebox }
 //       float  fill_min_slope;    // remainder fill gradient (default 1e-4)
+//       lsdtt::flat_resolution_choice fill_flat_resolution;  // inline_gradient
 //   };
 //   lsdtt_raster_cpu breach_depressions_least_cost(
 //       const lsdtt_raster_cpu&, const breach_least_cost_options&,
@@ -1684,6 +1691,51 @@ void test_errors(const std::map<std::string, grid>& fx)
               t && m.find("fill_min_slope") != std::string::npos,
               t ? "message: " + m : "did not throw");
     }
+
+    // barnes2014b_gradient takes its gradient from fill_min_slope, so 0 is
+    // refused -- but only when the remainder fill can run.
+    {
+        lsdtt::breach_least_cost_options o;
+        o.fill_flat_resolution = lsdtt::flat_resolution_choice::barnes2014b_gradient;
+        o.fill_min_slope       = 0.0f;
+        std::string m;
+        bool t = false;
+        {
+            cout_silencer quiet;
+            try { (void)lsdtt::breach_depressions_least_cost(dem, o); }
+            catch (const std::exception& e) { m = e.what(); t = true; }
+        }
+        check("E barnes2014b_gradient with fill_min_slope 0 is rejected, naming both",
+              t && m.find("fill_min_slope") != std::string::npos &&
+                  m.find("barnes2014b_gradient") != std::string::npos,
+              t ? "message: " + m : "did not throw");
+
+        o.fill_remainder = false;
+        t = false;
+        {
+            cout_silencer quiet;
+            try { (void)lsdtt::breach_depressions_least_cost(dem, o); }
+            catch (const std::exception& e) { m = e.what(); t = true; }
+        }
+        check("E barnes2014b_gradient with fill_min_slope 0 is accepted when fill_remainder is false",
+              !t, "threw: " + m);
+    }
+
+    // The edge-policy spelling shared by the CLIs and the binding.
+    {
+        bool ok = lsdtt::parse_breach_lc_edge_policy("outlet") == lsdtt::breach_lc_edge_policy::outlet &&
+                  lsdtt::parse_breach_lc_edge_policy("whitebox") == lsdtt::breach_lc_edge_policy::whitebox &&
+                  std::string(lsdtt::breach_lc_edge_policy_name(lsdtt::breach_lc_edge_policy::outlet)) == "outlet" &&
+                  std::string(lsdtt::breach_lc_edge_policy_name(lsdtt::breach_lc_edge_policy::whitebox)) == "whitebox";
+        check("E edge policy parses outlet / whitebox and names them back", ok);
+        std::string m;
+        bool t = false;
+        try { (void)lsdtt::parse_breach_lc_edge_policy("Outlet", "breach_lc_edge_policy"); }
+        catch (const std::invalid_argument& e) { m = e.what(); t = true; }
+        check("E edge policy 'Outlet' is rejected with the exact message",
+              t && m == "breach_lc_edge_policy must be one of outlet, whitebox; got 'Outlet'",
+              t ? "message: " + m : "did not throw");
+    }
 #endif
 }
 
@@ -1846,6 +1898,56 @@ void test_routability(const std::map<std::string, grid>& fx)
         const int n_bad = count_without_descent(out);
         check("R control: F10 whitebox with fill_min_slope 0 leaves cells without descent",
               n_bad > 0, "0 cells without descent: the R checks cannot detect a flat fill");
+    }
+
+    // The remainder fill honours fill_flat_resolution: with either barnes2014b
+    // option every interior cell still descends (whitebox mode, so F10 and
+    // F15 leave a remainder for the fill), and on F8 at increment 0.125 (16
+    // unsolved pits) the result differs from inline_gradient, so the option
+    // reaches the fill.
+    for (lsdtt::flat_resolution_choice fr : {lsdtt::flat_resolution_choice::barnes2014b_gradient,
+                                             lsdtt::flat_resolution_choice::barnes2014b_float_step})
+    {
+        const std::string fr_name = lsdtt::flat_resolution_choice_name(fr);
+        for (const char* name : {"F1", "F7", "F8", "F10", "F15"})
+        {
+            for (double cs : {1.0, 30.0})
+            {
+                lsdtt::breach_least_cost_options o;
+                o.edge_policy          = lsdtt::breach_lc_edge_policy::whitebox;
+                o.fill_flat_resolution = fr;
+                lsdtt::breach_least_cost_diagnostics diag;
+                lsdtt::lsdtt_raster_cpu out;
+                {
+                    cout_silencer quiet;
+                    out = lsdtt::breach_depressions_least_cost(make_raster(fx.at(name), cs), o, &diag);
+                }
+                const int n_bad = count_without_descent(out);
+                std::ostringstream lab;
+                lab << "R " << fr_name << ", whitebox, cs " << cs
+                    << ": every interior cell descends: " << name << " (remainder fill "
+                    << (diag.remainder_filled ? "ran" : "not needed") << ")";
+                check(lab.str(), n_bad == 0,
+                      std::to_string(n_bad) + " interior cells without a strictly lower neighbour");
+            }
+        }
+
+        lsdtt::breach_least_cost_options o;
+        o.flat_increment = 0.125;
+        o.edge_policy    = lsdtt::breach_lc_edge_policy::whitebox;
+        lsdtt::lsdtt_raster_cpu inline_out, fr_out;
+        lsdtt::breach_least_cost_diagnostics diag;
+        {
+            cout_silencer quiet;
+            inline_out = lsdtt::breach_depressions_least_cost(make_raster(fx.at("F8"), 1.0), o);
+            o.fill_flat_resolution = fr;
+            fr_out = lsdtt::breach_depressions_least_cost(make_raster(fx.at("F8"), 1.0), o, &diag);
+        }
+        const int n_bad = count_without_descent(fr_out);
+        check("R F8 whitebox, increment 0.125, " + fr_name +
+              ": remainder fill ran, every interior cell descends, result differs from inline_gradient",
+              diag.remainder_filled && n_bad == 0 && fr_out.get_data() != inline_out.get_data(),
+              std::to_string(n_bad) + " interior cells without a strictly lower neighbour");
     }
 #else
     (void)fx;

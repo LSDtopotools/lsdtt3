@@ -160,28 +160,53 @@ int main(int argc, char* argv[])
     // --- Bounded least-cost breaching (breach_algorithm_choice = least_cost) ---
     float_default_map["breach_max_cost"] = 0.0f;
     help_map["breach_max_cost"] = {"float","0",
-        "Cap on the total elevation (m, distance-weighted) carved along one "
-        "least-cost breach path. 0 = unbounded.",
-        "Discriminates obstruction type by carve depth: shallow carves (lake "
-        "spillways, small pits) stay below the cap and breach; deep carves "
-        "through road/rail embankments exceed it and are left filled, so those "
-        "crossings remain as gaps for the LCP burn (run_lcp_burn) to bridge under "
-        "the vector line. Start ~2-5 (m). Only used when breach_algorithm_choice "
-        "is least_cost.",
+        "Cap on the total depth (m) carved along one least-cost breach path. "
+        "0 = unbounded.",
+        "The cost of a path is the depth each cell on it is lowered, summed "
+        "(metres; with breach_minimize_dist true each step is weighted by its "
+        "length in cells, so the units become metres x cells). Discriminates "
+        "obstruction type by carve depth: shallow carves (lake spillways, "
+        "small pits) stay below the cap and breach; deep carves through "
+        "road/rail embankments exceed it and are left filled, so those "
+        "crossings remain as gaps for the LCP burn (run_lcp_burn) to bridge "
+        "under the vector line. Start ~2-5 (m). Only used when "
+        "breach_algorithm_choice is least_cost.",
         "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     int_default_map["breach_max_dist_pixels"] = 1000;
     help_map["breach_max_dist_pixels"] = {"int","1000",
-        "Maximum breach-path length in pixels for least-cost breaching.",
-        "Must be large enough to span the widest water body you want breached. "
-        "Only used when breach_algorithm_choice is least_cost.",
+        "Maximum breach path length in cells for least-cost breaching.",
+        "Counted in steps from the pit (a diagonal step counts as one), not "
+        "as a radius; 1 to 32767. Must be large enough to span the widest "
+        "water body you want breached. Only used when breach_algorithm_choice "
+        "is least_cost.",
+        "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
+
+    bool_default_map["breach_minimize_dist"] = false;
+    help_map["breach_minimize_dist"] = {"bool","false",
+        "Weight least-cost breach paths by their length.",
+        "false: a path costs the total depth carved (m), which is what "
+        "breach_max_cost caps. true: each step is weighted by its length in "
+        "cells, favouring shorter paths, and breach_max_cost is then in "
+        "metres x cells. Only used when breach_algorithm_choice is least_cost.",
+        "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
+
+    string_default_map["breach_edge_policy"] = "outlet";
+    help_map["breach_edge_policy"] = {"string","outlet",
+        "Whether a least-cost breach may drain off the raster edge.",
+        "outlet: the raster edge is an outlet, like a nodata cell. whitebox: "
+        "the edge is not an outlet (as in WhiteboxTools), so a breach must "
+        "reach an edge cell that is already low enough, which can carve deep "
+        "cuts across divides near the edge. Only used when "
+        "breach_algorithm_choice is least_cost.",
         "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     float_default_map["breach_flat_increment"] = 0.0f;
     help_map["breach_flat_increment"] = {"float","0",
         "Per-step elevation drop (m) imposed along a breach channel.",
-        "0 = auto (derived from the DEM). Only used when breach_algorithm_choice "
-        "is least_cost.",
+        "0 = auto: twice the float32 spacing at the largest absolute elevation "
+        "in the DEM, the smallest drop that keeps the channel strictly "
+        "downhill. Only used when breach_algorithm_choice is least_cost.",
         "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     bool_default_map["breach_fill_remainder"] = true;
@@ -189,8 +214,8 @@ int main(int argc, char* argv[])
         "Fill any depression that could not be breached within the cost/distance "
         "bounds (so flow still routes off it).",
         "Keep true for bounded breaching: road-dammed depressions that exceed "
-        "breach_max_cost are filled (then routed by fill_min_slope) rather than "
-        "carved. Only used when breach_algorithm_choice is least_cost.",
+        "breach_max_cost are filled with fill_min_slope rather than carved. "
+        "Only used when breach_algorithm_choice is least_cost.",
         "Bounded least-cost breaching (breach_algorithm_choice = least_cost)", "param", ""};
 
     float_default_map["fill_min_slope"] = 0.0001f;
@@ -782,6 +807,35 @@ int main(int argc, char* argv[])
         lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
             sf["burned_profiles_write_vector_format"], sf["write_vector_format"]));
 
+    // Least-cost breaching options, validated before the DEM is read so a bad
+    // value fails with the library's message.
+    lsdtt::breach_least_cost_options breach_lc_options;
+    if (!bf["raster_is_filled"] && bf["carve_before_fill"] &&
+        sf["breach_algorithm_choice"] == "least_cost")
+    {
+        try
+        {
+            // breach_max_cost <= 0 means unbounded (carve through everything).
+            const float bmc = ff["breach_max_cost"];
+            breach_lc_options.max_dist       = ifs["breach_max_dist_pixels"];
+            breach_lc_options.max_cost       = bmc > 0.0f
+                ? static_cast<double>(bmc)
+                : std::numeric_limits<double>::infinity();
+            breach_lc_options.minimize_dist  = bf["breach_minimize_dist"];
+            breach_lc_options.flat_increment = static_cast<double>(ff["breach_flat_increment"]);
+            breach_lc_options.fill_remainder = bf["breach_fill_remainder"];
+            breach_lc_options.fill_min_slope = ff["fill_min_slope"];
+            breach_lc_options.edge_policy    = lsdtt::parse_breach_lc_edge_policy(
+                sf["breach_edge_policy"], "breach_edge_policy");
+            lsdtt::validate_breach_least_cost_options(breach_lc_options);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Open DEM
     // -------------------------------------------------------------------------
@@ -830,22 +884,14 @@ int main(int argc, char* argv[])
                 if (sf["breach_algorithm_choice"] == "least_cost")
                 {
                     // Bounded least-cost breaching. max_cost caps the total
-                    // elevation carved along a breach path: shallow carves
-                    // (lake spillways, small pits) pass, but deep carves through
+                    // depth carved along a breach path: shallow carves (lake
+                    // spillways, small pits) pass, but deep carves through
                     // road embankments exceed the cap and are left filled - so
-                    // roads stay as gaps for the LCP burn (run_lcp_burn) to bridge
-                    // under the vector line. <= 0 means unbounded cost (carve
-                    // through everything, the classic behaviour).
-                    const float bmc = ff["breach_max_cost"];
+                    // roads stay as gaps for the LCP burn (run_lcp_burn) to
+                    // bridge under the vector line. Options were validated
+                    // before the DEM was read.
                     routed_dem = lsdtt::breach_depressions_least_cost(
-                        dem,
-                        ifs["breach_max_dist_pixels"],
-                        bmc > 0.0f ? bmc
-                                   : std::numeric_limits<float>::max(),
-                        /*min_dist=*/true,
-                        /*flat_increment=*/ff["breach_flat_increment"],
-                        /*fill_remainder=*/bf["breach_fill_remainder"],
-                        ifs["n_threads"]);
+                        dem, breach_lc_options);
                 }
                 else
                 {
