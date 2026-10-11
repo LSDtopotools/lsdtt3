@@ -684,6 +684,66 @@ add_lsdtt_cli_smoke_test(
     tiny30_fill.tif
 )
 
+# Least-cost breaching (Lindsay 2020, the Whitebox 2.0.6 port) through the CLI.
+# The numerics are asserted bitwise against Whitebox in unit_breach_least_cost;
+# these pin the parameter plumbing. tiny_breach_lc_dem.asc is a 7x7 bowl, pit
+# 1.0 at (3,3) inside a ring of 2s and a rim of 6s, with a 4 saddle at (3,5) and
+# a 3 on the east border at (3,6); breach_lc_flat_increment 0.125 keeps every
+# value dyadic.
+#   outlet:   the pit is raised to 1.875 and breached NE then E off the grid:
+#             (2,4) 1.75, (3,5) 1.625, border (3,6) 1.5.
+#   whitebox: the edge is not an outlet and no border cell is low enough, so
+#             the pit is unsolved and the remainder fill raises the bowl.
+# Neither file sets breach_lc_max_dist, so each pins the edge policy's default
+# (1000 outlet, 100 whitebox); the max_dist failure test sets it explicitly.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_breach_least_cost
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_outlet.param.in
+    breachlc_outlet_breached.tif
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 1 breached, 0 unsolved"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_raster_preprocessing_breach_least_cost
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_outlet.param.in
+    breachlc_outlet_breached.tif
+    --stdout-contains "breach_lc_max_dist = 1000 (default for this edge policy), breach_lc_edge_policy = outlet"
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 1 breached, 0 unsolved. flat_increment = 0.1250, edge_policy = outlet"
+    --expect-raster-values "breachlc_outlet_breached.tif:1.5,1.625,1.75,1.875,2,6,9"
+    --expect-raster-checksum breachlc_outlet_breached.tif:305
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_raster_preprocessing_breach_lc_whitebox_edge
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_whitebox.param.in
+    breachlc_whitebox_breached.tif
+    --stdout-contains "breach_lc_max_dist = 100 (default for this edge policy), breach_lc_edge_policy = whitebox"
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 0 breached, 1 unsolved. flat_increment = 0.1250, edge_policy = whitebox"
+    --stdout-contains "1 interior cells without descent - filling remainder with Priority-Flood, min_slope = 0.0001, flat resolution = inline_gradient."
+    --expect-raster-checksum breachlc_whitebox_breached.tif:326
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_breach_lc_max_dist
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_bad_max_dist.param.in
+    breachlc_bad_breached.tif
+    --expect-failure
+    --stderr-contains "FATAL: lsdtt::breach_depressions_least_cost: max_dist must be between 1 and 32767 (maximum breach path length in cells)\; got 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_breach_lc_edge_policy
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_bad_edge_policy.param.in
+    breachlc_badedge_breached.tif
+    --expect-failure
+    --stderr-contains "FATAL: breach_lc_edge_policy must be one of outlet, whitebox\; got 'Outlet'"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_channel_extraction
     lsdtt-channel-extraction
@@ -2753,8 +2813,14 @@ if(LSDTT_ENABLE_BENCHMARKS)
     # (RichDEM-equivalent) round, which must all lie above RichDEM's, with no
     # cell left without a lower neighbour -- oracle O1
     # (benchmark_flat_resolution_richdem) on real terrain.
+    #
+    # breach_least_cost is a VALUE comparison too: lsdtt3's least-cost breach
+    # (Lindsay 2020, ported from Whitebox) against whitebox_workflows 2.0.6
+    # under matched parameters (edge policy whitebox, no remainder fill,
+    # max_dist 100, minimize_dist false, flat increment float32(0.001)),
+    # asserted bit for bit on float32.
     foreach(bench_fixture alpine_small lakeland_small)
-        foreach(bench_case fill fill_epsilon breach accum_d8 flats_float_step)
+        foreach(bench_case fill fill_epsilon breach breach_least_cost accum_d8 flats_float_step)
             add_test(
                 NAME benchmark_${bench_case}_${bench_fixture}
                 COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
@@ -2770,6 +2836,22 @@ if(LSDTT_ENABLE_BENCHMARKS)
                 PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77)
         endforeach()
     endforeach()
+
+    # Least-cost breach fuzz against Whitebox 2.0.6: 200 seeded random DEMs
+    # (integer and 0.125-step values, some with nodata blobs) x minimize_dist
+    # {false,true} x max_dist {3,10,100} x max_cost {unlimited,2.5}, every run
+    # bitwise on float32. No network: the DEMs are generated in the driver.
+    # Exits 77 without whitebox_workflows.
+    add_test(
+        NAME benchmark_breach_least_cost_fuzz
+        COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_breach_least_cost_vs_whitebox.py"
+                --exe "$<TARGET_FILE:lsdtt-raster-preprocessing>"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flow_benchmark"
+    )
+    lsdtt_mark_test_runtime(pixi benchmark_breach_least_cost_fuzz)
+    lsdtt_set_tests_properties(benchmark_breach_least_cost_fuzz
+        PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
     # Surface-metrics SPEED benchmark vs TopoToolbox.  TopoToolbox is a PERFORMANCE reference here, not a
     # correctness one -- correctness comes from the Tier A analytic oracle in
@@ -3369,6 +3451,24 @@ add_test(NAME unit_flat_resolution_real_terrain
          COMMAND lsdtt-test-flat-resolution --real-terrain
                  "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
 lsdtt_set_tests_properties(unit_flat_resolution_real_terrain PROPERTIES LABELS "unit;flow")
+
+# Least-cost breaching (Lindsay 2020) against frozen float32 outputs of
+# Whitebox next-gen BreachDepressionsLeastCost (whitebox_workflows 2.0.6),
+# bitwise, on hand-built fixtures F0-F15, with edge_policy whitebox; plus the
+# Whitebox counters, max_dist validation and edge_policy outlet property checks.
+# Hermetic: in-process inputs only.
+add_executable(lsdtt-test-breach-least-cost cpp/test_breach_least_cost.cpp)
+target_link_libraries(lsdtt-test-breach-least-cost PRIVATE lsdtt3_cpu)
+add_test(NAME unit_breach_least_cost COMMAND lsdtt-test-breach-least-cost)
+lsdtt_set_tests_properties(unit_breach_least_cost PROPERTIES LABELS "unit;flow")
+# The same driver on the committed lakeland crop: float32 output under matched
+# parameters equals Whitebox 2.0.6's (digests computed from Whitebox itself),
+# and lsdtt3's default output routes (every interior cell descends; D8
+# flowinfo validates). Reads tests/data only; no network, no skip path.
+add_test(NAME unit_breach_least_cost_real_terrain
+         COMMAND lsdtt-test-breach-least-cost --real-terrain
+                 "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
+lsdtt_set_tests_properties(unit_breach_least_cost_real_terrain PROPERTIES LABELS "unit;flow")
 
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
 lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
@@ -7080,6 +7180,9 @@ set(LSDTT_DOMAIN_RULES
     # configuring with that option ON failed until 2026-09-18 -- the same trap
     # as the benchmark rule at the top, hidden by the option's OFF default.
     "flow_routines"          "network"
+    # Depression breaching is flow preprocessing. Ahead of the raster rule
+    # because "fill" would otherwise claim breach tests that mention filling.
+    "breach"                 "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference|test_env|configure_contract" "core"
     "depression_hierarchy"   "network"

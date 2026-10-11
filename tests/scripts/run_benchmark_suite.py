@@ -285,12 +285,17 @@ REFERENCE_SCRIPTS = {
 #
 # Verified 2026-09-08 against richdem 2.3.0, topotoolbox 0.0.12,
 # whitebox_workflows 2.0.6.
+# float32(0.001) as a double: the flat increment the lsdtt3 CLI uses when given
+# 0.001 (breach_least_cost hands Whitebox exactly this value).
+_F32_0P001 = __import__("struct").unpack("f", __import__("struct").pack("f", 0.001))[0]
+
 NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     "fill": {
         "whitebox": "no grayscale-reconstruction fill in whitebox_workflows "
-                    "2.0.6 (hydrology offers fill_depressions [priority-flood, "
-                    "measured in fill_priority_flood], "
-                    "fill_depressions_wang_and_liu, "
+                    "2.0.6 (hydrology offers fill_depressions [pit-centric, "
+                    "not like-for-like, not measured], "
+                    "fill_depressions_wang_and_liu [priority-flood, measured "
+                    "in fill_priority_flood], "
                     "fill_depressions_planchon_and_darboux, fill_pits)",
     },
     "fill_priority_flood": {
@@ -304,13 +309,18 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     "breach": {
         "whitebox": "no Lindsay (2016) complete breaching in whitebox_workflows "
                     "2.0.6 (hydrology offers breach_depressions_least_cost "
-                    "[measured in breach_least_cost] and "
+                    "[Lindsay 2020; measured in breach_least_cost] and "
                     "breach_single_cell_pits)",
     },
+    # breach_least_cost*: verified 2026-10-11 against the same three versions.
     "breach_least_cost": {
-        "richdem": "no least-cost breaching in richdem 2.3.0 "
-                   "(rd.BreachDepressions is Lindsay 2016 complete breaching, "
+        "richdem": "no least-cost breaching in richdem 2.3.0: "
+                   "BreachDepressions is complete breaching (Lindsay 2016; "
                    "measured in breach)",
+        "topotoolbox": "no breaching surface in the Python package 0.0.12: "
+                       "FlowObject's sink_resolution='carve' carves inside "
+                       "flow routing and returns flow directions, not a "
+                       "breached DEM",
     },
     "accum_dinf": {
         "topotoolbox": "not bound in the Python package 0.0.12 "
@@ -329,6 +339,10 @@ NOT_IMPLEMENTED: dict[str, dict[str, str]] = {
     },
     # fill_flats_*: verified 2026-10-10 against the same three versions.
     "fill_flats_float_step": {
+        "richdem": "not paired (2026-10-11): rd.ResolveFlats is lsdtt3's "
+                   "round 1 only (bitwise; asserted in run_flow_benchmark.py), "
+                   "while lsdtt3 loops to a routable surface, so the times "
+                   "measure different work",
         "topotoolbox": "not bound in the Python package 0.0.12 as a "
                        "surface: GridObject offers fillsinks (no flat "
                        "increment) and identifyflats (labels only); "
@@ -410,7 +424,9 @@ CASES: dict[str, dict[str, Any]] = {
     # not routable by lsdtt3's D8. They are kept only to show that lsdtt3's
     # implementations run at a similar speed to the same algorithm in other
     # packages (Simon, 2026-10-08). The drained-surface comparison a user
-    # cares about is `route_d8_default`.
+    # cares about is `route_d8_default`. Since 2026-10-10 both are
+    # report_only: grayscale fill speed is information, not a headline ratio,
+    # because the output is not a connected flow network.
     #
     # An earlier version of this table did not. It ran lsdtt3's DEFAULT
     # (`barnes2014`, the heap) against TopoToolbox's DEFAULT (`hybrid=True`,
@@ -426,10 +442,11 @@ CASES: dict[str, dict[str, Any]] = {
     "fill": {
         "sequential": True,
         "suite": "flow",
-        "note": ("ALGORITHM-ONLY, not a drained surface (flats left flat). "
-                 "RECONSTRUCTION family: grayscale reconstruction by erosion "
-                 "(Vincent 1993 hybrid -- raster scans + FIFO queue, O(N)). "
-                 "lsdtt3 vincent1993 vs TopoToolbox hybrid=True"),
+        "note": ("Leaves flats, not a connected network (single step). "
+                 "RECONSTRUCTION family: grayscale "
+                 "reconstruction by erosion (Vincent 1993 hybrid -- raster "
+                 "scans + FIFO queue, O(N)). lsdtt3 vincent1993 vs "
+                 "TopoToolbox hybrid=True"),
         # Whitebox was paired here until 2026-09-13, but its fill_depressions
         # is a PRIORITY-FLOOD tool (its own tool description: "priority-flood
         # strategy"), so it compared a heap fill with a reconstruction fill --
@@ -445,29 +462,86 @@ CASES: dict[str, dict[str, Any]] = {
                              # a gradient, hence min_slope 0.
                              "fill_algorithm_choice": "vincent1993"},
                   "output": "_fill.tif"},
+        # A real comparison since 2026-10-11 (Simon): it ends in flats, not a
+        # routed network, but it is the same algorithm on both sides with a
+        # value-asserted output (fill@topotoolbox, max_abs 0, in CTest), so
+        # the ratio is like-for-like. Report-only 2026-10-10 .. 2026-10-11.
     },
     "fill_priority_flood": {
         "sequential": True,
         "suite": "flow",
-        "note": ("ALGORITHM-ONLY, not a drained surface (flats left flat). "
+        "note": ("Leaves flats, not a connected network (single step). "
                  "PRIORITY-FLOOD family: heap-based flood, O(N log N). "
                  "lsdtt3 barnes2014 vs RichDEM (Zhou 2016) vs Whitebox "
-                 "fill_depressions. Same surface as the reconstruction case. "
+                 "Wang & Liu (2006). Same surface as the reconstruction case. "
                  "No TopoToolbox row: it has no priority-flood fill"),
-        # Whitebox `fill` = fill_depressions(fix_flats=False), a priority-flood
-        # fill (moved here from `fill` 2026-09-13).
+        # Whitebox is `depression_fill_wl` = fill_depressions_wang_and_liu(
+        # fix_flats=False) since 2026-10-10: an edge-seeded priority flood
+        # (every cell through a BinaryHeap, f64 working copy; source
+        # wbtools_oss/src/tools/hydrology/mod.rs fill_depressions_wang_and_liu_core),
+        # bit-exact against lsdtt3. Until then this row ran Whitebox
+        # `fill_depressions`, which is PIT-CENTRIC (finds interior pits, sorts
+        # them, works pit by pit), returns a different surface (6.45 m high on
+        # alpine_small) and is pathological on many-pit terrain (0.63 s alpine
+        # vs 54.7 s lakeland, 4000^2, 2026-09-21) -- not like-for-like. It was
+        # measured, report-only, in `fill_whitebox_default` until 2026-10-11,
+        # when that case was removed (not like-for-like with any lsdtt3 fill).
+        # The former `fill_wang_liu` case duplicated this pairing and was
+        # removed.
         #
         # TopoToolbox fillsinks(hybrid=False) was paired here until
         # 2026-10-08. It is Vincent's SEQUENTIAL reconstruction, not a heap
         # (`reconstruct` -> forward_scan/backward_scan; no pq_* call), so the
         # row compared a heap with a reconstruction. Its timings remain valid
         # measurements of that algorithm; only the pairing was wrong.
-        "engines": {"richdem": "fill", "whitebox": "fill"},
+        "engines": {"richdem": "fill", "whitebox": "depression_fill_wl"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_min_slope": "0",
                              "fill_algorithm_choice": "barnes2014"},
                   "output": "_fill.tif"},
+        # A real comparison since 2026-10-11, as `fill`: values asserted in
+        # CTest (fill@richdem and fill@whitebox, max_abs 0).
+    },
+    # -- lsdtt3 spill-queue variants (lsdtt3-only, report-only) ------------
+    #
+    # `priority_flood_queue: radix` swaps the binary heap of the barnes2014
+    # flood for an equivalent hybrid radix queue (same output; see the CLI
+    # help). The CLI passes the backend straight to fill_pits_priority_flood()
+    # for barnes2014 under the default inline_gradient flat resolution, at
+    # min_slope 0 and > 0 alike, and the fill's single "Compute time:" line
+    # brackets it. (Under a barnes2014b option the queue is never used and the
+    # CLI prints a NOTE.) No reference has a radix-queue variant, so these
+    # rows exist for the lsdtt3 fill ranking in SUMMARY.md.
+    "fill_priority_flood_radix": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("INFORMATION ONLY: leaves flats, not a connected network. "
+                 "lsdtt3 barnes2014 priority flood with the radix spill "
+                 "queue, fill_min_slope 0. lsdtt3-only. TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_fill_raster": "true",
+                             "fill_min_slope": "0",
+                             "fill_algorithm_choice": "barnes2014",
+                             "priority_flood_queue": "radix"},
+                  "output": "_fill.tif"},
+        "report_only": True,
+    },
+    "fill_epsilon_radix": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("lsdtt3 barnes2014 priority flood with the inline 1e-4 "
+                 "gradient (fill_epsilon's lsdtt3 command) on the radix "
+                 "spill queue. lsdtt3-only. TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_fill_raster": "true",
+                             "fill_min_slope": "0.0001",
+                             "fill_algorithm_choice": "barnes2014",
+                             "priority_flood_queue": "radix"},
+                  "output": "_fill.tif"},
+        "report_only": True,
     },
     "fill_epsilon": {
         "sequential": True,
@@ -519,16 +593,14 @@ CASES: dict[str, dict[str, Any]] = {
         "sequential": True,
         "suite": "flow",
         "note": ("fill + Barnes (2014b) flat resolution in float32 steps. "
-                 "lsdtt3 barnes2014b_float_step vs RichDEM FillDepressions"
-                 "(epsilon=False) + ResolveFlats. Round 1 is the same "
-                 "algorithm, bitwise; RichDEM stops after that one pass and "
-                 "leaves cells undrained on real terrain, while lsdtt3 loops "
-                 "(refill + resolve, up to 4 rounds, then a strict-rise pass) "
-                 "to a routable surface -- extra work RichDEM does not do. "
-                 "TIMING ONLY"),
-        # report_only because the outputs differ by design after round 1 (see
-        # the note). run_flow_benchmark.py asserts round 1 bitwise.
-        "engines": {"richdem": "fill_resolve_flats"},
+                 "lsdtt3-only (the lsdtt3 fill ranking). TIMING ONLY"),
+        # lsdtt3-only since 2026-10-11 (Simon). RichDEM FillDepressions
+        # (epsilon=False) + ResolveFlats was paired here: round 1 is the same
+        # algorithm, bitwise (asserted in run_flow_benchmark.py,
+        # flats_float_step), but RichDEM stops after that pass while lsdtt3
+        # loops (refill + resolve, up to 4 rounds, then a strict-rise pass) to
+        # a routable surface, so the times measured different work.
+        "engines": {},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_fill_raster": "true",
                              "fill_algorithm_choice": "barnes2014",
@@ -565,34 +637,104 @@ CASES: dict[str, dict[str, Any]] = {
         "note": "complete breaching, Lindsay (2016): lsdtt3 vs RichDEM",
         # Whitebox was paired here until 2026-09-13, but it runs
         # breach_depressions_least_cost -- Lindsay (2020), a different
-        # algorithm with a bounded search. It is now compared in
-        # `breach_least_cost` against lsdtt3's own least-cost breach.
+        # algorithm with a bounded search. That pairing is the separate
+        # `breach_least_cost` case below (removed 2026-10-10, re-instated
+        # 2026-10-11 after lsdtt3's least-cost core was ported from Whitebox
+        # and validated bitwise against it).
         "engines": {"richdem": "breach"},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_breached_raster": "true",
                              "breach_algorithm_choice": "lindsay2016"},
                   "output": "_breached.tif"},
     },
-    # Added 2026-09-13 so Whitebox's breach is paired with the SAME algorithm.
-    # Matched explicitly: max search distance 100 cells (whitebox_reference.py
-    # --breach-max-dist default), unresolved depressions filled afterwards
-    # (Whitebox fill_deps=True, lsdtt3 fill_remainder_after_breach, default
-    # true), no cost cap (lsdtt3 default; Whitebox's max_cost left unset).
-    # NOT verified equal, because whitebox_workflows 2.0.6 does not report its
-    # defaults: minimize_dist (lsdtt3 min_dist=true) and flat_increment
-    # (lsdtt3 0). A timing row, not a value comparison.
+
+    # -- least-cost breaching, Lindsay (2020) -------------------------------
+    #
+    # Re-instated 2026-10-11 after validation: lsdtt3's least_cost is a port
+    # of Whitebox's BreachDepressionsLeastCost, and under the parameters below
+    # its output equals whitebox_workflows 2.0.6's bit for bit (float32 of
+    # Whitebox's f64 output) -- values asserted bitwise in CTest (benchmark
+    # tier: benchmark_breach_least_cost_*, benchmark_breach_least_cost_fuzz;
+    # hermetic: unit_breach_least_cost_real_terrain). So this IS like-for-like
+    # and its ratio may be quoted.
+    #
+    # Matched parameters: edge policy whitebox (lsdtt3's default, outlet,
+    # treats the raster edge as an outlet; Whitebox does not), max_dist 100,
+    # minimize_dist false, no remainder fill / fill_deps False, and the flat
+    # increment float32(0.001) on both sides -- the CLI reads 0.001 as
+    # float32, so Whitebox is handed exactly that value. Both implementations
+    # are serial.
     "breach_least_cost": {
         "sequential": True,
         "suite": "flow",
-        "note": ("least-cost breaching, Lindsay (2020), max_dist 100, "
-                 "unresolved depressions filled: lsdtt3 vs Whitebox"),
+        "note": ("least-cost breaching, Lindsay (2020): lsdtt3 vs Whitebox "
+                 "2.0.6 under matched parameters (edge policy whitebox, "
+                 "max_dist 100, minimize_dist false, increment 0.001, no "
+                 "remainder fill); outputs bitwise equal, asserted in CTest"),
         "engines": {"whitebox": "breach"},
+        "reference_args": {"whitebox": [
+            "--breach-max-dist", "100",
+            "--breach-flat-increment", repr(_F32_0P001)]},
         "lsdtt": {"exe": "lsdtt-raster-preprocessing",
                   "params": {"write_breached_raster": "true",
                              "breach_algorithm_choice": "least_cost",
+                             "breach_lc_edge_policy": "whitebox",
                              "breach_lc_max_dist": "100",
-                             "fill_remainder_after_breach": "true"},
+                             "breach_lc_minimize_dist": "false",
+                             "breach_lc_flat_increment": "0.001",
+                             "fill_remainder_after_breach": "false"},
                   "output": "_breached.tif"},
+    },
+    # lsdtt3's least_cost with its CLI defaults (edge policy outlet, max_dist
+    # 1000, auto increment, remainder fill on): what a user gets. lsdtt3-only;
+    # no reference runs these parameters.
+    "breach_least_cost_default": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("least-cost breaching with lsdtt3's CLI defaults (edge "
+                 "policy outlet, max_dist 1000, auto increment, remainder "
+                 "fill on). lsdtt3-only. TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"write_breached_raster": "true",
+                             "breach_algorithm_choice": "least_cost"},
+                  "output": "_breached.tif"},
+        "report_only": True,
+    },
+    # Raw DEM -> routable surface by each breaching method: breach, then the
+    # default fill (barnes2014, fill_min_slope 1e-4). The time is the sum of
+    # the breach and fill "Compute time:" lines. lsdtt3-only: compares the two
+    # breaching methods against each other, not against a reference.
+    "breach_then_fill_lindsay2016": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("lindsay2016 breach + barnes2014 fill (min_slope 1e-4): "
+                 "time to a routable surface. lsdtt3-only. TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"breach_before_fill": "true",
+                             "breach_algorithm_choice": "lindsay2016",
+                             "write_fill_raster": "true",
+                             "fill_min_slope": "0.0001",
+                             "fill_algorithm_choice": "barnes2014"},
+                  "output": "_fill.tif"},
+        "report_only": True,
+    },
+    "breach_then_fill_least_cost": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("least_cost breach (CLI defaults) + barnes2014 fill "
+                 "(min_slope 1e-4): time to a routable surface. lsdtt3-only. "
+                 "TIMING ONLY"),
+        "engines": {},
+        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
+                  "params": {"breach_before_fill": "true",
+                             "breach_algorithm_choice": "least_cost",
+                             "write_fill_raster": "true",
+                             "fill_min_slope": "0.0001",
+                             "fill_algorithm_choice": "barnes2014"},
+                  "output": "_fill.tif"},
+        "report_only": True,
     },
     "accum_d8": {
         "sequential": True,
@@ -602,7 +744,11 @@ CASES: dict[str, dict[str, Any]] = {
                  "like-for-like: lsdtt3 also builds an S-vector the references "
                  "do not build (~57% of its build time), retained by design "
                  "because downstream analyses depend on it -- see the note in "
-                 "CASES and docs/developer_notes/testing_and_benchmarking.md"),
+                 "CASES and docs/developer_notes/testing_and_benchmarking.md. "
+                 "TopoToolbox's FlowObject always refills the input and runs "
+                 "its gwdt flat routing, even on this pre-filled DEM, so its "
+                 "build includes work the other engines skip; compare its "
+                 "seconds_accumulate_only column as well"),
         "engines": {"richdem": "accum_d8", "topotoolbox": "accum_d8",
                     "whitebox": "accum_d8"},
         "lsdtt": {"exe": "lsdtt-drainage-analysis",
@@ -653,19 +799,33 @@ CASES: dict[str, dict[str, Any]] = {
     # a routed surface:
     #
     #   lsdtt3       lsdtt-drainage-analysis, raster_is_filled false, CLI
-    #                defaults: barnes2014 priority-flood with fill_min_slope
-    #                1e-4, then D8. Time = sum of its fill, build and
-    #                accumulation `Compute time:` lines.
-    #   TopoToolbox  FlowObject(dem).flow_accumulation(), all defaults: fills
-    #                (hybrid reconstruction) and routes across flats and filled
-    #                depressions on least-cost carved auxiliary topography; the
-    #                DEM is unchanged.
+    #                defaults: fill_pits() with fill_min_slope 1e-4 and
+    #                fill_flat_resolution_choice inline_gradient -> Barnes
+    #                (2014) priority flood raising each cell >= 1e-4 x step
+    #                length (sqrt2 on diagonals) above the cell it was reached
+    #                from, so flats drain in parallel lines; then
+    #                steepest-descent D8 (drop / distance). Time = sum of its
+    #                fill, build and accumulation `Compute time:` lines.
+    #   TopoToolbox  FlowObject(dem).flow_accumulation(), all defaults
+    #                (method d8, sink_resolution carve): fillsinks_hybrid
+    #                (Vincent 1993, no gradient), identifyflats, gwdt costs from
+    #                fill depth, gwdt auxiliary surface, then
+    #                flow_routing_d8_carve on the filled DEM + auxiliary
+    #                surface. The DEM is not modified (flats keep zero slope).
     #   RichDEM      FillDepressions(epsilon=True) + FlowAccumulation(D8).
-    #                epsilon=True is NOT the default: the default fill leaves
-    #                true flats, which RichDEM's D8 does not route.
-    #   Whitebox     fill_depressions() defaults (fix_flats, 1e-4 m per cell)
-    #                + d8_flow_accum. Not breach_depressions_least_cost, whose
-    #                default fill_deps=False can leave depressions unresolved.
+    #                epsilon=True (PriorityFloodEpsilon_Barnes2014, nextafter
+    #                per cell: ULP-sized, not physical) is NOT the default: the
+    #                default fill leaves true flats, which RichDEM's D8 does not
+    #                route. Its D8 (FM_OCallaghan) picks the LOWEST neighbour,
+    #                not the steepest descent.
+    #   Whitebox     fill_depressions() defaults (pit-centric; fix_flats True,
+    #                flat_increment 1e-4, flat_resolution garbrecht_martz) +
+    #                d8_flow_accum (steepest descent). Not
+    #                breach_depressions_least_cost, whose default
+    #                fill_deps=False can leave depressions unresolved.
+    #
+    # Sources checked 2026-10-10 are listed in
+    # docs/developer_notes/testing_and_benchmarking.md beside this case.
     #
     # REQUIREMENT: every engine must return a FULLY DRAINED surface -- lsdtt3
     # exists to provide one, so a pipeline that leaves depressions or flats
@@ -683,10 +843,17 @@ CASES: dict[str, dict[str, Any]] = {
         "sequential": True,
         "suite": "flow",
         "note": ("raw DEM -> routed D8 accumulation, each package's DEFAULT "
-                 "pipeline; algorithms and outputs differ by design. lsdtt3 "
-                 "barnes2014 fill (fill_min_slope 1e-4) + D8; TopoToolbox "
-                 "FlowObject(carve); RichDEM epsilon fill + D8; Whitebox "
-                 "fill_depressions + d8_flow_accum"),
+                 "pipeline; algorithms and outputs differ by design. "
+                 "lsdtt3: Barnes 2014 priority flood with an inline 1e-4 m/m "
+                 "gradient per step length (flats drain in parallel lines) + "
+                 "steepest-descent D8. TopoToolbox: hybrid reconstruction "
+                 "fill (no gradient) + least-cost carving on a gwdt auxiliary "
+                 "surface; DEM unchanged, flats stay at zero slope; D8 from "
+                 "the auxiliary surface. RichDEM: Priority-Flood+Epsilon "
+                 "(one float step per cell, not a physical slope; NOT its "
+                 "default) + D8 to the LOWEST neighbour. Whitebox: pit-centric "
+                 "fill_depressions with Garbrecht-Martz flat resolution "
+                 "(1e-4 m per rank step) + steepest-descent d8_flow_accum"),
         "engines": {"richdem": "route_d8_default",
                     "topotoolbox": "route_d8_default",
                     "whitebox": "route_d8_default"},
@@ -695,6 +862,40 @@ CASES: dict[str, dict[str, Any]] = {
                              "raster_is_filled": "false"},
                   "output": "_d8_drainage_area.tif"},
         "report_only": True,
+    },
+
+    # Raw DEM -> routed D8 accumulation, LIKE-FOR-LIKE (2026-10-11, Simon:
+    # keep route_d8_default for the defaults question and add this beside it).
+    # Same pipeline on both sides: an edge-seeded priority-flood fill that
+    # imposes a gradient across flats, then steepest-descent D8.
+    #   lsdtt3    lsdtt-drainage-analysis on the raw DEM: Barnes (2014)
+    #             priority flood with fill_min_slope 1e-4 m/m per step length,
+    #             then steepest-descent D8 (route_d8_default's lsdtt3 row is
+    #             the same command; measured again so the case stands alone).
+    #   Whitebox  fill_depressions_wang_and_liu(fix_flats=True,
+    #             flat_increment = 1e-4 x cell size) -- an edge-seeded priority
+    #             flood with a constant per-cell increment -- then
+    #             d8_flow_accum (steepest descent, measured: see
+    #             check_whitebox_d8_rule.py).
+    # Remaining difference: lsdtt3 raises a diagonal step by sqrt(2) x the
+    # cardinal increment, Whitebox by the same increment (the fill_epsilon
+    # pairing; its values are pinned in run_flow_benchmark.py). RichDEM is not
+    # paired (its D8 picks the lowest neighbour, not the steepest descent), nor
+    # is TopoToolbox (no gradient fill).
+    "route_d8_epsilon": {
+        "sequential": True,
+        "suite": "flow",
+        "note": ("raw DEM -> routed D8 accumulation, like-for-like: priority "
+                 "flood with a gradient across flats (lsdtt3 1e-4 m/m per "
+                 "step length; Whitebox Wang & Liu, flat_increment 1e-4 x "
+                 "cell size) + steepest-descent D8"),
+        "engines": {"whitebox": "route_d8_wl_epsilon"},
+        "whitebox_flat_increment_from": "fill_min_slope",
+        "lsdtt": {"exe": "lsdtt-drainage-analysis",
+                  "params": {"write_d8_drainage_area_raster": "true",
+                             "raster_is_filled": "false",
+                             "fill_min_slope": "0.0001"},
+                  "output": "_d8_drainage_area.tif"},
     },
 
     # -- suite: mfd --------------------------------------------------------
@@ -842,51 +1043,15 @@ CASES: dict[str, dict[str, Any]] = {
     },
 
     # -- suite: depression -------------------------------------------------
-    # lsdtt3's depression hierarchy builds a nested tree of depressions and
-    # their spill relationships. Nothing else here does that, so these rows
-    # compare lsdtt3 against the cheapest thing the other tools offer and the
-    # ratio necessarily flatters them. Recorded because the ABSOLUTE cost of
-    # the hierarchy is a number users ask for.
-    "fill_spill_merge": {
-        "sequential": True,
-        "suite": "depression",
-        "note": ("lsdtt3 builds a nested depression hierarchy (Barnes 2020) "
-                 "then Fill-Spill-Merge (Barnes 2021). lsdtt3-only: the "
-                 "absolute cost of the hierarchy. TIMING ONLY"),
-        # lsdtt3-ONLY since 2026-09-13. Whitebox used to be paired here through
-        # `sink`, which only labels cells lying in depressions -- a different,
-        # far cheaper operation, so the row compared nothing and cost ~22 min
-        # of a server campaign. whitebox_reference.py keeps the routine because
-        # calibrate_overheads() uses it as the dispatch tripwire.
-        "engines": {},
-        # The depression hierarchy is not separately switchable: it is built as
-        # the first half of the barnesetal2021 fill, which is the only CLI path
-        # that reaches it. An earlier version of this table asked for
-        # `write_depression_hierarchy_raster`, which does not exist -- the CLI
-        # ignored it, did no work, and the case happily reported a timing for
-        # a run that had computed nothing.
-        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
-                  "params": {"write_fill_raster": "true",
-                             "fill_algorithm_choice": "barnesetal2021",
-                             "fill_min_slope": "0"},
-                  "output": "_fill.tif"},
-        "report_only": True,
-    },
-    "fill_wang_liu": {
-        "sequential": True,
-        "suite": "depression",
-        "note": "Wang & Liu (2006) fill lineage, a second fill implementation",
-        "engines": {"whitebox": "depression_fill_wl"},
-        # lsdtt3 has no Wang & Liu fill. Its side of this case is the CLI
-        # default, barnes2014 at fill_min_slope 0 -- byte-for-byte the command
-        # `fill_priority_flood` already runs (7.63 vs 7.65 Mcells/s on
-        # forth02). That row is copied here instead of re-measured.
-        "reuse_from": {"lsdtt3": "fill_priority_flood"},
-        "lsdtt": {"exe": "lsdtt-raster-preprocessing",
-                  "params": {"write_fill_raster": "true",
-                             "fill_min_slope": "0"},
-                  "output": "_fill.tif"},
-    },
+    # `fill_spill_merge` (lsdtt3's depression hierarchy + Fill-Spill-Merge,
+    # lsdtt3-only) was REMOVED 2026-10-10 (Simon): the suite now compares
+    # like-for-like algorithms only, and no binding benchmarked here offers
+    # Fill-Spill-Merge. The suite name stays so --suites depression is still
+    # accepted; it currently holds no case.
+    # `fill_whitebox_default` (Whitebox's pit-centric fill_depressions,
+    # report-only) was REMOVED 2026-10-11 (Simon): not like-for-like with any
+    # lsdtt3 fill. Its last measurement: 0.63 s alpine vs 54.7 s lakeland at
+    # 4000^2 (2026-09-21).
 }
 
 
@@ -1578,9 +1743,11 @@ def parse_reported_times(stdout: str) -> dict[str, float | None]:
     multi-metric run prints one pair per raster and the total is what that run
     cost.
 
-    Returns None for a CLI that prints nothing -- currently
-    lsdtt-raster-preprocessing and lsdtt-drainage-analysis, which is why
-    `timing_scope` is recorded per row rather than assumed for all lsdtt3 rows.
+    Returns None for a CLI that prints nothing, which is why `timing_scope` is
+    recorded per row rather than assumed for all lsdtt3 rows. As of 2026-10-10
+    lsdtt-surface-metrics, lsdtt-raster-preprocessing (fill, breach, flat
+    resolution) and lsdtt-drainage-analysis (its own fill on raw input, the D8
+    build and each accumulation) all print "Compute time:" lines.
     """
     import re
 
@@ -1769,6 +1936,9 @@ def reference_extra_args(engine: str, case: dict,
                          fixture: pathlib.Path) -> list[str]:
     """Per-fixture arguments a reference needs to do the SAME work as lsdtt3.
 
+    `reference_args: {engine: [...]}` passes fixed arguments (the least-cost
+    breach's matched max_dist and flat increment).
+
     `whitebox_flat_increment_from: <lsdtt3 param>` converts lsdtt3's flat
     GRADIENT into Whitebox's flat_increment, which is metres PER CELL:
     increment = gradient * cell size. Handing Whitebox the raw gradient (or
@@ -1776,9 +1946,10 @@ def reference_extra_args(engine: str, case: dict,
     grid -- a different amount of flat-resolution work. Same conversion as
     run_flow_benchmark.py uses for its value comparison.
     """
+    extra = list(case.get("reference_args", {}).get(engine, []))
     param = case.get("whitebox_flat_increment_from")
     if engine != "whitebox" or not param:
-        return []
+        return extra
     gradient = float(case["lsdtt"]["params"][param])
     try:
         from osgeo import gdal
@@ -1788,7 +1959,7 @@ def reference_extra_args(engine: str, case: dict,
     except Exception as exc:
         raise RuntimeError(f"cannot read cell size of {fixture} to match "
                            f"Whitebox flat_increment: {exc}") from exc
-    return ["--flat-increment", repr(gradient * cell)]
+    return extra + ["--flat-increment", repr(gradient * cell)]
 
 
 def measure_reference(engine: str, routine: str, fixture: pathlib.Path,
@@ -2193,6 +2364,7 @@ CSV_FIELDS = [
     "threads", "repeats",
     "seconds_median", "seconds_best", "seconds_stdev", "seconds_all",
     "seconds_read", "seconds_write", "seconds_process", "timing_scope",
+    "seconds_build_only", "seconds_accumulate_only",
     "peak_rss_mb", "rss_near_floor", "cpu_seconds_process",
     "mcells_per_second",
     "report_only", "serial_reference", "sequential_case",
@@ -2261,6 +2433,16 @@ def build_row(suite, case_name, engine, fixture_key, fixture_sha, n_cells,
         "seconds_process": (f"{info['seconds_process']:.9g}"
                             if info.get("seconds_process") is not None else ""),
         "timing_scope": info.get("timing_scope", ""),
+        # Reported by references that time flow-graph build and accumulation
+        # separately (topotoolbox_reference.py accum_d8 / route_d8_default).
+        # TopoToolbox's build includes an internal refill + flat routing, so
+        # the accumulate-only figure is the like-for-like part of its row.
+        "seconds_build_only": (f"{info['seconds_build_only']:.9g}"
+                               if info.get("seconds_build_only") is not None
+                               else ""),
+        "seconds_accumulate_only": (f"{info['seconds_accumulate_only']:.9g}"
+                                    if info.get("seconds_accumulate_only")
+                                    is not None else ""),
         "peak_rss_mb": (f"{info['peak_rss_mb']:.2f}"
                         if info.get("peak_rss_mb") is not None else ""),
         "cpu_seconds_process": (f"{info['cpu_seconds_process']:.9g}"
@@ -2495,6 +2677,8 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
         L.append("")
         _plain_table(L, report_only)
 
+    _fill_ranking(L, ok)
+
     L.append("")
     L.append("## Parallel scaling (lsdtt3 and whitebox)")
     L.append("")
@@ -2597,6 +2781,77 @@ def write_summary(path: pathlib.Path, rows: list[dict], manifest: dict,
     L.append("- Values are not asserted anywhere in this campaign. Correctness "
              "lives in the CTest suite; see `docs/developer_notes/testing_and_benchmarking.md`.")
     path.write_text("\n".join(L) + "\n")
+
+
+# The lsdtt3 fill methods ranked against EACH OTHER in SUMMARY.md, with a
+# short description and whether the output is a connected (drained) flow
+# network: every interior cell has a strictly lower neighbour. Order here is
+# only the tie-break; the table is sorted by median.
+FILL_RANKING_CASES: dict[str, tuple[str, str]] = {
+    "fill": ("Vincent (1993) hybrid reconstruction, min_slope 0", "no"),
+    "fill_priority_flood": ("Barnes (2014) priority flood, binary heap, "
+                            "min_slope 0", "no"),
+    "fill_priority_flood_radix": ("Barnes (2014) priority flood, radix "
+                                  "queue, min_slope 0", "no"),
+    "fill_epsilon": ("Barnes (2014) priority flood, inline 1e-4 gradient, "
+                     "binary heap", "yes"),
+    "fill_epsilon_radix": ("Barnes (2014) priority flood, inline 1e-4 "
+                           "gradient, radix queue", "yes"),
+    "fill_flats_float_step": ("reconstruction + Barnes (2014b) flats, "
+                              "float32 steps, looped", "yes"),
+    "fill_flats_gradient": ("reconstruction + Barnes (2014b) flats, 1e-4 "
+                            "gradient, looped", "yes"),
+}
+
+
+def _fill_ranking(L: list[str], ok_rows: list[dict]) -> None:
+    """lsdtt3's fill methods, fastest first, per fixture.
+
+    lsdtt3 against itself: only lsdtt3 rows timed by the CLI's own "Compute
+    time:" line, at the baseline (lowest) thread count, status ok. The
+    report_only flag is ignored on purpose -- it means "not the same work as
+    the references", which says nothing about ranking lsdtt3's own options.
+    """
+    rows = [r for r in ok_rows
+            if r["engine"] == "lsdtt3" and r["case"] in FILL_RANKING_CASES
+            and r["timing_scope"] == "cli_reported_compute"
+            and r["seconds_median"]]
+    if not rows:
+        return
+    base = min(int(r["threads"]) for r in rows)
+    rows = [r for r in rows if int(r["threads"]) == base]
+
+    L.append("")
+    L.append("## lsdtt3 fill methods, fastest first")
+    L.append("")
+    L.append(f"lsdtt3 against itself, on this machine, at {base} thread(s): "
+             "the CLI-reported compute time of each fill option, per fixture, "
+             "sorted by median. The `report_only` flags of the cross-package "
+             "table above do not apply here. `connected` says whether the "
+             "output is a connected flow network (every interior cell drains "
+             "to a strictly lower neighbour); the cases that leave flats are "
+             "faster partly because they do less.")
+    L.append("")
+    order = list(FILL_RANKING_CASES)
+    for fx in _fixture_order(rows):
+        fx_rows = sorted((r for r in rows if r["fixture"] == fx),
+                         key=lambda r: (float(r["seconds_median"]),
+                                        order.index(r["case"])))
+        fastest = float(fx_rows[0]["seconds_median"])
+        L.append(f"### {fx}")
+        L.append("")
+        L.append("| case | algorithm | connected | median (s) | Mcells/s | "
+                 "x fastest |")
+        L.append("|---|---|---|---|---|---|")
+        for r in fx_rows:
+            algo, connected = FILL_RANKING_CASES[r["case"]]
+            med = float(r["seconds_median"])
+            mc = (f"{float(r['mcells_per_second']):.2f}"
+                  if r["mcells_per_second"] else "-")
+            ratio = f"{med / fastest:.2f}x" if fastest > 0 else "-"
+            L.append(f"| {r['case']} | {algo} | {connected} | {med:.4f} | "
+                     f"{mc} | {ratio} |")
+        L.append("")
 
 
 def _fixture_order(rows: list[dict]) -> list[str]:
@@ -2964,7 +3219,7 @@ def main() -> int:
                 per_engine.append(f"{e}x{t}")
                 n += t * n_fixtures
             tag = "  [sequential: no thread sweep]" if seq else ""
-            print(f"  {case['suite']:11s} {name:22s} "
+            print(f"  {case['suite']:11s} {name:26s} "
                   f"{' '.join(per_engine)}{tag}")
         print(f"\n{n} measurements, each "
               f"{profile['repeats']} repeats + 1 warm-up")
@@ -3337,7 +3592,7 @@ def _progress(done, total, case_name, engine, fixture, threads, row,
     if report_only:
         detail = (detail + "  [report-only: not the same operation]").strip()
 
-    print(f"  [{done:4d}/{total:4d}] {case_name:22s} {label:26s} "
+    print(f"  [{done:4d}/{total:4d}] {case_name:26s} {label:26s} "
           f"{fixture:16s} {threads}t  {status:12s} {detail}")
 
 

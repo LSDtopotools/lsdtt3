@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -23,6 +25,7 @@
 #include <core/lsdtt_raster_meta.hpp>
 #include <cpu/lsdtt_raster_algebra.hpp>
 #include <cpu/lsdtt_raster_flow_preprocessing_cpu.hpp>
+#include <cpu/lsdtt_raster_breach_least_cost_cpu.hpp>
 #include <cpu/lsdtt_raster_nodata_filling_cpu.hpp>
 #include <cpu/lsdtt_raster_cpu.hpp>
 #include <cpu/lsdtt_raster_surface_metrics_cpu.hpp>
@@ -296,34 +299,64 @@ Raster fill_pits_boundary_aware(
     return fill_pits_with_outlets(raster, outlets, min_slope, n_threads, backend);
 }
 
-Raster breach_least_cost(
-    const Raster& raster,
-    int max_distance,
+lsdtt::breach_least_cost_options least_cost_options(
+    std::optional<int> max_distance,
     float max_cost,
     bool prefer_shortest_path,
     float flat_increment,
     bool fill_remainder,
-    int n_threads)
+    const std::string& edge_policy,
+    float fill_min_slope)
+{
+    lsdtt::breach_least_cost_options options;
+    options.max_cost       = (max_cost >= (std::numeric_limits<float>::max)())
+                           ? std::numeric_limits<double>::infinity()
+                           : static_cast<double>(max_cost);
+    options.minimize_dist  = prefer_shortest_path;
+    options.flat_increment = static_cast<double>(flat_increment);
+    options.fill_remainder = fill_remainder;
+    options.fill_min_slope = fill_min_slope;
+    options.edge_policy    = lsdtt::parse_breach_lc_edge_policy(edge_policy, "edge_policy");
+    // None: the edge policy's default (1000 outlet, to bridge large water
+    // bodies; 100 whitebox), as in lsdtt-raster-preprocessing.
+    options.max_dist       = max_distance.has_value()
+                           ? *max_distance
+                           : lsdtt::default_breach_lc_max_dist(options.edge_policy);
+    return options;
+}
+
+Raster breach_least_cost(
+    const Raster& raster,
+    std::optional<int> max_distance,
+    float max_cost,
+    bool prefer_shortest_path,
+    float flat_increment,
+    bool fill_remainder,
+    int /*n_threads*/,
+    const std::string& edge_policy,
+    float fill_min_slope)
 {
     return Raster(lsdtt::breach_depressions_least_cost(
-        raster.native(), max_distance, max_cost, prefer_shortest_path,
-        flat_increment, fill_remainder, n_threads
-    ));
+        raster.native(),
+        least_cost_options(max_distance, max_cost, prefer_shortest_path, flat_increment,
+                           fill_remainder, edge_policy, fill_min_slope)));
 }
 
 Raster least_cost_carve_depth(
     const Raster& raster,
-    int max_distance,
+    std::optional<int> max_distance,
     float max_cost,
     bool prefer_shortest_path,
     float flat_increment,
     bool fill_remainder,
-    int n_threads)
+    int /*n_threads*/,
+    const std::string& edge_policy,
+    float fill_min_slope)
 {
     const lsdtt::lsdtt_raster_cpu breached = lsdtt::breach_depressions_least_cost(
-        raster.native(), max_distance, max_cost, prefer_shortest_path,
-        flat_increment, fill_remainder, n_threads
-    );
+        raster.native(),
+        least_cost_options(max_distance, max_cost, prefer_shortest_path, flat_increment,
+                           fill_remainder, edge_policy, fill_min_slope));
     return Raster(lsdtt::algebra::raster_positive_difference(raster.native(), breached));
 }
 
@@ -420,28 +453,50 @@ points : array-like, shape (n, 2)
         nb::arg("n_threads") = 0, nb::arg("priority_flood_backend") = "binary",
         "Fill pits with NESW open, closed, periodic, or base-level boundaries.");
     m.def("breach_least_cost", &breach_least_cost, nb::arg("raster"),
-        nb::arg("max_distance") = 1000,
+        nb::arg("max_distance") = nb::none(),
         nb::arg("max_cost") = (std::numeric_limits<float>::max)(),
-        nb::arg("prefer_shortest_path") = true, nb::arg("flat_increment") = 0.0f,
-        nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0, R"doc(
-Breach depressions using configurable least-cost paths.
+        nb::arg("prefer_shortest_path") = false, nb::arg("flat_increment") = 0.0f,
+        nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0,
+        nb::arg("edge_policy") = "outlet", nb::arg("fill_min_slope") = 0.0001f, R"doc(
+Breach depressions along least-cost paths (Lindsay 2020).
+
+A port of WhiteboxTools BreachDepressionsLeastCost (whitebox_workflows 2.0.6).
 
 Parameters
 ----------
-max_distance : int, default=1000
-    Maximum search distance in cells.
+max_distance : int or None, default=None
+    Maximum breach path length in cells, counted in steps from the pit (a
+    diagonal step counts as one). 1 to 32767. None selects the edge policy's
+    default: 1000 for ``outlet`` (long enough to bridge large water bodies)
+    and 100 for ``whitebox`` (the WhiteboxTools default).
 max_cost : float, optional
-    Maximum accepted path cost.
-prefer_shortest_path, fill_remainder : bool, optional
-    Control path selection and whether unbreached pits are filled.
-flat_increment : float, optional
-    Elevation decrement used to route across flats.
+    A pit whose cheapest path costs more is left unbreached. The cost is the
+    depth each path cell is lowered, summed: metres, or metres x cells when
+    ``prefer_shortest_path`` is true. Default unlimited.
+prefer_shortest_path : bool, default=False
+    Weight each step's cost by its length in cells, favouring shorter paths.
+flat_increment : float, default=0
+    Elevation drop (m) per cell along a breach channel. 0 or less selects twice
+    the float32 spacing at the largest absolute elevation.
+fill_remainder : bool, default=True
+    Fill what the breach leaves (Priority-Flood with ``fill_min_slope``) so
+    every interior cell has a lower neighbour.
+n_threads : int, default=0
+    Ignored; the algorithm is serial.
+edge_policy : {"outlet", "whitebox"}, default="outlet"
+    ``outlet``: the raster edge is an outlet, like a nodata cell.
+    ``whitebox``: as in WhiteboxTools, a breach must reach an edge cell that
+    is already low enough.
+fill_min_slope : float, default=0.0001
+    Gradient (m/m) imposed by the remainder fill.
 )doc");
     m.def("least_cost_carve_depth", &least_cost_carve_depth, nb::arg("raster"),
-        nb::arg("max_distance") = 1000,
+        nb::arg("max_distance") = nb::none(),
         nb::arg("max_cost") = (std::numeric_limits<float>::max)(),
-        nb::arg("prefer_shortest_path") = true, nb::arg("flat_increment") = 0.0f,
+        nb::arg("prefer_shortest_path") = false, nb::arg("flat_increment") = 0.0f,
         nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0,
-        "Return the non-negative elevation removed by least-cost breaching.");
+        nb::arg("edge_policy") = "outlet", nb::arg("fill_min_slope") = 0.0001f,
+        "Return the non-negative elevation removed by least-cost breaching "
+        "(parameters as breach_least_cost).");
 }
 } // namespace lsdtt3_python

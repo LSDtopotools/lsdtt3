@@ -60,6 +60,8 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
     BREACH_LC_MAX_DIST = "BREACH_LC_MAX_DIST"
     BREACH_LC_MAX_COST = "BREACH_LC_MAX_COST"
     BREACH_LC_FLAT_INCREMENT = "BREACH_LC_FLAT_INCREMENT"
+    BREACH_LC_MINIMIZE_DIST = "BREACH_LC_MINIMIZE_DIST"
+    BREACH_LC_EDGE_POLICY = "BREACH_LC_EDGE_POLICY"
     WRITE_CARVE_DIFF = "WRITE_CARVE_DIFF"
 
     # Advanced: filling
@@ -99,6 +101,7 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
     ]
     NODATA_FILL_OPTIONS = ["laplacian", "iterative_weighted_average"]
     BREACH_ALGORITHM_OPTIONS = ["lindsay2016", "least_cost"]
+    BREACH_LC_EDGE_POLICY_OPTIONS = ["outlet", "whitebox"]
     FILL_ALGORITHM_OPTIONS = ["barnes2014", "barnesetal2021"]
     VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg"]
 
@@ -276,10 +279,12 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         self._add_advanced(
             QgsProcessingParameterNumber(
                 self.BREACH_LC_MAX_DIST,
-                "Least-cost breaching: maximum search radius (pixels)",
+                "Least-cost breaching: maximum breach path length (cells; "
+                "0 = edge-policy default: 1000 outlet, 100 whitebox)",
                 type=QgsProcessingParameterNumber.Integer,
-                minValue=1,
-                defaultValue=1000,
+                minValue=0,
+                maxValue=32767,
+                defaultValue=0,
             )
         )
         self._add_advanced(
@@ -293,9 +298,24 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         self._add_advanced(
             QgsProcessingParameterNumber(
                 self.BREACH_LC_FLAT_INCREMENT,
-                "Least-cost breaching: flat path elevation increment",
+                "Least-cost breaching: elevation drop per cell along a breach (0 = auto)",
                 type=QgsProcessingParameterNumber.Double,
                 defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.BREACH_LC_MINIMIZE_DIST,
+                "Least-cost breaching: weight path cost by length",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.BREACH_LC_EDGE_POLICY,
+                "Least-cost breaching: raster edge policy",
+                options=self.BREACH_LC_EDGE_POLICY_OPTIONS,
+                defaultValue=0,
             )
         )
         self._add_advanced(
@@ -529,10 +549,15 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             "breach_algorithm_choice": self.BREACH_ALGORITHM_OPTIONS[
                 self.parameterAsEnum(parameters, self.BREACH_ALGORITHM, context)
             ],
-            "breach_lc_max_dist": self.parameterAsInt(parameters, self.BREACH_LC_MAX_DIST, context),
             "breach_lc_flat_increment": self.parameterAsDouble(
                 parameters, self.BREACH_LC_FLAT_INCREMENT, context
             ),
+            "breach_lc_minimize_dist": self.parameterAsBool(
+                parameters, self.BREACH_LC_MINIMIZE_DIST, context
+            ),
+            "breach_lc_edge_policy": self.BREACH_LC_EDGE_POLICY_OPTIONS[
+                self.parameterAsEnum(parameters, self.BREACH_LC_EDGE_POLICY, context)
+            ],
             # filling
             "write_fill_raster": write_fill,
             "write_fill_diff_raster": write_fill_diff,
@@ -563,6 +588,12 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         breach_lc_max_cost = self.parameterAsDouble(parameters, self.BREACH_LC_MAX_COST, context)
         if breach_lc_max_cost > 0.0:
             param_values["breach_lc_max_cost"] = breach_lc_max_cost
+
+        # 0 leaves breach_lc_max_dist out, so the CLI applies the edge
+        # policy's default (1000 outlet, 100 whitebox).
+        breach_lc_max_dist = self.parameterAsInt(parameters, self.BREACH_LC_MAX_DIST, context)
+        if breach_lc_max_dist > 0:
+            param_values["breach_lc_max_dist"] = breach_lc_max_dist
 
         if mask_layer is not None:
             param_values["run_binary_mask"] = True
