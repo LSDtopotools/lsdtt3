@@ -85,13 +85,13 @@ def main():
     if not metadata_path.exists():
         raise RuntimeError("metadata.txt not found in plugin directory: {}".format(metadata_path))
 
-    plugin_name, version = read_plugin_metadata(metadata_path)
+    _, version = read_plugin_metadata(metadata_path)
     files = collect_files(plugin_dir, include_tests=args.include_tests)
     if not files:
         raise RuntimeError("No files found to package under {}".format(plugin_dir))
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    zip_name = "{}-{}.zip".format(plugin_name, version)
+    zip_name = "lsdtt3-qgis-plugin-{}.zip".format(version)
     zip_path = out_dir / zip_name
 
     if zip_path.exists():

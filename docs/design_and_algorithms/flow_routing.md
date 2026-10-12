@@ -400,7 +400,7 @@ channel that descends by a small increment per step. With
 float32(Whitebox's output); the test suite checks this on two real DEMs and on
 2400 random ones.
 
-!!! warning "Changed after release 0.5.2"
+!!! warning "Changed in release 0.6.0"
     Least-cost breaching was rewritten as this port on 2026-10-11. Its output
     differs from releases up to 0.5.2 in `lsdtt-raster-preprocessing`,
     `lsdtt-stream-burning` and the Python `breach_least_cost` /
