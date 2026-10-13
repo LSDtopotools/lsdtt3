@@ -648,7 +648,7 @@ lsdtt_junction_basin_manager_cpu::filter_largest()
 lsdtt_junction_basin_manager_cpu&
 lsdtt_junction_basin_manager_cpu::filter_range_spanning(
     const std::vector<std::vector<std::int64_t>>& boundary_segments,
-    const std::string& boundary_conditions)
+    const std::string& mountain_front_boundaries)
 {
     if (basins_.empty()) return *this;
 
@@ -693,18 +693,19 @@ lsdtt_junction_basin_manager_cpu::filter_range_spanning(
             }
         }
 
-        // Prioritize "o" boundaries if multiple matches: this can happen on corner
+        // Prioritize flagged mountain fronts if multiple matches: this can happen
+        // on corner
         // nodes where two boundaries "overlap": i.e. the end of one boundary is the
         // start of the other. 
         int boundary_index = -1;
         for (int idx : matching_boundaries) {
-            if (to_lower(boundary_conditions[idx]) == 'o') {
+            if (to_lower(mountain_front_boundaries[idx]) == 'm') {
                 boundary_index = idx;
                 break;
             }
         }
 
-        // If no "n" boundary found, fall back to first match
+        // If no mountain-front boundary is found, fall back to the first match
         if (boundary_index == -1 && !matching_boundaries.empty()) {
             boundary_index = matching_boundaries[0];
         }
@@ -718,9 +719,10 @@ lsdtt_junction_basin_manager_cpu::filter_range_spanning(
 
         int opp_b_idx = (boundary_index + 2) % 4;
 
-        // Only continue if opposing boundary pair both have no-flux conditions
-        if (to_lower(boundary_conditions[boundary_index]) != 'o' || 
-            to_lower(boundary_conditions[opp_b_idx]) != 'o') 
+        // Range-spanning basins are defined between opposing flagged mountain
+        // fronts. Routing boundary conditions are intentionally independent.
+        if (to_lower(mountain_front_boundaries[boundary_index]) != 'm' ||
+            to_lower(mountain_front_boundaries[opp_b_idx]) != 'm')
         {
             remove_mask[i] = true;
             continue;

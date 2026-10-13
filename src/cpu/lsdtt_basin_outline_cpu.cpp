@@ -1243,6 +1243,12 @@ std::vector<lsdtt_ridgeline_cpu> lsdtt_basin_outline_cpu::split_outline_into_rid
   return ridgelines;
 }
 
+std::vector<lsdtt_ridgeline_cpu> lsdtt_basin_outline_cpu::get_outline_as_ridgeline() const
+{
+  if (outline_divide_rc_.empty()) return {};
+  return {lsdtt_ridgeline_cpu(outline_divide_rc_, divide_grid_meta_)};
+}
+
 lsdtt_ridgeline_cpu lsdtt_basin_outline_cpu::get_left_transverse_divide_as_ridgeline(
     std::int32_t basin_junction,
     const std::vector<std::int32_t>& rsb_N,

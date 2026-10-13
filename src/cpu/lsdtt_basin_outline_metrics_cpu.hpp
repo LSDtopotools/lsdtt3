@@ -67,4 +67,11 @@ basin_slope_area_result compute_basin_slope_area_metrics(
     const std::vector<std::vector<float>>& slopes_by_scale,
     double log_bin_width);
 
+// As above, but with exactly n_bins evenly spaced bins between the observed
+// minimum and maximum log10(area).
+basin_slope_area_result compute_basin_slope_area_metrics_n_bins(
+    const std::vector<float>& log10_area,
+    const std::vector<std::vector<float>>& slopes_by_scale,
+    int n_bins);
+
 } // namespace lsdtt

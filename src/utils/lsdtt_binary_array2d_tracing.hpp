@@ -114,4 +114,13 @@ split_boundary_into_cardinal_segments(
     const std::array<std::int64_t, 4>& corners
 );
 
+// Split an already ordered 4-connected boundary trace into the same four
+// cardinal segments. The trace must use row/column coordinates from `mask`.
+[[nodiscard]] std::vector<std::vector<std::int64_t>>
+split_boundary_trace_into_cardinal_segments(
+    const std::vector<lsdtt_pixel_rc>&  boundary_rc,
+    int                                n_cols,
+    const std::array<std::int64_t, 4>& corners
+);
+
 } // namespace lsdtt

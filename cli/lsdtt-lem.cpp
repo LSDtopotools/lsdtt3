@@ -32,9 +32,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -61,6 +63,7 @@
 #include "../src/cpu/lsdtt_landscape_equilibration_cpu.hpp"
 #include "../src/cpu/lsdtt_critical_slope_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 #include "../src/cpu/lsdtt_synthetic_domain_cpu.hpp"
 
@@ -123,6 +126,77 @@ static void write_hillshade_png(
         lsdtt::compute_hillshade(raster, azimuth, altitude, z_factor);
     loader.write_full(hs.get_data(), hs.get_meta(), path,
                       lsdtt::raster_output_format::png);
+}
+
+static std::string diagnostic_path(
+    const std::string& directory,
+    const std::string& write_fname,
+    const std::string& frame,
+    const std::string& suffix)
+{
+    if (directory.empty()) return write_fname + frame + suffix + ".png";
+    std::string path = directory;
+    if (path.back() != '/' && path.back() != '\\') path += '/';
+    return path + write_fname + frame + suffix + ".png";
+}
+
+static void remove_png_sidecars(const std::string& path)
+{
+    std::remove((path + ".aux.xml").c_str());
+    std::remove((path.substr(0, path.size() - 4) + ".pgw").c_str());
+    std::remove((path.substr(0, path.size() - 4) + ".wld").c_str());
+}
+
+static void write_intermediate_diagnostics(
+    lsdtt::lsdtt_data_loader& loader,
+    const lsdtt::lsdtt_raster_cpu& raster,
+    const std::string& write_fname,
+    const std::string& frame,
+    const std::string& hillshade_path,
+    const std::string& drainage_path,
+    bool write_hillshade,
+    bool write_drainage,
+    bool keep_sidecars,
+    const std::string& boundary_conditions,
+    int n_threads,
+    double hillshade_azimuth,
+    double hillshade_altitude,
+    double hillshade_z_factor)
+{
+    if (write_hillshade)
+    {
+        const std::string path = diagnostic_path(
+            hillshade_path, write_fname, frame, "_hillshade");
+        write_hillshade_png(loader, raster, path, hillshade_azimuth,
+                            hillshade_altitude, hillshade_z_factor);
+        if (!keep_sidecars) remove_png_sidecars(path);
+    }
+    if (write_drainage)
+    {
+        const std::string path = diagnostic_path(
+            drainage_path, write_fname, frame, "_log10_dinf_drainage_area");
+        lsdtt::lsdtt_flowgraph_options fg_opts;
+        fg_opts.method = lsdtt::lsdtt_flowgraph_method::d_infinity;
+        fg_opts.boundary_conditions = boundary_conditions;
+        fg_opts.n_threads = n_threads;
+        lsdtt::lsdtt_flowgraph_cpu flowgraph(
+            raster.get_data_array(), raster.get_mask_array(), raster.get_meta(), fg_opts);
+        lsdtt::lsdtt_raster_result area = flowgraph.accumulate_raster();
+        float max_log_area = -std::numeric_limits<float>::infinity();
+        for (std::size_t i = 0; i < area.data.size(); ++i)
+            if (area.mask[i] != 0 && area.data[i] > 0.0f)
+                max_log_area = std::max(max_log_area, std::log10(area.data[i]));
+        for (std::size_t i = 0; i < area.data.size(); ++i)
+        {
+            if (area.mask[i] == 0 || area.data[i] <= 0.0f)
+                area.data[i] = area.meta.no_data_value;
+            else
+                area.data[i] = max_log_area - std::log10(area.data[i]);
+        }
+        loader.write_full(area.data, area.meta, path,
+                          lsdtt::raster_output_format::png);
+        if (!keep_sidecars) remove_png_sidecars(path);
+    }
 }
 
 
@@ -973,6 +1047,36 @@ int main(int argc, char* argv[])
         "Vertical exaggeration factor for hillshade.",
         "Use values > 1 to emphasise relief on low-gradient landscapes.",
         "Hillshade output (steady-state runs only)", "param", "write_hillshade_png"};
+
+    bool_default_map["write_intermediate_hillshade_png"] = false;
+    help_map["write_intermediate_hillshade_png"] = {"bool", "false",
+        "Write a hillshade PNG at each intermediate output checkpoint.",
+        "The PNG is written to intermediate_hillshade_write_path, or write_path when that path is empty.",
+        "Intermediate diagnostics", "switch", "frequency_of_output_writing"};
+
+    bool_default_map["write_intermediate_log10_dinf_drainage_area_png"] = false;
+    help_map["write_intermediate_log10_dinf_drainage_area_png"] = {"bool", "false",
+        "Write a log10 D-infinity drainage-area PNG at each intermediate output checkpoint.",
+        "The PNG uses an inverted grayscale mapping so larger drainage areas are darker, and is written to intermediate_drainage_area_write_path.",
+        "Intermediate diagnostics", "switch", "frequency_of_output_writing"};
+
+    bool_default_map["write_intermediate_png_sidecars"] = false;
+        help_map["write_intermediate_png_sidecars"] = {"bool", "false",
+        "Keep PNG georeferencing sidecars (.wld/.pgw and .aux.xml) for intermediate diagnostics.",
+        "False removes the sidecars after writing PNGs intended only for visual inspection.",
+        "Intermediate diagnostics", "switch", ""};
+
+    string_default_map["intermediate_hillshade_write_path"] = "";
+    help_map["intermediate_hillshade_write_path"] = {"string", "",
+        "Directory for intermediate hillshade PNGs.",
+        "Empty uses write_path.",
+        "Intermediate diagnostics", "io", "write_intermediate_hillshade_png"};
+
+    string_default_map["intermediate_drainage_area_write_path"] = "";
+    help_map["intermediate_drainage_area_write_path"] = {"string", "",
+        "Directory for intermediate D-infinity drainage-area PNGs.",
+        "Empty uses write_path.",
+        "Intermediate diagnostics", "io", "write_intermediate_log10_dinf_drainage_area_png"};
 
     // --- Timestepping ---
     float_default_map["timestep"] = 100.0f;
@@ -2848,6 +2952,22 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: could not write initial topography: " << e.what() << "\n";
         }
     }
+    try
+    {
+        write_intermediate_diagnostics(
+            loader, dem, pp.get_write_fname(), "_initial",
+            sf["intermediate_hillshade_write_path"],
+            sf["intermediate_drainage_area_write_path"],
+            bf["write_intermediate_hillshade_png"],
+            bf["write_intermediate_log10_dinf_drainage_area_png"],
+            bf["write_intermediate_png_sidecars"],
+            sf["boundary_conditions"], ifs["n_threads"],
+            ff["hillshade_azimuth"], ff["hillshade_altitude"], ff["hillshade_z_factor"]);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Warning: initial diagnostic write failed: " << e.what() << "\n";
+    }
 
 
     // -------------------------------------------------------------------------
@@ -3176,6 +3296,71 @@ int main(int argc, char* argv[])
 
                 write_erosion_rate(stats.erosion_rate, current, frame + "_erosion_rate");
                 write_channel_mask(current, frame + "_channel_mask");
+
+                if (bf["write_intermediate_hillshade_png"])
+                {
+                    const std::string path = diagnostic_path(
+                        sf["intermediate_hillshade_write_path"],
+                        pp.get_write_fname(), frame, "_hillshade");
+                    try
+                    {
+                        write_hillshade_png(
+                            loader, current, path,
+                            ff["hillshade_azimuth"],
+                            ff["hillshade_altitude"],
+                            ff["hillshade_z_factor"]);
+                        if (!bf["write_intermediate_png_sidecars"])
+                            remove_png_sidecars(path);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: intermediate hillshade write failed: "
+                                  << e.what() << "\n";
+                    }
+                }
+
+                if (bf["write_intermediate_log10_dinf_drainage_area_png"])
+                {
+                    const std::string path = diagnostic_path(
+                        sf["intermediate_drainage_area_write_path"],
+                        pp.get_write_fname(), frame,
+                        "_log10_dinf_drainage_area");
+                    try
+                    {
+                        lsdtt::lsdtt_flowgraph_options fg_opts;
+                        fg_opts.method = lsdtt::lsdtt_flowgraph_method::d_infinity;
+                        fg_opts.boundary_conditions = sf["boundary_conditions"];
+                        fg_opts.n_threads = ifs["n_threads"];
+                        lsdtt::lsdtt_flowgraph_cpu flowgraph(
+                            current.get_data_array(), current.get_mask_array(),
+                            current.get_meta(), fg_opts);
+                        lsdtt::lsdtt_raster_result area = flowgraph.accumulate_raster();
+                        float max_log_area = -std::numeric_limits<float>::infinity();
+                        for (std::size_t i = 0; i < area.data.size(); ++i)
+                        {
+                            if (area.mask[i] != 0 && area.data[i] > 0.0f)
+                                max_log_area = std::max(
+                                    max_log_area, std::log10(area.data[i]));
+                        }
+                        for (std::size_t i = 0; i < area.data.size(); ++i)
+                        {
+                            if (area.mask[i] == 0 || area.data[i] <= 0.0f)
+                                area.data[i] = area.meta.no_data_value;
+                            else
+                                area.data[i] = max_log_area - std::log10(area.data[i]);
+                        }
+                        loader.write_full(
+                            area.data, area.meta, path,
+                            lsdtt::raster_output_format::png);
+                        if (!bf["write_intermediate_png_sidecars"])
+                            remove_png_sidecars(path);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "Warning: intermediate D-infinity area write failed: "
+                                  << e.what() << "\n";
+                    }
+                }
             }
 
             return stats;
@@ -3279,6 +3464,22 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: writing final topography failed: " << e.what() << "\n";
             return 1;
         }
+    }
+    try
+    {
+        write_intermediate_diagnostics(
+            loader, current, pp.get_write_fname(), "_modelled",
+            sf["intermediate_hillshade_write_path"],
+            sf["intermediate_drainage_area_write_path"],
+            bf["write_intermediate_hillshade_png"],
+            bf["write_intermediate_log10_dinf_drainage_area_png"],
+            bf["write_intermediate_png_sidecars"],
+            sf["boundary_conditions"], ifs["n_threads"],
+            ff["hillshade_azimuth"], ff["hillshade_altitude"], ff["hillshade_z_factor"]);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Warning: final diagnostic write failed: " << e.what() << "\n";
     }
 
     write_erosion_rate(last_stats.erosion_rate, current, "_erosion_rate");

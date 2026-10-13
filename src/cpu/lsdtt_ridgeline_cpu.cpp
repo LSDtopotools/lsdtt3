@@ -258,7 +258,98 @@ void lsdtt_ridgeline_cpu::reverse()
         std::reverse(smoothed_detrended_slopes_.begin(), smoothed_detrended_slopes_.end());
     }
 
+    std::reverse(nearest_channel_elevations_left_.begin(), nearest_channel_elevations_left_.end());
+    std::reverse(nearest_channel_elevations_right_.begin(), nearest_channel_elevations_right_.end());
+
     compute_positions_and_distances_();
+}
+
+void lsdtt_ridgeline_cpu::orient_periodic_start(bool columns)
+{
+    if (nodes_.empty()) return;
+    auto rotate_to_minimum = [&]()
+    {
+        const auto index = std::min_element(
+            nodes_.begin(), nodes_.end(),
+            [columns](const lsdtt_pixel_rc& a, const lsdtt_pixel_rc& b)
+            { return columns ? a.col < b.col : a.row < b.row; });
+        const auto offset = static_cast<std::size_t>(index - nodes_.begin());
+        if (offset == 0) return;
+        std::rotate(nodes_.begin(), nodes_.begin() + offset, nodes_.end());
+        std::rotate(positions_.begin(), positions_.begin() + offset, positions_.end());
+        if (!elevations_.empty())
+            std::rotate(elevations_.begin(), elevations_.begin() + offset, elevations_.end());
+        if (!fitted_elevations_.empty())
+            std::rotate(fitted_elevations_.begin(), fitted_elevations_.begin() + offset, fitted_elevations_.end());
+        if (!detrended_elevations_.empty())
+            std::rotate(detrended_elevations_.begin(), detrended_elevations_.begin() + offset, detrended_elevations_.end());
+        if (!smoothed_detrended_elevations_.empty())
+            std::rotate(smoothed_detrended_elevations_.begin(), smoothed_detrended_elevations_.begin() + offset, smoothed_detrended_elevations_.end());
+        if (!smoothed_detrended_slopes_.empty())
+            std::rotate(smoothed_detrended_slopes_.begin(), smoothed_detrended_slopes_.begin() + offset, smoothed_detrended_slopes_.end());
+    };
+    rotate_to_minimum();
+    const auto coordinate = [columns](const lsdtt_pixel_rc& node)
+    { return columns ? node.col : node.row; };
+    const int coordinate_period = columns ? divide_grid_meta_.n_cols
+                                          : divide_grid_meta_.n_rows;
+    for (std::size_t i = 1; i < nodes_.size(); ++i)
+    {
+        const int delta = coordinate(nodes_[i]) - coordinate(nodes_[0]);
+        if (delta != 0 && (delta < 0 || delta > coordinate_period / 2))
+        {
+            reverse();
+            rotate_to_minimum();
+            break;
+        }
+        if (delta != 0) break;
+    }
+
+    compute_positions_and_distances_();
+}
+
+void lsdtt_ridgeline_cpu::calculate_nearest_channel_elevations(
+    const lsdtt_flow_base& flow,
+    const lsdtt_raster_cpu& dem,
+    const std::vector<std::uint8_t>& channel_mask)
+{
+    if (channel_mask.size() != dem.full_grid_size())
+        throw std::invalid_argument("channel mask does not match DEM size");
+
+    nearest_channel_elevations_left_.assign(
+        nodes_.size(), std::numeric_limits<float>::quiet_NaN());
+    nearest_channel_elevations_right_.assign(
+        nodes_.size(), std::numeric_limits<float>::quiet_NaN());
+
+    const auto& data = dem.get_data();
+    const auto& dem_mask = dem.get_mask();
+
+    auto trace_to_channel = [&](int row, int col) -> float {
+        if (!flow.in_bounds(row, col)) return std::numeric_limits<float>::quiet_NaN();
+        std::int64_t current = flow.flat_index_unchecked(row, col);
+        std::size_t steps = 0;
+        while (flow.is_valid_cell(current) && steps++ <= channel_mask.size())
+        {
+            if (channel_mask[static_cast<std::size_t>(current)] != 0 &&
+                dem_mask[static_cast<std::size_t>(current)] != 0)
+                return data[static_cast<std::size_t>(current)];
+
+            const std::int64_t next = flow.receiver_of_unchecked(current);
+            if (next < 0 || next == current) break;
+            current = next;
+        }
+        return std::numeric_limits<float>::quiet_NaN();
+    };
+
+    for (std::size_t i = 0; i + 1 < nodes_.size(); ++i)
+    {
+        const EdgePixels edge = get_edge_pixels(nodes_[i], nodes_[i + 1]);
+        if (!edge.valid) continue;
+        nearest_channel_elevations_left_[i] =
+            trace_to_channel(edge.left_r, edge.left_c);
+        nearest_channel_elevations_right_[i] =
+            trace_to_channel(edge.right_r, edge.right_c);
+    }
 }
 
 void lsdtt_ridgeline_cpu::append_without_check(const lsdtt_ridgeline_cpu& other)
@@ -785,8 +876,10 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_ridgeline_csv_row
         std::string s_det_z = (i < smoothed_detrended_elevations_.size()) ? format_float(smoothed_detrended_elevations_[i]) : "NaN";
         std::string s_det_s = (i < smoothed_detrended_slopes_.size()) ? format_float(smoothed_detrended_slopes_[i]) : "NaN";
 
-        rows.push_back({
+        std::vector<std::string> row = {
             id_string,
+            std::to_string(nodes_[i].row),
+            std::to_string(nodes_[i].col),
             format_float(ll.latitude),
             format_float(ll.longitude),
             ridgeline_type,
@@ -796,7 +889,16 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_ridgeline_csv_row
             det_z,
             s_det_z,
             s_det_s
-        });
+        };
+        if (!nearest_channel_elevations_left_.empty() ||
+            !nearest_channel_elevations_right_.empty())
+        {
+            row.push_back((i < nearest_channel_elevations_left_.size())
+                ? format_float(nearest_channel_elevations_left_[i]) : "NaN");
+            row.push_back((i < nearest_channel_elevations_right_.size())
+                ? format_float(nearest_channel_elevations_right_[i]) : "NaN");
+        }
+        rows.push_back(std::move(row));
     }
 
     return rows;
@@ -872,7 +974,7 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_extrema_csv_rows(
     {
         lsdtt_lonlat ll = xy_to_lonlat(positions_[ext.node_index].x, positions_[ext.node_index].y, transform);
         
-        rows.push_back({
+        std::vector<std::string> row = {
             id_string,
             ridgeline_type,
             format_float(ll.latitude),
@@ -882,7 +984,16 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_extrema_csv_rows(
             format_float(ext.distance_to_next),
             format_float(ext.relief_to_next),
             format_float(ext.distance_to_tdj)
-        });
+        };
+        if (!nearest_channel_elevations_left_.empty() ||
+            !nearest_channel_elevations_right_.empty())
+        {
+            row.push_back(ext.node_index < static_cast<int>(nearest_channel_elevations_left_.size())
+                ? format_float(nearest_channel_elevations_left_[ext.node_index]) : "NaN");
+            row.push_back(ext.node_index < static_cast<int>(nearest_channel_elevations_right_.size())
+                ? format_float(nearest_channel_elevations_right_[ext.node_index]) : "NaN");
+        }
+        rows.push_back(std::move(row));
     }
 
     return rows;
@@ -963,7 +1074,7 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_flow_topological_
             }
         }
 
-        rows.push_back({
+        std::vector<std::string> row = {
             id_string,
             ridgeline_type,
             format_float(ll.latitude),
@@ -976,7 +1087,16 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_flow_topological_
             format_float(right_junc_z),
             format_float(left_diff_z),
             format_float(right_diff_z)
-        });
+        };
+        if (!nearest_channel_elevations_left_.empty() ||
+            !nearest_channel_elevations_right_.empty())
+        {
+            row.push_back(i < nearest_channel_elevations_left_.size()
+                ? format_float(nearest_channel_elevations_left_[i]) : "NaN");
+            row.push_back(i < nearest_channel_elevations_right_.size()
+                ? format_float(nearest_channel_elevations_right_[i]) : "NaN");
+        }
+        rows.push_back(std::move(row));
     }
 
     return rows;

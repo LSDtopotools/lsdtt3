@@ -99,6 +99,7 @@ struct lsdtt_lem_options
     float m_exponent                      = 0.45f;
     float n_exponent                      = 1.0f;
     float incision_threshold_area         = 0.0f;
+    int   drainage_area_moving_average_kernel_size_pixels = 1;
     bool  divide_area_by_dx               = true;
 
     // Which of the two couplings to run. `automatic` infers it from

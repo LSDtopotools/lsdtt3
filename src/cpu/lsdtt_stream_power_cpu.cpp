@@ -16,6 +16,7 @@
 #include <numeric>
 #include <vector>
 #include <iostream>
+#include <stdexcept>
 
 #ifdef _OPENMP
 #  include <omp.h>
@@ -23,6 +24,118 @@
 
 namespace lsdtt
 {
+
+namespace
+{
+
+std::vector<double> smooth_drainage_area(
+    const std::vector<double>& area,
+    const std::vector<std::uint8_t>& mask,
+    int n_rows,
+    int n_cols,
+    int kernel_size,
+    const std::string& boundary_conditions)
+{
+    if (kernel_size < 1 || kernel_size % 2 == 0)
+        throw std::invalid_argument(
+            "drainage area moving-average kernel size must be a positive odd number");
+    if (kernel_size == 1) return area;
+
+    const int radius = kernel_size / 2;
+    const bool periodic_north = boundary_conditions.size() == 4 &&
+                                (boundary_conditions[0] == 'p' || boundary_conditions[0] == 'P');
+    const bool periodic_east = boundary_conditions.size() == 4 &&
+                               (boundary_conditions[1] == 'p' || boundary_conditions[1] == 'P');
+    const bool periodic_south = boundary_conditions.size() == 4 &&
+                                (boundary_conditions[2] == 'p' || boundary_conditions[2] == 'P');
+    const bool periodic_west = boundary_conditions.size() == 4 &&
+                               (boundary_conditions[3] == 'p' || boundary_conditions[3] == 'P');
+    auto wrapped_index = [](int index, int size) {
+        return (index % size + size) % size;
+    };
+
+    auto resolve_index = [&](int index, int size, bool periodic_negative,
+                             bool periodic_positive) {
+        if (index < 0 && !periodic_negative) return -1;
+        if (index >= size && !periodic_positive) return -1;
+        return wrapped_index(index, size);
+    };
+
+    const std::size_t n_cells = static_cast<std::size_t>(n_rows) * n_cols;
+    std::vector<double> horizontal_sum(n_cells, 0.0);
+    std::vector<std::size_t> horizontal_count(n_cells, 0);
+
+    // First pass: rolling horizontal sums and valid-cell counts.
+    for (int row = 0; row < n_rows; ++row)
+    {
+        double sum = 0.0;
+        std::size_t count = 0;
+        auto add_column = [&](int raw_col, double sign) {
+            const int column = resolve_index(
+                raw_col, n_cols, periodic_west, periodic_east);
+            if (column < 0) return;
+            const std::size_t neighbour =
+                static_cast<std::size_t>(row) * n_cols + column;
+            if (neighbour < area.size() && neighbour < mask.size() &&
+                mask[neighbour] != 0)
+            {
+                sum += sign * area[neighbour];
+                if (sign > 0.0) ++count;
+                else --count;
+            }
+        };
+
+        for (int offset = -radius; offset <= radius; ++offset)
+            add_column(offset, 1.0);
+        for (int col = 0; col < n_cols; ++col)
+        {
+            const std::size_t flat = static_cast<std::size_t>(row) * n_cols + col;
+            horizontal_sum[flat] = sum;
+            horizontal_count[flat] = count;
+            if (col + 1 < n_cols)
+            {
+                add_column(col - radius, -1.0);
+                add_column(col + radius + 1, 1.0);
+            }
+        }
+    }
+
+    std::vector<double> smoothed(n_cells, 0.0);
+
+    // Second pass: rolling vertical sums over the horizontal-pass results.
+    for (int col = 0; col < n_cols; ++col)
+    {
+        double sum = 0.0;
+        std::size_t count = 0;
+        auto add_row = [&](int raw_row, double sign) {
+            const int row = resolve_index(
+                raw_row, n_rows, periodic_north, periodic_south);
+            if (row < 0) return;
+            const std::size_t neighbour =
+                static_cast<std::size_t>(row) * n_cols + col;
+            sum += sign * horizontal_sum[neighbour];
+            if (sign > 0.0) count += horizontal_count[neighbour];
+            else count -= horizontal_count[neighbour];
+        };
+
+        for (int offset = -radius; offset <= radius; ++offset)
+            add_row(offset, 1.0);
+        for (int row = 0; row < n_rows; ++row)
+        {
+            const std::size_t flat = static_cast<std::size_t>(row) * n_cols + col;
+            if (mask[flat] != 0 && count != 0)
+                smoothed[flat] = sum / static_cast<double>(count);
+            if (row + 1 < n_rows)
+            {
+                add_row(row - radius, -1.0);
+                add_row(row + radius + 1, 1.0);
+            }
+        }
+    }
+    return smoothed;
+}
+
+} // namespace
 
 
 // -----------------------------------------------------------------------------
@@ -37,7 +150,9 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
     float dt,
     float incision_threshold_area,
     bool  divide_area_by_dx,
-    float slope_clamp)
+    float slope_clamp,
+    int   drainage_area_moving_average_kernel_size_pixels,
+    const std::string& boundary_conditions)
 {
     const lsdtt_raster_meta& meta       = dem.get_meta();
     const float              dx         = static_cast<float>(meta.cell_size);
@@ -51,6 +166,9 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 
     // Drainage area via D8 accumulation
     std::vector<double> area_d = flow.accumulate();
+    area_d = smooth_drainage_area(
+        area_d, dem.get_mask(), meta.n_rows, meta.n_cols,
+        drainage_area_moving_average_kernel_size_pixels, boundary_conditions);
 
     // Topological order is headwater->outlet; we need outlet->headwater,
     // so iterate in reverse.
@@ -190,7 +308,9 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     float incision_threshold_area,
     bool  divide_area_by_dx,
     float slope_clamp,
-    int   n_threads)
+    int   n_threads,
+    int   drainage_area_moving_average_kernel_size_pixels,
+    const std::string& boundary_conditions)
 {
     // The thread count goes on the parallel loop (num_threads clause); the
     // process-wide OpenMP setting is left alone (decision D4).
@@ -210,6 +330,9 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
 
     // Drainage area from the flow graph (forward accumulation)
     std::vector<double> area_d = flow.accumulate();
+    area_d = smooth_drainage_area(
+        area_d, dem.get_mask(), meta.n_rows, meta.n_cols,
+        drainage_area_moving_average_kernel_size_pixels, boundary_conditions);
 
     // Build levels for the reverse sweep (outlet -> headwater)
     auto levels = build_reverse_levels(flow);

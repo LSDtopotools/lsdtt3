@@ -39,7 +39,10 @@ convention, but the transient is not. The area-slope form comes from
 - **`m`** (the drainage-area exponent, default 0.45) captures how incision scales with catchment size. A larger basin carries more water, so it erodes faster. `m ≈ 0.4–0.5` reflects observations that incision is sub-linear in area: doubling the catchment does not double the erosion rate. This exponent actually includes exponents about runoff efficiency as well as channel width scaling: see Whipple and Tucker (1999). 
 - **`n`** (the slope exponent, default 1.0) determines how strongly the channel responds to slope. `n = 1` (linear slope dependence) is the simplest choice. This does have a physical basis (see Whipple and Tucker, 1999) but in reality it is often chosen due to its considerable numerical advantages over n not equal to 1. Empirical observations suggest n > 1 (e.g., Harel et al., 2016) but this is an ongoing debate within the geomorphology community, with many arguments for n = 1 and many against. `n ≠ 1` requires iterative (Newton–Raphson) solution instead of a closed-form formula, making it numerically (much) more expensive.
 
-The combination matters for landscape form: the landscape **Péclet number** `p = m + n` (under the Bonetti convention for specific area, discussed below) sets the ratio of advective (fluvial) to diffusive (hillslope) transport. A hillslope length `L_h` emerges at the crossover where `K A^m S^n ≈ D S^2 / L_h^2`, which gives `L_h ~ (D / K)^(1/p)`. Getting the exponent `p` wrong is an error in an **exponent, not a constant**, so it cannot be calibrated away by adjusting `K` or `D` after the fact.
+The combination matters for landscape form: the scaling of the characteristic
+landscape length depends on the erosivity convention and on the characteristic
+scales used to nondimensionalise the model. The two conventions therefore do
+not share one universal landscape Péclet exponent.
 
 #### Numerical schemes for stream power
 
@@ -412,7 +415,7 @@ One special steady-state feature: `steady_state_mode: relief`. Instead of specif
 
 ## Erosivity conventions: Perron versus Bonetti
 
-A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_specific_area` and the exponent in the landscape Péclet number.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
+A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_specific_area` and the scaling of model results.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
 
 ### The two conventions
 
@@ -426,6 +429,9 @@ dz/dt = U − K · (a)^m · S^n  =  U − K · (A/dx)^m · S^n
 
 This is the **default in lsdtt3** and was advocated by **Bonetti, Hooshyar, Camporeale and Porporato (2020, PNAS 117:1375–1382)** and **Litwin et al. (2022, JGR-ES)**.
 
+Note that the units of `K` are `m^(1 − m) yr^-1`, which differs from
+Convention 2.
+
 **Convention 2 (Perron et al. 2008, 2009): Total area** (`divide_area_by_dx: false`)
 
 Use the raw upslope area `A` in m², without dividing by dx. The law is
@@ -436,6 +442,9 @@ dz/dt = U − K · A^m · S^n
 
 This was used in **Perron et al. (2008, JGR-ES 113:F04016)** and **Perron et al. (2009, Nature 460:502–505)**.
 
+Note that the units of `K` are `m^(1 − 2m) yr^-1`, which differs from
+Convention 1.
+
 ### Two critical consequences
 
 **1. Units of the incision threshold**
@@ -443,14 +452,33 @@ This was used in **Perron et al. (2008, JGR-ES 113:F04016)** and **Perron et al.
 - **`divide_area_by_dx: true`** → `incision_threshold_specific_area` is **A/dx in metres**. A value of 1,000,000 m means "cells with at least 1 million metres of upstream area per cell width". On a 10 m DEM this is 100,000 pixels; on a 1 m DEM this is 1,000,000 pixels.
 - **`divide_area_by_dx: false`** → `incision_threshold_specific_area` is a **map area in m²**. A value of 1,000,000 m² means 1 km², regardless of cell size.
 
-**2. The landscape Péclet number**
+**2. Scaling of model results**
 
-The ratio of fluvial to hillslope transport (which sets hillslope length) depends on the convention:
+The characteristic length and height scales of the model depend on the
+erosivity convention. For the linear hillslope-diffusion model, the relevant
+scalings are:
 
-- **Specific area** (Bonetti convention): `p = m + n`  
-- **Total area** (Perron convention): `p = 2m + n`
+- **Specific area** (Bonetti convention): use the `L_g` formulation of Litwin
+  et al. (2025), with `a = A/dx` and `K` interpreted using the specific-area
+  convention.
+- **Total area** (Perron convention): use the `L_h` formulation of Theodoratos
+  et al. (2018), with raw area `A` and `K` interpreted using the total-area
+  convention.
 
-So a landscape designed with `m = 0.45, n = 1.0` under the Bonetti convention (`p = 1.45`) produces **different** mean hillslope lengths than the same parameters under Perron (`p = 1.9`). The error propagates into the calibrated constants (`c` in `L_h = c · (D/K)^(1/p)`) — calibrating `c` under the wrong convention is the kind of systematic error that field data cannot fix.
+Thus, the scaling of model results is different under the two conventions. A
+landscape designed with the same numerical values of `m`, `n`, `K`, and `D`
+under the two conventions does not in general have the same characteristic
+length or height scale. The convention, the coefficient units, and the chosen
+`dx` must be stated when comparing model results.
+
+These scaling relationships apply only to models with **linear hillslope
+diffusion**. Nonlinear or threshold hillslope laws introduce additional scales
+and cannot be interpreted using these linear-diffusion characteristic-scale
+relations alone. Although such models can be run with `lsdtt-lem`,
+`lsdtt-advection-diffusion` should preferably be used for clean numerical
+experiments with advection–diffusion models intended to follow these scaling
+relationships. It provides a deliberately minimal fixed-timestep model with
+linear ADI diffusion, controlled fluvial incision, and uniform uplift.
 
 ### Choosing a convention
 
@@ -612,12 +640,20 @@ text names a paper, this is the paper it means.
   Academy of Sciences*, 117(3), 1375–1382. doi:10.1073/pnas.1911817117 — the
   specific-area convention, adopted to remove grid dependence from the erosion
   law, and the channelisation index.
-- **Litwin, D. G., Tucker, G. E., Barnhart, K. R., & Harman, C. J. (2022).**
+- **Litwin, D. G., et al. (2022).**
   Groundwater affects the geomorphic and hydrologic properties of coevolved
   landscapes. *Journal of Geophysical Research: Earth Surface*, 127(1),
   e2021JF006239. doi:10.1029/2021JF006239 — also uses area per unit contour
-  width. **Note** its "Hillslope number" is a Péclet number for *groundwater*
-  flow, not the geomorphic fluvial/diffusive one used here.
+  width.
+- **Theodoratos, N., Hergarten, S., & Narteau, C. (2018).** On the scaling of
+  fluvial incision and hillslope diffusion in landscape evolution models.
+  *Earth Surface Dynamics*, 6, 779–793. https://doi.org/10.5194/esurf-6-779-2018
+  — total-area characteristic scaling and the `L_h` formulation.
+- **Litwin, D. G., Malatesta, L. C., & Sklar, L. S. (2025).** Hillslope
+  diffusion and channel steepness in landscape evolution models. *Earth
+  Surface Dynamics*, 13(2), 277–293.
+  https://doi.org/10.5194/esurf-13-277-2025 — specific-area characteristic
+  scaling and the `L_g` formulation.
 
 **Flow routing**
 

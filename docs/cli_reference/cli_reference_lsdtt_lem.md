@@ -314,6 +314,23 @@ These apply only when `use_landscape_equilibration_cycle` and
 | `stop_at_steady_state` | bool | `false` | Stop when mean erosion rate is within 1 % of uplift rate for 100 consecutive steps, then run 20× that step count more before stopping. |
 | `frequency_of_output_writing` | int | `0` | Write an intermediate raster every N iterations. `0` = write final only. |
 
+### Intermediate diagnostics
+
+When `frequency_of_output_writing` is greater than zero, optional PNG
+diagnostics can be written at the same checkpoints as the elevation snapshots.
+The D-infinity diagnostic is `log10` drainage area with an inverted grayscale
+mapping, so larger drainage areas are darker. The diagnostics are also written
+for the initial and final modelled topographies. PNG georeferencing sidecars are
+removed by default because these files are intended for visual inspection.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_intermediate_hillshade_png` | bool | `false` | Write an intermediate hillshade PNG at every output checkpoint. |
+| `intermediate_hillshade_write_path` | string | empty | Optional directory for intermediate hillshade PNGs; empty uses `write_path`. |
+| `write_intermediate_log10_dinf_drainage_area_png` | bool | `false` | Write an inverted-grayscale `log10` D-infinity drainage-area PNG at every output checkpoint. |
+| `intermediate_drainage_area_write_path` | string | empty | Optional directory for intermediate D-infinity area PNGs; empty uses `write_path`. |
+| `write_intermediate_png_sidecars` | bool | `false` | Keep PNG georeferencing sidecars (`.pgw` and `.aux.xml`) instead of removing them. |
+
 ---
 
 ## Output files
