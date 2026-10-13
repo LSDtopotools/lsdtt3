@@ -1,6 +1,6 @@
 [workspace]
 name = "lsdtt3"
-version = "0.4.0"
+version = "0.6.0"
 description = "Python environment for lsdtt3 test tooling and the python_helpers scripts."
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]

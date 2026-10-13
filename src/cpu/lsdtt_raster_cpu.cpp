@@ -8,6 +8,8 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_cpu.hpp"
+#include "lsdtt_raster_central_difference_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -326,12 +328,9 @@ vertical_plausibility_report check_vertical_plausibility(
             if (d[i] < zmin) zmin = d[i];
             if (d[i] > zmax) zmax = d[i];
 
-            const std::size_t n = i - nc, s = i + nc, w = i - 1, e = i + 1;
-            if (!m[n] || !m[s] || !m[w] || !m[e]) continue;
-
-            const double dzdx = (static_cast<double>(d[e]) - d[w]) / (2.0 * cs);
-            const double dzdy = (static_cast<double>(d[s]) - d[n]) / (2.0 * cs);
-            slopes.push_back(static_cast<float>(std::hypot(dzdx, dzdy)));
+            double dzdx = 0.0, dzdy = 0.0;
+            if (!cardinal_central_gradient(d, m, nc, i, cs, dzdx, dzdy)) continue;
+            slopes.push_back(static_cast<float>(gradient_magnitude(dzdx, dzdy)));
         }
     }
 
@@ -339,10 +338,7 @@ vertical_plausibility_report check_vertical_plausibility(
 
     const auto pct = [&slopes](double p) -> double
     {
-        const std::size_t k = static_cast<std::size_t>(
-            p / 100.0 * static_cast<double>(slopes.size() - 1));
-        std::nth_element(slopes.begin(), slopes.begin() + k, slopes.end());
-        return static_cast<double>(slopes[k]);
+        return compute_quantile_floor_in_place(slopes, p / 100.0);
     };
 
     const auto deg = [](double g) { return std::atan(g) * 180.0 / M_PI; };

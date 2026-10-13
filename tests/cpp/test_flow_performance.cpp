@@ -65,6 +65,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_data_loader.hpp"
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "lsdtt_raster_synthetic_surfaces_cpu.hpp"
 #include "lsdtt_flowinfo_cpu.hpp"
 #include "lsdtt_flowgraph_cpu.hpp"

@@ -67,6 +67,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
@@ -171,8 +172,14 @@ int main(int argc, char* argv[])
 
     float_default_map["fill_min_slope_for_routing"] = 0.0001f;
     help_map["fill_min_slope_for_routing"] = {"float","0.0001",
-        "Minimum slope used when pit-filling the DEM for flow routing.","",
+        "Minimum slope (m/m) used when pit-filling the DEM for flow routing.",
+        "inline_gradient (default): imposed during the Priority-Flood fill. "
+        "barnes2014b_gradient: the minimum gradient across flats. "
+        "barnes2014b_float_step: ignored. Separate from trough_fill_min_slope.",
         "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
+
+    lsdtt::declare_fill_flat_resolution_parameter(
+        string_default_map, help_map, "", "fill_min_slope_for_routing");
 
     // --- Valley identification ---
 
@@ -602,6 +609,26 @@ int main(int argc, char* argv[])
     const lsdtt::raster_output_format out_format =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
 
+    // How flats are made drainable for the routing fill (Barnes et al.
+    // 2014b options). Checked here, before any raster work. The trough
+    // routing inside the centreline extraction keeps its own fill
+    // (trough_fill_min_slope) and is not affected.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+        lsdtt::check_fill_flat_resolution_min_slope(
+            flat_choice, ff["fill_min_slope_for_routing"],
+            "fill_min_slope_for_routing");
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
     // -------------------------------------------------------------------------
     // DEM + flow routing
     // -------------------------------------------------------------------------
@@ -624,9 +651,27 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu dem(loader);
 
     std::cout << "Filling DEM for flow routing...\n";
-    lsdtt::lsdtt_raster_cpu routing_dem = lsdtt::fill_pits(
-        dem, ff["fill_min_slope_for_routing"],
-        sf["boundary_conditions"], ifs["n_threads"]);
+    lsdtt::lsdtt_raster_cpu routing_dem;
+    if (flat_choice == lsdtt::flat_resolution_choice::inline_gradient)
+    {
+        routing_dem = lsdtt::fill_pits(
+            dem, ff["fill_min_slope_for_routing"],
+            sf["boundary_conditions"], ifs["n_threads"]);
+    }
+    else
+    {
+        try
+        {
+            routing_dem = lsdtt::fill_pits_reporting_flat_resolution(
+                dem, ff["fill_min_slope_for_routing"],
+                sf["boundary_conditions"], flat_choice, ifs["n_threads"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: pit filling failed: " << e.what() << "\n";
+            return 1;
+        }
+    }
 
     std::cout << "Building flow object...\n";
     lsdtt::lsdtt_flowinfo_options fi_opts;

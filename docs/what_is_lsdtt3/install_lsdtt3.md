@@ -37,7 +37,7 @@ subset the QGIS plugin drives.
 > but don't assume it is the current one. The authoritative version is line 2
 > of `CMakeLists.txt` in the repository — `project(lsdtt3 VERSION ...)` (we do not recommend reading beyond this line or you will get a headache) and
 > release tags and package filenames are derived from it directly (`VERSION
-> 0.5.1` → tag `v0.5.1` → `...-v0.5.1.tar.gz`). If you cannot see the
+> 0.6.0` → tag `v0.6.0` → `...-v0.6.0.tar.gz`). If you cannot see the
 > repository, take the newest file from one of the two download locations
 > above instead. Substitute that number throughout.
 
@@ -358,7 +358,7 @@ lsdtt-raster-preprocessing -v
 ```
 
 ```
-lsdtt-raster-preprocessing version 1.0.0 (lsdtt3 0.5.1)
+lsdtt-raster-preprocessing version 1.0.0 (lsdtt3 0.6.0)
 GDAL 3.8.4, PROJ 9.3.1
   proj data: bundled: /home/you/lsdtt3/share/proj
   GDAL data: bundled: /home/you/lsdtt3/share/gdal

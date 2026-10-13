@@ -72,6 +72,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+import lsdtt_test_env  # non-interactive process launching (tests/scripts rule)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = REPO_ROOT / "tests" / "expected" / "hype"
 SF_FILES = "https://sourceforge.net/projects/hype/files/"
@@ -132,8 +134,8 @@ def git_commit_of_release(version):
     """Commit of the release in the SourceForge git repo, if master points at it.
     Informational only; returns '' when it cannot be determined."""
     try:
-        out = subprocess.run(["git", "ls-remote", SF_GIT, "refs/heads/master"],
-                             capture_output=True, text=True, timeout=60).stdout
+        out = lsdtt_test_env.run(["git", "ls-remote", SF_GIT, "refs/heads/master"],
+                                 capture_output=True, text=True, timeout=60).stdout
         return out.split()[0] if out.strip() else ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -152,7 +154,7 @@ def build_hype(archive, workdir, label, extra_switch=None):
         cmd.append(f"switch={extra_switch}")
     log = srcdirs[0] / "make.log"
     with open(log, "w") as f:
-        rc = subprocess.run(cmd, cwd=srcdirs[0], stdout=f, stderr=subprocess.STDOUT).returncode
+        rc = lsdtt_test_env.run(cmd, cwd=srcdirs[0], stdout=f, stderr=subprocess.STDOUT).returncode
     exe = srcdirs[0] / "hype"
     if rc != 0 or not exe.exists():
         sys.exit(f"ERROR: building HYPE ({label}) failed; see {log}")
@@ -160,7 +162,7 @@ def build_hype(archive, workdir, label, extra_switch=None):
 
 
 def gfortran_version():
-    out = subprocess.run(["gfortran", "--version"], capture_output=True, text=True).stdout
+    out = lsdtt_test_env.run(["gfortran", "--version"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip() if out else "unknown"
 
 
@@ -344,8 +346,8 @@ def run_hype(exe, hype_input, workdir, label):
     run_dir = workdir / label
     shutil.copytree(hype_input, run_dir)
     (run_dir / "results").mkdir()
-    proc = subprocess.run([str(exe), str(run_dir) + "/"], cwd=run_dir,
-                          capture_output=True, text=True)
+    proc = lsdtt_test_env.run([str(exe), str(run_dir) + "/"], cwd=run_dir,
+                              capture_output=True, text=True)
     # HYPE prints its final status line to stderr.
     ok = "Simulation will halt: successfully" in (proc.stdout + proc.stderr)
     if proc.returncode != 0 or not ok:
@@ -447,10 +449,10 @@ def precision_floor(single, double):
 # ---------------------------------------------------------------------------
 def script_revision():
     try:
-        rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
-                             capture_output=True, text=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "--", str(Path(__file__))],
-                               cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
+        rev = lsdtt_test_env.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
+                                 capture_output=True, text=True).stdout.strip()
+        dirty = lsdtt_test_env.run(["git", "status", "--porcelain", "--", str(Path(__file__))],
+                                   cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
         return rev + ("+uncommitted" if dirty else "")
     except OSError:
         return "unknown"

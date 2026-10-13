@@ -195,4 +195,59 @@ double csv_row_double_optional(const lsdtt_csv_row& row,
     }
 }
 
+double csv_parse_double_field(const std::string& text, const std::string& where,
+                              const std::size_t line_no)
+{
+    try
+    {
+        std::size_t pos = 0;
+        const double v = std::stod(text, &pos);
+        if (pos != text.size()) throw std::invalid_argument("trailing characters");
+        return v;
+    }
+    catch (const std::exception&)
+    {
+        throw std::runtime_error(
+            where + ": line " + std::to_string(line_no) +
+            ": cannot parse '" + text + "' as a number.");
+    }
+}
+
+long long csv_parse_int_field(const std::string& text, const std::string& where,
+                              const std::size_t line_no)
+{
+    try
+    {
+        std::size_t pos = 0;
+        const long long v = std::stoll(text, &pos);
+        if (pos != text.size()) throw std::invalid_argument("trailing characters");
+        return v;
+    }
+    catch (const std::exception&)
+    {
+        throw std::runtime_error(
+            where + ": line " + std::to_string(line_no) +
+            ": cannot parse '" + text + "' as an integer.");
+    }
+}
+
+unsigned long long csv_parse_uint_field(const std::string& text, const std::string& where,
+                                        const std::size_t line_no)
+{
+    try
+    {
+        if (text.find('-') != std::string::npos) throw std::invalid_argument("negative");
+        std::size_t pos = 0;
+        const unsigned long long v = std::stoull(text, &pos);
+        if (pos != text.size()) throw std::invalid_argument("trailing characters");
+        return v;
+    }
+    catch (const std::exception&)
+    {
+        throw std::runtime_error(
+            where + ": line " + std::to_string(line_no) +
+            ": cannot parse '" + text + "' as a non-negative integer.");
+    }
+}
+
 } // namespace lsdtt

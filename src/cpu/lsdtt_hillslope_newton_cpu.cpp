@@ -12,6 +12,7 @@
 // =============================================================================
 
 #include "lsdtt_hillslope_newton_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_hillslope_operator_cpu.hpp"
 
 #include <algorithm>
@@ -136,8 +137,8 @@ int dalpha_dz(const lsdtt_hillslope_stencil<double>& st,
               int r, int c, int dir, double Sc, double ratio_cap,
               double alpha, double s_n, jac_entry out[8], bool& capped)
 {
-    static constexpr int k_dr[4] = { -1,  0, +1,  0 };
-    static constexpr int k_dc[4] = {  0, +1,  0, -1 };
+    static constexpr const auto& k_dr = grid::d4_nesw_row;
+    static constexpr const auto& k_dc = grid::d4_nesw_col;
 
     const double h  = st.h;
     const double Sc2 = Sc * Sc;
@@ -210,9 +211,9 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
     return result;
 #else
 
-#ifdef _OPENMP
-    if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
-#endif
+    // opts.n_threads is not used here: nothing in the Newton solve runs an
+    // OpenMP loop (Eigen's SparseLU, IncompleteLUT and column-major BiCGSTAB are
+    // serial), and the process-wide setting is left alone (decision D4).
 
     result.had_eigen = true;
 
@@ -415,8 +416,8 @@ lsdtt_hillslope_newton_result compute_hillslope_newton(
         trips.clear();
         lsdtt_hillslope_stencil<double> st(dom, z.data(), h);
 
-        static constexpr int k_dr[4] = { -1,  0, +1,  0 };
-        static constexpr int k_dc[4] = {  0, +1,  0, -1 };
+        static constexpr const auto& k_dr = grid::d4_nesw_row;
+        static constexpr const auto& k_dc = grid::d4_nesw_col;
 
         for (int d = 0; d < n_dof; ++d)
         {

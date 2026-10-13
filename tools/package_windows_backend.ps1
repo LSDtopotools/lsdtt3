@@ -11,7 +11,7 @@ param(
     [string]$OutDir = "dist",
     [string]$VcpkgRoot = "$env:USERPROFILE/tools/vcpkg",
     [string]$Triplet = "x64-windows",
-    [string]$PluginVersionRange = ">=0.1.0 <0.4.0",
+    [string]$PluginVersionRange = ">=0.1.0 <0.5.0",
 
     # CLI set to package: qgis / core (from tools/cli_profiles.txt) or all
     # (every lsdtt-*.exe in the build directory, excluding lsdtt-test-*).

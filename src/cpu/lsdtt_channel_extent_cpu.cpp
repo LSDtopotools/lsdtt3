@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_channel_extent_cpu.hpp"
+#include "lsdtt_distributed_hydrology_argument_checks_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -22,37 +23,13 @@
 namespace lsdtt
 {
 
-namespace
-{
-
-void require_positive(double v, const char* name, const char* who)
-{
-    if (!(std::isfinite(v) && v > 0.0))
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " must be finite and > 0 (got " +
-            std::to_string(v) + ")");
-}
-
-void require_same_grid(const lsdtt_raster_cpu& r, const lsdtt_raster_meta& meta,
-                       const char* name, const char* who)
-{
-    const lsdtt_raster_meta& m = r.get_meta();
-    if (m.n_rows != meta.n_rows || m.n_cols != meta.n_cols)
-        throw std::invalid_argument(
-            std::string(who) + ": " + name + " is " + std::to_string(m.n_rows) +
-            "x" + std::to_string(m.n_cols) + " but the grid is " +
-            std::to_string(meta.n_rows) + "x" + std::to_string(meta.n_cols));
-}
-
-} // namespace
-
 double emergent_channel_area_m2(const channel_extent_options& opts)
 {
     const char* who = "emergent_channel_area_m2";
-    require_positive(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
-    require_positive(opts.hydraulic_radius_exponent, "hydraulic_radius_exponent", who);
-    require_positive(opts.reference_area_m2, "reference_area_m2", who);
-    require_positive(opts.sheet_flow_min_depth_metres,
+    require_positive_finite(opts.hydraulic_radius_coeff, "hydraulic_radius_coeff", who);
+    require_positive_finite(opts.hydraulic_radius_exponent, "hydraulic_radius_exponent", who);
+    require_positive_finite(opts.reference_area_m2, "reference_area_m2", who);
+    require_positive_finite(opts.sheet_flow_min_depth_metres,
                      "sheet_flow_min_depth_metres", who);
 
     return opts.reference_area_m2 *
@@ -69,9 +46,9 @@ channel_extent_result compute_channel_extent(
 {
     const char* who = "compute_channel_extent";
 
-    require_same_grid(drainage_area, meta, "drainage_area", who);
-    if (slope)        require_same_grid(*slope, meta, "slope", who);
-    if (supplied_mask) require_same_grid(*supplied_mask, meta, "supplied_mask", who);
+    require_same_grid_dims(drainage_area, meta, "drainage_area", who);
+    if (slope)        require_same_grid_dims(*slope, meta, "slope", who);
+    if (supplied_mask) require_same_grid_dims(*supplied_mask, meta, "supplied_mask", who);
 
     switch (opts.mode)
     {
@@ -79,7 +56,7 @@ channel_extent_result compute_channel_extent(
             // Validated inside emergent_channel_area_m2().
             break;
         case channel_extent_mode::area_threshold:
-            require_positive(opts.channel_area_threshold_m2,
+            require_positive_finite(opts.channel_area_threshold_m2,
                              "channel_area_threshold_m2", who);
             break;
         case channel_extent_mode::area_slope_threshold:
@@ -87,8 +64,8 @@ channel_extent_result compute_channel_extent(
                 throw std::invalid_argument(
                     std::string(who) + ": slope is required in "
                     "area_slope_threshold mode");
-            require_positive(opts.area_slope_threshold, "area_slope_threshold", who);
-            require_positive(opts.min_slope, "min_slope", who);
+            require_positive_finite(opts.area_slope_threshold, "area_slope_threshold", who);
+            require_positive_finite(opts.min_slope, "min_slope", who);
             break;
         case channel_extent_mode::extraction:
             if (supplied_mask == nullptr)
@@ -137,7 +114,7 @@ channel_extent_result compute_channel_extent(
                 std::string(who) + ": could not rasterise '" +
                 opts.channel_vector_fname + "': " + e.what());
         }
-        require_same_grid(lines, meta, "rasterised channel vector", who);
+        require_same_grid_dims(lines, meta, "rasterised channel vector", who);
 
         burned.assign(static_cast<std::size_t>(n_rows) * n_cols, 0);
         const auto& l_d = lines.get_data_array();

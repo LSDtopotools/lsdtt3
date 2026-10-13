@@ -4,7 +4,7 @@ import os
 import re
 
 
-MINIMUM_BACKEND_VERSION = "0.5.0"
+MINIMUM_BACKEND_VERSION = "0.6.0"
 _VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){0,2}$")
 _RANGE_OPERATORS = (">=", "<=", "==", ">", "<")
 
@@ -102,7 +102,7 @@ def backend_compatibility_error(manifest_data, plugin_version=None):
     if not compatible:
         return (
             "The configured lsdtt3 backend is version {}, but this plugin requires "
-            "version {} or newer (canonical threshold_contributing_pixels support)."
+            "version {} or newer (normalised parameter names and least-cost breach options)."
         ).format(backend_version, MINIMUM_BACKEND_VERSION)
 
     if plugin_version is None:

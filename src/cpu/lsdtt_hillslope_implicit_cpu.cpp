@@ -22,6 +22,7 @@
 
 #include "lsdtt_hillslope_implicit_cpu.hpp"
 #include "lsdtt_hillslope_operator_cpu.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -144,8 +145,11 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     // The Newton core remains deferred (Picard converges in a few iterations, so
     // its 9-point nonsymmetric Jacobian buys little over the TR-BDF2 accuracy path).
     // -------------------------------------------------------------------------
-#ifdef _OPENMP
-    if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
+    // The thread count goes on the parallel loops (num_threads clauses); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(opts.n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
     const lsdtt_raster_meta&    meta    = dem.get_meta();
     const int                   n_rows  = meta.n_rows;
@@ -387,7 +391,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     // gradient is computed once instead of once per adjacent face.
     auto compute_gradients = [&]()
     {
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
         for (std::int64_t f = 0; f < n_cells; ++f)
         {
             const std::size_t s = static_cast<std::size_t>(f);
@@ -409,7 +413,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     {
         const double Sc2 = Sc * Sc;
         const double cap = r_max * r_max;
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
         for (std::int64_t f = 0; f < n_cells; ++f)
         {
             const std::size_t s = static_cast<std::size_t>(f);
@@ -455,7 +459,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         compute_gradients();
         const double Sc2 = Sc * Sc;
         double mx = 0.0;
-        #pragma omp parallel for schedule(static) reduction(max:mx)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(max:mx)
         for (std::int64_t f = 0; f < n_cells; ++f)
         {
             const std::size_t s = static_cast<std::size_t>(f);
@@ -489,7 +493,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
     {
         double*    av    = A.valuePtr();
         const int* outer = A.outerIndexPtr();
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
         for (std::int64_t d = 0; d < n_dof; ++d)
         {
             for (int sp = outer[d]; sp < outer[d + 1]; ++sp) av[sp] = 0.0;
@@ -541,7 +545,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
                 factor_valid = true;
                 factor_beta  = beta;
             }
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
             for (std::int64_t d = 0; d < n_dof; ++d)
                 b(d) = g[static_cast<std::size_t>(
                              dof_flat[static_cast<std::size_t>(d)])]
@@ -563,7 +567,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
 
             // Damped update of the DOF cells; converge on max|Deltaz| between iterates.
             double max_dz = 0.0;
-            #pragma omp parallel for schedule(static) reduction(max:max_dz)
+            #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(max:max_dz)
             for (std::int64_t d = 0; d < n_dof; ++d)
             {
                 const std::size_t s = static_cast<std::size_t>(
@@ -589,7 +593,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
                             double& step_max_dz, int iter_cap,
                             bool semi_implicit, bool reuse_matrix) -> bool
     {
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
         for (std::int64_t d = 0; d < n_dof; ++d)
         {
             const std::size_t s = static_cast<std::size_t>(
@@ -600,7 +604,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
                                      reuse_matrix);
         if (semi_implicit) converged = true;   // gentle field fast path
         double smdz = 0.0;
-        #pragma omp parallel for schedule(static) reduction(max:smdz)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(max:smdz)
         for (std::int64_t d = 0; d < n_dof; ++d)
         {
             const std::size_t s = static_cast<std::size_t>(
@@ -625,7 +629,7 @@ lsdtt_roering_implicit_result compute_roering_hillslope_transport_implicit(
         Lout.assign(static_cast<std::size_t>(n_cells), 0.0);
         if (nonlinear) compute_gradients();
         compute_face_coeffs();
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
         for (std::int64_t d = 0; d < n_dof; ++d)
         {
             const std::int64_t f  = dof_flat[static_cast<std::size_t>(d)];

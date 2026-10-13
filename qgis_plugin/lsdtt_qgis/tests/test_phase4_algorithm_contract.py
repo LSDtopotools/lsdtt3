@@ -243,9 +243,9 @@ def test_phase4_backend_version_gate_runs_before_execution(monkeypatch):
 
     monkeypatch.setattr(support, "BackendManager", Backend)
     monkeypatch.setattr(
-        support, "load_manifest", lambda path: {"backend_version": "0.4.0"}
+        support, "load_manifest", lambda path: {"backend_version": "0.5.2"}
     )
-    with pytest.raises(RuntimeError, match="requires version 0.5.0 or newer"):
+    with pytest.raises(RuntimeError, match="requires version 0.6.0 or newer"):
         support.run_lsdtt_tool("lsdtt-basin-extraction", {}, "/out", "run", None)
 
 
@@ -261,11 +261,11 @@ def test_backend_plugin_version_gate_runs_before_execution(monkeypatch):
         support,
         "load_manifest",
         lambda path: {
-            "backend_version": "0.5.0",
+            "backend_version": "0.6.0",
             "plugin_version_range": ">=0.1.0 <0.2.0",
         },
     )
-    with pytest.raises(RuntimeError, match="current plugin version is 0.3.0"):
+    with pytest.raises(RuntimeError, match="current plugin version is 0.4.0"):
         support.run_lsdtt_tool("lsdtt-basin-extraction", {}, "/out", "run", None)
 
 

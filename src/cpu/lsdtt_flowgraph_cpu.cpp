@@ -28,6 +28,8 @@
 //     Environmental Modelling & Software 133: 104804.
 
 #include "lsdtt_flowgraph_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_point_input.hpp"
@@ -35,6 +37,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -67,11 +70,11 @@ constexpr int k_af[8]    = {  1, -1,  1, -1,  1, -1,  1, -1 };
 
 // MFD 8-neighbour offsets.  Indices 0-3 are cardinal (distance = d);
 // indices 4-7 are diagonal (distance = dsqrt2).
-constexpr int k_nb_dr[8] = { -1,  0,  0,  1, -1, -1,  1,  1 };
-constexpr int k_nb_dc[8] = {  0, -1,  1,  0, -1,  1, -1,  1 };
+static constexpr const auto& k_nb_dr = grid::d8_cardinal_first_row;
+static constexpr const auto& k_nb_dc = grid::d8_cardinal_first_col;
 
 constexpr float k_pi_over_4  = static_cast<float>(M_PI / 4.0);
-constexpr float k_sqrt2      = 1.41421356237f;
+constexpr float k_sqrt2      = grid::k_sqrt2_f;
 constexpr float k_rad_to_deg = static_cast<float>(180.0 / M_PI);
 
 } // anonymous namespace
@@ -246,59 +249,48 @@ std::vector<std::int64_t> lsdtt_flowgraph_cpu::outlet_indices() const
 // =============================================================================
 
 lsdtt_flowgraph_cpu::boundary_flags
-lsdtt_flowgraph_cpu::parse_boundary_conditions(const std::string& bc) const 
+lsdtt_flowgraph_cpu::parse_boundary_conditions(const std::string& bc) const
 {
-    if (bc.size() != 4)
+    const lsdtt_boundary_parse p = parse_boundary_codes(bc, "onpb", /*fold_case=*/true);
+
+    if (p.result == lsdtt_boundary_parse::status::wrong_length)
     {
         throw std::invalid_argument(
             "lsdtt_flowgraph_cpu: boundary_conditions must have exactly 4 characters "
             "(north, east, south, west)");
     }
 
-    auto is_allowed = [](char c) -> bool
+    if (p.result == lsdtt_boundary_parse::status::invalid_code)
     {
-        return c == 'o' || c == 'O' ||
-               c == 'n' || c == 'N' ||
-               c == 'p' || c == 'P' ||
-               c == 'b' || c == 'B';
-    };
-
-    for (char c : bc)
-    {
-        if (!is_allowed(c))
-        {
-            throw std::invalid_argument(
-                "lsdtt_flowgraph_cpu: boundary_conditions contains an invalid character. "
-                "Allowed values are o, n, p, b.");
-        }
+        throw std::invalid_argument(
+            "lsdtt_flowgraph_cpu: boundary_conditions contains an invalid character. "
+            "Allowed values are o, n, p, b.");
     }
 
     boundary_flags f;
-    auto is_periodic = [](char c) { return c == 'p' || c == 'P'; };
-    auto is_forced   = [](char c) { return c == 'b' || c == 'B'; };
 
-    f.north_periodic = is_periodic(bc[0]);
-    f.north_forced   = is_forced(bc[0]);
+    f.north_periodic = p.codes[0] == 'p';
+    f.north_forced   = p.codes[0] == 'b';
 
-    f.east_periodic  = is_periodic(bc[1]);
-    f.east_forced    = is_forced(bc[1]);
+    f.east_periodic  = p.codes[1] == 'p';
+    f.east_forced    = p.codes[1] == 'b';
 
-    f.south_periodic = is_periodic(bc[2]);
-    f.south_forced   = is_forced(bc[2]);
+    f.south_periodic = p.codes[2] == 'p';
+    f.south_forced   = p.codes[2] == 'b';
 
-    f.west_periodic  = is_periodic(bc[3]);
-    f.west_forced    = is_forced(bc[3]);
+    f.west_periodic  = p.codes[3] == 'p';
+    f.west_forced    = p.codes[3] == 'b';
 
     // Periodic boundaries must be symmetric pairs:
     // north <-> south and east <-> west.
-    if (f.north_periodic != f.south_periodic)
+    if (p.periodic_ns_mismatch)
     {
         throw std::invalid_argument(
             "lsdtt_flowgraph_cpu: north and south periodic boundary flags "
             "must match");
     }
 
-    if (f.east_periodic != f.west_periodic)
+    if (p.periodic_ew_mismatch)
     {
         throw std::invalid_argument(
             "lsdtt_flowgraph_cpu: east and west periodic boundary flags "
@@ -653,6 +645,22 @@ void lsdtt_flowgraph_cpu::build_dinf(
 //
 // exponent = 1.0 reproduces Quinn et al. (1991).
 // exponent = 1.1 is Freeman (1991)'s recommendation for natural terrain.
+//
+// Float underflow / overflow fallback: weights are computed in float.  On
+// very gentle surfaces (e.g. a flat resolved by one-ULP float steps, where
+// S ~ ULP(z)/L ~ 1e-7) a large exponent makes slope^exponent underflow:
+// S = 1e-7 with exponent >= 6.5 gives S^p < 1.4e-45, i.e. zero.  If the
+// summed weight is then zero the cell silently becomes a sink; if it is
+// subnormal the weights lose precision, and below ~2.9e-39 1/total_w
+// overflows to +inf (inf/NaN weights, which the graph check rejects).  In
+// that case only, the cell's weights are recomputed as (S_k / S_max)^exponent.
+// This is
+// the same set of weights after normalisation (the common factor
+// S_max^exponent cancels), but each ratio lies in (0, 1] and the steepest
+// receiver's term is exactly 1, so the sum is in [1, 8].  The same fallback
+// catches slope^exponent overflowing to +inf.  The branch is taken only when
+// total_w is not a normal finite float, so every cell the original formula
+// handles is computed exactly as before (bitwise).
 // =============================================================================
 
 void lsdtt_flowgraph_cpu::build_mfd(
@@ -702,6 +710,12 @@ void lsdtt_flowgraph_cpu::build_mfd(
             cell_rec& cr = cell_data[flat];
             float total_w = 0.0f;
 
+            // Per-receiver slopes, kept (before the duplicate merge) for the
+            // underflow fallback below.
+            std::int64_t pre_rec[8];
+            float        pre_slope[8];
+            int          pre_n = 0;
+
             for (int k = 0; k < 8; ++k)
             {
                 const lsdtt_pixel_rc nb =
@@ -729,6 +743,10 @@ void lsdtt_flowgraph_cpu::build_mfd(
                     cr.w[cr.n]   = w;
                     total_w += w;
                     ++cr.n;
+
+                    pre_rec[pre_n]   = cr.rec[cr.n - 1];
+                    pre_slope[pre_n] = slope;
+                    ++pre_n;
                 }
             }
 
@@ -769,6 +787,38 @@ void lsdtt_flowgraph_cpu::build_mfd(
             total_w = 0.0f;
             for (int k = 0; k < cr.n; ++k)
                 total_w += cr.w[k];
+
+            // Underflow / overflow fallback (see the header comment): only
+            // when total_w is zero, subnormal or non-finite.  Rescale every
+            // slope by the steepest one so the largest weight is exactly 1.
+            if (cr.n > 0 &&
+                (!(total_w >= std::numeric_limits<float>::min()) ||
+                 !std::isfinite(total_w)))
+            {
+                float s_max = 0.0f;
+                for (int k = 0; k < pre_n; ++k)
+                    s_max = std::max(s_max, pre_slope[k]);
+
+                for (int k = 0; k < cr.n; ++k) cr.w[k] = 0.0f;
+
+                for (int k = 0; k < pre_n; ++k)
+                {
+                    const float ratio = pre_slope[k] / s_max;   // in (0, 1]
+                    const float w = unit_exp ? ratio : std::pow(ratio, exponent);
+                    for (int kk = 0; kk < cr.n; ++kk)
+                    {
+                        if (cr.rec[kk] == pre_rec[k])
+                        {
+                            cr.w[kk] += w;   // merged duplicates sum, as above
+                            break;
+                        }
+                    }
+                }
+
+                total_w = 0.0f;
+                for (int k = 0; k < cr.n; ++k)
+                    total_w += cr.w[k];
+            }
 
             // Normalise so weights sum to 1.0
             if (total_w > 0.0f)
@@ -1020,14 +1070,8 @@ lsdtt_raster_result lsdtt_flowgraph_cpu::get_drainage_area_raster_with_injection
     const std::vector<lsdtt_drainage_injection_record> injections =
         load_drainage_injection_points(vector_path, meta_, drainage_area_field);
 
-    const double pixel_area = meta_.cell_size * meta_.cell_size;
-
-    std::vector<double> weights(static_cast<std::size_t>(n_cells_), pixel_area);
-
-    for (const auto& rec : injections)
-        weights[static_cast<std::size_t>(rec.flat)] += rec.drainage_area_m2;
-
-    return accumulate_raster(weights);
+    return accumulate_raster(drainage_area_injection_weights(
+        meta_, static_cast<std::size_t>(n_cells_), injections));
 }
 
 void lsdtt_flowgraph_cpu::write_drainage_area_raster_with_injection(

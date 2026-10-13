@@ -22,6 +22,9 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_network_analysis_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -42,7 +45,7 @@ namespace lsdtt
 namespace
 {
 
-constexpr double k_sqrt_2 = 1.4142135623730950488;
+constexpr double k_sqrt_2 = grid::k_sqrt2_d;
 
 // forward declarations
 void append_fit_result_to_segment_table(
@@ -1281,11 +1284,8 @@ void write_chi_network_fit_nodes_csv(
     const std::string& filename,
     const lsdtt_chi_network_fit_node_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_network_fit_nodes_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_network_fit_nodes_csv: cannot open ");
     out << "basin_index,outlet_flat,flat,receiver_flat,chi,observed_elevation,"
            "fitted_elevation,residual_elevation,abs_residual_elevation,branch_id,"
            "is_main_stem,is_source,is_junction,is_split_point\n";
@@ -1314,11 +1314,8 @@ void write_chi_network_fit_segments_csv(
     const std::string& filename,
     const lsdtt_chi_network_fit_segment_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_network_fit_segments_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_network_fit_segments_csv: cannot open ");
     out << "basin_index,outlet_flat,segment_id,parent_segment_id,branch_id,"
            "downstream_flat,upstream_flat,downstream_chi,upstream_chi,"
            "downstream_elevation,upstream_elevation,k_sn,max_abs_residual,n_nodes\n";
@@ -1346,30 +1343,6 @@ void write_chi_network_fit_segments_csv(
 // =============================================================================
 // Per-basin channel-steepness summary
 // =============================================================================
-namespace
-{
-
-double median_of(std::vector<double> values)
-{
-    if (values.empty())
-    {
-        return 0.0;
-    }
-
-    std::sort(values.begin(), values.end());
-
-    const std::size_t mid = values.size() / 2;
-
-    if (values.size() % 2 == 0)
-    {
-        return 0.5 * (values[mid - 1] + values[mid]);
-    }
-
-    return values[mid];
-}
-
-} // unnamed namespace
-
 lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
     const lsdtt_chi_network_fit_collection_result& fit_results)
 {
@@ -1424,7 +1397,7 @@ lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
         if (!all_k_sn.empty())
         {
             row.mean_k_sn   = sum_k_sn / static_cast<double>(all_k_sn.size());
-            row.median_k_sn = median_of(all_k_sn);
+            row.median_k_sn = compute_median_of_copy(all_k_sn, 0.0);
             row.min_k_sn =
                 *std::min_element(all_k_sn.begin(), all_k_sn.end());
             row.max_k_sn =
@@ -1440,7 +1413,7 @@ lsdtt_chi_ksn_basin_summary_table summarise_chi_ksn_by_basin(
         {
             row.main_stem_mean_k_sn =
                 main_stem_sum_k_sn / static_cast<double>(main_stem_k_sn.size());
-            row.main_stem_median_k_sn = median_of(main_stem_k_sn);
+            row.main_stem_median_k_sn = compute_median_of_copy(main_stem_k_sn, 0.0);
         }
 
         table.rows.push_back(row);
@@ -1453,11 +1426,8 @@ void write_chi_ksn_basin_summary_csv(
     const std::string& filename,
     const lsdtt_chi_ksn_basin_summary_table& table)
 {
-    std::ofstream out(filename);
-    if (!out)
-        throw std::runtime_error(
-            "write_chi_ksn_basin_summary_csv: cannot open " + filename);
-
+    std::ofstream out = open_output_file(
+        filename, "write_chi_ksn_basin_summary_csv: cannot open ");
     out << "basin_index,outlet_flat,n_segments,n_main_stem_segments,"
            "total_chi_length,mean_k_sn,median_k_sn,min_k_sn,max_k_sn,"
            "chi_weighted_mean_k_sn,main_stem_mean_k_sn,main_stem_median_k_sn\n";

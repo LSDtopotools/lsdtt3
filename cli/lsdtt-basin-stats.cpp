@@ -77,6 +77,7 @@
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
@@ -599,9 +600,14 @@ int main(int argc, char* argv[])
 
     float_default_map["fill_min_slope"] = 0.0001f;
     help_map["fill_min_slope"] = {"float","0.0001",
-        "Minimum slope imposed during pit filling.",
-        "Used when fill_before_routing is true.",
+        "Minimum slope (m/m) imposed during pit filling or flat resolution.",
+        "Used only when fill_before_routing is true. inline_gradient "
+        "(default): imposed during the Priority-Flood fill. "
+        "barnes2014b_gradient: the minimum gradient across flats. "
+        "barnes2014b_float_step: ignored.",
         "Routing preparation", "param", ""};
+
+    lsdtt::declare_fill_flat_resolution_parameter(string_default_map, help_map);
 
     // --- Basin quality control ---
     bool_default_map["reject_nodata_edge_basins"] = true;
@@ -877,6 +883,35 @@ int main(int argc, char* argv[])
         std::cout << "Output format: " << fmt_str << "\n";
     }
 
+    // How flats are made drainable (Barnes et al. 2014b options). Checked
+    // here, before any raster work. Only a fill uses it: with
+    // fill_before_routing: false the DEM is routed as it is.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+        if (bf["fill_before_routing"])
+        {
+            lsdtt::check_fill_flat_resolution_min_slope(
+                flat_choice, ff["fill_min_slope"]);
+        }
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
+    if (!bf["fill_before_routing"] &&
+        flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+    {
+        std::cout << "NOTE: fill_flat_resolution_choice ("
+                  << lsdtt::flat_resolution_choice_name(flat_choice)
+                  << ") is ignored because fill_before_routing is false.\n";
+    }
+
     // -------------------------------------------------------------------------
     // Load raster
     // -------------------------------------------------------------------------
@@ -977,12 +1012,25 @@ int main(int argc, char* argv[])
             // filling with open edges and then routing periodically leaves
             // cells with no downhill neighbour at the seam and routing aborts
             // with "could not assign a receiver at row N, col 0".
-            routing_dem = lsdtt::fill_pits(
-                dem,
-                ff["fill_min_slope"],
-                join_boundary_conditions(pp.get_boundary_conditions()),
-                ifs["n_threads"]
-            );
+            if (flat_choice == lsdtt::flat_resolution_choice::inline_gradient)
+            {
+                routing_dem = lsdtt::fill_pits(
+                    dem,
+                    ff["fill_min_slope"],
+                    join_boundary_conditions(pp.get_boundary_conditions()),
+                    ifs["n_threads"]
+                );
+            }
+            else
+            {
+                routing_dem = lsdtt::fill_pits_reporting_flat_resolution(
+                    dem,
+                    ff["fill_min_slope"],
+                    join_boundary_conditions(pp.get_boundary_conditions()),
+                    flat_choice,
+                    ifs["n_threads"]
+                );
+            }
         }
         catch (const std::exception& e)
         {

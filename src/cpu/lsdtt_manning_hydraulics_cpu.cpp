@@ -8,6 +8,10 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_manning_hydraulics_cpu.hpp"
+#include "lsdtt_manning_formula_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../core/lsdtt_csv_table.hpp"
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../core/lsdtt_flow_base.hpp"
@@ -94,42 +98,6 @@ int find_col(const std::vector<std::string>& header, const std::string& name)
         if (header[i] == name) return static_cast<int>(i);
     throw std::runtime_error(
         "lsdtt_manning_hydraulics_cpu: missing required column: " + name);
-}
-
-double parse_double_field(
-    const std::string& text, const std::string& where, std::size_t line_no)
-{
-    try
-    {
-        std::size_t pos = 0;
-        const double v = std::stod(text, &pos);
-        if (pos != text.size()) throw std::invalid_argument("trailing characters");
-        return v;
-    }
-    catch (const std::exception&)
-    {
-        throw std::runtime_error(
-            where + ": line " + std::to_string(line_no) +
-            ": cannot parse '" + text + "' as a number.");
-    }
-}
-
-long long parse_int_field(
-    const std::string& text, const std::string& where, std::size_t line_no)
-{
-    try
-    {
-        std::size_t pos = 0;
-        const long long v = std::stoll(text, &pos);
-        if (pos != text.size()) throw std::invalid_argument("trailing characters");
-        return v;
-    }
-    catch (const std::exception&)
-    {
-        throw std::runtime_error(
-            where + ": line " + std::to_string(line_no) +
-            ": cannot parse '" + text + "' as an integer.");
-    }
 }
 
 // Extract a sorted, valid (s, z, x, y) profile from a cross section's samples.
@@ -266,7 +234,7 @@ channel_path build_channel_path(
     channel_path path;
 
     const double cell_step = flow.cell_size();
-    const double diag_step = cell_step * std::sqrt(2.0);
+    const double diag_step = cell_step * grid::k_sqrt2_d;
 
     auto push = [&path](std::int64_t flat, double distance)
     {
@@ -440,10 +408,10 @@ std::vector<lsdtt_manning_reach> read_manning_reaches_csv(
         }
 
         lsdtt_manning_reach r;
-        r.start_distance_m     = parse_double_field(t[c_start], where, line_no);
-        r.end_distance_m       = parse_double_field(t[c_end], where, line_no);
-        r.manning_n            = parse_double_field(t[c_n], where, line_no);
-        r.target_discharge_m3s = parse_double_field(t[c_q], where, line_no);
+        r.start_distance_m     = csv_parse_double_field(t[c_start], where, line_no);
+        r.end_distance_m       = csv_parse_double_field(t[c_end], where, line_no);
+        r.manning_n            = csv_parse_double_field(t[c_n], where, line_no);
+        r.target_discharge_m3s = csv_parse_double_field(t[c_q], where, line_no);
         reaches.push_back(r);
     }
     return reaches;
@@ -524,18 +492,18 @@ lsdtt_channel_profile_lookup read_channel_profile_csv(
                 std::to_string(header.size()) + ".");
         }
 
-        const long long cross_id = parse_int_field(t[c_id], where, line_no);
+        const long long cross_id = csv_parse_int_field(t[c_id], where, line_no);
         lookup.distance_by_cross_id[cross_id] =
-            parse_double_field(t[c_dist], where, line_no);
+            csv_parse_double_field(t[c_dist], where, line_no);
         lookup.drainage_area_by_cross_id[cross_id] =
-            parse_double_field(t[c_area], where, line_no);
+            csv_parse_double_field(t[c_area], where, line_no);
 
         // A row with slope_valid == 0 is deliberately left OUT of
         // slope_by_cross_id so the solve flags it instead of using a bad value.
-        if (parse_int_field(t[c_valid], where, line_no) != 0)
+        if (csv_parse_int_field(t[c_valid], where, line_no) != 0)
         {
             lookup.slope_by_cross_id[cross_id] =
-                parse_double_field(t[c_slope], where, line_no);
+                csv_parse_double_field(t[c_slope], where, line_no);
         }
     }
     return lookup;
@@ -689,8 +657,7 @@ double manning_discharge(
     double slope, double manning_n)
 {
     if (manning_n <= 0.0 || slope <= 0.0 || area_m2 <= 0.0) return 0.0;
-    return (1.0 / manning_n) * area_m2 *
-           std::pow(hydraulic_radius_m, 2.0 / 3.0) * std::sqrt(slope);
+    return area_m2 * manning_velocity(manning_n, hydraulic_radius_m, slope);
 }
 
 bool solve_connected_bankfull_depth(
@@ -922,10 +889,8 @@ std::size_t write_manning_widths_csv(
     const std::vector<lsdtt_manning_width_record>& results,
     const std::string&                              out_path)
 {
-    std::ofstream out(out_path);
-    if (!out.is_open())
-        throw std::runtime_error("write_manning_widths_csv: could not open " + out_path);
-
+    std::ofstream out = open_output_file(
+        out_path, "write_manning_widths_csv: could not open ");
     out << "cross_id,distance_from_source_m,centre_x,centre_y,slope_m_per_m,drainage_area_m2,"
         << "thalweg_s,thalweg_z,solved_depth_m,"
         << "water_surface_elevation_m,left_bank_s,right_bank_s,"
@@ -1065,10 +1030,8 @@ void write_channel_profile_csv(
     const std::vector<lsdtt_channel_profile_row>& rows,
     const std::string&                            out_path)
 {
-    std::ofstream out(out_path);
-    if (!out.is_open())
-        throw std::runtime_error("write_channel_profile_csv: could not open " + out_path);
-
+    std::ofstream out = open_output_file(
+        out_path, "write_channel_profile_csv: could not open ");
     out << "cross_id,distance_from_source_m,drainage_area_m2,"
         << "thalweg_elevation_m,slope_m_per_m,slope_valid\n";
     out << std::fixed << std::setprecision(4);

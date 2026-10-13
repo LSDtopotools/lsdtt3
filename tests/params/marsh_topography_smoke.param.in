@@ -1,0 +1,29 @@
+# Smoke test for lsdtt-marsh-topography on the synthetic marsh written by
+# tests/scripts/make_marsh_topography_fixture.py (platform, scarp, tidal flat,
+# a trunk channel with two tributaries). All three stages run.
+#
+# lsdtt-marsh-topography had no test before 2026-10-07; it is the only CLI
+# route to lsdtt_marsh_platform_cpu, lsdtt_tidal_channel_cpu and
+# lsdtt_tidal_skeleton_metrics_cpu.
+#
+# tidal_max_width_ratio is raised from 3 to 10: the fixture channels are 2-4 px
+# wide, and at the default ratio almost every station cross section is rejected
+# (1 of 35 valid), which would leave the cross-section code barely exercised.
+# At 10, 26 of 35 are valid.
+read_path: __READ_PATH__
+read_fname: marsh_fixture_dem.asc
+write_path: __WRITE_PATH__
+write_fname: marsh
+
+n_threads: 1
+write_output_format: gtiff
+marsh_points_write_vector_format: flatgeobuf
+
+tidal_median_window_radii_metres: 3,6
+tidal_residual_thresholds_metres: 0.2
+tidal_station_spacing_metres: 3
+tidal_cross_section_half_length_metres: 8
+tidal_max_width_ratio: 10
+
+write_marsh_polygons: true
+write_tidal_channel_polygons: true

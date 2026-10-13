@@ -62,6 +62,49 @@ many flow-routing and neighbourhood operations depend on which cells are valid. 
 `lsdtt-raster-preprocessing` provides tools for filling interior nodata holes,
 masking values, and preparing hydrologically suitable surfaces. We already told you to use `lsdtt-raster-preprocessing` before doing any serious analysis. Don't make us tell you that a third time. 
 
+## Pit Filling and Flats
+
+Water can only be routed across a surface with no closed depressions, so the
+routing tools fill pits first. Filling leaves flat areas (lake floors, floodplains,
+the bottoms of filled basins), and water on a flat needs a direction. The
+parameter `fill_flat_resolution_choice` chooses how that direction is given. It
+is available in `lsdtt-raster-preprocessing` and in the routing tools that fill
+their own input (see their [command line reference pages](../cli_reference/cli_reference_lsdtt_raster_preprocessing.md)).
+
+| Value | When to use it |
+|---|---|
+| `inline_gradient` (default) | Most users should keep this. The fill gives each flat a gradient of `fill_min_slope` (default 0.0001 m/m) as it floods. Flow on flats runs in parallel lines towards the outlet. |
+| `barnes2014b_gradient` | You want flow on flats to converge towards the outlet, with a physical gradient of `fill_min_slope`. Flats are raised more than with the default. Where a flat sits too close to its rim to take the full gradient, some of its cells end up below `fill_min_slope`. The report counts them. |
+| `barnes2014b_float_step` | You want flow on flats to converge, and you are matching RichDEM's `ResolveFlats` on float32 data. The slopes it leaves on flats are not physical (see below), so use it only where those slopes are not used directly. |
+
+Both `barnes2014b` options always give a surface the router accepts. Cells left
+without a way down are refilled and resolved again, up to four rounds, and any
+still left get a final one-step adjustment. The report gives the number of
+rounds and the number of cells changed after the first pass. `fill_min_slope`
+is ignored by `barnes2014b_float_step`.
+
+A few things to know before choosing `barnes2014b_float_step`:
+
+* The slope on a flat is about one float32 step of the elevation divided by the
+  cell size. On a 30 m grid that is about 2e-7 m/m at 100 m and about 1e-6 m/m
+  at 1000 m. It depends on elevation, not on the landscape.
+* Many analysis tools impose a minimum slope of 1e-5 to 1e-3, so they will treat
+  these flats as flat. On a slope-area plot the flats form horizontal bands set
+  by elevation rather than by the landscape.
+* The elevation change is usually millimetres to centimetres. On large flats at
+  high elevation it can be metres, and a rim a few steps above a flat can be
+  overtopped by it.
+
+`min_elevation` (default 0) sets cells at or below that elevation to nodata
+before filling in `lsdtt-raster-preprocessing`, so flats at or below sea level
+are removed by default. If you lower it, sea-level flats take part in the fill.
+Near 0 m the native float32 step is almost zero, so the float step uses a fixed
+step of about 1.2e-7 m per unit for flats below 1 m. This keeps the slopes
+finite.
+
+The method and the measurements behind these statements are in
+[Flow routing](../design_and_algorithms/flow_routing.md#flat-resolution-barnes-et-al-2014b).
+
 ## Output Formats
 
 Most raster-producing CLIs use `write_output_format`:

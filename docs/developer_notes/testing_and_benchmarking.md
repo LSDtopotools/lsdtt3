@@ -589,10 +589,14 @@ centimetres deep.
 glaciated shield, marsh, floodplain), `fill_min_slope` is doing substantial work
 and is worth reducing. The default is tuned for steeper landscapes.
 
-The ULP approach was evaluated for lsdtt3 and **rejected**: it collapses to a
-denormal near sea level (exactly where `lsdtt-marsh-topography` operates), varies
-by orders of magnitude within a single raster, is resolution-blind, and is
-destroyed by any integer-typed output or by warping a filled DEM.
+The ULP approach was evaluated for lsdtt3 and is **not the default**: it collapses
+to a denormal near sea level (exactly where `lsdtt-marsh-topography` operates),
+varies by orders of magnitude within a single raster, is resolution-blind, and is
+destroyed by any integer-typed output or by warping a filled DEM. It is now
+available as an opt-in, `fill_flat_resolution_choice: barnes2014b_float_step`,
+which is RichDEM's `ResolveFlats` on float32 in its first pass. Its slopes
+are still ULP-based, and §10r describes how the difference from RichDEM is
+confined and tested.
 
 ### 5.3 Breaching pit-flattens before carving — in both tools
 
@@ -1145,13 +1149,20 @@ because the corrected cases are only meaningful alongside what they replaced.
 
 #### 1. `fill` compared two different algorithms
 
-Both tools implement both algorithm families, and both default to a *different*
-one:
+lsdtt3 implements both algorithm families; TopoToolbox implements only
+reconstruction, and the two default to a *different* family:
 
-| | reconstruction (O(N), FIFO queue) | priority-flood (O(N log N), heap) |
-|---|---|---|
-| lsdtt3 | `vincent1993` | `barnes2014` ← **CLI default** |
-| TopoToolbox | `hybrid=True` ← **default** | `hybrid=False` |
+| | hybrid reconstruction (O(N), FIFO queue) | sequential reconstruction (repeated scans) | priority-flood (O(N log N), heap) |
+|---|---|---|---|
+| lsdtt3 | `vincent1993` | — | `barnes2014` ← **CLI default** |
+| TopoToolbox | `hybrid=True` ← **default** | `hybrid=False` | — |
+
+**TopoToolbox has no priority-flood fill.** `fillsinks(hybrid=False)` calls
+libtopotoolbox `reconstruct`, Vincent's (1993) *sequential* algorithm (forward
+and backward raster scans repeated until nothing changes); `hybrid=True` calls
+`reconstruct_hybrid`. Neither calls the `pq_*` heap routines (call graph of the
+installed `topotoolbox/_grid*.so`). The sequential pass count is data-dependent:
+33.5 s on lakeland_4000 against 3.2 s on alpine_4000.
 
 The suite used both defaults, so it ran lsdtt3's heap against TopoToolbox's
 reconstruction. On alpine_1000 at `fill_min_slope: 0`, output **bit-identical**
@@ -1167,10 +1178,16 @@ reconstruction. On alpine_1000 at `fill_min_slope: 0`, output **bit-identical**
 entirely the algorithm choice.
 
 **Fix:** the `fill` case now pins `fill_algorithm_choice: vincent1993` against
-`hybrid=True`, and a new `fill_priority_flood` case pins `barnes2014` against
-`hybrid=False` and RichDEM (Zhou 2016). `topotoolbox_reference.py` gained a
-`fill_priority_flood` routine to expose the non-hybrid path. Both families are
-now measured; neither is compared across.
+`hybrid=True`, and a `fill_priority_flood` case pins `barnes2014` against
+RichDEM (Zhou 2016) and Whitebox. Both families are measured; neither is
+compared across.
+
+Until 2026-10-08 `fill_priority_flood` also carried TopoToolbox
+`hybrid=False`, on the mistaken belief that it was a heap. It was sequential
+reconstruction against lsdtt3's priority-flood, so those rows are not
+like-for-like. Their timings remain valid measurements of sequential
+reconstruction. The routine is removed: lsdtt3 has no sequential-reconstruction
+backend to pair it with.
 
 `fill_epsilon` has no reconstruction row, and cannot: reconstruction fills to
 exactly the spill level and has no mechanism for a gradient across flats.
@@ -1513,11 +1530,11 @@ lsdtt3 or in any of the references.
 
 Sweeping threads over them measured nothing. It multiplied the campaign length
 and — worse — filled the scaling table with flat rows that invite a reader to
-conclude something is broken. Nine cases are now marked `sequential` in the case
-registry and are **measured once, at the baseline thread count**:
+conclude something is broken. These cases are marked `sequential` in the case
+registry (list as of 2026-10-11) and are **measured once, at the baseline thread
+count**:
 
-`fill`, `fill_priority_flood`, `fill_epsilon`, `breach`, `accum_d8`,
-`accum_dinf`, `accum_mfd`, `fill_spill_merge`, `fill_wang_liu`
+`fill`, `fill_priority_flood`, `fill_priority_flood_radix`, `fill_epsilon_radix`, `fill_epsilon`, `fill_flats_float_step`, `fill_flats_gradient`, `breach`, `breach_least_cost`, `breach_least_cost_default`, `breach_then_fill_lindsay2016`, `breach_then_fill_least_cost`, `accum_d8`, `accum_d8_no_svector`, `route_d8_default`, `route_d8_epsilon`, `accum_dinf`, `accum_mfd`
 
 They carry `sequential_case = True` in the CSV, are excluded from the scaling
 table, and `SUMMARY.md` states why in that section. This cut the `laptop`
@@ -1551,12 +1568,44 @@ question, and an open one.
 
 ### What is compared, and what must never be
 
+The suite (Simon, 2026-10-10; revised 2026-10-11) shows (a) which lsdtt3
+methods are fastest, lsdtt3 against itself, and (b) lsdtt3 against other
+packages only where the algorithm and the output are like-for-like.
+
+1. **Surface fitting** -- `slope_only`, `polyfit_all`, `hillshade`
+   (report-only, kept).
+2. **Single-step fills** -- `fill` (vs TopoToolbox) and `fill_priority_flood`
+   (vs RichDEM and Whitebox Wang & Liu). Real comparisons since 2026-10-11:
+   same algorithm, outputs asserted identical (§4-5), even though the output
+   keeps its flats. lsdtt3's `fill_priority_flood_radix` is lsdtt3-only.
+3. **Breaching** -- `breach` (Lindsay 2016, vs RichDEM) and
+   `breach_least_cost` (Lindsay 2020, vs Whitebox 2.0.6 under matched
+   parameters, outputs asserted bitwise; re-instated 2026-10-11). lsdtt3-only:
+   `breach_least_cost_default`, `breach_then_fill_lindsay2016`,
+   `breach_then_fill_least_cost`.
+4. **Connected flow networks** -- `fill_epsilon`, the D8 accumulation cases
+   and `route_d8_epsilon` (raw DEM to D8 by the same pipeline in lsdtt3 and
+   Whitebox: epsilon priority flood + steepest descent). lsdtt3-only:
+   `fill_epsilon_radix`, `fill_flats_float_step`, `fill_flats_gradient`.
+   `route_d8_default` (each package's default pipeline) is report-only.
+   `SUMMARY.md` also ranks lsdtt3's own fill options against each other
+   (below).
+5. **Multi-direction flow** -- `accum_dinf`, `accum_mfd` (report-only).
+
 | Suite | Cases | Status |
 |---|---|---|
-| `flow` | fill, fill_priority_flood, fill_epsilon, breach, breach_least_cost, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
+| `flow` | fill_epsilon, breach, accum_d8, accum_d8_no_svector | timing; values asserted separately in §4-5 |
+| `flow` | fill, fill_priority_flood | timing; values asserted bit-exact in §4-5. Report-only 2026-10-10 .. 2026-10-11. Run at `fill_min_slope: 0`, so the output keeps its flats and is **not a connected flow network**: quote them as fill-algorithm comparisons, never as a drained-surface comparison |
+| `flow` | breach_least_cost | timing; lsdtt3 least_cost (edge policy whitebox, max_dist 100, minimize_dist false, increment 0.001, no remainder fill) vs Whitebox 2.0.6 with the same parameters (flat_increment = float32(0.001)); outputs asserted bitwise (`benchmark_breach_least_cost_*`, `benchmark_breach_least_cost_fuzz`, `unit_breach_least_cost_real_terrain`) |
+| `flow` | breach_least_cost_default, breach_then_fill_lindsay2016, breach_then_fill_least_cost | **timing only, report-only, lsdtt3-only** -- least_cost with the CLI defaults; and breach + barnes2014 fill (min_slope 1e-4) per breaching method, the time to a routable surface |
+| `flow` | route_d8_epsilon | timing -- raw DEM to routed D8 accumulation: lsdtt3 drainage-analysis (Barnes 2014 priority flood, fill_min_slope 1e-4, steepest-descent D8) vs Whitebox Wang & Liu (fix_flats, flat_increment 1e-4 × cell size) + d8_flow_accum. Differs only in the diagonal increment (√2 in lsdtt3) |
+| `flow` | fill_priority_flood_radix, fill_epsilon_radix | **timing only, report-only, lsdtt3-only** -- the `fill_priority_flood` and `fill_epsilon` lsdtt3 commands with `priority_flood_queue: radix` |
+| `flow` | route_d8_default | **timing only, report-only** -- raw DEM to routed D8 accumulation using each package's default pipeline; algorithms and outputs differ by design |
+| `flow` | fill_flats_float_step | **timing only, report-only, lsdtt3-only since 2026-10-11** -- fill + Barnes (2014b) flat resolution in float32 steps (`barnes2014b_float_step`). RichDEM FillDepressions + ResolveFlats was paired until then; it does one pass (bitwise equal to lsdtt3's round 1, asserted in §5), lsdtt3 loops to a routable surface |
+| `flow` | fill_flats_gradient | **timing only, report-only, lsdtt3-only** -- fill + Barnes (2014b) flat resolution with a 1e-4 gradient (`barnes2014b_gradient`); no reference implements it |
 | `mfd` | accum_dinf, accum_mfd | **timing only** -- Tarboton vs Quinn vs Freeman proportioning genuinely differ |
 | `surface` | slope_only, polyfit_all, hillshade | **timing only** -- curvature definitions and aspect handedness differ |
-| `depression` | fill_spill_merge, fill_wang_liu | **timing only**, and the depression hierarchy has no counterpart at all |
+| ~~`flow`~~ | ~~fill_whitebox_default~~ | **removed 2026-10-11** -- Whitebox's default `fill_depressions` (pit-centric, different surface) is not like-for-like with any lsdtt3 fill |
 
 Two of these deserve their reasoning stated wherever they are quoted:
 
@@ -1582,27 +1631,124 @@ algorithm from the lsdtt3 row they were compared against:
   `fill_depressions_wang_and_liu(fix_flats=True)` with
   `flat_increment = fill_min_slope * cell size`, read from each fixture.
 - `breach@whitebox` ran `breach_depressions_least_cost` (Lindsay 2020) against
-  lsdtt3's and RichDEM's Lindsay (2016). `breach` is now lsdtt3 vs RichDEM, and
-  the new `breach_least_cost` compares lsdtt3's least-cost breach with Whitebox's
-  at max_dist 100 cells with unresolved depressions filled. Whitebox's
-  `minimize_dist` and `flat_increment` defaults are not reported by the
-  package, so they are not verified equal to lsdtt3's.
+  lsdtt3's and RichDEM's Lindsay (2016). `breach` is now lsdtt3 vs RichDEM.
+  A `breach_least_cost` case (lsdtt3 least_cost vs Whitebox) was added the same
+  day. It was not like-for-like: lsdtt3 weights the cut by step distance while
+  Whitebox ran `minimize_dist=False`, and the automatic flat increments differ
+  by about seven orders of magnitude. Campaigns from 2026-09-13 to 2026-10-10
+  carry those `breach_least_cost` rows; do not quote them. The case was
+  **removed on 2026-10-10**: lsdtt3's least-cost breach outputs looked
+  incorrect on inspection, and it returns only once that implementation has
+  passed validation. Breaching is benchmarked on Lindsay (2016) only.
 
 Campaigns before 2026-09-13 carry the old pairings in those three rows.
 
-`fill_spill_merge` measures lsdtt3's nested depression hierarchy (Barnes 2020)
-plus Fill-Spill-Merge (Barnes 2021), lsdtt3 only. It is recorded because the
-absolute cost of the hierarchy is a number users ask for. Until 2026-09-13 it
-was paired with Whitebox's `sink`, which only labels depression cells, so that
-ratio compared nothing and the pairing was removed. Note the hierarchy is
-not separately switchable -- it is built as the first half of the
-`barnesetal2021` fill, which is the only CLI path that reaches it.
+
+**Pairings corrected 2026-10-08.** `fill_priority_flood@topotoolbox` ran
+`fillsinks(hybrid=False)`, which is Vincent's sequential reconstruction, not a
+priority flood. TopoToolbox has no priority-flood fill, so it is now `n/a` in
+that case. Campaigns before 2026-10-08 carry this row; it must not be read as a
+priority-flood comparison.
+
+`route_d8_default` (added 2026-10-08) answers the user's question rather than
+the algorithm question: how long each package takes, with its defaults, to get
+from a raw DEM to a routed D8 accumulation surface. The algorithms are not
+matched and the rasters differ; no value is compared and no ratio is built.
+Every pipeline must return a **fully drained** surface, because that is what
+lsdtt3 provides. Checked 2026-10-08 on alpine_1000 and lakeland_1000: interior
+cells with no strictly lower neighbour (TopoToolbox: no receiver in the
+`FlowObject`) were 0 for all four engines, against 5,532 and 128,931 in the
+raw DEMs.
+
+| engine | fill | flats | physical slope on flats in the DEM? | D8 rule |
+|---|---|---|---|---|
+| lsdtt3 | `lsdtt-drainage-analysis`, `raster_is_filled: false`: `fill_pits` with `fill_min_slope` 1e-4 and `fill_flat_resolution_choice: inline_gradient`, i.e. Barnes et al. (2014) priority flood | gradient imposed inside the flood: each cell is raised to at least 1e-4 x step length (cell size, x sqrt2 on diagonals) above the cell it was reached from, so flats drain in parallel lines along the flood paths | yes, >= 1e-4 m/m | steepest descent (drop / distance) |
+| TopoToolbox | `FlowObject(dem)` defaults (`method="d8"`, `sink_resolution="carve"`): `fillsinks_hybrid` (Vincent 1993 reconstruction, no gradient) | `identifyflats`, then gwdt costs from fill depth (`gwdt_computecosts`) and a geodesic-time auxiliary surface (`gwdt`); `flow_routing_d8_carve` routes flats and filled depressions by least-cost carving (Schwanghart et al. 2013, ESPL 38:1576-1586) | no: the DEM is not modified, flats stay at zero slope | steepest descent on the filled DEM; on flats, from the auxiliary surface |
+| RichDEM | `FillDepressions(epsilon=True)`: Barnes (2014) Priority-Flood+Epsilon. `epsilon=True` is NOT the default; the default (`epsilon=False`) leaves flats that its D8 does not route | each flat cell raised to `nextafter` of the cell it was reached from, one float step | no: steps are ULP(z) of the raster dtype, slopes of order ULP(z) / cell size | the LOWEST neighbour, not steepest descent |
+| Whitebox | `fill_depressions()` defaults: pit-centric (finds interior pits, sorts them, works pit by pit), `fix_flats=True`, `flat_increment` 1e-4 | `flat_resolution` `garbrecht_martz`: per flat, rank = dist_low x (max_high + 1) + (max_high - dist_high), raise = 1e-4 m x rank -- towards lower terrain first, away from higher terrain second | yes, in metres (1e-4 m per rank step), so a small real gradient | steepest descent (`d8_flow_accum`) |
+
+Time is each engine's in-process call; for lsdtt3 the sum of its fill, D8
+build and accumulation `Compute time:` lines. Whitebox's
+`breach_depressions_least_cost` is not used: its default `fill_deps=False` can
+leave depressions unresolved.
+
+Where each row was checked (2026-10-10):
+
+- **lsdtt3**: `cli/lsdtt-drainage-analysis.cpp` (default `fill_min_slope`
+  0.0001; the fill block calls `lsdtt::fill_pits(dem, min_slope, bc, threads)`
+  under `inline_gradient`); `src/cpu/lsdtt_raster_flow_preprocessing_cpu.cpp`
+  (`fill_pits` sends `min_slope > 0` to `fill_pits_priority_flood`; the flood
+  raises to `centre.zeta + min_slope * distance`, `distance` = L or L x sqrt2);
+  `src/cpu/lsdtt_flowinfo_cpu.cpp` (receiver = largest `dz / path_length`).
+- **TopoToolbox** 0.0.12, installed sources in the pixi `benchmark` env:
+  `flow_object.py` (`FlowObject.__init__` defaults, `_d8_carve` ->
+  `grid.auxiliary_topography` -> `_grid.flow_routing_d8_carve(..., filled_dem,
+  aux, flats, ...)`) and `grid_object.py` (`auxiliary_topography`:
+  `fillsinks_hybrid`, `identifyflats`, `gwdt_computecosts(costs, ..., dem,
+  filled_dem)`, `gwdt`); no DEM is returned. Steepest descent off flats is
+  asserted against lsdtt3 in §4.
+- **RichDEM** 2.3.0: `richdem/__init__.py` (`FillDepressions(dem,
+  epsilon=False, ...)`; `epsilon=True` -> `rdPFepsilonD8`), the installed
+  headers `include/richdem/depressions/Barnes2014.hpp`
+  (`PriorityFloodEpsilon_Barnes2014`, `std::nextafter`) and
+  `flowmet/OCallaghan1984.hpp` (`FM_OCallaghan`: keeps the neighbour with the
+  lowest elevation). `tests/scripts/run_flow_benchmark.py` records the same
+  lowest-neighbour finding.
+- **Whitebox** 2.0.6: the stub `whitebox_workflows.pyi` in the pixi
+  `benchmark` env (`fill_depressions(dem, fix_flats=True,
+  flat_increment=0.0001, max_depth=None, flat_resolution=None, ...)`), and
+  `../whitebox_next_gen/crates/wbtools_oss/src/tools/hydrology/mod.rs` at
+  commit cd24675: `parse_flat_resolution_mode` (`None` ->
+  `"garbrecht_martz"`), the tool defaults (`fix_flats` true, `flat_increment`
+  0.0001, `flat_resolution` `garbrecht_martz`), `fill_depressions_core` (pits
+  collected in the interior, sorted, popped one at a time) and
+  `resolve_flats_garbrecht_martz` (the rank formula above);
+  `tools/flow_algorithms/mod.rs` `d8_dir_from_dem`, used by
+  `D8FlowAccumTool` (largest `(z0 - z) / length`). Steepest descent was also
+  measured, §10o (`tests/scripts/check_whitebox_d8_rule.py`).
+
+`fill_spill_merge` (lsdtt3's nested depression hierarchy, Barnes 2020, plus
+Fill-Spill-Merge, Barnes 2021, lsdtt3 only) was **removed on 2026-10-10**: the
+suite now compares like-for-like algorithms only, and no binding benchmarked
+here offers Fill-Spill-Merge (RichDEM's Python package 2.3.0 exposes only
+`FillDepressions` and `BreachDepressions`). Until 2026-09-13 it had been paired
+with Whitebox's `sink`, which only labels depression cells.
+
+**lsdtt3 fill ranking (added 2026-10-10).** `SUMMARY.md` has a section "lsdtt3
+fill methods, fastest first": per fixture, at the baseline thread count, the
+lsdtt3 rows of `fill`, `fill_priority_flood`, `fill_priority_flood_radix`,
+`fill_epsilon`, `fill_epsilon_radix`, `fill_flats_float_step`,
+`fill_flats_gradient`, sorted by median,
+with a one-phrase algorithm, whether the output is a connected flow network,
+the median, Mcells/s and the ratio to the fastest. Only `cli_reported_compute`
+rows with status ok enter it. It compares lsdtt3 with itself on one machine, so
+the report-only flags of the cross-package table do not apply. The radix variants are
+honoured by the CLI for `barnes2014` under the default `inline_gradient` flat
+resolution: `fill_pits_priority_flood` receives the queue backend directly at
+`fill_min_slope` 0 and > 0, inside the single `Compute time:` bracket.
 
 Two cases reuse rows rather than re-measuring (`reuse_from` in the case
 registry, `reused_from` in the CSV). `accum_d8_no_svector` copies the
 reference rows of `accum_d8`, because the references run the identical call in
-both. `fill_wang_liu` copies lsdtt3's `fill_priority_flood` row, because lsdtt3
-has no Wang & Liu fill and its side of that case was the same barnes2014 command.
+both. `fill_whitebox_default` copies lsdtt3's `fill_priority_flood` row, because
+its lsdtt3 side is the same barnes2014 command.
+
+**Pairings corrected 2026-10-10.** `fill_priority_flood@whitebox` ran
+`fill_depressions`, which is pit-centric (finds interior pits, sorts them, works
+pit by pit) rather than an edge-seeded priority flood. It returns a different
+surface (6.45 m high on alpine_small, §10o) and its cost depends strongly on the
+number of pits: 0.63 s on alpine_4000 against 54.7 s on lakeland_4000
+(forth01, 2026-09-21, 1 thread). The row now runs Whitebox's
+`fill_depressions_wang_and_liu(fix_flats=False)`, an edge-seeded priority flood
+that is bit-exact against lsdtt3 (3.1 s alpine, 4.2 s lakeland on the same
+campaign). The former `fill_wang_liu` case made exactly that pairing and was
+removed; `fill_depressions` is kept, report-only, as `fill_whitebox_default`.
+Campaigns before 2026-10-10 carry the old `fill_priority_flood@whitebox` row; do
+not quote it as a priority-flood comparison. The CSV also gained
+`seconds_build_only` / `seconds_accumulate_only`: TopoToolbox's `FlowObject`
+refills its input and runs its gwdt flat routing even on the pre-filled
+`accum_d8` DEM, so its accumulate-only time is the like-for-like part of that
+row.
 
 **Memory.** Every command is launched through `tests/scripts/rusage_launcher.py`.
 A Linux child inherits its parent's lifetime peak RSS and `wait4` reports it as
@@ -1808,9 +1954,14 @@ an implementation-quality gap but a **different algorithm class**:
   morphological reconstruction — **O(N)**: two raster scans plus a bounded FIFO
   drain, almost entirely sequential memory access.
 
-The decisive control: TopoToolbox's *non*-hybrid path tracks lsdtt3 almost
-exactly at every size, so their implementation quality was never the
-differentiator — the hybrid reconstruction specifically was.
+TopoToolbox's *non*-hybrid path was measured tracking lsdtt3's priority-flood
+almost exactly at every size, and was read at the time as a control showing
+that implementation quality was not the differentiator. That reading is
+withdrawn: `hybrid=False` is Vincent's *sequential* reconstruction, not a
+priority flood (TopoToolbox has none), so the two curves come from different
+algorithms and their agreement is not a control. The measurement stands. The
+conclusion that the hybrid reconstruction is the faster algorithm class rests on
+the matched `vincent1993` vs `hybrid=True` comparison, not on this.
 
 lsdtt3 now has both. `fill_pits_reconstruction()` implements Vincent 1993, and
 `fill_pits()` dispatches on `min_slope`:
@@ -1871,6 +2022,8 @@ alone passes both:
 `resolve_flats_gradient` is retained — it is correct, tested, and defines the
 gradient by propagated distance rather than FIFO first-arrival, which may be
 independently useful — but it is not wired into any CLI and is not a default.
+The opt-in Barnes et al. (2014b) flat resolution (§10r) is a separate code path
+in `lsdtt_raster_flat_resolution_cpu`: it does not use this fixed point.
 
 #### The `min_slope > 0` output depends on heap tie-breaking
 
@@ -2284,6 +2437,127 @@ That comparison is one-thread lsdtt3 against many-thread Whitebox and **must
 not be quoted**. The other three affected cases are `report_only` and carry no
 ratio. Until the pinning is understood, treat every Whitebox row for slope,
 hillshade, curvature and D8 accumulation as an unpinned measurement.
+
+**Fixed 2026-10-11 by pinning the process, not the setting.** The forth01
+campaign of that date showed the same thing from the other side: on a 2-CPU
+mask, Whitebox used 1.30 (`accum_d8`), 1.48 (hillshade), 1.54 (`polyfit_all`)
+and 1.65 (slope) CPUs per process at `max_procs=1`. `run_benchmark_suite.py`
+now launches every Whitebox measurement under `taskset -c <cpus>`, with as many
+CPUs as the row's thread count, one per physical core first
+(`whitebox_cpu_pin()`). The mask is inherited by every thread Whitebox starts.
+A laptop check at 1000² after the change (laptop, thermally limited: the
+direction is meaningful, the values are not): Whitebox slope 130 ms at 1 thread and
+82 ms at 2, hillshade 91 and 53 ms, so the tools do scale once the 1-thread row
+really is one core. `REFERENCE_MAX_THREADS` was emptied at the same time,
+because the cap at 2 threads rested on flat curves measured on a restricted
+mask. `SUMMARY.md` gained a CPU-use table that lists any engine and case
+above 1.2 CPUs at the baseline thread count, so an unpinned row cannot pass
+unnoticed.
+
+### Server campaign 2026-10-11 (forth01): Whitebox pinned, least-cost breach back
+
+`server` profile (1000/2000/4000², 5 repeats after a warm-up, medians) at
+`4d8d844`, clean tree, `--threads 1,2,4`. Raw data:
+`../data/benchmarking/server_forth01.geos.ed.ac.uk_20261011_140209`. 372 rows,
+all `ok`.
+
+- **Machine:** forth01 (AMD EPYC 9654P), GCC 13.3 `-O3`. The session had 8
+  logical CPUs (`Cpus_allowed_list: 75,90-92,171,186-188`), which are **4
+  physical cores** and their SMT siblings. **Not exclusive**; governor
+  `schedutil`.
+- **Whitebox pinned:** every Whitebox measurement ran under `taskset`, one
+  physical core per thread. The CPU-use table flags nothing: every 1-thread row
+  of every engine is at about 1.0 CPU/wall.
+- **Earlier run the same day** (`…_20261011_120654`, `a3d90e6`) had a 2-CPU
+  mask and unpinned Whitebox. Its lsdtt3, RichDEM and TopoToolbox 1-thread rows
+  agree with this campaign within 0.89-1.08 (median per case). Its Whitebox
+  rows do not: pinning made Whitebox's 1-thread times longer by 1.42×
+  (`accum_d8`, hillshade), 1.32× (`route_d8_epsilon`), 1.25× (fills), 1.19×
+  (slope, `route_d8_default`), 1.10-1.12× (polyfit, `breach_least_cost`) and
+  1.04-1.08× (D-inf, MFD). **Whitebox rows from any campaign before this one
+  are unpinned and must not be compared with these.**
+
+#### 1-thread comparison
+
+Reference time / lsdtt3 time, range over the six fixtures (above 1 means lsdtt3
+took less time). Report-only cases compare different work.
+
+| case | RichDEM | TopoToolbox | Whitebox |
+|---|---|---|---|
+| `accum_d8` (S-vector on) | 1.05-1.23 | 1.21-1.72 | 0.95-1.17 |
+| `accum_d8_no_svector` | 1.50-1.74 | 1.77-2.26 | 1.32-1.87 |
+| `fill_epsilon` | 0.92-0.99 | n/a | 1.03-2.75 |
+| `fill_priority_flood` | 0.52-0.80 | n/a | 1.05-2.10 |
+| `fill` (reconstruction) | n/a | 0.84-1.03 | n/a |
+| `breach` (Lindsay 2016) | 0.94-1.49 | n/a | n/a |
+| `breach_least_cost` (bitwise-equal output) | n/a | n/a | 0.69-0.83; 1.45 on alpine 4000² |
+| `route_d8_epsilon` | n/a | n/a | 0.99-2.00 |
+| `accum_dinf` (report-only) | 0.93-1.21 | n/a | 0.69-0.89 |
+| `accum_mfd` (report-only) | 0.57-0.63 | n/a | 0.51-0.63 |
+| `slope_only` (report-only) | 0.43-0.51 | 0.85-1.02 | 2.11-2.47 |
+| `hillshade` (report-only) | n/a | 0.45-0.59 | 9.7-12.2 |
+| `polyfit_all` (report-only) | 0.20-0.26 | 1.04-1.20 | 0.97-1.14 |
+
+Raw DEM to D8 accumulation with each package's defaults (`route_d8_default`,
+report-only), seconds:
+
+| package | alpine 1000² | lakeland 1000² | alpine 2000² | lakeland 2000² | alpine 4000² | lakeland 4000² |
+|---|---|---|---|---|---|---|
+| lsdtt3 | 0.241 | 0.240 | 1.103 | 1.100 | 4.909 | 5.310 |
+| RichDEM | 0.247 | 0.245 | 1.150 | 1.097 | 5.095 | 5.272 |
+| TopoToolbox | 0.147 | 0.285 | 0.578 | 1.335 | 2.790 | 6.729 |
+| Whitebox | 0.127 | 0.494 | 0.446 | 6.648 | 2.361 | 81.273 |
+
+The timings of every lsdtt3 conditioning option on the same campaign, and the
+decomposition of the TopoToolbox / lsdtt3 difference on alpine terrain (fill
+family about 1.7 s, S-vector about 0.5 s at 4000²), are in
+`docs/design_and_algorithms/flow_routing.md`, "From a raw DEM to a fully routed
+DEM".
+
+#### Least-cost breaching
+
+`breach_least_cost` runs lsdtt3 and Whitebox with matched parameters (edge
+policy `whitebox`, max_dist 100, increment float32(0.001), no remainder fill);
+the outputs are asserted bitwise in CTest. Seconds:
+
+| | alpine 1000² | lakeland 1000² | alpine 2000² | lakeland 2000² | alpine 4000² | lakeland 4000² |
+|---|---|---|---|---|---|---|
+| lsdtt3 | 0.040 | 0.263 | 0.135 | 1.051 | 0.498 | 4.695 |
+| Whitebox | 0.028 | 0.199 | 0.093 | 0.779 | 0.723 | 3.920 |
+| lsdtt3 / Whitebox | 1.41 | 1.32 | 1.45 | 1.35 | 0.69 | 1.20 |
+| lsdtt3, CLI defaults (`breach_least_cost_default`) | 0.035 | 0.196 | 0.133 | 0.931 | 0.491 | 10.055 |
+
+On identical output lsdtt3 took 1.20-1.45× Whitebox's time on five of six
+fixtures. A laptop profile (direction only) put 87-90% of lsdtt3's time in the
+search loop and found no algorithmic difference; heap reuse, int16 path
+lengths, no validity lookup, row/col carried in the heap node and
+`-march=native` each changed nothing beyond noise. The compiler (GCC here,
+LLVM for Whitebox's Rust) is the remaining untested candidate. Peak memory at
+4000²: lsdtt3 644-657 MiB, Whitebox 1759-1774 MiB.
+
+With the CLI defaults (edge policy `outlet`, max_dist 1000, automatic
+increment, remainder fill on) lakeland 4000² took 10.1 s against 4.7 s for the
+matched run: the longer searches cross large lakes.
+
+#### Thread scaling on 4 physical cores
+
+Speedup over each engine's own 1-thread time, 4000² (alpine and lakeland
+within 0.07× of each other):
+
+| case | lsdtt3 2t | lsdtt3 4t | Whitebox 2t | Whitebox 4t |
+|---|---|---|---|---|
+| `slope_only` | 1.80-1.82× | 2.14-2.21× | 1.00× | 2.40-2.42× |
+| `polyfit_all` | 1.83-1.85× | 2.12-2.13× | 1.02-1.03× | 1.80-1.83× |
+| `hillshade` | 1.48× | 1.50-1.53× | 1.01× | 2.05× |
+
+- Whitebox gains nothing from a second core and then 1.8-2.4× from four. That
+  fits a pool of n − 1 workers plus a coordinating thread; not verified (no
+  whitebox_workflows 2.0.6 source).
+- lsdtt3's 4-thread figures are below the 3.18-3.22× of the 2026-09-21
+  allocation. lsdtt3's OpenMP threads were not pinned here, so two can share a
+  physical core's SMT siblings, and the node was shared. Not separated.
+- lsdtt3's 4-thread rows at 1000² are bimodal (hillshade alpine repeats of 8 ms
+  and 20 ms); quote the 4000² rows.
 
 ## 7. Cosmogenic nuclide testing
 
@@ -6970,6 +7244,281 @@ Scaling stops at about 4 threads, and cost per unit-step rises with unit count (
 - **Disabled options:** the HYPE options switched off in this version (fractional snow cover, sublimation, tile drainage, frozen soil, lakes) are rejected at start-up rather than tested.
 
 ---
+
+## 10r. Flat resolution: the Barnes et al. (2014b) options
+
+The method is described in `docs/design_and_algorithms/flow_routing.md`
+(section "Flat resolution: Barnes et al. (2014b)"). This section records how it
+was tested, what each oracle asserts now, and what the tests found. The option
+is `fill_flat_resolution_choice`: `inline_gradient` (the default, unchanged),
+`barnes2014b_gradient` and `barnes2014b_float_step`.
+
+### 10r.1 Where the code is
+
+- `src/cpu/lsdtt_raster_flat_resolution_cpu.{hpp,cpp}`: the Barnes mask, the
+  float32 step, both resolvers, the rounds and the final pass, and the
+  parse / name functions.
+- `src/cpu/lsdtt_raster_flow_preprocessing_cpu.{hpp,cpp}`: the `fill_pits`
+  overloads that take a `flat_resolution_choice`. `inline_gradient` forwards to
+  the existing fill with the same arguments.
+- `src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.{hpp,cpp}`: the one helper
+  every CLI calls for the choice check, the report lines, the WARNING and the
+  resolve-only path used when `raster_is_filled` is true.
+- `src/cpu/lsdtt_flowgraph_cpu.cpp`: the MFD underflow fallback (10r.7).
+- `src/core/lsdtt_common_parameters.cpp`: the parameter declaration and its help
+  text, which the reference pages are generated from.
+
+### 10r.2 What RichDEM does, measured first
+
+Before any code, RichDEM's `ResolveFlats` was run on hand-built float32 fixtures
+(richdem 2.3.0, pixi `benchmark` environment) and the raise of every cell was
+measured in ULPs. The implementation follows these findings:
+
+- Interior low-edge cells are raised by 2 (the mask's low-edge value).
+- Raster-border cells are never modified, even where the mask would raise them.
+  The towards pass still starts from border low edges, so the interior values
+  are unchanged.
+- Cells next to interior nodata count as draining and are raised.
+- A float32 raster is not upcast; the output is float32.
+- RichDEM's "Cells inappropriately raised above surrounding terrain" counts
+  ordered neighbour **pairs**, not cells. The comparison is `>=`: a valley with
+  one cell raised two float steps gives 8 pairs under `>=` and 7 under `>`. The
+  C++ driver pins the 8.
+- On a floor at 0 m a float32 step is a denormal (1.4e-45 m). The maximum raise
+  on that fixture was 6.7e-44 m, 48 denormal steps. This is why the near-zero
+  guard exists.
+- RichDEM's counts of NO_FLOW, low-edge and high-edge cells equal the mask's.
+
+### 10r.3 Test inventory
+
+| test | labels | what it covers |
+|---|---|---|
+| `unit_flat_resolution` | `unit;flow` | `tests/cpp/test_flat_resolution.cpp`, in-process fixtures only (groups below) |
+| `unit_flat_resolution_real_terrain` | `unit;flow` | the same driver in `--real-terrain` mode on the committed Copernicus crop (30 checks) |
+| `smoke_fill_flat_resolution_float_step`, `smoke_fill_flat_resolution_gradient` | `smoke;flow;cli` | C1, C2: both options run and write. Plumbing only: `tiny_dem.asc` has no flats after a `min_slope: 0` fill |
+| `failure_fill_flat_resolution_unknown_choice`, `..._gradient_zero_slope`, `..._fill_spill_merge` | `failure;cli;flow` | C3, C4, C5: exact refusal messages |
+| `smoke_chi_analysis_flat_resolution_gradient`, `smoke_channel_extraction_flat_resolution_gradient`, `smoke_drainage_analysis_flat_resolution_float_step` | `smoke;cli;flow` | C6: the option reaches a routing CLI. Each asserts a line only the barnes path prints |
+| `smoke_chi_analysis_flat_resolution_filled_float_step`, `failure_chi_analysis_flat_resolution_filled_inline`, `failure_chi_analysis_flat_resolution_unfilled_input` | `smoke` / `failure;cli;flow` | C7: `raster_is_filled` true runs the resolve-only path. The inline control must fail with "could not assign a receiver". An unfilled input is refused with the no-outlet message |
+| `rigorous_fill_flat_resolution_valley_float_step`, `rigorous_fill_flat_resolution_valley_gradient`, `rigorous_fill_flat_resolution_knob_rounds` | `rigorous;cli;flow` | exact fill-difference ranges and stdout pins on the valley fixtures, including the round count on the one-ULP knob |
+| `smoke_basin_extraction_*`, `failure_basin_extraction_*`, `smoke_basin_stats_*`, `failure_basin_stats_*`, `smoke_basin_surface_metrics_*`, `smoke_channel_network_analysis_*`, `smoke_cross_sections_*`, `smoke_bankfull_width_*`, `smoke_distributed_hydrology_*`, `smoke_fluvial_surfaces_*`, `failure_fluvial_surfaces_*`, `smoke_ridgeline_*`, `smoke_valley_centreline_*` (all `flat_resolution`) | `smoke;cli;flow` or `failure;cli;flow` | one barnes run in each remaining wired CLI, asserting the "Flat resolution:" block and a value the default fill does not give. The `fill_before_routing: false` NOTE tests cover the two CLIs that skip the fill |
+| `rigorous_drainage_analysis_flat_resolution_real_terrain_float_step`, `..._gradient`, `smoke_drainage_analysis_flat_resolution_real_terrain_inline_gradient` | `rigorous;cli;flow` (control: `smoke`) | the Appendix B command on the committed crop (10r.4) |
+| `smoke_flat_resolution_real_terrain_routing` | `smoke;flow`, network tier | `tests/scripts/check_flat_resolution_real_terrain_routing.py` (10r.6) |
+| `benchmark_flat_resolution_richdem` | `benchmark;flow`, `tier_pixi` | oracle O1 (10r.5) |
+| `benchmark_flats_float_step_alpine_small`, `benchmark_flats_float_step_lakeland_small` | `benchmark;flow`, `tier_pixi` | oracle O2 (10r.5) |
+
+The option is wired into lsdtt-raster-preprocessing and into 13 routing CLIs:
+chi-analysis, channel-extraction, basin-extraction, drainage-analysis,
+channel-network-analysis, basin-stats, basin-surface-metrics, cross-sections,
+bankfull-width, distributed-hydrology, fluvial-surfaces, ridgeline-analysis and
+valley-centreline. Deliberately not wired: lsdtt-lem and divide-migration
+(periodic boundaries, an evolving surface), the three cosmogenic CLIs (locked
+numerics with sha256-pinned sentinels), graphflood (its own internal fill),
+internal-drainage (`fill_pits_with_sinks`), stream-burning (several internal
+fills), and feature-finder and mountain-front (a hard-coded 1e-4).
+
+The driver `unit_flat_resolution` groups its checks as follows. No group F28
+exists; the numbering skips it.
+
+- **F1** `step_up_float32` is bitwise equal to a looped `nextafter`, including
+  signed zero, denormals, the crossing from negative to positive, and the
+  overflow and NaN behaviour.
+- **F2** The valley mask equals the frozen RichDEM raise, element by element.
+  Fixtures 2 to 4 agree with RichDEM in the interior.
+- **F3** Descent: on the valley, the terraces and a filled 256 × 256 fractal,
+  every NO_FLOW cell has a lower same-label neighbour.
+- **F4** Routability: `build_d8` succeeds, `validate()` passes, and an
+  independent check finds a strictly lower neighbour for every non-exit cell.
+- **F5** The valley profile at column 12, rows 1-9, is pinned to
+  2 3 4 5 104 5 4 3 2. The default fill gives 24 12 12 12 12 12 12 12 24 at the
+  same cells, and the test asserts that its ratio stays within 2.
+- **F6** Gradient exact: every D8 step on the valley has slope at least
+  `fill_min_slope` in double precision, with no tolerance.
+- **F7, F7b** The rim cap: a 60 × 60 flat under a rim 0.01 m higher is capped and
+  routable. A rim 3 ULPs up has a quantised cap of 0, and the result equals the
+  float-step result bit for bit.
+- **F8** The big flat with its rim 1 ULP above it: 701 pairs and 232 cells, as
+  RichDEM.
+- **F9** Near zero: with the guard, the smallest float32 D8 slope is at least
+  2^-23 / (√2 L). Without it some slopes are exactly zero.
+- **F10** Idempotence. **F11a, F11b** The exact messages for an unfilled input
+  and for a periodic boundary. **F12** One thread and four threads give the same
+  bits, including every new field. **F13** An interior nodata hole.
+  **F14** `fill_pits` with `inline_gradient` equals the existing fill on the
+  valley, the unfilled fractal and two fixtures with interior nodata, through
+  the overloads, thread counts and queue backends. **F15** The MFD underflow fallback (10r.7). **F16** Border
+  cells are never raised. **F17** Edge cases: tiny rasters, all nodata, one
+  elevation everywhere, NaN nodata, and validity taken from the mask array.
+  **F18** The guard's bound, method dispatch and the no-outlet message.
+- **F19** Quantisation: 1 m cells at 4000 m (u below the ULP), and a raise across
+  1024 m.
+- **F20** A ramp whose floor is an odd multiple of q/2. Half-ULP ties leave cells
+  without descent, so verification fails and the region falls back to float
+  steps. Even-multiple controls verify.
+- **F21** A cell or a rim a few ULPs above a flat (category a: stranded rim
+  cells). **F22** Two flats a few ULPs apart (category b: stranded low edges).
+  **F23** Cascades of 3, 5 and 8 terraces: no cell is ever lowered, the stranded
+  front moves up each round, and the final pass changes no cell on a strictly
+  descending path to an exit. **F24** The round-cap and option messages.
+  **F25** The final pass keeps the near-zero guard. **F26** Gradient diagnostics
+  are recounted from the per-cell flag, with an explicit allowance for cells
+  whose quantised unit equals the float step. **F27** Rounds from 2 on raise
+  only NO_FLOW cells. **F29** `max_rounds = 1` with the final pass off equals
+  frozen FNV-1a hashes of the pre-loop output, and the defaults equal it on
+  every fixture that strands nothing.
+
+The real-terrain mode checks the committed crop: the single pass strands the
+pinned cells, and the router refuses them; the defaults take the pinned rounds
+and the final pass and route; the `fill_pits` dispatch equals the resolver; the
+round-1 fields and the gradient recount agree; and the `inline_gradient` control
+routes.
+
+### 10r.4 The real-terrain gate, and how it was shown to catch the bug
+
+The failure was found on real terrain, not on any synthetic fixture. One Barnes
+pass left between 20 and 2475 cells without a lower neighbour on each of the
+four 500 and 1000 m benchmark rasters (alpine and lakeland), for both options,
+and `lsdtt-drainage-analysis` exited 1 with "could not assign a receiver". The
+synthetic fixtures had rims metres above their flats, and the RichDEM comparison
+could not see the failure, because RichDEM strands the same cells. The default
+`inline_gradient` routed the same DEMs.
+
+The committed crop, `tests/data/flat_resolution_lakeland_crop_dem.tif`, is a
+128 × 128 float32 window (37,947 bytes, UTM 15N, Copernicus GLO-30 attribution in
+`tests/README.md`). On it the single pass strands 117 cells with the float step
+and 115 with the gradient, and the pre-loop CLI exits 1 at row 5, column 123.
+
+The gate was tested by mutation, in a scratch copy with the round cap set to 1
+and the final pass off. Then both rigorous CLI tests fail with exit 1 and
+"could not assign a receiver", and `unit_flat_resolution_real_terrain` fails two
+checks. The `inline_gradient` control passes. The gate is therefore sensitive to
+the failure it was added for.
+
+### 10r.5 Oracles O1 and O2: what they assert now
+
+Both compare with RichDEM 2.3.0 on float32 bits. The rules changed when the
+loop was added, because RichDEM has no loop: its output is the first round only.
+
+**O1, `check_flat_resolution_vs_richdem.py`** runs on fixtures it builds (valley,
+open flat edge, interior nodata, two terraces, a mesa, a big flat with a rim one
+ULP up, a 2-ULP bump, floors at +0, -0, -50 and +4000 m, two 256 × 256 fractals,
+and the knob, terrace and cascade fixtures used by F21-F23). It also runs the
+committed crop.
+
+- The number of differing unguarded cells, minus the number of cells that
+  lsdtt3 reports changing after round 1, is exactly 0.
+- Every differing cell is strictly higher in lsdtt3 than in RichDEM (ordered
+  float32 keys). No lsdtt3 cell is below RichDEM.
+- Cells in near-zero-guarded flats are exempt, and a fixture that mixes guarded
+  and loop-changed cells fails: no fixture does.
+- Cells without descent: RichDEM's count equals lsdtt3's round-1 count, and
+  lsdtt3's final count is 0. On the stranding fixtures RichDEM's count is above
+  0, which documents that it has the same failure. On the others both are 0.
+- Pairs: lsdtt3's round-1 pair and cell counts equal the recount from the
+  RichDEM-comparable output. RichDEM's printed pair count must lie within the
+  range its loop allows. Its loop raises cells in place, so where two raised
+  flats touch the printed count depends on processing order: on the crop it
+  prints 367, while a recount from its own output gives 364.
+
+On the fixtures without stranding, the result is one round, zero changed cells
+and zero cells without descent; equality is exact.
+
+**O2, `flats_float_step` in `run_flow_benchmark.py`** runs on the fetched
+alpine and lakeland small DEMs, against `FillDepressions(epsilon=False)`
+followed by `ResolveFlats`. Its tolerances are: unexplained differences 0 (the
+differing cells must equal the cells changed after round 1), cells below
+RichDEM 0, and lsdtt3's cells without descent 0. The count of differing
+unguarded cells is no longer pinned, since both fixtures strand in round 1. Its
+measured values, from the same runs as the tolerances:
+
+| fixture | cells compared | flat cells | differing (all changed after round 1) | cells without descent (RichDEM / lsdtt3) |
+|---|---|---|---|---|
+| alpine_small | 65,536 | 723 | 1 | 1 / 0 |
+| lakeland_small | 65,536 | 61,913 | 51 | 41 / 0 |
+
+Negative checks, run in scratch wrappers that perturb one cell, were caught:
+a 1-ULP change to an unchanged cell gives `n_unexplained_differences = 1`, and
+lowering a loop-changed cell below RichDEM gives `n_below_richdem = 1`.
+
+### 10r.6 The network-tier routing script
+
+`tests/scripts/check_flat_resolution_real_terrain_routing.py` is stdlib-only. It
+runs `lsdtt-drainage-analysis` with `inline_gradient` (control),
+`barnes2014b_float_step` and `barnes2014b_gradient` on the flow-benchmark
+fixtures (alpine and lakeland, small and medium, fetched when not cached) and on
+the 500 and 1000 m benchmark rasters when they are already cached. Every run
+must exit 0, and each barnes run must end with `Rim cells without descent: 0`.
+It prints the rounds and per-round counts. The fixture registry lives in
+`tests/scripts/flow_benchmark_fixtures.py`, a stdlib module, because importing
+`run_flow_benchmark.py` from a stdlib script failed the test-inventory audit (it
+follows local imports into the function-level numpy and osgeo imports).
+
+Round counts recorded on the small fixtures: alpine_small 2 (1, 0),
+lakeland_small 2 (41, 0). The medium fixtures needed 4 rounds each.
+
+### 10r.7 Round count and the cap
+
+Before the cap was chosen, the loop was run to caps of 64 and then 256 rounds.
+Deterministic counts: on lakeland_500 the float-step option converged after 76
+rounds and the gradient option after 74, and on lakeland_1000 after 66 rounds.
+The chain length was set by the ULP relief of the lake surface, not by the number
+of flats. The cost per round was similar to round 1, so the total grew with the
+round count, and a 64-round cap would have left cells without descent on these
+DEMs. The chosen policy is four rounds plus a final strict-rise priority-flood
+pass. It gives a routable surface with a bounded number of passes, and the pass
+changes no cell that already drains. The report gives the cells it changed.
+
+### 10r.8 The MFD underflow fallback
+
+With a large exponent the float32 weights `S^p` underflow. A cell whose summed
+weight is zero silently becomes a sink. This was not specific to the float step.
+An instrumented count of the branch over the existing flow, MFD and
+distributed-hydrology tests never fired it (all of those run at exponent 1). Runs by hand at
+exponent 8 did reach it, on the alpine and lakeland small fixtures under the
+default fill as well as under the float step. The earlier code failed there with
+"invalid receiver weight in receiver graph", and left two silent sinks on the
+lakeland fixture.
+
+The fix recomputes the weights of a cell from `(S_k / S_max)^p` only when the
+summed weight is not a normal finite float. F15 covers it (22 checks; the old
+kernel fails five of them). The outputs were compared byte for byte before and
+after the change: drainage-analysis MFD rasters at exponents 1 and 4 on the
+valley, alpine small and lakeland small fixtures (both fills), and at exponent 8
+on the valley under the default fill; and distributed-hydrology TOPMODEL MFD
+output on the valley at exponent 1 (both fills) and exponent 8 under the default
+fill. All were identical. The runs that failed before now complete.
+
+### 10r.9 Lessons
+
+- **Synthetic fixtures and RichDEM comparisons both missed the routing failure.**
+  Synthetic rims sit metres above their flats, and RichDEM strands the same cells
+  on real DEMs, so a comparison with RichDEM cannot detect a failure that RichDEM
+  shares. Any flat step needs a routing gate on real terrain, not only a value
+  comparison.
+- **The later rounds must not raise low edges.** A low edge of an already
+  resolved flat, raised by two units, can strand that flat again. This was found
+  by reasoning about the invariant before writing the loop, and it is pinned by
+  F27.
+- **An oracle count is not always a function of the output.** RichDEM's printed
+  pair count depends on its loop order where two raised flats touch, so O1
+  asserts a range rather than an equality.
+- **Pixi exports GDAL, PROJ and CONDA variables.** A system-GDAL CLI launched
+  from a pixi Python loads pixi's GDAL plugins, with errors on stderr and a
+  large slowdown per call. The flat-resolution harnesses strip those variables
+  from the subprocess environment. Any future pixi-driven CLI harness must do the
+  same.
+- **Stream state leaks between stages.** An earlier stage left `std::cout` in
+  fixed four-decimal mode, so the maximum raise printed as `0.0000 m`. The report
+  now sets and restores the precision.
+
+### 10r.10 What is not measured
+
+- No speed claim is made for the barnes options. Timings on the server have not
+  been recorded, and they must be before any statement about cost. The loop adds
+  rounds, so its cost depends on the terrain.
+- Peak memory on a large DEM (8000 × 8000 cells and beyond) has not been measured.
+  The per-cell memory of the resolver is described in its header.
+- The per-CLI tests check that each CLI runs the option and prints the report.
+  They do not check the routed output of every CLI against a reference.
 
 ## 11. Adding a test
 

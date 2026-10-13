@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: flatbad
+
+# An unknown fill_flat_resolution_choice must be refused with the parse
+# message, not silently replaced by the default.
+
+enforce_projection: false
+write_output_format: gtiff
+
+write_fill_raster: true
+fill_flat_resolution_choice: barnes2014b_gradiant

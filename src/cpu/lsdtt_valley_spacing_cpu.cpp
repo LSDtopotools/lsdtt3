@@ -11,6 +11,7 @@
 // =============================================================================
 
 #include "lsdtt_valley_spacing_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -78,10 +79,6 @@ lsdtt_valley_spacing_result compute_valley_spacing(
     const lsdtt_valley_spacing_options& opts)
 {
     lsdtt_valley_spacing_result out;
-
-#ifdef _OPENMP
-    if (opts.n_threads > 0) omp_set_num_threads(opts.n_threads);
-#endif
 
     const lsdtt_raster_meta& meta = dem.get_meta();
     const int nrows = meta.n_rows;
@@ -232,7 +229,7 @@ lsdtt_valley_spacing_result compute_valley_spacing(
     {
         constexpr double k_big = 1e30;
         const double wa = 1.0 * dx;         // orthogonal step
-        const double wb = 1.41421356 * dx;  // diagonal step
+        const double wb = grid::k_sqrt2_d * dx;  // diagonal step
 
         std::vector<double> dist(static_cast<std::size_t>(nrows) * ncols, k_big);
         std::vector<uint8_t> is_hill(dist.size(), 0);

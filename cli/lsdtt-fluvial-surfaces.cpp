@@ -82,6 +82,7 @@
 #include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_reference_field_ladder_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
@@ -609,8 +610,14 @@ int main(int argc, char* argv[])
     float_default_map["fill_min_slope_for_routing"] = 0.0001f;
     help_map["fill_min_slope_for_routing"] = {"float","0.0001",
         "Minimum imposed slope when filling for routing [m/m].",
-        "Barnes et al. 2014 Priority-Flood.",
+        "Used only when fill_before_routing is true. inline_gradient "
+        "(default): imposed during the Barnes et al. 2014 Priority-Flood. "
+        "barnes2014b_gradient: the minimum gradient across flats. "
+        "barnes2014b_float_step: ignored.",
         "Flow routing","param","fill_before_routing"};
+
+    lsdtt::declare_fill_flat_resolution_parameter(
+        string_default_map, help_map, "", "fill_min_slope_for_routing");
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
@@ -1246,6 +1253,36 @@ int main(int argc, char* argv[])
                      "has an effective accuracy 3.28x larger than it looks.)\n";
     }
 
+    // How flats are made drainable (Barnes et al. 2014b options). Checked
+    // here, before any raster work. Only the routing fill uses it: with
+    // fill_before_routing: false the DEM is routed as it is.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+        if (bf["fill_before_routing"])
+        {
+            lsdtt::check_fill_flat_resolution_min_slope(
+                flat_choice, ff["fill_min_slope_for_routing"],
+                "fill_min_slope_for_routing");
+        }
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
+    if (!bf["fill_before_routing"] &&
+        flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+    {
+        std::cout << "NOTE: fill_flat_resolution_choice ("
+                  << lsdtt::flat_resolution_choice_name(flat_choice)
+                  << ") is ignored because fill_before_routing is false.\n";
+    }
+
     // -------------------------------------------------------------------------
     // Load DEM
     // -------------------------------------------------------------------------
@@ -1412,8 +1449,18 @@ int main(int argc, char* argv[])
             if (bf["fill_before_routing"])
             {
                 std::cout << "Filling DEM for flow routing...\n";
-                routing_dem = lsdtt::fill_pits(
-                    dem, ff["fill_min_slope_for_routing"], ip["n_threads"]);
+                if (flat_choice ==
+                    lsdtt::flat_resolution_choice::inline_gradient)
+                {
+                    routing_dem = lsdtt::fill_pits(
+                        dem, ff["fill_min_slope_for_routing"], ip["n_threads"]);
+                }
+                else
+                {
+                    routing_dem = lsdtt::fill_pits_reporting_flat_resolution(
+                        dem, ff["fill_min_slope_for_routing"], flat_choice,
+                        ip["n_threads"]);
+                }
             }
             else
             {

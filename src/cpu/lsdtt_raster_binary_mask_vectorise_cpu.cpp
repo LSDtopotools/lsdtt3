@@ -17,6 +17,7 @@
 
 
 #include "lsdtt_raster_binary_mask_vectorise_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../utils/lsdtt_binary_array2d_tracing.hpp"
 
 
@@ -139,8 +140,8 @@ static std::vector<std::vector<lsdtt_xy>> find_hole_rings(
         try_enqueue(r, box_max_c);
     }
 
-    const int dr4[4] = {-1, 1,  0, 0};
-    const int dc4[4] = { 0, 0, -1, 1};
+    static constexpr const auto& dr4 = grid::d4_nswe_row;
+    static constexpr const auto& dc4 = grid::d4_nswe_col;
 
     for (std::size_t qi = 0; qi < queue.size(); ++qi)
     {

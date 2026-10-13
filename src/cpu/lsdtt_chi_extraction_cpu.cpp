@@ -28,6 +28,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_chi_extraction_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "lsdtt_basin_cpu.hpp"
 
@@ -48,7 +49,7 @@ namespace lsdtt
 namespace
 {
 
-constexpr double k_sqrt_2 = 1.4142135623730950488;
+constexpr double k_sqrt_2 = grid::k_sqrt2_d;
 
 // -----------------------------------------------------------------------------
 // Helpers

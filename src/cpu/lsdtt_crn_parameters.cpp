@@ -31,6 +31,13 @@ namespace lsdtt
 namespace {
 constexpr double kPi = 3.14159265358979323846;
 
+// Standard-atmosphere constants shared by the three barometric formulae
+// (atmospheric_pressure_standard / _era40 / _ncep).
+constexpr double kBalcoGmr        = -0.03417;  // -g*M/R (Balco 2008)
+constexpr double kStdLapseRate    =  0.0065;   // standard environmental lapse rate (K m^-1)
+constexpr double kStdSeaLevelP    =  1013.25;  // standard sea-level pressure (mbar)
+constexpr double kStdSeaLevelT    =  288.15;   // standard sea-level temperature (K)
+
 const char* const kMuonSchemes[] = {
     "Braucher",
     "BraucherBorchers",
@@ -632,10 +639,10 @@ double lsdtt_crn_parameters::atmospheric_pressure_standard(double elevation_m)
 {
     // Balco barometric formula with SLHL standard-atmosphere constants.
     // Returns pressure in mbar (hPa).
-    const double gmr   = -0.03417;   // g*M/R (mol^-^1 K^-^1)
-    const double dtdz  =  0.0065;    // environmental lapse rate (K m^-^1)
-    const double P_slp =  1013.25;   // standard sea-level pressure (mbar)
-    const double T_slp =  288.15;    // standard sea-level temperature (K)
+    const double gmr   = kBalcoGmr;
+    const double dtdz  = kStdLapseRate;
+    const double P_slp = kStdSeaLevelP;
+    const double T_slp = kStdSeaLevelT;
     double T_site = T_slp - dtdz * elevation_m;
     if (T_site <= 0.0) T_site = 1.0;   // guard against unphysical elevations
     return P_slp * std::exp((gmr / dtdz) * (std::log(T_slp) - std::log(T_site)));
@@ -1014,7 +1021,7 @@ double lsdtt_crn_parameters::atmospheric_pressure_era40(double lat_deg, double l
     }
     dtdz = -dtdz;   // sign convention: dtdz > 0 means temperature falls with altitude
 
-    const double gmr = -0.03417;   // -g*M/R (Balco 2008)
+    const double gmr = kBalcoGmr;
     double T_site = T_sl - dtdz * elevation_m;
     if (T_site <= 0.0) T_site = 1.0;   // guard unphysical elevations
     return P_sl * std::exp((gmr / dtdz) * (std::log(T_sl) - std::log(T_site)));
@@ -1045,8 +1052,8 @@ double lsdtt_crn_parameters::atmospheric_pressure_ncep(double lat_deg, double lo
 
     double T_degK = site_T + 273.15;   // NCEP2 temperature is stored in degC
 
-    const double gmr  = -0.03417;      // -g*M/R (Balco 2008)
-    const double dtdz = 0.0065;        // fixed standard-atmosphere lapse rate (K/m)
+    const double gmr  = kBalcoGmr;
+    const double dtdz = kStdLapseRate;  // fixed, not the Lifton latitude polynomial
     double T_site = T_degK - elevation_m * dtdz;
     if (T_site <= 0.0) T_site = 1.0;   // guard unphysical elevations
     return site_slp * std::exp((gmr / dtdz) * (std::log(T_degK) - std::log(T_site)));
@@ -1216,6 +1223,29 @@ double lsdtt_crn_parameters::stone_paleomag_correction_direct(
 //  get_DipRc.m but are implemented independently here.
 // =============================================================================
 
+namespace {
+
+// Bracketing index and weight on a REGULAR ASCENDING axis, clamped to the axis
+// bounds.  bilinear_regular() and the precomputed LSDn / Stone surfaces below
+// both take their weights from here, so a surface node and a direct lookup
+// agree bit for bit by construction.
+// A single-node axis returns (0, 0) - it contributes nothing, which is what a
+// degenerate longitude axis needs.
+inline void regular_axis_weight(const std::vector<double>& ax, double v,
+                                int& i0, double& t)
+{
+    const int n = static_cast<int>(ax.size());
+    if (n < 2) { i0 = 0; t = 0.0; return; }
+
+    const double dv = (ax[n-1] - ax[0]) / (n - 1);
+    v = std::max(ax[0], std::min(ax[n-1], v));
+    i0 = static_cast<int>(std::floor((v - ax[0]) / dv));
+    i0 = std::max(0, std::min(n - 2, i0));
+    t  = (v - ax[i0]) / dv;
+}
+
+} // anonymous namespace
+
 //
 // bilinear_regular
 // Regular ascending axes, x fast and y slow: flat index = iy*nx + ix.
@@ -1229,22 +1259,13 @@ double lsdtt_crn_parameters::bilinear_regular(const std::vector<double>& x_ax,
     const int ny = static_cast<int>(y_ax.size());
     if (nx < 2 || ny < 2) return std::numeric_limits<double>::quiet_NaN();
 
-    // Regular spacing, so the bracketing cell follows directly from the offset
-    const double dx = (x_ax[nx-1] - x_ax[0]) / (nx - 1);
-    const double dy = (y_ax[ny-1] - y_ax[0]) / (ny - 1);
-
-    // Clamp to the grid bounds (see lsdn_grid_value for why clamping rather
-    // than returning NaN as v3's interp2 would)
-    x = std::max(x_ax[0], std::min(x_ax[nx-1], x));
-    y = std::max(y_ax[0], std::min(y_ax[ny-1], y));
-
-    int ix = static_cast<int>(std::floor((x - x_ax[0]) / dx));
-    int iy = static_cast<int>(std::floor((y - y_ax[0]) / dy));
-    ix = std::max(0, std::min(nx - 2, ix));
-    iy = std::max(0, std::min(ny - 2, iy));
-
-    const double tx = (x - x_ax[ix]) / dx;
-    const double ty = (y - y_ax[iy]) / dy;
+    // Regular spacing, so the bracketing cell follows directly from the offset.
+    // Both axes are clamped to the grid bounds (see lsdn_grid_value for why
+    // clamping rather than returning NaN as v3's interp2 would).
+    int ix = 0, iy = 0;
+    double tx = 0.0, ty = 0.0;
+    regular_axis_weight(x_ax, x, ix, tx);
+    regular_axis_weight(y_ax, y, iy, ty);
 
     auto idx = [&](int j, int i) { return static_cast<std::size_t>(j) * nx + i; };
     const double v00 = grid[idx(iy,   ix)];
@@ -1476,24 +1497,6 @@ double lsdtt_crn_parameters::lsd_geomagnetic_lat(double lat_rad, double lon_rad,
 // -----------------------------------------------------------------------------
 
 namespace {
-
-// Bracketing index and weight on a REGULAR ASCENDING axis, clamped to the axis
-// bounds.  Deliberately identical arithmetic to bilinear_regular(), so that a
-// surface node evaluated here and a direct lookup there agree bit for bit.
-// A single-node axis returns (0, 0) - it contributes nothing, which is what a
-// degenerate longitude axis needs.
-inline void regular_axis_weight(const std::vector<double>& ax, double v,
-                                int& i0, double& t)
-{
-    const int n = static_cast<int>(ax.size());
-    if (n < 2) { i0 = 0; t = 0.0; return; }
-
-    const double dv = (ax[n-1] - ax[0]) / (n - 1);
-    v = std::max(ax[0], std::min(ax[n-1], v));
-    i0 = static_cast<int>(std::floor((v - ax[0]) / dv));
-    i0 = std::max(0, std::min(n - 2, i0));
-    t  = (v - ax[i0]) / dv;
-}
 
 // One row of a packed (p, Rc) grid, linearly interpolated along the Rc axis.
 // This is bilinear_regular()'s inner lerp with the pressure weight left off.

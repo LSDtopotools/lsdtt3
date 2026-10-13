@@ -353,13 +353,14 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. |
 | `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string (N, E, S, W). o = open, p = periodic. Note that range_defined_ridgelines relies on open boundaries (o) being interpreted as mountain fronts. |
-| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope imposed by pit filling. | Used when raster_is_filled is false. |
+| `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope (m/m) imposed by pit filling or flat resolution. | inline_gradient (default): imposed during the Priority-Flood fill, so used only when raster_is_filled is false. barnes2014b_gradient: the minimum gradient across flats, also on a raster_is_filled input. barnes2014b_float_step: ignored. |
 
 ### Pit filling
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `raster_is_filled` | `bool` | `false` | `switch` | - | Assert that the input raster has ALREADY been pit-filled. | ASKS: has the input already been filled? Filling is REQUIRED for this analysis, so this switch does not choose whether to fill -- it only lets the tool skip filling a surface that is filled already. Setting it true for a DEM that still contains pits gives BAD routing, not different routing. Do not confuse this with fill_before_routing, which asks whether to fill at all. |
+| `fill_flat_resolution_choice` | `string` | `inline_gradient` | `param` | - | How flats are made drainable: inline_gradient, barnes2014b_gradient or barnes2014b_float_step. | inline_gradient (default, unchanged): the Priority-Flood fill imposes fill_min_slope during the flood. The barnes2014b options make flow converge across flats (Barnes et al. 2014, doi:10.1016/j.cageo.2013.01.009). barnes2014b_gradient uses fill_min_slope (m/m, must be &gt; 0) as the minimum gradient; flats are raised about 3-4x more, capped below their rims, and capped flats are reported. barnes2014b_float_step is equivalent to RichDEM ResolveFlats on float32 in its first pass: it ignores fill_min_slope and its slopes depend on elevation (of order ULP(z) / cell size). With either barnes2014b option the result is always routable: cells the first pass leaves without a lower neighbour are refilled and resolved again (up to 4 rounds), and any still left are raised by a final priority-flood pass by one float32 step each; the report gives the rounds and the cells changed after the first pass. |
 
 ### Channel network
 
@@ -449,9 +450,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write triple and quadruple divide nodes on selected ridgelines. | The surrounding-basin test is used. |
 | `write_zero_order_triple_divides_on_selected_ridglines` | `bool` | `false` | `switch` | - | Write triple divide join/leave nodes bounding zero-order basins. | Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network. |
+| `write_zero_order_basins_touching_selected_ridgelines` | `bool` | `false` | `switch` | - | Write source-based zero-order basin outlines that touch selected ridgelines. | Uses the same exact ridgeline-grid contact test as zero-order TDJ detection. |
 | `write_topological_distance_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write nodes where either flanking flow topological distance exceeds the threshold. | Results are written with the other selected triple-divide modes in one metadata-compatible layer. |
 | `topological_distance_triple_divide_threshold` | `float` | `0.0` | `param` | - | Flow topological distance threshold for topological triple divides. | A node qualifies when the left OR right distance is greater than this value. |
 | `topological_distance_triple_divide_thresholds` | `string` | - | `param` | - | Comma-separated flow topological distance thresholds in metres. | When supplied, one topological triple-divide CSV and FlatGeobuf is written for each value. An empty value falls back to the singular topological_distance_triple_divide_threshold parameter. |
+| `native_tdj_channel_thresholds` | `string` | - | `param` | - | Comma-separated channel-area thresholds in square metres for native TDJs. | Native TDJs are recalculated on the selected ridgelines for each value. |
 
 ### Paired flow paths
 
@@ -469,6 +472,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_polyfit_rasters` | `bool` | `false` | `switch` | - | Write the six quadratic polynomial fit coefficient rasters. | Computes a, b, c, d, e, f where z = ax^2 + by^2 + cxy + dx + ey + f over a moving window controlled by polyfit_lambda. |
 | `polyfit_lambda_metres` | `float` | `70.0` | `param` | - | Characteristic lengthscale (metres) for the wavelet quadratic fit. | Controls the size of the moving window. Default (70 m) is tuned for Copernicus 30 m data. Reduce for lidar (e.g. 10-30 m). |
+| `polyfit_lambda_metres_list` | `string` | - | `param` | - | Comma-separated polyfit lengthscales in metres. | When supplied, Phase 9 runs each lambda sequentially after the ridgelines are extracted, releasing each polyfit result before the next lambda is calculated. |
 | `polyfit_metrics` | `string` | - | `param` | - | Comma-separated list of derived polyfit metrics to write. | Examples: slope,aspect_degrees,plan_curvature,profile_curvature. Use all to write every supported metric. Available metrics: fitted_surface, dzdx, dzdy, d2zdx2, d2zdxdy, d2zdy2, slope, slope_degrees,aspect_radians, aspect_degrees, laplacian, hessian_determinant, mean_curvature, gaussian_curvature, maximum_curvature, minimum_curvature, curvedness, shape_index, profile_curvature, plan_curvature, tangential_curvature, difference_curvature, horizontal_excess_curvature, vertical_excess_curvature, accumulation_curvature, ring_curvature, rotor. |
 | `polyfit_z_factor` | `float` | `1.0` | `param` | - | Vertical scaling applied before interpreting polyfit derivatives. | Scales first and second derivatives consistently in the polyfit metric engine. |
 | `polyfit_flat_slope_tolerance` | `float` | `1e-12` | `param` | - | Slope tolerance below which direction-dependent polyfit metrics are nodata. | Applies to aspect, plan curvature, tangential curvature, profile curvature, and rotor. |

@@ -1,0 +1,33 @@
+# Generates the DEM shared by the lsdtt-cross-sections and lsdtt-bankfull-width
+# tests: a straight trunk channel down column 74 (row 0 at 100 m, falling
+# 0.01 m/m to the south edge) with two terrace treads either side and a 0.3
+# valley wall beyond them, plus +-0.05 m seeded noise. 150 x 150 cells at 2 m,
+# fixed synthetic georeference (EPSG:32758), so the DEM is byte-reproducible.
+#
+# Neither CLI had a test before 2026-10-07. They are the only CLI route to
+# lsdtt_cross_sections_cpu and lsdtt_manning_hydraulics_cpu, which the
+# src/utils + src/cpu consolidation changes (bilinear sampling, neighbour
+# tables, sqrt(2), Manning, CSV writing), so these runs are its end-to-end gate.
+#
+# tests/data/cross_sections_source.csv is the lat/lon of the centre of
+# pixel (row 10, col 74), on the channel. Changing n_rows, n_cols,
+# cell_size_metres or any terrace_* value moves the channel and invalidates it.
+read_path: __READ_PATH__
+read_fname: unused
+write_path: __WRITE_PATH__
+write_fname: xs
+
+write_output_format: gtiff
+n_rows: 150
+n_cols: 150
+cell_size_metres: 2.0
+random_seed: 41
+
+write_terrace_staircase_surface: true
+write_terrace_staircase_tread_id_raster: false
+terrace_n_terraces: 2
+terrace_tread_width_metres: 40
+terrace_riser_height_metres: 3
+terrace_valley_gradient: 0.01
+terrace_noise_amplitude_metres: 0.05
+terrace_valley_wall_gradient: 0.3

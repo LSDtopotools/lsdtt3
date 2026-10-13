@@ -23,6 +23,8 @@ Routine -> RichDEM mapping:
     accum_d8          rd.FlowAccumulation(method='D8')
     accum_dinf        rd.FlowAccumulation(method='Dinf')  Tarboton 1997
     accum_mfd         rd.FlowAccumulation(method='Freeman', exponent=...)
+    fill_resolve_flats  rd.FillDepressions(epsilon=False), then
+                      rd.ResolveFlats                     Barnes 2014b, float32
 
 Usage:
     python richdem_reference.py --routine fill --in dem.tif --out ref.tif
@@ -39,7 +41,8 @@ import sys
 import time
 
 FLOW_ROUTINES = ("fill", "fill_epsilon", "breach",
-                 "accum_d8", "accum_dinf", "accum_mfd")
+                 "accum_d8", "accum_dinf", "accum_mfd", "route_d8_default",
+                 "fill_resolve_flats")
 
 # Surface metrics -- TIMING ONLY.
 #
@@ -128,6 +131,36 @@ def _call_for(routine: str, dem, mfd_exponent: float):
     if routine == "accum_mfd":
         return lambda: rd.FlowAccumulation(dem, method="Freeman",
                                            exponent=mfd_exponent)
+    if routine == "route_d8_default":
+        # Raw DEM -> D8 accumulation, the way a RichDEM user gets a routed
+        # surface. epsilon=True (Barnes 2014 Priority-Flood+Epsilon) rather
+        # than the epsilon=False default: the default fill (Zhou 2016) leaves
+        # true flats, and FlowAccumulation(D8) gives a flat cell no receiver,
+        # so the surface would not be routed. One timed call covers both steps.
+        return lambda: rd.FlowAccumulation(
+            rd.FillDepressions(dem, epsilon=True, in_place=False),
+            method="D8")
+
+    if routine == "fill_resolve_flats":
+        # Fill to true flats, then Barnes, Lehman and Mulla (2014b) flat
+        # resolution: the reference for lsdtt3's
+        # fill_flat_resolution_choice: barnes2014b_float_step. ResolveFlats
+        # raises each flat cell by `mask` successive nextafter steps IN THE
+        # ARRAY'S OWN DTYPE, so the dtype is part of the answer: a float64
+        # ULP is ~5e8 times smaller than a float32 one, and a float64 run would
+        # differ from lsdtt3 on every flat cell. LoadGDAL returns float32 for
+        # the Float32 fixtures (checked on alpine_small and lakeland_small);
+        # anything else is converted here, before both calls, keeping the
+        # georeferencing so SaveGDAL still writes a usable raster.
+        import numpy as np
+        if dem.dtype != np.float32:
+            dem = rd.rdarray(np.asarray(dem, dtype=np.float32), meta_obj=dem,
+                             no_data=dem.no_data)
+
+        def fill_then_resolve():
+            filled = rd.FillDepressions(dem, epsilon=False, in_place=False)
+            return rd.ResolveFlats(filled, in_place=False)
+        return fill_then_resolve
 
     # -- surface -----------------------------------------------------------
     # Degrees for slope, matching whitebox_reference.py's units="degrees", so

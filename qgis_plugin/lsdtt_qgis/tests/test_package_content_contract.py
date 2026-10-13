@@ -45,7 +45,7 @@ def test_distributable_matches_plugin_source_contract(tmp_path):
         (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
     )
     assert source_metadata["name"] == "lsdtt3"
-    assert source_metadata["version"] == "0.3.0"
+    assert source_metadata["version"] == "0.4.0"
     assert source_metadata["hasProcessingProvider"] == "yes"
 
     subprocess.run(
@@ -59,8 +59,8 @@ def test_distributable_matches_plugin_source_contract(tmp_path):
         capture_output=True,
         text=True,
     )
-    expected_zip = tmp_path / "{}-{}.zip".format(
-        source_metadata["name"], source_metadata["version"]
+    expected_zip = tmp_path / "lsdtt3-qgis-plugin-{}.zip".format(
+        source_metadata["version"]
     )
     assert sorted(tmp_path.glob("*.zip")) == [expected_zip]
 
@@ -98,5 +98,5 @@ def test_distributable_matches_plugin_source_contract(tmp_path):
         manifest = archive.read(
             PLUGIN_DIR.name + "/backend/manifest.py"
         ).decode("utf-8")
-        assert 'MINIMUM_BACKEND_VERSION = "0.5.0"' in manifest
-        assert "canonical threshold_contributing_pixels support" in manifest
+        assert 'MINIMUM_BACKEND_VERSION = "0.6.0"' in manifest
+        assert "normalised parameter names and least-cost breach options" in manifest

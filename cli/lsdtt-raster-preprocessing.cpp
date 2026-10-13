@@ -56,8 +56,10 @@
 //   write_fill_raster: true
 // -----------------------------------------------------------------------------
 
+#include <cmath>
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -76,6 +78,8 @@
 #include "../src/cpu/lsdtt_usgs_elevation.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
+#include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
@@ -586,7 +590,10 @@ int main(int argc, char* argv[])
     bool_default_map["fill_remainder_after_breach"] = true;
     help_map["fill_remainder_after_breach"] = {"bool","true",
         "Fill pits that could not be fully breached.",
-        "Used with breach_before_fill or least-cost breaching.",
+        "Only used when breach_algorithm_choice is least_cost. If cells "
+        "without a downslope neighbour remain after the breach, they are "
+        "filled with fill_min_slope and fill_flat_resolution_choice, as the "
+        "barnes2014 pit fill would, so the breached DEM is routable.",
         "Depression breaching", "param", "breach_before_fill"};
 
     string_default_map["breach_algorithm_choice"] = "lindsay2016";
@@ -596,23 +603,62 @@ int main(int argc, char* argv[])
         "least_cost: Lindsay (2020) pit-centric least-cost breaching.",
         "Depression breaching", "param", "write_breached_raster"};
 
-    int_default_map["breach_lc_max_dist"] = 1000;
-    help_map["breach_lc_max_dist"] = {"int","1000",
-        "Maximum search radius in pixels for least-cost breaching.",
-        "Only used when breach_algorithm_choice is least_cost.",
+    // The declared default is the outlet-mode one; when the file does not
+    // set the key, the whitebox edge policy uses 100 instead (see the
+    // options block below and default_breach_lc_max_dist).
+    int_default_map["breach_lc_max_dist"] = lsdtt::k_breach_lc_default_max_dist_outlet;
+    help_map["breach_lc_max_dist"] = {"int","1000 (outlet) / 100 (whitebox)",
+        "Maximum breach path length in cells for least-cost breaching.",
+        "Counted in steps from the pit (a diagonal step counts as one), not "
+        "as a radius. Pits that need a longer path are left unbreached (and "
+        "filled if fill_remainder_after_breach is true). 1 to 32767. If not "
+        "set, 1000 with breach_lc_edge_policy outlet (long enough to bridge "
+        "large water bodies, so a far-off pit is not carved to the nearest "
+        "raster edge instead) and 100 with whitebox (the WhiteboxTools "
+        "default; longer paths there can carve across divides). Only used "
+        "when breach_algorithm_choice is least_cost.",
         "Depression breaching", "param", "write_breached_raster"};
 
     float_default_map["breach_lc_max_cost"] = std::numeric_limits<float>::max();
     help_map["breach_lc_max_cost"] = {"float","unlimited",
-        "Maximum total elevation lowering allowed for a breach path.",
-        "Only used when breach_algorithm_choice is least_cost. "
-        "Paths that would require more lowering than this are skipped.",
+        "Maximum cost of a least-cost breach path.",
+        "The cost of a path is the depth each cell on it is lowered, summed: "
+        "metres when breach_lc_minimize_dist is false; with "
+        "breach_lc_minimize_dist true each step is weighted by its length in "
+        "cells (1 or 1.414), so the units are metres x cells. A pit whose "
+        "cheapest path costs more is left unbreached. Only used when "
+        "breach_algorithm_choice is least_cost.",
+        "Depression breaching", "param", "write_breached_raster"};
+
+    bool_default_map["breach_lc_minimize_dist"] = false;
+    help_map["breach_lc_minimize_dist"] = {"bool","false",
+        "Weight least-cost breach paths by their length.",
+        "false: a path costs the total depth lowered (m), so the search "
+        "prefers shallow cuts however long. true: each step is weighted by "
+        "its length in cells, favouring shorter paths; breach_lc_max_cost is "
+        "then in metres x cells. Only used when breach_algorithm_choice is "
+        "least_cost.",
+        "Depression breaching", "param", "write_breached_raster"};
+
+    string_default_map["breach_lc_edge_policy"] = "outlet";
+    help_map["breach_lc_edge_policy"] = {"string","outlet",
+        "Whether a least-cost breach may drain off the raster edge.",
+        "outlet: the raster edge is an outlet, like a nodata cell, so a pit "
+        "near the edge can breach straight off the grid. whitebox: the edge "
+        "is not an outlet (as in WhiteboxTools), so a breach must reach an "
+        "edge cell that is already low enough, which can carve deep cuts "
+        "across divides near the edge. Only used when breach_algorithm_choice "
+        "is least_cost.",
         "Depression breaching", "param", "write_breached_raster"};
 
     float_default_map["breach_lc_flat_increment"] = 0.0f;
     help_map["breach_lc_flat_increment"] = {"float","0.0",
-        "Small elevation increment added along flat breach paths.",
-        "Only used when breach_algorithm_choice is least_cost.",
+        "Elevation drop (m) per cell along a least-cost breach channel.",
+        "0 or less selects the automatic value: twice the float32 spacing at "
+        "the largest absolute elevation in the DEM (e.g. 2.4e-4 m for "
+        "elevations of 1024-2047 m), the smallest drop that keeps the channel "
+        "strictly downhill. Only used when breach_algorithm_choice is "
+        "least_cost.",
         "Depression breaching", "param", "write_breached_raster"};
 
     // --- Pit filling ---
@@ -656,9 +702,15 @@ int main(int argc, char* argv[])
     help_map["fill_min_slope"] = {"float","0.0001",
         "Minimum gradient imposed between adjacent filled cells.",
         "Prevents flat regions that cause ambiguous flow direction. "
-        "Increase slightly for very coarse DEMs."
-        "This does not apply to fill-spill-merge.",
+        "Increase slightly for very coarse DEMs. "
+        "This does not apply to fill-spill-merge. Under "
+        "fill_flat_resolution_choice barnes2014b_gradient it is the minimum "
+        "gradient across flats; barnes2014b_float_step ignores it.",
         "Pit filling", "param", "write_fill_raster"};
+
+    // inline_gradient (default) | barnes2014b_gradient | barnes2014b_float_step.
+    // The barnes2014b options apply to the barnes2014 and vincent1993 fills.
+    lsdtt::declare_fill_flat_resolution_parameter(string_default_map, help_map);
 
     float_default_map["fill_spill_merge_rainfall_rate"] = 0.1f;
     help_map["fill_spill_merge_rainfall_rate"] = {"float", "0.1",
@@ -1020,6 +1072,93 @@ int main(int argc, char* argv[])
  
 
     int n_threads = ifs["n_threads"];
+
+    // Flat resolution for pit filling. Checked here, before any raster work,
+    // so a bad value or combination fails without loading anything.
+    // inline_gradient keeps the fill exactly as it was; the barnes2014b
+    // options fill to the spill level and then resolve the flats (Barnes et
+    // al. 2014b), so they only make sense for the barnes2014 and vincent1993
+    // fills.
+    lsdtt::flat_resolution_choice flat_choice =
+        lsdtt::flat_resolution_choice::inline_gradient;
+    try
+    {
+        flat_choice = lsdtt::parse_flat_resolution_choice(
+            sf["fill_flat_resolution_choice"]);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+
+    if ((bf["write_fill_raster"] || bf["write_fill_diff_raster"]) &&
+        flat_choice != lsdtt::flat_resolution_choice::inline_gradient)
+    {
+        if (sf["fill_algorithm_choice"] == "barnesetal2021")
+        {
+            std::cerr << "FATAL: fill_flat_resolution_choice = "
+                      << lsdtt::flat_resolution_choice_name(flat_choice)
+                      << " applies to the barnes2014 and vincent1993 fills, "
+                         "not barnesetal2021\n";
+            return 1;
+        }
+
+        try
+        {
+            lsdtt::check_fill_flat_resolution_min_slope(
+                flat_choice, ff["fill_min_slope"]);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // Least-cost breaching options. Built and validated here, before any
+    // raster work, so a bad value fails with the library's message and a
+    // non-zero exit rather than being caught as a breach failure later.
+    lsdtt::breach_least_cost_options breach_lc_options;
+    const bool run_breach = bf["breach_before_fill"] || bf["write_breached_raster"] ||
+                            bf["write_carve_diff_raster"];
+    if (run_breach && sf["breach_algorithm_choice"] == "least_cost")
+    {
+        try
+        {
+            breach_lc_options.max_cost       =
+                (ff["breach_lc_max_cost"] >= std::numeric_limits<float>::max())
+                    ? std::numeric_limits<double>::infinity()
+                    : static_cast<double>(ff["breach_lc_max_cost"]);
+            breach_lc_options.minimize_dist  = bf["breach_lc_minimize_dist"];
+            breach_lc_options.flat_increment = static_cast<double>(ff["breach_lc_flat_increment"]);
+            breach_lc_options.fill_remainder = bf["fill_remainder_after_breach"];
+            breach_lc_options.fill_min_slope = ff["fill_min_slope"];
+            breach_lc_options.fill_flat_resolution = flat_choice;
+            breach_lc_options.edge_policy    = lsdtt::parse_breach_lc_edge_policy(
+                sf["breach_lc_edge_policy"], "breach_lc_edge_policy");
+            // max_dist defaults by edge policy (1000 outlet, to bridge large
+            // water bodies; 100 whitebox, Whitebox's own) unless the file
+            // sets it. See default_breach_lc_max_dist.
+            const bool max_dist_given = pp.parameter_supplied("breach_lc_max_dist");
+            breach_lc_options.max_dist = max_dist_given
+                ? ifs["breach_lc_max_dist"]
+                : lsdtt::default_breach_lc_max_dist(breach_lc_options.edge_policy);
+            lsdtt::validate_breach_least_cost_options(breach_lc_options);
+            std::cout << "Least-cost breaching: breach_lc_max_dist = "
+                      << breach_lc_options.max_dist
+                      << (max_dist_given ? " (from the parameter file)"
+                                         : " (default for this edge policy)")
+                      << ", breach_lc_edge_policy = "
+                      << lsdtt::breach_lc_edge_policy_name(breach_lc_options.edge_policy)
+                      << "\n";
+        }
+        catch (const std::invalid_argument& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+    }
 
     // Resolve output format
     lsdtt::raster_output_format out_fmt = lsdtt::raster_output_format::cog;
@@ -1766,14 +1905,7 @@ int main(int argc, char* argv[])
                 std::cout << "Algorithm: Lindsay (2020) least-cost "
                              "breaching\n";
                 breached = lsdtt::breach_depressions_least_cost(
-                    working_dem,
-                    ifs["breach_lc_max_dist"],
-                    ff["breach_lc_max_cost"],
-                    true,
-                    ff["breach_lc_flat_increment"],
-                    bf["fill_remainder_after_breach"],
-                    n_threads
-                );
+                    working_dem, breach_lc_options);
             }
             else
             {
@@ -1854,6 +1986,41 @@ int main(int argc, char* argv[])
             throw std::invalid_argument(
                 "priority_flood_queue must be 'binary' or 'radix'");
 
+        // Under a barnes2014b option the fill runs to the spill level by
+        // reconstruction (identical to barnes2014 at min_slope 0) and the
+        // flats are then resolved, so the spill queue is never used and
+        // barnes2014b_float_step has no use for fill_min_slope.
+        const bool barnes2014b_flats =
+            flat_choice != lsdtt::flat_resolution_choice::inline_gradient;
+        if (barnes2014b_flats && algo != "barnesetal2021")
+        {
+            if (queue_name != "binary")
+            {
+                std::cout << "NOTE: priority_flood_queue is ignored by "
+                             "fill_flat_resolution_choice = "
+                          << lsdtt::flat_resolution_choice_name(flat_choice)
+                          << ".\n";
+            }
+            if (flat_choice ==
+                    lsdtt::flat_resolution_choice::barnes2014b_float_step &&
+                ff["fill_min_slope"] != 0.0f)
+            {
+                std::cout << "NOTE: fill_min_slope (" << ff["fill_min_slope"]
+                          << ") is ignored by fill_flat_resolution_choice = "
+                             "barnes2014b_float_step; flats are raised by "
+                             "float32 steps.\n";
+            }
+        }
+
+        // Fill to the spill level, resolve the flats (Barnes et al. 2014b)
+        // and print what the resolver did. Used by barnes2014 and vincent1993
+        // under a barnes2014b option.
+        auto fill_and_resolve_flats = [&]() -> lsdtt::lsdtt_raster_cpu
+        {
+            return lsdtt::fill_pits_reporting_flat_resolution(
+                working_dem, ff["fill_min_slope"], flat_choice, n_threads);
+        };
+
         // Timed so the cost of the fill itself can be separated from process
         // startup, GDAL raster I/O and every other stage this CLI runs. The
         // "Compute time:"/"Write time:" wording matches lsdtt-surface-metrics
@@ -1870,12 +2037,19 @@ int main(int argc, char* argv[])
                 std::cout << "Algorithm: Barnes et al. (2014) "
                              "Priority-Flood\n";
 
-                filled_dem = lsdtt::fill_pits_priority_flood(
-                    working_dem,
-                    ff["fill_min_slope"],
-                    n_threads,
-                    queue_backend
-                );
+                if (barnes2014b_flats)
+                {
+                    filled_dem = fill_and_resolve_flats();
+                }
+                else
+                {
+                    filled_dem = lsdtt::fill_pits_priority_flood(
+                        working_dem,
+                        ff["fill_min_slope"],
+                        n_threads,
+                        queue_backend
+                    );
+                }
             }
             else if (algo == "vincent1993")
             {
@@ -1883,8 +2057,8 @@ int main(int argc, char* argv[])
                 // mechanism for a gradient across flats. Refusing is better
                 // than silently ignoring fill_min_slope and handing back a
                 // surface with undrainable flats that the D8 router will then
-                // reject.
-                if (ff["fill_min_slope"] > 0.0f)
+                // reject. A barnes2014b option supplies that mechanism.
+                if (!barnes2014b_flats && ff["fill_min_slope"] > 0.0f)
                 {
                     std::cerr << "FATAL: fill_algorithm_choice = vincent1993 "
                                  "cannot impose a gradient across flats, but "
@@ -1892,17 +2066,26 @@ int main(int argc, char* argv[])
                               << ff["fill_min_slope"] << ".\n"
                               << "Set fill_min_slope: 0 to use it, or use "
                                  "barnes2014 (the default), which is what "
-                                 "imposes the gradient.\n";
+                                 "imposes the gradient, or set "
+                                 "fill_flat_resolution_choice: "
+                                 "barnes2014b_gradient.\n";
                     return 1;
                 }
 
                 std::cout << "Algorithm: Vincent (1993) grayscale morphological "
                              "reconstruction\n";
 
-                filled_dem = lsdtt::fill_pits_reconstruction(
-                    working_dem,
-                    n_threads
-                );
+                if (barnes2014b_flats)
+                {
+                    filled_dem = fill_and_resolve_flats();
+                }
+                else
+                {
+                    filled_dem = lsdtt::fill_pits_reconstruction(
+                        working_dem,
+                        n_threads
+                    );
+                }
             }
             else if (algo == "barnesetal2021"){
                 std::cout << "Algorithm: Barnes et al. (2021), "

@@ -4778,18 +4778,20 @@
     {
       "name": "breach_least_cost",
       "kind": "function",
-      "doc": "breach_least_cost(raster: lsdtt3.Raster, max_distance: int = 1000, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = True, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0) -> lsdtt3.Raster\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    breach_least_cost(raster: lsdtt3.Raster, max_distance: int = 1000, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = True, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0) -> lsdtt3.Raster\n\nBreach depressions using configurable least-cost paths.\n\nParameters\n----------\nmax_distance : int, default=1000\n    Maximum search distance in cells.\nmax_cost : float, optional\n    Maximum accepted path cost.\nprefer_shortest_path, fill_remainder : bool, optional\n    Control path selection and whether unbreached pits are filled.\nflat_increment : float, optional\n    Elevation decrement used to route across flats.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
+      "doc": "breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster\n\nBreach depressions along least-cost paths (Lindsay 2020).\n\nA port of WhiteboxTools BreachDepressionsLeastCost (whitebox_workflows 2.0.6).\n\nParameters\n----------\nmax_distance : int or None, default=None\n    Maximum breach path length in cells, counted in steps from the pit (a\n    diagonal step counts as one). 1 to 32767. None selects the edge policy's\n    default: 1000 for ``outlet`` (long enough to bridge large water bodies)\n    and 100 for ``whitebox`` (the WhiteboxTools default).\nmax_cost : float, optional\n    A pit whose cheapest path costs more is left unbreached. The cost is the\n    depth each path cell is lowered, summed: metres, or metres x cells when\n    ``prefer_shortest_path`` is true. Default unlimited.\nprefer_shortest_path : bool, default=False\n    Weight each step's cost by its length in cells, favouring shorter paths.\nflat_increment : float, default=0\n    Elevation drop (m) per cell along a breach channel. 0 or less selects twice\n    the float32 spacing at the largest absolute elevation.\nfill_remainder : bool, default=True\n    Fill what the breach leaves (Priority-Flood with ``fill_min_slope``) so\n    every interior cell has a lower neighbour.\nn_threads : int, default=0\n    Ignored; the algorithm is serial.\nedge_policy : {\"outlet\", \"whitebox\"}, default=\"outlet\"\n    ``outlet``: the raster edge is an outlet, like a nodata cell.\n    ``whitebox``: as in WhiteboxTools, a breach must reach an edge cell that\n    is already low enough.\nfill_min_slope : float, default=0.0001\n    Gradient (m/m) imposed by the remainder fill.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
       "members": [],
       "signatures": [
         {
-          "definition": "def breach_least_cost(raster: lsdtt3.Raster, max_distance: int = \\0, max_cost: float = \\1, prefer_shortest_path: bool = \\2, flat_increment: float = \\3, fill_remainder: bool = \\4, n_threads: int = \\5) -> lsdtt3.Raster",
+          "definition": "def breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = \\0, max_cost: float = \\1, prefer_shortest_path: bool = \\2, flat_increment: float = \\3, fill_remainder: bool = \\4, n_threads: int = \\5, edge_policy: str = \\6, fill_min_slope: float = \\7) -> lsdtt3.Raster",
           "defaults": [
-            1000,
+            null,
             3.4028234663852886e+38,
-            true,
+            false,
             0.0,
             true,
-            0
+            0,
+            "outlet",
+            9.999999747378752e-05
           ]
         }
       ]
@@ -6149,18 +6151,20 @@
     {
       "name": "least_cost_carve_depth",
       "kind": "function",
-      "doc": "least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int = 1000, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = True, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0) -> lsdtt3.Raster\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int = 1000, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = True, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0) -> lsdtt3.Raster\n\nReturn the non-negative elevation removed by least-cost breaching.\n\n    Authors\n    -------\n    B. Gailleton\n    ",
+      "doc": "least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster\n\n    Parameters\n    ----------\n    *args\n        Positional arguments described by the generated binding signature.\n    **kwargs\n        Keyword arguments described by the generated binding signature.\n\n    Returns\n    -------\n    object\n        Result described by the generated binding signature.\n\n    Notes\n    -----\n    least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster\n\nReturn the non-negative elevation removed by least-cost breaching (parameters as breach_least_cost).\n\n    Authors\n    -------\n    B. Gailleton\n    ",
       "members": [],
       "signatures": [
         {
-          "definition": "def least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int = \\0, max_cost: float = \\1, prefer_shortest_path: bool = \\2, flat_increment: float = \\3, fill_remainder: bool = \\4, n_threads: int = \\5) -> lsdtt3.Raster",
+          "definition": "def least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = \\0, max_cost: float = \\1, prefer_shortest_path: bool = \\2, flat_increment: float = \\3, fill_remainder: bool = \\4, n_threads: int = \\5, edge_policy: str = \\6, fill_min_slope: float = \\7) -> lsdtt3.Raster",
           "defaults": [
-            1000,
+            null,
             3.4028234663852886e+38,
-            true,
+            false,
             0.0,
             true,
-            0
+            0,
+            "outlet",
+            9.999999747378752e-05
           ]
         }
       ]

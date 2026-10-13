@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_feature_finder_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "lsdtt_raster_algebra.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"
@@ -2100,8 +2101,8 @@ road_flow_result find_road_flow_discrimination(
     //    (largest-drainage donor among the 8 neighbours), then take the bearing
     //    of the segment from the upstream end to the downstream end.
     // -------------------------------------------------------------------------
-    static const int DR[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    static const int DC[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR = grid::d8_rowmajor_row;
+    static constexpr const auto& DC = grid::d8_rowmajor_col;
 
     std::vector<float>   bearing_d(npix, nodata);
     std::vector<uint8_t> bearing_m(npix, 0u);

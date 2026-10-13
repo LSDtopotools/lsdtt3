@@ -1,4 +1,7 @@
 #include "lsdtt_sti_cpu.hpp"
+#include "../utils/lsdtt_output_file.hpp"
+#include "../core/lsdtt_vector_utils.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
 
 #include <algorithm>
@@ -23,15 +26,11 @@
 namespace lsdtt {
 namespace {
 
-struct oct_deleter
-{
-    void operator()(OGRCoordinateTransformation* tx) const
-    {
-        if (tx) OCTDestroyCoordinateTransformation(tx);
-    }
-};
+// Thrown when the vector and raster CRSs are both valid but GDAL cannot build
+// a transform between them.
+const char* const k_crs_transform_failure =
+    "rasterise_polygon_string_field: failed to create CRS transform";
 
-using ct_ptr = std::unique_ptr<OGRCoordinateTransformation, oct_deleter>;
 
 std::string trim_copy(const std::string& s)
 {
@@ -189,68 +188,10 @@ GDALDataset* make_mem_byte_raster(int nrows, int ncols, const double gt[6])
     return ds;
 }
 
-ct_ptr make_ct_if_needed(const OGRSpatialReference* layer_srs, const std::string& raster_wkt)
-{
-    if (!layer_srs || raster_wkt.empty()) return nullptr;
-
-    OGRSpatialReference src_srs(*layer_srs);
-    OGRSpatialReference raster_srs;
-    src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    if (raster_srs.importFromWkt(raster_wkt.c_str()) != OGRERR_NONE) return nullptr;
-    if (src_srs.IsSame(&raster_srs)) return nullptr;
-
-    OGRCoordinateTransformation* ct = OGRCreateCoordinateTransformation(&src_srs, &raster_srs);
-    if (!ct)
-    {
-        throw std::runtime_error("rasterise_polygon_string_field: failed to create CRS transform");
-    }
-    return ct_ptr(ct);
-}
-
 bool is_polygon_type(OGRwkbGeometryType t)
 {
     t = wkbFlatten(t);
     return t == wkbPolygon || t == wkbMultiPolygon || t == wkbGeometryCollection || t == wkbUnknown;
-}
-
-void set_spatial_filter_from_raster_bbox(OGRLayer* layer, const lsdtt_raster_meta& meta)
-{
-    double minx = meta.x_min;
-    double miny = meta.y_min;
-    double maxx = meta.x_max();
-    double maxy = meta.y_max();
-
-    const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
-    if (layer_srs && !meta.crs_wkt.empty())
-    {
-        OGRSpatialReference raster_srs;
-        raster_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-        if (raster_srs.importFromWkt(meta.crs_wkt.c_str()) == OGRERR_NONE)
-        {
-            OGRSpatialReference dst_srs(*layer_srs);
-            dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            if (!raster_srs.IsSame(&dst_srs))
-            {
-                OGRCoordinateTransformation* raw_ct = OGRCreateCoordinateTransformation(&raster_srs, &dst_srs);
-                if (raw_ct)
-                {
-                    ct_ptr ct(raw_ct);
-                    double xs[4] = {meta.x_min, meta.x_max(), meta.x_min, meta.x_max()};
-                    double ys[4] = {meta.y_min, meta.y_min, meta.y_max(), meta.y_max()};
-                    if (ct->Transform(4, xs, ys))
-                    {
-                        minx = *std::min_element(xs, xs + 4);
-                        maxx = *std::max_element(xs, xs + 4);
-                        miny = *std::min_element(ys, ys + 4);
-                        maxy = *std::max_element(ys, ys + 4);
-                    }
-                }
-            }
-        }
-    }
-
-    layer->SetSpatialFilterRect(minx, miny, maxx, maxy);
 }
 
 bool raster_window_from_envelope(const lsdtt_raster_meta& meta, const OGREnvelope& env,
@@ -310,15 +251,6 @@ struct ksat_profile_accum
     double transmissivity_proxy = 0.0;
     double integrated_depth_cm = 0.0;
 };
-
-double median_in_place(std::vector<double>& values)
-{
-    if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
-    std::sort(values.begin(), values.end());
-    const std::size_t n = values.size();
-    if (n % 2 == 1) return values[n / 2];
-    return 0.5 * (values[(n / 2) - 1] + values[n / 2]);
-}
 
 std::unordered_map<std::string, std::size_t> header_index_map(const std::vector<std::string>& headers)
 {
@@ -510,7 +442,7 @@ sti_lnkd_build_result build_sti_lnkd_table_from_csv(
     {
         std::vector<double>& values = kv.second;
         if (values.empty()) continue;
-        result.table.ln_kd_by_key[kv.first] = median_in_place(values);
+        result.table.ln_kd_by_key[kv.first] = compute_median_in_place(values);
         result.table.n_profiles_by_key[kv.first] = static_cast<int>(values.size());
     }
 
@@ -620,7 +552,7 @@ sti_polygon_string_rasterise_result rasterise_polygon_string_field(
         throw std::runtime_error("rasterise_polygon_string_field: layer is not polygon geometry");
     }
 
-    set_spatial_filter_from_raster_bbox(layer, meta);
+    set_layer_spatial_filter_from_raster_bbox(layer, meta);
     OGRFeatureDefn* defn = layer->GetLayerDefn();
     if (!defn)
     {
@@ -634,7 +566,7 @@ sti_polygon_string_rasterise_result rasterise_polygon_string_field(
         throw std::runtime_error("rasterise_polygon_string_field: field '" + field_name + "' not found in layer '" + layer_name + "'");
     }
 
-    auto ct = make_ct_if_needed(layer->GetSpatialRef(), meta.crs_wkt);
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt, k_crs_transform_failure);
 
     std::set<std::string> unique_values;
     layer->ResetReading();
@@ -1026,12 +958,8 @@ void write_sti_lookup_csv(
     const std::vector<sti_lookup_row>& rows,
     const std::string& out_csv_path)
 {
-    std::ofstream ofs(out_csv_path);
-    if (!ofs.is_open())
-    {
-        throw std::runtime_error("write_sti_lookup_csv: could not open CSV for writing: " + out_csv_path);
-    }
-
+    std::ofstream ofs = open_output_file(
+        out_csv_path, "write_sti_lookup_csv: could not open CSV for writing: ");
     ofs << "series_code,land_use,n_profiles,ln_kd_median,spr_prc,spr_term,source\n";
     for (const auto& row : rows)
     {

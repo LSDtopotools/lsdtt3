@@ -20,7 +20,7 @@ install therefore needs **two** things:
 
 | Artefact | Source | Built by | Output |
 |---|---|---|---|
-| **Plugin zip** — pure Python | `qgis_plugin/lsdtt_qgis/` | `python3 qgis_plugin/package_plugin.py` (any platform) | `qgis_plugin/dist/lsdtt3-<plugin version>.zip` |
+| **Plugin zip** — pure Python | `qgis_plugin/lsdtt_qgis/` | `python3 qgis_plugin/package_plugin.py` (any platform) | `qgis_plugin/dist/lsdtt3-qgis-plugin-<plugin version>.zip` |
 | **Backend bundle** — the compiled CLIs plus their libraries and GDAL/PROJ data | `cli/`, `src/` | a per-platform packaging script, **on that platform** | `dist/lsdtt3-backend-<platform>-<profile>-v<backend version>.{zip,tar.gz}` |
 
 In QGIS, the plugin is installed from the zip, and pointed at the unpacked

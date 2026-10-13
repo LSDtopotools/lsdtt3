@@ -8,6 +8,10 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_reference_field_ladder_cpu.hpp"
+#include "lsdtt_raster_surface_fitting_cpu.hpp"
+#include "../utils/lsdtt_random.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -30,17 +34,6 @@ namespace
 // Float32 exact-integer ceiling. Above this a label cannot round-trip through
 // the raster's backing store, so a join keyed on it silently corrupts.
 constexpr std::int64_t k_max_exact_float_label = 16777216;
-
-double median_of_copy(std::vector<double> v)
-{
-    if (v.empty()) return 0.0;
-    const std::size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + mid, v.end());
-    const double upper = v[mid];
-    if (v.size() % 2 != 0) return upper;
-    const double lower = *std::max_element(v.begin(), v.begin() + mid);
-    return 0.5 * (lower + upper);
-}
 
 // -----------------------------------------------------------------------------
 // band_of
@@ -101,7 +94,7 @@ partition_metrics evaluate_partition(
     pm.band_centres.reserve(k);
     for (std::vector<double>& b : bins)
     {
-        pm.band_centres.push_back(median_of_copy(std::move(b)));
+        pm.band_centres.push_back(compute_median_of_copy(std::move(b), 0.0));
     }
     std::sort(pm.band_centres.begin(), pm.band_centres.end());
 
@@ -633,17 +626,10 @@ bootstrap_summary bootstrap_k(
         std::max(2, request.k_bootstrap_max_sample));
     const std::size_t draw = std::min(values.size(), cap);
 
-    std::uint64_t state = seed ? seed : 1u;
-    auto next = [&state]() -> std::uint64_t
-    {
-        // splitmix64: cheap, well-distributed, and fully specified here so the
-        // sequence does not depend on the standard library.
-        state += 0x9E3779B97F4A7C15ull;
-        std::uint64_t z = state;
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        return z ^ (z >> 31);
-    };
+    // splitmix64: cheap, well-distributed, and fully specified (lsdtt_random)
+    // so the sequence does not depend on the standard library.
+    random::splitmix64_stream rng(seed ? seed : 1u);
+    auto next = [&rng]() -> std::uint64_t { return rng.next(); };
 
     std::vector<int> ks;
     ks.reserve(static_cast<std::size_t>(request.k_bootstrap));
@@ -886,10 +872,7 @@ ladder_result build_reference_field_ladder(
     {
         if (sld == nullptr || slopes.empty())
             return request.vertical_accuracy_metres;
-        std::vector<double> s = slopes;
-        const std::size_t mid = s.size() / 2;
-        std::nth_element(s.begin(), s.begin() + static_cast<long>(mid), s.end());
-        const double med = s[mid];
+        const double med = compute_median_of_copy(slopes);
         return (med <= request.vertical_accuracy_break_degrees)
             ? request.vertical_accuracy_gentle_metres
             : request.vertical_accuracy_steep_metres;
@@ -898,10 +881,7 @@ ladder_result build_reference_field_ladder(
     {
         if (sld == nullptr || slopes.empty())
             return std::numeric_limits<double>::quiet_NaN();
-        std::vector<double> s = slopes;
-        const std::size_t mid = s.size() / 2;
-        std::nth_element(s.begin(), s.begin() + static_cast<long>(mid), s.end());
-        return s[mid];
+        return compute_median_of_copy(slopes);
     };
     auto gap_from_ev = [&](double ev) -> double
     {
@@ -1411,10 +1391,10 @@ banded_label_result label_components_within_bands(
     banded_label_result out;
 
     const int  n_off = (connectivity == pixel_connectivity::d8) ? 8 : 4;
-    const int  dr8[8] = {-1, -1, -1,  0, 0,  1, 1, 1};
-    const int  dc8[8] = {-1,  0,  1, -1, 1, -1, 0, 1};
-    const int  dr4[4] = {-1,  0,  0,  1};
-    const int  dc4[4] = { 0, -1,  1,  0};
+    static constexpr const auto& dr8 = grid::d8_rowmajor_row;
+    static constexpr const auto& dc8 = grid::d8_rowmajor_col;
+    static constexpr const auto& dr4 = grid::d4_nwes_row;
+    static constexpr const auto& dc4 = grid::d4_nwes_col;
     const int* dr = (connectivity == pixel_connectivity::d8) ? dr8 : dr4;
     const int* dc = (connectivity == pixel_connectivity::d8) ? dc8 : dc4;
 
@@ -1489,50 +1469,33 @@ banded_label_result label_components_within_bands(
             rec.area_m2  = static_cast<double>(members.size()) * cell_area;
 
             std::vector<double> vals;
+            std::vector<double> xs, ys;
             vals.reserve(members.size());
-            double sx = 0.0, sy = 0.0, sz = 0.0;
+            xs.reserve(members.size());
+            ys.reserve(members.size());
             for (const std::size_t m : members)
             {
                 if (!std::isfinite(fv[m])) continue;
                 const int r = static_cast<int>(m / static_cast<std::size_t>(n_cols));
                 const int c = static_cast<int>(m % static_cast<std::size_t>(n_cols));
-                const double x = static_cast<double>(c) * meta.cell_size;
-                const double y = -static_cast<double>(r) * meta.cell_size;
-                const double z = static_cast<double>(fv[m]);
-                vals.push_back(z);
-                sx += x;
-                sy += y;
-                sz += z;
+                xs.push_back(static_cast<double>(c) * meta.cell_size);
+                ys.push_back(-static_cast<double>(r) * meta.cell_size);
+                vals.push_back(static_cast<double>(fv[m]));
             }
-            rec.median_field = median_of_copy(vals);
+            rec.median_field = compute_median_of_copy(vals, 0.0);
 
+            // Patch tilt from the shared least-squares plane (decision D7,
+            // 2026-10-08): it uses a relative degeneracy test,
+            // |det| < 1e-10 * max(Sxx * Syy, 1), where this code had its own
+            // fit with an absolute |det| > 1e-12.
             if (vals.size() >= 3)
             {
-                const double inv_n = 1.0 / static_cast<double>(vals.size());
-                const double mx = sx * inv_n;
-                const double my = sy * inv_n;
-                const double mz = sz * inv_n;
-                double sxx = 0.0, sxy = 0.0, syy = 0.0;
-                double sxz = 0.0, syz = 0.0;
-                for (const std::size_t m : members)
+                const lsdtt_plane_fit_result plane =
+                    fit_plane_least_squares(xs, ys, vals);
+                if (plane.valid)
                 {
-                    if (!std::isfinite(fv[m])) continue;
-                    const int r = static_cast<int>(m / static_cast<std::size_t>(n_cols));
-                    const int c = static_cast<int>(m % static_cast<std::size_t>(n_cols));
-                    const double x = static_cast<double>(c) * meta.cell_size - mx;
-                    const double y = -static_cast<double>(r) * meta.cell_size - my;
-                    const double z = static_cast<double>(fv[m]) - mz;
-                    sxx += x * x;
-                    sxy += x * y;
-                    syy += y * y;
-                    sxz += x * z;
-                    syz += y * z;
-                }
-                const double det = sxx * syy - sxy * sxy;
-                if (std::abs(det) > 1e-12)
-                {
-                    const double a = (sxz * syy - syz * sxy) / det;
-                    const double b = (syz * sxx - sxz * sxy) / det;
+                    const double a = plane.coeffs.a;
+                    const double b = plane.coeffs.b;
                     if (std::hypot(a, b) > 1e-12)
                     {
                         constexpr double rad_to_deg =

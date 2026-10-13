@@ -1,0 +1,17 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: valleygr
+
+# Valley with one flat floor (see fill_flat_resolution_valley_float_step).
+# barnes2014b_gradient with fill_min_slope 1e-4 uses the quantised unit
+# u_q = 186 x 2^-17 m, so the largest fill difference is 48 u_q = 0.0681 m
+# against 0.0255 m for the default fill.
+
+enforce_projection: false
+write_output_format: gtiff
+
+write_fill_raster: true
+write_fill_diff_raster: true
+fill_flat_resolution_choice: barnes2014b_gradient
+fill_min_slope: 0.0001

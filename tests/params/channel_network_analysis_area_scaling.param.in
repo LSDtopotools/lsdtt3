@@ -1,0 +1,20 @@
+# Smoke test for the drainage-area exceedance scaling (P(A > a) ~ a^-beta) and
+# the Tokunaga summary of lsdtt-channel-network-analysis, on the stream-burning
+# fixture DEM (200 x 200 cells at 30 m, so drainage area spans ~4.6 decades;
+# the 5 x 5 tiny DEM is far too small for a fit over 1.5 decades).
+#
+# No test ran the area scaling before 2026-10-07. It is where the private
+# ols_fit was replaced by compute_linear_regression (consolidation C12, D7).
+# Reports: beta (MLE) 0.619517 +/- 0.0200703; beta (least squares) 0.588331,
+# r^2 0.997159; fitted range 48600 to 1.764e+06 m^2.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: cnas
+
+n_threads: 1
+threshold_contributing_pixels: 50
+calculate_spatial_index: false
+
+write_area_scaling_summary: true
+write_tokunaga_summary_data: true

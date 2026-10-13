@@ -9,6 +9,7 @@
 // See lsdtt_usgs_elevation.hpp for why this exists and why it is US-only.
 
 #include "lsdtt_usgs_elevation.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -76,14 +77,6 @@ bool parse_epqs_value(const char* body, double& out)
         return true;
     }
     catch (const std::exception&) { return false; }
-}
-
-double median_of(std::vector<double> v)
-{
-    if (v.empty()) return 0.0;
-    const std::size_t k = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + k, v.end());
-    return v[k];
 }
 
 } // namespace
@@ -256,9 +249,9 @@ usgs_unit_check check_vertical_units_against_usgs(const lsdtt_raster_cpu& dem,
         return out;
     }
 
-    out.median_ratio           = median_of(ratios);
-    out.median_abs_err_as_metres = median_of(err_m);
-    out.median_abs_err_as_feet   = median_of(err_ft);
+    out.median_ratio           = compute_median_of_copy(ratios, 0.0);
+    out.median_abs_err_as_metres = compute_median_of_copy(err_m, 0.0);
+    out.median_abs_err_as_feet   = compute_median_of_copy(err_ft, 0.0);
 
     const double feet_ratio = 1.0 / kMetresPerFoot;   // 3.28084
     std::ostringstream msg;

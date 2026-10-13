@@ -11,6 +11,8 @@
 // =============================================================================
 
 #include "lsdtt_lem_timestep_cpu.hpp"
+#include "lsdtt_raster_central_difference_cpu.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -39,18 +41,13 @@ double median_interior_gradient(const lsdtt_raster_cpu& dem)
         for (int c = 1; c < ncols - 1; ++c)
         {
             const std::size_t f = static_cast<std::size_t>(r) * ncols + c;
-            const std::size_t fn = f - ncols, fs = f + ncols, fw = f - 1, fe = f + 1;
-            if (!mask[f] || !mask[fn] || !mask[fs] || !mask[fw] || !mask[fe]) continue;
-            const double gx = (static_cast<double>(z[fe]) - static_cast<double>(z[fw]))
-                            / (2.0 * dx);
-            const double gy = (static_cast<double>(z[fs]) - static_cast<double>(z[fn]))
-                            / (2.0 * dx);
-            g.push_back(std::sqrt(gx * gx + gy * gy));
+            if (!mask[f]) continue;
+            double gx = 0.0, gy = 0.0;
+            if (!cardinal_central_gradient(z, mask, ncols, f, dx, gx, gy)) continue;
+            g.push_back(gradient_magnitude(gx, gy));
         }
 
-    if (g.empty()) return 0.0;
-    std::nth_element(g.begin(), g.begin() + g.size() / 2, g.end());
-    return g[g.size() / 2];
+    return compute_median_in_place(g, 0.0);
 }
 
 

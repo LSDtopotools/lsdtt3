@@ -1,0 +1,20 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_pit_dem.asc
+write_path: __WRITE_PATH__
+write_fname: chivp
+
+# raster_is_filled: true on an input that is NOT filled: flat_valley_dem.asc
+# with one floor cell (row 5, col 12) lowered to 99.5, a one-cell pit. The
+# resolve-only path finds a flat with no outlet and refuses, pointing at
+# raster_is_filled.
+
+raster_is_filled: true
+fill_flat_resolution_choice: barnes2014b_float_step
+threshold_contributing_pixels: 1
+min_channel_pixels: 1
+n_largest_basins: 0
+
+mn_min: 0.5
+mn_max: 0.5
+mn_step: 0.1
+run_inversion: false

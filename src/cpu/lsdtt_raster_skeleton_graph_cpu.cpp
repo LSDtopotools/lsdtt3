@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 
 #include "../utils/lsdtt_linear_algebra.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
@@ -784,10 +785,10 @@ lsdtt_raster_cpu thin_distance_guided(
     // This is not an exact continuous EDT, but it is a robust centre-support
     // field that is adequate for guiding thinning.
     // -------------------------------------------------------------------------
-    constexpr int DR8[8] = {-1,-1, 0, 1, 1, 1, 0,-1};
-    constexpr int DC8[8] = { 0, 1, 1, 1, 0,-1,-1,-1};
+    static constexpr const auto& DR8 = grid::d8_clockwise_row;
+    static constexpr const auto& DC8 = grid::d8_clockwise_col;
 
-    const double sqrt2 = std::sqrt(2.0);
+    const double sqrt2 = grid::k_sqrt2_d;
     const double step_cost[8] =
         {1.0, sqrt2, 1.0, sqrt2, 1.0, sqrt2, 1.0, sqrt2};
 
@@ -1303,8 +1304,8 @@ lsdtt_raster_cpu prune_skeleton_spurs(
 
 
 
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     // -------------------------------------------------------------------------
     // Iterative pruning.
@@ -2105,8 +2106,8 @@ extract_skeleton_segments(
     };
 
 
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     // -------------------------------------------------------------------------
     // Compute 8-neighbour foreground degree.
@@ -3574,8 +3575,8 @@ route_skeleton_endpoint_bridges_least_cost(
         return static_cast<int>(idx % static_cast<std::size_t>(ncols));
     };
 
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     struct open_node
     {
@@ -3761,7 +3762,7 @@ route_skeleton_endpoint_bridges_least_cost(
                 const double step_len =
                     (DR8[d] == 0 || DC8[d] == 0)
                         ? 1.0
-                        : std::sqrt(2.0);
+                        : grid::k_sqrt2_d;
 
                 const double tentative_g =
                     gscore[cur.idx] +

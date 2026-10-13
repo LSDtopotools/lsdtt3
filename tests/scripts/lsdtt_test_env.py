@@ -62,10 +62,11 @@ NONINTERACTIVE_ENV = "LSDTT_NONINTERACTIVE"
 GDAL_LIBRARY_ENV = "LSDTT_TEST_GDAL_LIBRARY"
 
 # What an activated Pixi/conda environment sets that a binary built against a
-# DIFFERENT GDAL must not see.
+# DIFFERENT GDAL must not see. PROJ_NETWORK=ON (set by pixi) would let the
+# system PROJ fetch transformation grids over the network mid-test.
 ENVIRONMENT_LIBRARY_VARS = (
     "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GDAL_DATA", "GDAL_DRIVER_PATH",
-    "PROJ_DATA", "PROJ_LIB", "CONDA_PREFIX",
+    "PROJ_DATA", "PROJ_LIB", "PROJ_NETWORK", "CONDA_PREFIX",
 )
 
 

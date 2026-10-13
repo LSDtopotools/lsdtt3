@@ -134,7 +134,9 @@ lsdtt3/
 │   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp         — hillshade, moving window, polyfit metrics, surface-shape (SMAP) classification
 │   │   ├── lsdtt_surface_texture_cpu.hpp/.cpp                — MADk2, moving_window_iqr, NVD roughness metrics
 │   │   ├── lsdtt_raster_surface_fitting_cpu.hpp/.cpp         — plane and polynomial surface fitting to masks
-│   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp      — fill, breach, nodata
+│   │   ├── lsdtt_raster_flow_preprocessing_cpu.hpp/.cpp      — fill (Priority-Flood, reconstruction), Lindsay 2016 breach, nodata
+│   │   ├── lsdtt_raster_breach_least_cost_cpu.hpp/.cpp       — least-cost breaching (Lindsay 2020; bitwise port of Whitebox 2.0.6)
+│   │   ├── lsdtt_raster_flat_resolution_cpu.hpp/.cpp         — Barnes 2014b flat resolution (mask, rounds, final pass)
 │   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp          — interior void filling
 │   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp                — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
 │   │   ├── lsdtt_raster_image_ops_cpu.hpp/.cpp               — Otsu, adaptive threshold, Canny, probabilistic Hough (native; replaced OpenCV)
@@ -288,7 +290,7 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Surface metrics and texture*: `lsdtt_raster_surface_metrics_cpu`, `lsdtt_raster_surface_fitting_cpu`, `lsdtt_surface_texture_cpu`, `lsdtt_raster_spectral_cpu`, `lsdtt_critical_slope_cpu`, `lsdtt_slope_break_finder_cpu`
 
 
-*Flow routing and preprocessing*: `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
+*Flow routing and preprocessing*: `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_raster_breach_least_cost_cpu`, `lsdtt_raster_flat_resolution_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
 
 
 *Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`
@@ -878,6 +880,10 @@ Current CLI programs are:
   DEM-extracted network as lines and optionally as points and junctions. The two networks
   (vector-supplied vs DEM-extracted) are intended for subsequent comparison to decide
   where to burn the vector channel directly into the DEM vs follow DEM routing.
+  With `carve_before_fill: true` it conditions the DEM by breaching first
+  (`breach_algorithm_choice`: `lindsay2016` or `least_cost`; least-cost uses
+  `breach_max_dist_pixels` (1000), `breach_max_cost`, `breach_minimize_dist`
+  (false) and `breach_edge_policy` (outlet), validated before the DEM is read).
 
 - **`lsdtt-cosmo-tool.cpp`**  
   Cosmogenic nuclide erosion-rate inversion. Loads measured nuclide concentrations at
@@ -1925,11 +1931,64 @@ For spectral (long-wavelength) surface fitting see `lsdtt_raster_spectral_cpu`.
 
 **`lsdtt_raster_flow_preprocessing_cpu`:**
 - `mask_to_nodata_using_threshold(raster, threshold, is_below_nodata)`
-- `fill_pits(raster, min_slope=0.0001f, n_threads=0)` — Barnes et al. 2014
+- `fill_pits(raster, min_slope=0.0001f, [boundary_conditions,]
+  [flat_resolution,] n_threads=0, queue_backend=binary_heap)` — dispatches on
+  `min_slope`: > 0 → Priority-Flood with the gradient imposed inline (Barnes
+  et al. 2014); <= 0 → grayscale reconstruction (Vincent 1993), same fill
+  levels, faster. The `flat_resolution_choice` overloads run the Barnes 2014b
+  resolver after a flat fill.
+- `fill_pits_with_flat_resolution(...)` → `flat_resolution_result` — the same,
+  returning the resolver's report (rounds, cells raised, final-pass counts).
+- `fill_pits_priority_flood(raster, min_slope, n_threads, queue_backend)` and
+  `fill_pits_reconstruction(raster, ...)` — the two backends, called directly.
+- `priority_flood_queue_backend` enum: `binary_heap` (default), `radix_hybrid`.
+  Same fill levels; at `min_slope > 0` the imposed gradients on flats can
+  differ, because ties are broken in a different order.
 - `fill_pits_with_boundary(...)` — serial only
-- `breach_depressions(raster, n_threads=0)` — Lindsay 2016
-- `breach_depressions_least_cost(raster, max_dist=1000, max_cost=max_float,
-  min_dist=true, flat_increment=0, fill_remainder=true, n_threads=0)` — Lindsay 2020
+- `breach_depressions(raster, n_threads=0)` — Lindsay 2016 complete breaching
+
+**`lsdtt_raster_breach_least_cost_cpu`** (Lindsay 2020 least-cost breaching):
+- `breach_depressions_least_cost(raster, const breach_least_cost_options&,
+  breach_least_cost_diagnostics* = nullptr)` — the form every caller uses.
+- `breach_least_cost_options`: `max_dist` (path length in cells; default
+  1000), `max_cost` (inf), `minimize_dist` (false), `flat_increment` (<= 0 →
+  auto, 2 × ULP_f32(max(|z|max, 1))), `fill_remainder` (true),
+  `fill_min_slope` (1e-4), `fill_flat_resolution` (`inline_gradient`),
+  `edge_policy` (`outlet`).
+- `breach_lc_edge_policy` enum: `outlet` (an off-grid neighbour ends the search
+  like a nodata neighbour; the user default) and `whitebox` (off-grid
+  neighbours skipped; the bitwise oracle mode). `default_breach_lc_max_dist()`
+  gives 1000 for `outlet` and 100 for `whitebox`; callers resolve an unset
+  max_dist through it, so an explicit value always wins.
+- `parse_breach_lc_edge_policy` / `breach_lc_edge_policy_name`,
+  `validate_breach_least_cost_options` (throws `std::invalid_argument` naming
+  the parameter; the CLIs call it before reading any raster).
+- `breach_least_cost_diagnostics`: pits detected / searched / skipped / solved
+  / unsolved, cells without descent before the remainder fill, the increment
+  used.
+- A legacy positional overload remains (`max_dist=1000, max_cost, min_dist=false,
+  flat_increment=0, fill_remainder=true, n_threads`), forwarding to the options
+  form; no CLI or binding uses it.
+- Numerics: a float64 working copy, rounded once to float32; the search heap
+  is a hand port of Rust's `BinaryHeap`, so ties pop in Whitebox's order; the
+  TU is compiled with `-ffp-contract=off` (see `CMakeLists.txt`). With
+  `edge_policy = whitebox`, an explicit increment and `fill_remainder = false`
+  the output is float32(Whitebox 2.0.6's output), bit for bit. Serial.
+- Exposed in Python as `breach_least_cost` and `least_cost_carve_depth`
+  (`max_distance=None` → the edge-policy default, `prefer_shortest_path=False`,
+  `edge_policy="outlet"`, `fill_min_slope=1e-4`).
+
+**`lsdtt_raster_flat_resolution_cpu`** (Barnes et al. 2014b):
+- `flat_resolution_choice` enum: `inline_gradient` (default; no separate
+  pass), `barnes2014b_gradient`, `barnes2014b_float_step`;
+  `parse_flat_resolution_choice` / `flat_resolution_choice_name`.
+- `compute_barnes2014b_flat_mask(filled, ...)` — the towards-low /
+  away-from-high mask.
+- `resolve_flats_barnes2014b(filled, flat_resolution_options)` →
+  `flat_resolution_result` — up to four refill-and-resolve rounds and a final
+  strict-rise Priority-Flood pass; never lowers a cell; output independent of
+  thread count.
+- Algorithm and guarantees: `docs/design_and_algorithms/flow_routing.md`.
 
 **`lsdtt_raster_nodata_filling_cpu`:**
 - `identify_interior_nodata(raster)` → `lsdtt_array2d<uint8_t>`
@@ -2057,8 +2116,12 @@ File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_version`: 1.0.0
 2. **Threshold masking** — remove pixels outside elevation range
 3. **Interior nodata filling** — fill enclosed voids
 4. **Clip to rectangle** — largest valid rectangle
-5. **Depression breaching** — Lindsay 2016 or Lindsay 2020 least-cost
-6. **Pit filling** — Barnes 2014 Priority-Flood
+5. **Depression breaching** — Lindsay 2016 complete breaching (default) or
+   Lindsay 2020 least-cost (`breach_algorithm_choice: least_cost`, with its own
+   remainder fill)
+6. **Pit filling** — Barnes 2014 Priority-Flood (default), Vincent 1993
+   reconstruction, or Fill-Spill-Merge; flats by the inline gradient or Barnes
+   2014b (`fill_flat_resolution_choice`)
 7. **Hillshade** — Zevenbergen & Thorne 1987
 
 Steps 2–7 always operate on the (possibly reprojected) raster. If reprojection
@@ -2086,12 +2149,16 @@ write_hillshade_raster, write_fill_raster, write_fill_diff_raster
 write_breached_raster, write_carve_diff_raster
 write_filled_nodata_raster, write_clipped_rectangle_raster
 breach_before_fill, fill_remainder_after_breach
-fill_algorithm_choice: barnes2014 / barnesetal2021
+fill_algorithm_choice: barnes2014 / vincent1993 / barnesetal2021
+priority_flood_queue: binary / radix
+fill_flat_resolution_choice: inline_gradient / barnes2014b_gradient / barnes2014b_float_step
 breach_algorithm_choice: lindsay2016 / least_cost
 nodata_fill_method_choice: laplacian / iterative_weighted_average
 hillshade_azimuth, hillshade_altitude, hillshade_z_factor
 fill_min_slope, min_elevation, maximum_elevation
-breach_lc_max_dist, breach_lc_max_cost, breach_lc_flat_increment
+breach_lc_max_dist (default 1000 outlet / 100 whitebox), breach_lc_max_cost,
+breach_lc_minimize_dist (false), breach_lc_edge_policy (outlet / whitebox),
+breach_lc_flat_increment (0 = auto)
 n_threads, nodata_fill_max_iter
 ```
 
@@ -2116,17 +2183,22 @@ File: `cli/lsdtt-drainage-analysis.cpp`
 Computes drainage-related rasters. Uses `make_flow_base()` for D8 or
 `lsdtt_flowgraph_cpu` for D-infinity / MFD.
 
+On a raw DEM (`raster_is_filled: false`) it runs `fill_pits` first and prints a
+`Compute time:` line for the fill, the D8 build and each accumulation; this is
+the default route from a raw DEM to a routed DEM described in
+`docs/design_and_algorithms/flow_routing.md`.
+
 **Key parameters:**
 ```
 read_fname, write_fname, read_path, write_path
-flow_algorithm_choice: d8 / d_infinity / mfd   (default: d8)
 mfd_exponent: 1.0
 boundary_conditions: oooo
-fill_before_routing, fill_algorithm_choice, breach_algorithm_choice
-fill_min_slope, min_elevation, maximum_elevation
-write_n_contributing_pixels_raster, write_flow_direction_raster
-write_twi_raster
-write_fill_raster, write_breached_raster
+raster_is_filled (false: fill_pits on the raw DEM first)
+fill_min_slope: 0.0001, fill_flat_resolution_choice: inline_gradient
+build_flow_s_vector: true
+write_d8_drainage_area_raster, write_dinf_drainage_area_raster,
+write_mfd_drainage_area_raster, write_twi_raster, write_sti_raster,
+write_connectivity_raster, write_height_above_channel_raster
 write_output_format: cog
 n_threads: 0
 ```

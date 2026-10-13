@@ -1,0 +1,26 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: bevf
+
+# raster_is_filled: true with a barnes2014b option (C7) in the basin-extraction
+# family. The valley is already depression-filled with a true flat floor, so
+# routing it as it is fails (see
+# failure_basin_extraction_flat_resolution_filled_inline). With
+# barnes2014b_float_step the input is not filled again but its flat is
+# resolved, so routing succeeds.
+
+raster_is_filled: true
+fill_flat_resolution_choice: barnes2014b_float_step
+threshold_contributing_pixels: 1
+select_all_basins: true
+
+write_basin_outlines: true
+write_basin_outlines_as_polygon: false
+basin_outlines_write_vector_format: flatgeobuf
+write_basin_outlet_points: false
+write_channel_network_lines: false
+write_channel_network_points: false
+write_channel_network_junctions: false
+write_basins_raster: false
+calculate_spatial_index: false

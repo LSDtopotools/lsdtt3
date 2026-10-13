@@ -286,7 +286,13 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `source_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square search radius for source snapping. | - |
 | `outlet_snap_max_distance_metres` | `float` | `0` | `param` | - | Maximum distance between a raw outlet point and its traced-path node. | 0 = unlimited. |
 | `boundary_conditions` | `string` | `oooo` | `param` | - | Flow boundary conditions (N,E,S,W). | - |
-| `fill_min_slope_for_routing` | `float` | `0.0001` | `param` | - | Minimum slope used when pit-filling the DEM for flow routing. | - |
+| `fill_min_slope_for_routing` | `float` | `0.0001` | `param` | - | Minimum slope (m/m) used when pit-filling the DEM for flow routing. | inline_gradient (default): imposed during the Priority-Flood fill. barnes2014b_gradient: the minimum gradient across flats. barnes2014b_float_step: ignored. Separate from trough_fill_min_slope. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_flat_resolution_choice` | `string` | `inline_gradient` | `param` | - | How flats are made drainable: inline_gradient, barnes2014b_gradient or barnes2014b_float_step. | inline_gradient (default, unchanged): the Priority-Flood fill imposes fill_min_slope_for_routing during the flood. The barnes2014b options make flow converge across flats (Barnes et al. 2014, doi:10.1016/j.cageo.2013.01.009). barnes2014b_gradient uses fill_min_slope_for_routing (m/m, must be &gt; 0) as the minimum gradient; flats are raised about 3-4x more, capped below their rims, and capped flats are reported. barnes2014b_float_step is equivalent to RichDEM ResolveFlats on float32 in its first pass: it ignores fill_min_slope_for_routing and its slopes depend on elevation (of order ULP(z) / cell size). With either barnes2014b option the result is always routable: cells the first pass leaves without a lower neighbour are refilled and resolved again (up to 4 rounds), and any still left are raised by a final priority-flood pass by one float32 step each; the report gives the rounds and the cells changed after the first pass. |
 
 ### Valley mask
 

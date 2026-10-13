@@ -13,7 +13,7 @@
 //  * Pit filling using the Improved Priority-Flood algorithm of
 //    Barnes et al. (2014)
 //  * Depression breaching following the Lindsay-style backlink traversal
-//  * Serial least-cost breaching
+//  * Least-cost breaching lives in lsdtt_raster_breach_least_cost_cpu.cpp
 //
 // Notes:
 //  * Public preprocessing functions in this file are intentionally serial-only.
@@ -21,6 +21,9 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../utils/lsdtt_boundary_conditions.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "lsdtt_raster_binary_mask_cpu.hpp"
 #include "lsdtt_raster_binary_mask_vectorise_cpu.hpp"
 #include "lsdtt_raster_algebra.hpp"
@@ -248,9 +251,9 @@ static constexpr int k_closed  =  2;
 static constexpr int k_nodata  = -1;
 
 // 8-neighbour offsets - even = cardinal, odd = diagonal
-static const int k_dr[8] = { -1, -1,  0,  1,  1,  1,  0, -1 };
-static const int k_dc[8] = {  0,  1,  1,  1,  0, -1, -1, -1 };
-static constexpr float k_sqrt2 = 1.41421356f;
+static constexpr const auto& k_dr = grid::d8_clockwise_row;
+static constexpr const auto& k_dc = grid::d8_clockwise_col;
+static constexpr float k_sqrt2 = grid::k_sqrt2_f;
 
 // Sentinel value for backlink array - cell has no parent in the traversal
 static constexpr uint32_t k_no_backlink = std::numeric_limits<uint32_t>::max();
@@ -330,12 +333,12 @@ static lsdtt_array2d<uint8_t> make_owned_mask_copy(
 // Builds the DEM copy, the validity mask and the fill index in ONE pass.
 //
 // The three are otherwise produced by three separate sweeps over the same
-// index range (make_owned_dem_copy, make_owned_mask_copy, build_fill_index),
+// index range (make_owned_dem_copy, make_owned_mask_copy, a fill-index pass),
 // each re-reading the source arrays and each repeating the same
 // mask/nodata test. Fusing them cuts setup memory traffic roughly threefold
 // and evaluates the validity predicate once instead of three times.
 //
-// The individual helpers are kept: several callers need only one of the three.
+// The individual DEM and mask helpers are kept: several callers need only one.
 // -----------------------------------------------------------------------------
 struct fill_inputs
 {
@@ -386,28 +389,6 @@ static fill_inputs make_fill_inputs(const lsdtt_raster_cpu& raster)
     }
 
     return out;
-}
-
-// -----------------------------------------------------------------------------
-// build_fill_index
-// -----------------------------------------------------------------------------
-
-static lsdtt_array2d<int> build_fill_index(
-    const lsdtt_array2d<uint8_t>& mask,
-    int nrows, int ncols)
-{
-    lsdtt_array2d<int> idx(nrows, ncols, k_nodata);
-    for (int r = 0; r < nrows; ++r)
-    {
-        for (int c = 0; c < ncols; ++c)
-        {
-            if (mask(r, c) != 0)
-            {
-                idx(r, c) = k_open;
-            }
-        }
-    }
-    return idx;
 }
 
 // -----------------------------------------------------------------------------
@@ -788,6 +769,111 @@ lsdtt_raster_cpu fill_pits(
 }
 
 // -----------------------------------------------------------------------------
+// fill_pits / fill_pits_with_flat_resolution (flat-resolution overloads)
+// -----------------------------------------------------------------------------
+
+// The barnes2014b path: true flats from the reconstruction, then the Barnes
+// mask. The queue backend has no meaning here.
+static flat_resolution_result fill_then_resolve_barnes2014b(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads)
+{
+    flat_resolution_options options;
+    options.method                     = flat_resolution;
+    options.min_slope                  = min_slope;  // gradient option only
+    options.float_step_near_zero_guard = true;
+    options.n_threads                  = n_threads;
+    return resolve_flats_barnes2014b(fill_pits_reconstruction(raster, n_threads),
+                                     options);
+}
+
+// Refuses a periodic edge under a barnes2014b option. Only 'p' changes the
+// fill's exit rule (see the header), so every other string is accepted.
+static void check_barnes2014b_boundary_conditions(
+    const std::string&     boundary_conditions,
+    flat_resolution_choice flat_resolution)
+{
+    const std::string& bc = boundary_conditions;
+    for (std::size_t i = 0; i < 4 && i < bc.size(); ++i)
+    {
+        if (bc[i] == 'p' || bc[i] == 'P')
+            throw std::invalid_argument(
+                std::string("lsdtt::fill_pits: fill_flat_resolution_choice '") +
+                flat_resolution_choice_name(flat_resolution) +
+                "' does not support periodic boundary_conditions ('" + bc +
+                "'); use inline_gradient");
+    }
+}
+
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+    {
+        flat_resolution_result out;
+        out.resolved = fill_pits(raster, min_slope, n_threads, queue_backend);
+        return out;
+    }
+    return fill_then_resolve_barnes2014b(raster, min_slope, flat_resolution, n_threads);
+}
+
+flat_resolution_result fill_pits_with_flat_resolution(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+    {
+        flat_resolution_result out;
+        out.resolved = fill_pits(raster, min_slope, boundary_conditions, n_threads,
+                                 queue_backend);
+        return out;
+    }
+    check_barnes2014b_boundary_conditions(boundary_conditions, flat_resolution);
+    return fill_then_resolve_barnes2014b(raster, min_slope, flat_resolution, n_threads);
+}
+
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+        return fill_pits(raster, min_slope, n_threads, queue_backend);
+    // A member of a prvalue is an xvalue, so this moves.
+    return fill_then_resolve_barnes2014b(
+        raster, min_slope, flat_resolution, n_threads).resolved;
+}
+
+lsdtt_raster_cpu fill_pits(
+    const lsdtt_raster_cpu& raster,
+    float                   min_slope,
+    const std::string&      boundary_conditions,
+    flat_resolution_choice  flat_resolution,
+    int                     n_threads,
+    priority_flood_queue_backend queue_backend)
+{
+    if (flat_resolution == flat_resolution_choice::inline_gradient)
+        return fill_pits(raster, min_slope, boundary_conditions, n_threads,
+                         queue_backend);
+    check_barnes2014b_boundary_conditions(boundary_conditions, flat_resolution);
+    // A member of a prvalue is an xvalue, so this moves.
+    return fill_then_resolve_barnes2014b(
+        raster, min_slope, flat_resolution, n_threads).resolved;
+}
+
+// -----------------------------------------------------------------------------
 // fill_pits_priority_flood
 // -----------------------------------------------------------------------------
 
@@ -925,27 +1011,19 @@ hydraulic_surface_fill_result fill_hydraulic_surface(
     if (!std::isfinite(fill_slope_epsilon) || fill_slope_epsilon < 0.0f)
         throw std::invalid_argument(
             "fill_hydraulic_surface: fill_slope_epsilon must be finite and >= 0");
-    if (boundary_conditions.size() != 4)
+    const lsdtt_boundary_parse bcp =
+        parse_boundary_codes(boundary_conditions, "onp", /*fold_case=*/true);
+    if (bcp.result == lsdtt_boundary_parse::status::wrong_length)
         throw std::invalid_argument(
             "fill_hydraulic_surface: boundary_conditions must contain NESW codes");
-
-    const auto normalise_bc = [](char c) -> char
-    {
-        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    };
-    const char bn = normalise_bc(boundary_conditions[0]);
-    const char be = normalise_bc(boundary_conditions[1]);
-    const char bs = normalise_bc(boundary_conditions[2]);
-    const char bw = normalise_bc(boundary_conditions[3]);
-    for (const char b : {bn, be, bs, bw})
-    {
-        if (b != 'o' && b != 'n' && b != 'p')
-            throw std::invalid_argument(
-                "fill_hydraulic_surface: hydraulic boundaries allow only o, n, or p");
-    }
-    if ((bn == 'p') != (bs == 'p') || (be == 'p') != (bw == 'p'))
+    if (bcp.result == lsdtt_boundary_parse::status::invalid_code)
+        throw std::invalid_argument(
+            "fill_hydraulic_surface: hydraulic boundaries allow only o, n, or p");
+    if (bcp.periodic_ns_mismatch || bcp.periodic_ew_mismatch)
         throw std::invalid_argument(
             "fill_hydraulic_surface: periodic boundaries must occur in opposite pairs");
+    const char bn = bcp.codes[0];
+    const char be = bcp.codes[1];
 
     const int nrows = meta.n_rows;
     const int ncols = meta.n_cols;
@@ -1826,425 +1904,6 @@ lsdtt_raster_cpu breach_depressions(
 }
 
 // -----------------------------------------------------------------------------
-// least-cost breaching helpers
-// -----------------------------------------------------------------------------
-
-struct lc_node
-{
-    float    accum_cost;
-    float    zeta;
-    int      row;
-    int      col;
-    uint32_t backlink;
-
-    bool operator>(const lc_node& rhs) const
-    {
-        return accum_cost > rhs.accum_cost;
-    }
-};
-
-using lc_heap = std::priority_queue<lc_node,
-                                    std::vector<lc_node>,
-                                    std::greater<lc_node>>;
-
-static inline float grid_dist(int neighbour_index, float cell_size)
-{
-    return (neighbour_index % 2 == 0) ? cell_size : cell_size * k_sqrt2;
-}
-
-static float auto_flat_increment(
-    const lsdtt_array2d<float>&   dem,
-    const lsdtt_array2d<uint8_t>& mask,
-    int nrows, int ncols)
-{
-    float zmin =  std::numeric_limits<float>::max();
-    float zmax = -std::numeric_limits<float>::max();
-
-    for (int r = 0; r < nrows; ++r)
-    {
-        for (int c = 0; c < ncols; ++c)
-        {
-            if (mask(r, c) == 0) continue;
-            zmin = std::min(zmin, dem(r, c));
-            zmax = std::max(zmax, dem(r, c));
-        }
-    }
-
-    if (zmax <= zmin) return 0.001f;
-    return (zmax - zmin) * 1e-6f;
-}
-
-static bool is_edge_or_nodata_adjacent(
-    const lsdtt_array2d<uint8_t>& mask,
-    int row, int col,
-    int nrows, int ncols)
-{
-    if (row == 0 || row == nrows - 1 || col == 0 || col == ncols - 1)
-    {
-        return true;
-    }
-
-    for (int n = 0; n < 8; ++n)
-    {
-        const int nr = row + k_dr[n];
-        const int nc = col + k_dc[n];
-
-        if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) return true;
-        if (mask(nr, nc) == 0) return true;
-    }
-
-    return false;
-}
-
-static bool has_lower_neighbour(
-    const lsdtt_array2d<float>&   dem,
-    const lsdtt_array2d<uint8_t>& mask,
-    int row, int col,
-    int nrows, int ncols)
-{
-    const float z = dem(row, col);
-
-    for (int n = 0; n < 8; ++n)
-    {
-        const int nr = row + k_dr[n];
-        const int nc = col + k_dc[n];
-
-        if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
-        if (mask(nr, nc) == 0) continue;
-
-        if (dem(nr, nc) < z) return true;
-    }
-
-    return false;
-}
-
-static bool is_current_pit_candidate(
-    const lsdtt_array2d<float>&   dem,
-    const lsdtt_array2d<uint8_t>& mask,
-    int row, int col,
-    int nrows, int ncols)
-{
-    if (mask(row, col) == 0) return false;
-    if (is_edge_or_nodata_adjacent(mask, row, col, nrows, ncols)) return false;
-    return !has_lower_neighbour(dem, mask, row, col, nrows, ncols);
-}
-
-static bool has_downhill_escape_from_channel(
-    const lsdtt_array2d<float>&   dem,
-    const lsdtt_array2d<uint8_t>& mask,
-    int row, int col,
-    float channel_z,
-    int nrows, int ncols)
-{
-    if (is_edge_or_nodata_adjacent(mask, row, col, nrows, ncols))
-    {
-        return true;
-    }
-
-    for (int n = 0; n < 8; ++n)
-    {
-        const int nr = row + k_dr[n];
-        const int nc = col + k_dc[n];
-
-        if (nr < 0 || nr >= nrows || nc < 0 || nc >= ncols) continue;
-        if (mask(nr, nc) == 0) continue;
-
-        if (dem(nr, nc) < channel_z) return true;
-    }
-
-    return false;
-}
-
-static std::vector<std::pair<int,int>> find_pit_candidates_serial(
-    const lsdtt_array2d<float>&   dem,
-    const lsdtt_array2d<uint8_t>& mask,
-    int nrows, int ncols)
-{
-    std::vector<std::pair<int,int>> pits;
-
-    for (int r = 1; r < nrows - 1; ++r)
-    {
-        for (int c = 1; c < ncols - 1; ++c)
-        {
-            if (is_current_pit_candidate(dem, mask, r, c, nrows, ncols))
-            {
-                pits.emplace_back(r, c);
-            }
-        }
-    }
-
-    std::stable_sort(
-        pits.begin(), pits.end(),
-        [&](const std::pair<int,int>& a, const std::pair<int,int>& b)
-        {
-            const float za = dem(a.first, a.second);
-            const float zb = dem(b.first, b.second);
-
-            if (za < zb) return true;
-            if (za > zb) return false;
-            if (a.first < b.first) return true;
-            if (a.first > b.first) return false;
-            return a.second < b.second;
-        });
-
-    return pits;
-}
-
-struct lc_state
-{
-    float cost;
-    float channel_z;
-    int   row;
-    int   col;
-
-    bool operator>(const lc_state& rhs) const
-    {
-        if (cost > rhs.cost) return true;
-        if (cost < rhs.cost) return false;
-        return channel_z < rhs.channel_z;
-    }
-};
-
-using lc_state_heap = std::priority_queue<lc_state,
-                                          std::vector<lc_state>,
-                                          std::greater<lc_state>>;
-
-static bool breach_single_pit_serial_safe(
-    lsdtt_array2d<float>&         dem,
-    const lsdtt_array2d<uint8_t>& mask,
-    int pit_row, int pit_col,
-    int max_dist,
-    float max_cost,
-    bool  use_min_dist,
-    float flat_inc,
-    float cell_size,
-    int nrows, int ncols)
-{
-    const float k_eps = 1e-7f;
-
-    const int wr0 = std::max(0, pit_row - max_dist);
-    const int wr1 = std::min(nrows, pit_row + max_dist + 1);
-    const int wc0 = std::max(0, pit_col - max_dist);
-    const int wc1 = std::min(ncols, pit_col + max_dist + 1);
-
-    const int wnrows = wr1 - wr0;
-    const int wncols = wc1 - wc0;
-    const int wsize  = wnrows * wncols;
-
-    auto widx = [&](int r, int c) -> int
-    {
-        return (r - wr0) * wncols + (c - wc0);
-    };
-
-    const float inf = std::numeric_limits<float>::infinity();
-
-    std::vector<float> best_cost(static_cast<std::size_t>(wsize), inf);
-    std::vector<float> best_z(static_cast<std::size_t>(wsize), -inf);
-    std::vector<int>   parent(static_cast<std::size_t>(wsize), -1);
-
-    lc_state_heap pq;
-
-    const int pit_i = widx(pit_row, pit_col);
-    best_cost[pit_i] = 0.0f;
-    best_z[pit_i]    = dem(pit_row, pit_col);
-    parent[pit_i]    = -1;
-
-    pq.push(lc_state{0.0f, dem(pit_row, pit_col), pit_row, pit_col});
-
-    int dest_i = -1;
-
-    while (!pq.empty())
-    {
-        const lc_state cur = pq.top();
-        pq.pop();
-
-        const int ci = widx(cur.row, cur.col);
-
-        if (cur.cost > best_cost[ci] + k_eps) continue;
-        if (std::fabs(cur.cost - best_cost[ci]) <= k_eps &&
-            cur.channel_z + k_eps < best_z[ci]) continue;
-
-        if ((cur.row != pit_row || cur.col != pit_col) &&
-            has_downhill_escape_from_channel(
-                dem, mask, cur.row, cur.col, cur.channel_z, nrows, ncols))
-        {
-            dest_i = ci;
-            break;
-        }
-
-        for (int n = 0; n < 8; ++n)
-        {
-            const int nr = cur.row + k_dr[n];
-            const int nc = cur.col + k_dc[n];
-
-            if (nr < wr0 || nr >= wr1 || nc < wc0 || nc >= wc1) continue;
-            if (mask(nr, nc) == 0) continue;
-
-            const int dr = nr - pit_row;
-            const int dc = nc - pit_col;
-            if (dr * dr + dc * dc > max_dist * max_dist) continue;
-
-            const float step_scale = (n % 2 == 0) ? 1.0f : k_sqrt2;
-            const float step_drop  = flat_inc * step_scale;
-            const float allowed_z  = cur.channel_z - step_drop;
-            const float old_z      = dem(nr, nc);
-
-            const float cut = std::max(0.0f, old_z - allowed_z);
-            const float step_cost = use_min_dist
-                                  ? cut * grid_dist(n, cell_size)
-                                  : cut;
-            const float new_cost = cur.cost + step_cost;
-
-            if (new_cost > max_cost) continue;
-
-            const float next_channel_z = std::min(old_z, allowed_z);
-            const int ni = widx(nr, nc);
-
-            bool better = false;
-            if (new_cost + k_eps < best_cost[ni])
-            {
-                better = true;
-            }
-            else if (std::fabs(new_cost - best_cost[ni]) <= k_eps &&
-                     next_channel_z > best_z[ni] + k_eps)
-            {
-                better = true;
-            }
-
-            if (!better) continue;
-
-            best_cost[ni] = new_cost;
-            best_z[ni]    = next_channel_z;
-            parent[ni]    = ci;
-
-            pq.push(lc_state{new_cost, next_channel_z, nr, nc});
-        }
-    }
-
-    if (dest_i < 0) return false;
-
-    int ci = dest_i;
-    while (ci != -1 && ci != pit_i)
-    {
-        const int rr = wr0 + (ci / wncols);
-        const int cc = wc0 + (ci % wncols);
-
-        dem(rr, cc) = std::min(dem(rr, cc), best_z[ci]);
-        ci = parent[ci];
-    }
-
-    return true;
-}
-
-// -----------------------------------------------------------------------------
-// breach_depressions_least_cost
-// -----------------------------------------------------------------------------
-
-lsdtt_raster_cpu breach_depressions_least_cost(
-    const lsdtt_raster_cpu& raster,
-    int   max_dist,
-    float max_cost,
-    bool  min_dist,
-    float flat_increment,
-    bool  fill_remainder,
-    int   /*n_threads*/)
-{
-    const lsdtt_raster_meta& meta = raster.get_meta();
-    if (!meta.is_valid())
-    {
-        throw std::runtime_error(
-            "lsdtt::breach_depressions_least_cost: invalid raster metadata"
-        );
-    }
-
-    if (max_dist < 1)
-    {
-        throw std::runtime_error(
-            "lsdtt::breach_depressions_least_cost: max_dist must be >= 1"
-        );
-    }
-
-    const int   nrows     = meta.n_rows;
-    const int   ncols     = meta.n_cols;
-    const float cell_size = static_cast<float>(meta.cell_size);
-
-    lsdtt_array2d<float>   dem      = make_owned_dem_copy(raster);
-    lsdtt_array2d<uint8_t> mask_arr = make_owned_mask_copy(raster);
-
-    float flat_inc = flat_increment;
-    if (flat_inc <= 0.0f)
-    {
-        flat_inc = auto_flat_increment(dem, mask_arr, nrows, ncols);
-    }
-
-    std::vector<std::pair<int,int>> pit_candidates =
-        find_pit_candidates_serial(dem, mask_arr, nrows, ncols);
-
-    std::cout << "lsdtt::breach_depressions_least_cost: found "
-              << pit_candidates.size() << " pit cells. "
-              << "flat_increment = " << flat_inc << "\n";
-
-    int n_breached = 0;
-
-    for (const auto& pit : pit_candidates)
-    {
-        const int pr = pit.first;
-        const int pc = pit.second;
-
-        if (!is_current_pit_candidate(dem, mask_arr, pr, pc, nrows, ncols))
-        {
-            continue;
-        }
-
-        if (breach_single_pit_serial_safe(
-                dem, mask_arr,
-                pr, pc,
-                max_dist,
-                max_cost,
-                min_dist,
-                flat_inc,
-                cell_size,
-                nrows, ncols))
-        {
-            ++n_breached;
-        }
-    }
-
-    std::vector<std::pair<int,int>> remaining_pits =
-        find_pit_candidates_serial(dem, mask_arr, nrows, ncols);
-
-    const int n_remaining = static_cast<int>(remaining_pits.size());
-
-    std::cout << "lsdtt::breach_depressions_least_cost: breached "
-              << n_breached << " pits. ";
-
-    if (n_remaining > 0)
-    {
-        std::cout << n_remaining << " pits remain";
-        if (fill_remainder)
-        {
-            std::cout << " - filling remainder with Priority-Flood.\n";
-            lsdtt_array2d<int> fill_idx = build_fill_index(mask_arr, nrows, ncols);
-            fill_serial(dem, fill_idx, meta, 0.0f);
-        }
-        else
-        {
-            std::cout << " - left unfilled (fill_remainder = false).\n";
-        }
-    }
-    else
-    {
-        std::cout << "\n";
-    }
-
-    return lsdtt_raster_cpu(
-        std::move(dem.get_vector()),
-        std::move(mask_arr.get_vector()),
-        meta
-    );
-}
-
-// -----------------------------------------------------------------------------
 // depressions_to_polygons
 // -----------------------------------------------------------------------------
 depression_polygons_result
@@ -2308,8 +1967,8 @@ lsdtt_raster_cpu stencil_difference_magnitude(
             const std::size_t i = static_cast<std::size_t>(r) * n_cols + c;
             if (!m[i]) continue;
 
-            const int dr[4] = {-1, 1, 0, 0};
-            const int dc[4] = { 0, 0,-1, 1};
+            static constexpr const auto& dr = grid::d4_nswe_row;
+            static constexpr const auto& dc = grid::d4_nswe_col;
             double best = -1.0;
             for (int nb = 0; nb < 4; ++nb)
             {
@@ -2397,12 +2056,7 @@ perona_malik_result perona_malik_diffusion(
                 "perona_malik_diffusion: no finite neighbour differences, so "
                 "K cannot be estimated. State k_metres_per_cell instead.");
         }
-        std::size_t idx = static_cast<std::size_t>(
-            options.k_gradient_quantile * static_cast<double>(vals.size() - 1));
-        idx = std::min(idx, vals.size() - 1);
-        std::nth_element(vals.begin(), vals.begin() + static_cast<long>(idx),
-                         vals.end());
-        k = static_cast<double>(vals[idx]);
+        k = compute_quantile_floor_in_place(vals, options.k_gradient_quantile);
     }
     else
     {
@@ -2444,8 +2098,8 @@ perona_malik_result perona_malik_diffusion(
                 // exists and carries data. Skipping this is how a nodata hole
                 // would bleed a zero into the interior on the first step.
                 double acc = 0.0;
-                const int dr[4] = {-1, 1, 0, 0};
-                const int dc[4] = { 0, 0,-1, 1};
+                static constexpr const auto& dr = grid::d4_nswe_row;
+                static constexpr const auto& dc = grid::d4_nswe_col;
                 for (int nb = 0; nb < 4; ++nb)
                 {
                     const int rr = r + dr[nb];

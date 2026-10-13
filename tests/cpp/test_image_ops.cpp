@@ -10,20 +10,27 @@
 // -----------------------------------------------------------------------------
 // Tests for src/cpu/lsdtt_raster_image_ops_cpu and the image primitives it uses.
 // OpenCV is no longer a dependency: its behaviour is read from outputs frozen
-// from OpenCV 4.13 on 2026-09-14 (tests/expected/image_ops/; see
+// from OpenCV 4.13 on 2026-09-14 (tests/expected/image_ops/; see README.md and
 // capture_info.txt) by a capture tool that was deleted with the dependency.
+// The fixtures hold HASHES of the OpenCV outputs, not the outputs themselves
+// (the 2.6 MB of raw output was replaced on 2026-10-08; git history has it).
 //
-//   lsdtt-test-image-ops <path to tests/expected/image_ops> [--record-hough]
+//   lsdtt-test-image-ops <path to tests/expected/image_ops>
+//                        [--record-hough | --record-nodata]
 //
-//   O  oracle: native output vs OpenCV, pixel for pixel. Exact for every input
-//      without nodata. For inputs with nodata the native code deliberately
-//      differs (valid-pixel normalisation); the difference is reported
-//      as a measurement, and I4/I5 check the corrected behaviour directly.
+//   O  oracle: native output vs OpenCV. Exact for every input without nodata:
+//      the native output, encoded as the capture encoded OpenCV's (u8 bytes, or
+//      bits packed LSB first), must have the manifest's reference_hash. For
+//      inputs with nodata the native code deliberately differs (valid-pixel
+//      normalisation): how many records differ from OpenCV is reported, the
+//      native output is pinned by hash (nodata_native.csv, written with
+//      --record-nodata), and I4/I5 check the corrected behaviour directly.
 //   P  primitives: the native primitives' own 8-bit / 16-bit images vs OpenCV
 //      on a large random image (hash comparison; every rounding decision counts)
-//   H  Hough: planted-segment recovery, agreement with OpenCV (reported), and
-//      pinned native hashes (tests/expected/image_ops/hough_native.csv, written
-//      with --record-hough) so any platform or code difference is caught
+//   H  Hough: planted-segment recovery, pinned native hashes
+//      (tests/expected/image_ops/hough_native.csv, written with --record-hough)
+//      so any platform or code difference is caught, and the cv::RNG replay
+//      against hashes of OpenCV's segment lists (hough_opencv_segment_hashes.csv)
 //   I  invariants of the native implementation (thread count, nodata, offset,
 //      the valid_pixels normalisation)
 // -----------------------------------------------------------------------------
@@ -76,8 +83,8 @@ std::string hex64(std::uint64_t v)
 
 struct record
 {
-    std::string input, input_hash, op, params, encoding;
-    std::uint64_t offset = 0, nbytes = 0;
+    std::string input, input_hash, op, params, encoding, reference_hash;
+    std::uint64_t nbytes = 0;
     long n_pixels = 0;
 };
 
@@ -111,7 +118,7 @@ std::vector<record> read_manifest(const std::string& dir)
         if (f.size() < 13) continue;
         record r;
         r.input = f[0]; r.input_hash = f[3]; r.op = f[4]; r.params = f[5]; r.encoding = f[6];
-        r.offset = std::stoull(f[7]); r.nbytes = std::stoull(f[8]); r.n_pixels = std::stol(f[12]);
+        r.nbytes = std::stoull(f[8]); r.reference_hash = f[9]; r.n_pixels = std::stol(f[12]);
         out.push_back(r);
     }
     return out;
@@ -130,24 +137,41 @@ std::map<std::string, double> parse_params(const std::string& p)
     return out;
 }
 
-// Decode a record into one value per pixel (u8 value, or 0/1 for bits).
-std::vector<std::uint8_t> load_record(const std::string& dir, const record& r)
+// Encode one value per pixel the way the capture encoded OpenCV's output (u8:
+// one byte per pixel; bits: 0/1 packed eight to a byte, least significant bit
+// first) and hash it with FNV-1a, which is what the manifest's reference_hash
+// is.
+std::string record_hash(const std::vector<std::uint8_t>& px, const std::string& encoding)
 {
-    std::ifstream in(dir + "/" + r.input + ".bin", std::ios::binary);
-    std::vector<char> bytes(r.nbytes);
-    in.seekg(static_cast<std::streamoff>(r.offset));
-    in.read(bytes.data(), static_cast<std::streamsize>(r.nbytes));
-    std::vector<std::uint8_t> px(static_cast<std::size_t>(r.n_pixels), 0);
-    if (r.encoding == "u8")
-    {
-        for (long i = 0; i < r.n_pixels; ++i) px[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(bytes[static_cast<std::size_t>(i)]);
-    }
+    std::vector<unsigned char> bytes;
+    if (encoding == "u8")
+        bytes.assign(px.begin(), px.end());
     else
     {
-        for (long i = 0; i < r.n_pixels; ++i)
-            px[static_cast<std::size_t>(i)] = (static_cast<std::uint8_t>(bytes[static_cast<std::size_t>(i / 8)]) >> (i % 8)) & 1;
+        bytes.assign((px.size() + 7) / 8, 0);
+        for (std::size_t i = 0; i < px.size(); ++i)
+            if (px[i]) bytes[i / 8] = static_cast<unsigned char>(bytes[i / 8] | (1u << (i % 8)));
     }
-    return px;
+    return hex64(fnv1a64(bytes.data(), bytes.size()));
+}
+
+// key,native_hash rows of a pinned-hash file (key = the first `n_key` fields
+// joined by '|').
+std::map<std::string, std::string> read_pins(const std::string& path, int n_key)
+{
+    std::map<std::string, std::string> pins;
+    std::ifstream f(path);
+    std::string line;
+    std::getline(f, line);
+    while (std::getline(f, line))
+    {
+        const auto v = split_csv_line(line);
+        if (static_cast<int>(v.size()) <= n_key) continue;
+        std::string key = v[0];
+        for (int i = 1; i < n_key; ++i) key += "|" + v[static_cast<std::size_t>(i)];
+        pins[key] = v[static_cast<std::size_t>(n_key)];
+    }
+    return pins;
 }
 
 struct line_segment_ref { int x0, y0, x1, y1; };
@@ -210,7 +234,7 @@ bool run_native(const record& r, const lsdtt_raster_cpu& in,
 // =============================================================================
 // O - oracle
 // =============================================================================
-void test_oracle(const std::string& dir)
+void test_oracle(const std::string& dir, bool record_nodata)
 {
     std::cout << "--- O: native vs frozen OpenCV output ---\n";
 
@@ -229,31 +253,48 @@ void test_oracle(const std::string& dir)
     check("O1 regenerated inputs match the hashes recorded at capture", hashes_ok);
     if (!hashes_ok) return;
 
-    struct tally { long records = 0, bad_records = 0, bad_pixels = 0; std::string first_bad; };
+    const std::map<std::string, std::string> pinned = read_pins(dir + "/nodata_native.csv", 3);
+    std::ofstream rec_out;
+    if (record_nodata)
+    {
+        rec_out.open(dir + "/nodata_native.csv");
+        rec_out << "input,op,params,native_hash\n";
+    }
+
+    struct tally
+    {
+        long records = 0, differ_from_opencv = 0, pinned = 0, pin_bad = 0;
+        std::string first_bad;
+    };
     std::map<std::string, tally> exact_by_op, nodata_by_op;
-    std::map<std::string, long> nodata_valid_pixels;
 
     for (const auto& r : recs)
     {
         std::vector<std::uint8_t> got;
         const lsdtt_raster_cpu& in = inputs.at(r.input);
         if (!run_native(r, in, got)) continue;
-        const std::vector<std::uint8_t> want = load_record(dir, r);
-        long diff = 0;
-        long valid = 0;
-        for (std::size_t i = 0; i < want.size(); ++i)
-        {
-            if (in.get_mask()[i] != 0) ++valid;
-            if (got[i] != want[i]) ++diff;
-        }
-        const bool has_nodata = valid < static_cast<long>(want.size());
+        const std::string h = record_hash(got, r.encoding);
+
+        bool has_nodata = false;
+        for (std::uint8_t m : in.get_mask()) if (!m) { has_nodata = true; break; }
+
         tally& t = has_nodata ? nodata_by_op[r.op] : exact_by_op[r.op];
-        if (has_nodata) nodata_valid_pixels[r.op] += valid;
         ++t.records;
-        if (diff)
+        if (h != r.reference_hash)
         {
-            if (t.bad_records++ == 0) t.first_bad = r.input + " " + r.params + " (" + std::to_string(diff) + " px)";
-            t.bad_pixels += diff;
+            if (t.differ_from_opencv++ == 0 && !has_nodata)
+                t.first_bad = r.input + " " + r.params + " (native " + h + ", OpenCV " + r.reference_hash + ")";
+        }
+        if (has_nodata)
+        {
+            const std::string key = r.input + "|" + r.op + "|" + r.params;
+            if (record_nodata) rec_out << r.input << "," << r.op << ",\"" << r.params << "\"," << h << "\n";
+            const auto it = pinned.find(key);
+            if (it != pinned.end())
+            {
+                ++t.pinned;
+                if (it->second != h && t.pin_bad++ == 0) t.first_bad = key;
+            }
         }
     }
 
@@ -261,21 +302,26 @@ void test_oracle(const std::string& dir)
     {
         const tally& t = exact_by_op[op];
         std::ostringstream d;
-        d << t.records << " records, " << t.bad_records << " differ, " << t.bad_pixels << " pixels";
-        if (t.bad_records) d << "; first: " << t.first_bad;
+        d << t.records << " records, " << t.differ_from_opencv << " differ";
+        if (t.differ_from_opencv) d << "; first: " << t.first_bad;
         check(std::string("O2 ") + op + " identical to OpenCV on every input without nodata",
-              t.records > 0 && t.bad_records == 0, d.str());
+              t.records > 0 && t.differ_from_opencv == 0, d.str());
     }
     for (const char* op : {"u8", "otsu", "adaptive_mean", "adaptive_gaussian", "canny"})
     {
         const tally& t = nodata_by_op[op];
         std::ostringstream d;
         d << op << " on inputs with nodata (valid-pixel normalisation vs OpenCV): "
-          << t.bad_records << " of " << t.records << " records differ, "
-          << t.bad_pixels << " pixels (all pixels, incl. nodata, for u8; valid pixels total "
-          << nodata_valid_pixels[op] << ")";
+          << t.differ_from_opencv << " of " << t.records
+          << " records differ from OpenCV (pixel counts at capture: README.md)";
         info(d.str());
+        if (!record_nodata)
+            check(std::string("O3 ") + op + " on inputs with nodata matches the pinned native hashes",
+                  t.records > 0 && t.pinned == t.records && t.pin_bad == 0,
+                  std::to_string(t.pinned) + " of " + std::to_string(t.records) + " pinned, " +
+                      std::to_string(t.pin_bad) + " differ" + (t.first_bad.empty() ? "" : "; first " + t.first_bad));
     }
+    if (record_nodata) info("recorded tests/expected/image_ops/nodata_native.csv");
 }
 
 
@@ -500,7 +546,8 @@ void test_hough(const std::string& dir, bool record_hashes)
               cover >= 0.90, std::to_string(cover) + " of " + std::to_string(n_planted) + " planted pixels");
     }
 
-    // H3: agreement with OpenCV (reported) and pinned native hashes.
+    // H3: pinned native hashes. (Pixel agreement with OpenCV was measured at
+    // capture; the numbers are in README.md.)
     std::map<std::string, std::string> pinned;
     {
         std::ifstream f(dir + "/hough_native.csv");
@@ -542,21 +589,6 @@ void test_hough(const std::string& dir, bool record_hashes)
             ++n_pinned;
             if (pinned[key] != h && n_pin_bad++ == 0) first_bad = key;
         }
-
-        const int R = r.get_meta().n_rows, C = r.get_meta().n_cols;
-        const auto got = binary_pixels(native);
-        const auto want = load_record(dir, rcd);
-        long n_ocv = 0, n_nat = 0;
-        const double f_ocv = near_fraction(want, got, R, C, 1, &n_ocv);
-        const double f_nat = near_fraction(got, want, R, C, 1, &n_nat);
-        if (rcd.input.find("_full") != std::string::npos && rcd.input != "flat_full")
-        {
-            std::ostringstream o;
-            o << std::fixed << std::setprecision(3) << "Hough " << rcd.input << " threshold=" << p.at("threshold")
-              << ": line pixels OpenCV " << n_ocv << ", native " << n_nat
-              << "; OpenCV px within 1 px of native " << f_ocv << ", native px within 1 px of OpenCV " << f_nat;
-            info(o.str());
-        }
     }
     if (!record_hashes)
     {
@@ -592,20 +624,32 @@ void test_hough(const std::string& dir, bool record_hashes)
             }
         };
 
-        std::map<std::string, std::vector<std::array<int, 4>>> want;
+        // Per case: OpenCV's segment count and an FNV-1a hash of its segments in
+        // order, each as x0, y0, x1, y1 little-endian int32.
+        struct segment_list_ref { std::size_t n = 0; std::string hash; };
+        std::map<std::string, segment_list_ref> want;
         {
-            std::ifstream f(dir + "/hough_opencv_segments.csv");
+            std::ifstream f(dir + "/hough_opencv_segment_hashes.csv");
             std::string line;
             std::getline(f, line);
             while (std::getline(f, line))
             {
                 const auto v = split_csv_line(line);
-                if (v.size() < 8) continue;
-                auto& list = want[v[0] + "|" + v[1]];
-                if (std::stoi(v[3]) >= 0)
-                    list.push_back({std::stoi(v[4]), std::stoi(v[5]), std::stoi(v[6]), std::stoi(v[7])});
+                if (v.size() < 4) continue;
+                want[v[0] + "|" + v[1]] = {static_cast<std::size_t>(std::stoul(v[2])), v[3]};
             }
         }
+        const auto segment_list_hash = [](const auto& segments)
+        {
+            std::vector<unsigned char> bytes;
+            for (const auto& g : segments)
+                for (int v : {g.x0, g.y0, g.x1, g.y1})
+                {
+                    const auto u = static_cast<std::uint32_t>(v);
+                    for (int b = 0; b < 4; ++b) bytes.push_back(static_cast<unsigned char>(u >> (8 * b)));
+                }
+            return hex64(fnv1a64(bytes.data(), bytes.size()));
+        };
         int n_cases = 0, n_same = 0;
         long n_segments = 0;
         std::string first_bad;
@@ -624,15 +668,13 @@ void test_hough(const std::string& dir, bool record_hashes)
                 static_cast<int>(p.at("threshold")), static_cast<int>(p.at("min_line_length")),
                 static_cast<int>(p.at("max_line_gap")),
                 [&rng](std::uint64_t count) { return static_cast<std::uint64_t>(rng.next() % count); });
-            bool same = got.size() == kv.second.size();
-            for (std::size_t i = 0; same && i < got.size(); ++i)
-                same = got[i].x0 == kv.second[i][0] && got[i].y0 == kv.second[i][1] &&
-                       got[i].x1 == kv.second[i][2] && got[i].y1 == kv.second[i][3];
+            const bool same = got.size() == kv.second.n && segment_list_hash(got) == kv.second.hash;
             ++n_cases;
-            n_segments += static_cast<long>(kv.second.size());
+            n_segments += static_cast<long>(kv.second.n);
             if (same) ++n_same;
             else if (first_bad.empty())
-                first_bad = kv.first + " (OpenCV " + std::to_string(kv.second.size()) + ", native " + std::to_string(got.size()) + ")";
+                first_bad = kv.first + " (OpenCV " + std::to_string(kv.second.n) + " segments, native " +
+                            std::to_string(got.size()) + ")";
         }
         check("H5 native Hough driven by cv::RNG reproduces cv::HoughLinesP segment lists exactly (96 cases)",
               n_cases == 96 && n_same == n_cases,
@@ -775,12 +817,14 @@ void test_invariants()
 int main(int argc, char* argv[])
 {
     const bool record_hashes = argc == 3 && std::string(argv[2]) == "--record-hough";
-    if (argc != 2 && !record_hashes)
+    const bool record_nodata = argc == 3 && std::string(argv[2]) == "--record-nodata";
+    if (argc != 2 && !record_hashes && !record_nodata)
     {
-        std::cerr << "usage: lsdtt-test-image-ops <tests/expected/image_ops> [--record-hough]\n";
+        std::cerr << "usage: lsdtt-test-image-ops <tests/expected/image_ops> "
+                     "[--record-hough | --record-nodata]\n";
         return 2;
     }
-    test_oracle(argv[1]);
+    test_oracle(argv[1], record_nodata);
     test_primitives(argv[1]);
     test_hough(argv[1], record_hashes);
     test_invariants();

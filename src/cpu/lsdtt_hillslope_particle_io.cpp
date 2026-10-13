@@ -1,4 +1,6 @@
 #include "lsdtt_hillslope_particle_io.hpp"
+#include "../utils/lsdtt_output_file.hpp"
+#include "../core/lsdtt_csv_table.hpp"
 
 #include <fstream>
 #include <iomanip>
@@ -13,8 +15,8 @@ void write_hillslope_particles_csv(
     const std::string& path,
     const lsdtt_hillslope_particle_tracker& p)
 {
-    std::ofstream out(path);
-    if (!out) throw std::runtime_error("cannot write particle CSV: " + path);
+    std::ofstream out = open_output_file(
+        path, "cannot write particle CSV: ");
     out << "id,cell,weight,source_id,age_yr,distance_cells,status,"
            "mixing_depth,seed,substep_index\n";
     out << std::setprecision(17);
@@ -30,32 +32,49 @@ lsdtt_hillslope_particle_tracker load_hillslope_particles_csv(
 {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("cannot open particle restart CSV: " + path);
+    static const std::string k_header =
+        "id,cell,weight,source_id,age_yr,distance_cells,status,mixing_depth,seed,substep_index";
     std::string line;
-    if (!std::getline(in, line)
-        || line != "id,cell,weight,source_id,age_yr,distance_cells,status,mixing_depth,seed,substep_index")
-        throw std::runtime_error("invalid particle restart header: " + path);
+    if (!std::getline(in, line) || line != k_header)
+    {
+        // A restart file edited or saved on Windows gains CRLF line endings;
+        // say so, because the header otherwise looks right.
+        const bool crlf = !line.empty() && line.back() == '\r' &&
+                          line.compare(0, line.size() - 1, k_header) == 0;
+        throw std::runtime_error("invalid particle restart header: " + path +
+                                 (crlf ? " (the file has Windows CRLF line endings; "
+                                         "convert it to LF)"
+                                       : " (expected \"" + k_header + "\")"));
+    }
 
+    // Every field must be a number in full; a bad one is reported with the file,
+    // line and text rather than as a bare "stod" / "stoull".
+    const std::string where = "particle restart CSV " + path;
     lsdtt_hillslope_particle_tracker p;
     bool first = true;
+    std::size_t line_no = 1;
     while (std::getline(in, line))
     {
+        ++line_no;
         if (line.empty()) continue;
         std::stringstream ss(line);
         std::vector<std::string> v;
         std::string value;
         while (std::getline(ss, value, ',')) v.push_back(value);
         if (v.size() != 10)
-            throw std::runtime_error("invalid particle restart row: " + path);
-        p.id.push_back(std::stoull(v[0]));
-        p.cell.push_back(std::stoll(v[1]));
-        p.weight.push_back(std::stod(v[2]));
-        p.source_id.push_back(static_cast<std::uint32_t>(std::stoul(v[3])));
-        p.age.push_back(std::stod(v[4]));
-        p.distance_cells.push_back(std::stod(v[5]));
-        p.status.push_back(static_cast<std::uint8_t>(std::stoul(v[6])));
-        const double mixing = std::stod(v[7]);
-        const std::uint64_t seed = std::stoull(v[8]);
-        const std::uint64_t step = std::stoull(v[9]);
+            throw std::runtime_error("invalid particle restart row: " + path + ": line " +
+                                     std::to_string(line_no) + " has " +
+                                     std::to_string(v.size()) + " fields, expected 10");
+        p.id.push_back(csv_parse_uint_field(v[0], where, line_no));
+        p.cell.push_back(csv_parse_int_field(v[1], where, line_no));
+        p.weight.push_back(csv_parse_double_field(v[2], where, line_no));
+        p.source_id.push_back(static_cast<std::uint32_t>(csv_parse_uint_field(v[3], where, line_no)));
+        p.age.push_back(csv_parse_double_field(v[4], where, line_no));
+        p.distance_cells.push_back(csv_parse_double_field(v[5], where, line_no));
+        p.status.push_back(static_cast<std::uint8_t>(csv_parse_uint_field(v[6], where, line_no)));
+        const double mixing = csv_parse_double_field(v[7], where, line_no);
+        const std::uint64_t seed = csv_parse_uint_field(v[8], where, line_no);
+        const std::uint64_t step = csv_parse_uint_field(v[9], where, line_no);
         if (first)
         {
             p.mixing_depth = mixing;

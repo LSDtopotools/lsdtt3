@@ -289,6 +289,20 @@ set(LSDTT_STREAM_BURNING_FIXTURE_DIR
 set(LSDTT_BASIN_STATS_FIXTURE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/basin_stats_fixture")
 
+# Terrace-valley DEM (lsdtt-synthetic-surfaces) plus the source-point and reach
+# CSVs, read by the lsdtt-cross-sections and lsdtt-bankfull-width tests.
+set(LSDTT_CROSS_SECTIONS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/cross_sections_fixture")
+
+# Synthetic marsh DEM written by tests/scripts/make_marsh_topography_fixture.py.
+set(LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/marsh_topography_fixture")
+
+# Reference and shifted DEM pair written by
+# tests/scripts/make_dem_coregistration_fixture.py.
+set(LSDTT_DEM_COREGISTRATION_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/dem_coregistration_fixture")
+
 # Written by lsdtt-test-hype-cli-fixture (the fixture_hype_cli CTest fixture):
 # a 60x60 projected Y-network DEM, land-use and soil rasters, the four HYPE
 # parameter tables (plus three broken ones), 120 days of forcing and an outlet
@@ -670,6 +684,66 @@ add_lsdtt_cli_smoke_test(
     tiny30_fill.tif
 )
 
+# Least-cost breaching (Lindsay 2020, the Whitebox 2.0.6 port) through the CLI.
+# The numerics are asserted bitwise against Whitebox in unit_breach_least_cost;
+# these pin the parameter plumbing. tiny_breach_lc_dem.asc is a 7x7 bowl, pit
+# 1.0 at (3,3) inside a ring of 2s and a rim of 6s, with a 4 saddle at (3,5) and
+# a 3 on the east border at (3,6); breach_lc_flat_increment 0.125 keeps every
+# value dyadic.
+#   outlet:   the pit is raised to 1.875 and breached NE then E off the grid:
+#             (2,4) 1.75, (3,5) 1.625, border (3,6) 1.5.
+#   whitebox: the edge is not an outlet and no border cell is low enough, so
+#             the pit is unsolved and the remainder fill raises the bowl.
+# Neither file sets breach_lc_max_dist, so each pins the edge policy's default
+# (1000 outlet, 100 whitebox); the max_dist failure test sets it explicitly.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_breach_least_cost
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_outlet.param.in
+    breachlc_outlet_breached.tif
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 1 breached, 0 unsolved"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_raster_preprocessing_breach_least_cost
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_outlet.param.in
+    breachlc_outlet_breached.tif
+    --stdout-contains "breach_lc_max_dist = 1000 (default for this edge policy), breach_lc_edge_policy = outlet"
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 1 breached, 0 unsolved. flat_increment = 0.1250, edge_policy = outlet"
+    --expect-raster-values "breachlc_outlet_breached.tif:1.5,1.625,1.75,1.875,2,6,9"
+    --expect-raster-checksum breachlc_outlet_breached.tif:305
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_raster_preprocessing_breach_lc_whitebox_edge
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_whitebox.param.in
+    breachlc_whitebox_breached.tif
+    --stdout-contains "breach_lc_max_dist = 100 (default for this edge policy), breach_lc_edge_policy = whitebox"
+    --stdout-contains "1 pits found, 0 skipped (no longer pits), 0 breached, 1 unsolved. flat_increment = 0.1250, edge_policy = whitebox"
+    --stdout-contains "1 interior cells without descent - filling remainder with Priority-Flood, min_slope = 0.0001, flat resolution = inline_gradient."
+    --expect-raster-checksum breachlc_whitebox_breached.tif:326
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_breach_lc_max_dist
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_bad_max_dist.param.in
+    breachlc_bad_breached.tif
+    --expect-failure
+    --stderr-contains "FATAL: lsdtt::breach_depressions_least_cost: max_dist must be between 1 and 32767 (maximum breach path length in cells)\; got 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_breach_lc_edge_policy
+    lsdtt-raster-preprocessing
+    raster_preprocessing_breach_lc_bad_edge_policy.param.in
+    breachlc_badedge_breached.tif
+    --expect-failure
+    --stderr-contains "FATAL: breach_lc_edge_policy must be one of outlet, whitebox\; got 'Outlet'"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_channel_extraction
     lsdtt-channel-extraction
@@ -813,6 +887,19 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "'sti_soil_vector_path' is deprecated"
     --stderr-contains "'sti_ksat_csv_path' is deprecated"
     --stderr-contains "use 'sti_soil_fname'"
+    --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
+)
+
+# The same STI run with the polygons in EPSG:4326: the only end-to-end test of
+# the layer-to-raster CRS transform (consolidation C03). Same pins as the UTM
+# sibling below, because reprojecting the inputs must not change the result.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_sti_reprojected_layers
+    lsdtt-drainage-analysis
+    drainage_analysis_sti_reprojected.param.in
+    drainage_sti_rp_sti_p95_jenks5.tif
+    --expect-raster-values drainage_sti_rp_sti_p95_jenks5.tif:1
+    --stdout-contains "STI ksd Jenks classified pixels          : 3 / 3"
     --stdout-contains "STI ksd Jenks upper breaks               : -4.90252"
 )
 
@@ -1456,6 +1543,24 @@ lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "smoke;cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
+# Least-cost-path burn: regression test for the use-after-free segfault fixed on
+# 2026-10-07, and the only test that runs raster_least_cost_path. See the
+# parameter file.
+add_lsdtt_cli_smoke_test(
+    smoke_stream_burning_lcp_burn
+    lsdtt-stream-burning
+    stream_burning_lcp_burn.param.in
+    lcpb_lcp_burn_paths.fgb
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect lcpb_burn_segments.fgb
+    --expect lcpb_lcp_burned.tif
+    --expect lcpb_connected_network_lines.fgb
+    --stdout-contains "LCP burn: 12 gaps (case1/2/3), 10 D8-connected on carve"
+    --stdout-contains "Candidate detection complete."
+)
+lsdtt_set_tests_properties(smoke_stream_burning_lcp_burn PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 add_lsdtt_cli_smoke_test(
     rigorous_stream_burning_legacy_threshold
     lsdtt-stream-burning
@@ -1472,6 +1577,125 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
     FIXTURES_REQUIRED stream_burning_fixture)
+
+# =============================================================================
+# lsdtt-cross-sections, lsdtt-bankfull-width, lsdtt-marsh-topography,
+# lsdtt-water-centreline
+#
+# None of these four CLIs had a test until 2026-10-07. Each is the only CLI
+# route to modules the src/utils + src/cpu consolidation changes
+# (lsdtt_cross_sections_cpu, lsdtt_manning_hydraulics_cpu,
+# lsdtt_marsh_platform_cpu, lsdtt_tidal_channel_cpu,
+# lsdtt_tidal_skeleton_metrics_cpu, lsdtt_water_area_centreline_cpu), and that
+# work gates on hashing every output the CLI tests write
+# (tests/scripts/capture_consolidation_e2e_hashes.py), so a CLI without a test
+# had no gate at all. These smoke tests pin what each run must report; the
+# numbers themselves are guarded by the e2e hashes, not frozen here.
+# =============================================================================
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_cross_sections_dem
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+            --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/cross_sections_fixture_dem.param.in"
+            --read-path "${LSDTT_TEST_DATA_DIR}"
+            --work-dir "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}"
+            --expect xs_terrace_staircase.tif)
+    lsdtt_mark_test_runtime(python fixture_cross_sections_dem)
+else()
+    lsdtt_mark_test_unregistered(python fixture_cross_sections_dem)
+endif()
+lsdtt_set_tests_properties(fixture_cross_sections_dem PROPERTIES
+    LABELS "fixture;cross_sections"
+    FIXTURES_SETUP cross_sections_fixture)
+
+add_test(NAME fixture_cross_sections_inputs
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/cross_sections_source.csv"
+        "${LSDTT_TEST_DATA_DIR}/bankfull_width_reaches.csv"
+        "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out/")
+lsdtt_set_tests_properties(fixture_cross_sections_inputs PROPERTIES
+    LABELS "fixture;cross_sections"
+    FIXTURES_SETUP cross_sections_fixture
+    DEPENDS fixture_cross_sections_dem)
+
+add_lsdtt_cli_smoke_test(
+    smoke_cross_sections
+    lsdtt-cross-sections
+    cross_sections_smoke.param.in
+    xsec_cross_sections.fgb
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --expect xsec_channel_network_lines.fgb
+    --expect xsec_cross_section_sample_points.fgb
+    --expect xsec_vertical_excess_curvature.tif
+    --stdout-contains "Points mapped       : 1"
+    --stdout-contains "Channel cells : 140"
+    --stdout-contains "Cross sections written from 14 channel centres."
+)
+lsdtt_set_tests_properties(smoke_cross_sections PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width
+    lsdtt-bankfull-width
+    bankfull_width_smoke.param.in
+    bf_manning_widths.csv
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --expect bf_channel_profile.csv
+    --expect bf_cross_section_sample_points.fgb
+    --expect bf_manning_bank_points.fgb
+    --stdout-contains "Cross sections with valid slope: 14 of 14"
+    --stdout-contains "Reaches loaded                          : 2"
+    --stdout-contains "Manning widths: 14 valid out of 14 sections matched to a reach by distance."
+    --expect-file-not-contains "bf_manning_widths.csv:nan"
+)
+lsdtt_set_tests_properties(smoke_bankfull_width PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_marsh_topography_dem
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/make_marsh_topography_fixture.py"
+            "${LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR}")
+    lsdtt_mark_test_runtime(python fixture_marsh_topography_dem)
+else()
+    lsdtt_mark_test_unregistered(python fixture_marsh_topography_dem)
+endif()
+lsdtt_set_tests_properties(fixture_marsh_topography_dem PROPERTIES
+    LABELS "fixture;marsh"
+    FIXTURES_SETUP marsh_topography_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_marsh_topography
+    lsdtt-marsh-topography
+    marsh_topography_smoke.param.in
+    marsh_marsh_platform_mask.tif
+    --read-path "${LSDTT_MARSH_TOPOGRAPHY_FIXTURE_DIR}"
+    --expect marsh_marsh_platform_labels.tif
+    --expect marsh_marsh_scarp_mask.tif
+    --expect marsh_marsh_platforms.fgb
+    --expect marsh_tidal_channel_mask.tif
+    --expect marsh_tidal_channel_skeleton.tif
+    --expect marsh_tidal_upl.tif
+    --expect marsh_tidal_sections.fgb
+    --expect marsh_tidal_stations.fgb
+    --expect marsh_tidal_stations.csv
+    --stdout-contains "Building nodes and sections (8 segments)..."
+    --stdout-contains "Computing cross-sections (35 stations)..."
+)
+lsdtt_set_tests_properties(smoke_marsh_topography PROPERTIES
+    FIXTURES_REQUIRED marsh_topography_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_water_centreline
+    lsdtt-water-centreline
+    water_centreline_smoke.param.in
+    wc_water_centreline.fgb
+    --stdout-contains "Water areas: 2   Water lines: 5"
+    --stdout-contains "treated as loch    : 1"
+    --stdout-contains "Tributary connectors : 4"
+    --stdout-contains "Pass-through lines    : 4"
+)
 
 # =============================================================================
 # lsdtt-basin-stats
@@ -1597,6 +1821,23 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "ff_flow_ingested_params.param:threshold_contributing_pixels: 3"
 )
 
+# Drainage-area exceedance scaling and the Tokunaga summary: no test reached
+# either before 2026-10-07. See the parameter file for the reported values.
+add_lsdtt_cli_smoke_test(
+    smoke_channel_network_analysis_area_scaling
+    lsdtt-channel-network-analysis
+    channel_network_analysis_area_scaling.param.in
+    cnas_area_scaling_summary.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect cnas_area_scaling_curve.csv
+    --expect cnas_tokunaga_summary_fit.csv
+    --expect cnas_tokunaga_summary_pair_counts.csv
+    --stdout-contains "--- Drainage-area exceedance scaling ---"
+    --stdout-contains "beta (MLE)                  : 0.6195"
+)
+lsdtt_set_tests_properties(smoke_channel_network_analysis_area_scaling PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 # Phase 4 readiness: this old spelling remains explicit after aliases land. The
 # diagnostics and Strahler/Tokunaga CSV oracle prove that threshold-defined
 # sources reach channel-network construction and a real network analysis.
@@ -1677,6 +1918,35 @@ add_lsdtt_cli_smoke_test(
     raster_calculator_difference.param.in
     tiny_and_tiny_dem_plus1_difference.tif
 )
+
+# DEM coregistration (Nuth and Kaab) had no test until 2026-10-07. The DEM pair
+# is generated: see tests/params/raster_calculator_coregistration.param.in.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_raster_calculator_coregistration_dems
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/make_dem_coregistration_fixture.py"
+            "${LSDTT_DEM_COREGISTRATION_FIXTURE_DIR}")
+    lsdtt_mark_test_runtime(python fixture_raster_calculator_coregistration_dems)
+else()
+    lsdtt_mark_test_unregistered(python fixture_raster_calculator_coregistration_dems)
+endif()
+lsdtt_set_tests_properties(fixture_raster_calculator_coregistration_dems PROPERTIES
+    LABELS "fixture;raster"
+    FIXTURES_SETUP dem_coregistration_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_calculator_coregistration
+    lsdtt-raster-calculator
+    raster_calculator_coregistration.param.in
+    coreg_and_coreg_shifted_coreg_difference.tif
+    --read-path "${LSDTT_DEM_COREGISTRATION_FIXTURE_DIR}"
+    --expect coreg_shifted_coregistered_to_coreg.tif
+    --expect coreg_and_coreg_shifted_coreg_diagnostics.csv
+    --stdout-contains "DEM coregistration offsets [m]: dx=4.01"
+    --stdout-contains "DEM coregistration iterations: 3, converged: yes"
+)
+lsdtt_set_tests_properties(smoke_raster_calculator_coregistration PROPERTIES
+    FIXTURES_REQUIRED dem_coregistration_fixture)
 
 add_lsdtt_cli_smoke_test(
     failure_channel_extraction_invalid_threshold
@@ -2535,8 +2805,22 @@ if(LSDTT_ENABLE_BENCHMARKS)
     # uses the same steepest-descent rule as lsdtt3. The RichDEM row for the
     # same comparison is recorded but not asserted -- see REPORT_ONLY in the
     # driver and docs/developer_notes/testing_and_benchmarking.md.
+    #
+    # flats_float_step is a VALUE comparison: fill_flat_resolution_choice:
+    # barnes2014b_float_step against RichDEM FillDepressions + ResolveFlats,
+    # asserted bit for bit on float32 outside lsdtt3's |z| < 1 m near-zero
+    # guard and the cells lsdtt3 reports changing after its first
+    # (RichDEM-equivalent) round, which must all lie above RichDEM's, with no
+    # cell left without a lower neighbour -- oracle O1
+    # (benchmark_flat_resolution_richdem) on real terrain.
+    #
+    # breach_least_cost is a VALUE comparison too: lsdtt3's least-cost breach
+    # (Lindsay 2020, ported from Whitebox) against whitebox_workflows 2.0.6
+    # under matched parameters (edge policy whitebox, no remainder fill,
+    # max_dist 100, minimize_dist false, flat increment float32(0.001)),
+    # asserted bit for bit on float32.
     foreach(bench_fixture alpine_small lakeland_small)
-        foreach(bench_case fill fill_epsilon breach accum_d8)
+        foreach(bench_case fill fill_epsilon breach breach_least_cost accum_d8 flats_float_step)
             add_test(
                 NAME benchmark_${bench_case}_${bench_fixture}
                 COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
@@ -2552,6 +2836,22 @@ if(LSDTT_ENABLE_BENCHMARKS)
                 PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77)
         endforeach()
     endforeach()
+
+    # Least-cost breach fuzz against Whitebox 2.0.6: 200 seeded random DEMs
+    # (integer and 0.125-step values, some with nodata blobs) x minimize_dist
+    # {false,true} x max_dist {3,10,100} x max_cost {unlimited,2.5}, every run
+    # bitwise on float32. No network: the DEMs are generated in the driver.
+    # Exits 77 without whitebox_workflows.
+    add_test(
+        NAME benchmark_breach_least_cost_fuzz
+        COMMAND ${LSDTT_BENCHMARK_LAUNCHER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_breach_least_cost_vs_whitebox.py"
+                --exe "$<TARGET_FILE:lsdtt-raster-preprocessing>"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flow_benchmark"
+    )
+    lsdtt_mark_test_runtime(pixi benchmark_breach_least_cost_fuzz)
+    lsdtt_set_tests_properties(benchmark_breach_least_cost_fuzz
+        PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
     # Surface-metrics SPEED benchmark vs TopoToolbox.  TopoToolbox is a PERFORMANCE reference here, not a
     # correctness one -- correctness comes from the Tier A analytic oracle in
@@ -2620,6 +2920,34 @@ if(LSDTT_ENABLE_BENCHMARKS)
     lsdtt_mark_test_runtime(pixi benchmark_chi_value_topotoolbox)
     lsdtt_set_tests_properties(benchmark_chi_value_topotoolbox
         PROPERTIES LABELS "benchmark;chi" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+
+    # -------------------------------------------------------------------------
+    # Flat resolution VALUE comparison against RichDEM (oracle O1).
+    #
+    # The first round of fill_flat_resolution_choice: barnes2014b_float_step
+    # is meant to equal RichDEM's ResolveFlats on float32 bit for bit. The
+    # driver fills its own synthetic fixtures (no network) and the committed
+    # lakeland crop with vincent1993 at fill_min_slope 0, resolves the flats
+    # with both tools and asserts equal float32 bits on every valid cell,
+    # except (a) on flats with |z| < 1 m, where lsdtt3's near-zero guard
+    # replaces subnormal steps by design (the driver asserts the differences
+    # are exactly those cells, in RichDEM's order), and (b) on the cells
+    # lsdtt3 reports changing after round 1, which must all be above RichDEM.
+    # It asserts lsdtt3 leaves no cell without a lower neighbour, that RichDEM
+    # does on the fixtures chosen for it, and the round-1 PAIR counts.
+    # Elevations are compared, not D8 directions: RichDEM's D8 is not steepest
+    # descent (see run_flow_benchmark.py). Exits 77 without richdem.
+    # -------------------------------------------------------------------------
+    add_test(
+        NAME benchmark_flat_resolution_richdem
+        COMMAND ${LSDTT_BENCHMARK_LAUNCHER} -I
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_flat_resolution_vs_richdem.py"
+                --bin-dir "$<TARGET_FILE_DIR:lsdtt-raster-preprocessing>"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flat_resolution_richdem"
+    )
+    lsdtt_mark_test_runtime(pixi benchmark_flat_resolution_richdem)
+    lsdtt_set_tests_properties(benchmark_flat_resolution_richdem
+        PROPERTIES LABELS "benchmark;flow" SKIP_RETURN_CODE 77 TIMEOUT 600)
     endif()
 
     # Hydraulic DAGGER parity benchmark.
@@ -2953,6 +3281,15 @@ target_link_libraries(lsdtt-test-csv-table-quoting PRIVATE lsdtt3_core)
 add_test(NAME unit_csv_table_quoting COMMAND lsdtt-test-csv-table-quoting)
 lsdtt_set_tests_properties(unit_csv_table_quoting PROPERTIES LABELS "unit")
 
+# Strict field converters shared by the hand-written CSV readers (Manning,
+# crn_column erosion history, particle restart): file, line and text on error.
+add_executable(lsdtt-test-csv-table-field-parsers cpp/test_csv_table_field_parsers.cpp)
+target_link_libraries(lsdtt-test-csv-table-field-parsers PRIVATE lsdtt3_cpu)
+add_test(NAME unit_csv_table_field_parsers
+         COMMAND lsdtt-test-csv-table-field-parsers
+                 ${CMAKE_CURRENT_BINARY_DIR}/csv_table_field_parsers_output)
+lsdtt_set_tests_properties(unit_csv_table_field_parsers PROPERTIES LABELS "unit")
+
 # B4 the polyfit metric name/suffix table beside the polyfit_metric enum.
 add_executable(lsdtt-test-surface-metrics-polyfit-metric-table
                cpp/test_surface_metrics_polyfit_metric_table.cpp)
@@ -3062,9 +3399,15 @@ target_link_libraries(lsdtt-test-synthetic-networks PRIVATE lsdtt3_cpu)
 add_test(NAME unit_synthetic_networks
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
+# Both synthetic-networks runs write into the same directory (the same binary
+# writes ocn_square_polygon.fgb in both modes), so they must not run at once:
+# under ctest -j the polygon write in one could fail mid-write of the other
+# (P1 failed in ~1 run in 4, measured 2026-10-07). RESOURCE_LOCK serialises
+# just these two and keeps every output path unchanged.
 lsdtt_set_tests_properties(unit_synthetic_networks PROPERTIES
     LABELS "unit;synthetic_networks"
-    FIXTURES_SETUP synthetic_networks_fixture)
+    FIXTURES_SETUP synthetic_networks_fixture
+    RESOURCE_LOCK synthetic_networks_output)
 file(MAKE_DIRECTORY ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
 
 # Reported, never asserted: the fidelity / energy table over temperature at
@@ -3078,7 +3421,8 @@ add_test(NAME unit_synthetic_networks_sweep
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR} --sweep)
 lsdtt_set_tests_properties(unit_synthetic_networks_sweep PROPERTIES
-    LABELS "unit;synthetic_networks" TIMEOUT 1800)
+    LABELS "unit;synthetic_networks" TIMEOUT 1800
+    RESOURCE_LOCK synthetic_networks_output)
 
 add_test(NAME unit_flow_properties
          COMMAND lsdtt-test-flow-properties
@@ -3094,6 +3438,37 @@ add_executable(lsdtt-test-flow-d8-identity cpp/test_flow_d8_identity.cpp)
 target_link_libraries(lsdtt-test-flow-d8-identity PRIVATE lsdtt3_cpu)
 add_test(NAME unit_flow_d8_identity COMMAND lsdtt-test-flow-d8-identity)
 lsdtt_set_tests_properties(unit_flow_d8_identity PROPERTIES LABELS "unit;flow")
+
+# Barnes et al. (2014b) flat resolution. Hermetic: in-process inputs only.
+add_executable(lsdtt-test-flat-resolution cpp/test_flat_resolution.cpp)
+target_link_libraries(lsdtt-test-flat-resolution PRIVATE lsdtt3_cpu)
+add_test(NAME unit_flat_resolution COMMAND lsdtt-test-flat-resolution)
+lsdtt_set_tests_properties(unit_flat_resolution PROPERTIES LABELS "unit;flow")
+# The same driver on the committed real-terrain crop (Step 11d): a Copernicus
+# GLO-30 lakeland window on which a single Barnes pass leaves cells the D8
+# router refuses. Reads tests/data only; no network, no skip path.
+add_test(NAME unit_flat_resolution_real_terrain
+         COMMAND lsdtt-test-flat-resolution --real-terrain
+                 "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
+lsdtt_set_tests_properties(unit_flat_resolution_real_terrain PROPERTIES LABELS "unit;flow")
+
+# Least-cost breaching (Lindsay 2020) against frozen float32 outputs of
+# Whitebox next-gen BreachDepressionsLeastCost (whitebox_workflows 2.0.6),
+# bitwise, on hand-built fixtures F0-F15, with edge_policy whitebox; plus the
+# Whitebox counters, max_dist validation and edge_policy outlet property checks.
+# Hermetic: in-process inputs only.
+add_executable(lsdtt-test-breach-least-cost cpp/test_breach_least_cost.cpp)
+target_link_libraries(lsdtt-test-breach-least-cost PRIVATE lsdtt3_cpu)
+add_test(NAME unit_breach_least_cost COMMAND lsdtt-test-breach-least-cost)
+lsdtt_set_tests_properties(unit_breach_least_cost PROPERTIES LABELS "unit;flow")
+# The same driver on the committed lakeland crop: float32 output under matched
+# parameters equals Whitebox 2.0.6's (digests computed from Whitebox itself),
+# and lsdtt3's default output routes (every interior cell descends; D8
+# flowinfo validates). Reads tests/data only; no network, no skip path.
+add_test(NAME unit_breach_least_cost_real_terrain
+         COMMAND lsdtt-test-breach-least-cost --real-terrain
+                 "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
+lsdtt_set_tests_properties(unit_breach_least_cost_real_terrain PROPERTIES LABELS "unit;flow")
 
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
 lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
@@ -3328,6 +3703,163 @@ add_test(NAME unit_point_input
 lsdtt_set_tests_properties(unit_point_input PROPERTIES
     LABELS "unit;point_input")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
+
+# Characterisation tests for the src/utils + src/cpu consolidation (stage 1).
+# Each embeds the private copies it replaced, verbatim, as the reference, and
+# stays after those copies are deleted.
+add_executable(lsdtt-test-raster-cell-predicates cpp/test_raster_cell_predicates.cpp)
+target_link_libraries(lsdtt-test-raster-cell-predicates PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_cell_predicates COMMAND lsdtt-test-raster-cell-predicates)
+lsdtt_set_tests_properties(unit_raster_cell_predicates PROPERTIES
+    LABELS "unit;raster")
+
+add_executable(lsdtt-test-distributed-hydrology-argument-checks
+    cpp/test_distributed_hydrology_argument_checks.cpp)
+target_link_libraries(lsdtt-test-distributed-hydrology-argument-checks PRIVATE lsdtt3_cpu)
+add_test(NAME unit_distributed_hydrology_argument_checks
+         COMMAND lsdtt-test-distributed-hydrology-argument-checks)
+lsdtt_set_tests_properties(unit_distributed_hydrology_argument_checks PROPERTIES
+    LABELS "unit;distributed_hydrology")
+
+add_executable(lsdtt-test-drainage-injection-weights cpp/test_drainage_injection_weights.cpp)
+target_link_libraries(lsdtt-test-drainage-injection-weights PRIVATE lsdtt3_cpu)
+add_test(NAME unit_drainage_injection_weights
+         COMMAND lsdtt-test-drainage-injection-weights
+                 ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
+lsdtt_set_tests_properties(unit_drainage_injection_weights PROPERTIES
+    LABELS "unit;point_input;flow")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
+
+# Stage 3: bilinear raster sampling (C07) and point_in_ring (C22).
+add_executable(lsdtt-test-raster-sampling cpp/test_raster_sampling.cpp)
+target_link_libraries(lsdtt-test-raster-sampling PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_sampling COMMAND lsdtt-test-raster-sampling)
+lsdtt_set_tests_properties(unit_raster_sampling PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 4: junction-graph topological order and s_vector preorder (C05).
+add_executable(lsdtt-test-junction-graph-orders cpp/test_junction_graph_orders.cpp)
+target_link_libraries(lsdtt-test-junction-graph-orders PRIVATE lsdtt3_cpu)
+add_test(NAME unit_junction_graph_orders COMMAND lsdtt-test-junction-graph-orders)
+lsdtt_set_tests_properties(unit_junction_graph_orders PROPERTIES
+    LABELS "unit;network")
+
+# Stage 5: neighbour tables (C01) and sqrt(2) (C19). The table checks are
+# static_asserts, so a mapping error fails the build of this test.
+add_executable(lsdtt-test-grid-neighbours cpp/test_grid_neighbours.cpp)
+target_link_libraries(lsdtt-test-grid-neighbours PRIVATE lsdtt3_cpu)
+add_test(NAME unit_grid_neighbours COMMAND lsdtt-test-grid-neighbours)
+lsdtt_set_tests_properties(unit_grid_neighbours PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 6: shared layer-to-raster CRS transform and spatial filter (C03).
+add_executable(lsdtt-test-vector-layer-transform cpp/test_vector_layer_transform.cpp)
+target_link_libraries(lsdtt-test-vector-layer-transform PRIVATE lsdtt3_cpu)
+add_test(NAME unit_vector_layer_transform COMMAND lsdtt-test-vector-layer-transform)
+lsdtt_set_tests_properties(unit_vector_layer_transform PROPERTIES
+    LABELS "unit;gdal")
+
+# Stage 7: connected-component labelling (C08) and grid Dijkstra (C11).
+add_executable(lsdtt-test-connected-components cpp/test_connected_components.cpp)
+target_link_libraries(lsdtt-test-connected-components PRIVATE lsdtt3_cpu)
+add_test(NAME unit_connected_components COMMAND lsdtt-test-connected-components)
+lsdtt_set_tests_properties(unit_connected_components PROPERTIES
+    LABELS "unit;raster")
+
+add_executable(lsdtt-test-grid-geodesic cpp/test_grid_geodesic.cpp)
+target_link_libraries(lsdtt-test-grid-geodesic PRIVATE lsdtt3_cpu)
+add_test(NAME unit_grid_geodesic COMMAND lsdtt-test-grid-geodesic)
+lsdtt_set_tests_properties(unit_grid_geodesic PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 8: boundary-condition string parsing (C09).
+add_executable(lsdtt-test-boundary-conditions cpp/test_boundary_conditions.cpp)
+target_link_libraries(lsdtt-test-boundary-conditions PRIVATE lsdtt3_cpu)
+add_test(NAME unit_boundary_conditions COMMAND lsdtt-test-boundary-conditions)
+lsdtt_set_tests_properties(unit_boundary_conditions PROPERTIES
+    LABELS "unit;flow")
+
+# Stage 8: open-for-write helper (C14).
+add_executable(lsdtt-test-output-file cpp/test_output_file.cpp)
+add_test(NAME unit_output_file COMMAND lsdtt-test-output-file
+         ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
+lsdtt_set_tests_properties(unit_output_file PROPERTIES
+    LABELS "unit;core")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
+
+# Stage 8: splitmix64 copies replaced by lsdtt_random.hpp (C15).
+add_executable(lsdtt-test-splitmix-copies cpp/test_splitmix_copies.cpp)
+add_test(NAME unit_splitmix_copies COMMAND lsdtt-test-splitmix-copies)
+lsdtt_set_tests_properties(unit_splitmix_copies PROPERTIES
+    LABELS "unit;core")
+
+# Stage 9: thread-count invariance of the kernels whose OpenMP thread setting
+# moved from omp_set_num_threads to num_threads clauses (C16, decision D4).
+add_executable(lsdtt-test-thread-count-invariance cpp/test_thread_count_invariance.cpp)
+target_link_libraries(lsdtt-test-thread-count-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_thread_count_invariance COMMAND lsdtt-test-thread-count-invariance)
+lsdtt_set_tests_properties(unit_thread_count_invariance PROPERTIES
+    LABELS "unit;lem")
+
+# Stage 10: landslide xorshift64* copies replaced by lsdtt_random (L3).
+add_executable(lsdtt-test-landslide-rng cpp/test_landslide_rng.cpp)
+add_test(NAME unit_landslide_rng COMMAND lsdtt-test-landslide-rng)
+lsdtt_set_tests_properties(unit_landslide_rng PROPERTIES
+    LABELS "unit;landslide")
+
+# Stage 10: thread setting of the hillslope solvers moved from
+# omp_set_num_threads to num_threads clauses (C16-H, decision D4).
+add_executable(lsdtt-test-hillslope-thread-count-invariance cpp/test_hillslope_thread_count_invariance.cpp)
+target_link_libraries(lsdtt-test-hillslope-thread-count-invariance PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hillslope_thread_count_invariance COMMAND lsdtt-test-hillslope-thread-count-invariance)
+lsdtt_set_tests_properties(unit_hillslope_thread_count_invariance PROPERTIES
+    LABELS "unit;hillslope")
+
+# Stage 10: bilinear_regular takes its axis weights from regular_axis_weight (L1).
+add_executable(lsdtt-test-cosmo-lsdn-grid-lookup cpp/test_cosmo_lsdn_grid_lookup.cpp)
+target_link_libraries(lsdtt-test-cosmo-lsdn-grid-lookup PRIVATE lsdtt3_cpu)
+add_test(NAME unit_cosmo_lsdn_grid_lookup COMMAND lsdtt-test-cosmo-lsdn-grid-lookup)
+lsdtt_set_tests_properties(unit_cosmo_lsdn_grid_lookup PROPERTIES
+    LABELS "unit;cosmo")
+
+# The production / pressure rasters' WGS84 conversion must not depend on the
+# axis order the DEM's CRS declares (northing-first CRSs such as NZTM).
+add_executable(lsdtt-test-cosmo-raster-axis-order cpp/test_cosmo_raster_axis_order.cpp)
+target_link_libraries(lsdtt-test-cosmo-raster-axis-order PRIVATE lsdtt3_cpu)
+add_test(NAME unit_cosmo_raster_axis_order COMMAND lsdtt-test-cosmo-raster-axis-order)
+lsdtt_set_tests_properties(unit_cosmo_raster_axis_order PROPERTIES
+    LABELS "unit;cosmo")
+
+# Stage 11: four-cardinal centred-difference gradient shared by the
+# vertical-units check and the LEM timestep diagnosis (C18).
+add_executable(lsdtt-test-raster-central-difference cpp/test_raster_central_difference.cpp)
+target_link_libraries(lsdtt-test-raster-central-difference PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_central_difference COMMAND lsdtt-test-raster-central-difference)
+lsdtt_set_tests_properties(unit_raster_central_difference PROPERTIES
+    LABELS "unit;raster")
+
+# Stage 11: Manning's equation shared by hydro_velocity_field and
+# manning_hydraulics (C20).
+add_executable(lsdtt-test-hydro-velocity-manning-formula cpp/test_hydro_velocity_manning_formula.cpp)
+target_link_libraries(lsdtt-test-hydro-velocity-manning-formula PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hydro_velocity_manning_formula COMMAND lsdtt-test-hydro-velocity-manning-formula)
+lsdtt_set_tests_properties(unit_hydro_velocity_manning_formula PROPERTIES
+    LABELS "unit;network")
+
+# Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
+add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
+target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
+add_test(NAME unit_order_statistics COMMAND lsdtt-test-order-statistics)
+lsdtt_set_tests_properties(unit_order_statistics PROPERTIES
+    LABELS "unit;statistics")
+
+# Stage 2 part B: records the D7 change from the private ols_fit to
+# compute_linear_regression in the drainage-area exceedance scaling.
+add_executable(lsdtt-test-drainage-area-exceedance-ols cpp/test_drainage_area_exceedance_ols.cpp)
+target_link_libraries(lsdtt-test-drainage-area-exceedance-ols PRIVATE lsdtt3_cpu)
+add_test(NAME unit_drainage_area_exceedance_ols COMMAND lsdtt-test-drainage-area-exceedance-ols)
+lsdtt_set_tests_properties(unit_drainage_area_exceedance_ols PROPERTIES
+    LABELS "unit;statistics")
 
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
 target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
@@ -4091,7 +4623,512 @@ add_lsdtt_cli_smoke_test(
     unused_expected_output
     --expect-failure
     --stderr-contains "cannot impose a gradient across flats"
+    --stderr-contains "or set fill_flat_resolution_choice: barnes2014b_gradient"
 )
+
+# fill_flat_resolution_choice (Barnes et al. 2014b flat resolution) in
+# lsdtt-raster-preprocessing. The resolver numerics are covered by
+# unit_flat_resolution; these carry the CLI wiring: both options run and
+# write, the three refusals are exact, the diagnostics reach stdout, and the
+# rim-pit warning reaches stderr. tiny_dem.asc has no flats once filled, so
+# the first two are plumbing only; flat_valley_dem.asc (11 x 24 valley, one
+# flat floor) is where the options differ from the default fill.
+add_lsdtt_cli_smoke_test(
+    smoke_fill_flat_resolution_float_step
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_float_step.param.in
+    tinyfs_fill.tif
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fill_flat_resolution_gradient
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_gradient.param.in
+    tinygr_fill.tif
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fill_flat_resolution_unknown_choice
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_unknown.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice must be one of inline_gradient, barnes2014b_gradient, barnes2014b_float_step\; got 'barnes2014b_gradiant'"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fill_flat_resolution_gradient_zero_slope
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_gradient_zero_slope.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice = barnes2014b_gradient needs fill_min_slope > 0 (it sets the gradient imposed across flats)\; got 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fill_flat_resolution_fill_spill_merge
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_fsm.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice = barnes2014b_float_step applies to the barnes2014 and vincent1993 fills, not barnesetal2021"
+)
+
+# Bands on the fill difference, not oracles of the whole surface: the largest
+# raise on the valley is 48 x 2^-17 m (float step) and 48 u_q = 0.0681 m
+# (gradient), against 0.0255 m for the default fill, so each band also fails
+# if the option silently falls back to the default.
+add_lsdtt_cli_smoke_test(
+    rigorous_fill_flat_resolution_valley_float_step
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_valley_float_step.param.in
+    valleyfs_fill.tif
+    --expect valleyfs_fill_diff.tif
+    --expect-raster-stat valleyfs_fill_diff.tif:max:0.000366:0.000367
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max mask: 48"
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Rounds: 1 ("
+    --stdout-contains "NOTE: fill_min_slope (0.0001) is ignored"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fill_flat_resolution_valley_gradient
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_valley_gradient.param.in
+    valleygr_fill.tif
+    --expect valleygr_fill_diff.tif
+    --expect-raster-stat valleygr_fill_diff.tif:max:0.0681:0.0682
+    --stdout-contains "Capped flats: 0"
+    --stdout-contains "Float-step fallbacks: 0"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --stdout-contains "Rounds: 1 ("
+)
+
+# The knob 1 ULP above the valley floor: round 1 (RichDEM) leaves it without a
+# lower neighbour, round 2 refills and re-resolves it, and the result routes.
+# Pinned on the first run (2026-10-09).
+add_lsdtt_cli_smoke_test(
+    rigorous_fill_flat_resolution_knob_rounds
+    lsdtt-raster-preprocessing
+    fill_flat_resolution_rim_warning.param.in
+    valleyknob_fill.tif
+    --stdout-contains "Rounds: 2 (cells without descent after each round: 1, 0)"
+    --stdout-contains "Round 1 (RichDEM-comparable): 8 pair(s), 8 cell(s) raised above surroundings, 1 cell(s) without descent"
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Final priority-flood pass: not needed"
+    --stderr-not-contains "WARNING:"
+)
+
+lsdtt_set_tests_properties(
+    smoke_fill_flat_resolution_float_step
+    smoke_fill_flat_resolution_gradient
+    PROPERTIES LABELS "smoke;cli;flow")
+lsdtt_set_tests_properties(
+    failure_fill_flat_resolution_unknown_choice
+    failure_fill_flat_resolution_gradient_zero_slope
+    failure_fill_flat_resolution_fill_spill_merge
+    PROPERTIES LABELS "failure;cli;flow")
+lsdtt_set_tests_properties(
+    rigorous_fill_flat_resolution_valley_float_step
+    rigorous_fill_flat_resolution_valley_gradient
+    rigorous_fill_flat_resolution_knob_rounds
+    PROPERTIES LABELS "rigorous;cli;flow")
+
+# fill_flat_resolution_choice in the routing CLIs. The parameter check, the
+# fill-and-resolve path, the raster_is_filled: true resolve-only path and the
+# report are one shared implementation
+# (src/cpu/lsdtt_fill_flat_resolution_reporting_cpu), so one CLI carries the
+# raster_is_filled cases and each CLI family gets one run with an option on
+# the valley. The "Flat regions" line shows the resolver ran on the valley's
+# floor; under the default fill that line is never printed.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_flat_resolution_gradient
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_gradient.param.in
+    chivg_chi_fit_nodes_mn_0p500.csv
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+)
+
+# raster_is_filled: true (the input is not filled again). The valley is a
+# filled surface with a true flat: a barnes2014b option resolves it and the
+# run succeeds; inline_gradient routes it as it is and the router refuses it.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_flat_resolution_filled_float_step
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_filled_float_step.param.in
+    chivf_chi_fit_nodes_mn_0p500.csv
+    --stdout-contains "Raster is marked as already filled. Skipping fill step."
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max raise: 0.000366211 m"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_analysis_flat_resolution_filled_inline
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_filled_inline.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "could not assign a receiver"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_analysis_flat_resolution_unfilled_input
+    lsdtt-chi-analysis
+    chi_analysis_flat_resolution_unfilled_input.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: flat resolution failed: lsdtt::compute_barnes2014b_flat_mask: 1 flat cell(s) in 1 flat region(s) have no outlet"
+    --stderr-contains "\; set raster_is_filled: false"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_flat_resolution_gradient
+    lsdtt-channel-extraction
+    channel_extraction_flat_resolution_gradient.param.in
+    chanvg_channel_network_lines.fgb
+    --expect-vector-feature-min chanvg_channel_network_lines.fgb:1
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_drainage_analysis_flat_resolution_float_step
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_float_step.param.in
+    drainvf_d8_drainage_area.tif
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max raise: 0.000366211 m"
+)
+
+# Two CLIs call their routing fill slope fill_min_slope_for_routing; the
+# gradient refusal names the parameter the user actually set.
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_flat_resolution_gradient_zero_slope
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_resolution_gradient_zero_slope.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: fill_flat_resolution_choice = barnes2014b_gradient needs fill_min_slope_for_routing > 0 (it sets the gradient imposed across flats)\; got 0"
+)
+
+lsdtt_set_tests_properties(
+    smoke_chi_analysis_flat_resolution_gradient
+    smoke_chi_analysis_flat_resolution_filled_float_step
+    smoke_channel_extraction_flat_resolution_gradient
+    smoke_drainage_analysis_flat_resolution_float_step
+    PROPERTIES LABELS "smoke;cli;flow")
+lsdtt_set_tests_properties(
+    failure_chi_analysis_flat_resolution_filled_inline
+    failure_chi_analysis_flat_resolution_unfilled_input
+    failure_fluvial_surfaces_flat_resolution_gradient_zero_slope
+    PROPERTIES LABELS "failure;cli;flow")
+
+# Real-terrain gate. The committed 128 x 128 Copernicus GLO-30 lakeland crop
+# (tests/data/flat_resolution_lakeland_crop_dem.tif; provenance in
+# tests/README.md) is a surface on which a single Barnes pass -- RichDEM
+# ResolveFlats -- leaves rim cells without a lower neighbour, so before the
+# round loop these exact commands exited 1 with "could not assign a receiver".
+# Each barnes2014b run must now exit 0 with no cell left without descent; the
+# round and final-pass lines are pinned (2026-10-10). The synthetic valley
+# fixtures above strand nothing, which is why they missed that failure.
+# unit_flat_resolution_real_terrain checks the same crop at API level.
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_analysis_flat_resolution_real_terrain_float_step
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_real_terrain_float_step.param.in
+    rtfs_d8_drainage_area.tif
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Rounds: 4 (cells without descent after each round: 117, 44, 26, 28)"
+    --stdout-contains "Round 1 (RichDEM-comparable): 364 pair(s), 191 cell(s) raised above surroundings, 117 cell(s) without descent"
+    --stdout-contains "Final priority-flood pass: 107 cell(s)"
+    --stderr-not-contains "could not assign a receiver"
+)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_drainage_analysis_flat_resolution_real_terrain_gradient
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_real_terrain_gradient.param.in
+    rtgr_d8_drainage_area.tif
+    --stdout-contains "Rim cells without descent: 0"
+    --stdout-contains "Rounds: 4 (cells without descent after each round: 115, 56, 43, 30)"
+    --stdout-contains "Round 1 (RichDEM-comparable): 362 pair(s), 189 cell(s) raised above surroundings, 115 cell(s) without descent"
+    --stdout-contains "Final priority-flood pass: 108 cell(s)"
+    --stderr-not-contains "could not assign a receiver"
+)
+
+# Control: the default flat handling routes the same crop with the same
+# command shape (no "Flat resolution:" block on this path).
+add_lsdtt_cli_smoke_test(
+    smoke_drainage_analysis_flat_resolution_real_terrain_inline_gradient
+    lsdtt-drainage-analysis
+    drainage_analysis_flat_resolution_real_terrain_inline_gradient.param.in
+    rtig_d8_drainage_area.tif
+)
+
+lsdtt_set_tests_properties(
+    rigorous_drainage_analysis_flat_resolution_real_terrain_float_step
+    rigorous_drainage_analysis_flat_resolution_real_terrain_gradient
+    PROPERTIES LABELS "rigorous;cli;flow")
+lsdtt_set_tests_properties(
+    smoke_drainage_analysis_flat_resolution_real_terrain_inline_gradient
+    PROPERTIES LABELS "smoke;cli;flow")
+
+# The same command on whole fetched Copernicus GLO-30 fixtures: the flow
+# benchmark's alpine/lakeland small and medium (fetched with
+# lsdtt-fetch-raster when not cached), plus the benchmark suite's
+# alpine/lakeland 500 and 1000 rungs when they are cached. inline_gradient,
+# barnes2014b_float_step and barnes2014b_gradient must each exit 0, and the
+# barnes runs must end with no cell without descent. Stdlib-only script.
+# NEEDS NETWORK; skips (77) when a fixture cannot be fetched.
+if(LSDTT_ENABLE_PYTHON_TESTS AND LSDTT_ENABLE_NETWORK_TESTS)
+    add_test(NAME smoke_flat_resolution_real_terrain_routing
+             COMMAND ${Python3_EXECUTABLE} -I
+                     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_flat_resolution_real_terrain_routing.py"
+                     --bin-dir "$<TARGET_FILE_DIR:lsdtt-drainage-analysis>"
+                     --work-dir "${CMAKE_CURRENT_BINARY_DIR}/flat_resolution_real_terrain_routing")
+    lsdtt_mark_test_runtime(python smoke_flat_resolution_real_terrain_routing)
+elseif(NOT LSDTT_ENABLE_NETWORK_TESTS)
+    lsdtt_mark_test_unregistered(network smoke_flat_resolution_real_terrain_routing)
+else()
+    lsdtt_mark_test_unregistered(python smoke_flat_resolution_real_terrain_routing)
+endif()
+lsdtt_set_tests_properties(smoke_flat_resolution_real_terrain_routing PROPERTIES
+    LABELS "smoke;flow" SKIP_RETURN_CODE 77 TIMEOUT 600)
+
+# One run with an option per remaining wired CLI, the two options alternating
+# across CLIs. Each asserts the "Flat resolution:" block (printed only on the
+# barnes path, so the test fails if the option silently falls back to the
+# default) and, where the valley's flat reaches an output cheaply, a value the
+# default fill does not give (stated in each param file). The extra inputs are
+# flat_valley_outlets.csv (the floor cell next to the spill, row 5, col 1),
+# flat_valley_source.csv (the head of the valley axis, row 5, col 22) and
+# flat_valley_mask.asc (the floor plus the spill cell).
+add_lsdtt_cli_smoke_test(
+    smoke_basin_extraction_flat_resolution_gradient
+    lsdtt-basin-extraction
+    basin_extraction_flat_resolution_gradient.param.in
+    bevg_junction_basin_outlines.fgb
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Junctions     : 105"
+)
+
+# raster_is_filled: true in a second CLI family (chi-analysis carries the
+# first): the resolve-only path resolves the valley's flat and routing
+# succeeds; inline_gradient leaves the flat for the router, which refuses it.
+add_lsdtt_cli_smoke_test(
+    smoke_basin_extraction_flat_resolution_filled_float_step
+    lsdtt-basin-extraction
+    basin_extraction_flat_resolution_filled_float_step.param.in
+    bevf_junction_basin_outlines.fgb
+    --stdout-contains "Raster is marked as already filled. Skipping fill step."
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Max raise: 0.000366211 m"
+    --stdout-contains "Junctions     : 105"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_basin_extraction_flat_resolution_filled_inline
+    lsdtt-basin-extraction
+    basin_extraction_flat_resolution_filled_inline.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "could not assign a receiver"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_basin_stats_flat_resolution_float_step
+    lsdtt-basin-stats
+    basin_stats_flat_resolution_float_step.param.in
+    bsvf_basin_stats.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Basin pixels  : 207"
+)
+
+# fill_before_routing: false (the two CLIs that have it). The NOTE is the
+# assertion; the router's refusal shows the option really was not applied.
+add_lsdtt_cli_smoke_test(
+    failure_basin_stats_flat_resolution_no_fill_note
+    lsdtt-basin-stats
+    basin_stats_flat_resolution_no_fill.param.in
+    unused_expected_output
+    --expect-failure
+    --stdout-contains "NOTE: fill_flat_resolution_choice (barnes2014b_gradient) is ignored because fill_before_routing is false."
+    --stderr-contains "could not assign a receiver"
+    --stderr-not-contains "needs fill_min_slope > 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_basin_surface_metrics_flat_resolution_gradient
+    lsdtt-basin-surface-metrics
+    basin_surface_metrics_flat_resolution_gradient.param.in
+    bsmvg_slope_area_stats.csv
+    --expect bsmvg_outline_curvature_flips.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --expect-file-contains "bsmvg_slope_area_stats.csv:121,45,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_channel_network_analysis_flat_resolution_float_step
+    lsdtt-channel-network-analysis
+    channel_network_analysis_flat_resolution_float_step.param.in
+    cnavf_tokunaga_summary_fit.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "Junctions     : 105"
+    --stdout-contains "Strahler channels           : 80"
+)
+
+# The section geometry does not depend on the choice on this fixture (see the
+# param file), so this is the block and the outputs only.
+add_lsdtt_cli_smoke_test(
+    smoke_cross_sections_flat_resolution_gradient
+    lsdtt-cross-sections
+    cross_sections_flat_resolution_gradient.param.in
+    xsvg_cross_sections.fgb
+    --expect xsvg_cross_section_sample_points.fgb
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --stdout-contains "Cross sections written from 23 channel centres."
+)
+
+# lsdtt-bankfull-width's low-slope WARNING has one sentence per choice; one
+# test per branch, each asserting the whole WARNING. The barnes runs also show
+# the routing change: the second section's drainage area is 20700 m2 on the
+# resolved floor against 2300 m2 under the default fill.
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_inline_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_inline.param.in
+    bfvi_channel_profile.csv
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). Pit filling imposes fill_min_slope on flats, so on these low-gradient reaches the slope (and Manning discharge, which scales as sqrt(slope)) is materially set by the fill. Reduce fill_min_slope or supply a pre-filled DEM."
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_gradient_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_gradient.param.in
+    bfvg_channel_profile.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). The barnes2014b_gradient flat resolver gives flats at least fill_min_slope (more on quantised-up flats, less on capped flats\; see the flat-resolution report above), so on these low-gradient reaches the slope (and Manning discharge, which scales as sqrt(slope)) is materially set by the flat resolution. Reduce fill_min_slope."
+    --expect-file-contains "bfvg_channel_profile.csv:1,210.0000,20700.0000,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_float_step_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_float_step.param.in
+    bfvf_channel_profile.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). Under barnes2014b_float_step, flat slopes come from float32 steps of order ULP(z) / cell size and fill_min_slope does not apply, so on these low-gradient reaches the slope (and Manning discharge, which scales as sqrt(slope)) is set by elevation precision, not the terrain."
+    --expect-file-contains "bfvf_channel_profile.csv:1,210.0000,20700.0000,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_bankfull_width_flat_resolution_filled_float_step_warning
+    lsdtt-bankfull-width
+    bankfull_width_flat_resolution_filled_float_step.param.in
+    bfvff_channel_profile.csv
+    --stdout-contains "Raster marked as already filled. Skipping."
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stderr-contains "WARNING: 19 section(s) have fitted slope below 10 x fill_min_slope (0.001). Under barnes2014b_float_step, flat slopes come from float32 steps of order ULP(z) / cell size and fill_min_slope does not apply"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_flat_resolution_hype_gradient
+    lsdtt-distributed-hydrology
+    distributed_hydrology_flat_resolution_hype_gradient.param.in
+    hypevg_hype_discharge.csv
+    --read-path "${LSDTT_HYPE_CLI_FIXTURE_DIR}"
+    --stdout-contains "Column model: HYPE"
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Flat regions: 0, flat cells: 0, NO_FLOW cells: 0"
+    --expect-file-contains "hypevg_hype_discharge.csv:30,2001-01-30,"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_distributed_hydrology_flat_resolution_topmodel_float_step
+    lsdtt-distributed-hydrology
+    distributed_hydrology_flat_resolution_topmodel_float_step.param.in
+    tmvf_twi.tif
+    --expect tmvf_discharge.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --expect-raster-stat tmvf_twi.tif:mean:11.50:11.57
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_flat_resolution_float_step
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_resolution_float_step.param.in
+    fsvf_surface_class.csv
+    --expect fsvf_hand.tif
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "  3 channel source(s) in scope"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_flat_resolution_no_fill_note
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_resolution_no_fill.param.in
+    unused_expected_output
+    --expect-failure
+    --stdout-contains "NOTE: fill_flat_resolution_choice (barnes2014b_gradient) is ignored because fill_before_routing is false."
+    --stderr-contains "could not assign a receiver"
+    --stderr-not-contains "needs fill_min_slope_for_routing > 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_ridgeline_flat_resolution_gradient
+    lsdtt-ridgeline-analysis
+    ridgeline_flat_resolution_gradient.param.in
+    rlvg_basin_outlines.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_gradient"
+    --stdout-contains "Min effective gradient: 0.000141907 m/m"
+    --stdout-contains "Filtering initial selection (55 basins)..."
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_valley_centreline_flat_resolution_float_step
+    lsdtt-valley-centreline
+    valley_centreline_flat_resolution_float_step.param.in
+    vcvf_valley_centreline.fgb
+    --expect vcvf_valley_centreline_nodes.csv
+    --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
+    --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
+    --stdout-contains "centreline 21 nodes, 2 px upstream of the head excluded from the trough"
+)
+
+lsdtt_set_tests_properties(
+    smoke_basin_extraction_flat_resolution_gradient
+    smoke_basin_extraction_flat_resolution_filled_float_step
+    smoke_basin_stats_flat_resolution_float_step
+    smoke_basin_surface_metrics_flat_resolution_gradient
+    smoke_channel_network_analysis_flat_resolution_float_step
+    smoke_cross_sections_flat_resolution_gradient
+    smoke_bankfull_width_flat_resolution_inline_warning
+    smoke_bankfull_width_flat_resolution_gradient_warning
+    smoke_bankfull_width_flat_resolution_float_step_warning
+    smoke_bankfull_width_flat_resolution_filled_float_step_warning
+    smoke_distributed_hydrology_flat_resolution_hype_gradient
+    smoke_distributed_hydrology_flat_resolution_topmodel_float_step
+    smoke_fluvial_surfaces_flat_resolution_float_step
+    smoke_ridgeline_flat_resolution_gradient
+    smoke_valley_centreline_flat_resolution_float_step
+    PROPERTIES LABELS "smoke;cli;flow")
+lsdtt_set_tests_properties(
+    failure_basin_extraction_flat_resolution_filled_inline
+    failure_basin_stats_flat_resolution_no_fill_note
+    failure_fluvial_surfaces_flat_resolution_no_fill_note
+    PROPERTIES LABELS "failure;cli;flow")
+lsdtt_set_tests_properties(smoke_distributed_hydrology_flat_resolution_hype_gradient
+    PROPERTIES FIXTURES_REQUIRED hype_cli_fixture)
 
 # lsdtt-surface-metrics.  Uses tiny_dem.asc (UTM 30N) rather than tiny30_dem.tif,
 # which is EPSG:4326 and is rejected by the CLI's projected-CRS check - that
@@ -4129,6 +5166,21 @@ add_lsdtt_cli_smoke_test(
     frangi_c15_frangi.tif
     --stdout-contains "c         : 15"
 )
+
+# Valley spacing proper: no test ran it before 2026-10-07. See the parameter
+# file for why (consolidation D5 changed its chamfer diagonal weight).
+add_lsdtt_cli_smoke_test(
+    smoke_spectral_analysis_valley_spacing
+    lsdtt-spectral-analysis
+    spectral_analysis_valley_spacing.param.in
+    vsp_valley_spacing.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect vsp_valley_spacing_spectrum.csv
+    --stdout-contains "--- Valley spacing ---"
+    --stdout-contains "Hillslope length (p90)  : 30 m"
+)
+lsdtt_set_tests_properties(smoke_spectral_analysis_valley_spacing PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
 
 add_lsdtt_cli_smoke_test(
     regression_spectral_analysis_valley_spacing_legacy_alias
@@ -5597,6 +6649,22 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_flat_surface_finder PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Slope-break skeleton connection: the only test that runs the slope-break
+# finder's component labelling. See the parameter file.
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_slope_break_connect
+    lsdtt-flat-surface-finder
+    flat_surface_finder_slope_break_connect.param.in
+    fsfsb_slope_break_centreline_connected.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect fsfsb_slope_break_bridge_mask.tif
+    --stdout-contains "endpoints found : 7"
+    --stdout-contains "candidates      : 6"
+    --stdout-contains "bridges accepted: 2"
+)
+lsdtt_set_tests_properties(smoke_flat_surface_finder_slope_break_connect PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 # Phase 1. The reordering through the CLI: the ladder must resolve the flight,
 # every patch must carry a band, and the run must report which windows resolved.
 # Phase 1's reordering, now driven through lsdtt-fluvial-surfaces: phase 4 moved
@@ -6107,11 +7175,14 @@ set(LSDTT_DOMAIN_RULES
     # there is a real cluster of tests on this module, flip this one line to
     # "wetness_index" and move the STI tests with it, deliberately.
     "wetness_index|hydro_velocity|hydro_roughness|hydro_routing|topmodel|canopy|channel_extent|infiltration|landcover|distributed_hydrology|hype"          "network"
-    "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length"  "network"
+    "chi|channel|drainage|basin|flow_properties|flow_snapping|flow_d8|link_length|flat_resolution"  "network"
     # performance_flow_routines (LSDTT_ENABLE_PERF_TESTS) matched no rule, so
     # configuring with that option ON failed until 2026-09-18 -- the same trap
     # as the benchmark rule at the top, hidden by the option's OFF default.
     "flow_routines"          "network"
+    # Depression breaching is flow preprocessing. Ahead of the raster rule
+    # because "fill" would otherwise claim breach tests that mention filling.
+    "breach"                 "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference|test_env|configure_contract" "core"
     "depression_hierarchy"   "network"
@@ -6125,7 +7196,18 @@ set(LSDTT_DOMAIN_RULES
     # mountain_front is landform/relief work and feature_finder is multi-scale
     # surface response, so both sit in the surface compartment.
     "mountain_front|feature_finder" "surface_metrics"
+    # Added 2026-10-07 with the first tests these four CLIs have had. Cross
+    # sections, bankfull width and the water-body centreline are channel /
+    # hydrography work; marsh platform and tidal channel extraction is landform
+    # extraction, beside feature_finder.
+    "cross_sections|bankfull_width|water_centreline" "network"
+    "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
+    "junction_graph"         "network"
+    "grid_neighbours"        "raster"
+    "vector_layer_transform" "gdal"
+    "connected_components|grid_geodesic" "raster"
+    "boundary_conditions|output_file|splitmix|thread_count" "core"
     "stream_burning"         "network"
     "sediment_routing"       "network"
     "linear_stats"           "network"
@@ -6138,6 +7220,8 @@ set(LSDTT_DOMAIN_RULES
     # data pinning (Phase 0), the header facade (Phase 1) and the format contract
     # (Phase 2 chunk 2a). Anyone touching that boundary wants `ctest -L gdal`.
     "gdal_"                  "gdal"
+    # Library-level statistics (src/utils/lsdtt_statistics and relatives).
+    "order_statistics"       "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. The
@@ -6477,6 +7561,7 @@ set(LSDTT_GDAL_TOOL_SCRIPT_TESTS
 set(LSDTT_NEEDS_NETWORK_PATTERN "^(network_|cosmo_realworld_|benchmark_)")
 set(LSDTT_NEEDS_NETWORK_TESTS
     performance_surface_metrics
+    smoke_flat_resolution_real_terrain_routing   # fetches its fixtures when not cached
 )
 
 # Native tests that are nevertheless not hermetic. Tests with a
@@ -6509,6 +7594,7 @@ set(LSDTT_LEM_ENGINE_TESTS
     unit_hillslope_perron_qimp
     unit_hillslope_ren_modular_implicit
     unit_hillslope_critical_slope
+    unit_hillslope_thread_count_invariance
     performance_hillslope_implicit
     # cellular hillslope
     unit_cellular_hillslope_references

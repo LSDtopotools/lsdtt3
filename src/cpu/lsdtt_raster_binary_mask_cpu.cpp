@@ -19,6 +19,10 @@
 #include <vector>
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"
+#include "../utils/lsdtt_grid_geodesic.hpp"
+#include "lsdtt_raster_cell_predicates_cpu.hpp"
+#include "../utils/lsdtt_connected_components.hpp"
+#include "../utils/lsdtt_grid_neighbours.hpp"
 #include "lsdtt_proximity_cpu.hpp"  // euclidean_distance_transform
 
 namespace lsdtt
@@ -694,8 +698,8 @@ lsdtt_raster_cpu binary_opening_by_reconstruction(
 
     // Step 2: BFS from eroded-foreground seeds, constrained to original
     // foreground.  Uses 8-connectivity so diagonal necks are also restored.
-    constexpr int DR8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    constexpr int DC8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+    static constexpr const auto& DR8 = grid::d8_rowmajor_row;
+    static constexpr const auto& DC8 = grid::d8_rowmajor_col;
 
     std::vector<bool> visited(npix, false);
     std::queue<int>   q;
@@ -843,8 +847,8 @@ lsdtt_raster_cpu binary_fill_holes(
     for (int c = 0; c < ncols; ++c) { try_enqueue(0, c); try_enqueue(nrows-1, c); }
     for (int r = 0; r < nrows;  ++r) { try_enqueue(r, 0); try_enqueue(r, ncols-1); }
 
-    constexpr int DR[4] = {-1, 1,  0, 0};
-    constexpr int DC[4] = { 0, 0, -1, 1};
+    static constexpr const auto& DR = grid::d4_nswe_row;
+    static constexpr const auto& DC = grid::d4_nswe_col;
 
     // Also seed valid background pixels adjacent to any nodata pixel - they sit
     // at the effective exterior boundary of the valid DEM region and are outside
@@ -1143,90 +1147,38 @@ lsdtt_raster_cpu label_binary_components_by_size(
 
     std::vector<float>   out_data(npix, nodata);
     std::vector<uint8_t> out_mask(npix, uint8_t{0});
-    std::vector<uint8_t> visited(npix, uint8_t{0});
-
-    auto is_valid = [&](std::size_t idx) -> bool
-    {
-        return in_mask[idx] != 0 &&
-               !meta.is_nodata(in_data[idx]) &&
-               std::isfinite(in_data[idx]);
-    };
 
     auto is_foreground = [&](std::size_t idx) -> bool
     {
-        return is_valid(idx) && in_data[idx] > 0.5f;
+        return raster_cell_is_foreground(meta, in_data, in_mask, idx);
     };
 
+    // Every component is labelled in row-major seed order; only those of at
+    // least min_component_pixels cells are kept, renumbered 1, 2, ... in the
+    // same order.
+    std::vector<std::int32_t> label;
+    std::vector<std::int64_t> size;
+    const std::int32_t n_comp = label_connected_components(
+        nrows, ncols, connectivity == pixel_connectivity::d4 ? 4 : 8,
+        is_foreground, label, size);
+
+    std::vector<float> kept_label(static_cast<std::size_t>(n_comp) + 1, 0.0f);
     int next_label = 1;
-
-    for (int row0 = 0; row0 < nrows; ++row0)
+    for (std::int32_t l = 1; l <= n_comp; ++l)
     {
-        for (int col0 = 0; col0 < ncols; ++col0)
+        if (size[static_cast<std::size_t>(l)] >= min_component_pixels)
         {
-            const std::size_t seed =
-                static_cast<std::size_t>(row0) * static_cast<std::size_t>(ncols) +
-                static_cast<std::size_t>(col0);
+            kept_label[static_cast<std::size_t>(l)] = static_cast<float>(next_label++);
+        }
+    }
 
-            if (visited[seed] != 0 || !is_foreground(seed))
-            {
-                continue;
-            }
-
-            std::vector<std::size_t> stack;
-            std::vector<std::size_t> component;
-
-            stack.push_back(seed);
-            visited[seed] = uint8_t{1};
-
-            while (!stack.empty())
-            {
-                const std::size_t idx = stack.back();
-                stack.pop_back();
-                component.push_back(idx);
-
-                const int row = static_cast<int>(idx / static_cast<std::size_t>(ncols));
-                const int col = static_cast<int>(idx % static_cast<std::size_t>(ncols));
-
-                for (int dr = -1; dr <= 1; ++dr)
-                {
-                    for (int dc = -1; dc <= 1; ++dc)
-                    {
-                        if (dr == 0 && dc == 0) continue;
-                        if (connectivity == pixel_connectivity::d4 &&
-                            dr != 0 && dc != 0) continue;
-
-                        const int rr = row + dr;
-                        const int cc = col + dc;
-
-                        if (rr < 0 || rr >= nrows || cc < 0 || cc >= ncols)
-                        {
-                            continue;
-                        }
-
-                        const std::size_t nidx =
-                            static_cast<std::size_t>(rr) * static_cast<std::size_t>(ncols) +
-                            static_cast<std::size_t>(cc);
-
-                        if (visited[nidx] == 0 && is_foreground(nidx))
-                        {
-                            visited[nidx] = uint8_t{1};
-                            stack.push_back(nidx);
-                        }
-                    }
-                }
-            }
-
-            if (static_cast<int>(component.size()) >= min_component_pixels)
-            {
-                const float label = static_cast<float>(next_label);
-                ++next_label;
-
-                for (std::size_t idx : component)
-                {
-                    out_data[idx] = label;
-                    out_mask[idx] = uint8_t{1};
-                }
-            }
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        const float k = kept_label[static_cast<std::size_t>(label[i])];
+        if (label[i] != 0 && k != 0.0f)
+        {
+            out_data[i] = k;
+            out_mask[i] = uint8_t{1};
         }
     }
 
@@ -1241,8 +1193,8 @@ constexpr std::uint8_t k_off = 0u;
 constexpr std::uint8_t k_on  = 1u;
 
 // 8-neighbour offsets, row then column.
-constexpr int k_dr[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
-constexpr int k_dc[8] = { -1,  0,  1, -1, 1, -1, 0, 1 };
+static constexpr const auto& k_dr = grid::d8_rowmajor_row;
+static constexpr const auto& k_dc = grid::d8_rowmajor_col;
 }
 
 // -----------------------------------------------------------------------------
@@ -1450,44 +1402,23 @@ void filter_components_by_seed_reachability_in_place(
     {
         constexpr float k_unreached = std::numeric_limits<float>::infinity();
         std::vector<float> geo(n, k_unreached);
-        using qnode = std::pair<float, std::int64_t>;
-        std::priority_queue<qnode, std::vector<qnode>,
-                            std::greater<qnode>> pq;
+        std::vector<std::int64_t> sources;
         for (const std::int64_t cf : seed_flats)
         {
             if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
             const std::size_t fi = static_cast<std::size_t>(cf);
             if (!mask[fi]) continue;
             geo[fi] = 0.0f;
-            pq.emplace(0.0f, cf);
+            sources.push_back(cf);
         }
         const float straight = static_cast<float>(cell);
-        const float diag = static_cast<float>(cell * std::sqrt(2.0));
-        while (!pq.empty())
-        {
-            const auto [d, flat] = pq.top();
-            pq.pop();
-            const std::size_t fi = static_cast<std::size_t>(flat);
-            if (d > geo[fi]) continue;
-            const int r = static_cast<int>(flat / n_cols);
-            const int c = static_cast<int>(flat % n_cols);
-            for (int k = 0; k < 8; ++k)
-            {
-                const int rr = r + k_dr[k], cc = c + k_dc[k];
-                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                    continue;
-                const std::size_t nf =
-                    static_cast<std::size_t>(rr) * n_cols + cc;
-                if (!mask[nf]) continue;
-                const float nd =
-                    d + ((k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight);
-                if (nd < geo[nf])
-                {
-                    geo[nf] = nd;
-                    pq.emplace(nd, static_cast<std::int64_t>(nf));
-                }
-            }
-        }
+        const float diag = static_cast<float>(cell * grid::k_sqrt2_d);
+        grid_dijkstra_d8(n_rows, n_cols, geo, sources,
+            [&](std::size_t nf) { return mask[nf] != 0; },
+            [&](std::size_t, std::size_t, int k) {
+                return (k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight; },
+            [](std::size_t, std::size_t) {},
+            [](std::int64_t) { return false; });
         for (std::size_t i = 0; i < n; ++i)
         {
             if (!mask[i]) continue;
@@ -1519,44 +1450,22 @@ void filter_components_by_seed_reachability_in_place(
         std::vector<float>        gdist(n,
             std::numeric_limits<float>::infinity());
         std::vector<std::int64_t> gsrc(n, -1);
-        using qnode = std::pair<float, std::int64_t>;
-        std::priority_queue<qnode, std::vector<qnode>,
-                            std::greater<qnode>> pq;
+        std::vector<std::int64_t> sources;
         for (const std::int64_t cf : seed_flats)
         {
             if (cf < 0 || cf >= static_cast<std::int64_t>(n)) continue;
             gdist[static_cast<std::size_t>(cf)] = 0.0f;
             gsrc[static_cast<std::size_t>(cf)]  = cf;
-            pq.emplace(0.0f, cf);
+            sources.push_back(cf);
         }
         const float straight = static_cast<float>(cell);
-        const float diag = static_cast<float>(cell * std::sqrt(2.0));
-        while (!pq.empty())
-        {
-            const auto [d, flat] = pq.top();
-            pq.pop();
-            const std::size_t fi = static_cast<std::size_t>(flat);
-            if (d > gdist[fi]) continue;
-            const int r = static_cast<int>(flat / n_cols);
-            const int c = static_cast<int>(flat % n_cols);
-            for (int k = 0; k < 8; ++k)
-            {
-                const int rr = r + k_dr[k], cc = c + k_dc[k];
-                if (rr < 0 || rr >= n_rows || cc < 0 || cc >= n_cols)
-                    continue;
-                const std::size_t nf =
-                    static_cast<std::size_t>(rr) * n_cols + cc;
-                if (!distance_mask[nf]) continue;
-                const float nd =
-                    d + ((k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight);
-                if (nd < gdist[nf])
-                {
-                    gdist[nf] = nd;
-                    gsrc[nf]  = gsrc[fi];
-                    pq.emplace(nd, static_cast<std::int64_t>(nf));
-                }
-            }
-        }
+        const float diag = static_cast<float>(cell * grid::k_sqrt2_d);
+        grid_dijkstra_d8(n_rows, n_cols, gdist, sources,
+            [&](std::size_t nf) { return distance_mask[nf] != 0; },
+            [&](std::size_t, std::size_t, int k) {
+                return (k_dr[k] != 0 && k_dc[k] != 0) ? diag : straight; },
+            [&](std::size_t from, std::size_t to) { gsrc[to] = gsrc[from]; },
+            [](std::int64_t) { return false; });
 
         for (std::size_t i = 0; i < n; ++i)
         {

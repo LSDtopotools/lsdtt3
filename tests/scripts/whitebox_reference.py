@@ -109,6 +109,8 @@ FLOW_ROUTINES = (
     "accum_d8",
     "accum_dinf",
     "accum_mfd",
+    "route_d8_default",  # raw DEM -> D8 accumulation, Whitebox defaults
+    "route_d8_wl_epsilon",  # raw DEM -> Wang & Liu epsilon fill -> D8
 )
 
 SURFACE_ROUTINES = (
@@ -246,12 +248,25 @@ def _make_call(wbe, routine: str, dem, args):
         return lambda: fn(dem=dem, fix_flats=True,
                           flat_increment=args.flat_increment)
     if routine == "breach":
-        # max_dist defaults to 100 cells, and an unbounded search is a
-        # different algorithm with a different cost.  Surfaced as a CLI flag so
-        # the caller states what it used rather than inheriting it silently.
+        # Every parameter is a CLI flag so the caller states what it used
+        # rather than inheriting it silently. Defaults are Whitebox's own
+        # (max_dist 100, max_cost unlimited, minimize_dist False, its auto
+        # flat_increment) except fill_deps, which defaults to False here: its
+        # pit-centric fill is not lsdtt3's remainder fill and is not an oracle
+        # for anything. lsdtt3's least_cost with breach_lc_edge_policy
+        # whitebox and fill_remainder_after_breach false reproduces this tool
+        # bit for bit (float32 of Whitebox's f64 output) when both sides use
+        # the SAME increment -- pass float32-representable values, because the
+        # lsdtt3 CLI reads flat_increment and max_cost as float32.
         fn = H.breach_depressions_least_cost
-        return lambda: fn(dem=dem, max_dist=args.breach_max_dist,
-                          fill_deps=True)
+        kw = dict(dem=dem, max_dist=args.breach_max_dist,
+                  minimize_dist=bool(args.breach_minimize_dist),
+                  fill_deps=bool(args.breach_fill_deps))
+        if args.breach_flat_increment is not None:
+            kw["flat_increment"] = args.breach_flat_increment
+        if args.breach_max_cost is not None:
+            kw["max_cost"] = args.breach_max_cost
+        return lambda: fn(**kw)
     if routine == "accum_d8":
         # out_type="cells" not the default "sca": lsdtt3's drainage area raster
         # is compared in cell counts, and specific catchment area would fold in
@@ -268,6 +283,29 @@ def _make_call(wbe, routine: str, dem, args):
         fn = H.fd8_flow_accum
         return lambda: fn(dem=dem, out_type="cells",
                           exponent=args.mfd_exponent)
+    if routine == "route_d8_default":
+        # Raw DEM -> D8 accumulation with the tools' DEFAULT arguments:
+        # fill_depressions(fix_flats=True, flat_increment=1e-4), then
+        # d8_flow_accum. Not breach_depressions_least_cost: its default
+        # fill_deps=False can leave depressions unresolved, so the result is
+        # not guaranteed to be a routed surface. out_type="cells" as in
+        # accum_d8; the unit conversion does not change the cost.
+        fill_fn = H.fill_depressions
+        acc_fn = H.d8_flow_accum
+        return lambda: acc_fn(input=fill_fn(dem=dem), out_type="cells")
+
+    if routine == "route_d8_wl_epsilon":
+        # Raw DEM -> fill_depressions_wang_and_liu(fix_flats=True,
+        # flat_increment) -> d8_flow_accum: an edge-seeded priority flood with
+        # a constant gradient across flats, then steepest-descent D8. The
+        # like-for-like partner of lsdtt3's drainage pipeline (the caller
+        # passes --flat-increment = fill_min_slope x cell size).
+        fill_fn = H.fill_depressions_wang_and_liu
+        acc_fn = H.d8_flow_accum
+        return lambda: acc_fn(
+            input=fill_fn(dem=dem, fix_flats=True,
+                          flat_increment=args.flat_increment),
+            out_type="cells")
 
     # -- surface -----------------------------------------------------------
     if routine == "slope":
@@ -645,7 +683,17 @@ def main() -> int:
                     help="constant increment across flats for fill_epsilon; "
                          "match lsdtt3's fill_min_slope")
     ap.add_argument("--breach-max-dist", type=int, default=100,
-                    help="least-cost breach search radius in cells")
+                    help="least-cost breach: maximum path length in cells "
+                         "(steps from the pit; Whitebox default 100)")
+    ap.add_argument("--breach-max-cost", type=float, default=None,
+                    help="least-cost breach: max_cost (default unlimited)")
+    ap.add_argument("--breach-minimize-dist", action="store_true",
+                    help="least-cost breach: minimize_dist=True (default False)")
+    ap.add_argument("--breach-flat-increment", type=float, default=None,
+                    help="least-cost breach: flat_increment in metres per cell "
+                         "(default: Whitebox's automatic value)")
+    ap.add_argument("--breach-fill-deps", action="store_true",
+                    help="least-cost breach: fill_deps=True (default False)")
     ap.add_argument("--azimuth", type=float, default=315.0)
     ap.add_argument("--altitude", type=float, default=60.0)
     ap.add_argument("--list", action="store_true",

@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+read_fname: tiny_breach_lc_dem.asc
+write_path: __WRITE_PATH__
+write_fname: breachlc_badedge
+
+enforce_projection: false
+write_output_format: gtiff
+
+breach_algorithm_choice: least_cost
+breach_lc_edge_policy: Outlet
+write_breached_raster: true
+write_fill_raster: false
+write_hillshade_raster: false

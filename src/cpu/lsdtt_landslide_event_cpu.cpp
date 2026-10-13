@@ -9,6 +9,7 @@
 // See lsdtt_landslide_event_cpu.hpp for the design.
 
 #include "lsdtt_landslide_event_cpu.hpp"
+#include "../utils/lsdtt_random.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -23,14 +24,9 @@ namespace lsdtt
 namespace
 {
 
-inline double next_uniform(std::uint64_t& state)
-{
-    state ^= state >> 12;
-    state ^= state << 25;
-    state ^= state >> 27;
-    const std::uint64_t v = state * 2685821657736338717ULL;
-    return static_cast<double>(v >> 11) * (1.0 / 9007199254740992.0);
-}
+// xorshift64*, so a test can reproduce a draw sequence exactly without
+// dragging in <random> and its implementation-defined engines.
+constexpr auto next_uniform = &random::xorshift64star_uniform01;
 
 }  // namespace
 

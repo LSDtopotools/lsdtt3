@@ -9,6 +9,7 @@
 
 #include "lsdtt_hillslope_transport_cpu.hpp"
 #include "lsdtt_hillslope_operator_cpu.hpp"
+#include "../utils/lsdtt_thread_utils.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -38,11 +39,11 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
     int   n_threads,
     const std::vector<std::uint8_t>* channel_override)
 {
-#ifdef _OPENMP
-    if (n_threads > 0)
-        omp_set_num_threads(n_threads);
-#else
-    (void)n_threads;
+    // The thread count goes on the parallel loops (num_threads clauses); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     const lsdtt_raster_meta& meta = dem.get_meta();
@@ -100,7 +101,7 @@ lsdtt_raster_cpu compute_cidre_hillslope_transport(
         const std::int64_t level_size = static_cast<std::int64_t>(level.size());
 
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
         for (std::int64_t li = 0; li < level_size; ++li)
         {
@@ -208,11 +209,11 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
     const std::string&              boundary_conditions,
     int   n_threads)
 {
-#ifdef _OPENMP
-    if (n_threads > 0)
-        omp_set_num_threads(n_threads);
-#else
-    (void)n_threads;
+    // The thread count goes on the parallel loops (num_threads clauses); the
+    // process-wide OpenMP setting is left alone (decision D4).
+    const int n_omp_threads = resolve_thread_count(n_threads);
+#ifndef _OPENMP
+    (void)n_omp_threads;
 #endif
 
     const lsdtt_raster_meta& meta  = dem.get_meta();
@@ -279,7 +280,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
             const lsdtt_hillslope_stencil<float> cfl_st(dom, z.data(),
                                                         static_cast<double>(h));
 #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) reduction(max : tangent_max)
+            #pragma omp parallel for schedule(static) num_threads(n_omp_threads) reduction(max : tangent_max)
 #endif
             for (std::int64_t idx = 0; idx < n_cells; ++idx)
             {
@@ -323,7 +324,7 @@ lsdtt_raster_cpu compute_roering_hillslope_transport(
                                                 static_cast<double>(h));
 
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) num_threads(n_omp_threads)
 #endif
         for (std::int64_t idx = 0; idx < n_cells; ++idx)
         {

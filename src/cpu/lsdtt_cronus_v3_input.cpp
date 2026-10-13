@@ -5,6 +5,7 @@
 // =============================================================================
 
 #include "lsdtt_cronus_v3_input.hpp"
+#include "../utils/lsdtt_output_file.hpp"
 
 #include <fstream>
 #include <iomanip>
@@ -103,10 +104,8 @@ std::string format_cronus_v3_sample(const CronusV3Sample& sample)
 std::size_t write_cronus_v3_input_file(const std::string&                 path,
                                        const std::vector<CronusV3Sample>& samples)
 {
-    std::ofstream f(path);
-    if (!f.is_open())
-        throw std::runtime_error("Cannot open CRONUS v3 input file: " + path);
-
+    std::ofstream f = open_output_file(
+        path, "Cannot open CRONUS v3 input file: ");
     // The calculator keys results by id, so two samples sharing one would come
     // back indistinguishable.  Suffix duplicates rather than dropping them.
     std::unordered_map<std::string, int> seen;

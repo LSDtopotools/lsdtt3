@@ -1,0 +1,25 @@
+# Smoke test for the DEM coregistration path of lsdtt-raster-calculator, on the
+# pair written by tests/scripts/make_dem_coregistration_fixture.py: one analytic
+# surface on a 120 x 120 grid of 10 m cells, the second copy shifted by
+# (dx, dy, dz) = (4, -3, 0.5) m. Nuth and Kaab should recover that shift; it
+# reports dx=4.01272, dy=-3.02423 (dz is reported as the correction applied to
+# the second DEM, so -0.499).
+#
+# No test ran coregistration before 2026-10-07. It is the only route to
+# lsdtt_raster_coregistration_cpu, which the src/utils + src/cpu consolidation
+# changes (cell validity, bilinear sampling, gradient).
+read_path: __READ_PATH__
+read_fname: coreg_reference.asc
+write_path: __WRITE_PATH__
+write_fname: coreg
+
+second_raster_read_fname: coreg_shifted.asc
+second_raster_read_path: __READ_PATH__
+resample_second_to_first_grid: false
+
+write_output_format: gtiff
+write_difference_raster: true
+
+run_dem_coregistration: true
+write_second_coregistered_raster: true
+write_dem_coreg_diagnostics_csv: true

@@ -31,19 +31,19 @@ def test_manifest_rejects_malformed_version_ranges(version_range):
 
 
 def test_current_plugin_version_comes_from_metadata():
-    assert current_plugin_version() == "0.3.0"
+    assert current_plugin_version() == "0.4.0"
 
 
 def test_current_wrappers_require_versioned_phase_4_backend():
-    assert MINIMUM_BACKEND_VERSION == "0.5.0"
+    assert MINIMUM_BACKEND_VERSION == "0.6.0"
     assert "no manifest.json" in backend_compatibility_error(None)
     assert "not a JSON object" in backend_compatibility_error([])
     assert "no backend_version" in backend_compatibility_error({})
-    assert "version 0.5.0 or newer" in backend_compatibility_error(
-        {"backend_version": "0.4.9"}
+    assert "version 0.6.0 or newer" in backend_compatibility_error(
+        {"backend_version": "0.5.9"}
     )
     compatible = {
-        "backend_version": "0.5.0",
+        "backend_version": "0.6.0",
         "plugin_version_range": ">=0.1.0 <0.3.0",
     }
     assert backend_compatibility_error(compatible, "0.1.0") is None
@@ -59,17 +59,17 @@ def test_current_wrappers_reject_invalid_backend_version():
 
 def test_current_wrappers_reject_missing_or_malformed_plugin_range():
     assert "invalid plugin_version_range" in backend_compatibility_error(
-        {"backend_version": "0.5.0"}, "0.1.0"
+        {"backend_version": "0.6.0"}, "0.1.0"
     )
     assert "invalid plugin_version_range" in backend_compatibility_error(
-        {"backend_version": "0.5.0", "plugin_version_range": ">=banana"},
+        {"backend_version": "0.6.0", "plugin_version_range": ">=banana"},
         "0.1.0",
     )
 
 
 def test_current_wrappers_reject_incompatible_plugin_version():
     error = backend_compatibility_error(
-        {"backend_version": "0.5.0", "plugin_version_range": ">=0.2.0 <0.3.0"},
+        {"backend_version": "0.6.0", "plugin_version_range": ">=0.2.0 <0.3.0"},
         "0.1.0",
     )
     assert "supports plugin versions" in error

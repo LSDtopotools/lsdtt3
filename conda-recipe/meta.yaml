@@ -20,7 +20,7 @@
 
 # Keep in step with project(lsdtt3 VERSION ...) on line 2 of CMakeLists.txt,
 # which is the single source of truth for the version.
-{% set version = "0.4.0" %}
+{% set version = "0.6.0" %}
 
 package:
   name: lsdtt3

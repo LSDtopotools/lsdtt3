@@ -35,7 +35,7 @@ Options:
                                Defined in tools/cli_profiles.txt; all = every
                                lsdtt-* executable in the build directory
   --profile <name>             Manifest profile label (default: <cli-profile>-macos)
-  --plugin-version-range <rng> Plugin compatibility range (default: >=0.1.0 <0.4.0)
+  --plugin-version-range <rng> Plugin compatibility range (default: >=0.1.0 <0.5.0)
   --cli <name>                 Package exactly this CLI (repeatable; overrides
                                --cli-profile, bundle is labelled 'custom')
   --help                       Show this help
@@ -55,7 +55,7 @@ OUT_DIR="dist"
 ARCH="$(uname -m)"
 CLI_PROFILE="core"
 PROFILE=""
-PLUGIN_VERSION_RANGE=">=0.1.0 <0.4.0"
+PLUGIN_VERSION_RANGE=">=0.1.0 <0.5.0"
 CLI_NAMES=()
 
 while [[ $# -gt 0 ]]; do

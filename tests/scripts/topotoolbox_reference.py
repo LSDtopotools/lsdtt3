@@ -38,19 +38,36 @@ Routine -> TopoToolbox mapping:
 
   Flow routing (docs/developer_notes/testing_and_benchmarking.md):
     fill               GridObject.fillsinks(hybrid=True)   DEFAULT
-                       Vincent-style grayscale reconstruction: forward and
-                       backward raster scans plus a FIFO queue. O(N), almost
-                       entirely sequential memory access.
-    fill_priority_flood  GridObject.fillsinks(hybrid=False)
-                       The heap-based flood. Same result, O(N log N).
+                       Vincent (1993) HYBRID grayscale reconstruction: forward
+                       and backward raster scans plus a FIFO queue. O(N),
+                       almost entirely sequential memory access. Paired with
+                       lsdtt3 `fill_algorithm_choice: vincent1993`, the same
+                       algorithm.
+    accum_d8           FlowObject(method='d8').flow_accumulation()
+    route_d8_default   FlowObject(RAW dem).flow_accumulation(), all defaults
+                       (method='d8', sink_resolution='carve').
+                       Raw DEM -> routed D8 surface, the way a TopoToolbox
+                       user gets one. FlowObject fills internally
+                       (auxiliary_topography) and routes across the flats of
+                       the filled DEM -- including every filled depression --
+                       on least-cost carved auxiliary topography (Schwanghart
+                       et al. 2013); the DEM is left unchanged. Do not call
+                       fillsinks() first: FlowObject would fill again.
 
-    BOTH exist here so the benchmark can compare ALGORITHM AGAINST ALGORITHM.
-    lsdtt3 has both too (`fill_algorithm_choice` vincent1993 / barnes2014), and
-    an earlier version of the suite compared lsdtt3's heap against this
+    TopoToolbox HAS NO PRIORITY-FLOOD FILL. fillsinks(hybrid=False) is NOT a
+    heap: it calls `reconstruct`, Vincent's SEQUENTIAL algorithm (forward and
+    backward raster scans repeated until nothing changes), whose pass count is
+    data-dependent (33.5 s on lakeland_4000 vs 3.2 s on alpine_4000). Neither
+    fill path calls the pq_* heap symbols in _grid*.so (objdump of the
+    installed 3.x wheel). It was once offered here as `fill_priority_flood`
+    and paired with lsdtt3 barnes2014 -- a heap against a reconstruction. It
+    has been removed; lsdtt3 has no sequential-reconstruction variant to pair
+    it with.
+
+    An earlier version of the suite compared lsdtt3's heap against the hybrid
     reconstruction and reported lsdtt3 2.9x slower -- which measured the
     algorithm choice, not the implementations. See
     docs/developer_notes/testing_and_benchmarking.md.
-    accum_d8           FlowObject(method='d8').flow_accumulation()
 
   Surface metrics (Tier B -- SPEED ONLY):
     evansslope         GridObject.evansslope(modified=False)
@@ -111,7 +128,7 @@ import statistics
 import sys
 import time
 
-FLOW_ROUTINES = ("fill", "fill_priority_flood", "accum_d8")
+FLOW_ROUTINES = ("fill", "accum_d8", "route_d8_default")
 
 # Surface-metric routines. Each is timed best-of-N after a discarded warm-up
 # (see --repeats); the flow routines are single-shot because they are the
@@ -582,11 +599,12 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         info["dem_dtype"] = str(np.asarray(dem.z).dtype)
         info["cellsize"] = float(dem.cellsize)
 
-    elif routine in ("fill", "fill_priority_flood"):
-        # hybrid=True is TopoToolbox's default and is the reconstruction
-        # algorithm; hybrid=False is the heap. Pair each against the matching
-        # lsdtt3 backend, never across.
-        hybrid = (routine == "fill")
+    elif routine == "fill":
+        # hybrid=True is TopoToolbox's default: Vincent's hybrid
+        # reconstruction, the algorithm lsdtt3 vincent1993 runs. hybrid=False
+        # is Vincent's SEQUENTIAL reconstruction, not a heap -- TopoToolbox has
+        # no priority-flood fill -- and is deliberately not offered.
+        hybrid = True
         # repeats=1 reproduces the historical single-shot behaviour exactly, so
         # run_flow_benchmark.py's pinned tolerances and cached numbers are
         # untouched. repeats>1 adds a discarded warm-up and reports best-of-N,
@@ -598,7 +616,7 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         info["hybrid"] = hybrid
         result = info.pop("_result")
 
-    elif routine == "accum_d8":
+    elif routine in ("accum_d8", "route_d8_default"):
         # Timed in two phases because they are separately meaningful and
         # because RichDEM's single call does directions+accumulation without
         # sink resolution -- so `seconds` (build + accumulate) is the
@@ -606,8 +624,15 @@ def run(routine: str, in_path: str, out_path: str, repeats: int = 1,
         # with lsdtt3's in-process accumulation timing.
         #
         # sink_resolution='carve' is a no-op on an already-filled DEM, which is
-        # what the benchmark feeds it, so it does not silently modify the
-        # surface being compared.
+        # what the benchmark feeds `accum_d8`, so it does not silently modify
+        # the surface being compared.
+        #
+        # `route_d8_default` is the SAME call on the RAW DEM. FlowObject fills
+        # internally (auxiliary_topography) and carves across flats and filled
+        # depressions, so here the build phase includes the fill and the flat
+        # routing. The routine name exists so the CSV records which input was
+        # intended; the suite decides the input (`needs_filled` on accum_d8
+        # only).
         build = _repeat_time(
             lambda: ttb.FlowObject(dem, method="d8", sink_resolution="carve"),
             repeats)

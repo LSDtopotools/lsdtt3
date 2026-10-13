@@ -1,0 +1,24 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: vcvf
+
+# fill_flat_resolution_choice in lsdtt-valley-centreline (C6). The valley
+# (11 x 24, 10 m cells, one flat floor at 100, outlet 99 at row 5, col 0) is
+# filled for routing and its floor resolved by barnes2014b_float_step; the
+# routing DEM also feeds the centreline extraction. The valley mask
+# (flat_valley_mask.asc) is the floor plus the spill cell; the source
+# (flat_valley_source.csv) is the head of the valley axis, row 5, col 22.
+# The routed centreline has 21 nodes with 2 pixels above the head excluded
+# from the trough; the default fill gives 20 nodes and 9 pixels.
+
+n_threads: 1
+write_output_format: gtiff
+valley_mask_fname: flat_valley_mask.asc
+source_points_path: __READ_PATH__/flat_valley_source.csv
+threshold_contributing_pixels: 5
+fill_min_slope_for_routing: 0.0001
+fill_flat_resolution_choice: barnes2014b_float_step
+min_centreline_nodes: 3
+min_bank_elevation_window_radius_metres: 20
+write_valley_cross_sections: false

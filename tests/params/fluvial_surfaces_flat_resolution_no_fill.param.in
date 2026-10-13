@@ -1,0 +1,25 @@
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: fsvn
+
+# fill_before_routing: false routes the DEM as it is, so a barnes2014b option
+# has nothing to act on: the CLI says it is ignored (stdout NOTE), does not
+# apply the gradient check (fill_min_slope_for_routing is 0 here, which
+# barnes2014b_gradient would refuse if the fill ran; see
+# failure_fluvial_surfaces_flat_resolution_gradient_zero_slope), and the
+# valley's true flat reaches the router.
+
+n_threads: 1
+write_output_format: gtiff
+fill_before_routing: false
+fill_min_slope_for_routing: 0
+fill_flat_resolution_choice: barnes2014b_gradient
+threshold_contributing_pixels: 20
+fallback_admission_algorithm_choice: relief
+fallback_relief_window_radius_pixels: 2
+fallback_relief_threshold_metres: 2.0
+min_component_pixels: 5
+reference_field_algorithm_choice: hand
+vertical_accuracy_metres: 0.5
+write_hand_raster: true
