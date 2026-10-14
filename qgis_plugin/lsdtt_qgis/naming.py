@@ -137,3 +137,34 @@ def extract_json_payload(text):
         return json.loads(text[start:])
     except ValueError:
         return None
+
+
+def write_line_geojson(path, points, crs_authid=None):
+    """Write one ordered polyline as a single-feature GeoJSON LineString.
+
+    `points` is a sequence of (x, y) pairs in the target CRS. The lsdtt CLIs
+    do not reproject vectors, so the caller must already have transformed
+    them; `crs_authid` (e.g. "EPSG:32633") is recorded only so the file
+    displays in the right place when opened in QGIS. Returns `path`.
+    """
+    import json
+
+    coordinates = [[float(x), float(y)] for x, y in points]
+    if len(coordinates) < 2:
+        raise ValueError("a line needs at least two points")
+    collection = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": 1},
+                "geometry": {"type": "LineString", "coordinates": coordinates},
+            }
+        ],
+    }
+    if crs_authid:
+        collection["crs"] = {"type": "name", "properties": {"name": crs_authid}}
+    with open(path, "w", encoding="utf-8") as dst:
+        json.dump(collection, dst)
+        dst.write("\n")
+    return path

@@ -669,3 +669,138 @@ def test_chi_segment_lines_auto_enable_fitting_and_are_required(monkeypatch, tmp
     monkeypatch.setattr(module, "run_lsdtt_tool", fake_run_without_segments)
     with pytest.raises(RuntimeError, match="Expected chi fit segment lines output not found"):
         algorithm.processAlgorithm(parameters, None, _Feedback())
+
+
+def _run_swath(monkeypatch, tmp_path, **overrides):
+    module, algorithm_class = _load("swath_profile", "SwathProfileAlgorithm")
+    captured = {}
+    exported = {}
+
+    def fake_export(layer, crs, path, context, feedback):
+        exported.update(layer=layer, crs=crs, path=path)
+        return path
+
+    def fake_run(tool, values, folder, prefix, feedback):
+        captured.update(tool=tool, values=values)
+        _touch_outputs(folder, prefix, [
+            "_swath_profile.csv", "_swath_along_axis.tif",
+            "_swath_perp_distance.tif", "_swath_signed_perp.tif",
+        ])
+
+    monkeypatch.setattr(module, "export_baseline_line", fake_export)
+    monkeypatch.setattr(module, "run_lsdtt_tool", fake_run)
+
+    class DemLayer(_Layer):
+        def crs(self):
+            return "EPSG:32633"
+
+    algorithm = algorithm_class()
+    _configure_parameters(algorithm)
+    values = {
+        algorithm.INPUT_DEM: DemLayer(str(tmp_path / "dem.tif")),
+        algorithm.INPUT_BASELINE: _Layer(str(tmp_path / "line.gpkg|layername=line")),
+        algorithm.OUTPUT_FOLDER: str(tmp_path),
+        algorithm.OUTPUT_PREFIX: "swath",
+        algorithm.HALF_WIDTH_METRES: 250.0,
+        algorithm.BIN_WIDTH_METRES: 50.0,
+        algorithm.WRITE_DISTANCE_RASTERS: True,
+    }
+    values.update({getattr(algorithm, key): value for key, value in overrides.items()})
+    outputs = algorithm.processAlgorithm(values, None, _Feedback())
+    return algorithm, captured, exported, outputs
+
+
+def test_swath_profile_maps_parameters_and_exports_baseline_in_dem_crs(monkeypatch, tmp_path):
+    algorithm, captured, exported, outputs = _run_swath(monkeypatch, tmp_path)
+    assert captured["tool"] == "lsdtt-swath-profile"
+    values = captured["values"]
+    assert exported["crs"] == "EPSG:32633"
+    assert exported["path"] == str(tmp_path / "swath_qgis_baseline.geojson")
+    assert values["baseline_vector_fname"] == exported["path"]
+    assert values["value_raster_fname"] == "NULL"
+    assert values["half_width_metres"] == 250.0
+    assert values["bin_width_metres"] == 50.0
+    assert values["write_distance_rasters"] is True
+    assert values["read_fname"] == "dem.tif"
+    assert set(outputs) == {
+        algorithm.OUTPUT_PROFILE, algorithm.OUTPUT_ALONG_AXIS,
+        algorithm.OUTPUT_PERP_DISTANCE, algorithm.OUTPUT_SIGNED_PERP,
+    }
+    assert outputs[algorithm.OUTPUT_PROFILE].endswith("swath_swath_profile.csv")
+
+
+def test_swath_profile_value_raster_and_no_distance_rasters(monkeypatch, tmp_path):
+    algorithm, captured, _, outputs = _run_swath(
+        monkeypatch, tmp_path,
+        VALUE_RASTER=_Layer(str(tmp_path / "ksn.tif")),
+        WRITE_DISTANCE_RASTERS=False,
+    )
+    assert captured["values"]["value_raster_fname"] == str(tmp_path / "ksn.tif")
+    assert captured["values"]["write_distance_rasters"] is False
+    assert set(outputs) == {algorithm.OUTPUT_PROFILE}
+
+
+def test_swath_profile_help_overrides_and_public_id(monkeypatch):
+    module, algorithm_class = _load("swath_profile", "SwathProfileAlgorithm")
+    captured = {}
+    monkeypatch.setattr(
+        module,
+        "attach_backend_help",
+        lambda algorithm, tool_name, overrides=None: captured.update(
+            tool=tool_name, **(overrides or {})
+        ),
+    )
+    algorithm = algorithm_class()
+    algorithm.initAlgorithm()
+    assert algorithm.name() == "swath_profile"
+    assert captured["tool"] == "lsdtt-swath-profile"
+    assert captured[algorithm.INPUT_BASELINE] == "baseline_vector_fname"
+    assert captured[algorithm.VALUE_RASTER] == "value_raster_fname"
+
+
+def _backend_with(monkeypatch, tmp_path, present):
+    """Point support.run_lsdtt_tool at a compatible backend holding `present`."""
+    support = importlib.import_module("lsdtt_qgis.algorithms.support")
+
+    class Backend:
+        def backend_path(self):
+            return str(tmp_path / "backend")
+
+        def executable_path(self, cli_name):
+            if cli_name not in present:
+                raise RuntimeError("Executable not found for '{}'".format(cli_name))
+            return str(tmp_path / "backend" / "bin" / cli_name)
+
+        def runtime_environment(self):
+            return {}
+
+    monkeypatch.setattr(support, "BackendManager", Backend)
+    monkeypatch.setattr(support, "load_manifest", lambda path: {})
+    monkeypatch.setattr(support, "backend_compatibility_error", lambda manifest: None)
+    return support
+
+
+def test_run_stops_when_its_own_cli_is_missing(monkeypatch, tmp_path):
+    support = _backend_with(monkeypatch, tmp_path, present={"lsdtt-basin-stats"})
+    ran = []
+    monkeypatch.setattr(support, "run_cli", lambda *args, **kwargs: ran.append(args))
+    with pytest.raises(RuntimeError, match="has no lsdtt-swath-profile"):
+        support.run_lsdtt_tool(
+            "lsdtt-swath-profile", {}, str(tmp_path), "run", _Feedback()
+        )
+    assert ran == []
+
+
+def test_run_ignores_other_missing_clis(monkeypatch, tmp_path):
+    # An older bundle without lsdtt-swath-profile still runs Basin Statistics.
+    support = _backend_with(monkeypatch, tmp_path, present={"lsdtt-basin-stats"})
+    commands = []
+
+    def fake_run_cli(command, feedback=None, env=None):
+        commands.append(command)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(support, "run_cli", fake_run_cli)
+    monkeypatch.setattr(support, "write_log", lambda *args: None)
+    support.run_lsdtt_tool("lsdtt-basin-stats", {}, str(tmp_path), "run", _Feedback())
+    assert commands[0][0].endswith("lsdtt-basin-stats")

@@ -33,6 +33,15 @@ The `qgis` profile in `tools/cli_profiles.txt` is the list of CLIs the plugin
 wraps. It is the single source of truth for every packaging script. Each CLI
 has a wrapper in `qgis_plugin/lsdtt_qgis/algorithms/`.
 
+The plugin keeps the same list as `REQUIRED_CLIS` in
+`qgis_plugin/lsdtt_qgis/backend/health.py`, and checks that the configured
+backend has them. Saving a backend in **LSDTT Backend Settings** checks all
+of them and warns, naming every missing CLI; the path is still saved. Running
+an algorithm checks only that algorithm's CLI, so an older bundle still runs
+the algorithms it has, and the others stop with an error naming the missing
+CLI before anything runs. `test_backend_health.py` fails if `REQUIRED_CLIS` differs from the
+`qgis` profile or from the CLIs named in `algorithms/*.py`.
+
 ### Backend per platform
 
 | QGIS on | Build | Package |
@@ -116,7 +125,9 @@ Rules of thumb:
 1. Write the wrapper in `qgis_plugin/lsdtt_qgis/algorithms/` and register it
    in `qgis_plugin/lsdtt_qgis/provider.py`.
 2. Add the CLI to the `qgis` profile in `tools/cli_profiles.txt`, so every
-   packaging script ships it.
+   packaging script ships it, and to `REQUIRED_CLIS` in
+   `qgis_plugin/lsdtt_qgis/backend/health.py`. The plugin tests fail until
+   all three lists agree.
 3. Add its target to the native Windows build command in
    [Building on Windows](building_on_windows.md#3-configure-and-build).
 

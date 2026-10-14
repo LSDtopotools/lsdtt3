@@ -15,6 +15,7 @@ import tempfile
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsGeometry,
     QgsProcessingException,
 )
 
@@ -29,11 +30,13 @@ from ..naming import (
     next_qgis_driver_name,
     split_source,
     strip_layer_suffix,
+    write_line_geojson,
 )
 from ..templates.lsdtt_params import write_parameter_file
 
 __all__ = [
     "attach_backend_help",
+    "export_baseline_line",
     "export_points_as_latlon_csv",
     "extension_for_format",
     "layer_file_path",
@@ -137,6 +140,64 @@ def export_points_as_latlon_csv(layer, csv_path, context, feedback=None):
     return csv_path
 
 
+def export_baseline_line(layer, target_crs, path, context, feedback=None):
+    """Write one line feature of a QGIS layer, reprojected, as GeoJSON.
+
+    lsdtt-swath-profile uses the first LineString of its baseline file and
+    reads its coordinates as being in the DEM's CRS, without reprojecting.
+    So the baseline is taken from the first selected feature (or the first
+    feature, when nothing is selected), transformed to `target_crs`, and
+    written as a single LineString. A multipart feature with more than one
+    part is refused rather than silently cut to its first part.
+    Returns `path`.
+    """
+    transform = QgsCoordinateTransform(layer.crs(), target_crs, context.transformContext())
+    use_selection = layer.selectedFeatureCount() > 0
+    features = layer.selectedFeatures() if use_selection else layer.getFeatures()
+
+    for feature in features:
+        geometry = feature.geometry()
+        if geometry is None or geometry.isEmpty():
+            continue
+        geometry = QgsGeometry(geometry)
+        try:
+            geometry.transform(transform)
+        except Exception as exc:
+            raise QgsProcessingException(
+                "Could not reproject the baseline to the DEM CRS: {}".format(exc)
+            )
+        if geometry.isMultipart():
+            parts = geometry.asMultiPolyline()
+            if len(parts) != 1:
+                raise QgsProcessingException(
+                    "The baseline feature has {} parts; the swath needs one "
+                    "continuous line. Merge or split it first (for example "
+                    "with Multipart to Singleparts).".format(len(parts))
+                )
+            line = parts[0]
+        else:
+            line = geometry.asPolyline()
+        if len(line) < 2:
+            continue
+        write_line_geojson(
+            path, [(point.x(), point.y()) for point in line], target_crs.authid()
+        )
+        if feedback is not None:
+            feedback.pushInfo(
+                "Wrote baseline ({} vertices, {} feature id {}) to {}".format(
+                    len(line),
+                    "selected" if use_selection else "first",
+                    feature.id(),
+                    path,
+                )
+            )
+        return path
+
+    raise QgsProcessingException(
+        "The baseline layer has no line feature with at least two vertices."
+    )
+
+
 def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedback):
     """Write a parameter file, run the named lsdtt CLI, and log the result.
 
@@ -147,7 +208,9 @@ def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedba
     (or its directory is not writable), in which case the driver is
     discarded with the directory.
 
-    Raises QgsProcessingException on a non-zero exit code.
+    Raises QgsProcessingException, before anything runs, if the backend is
+    incompatible or lacks this algorithm's CLI (only this one: an older
+    bundle still runs the algorithms it has); and on a non-zero exit code.
     """
     backend = BackendManager()
     compatibility_error = backend_compatibility_error(
@@ -155,6 +218,13 @@ def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedba
     )
     if compatibility_error:
         raise QgsProcessingException(compatibility_error)
+    try:
+        executable = backend.executable_path(tool_name)
+    except RuntimeError:
+        raise QgsProcessingException(
+            "The configured backend ({}) has no {}. Install the qgis backend "
+            "bundle that matches this plugin.".format(backend.backend_path(), tool_name)
+        )
 
     log_stem = tool_name.replace("lsdtt-", "").replace("-", "_")
 
@@ -191,7 +261,6 @@ def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedba
                 "Saved reproducible parameter file: {}".format(params_file)
             )
 
-        executable = backend.executable_path(tool_name)
         command = [executable, driver_dir, params_name]
         log_path = os.path.join(
             output_folder, "{}_{}.log".format(output_prefix, log_stem)

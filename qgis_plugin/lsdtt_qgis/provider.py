@@ -15,6 +15,7 @@ from .algorithms.raster_preprocessing import RasterPreprocessingAlgorithm
 from .algorithms.sample_rasters_to_points import SampleRastersToPointsAlgorithm
 from .algorithms.side_tributary_basins import SideTributaryBasinsAlgorithm
 from .algorithms.surface_metrics import SurfaceMetricsAlgorithm
+from .algorithms.swath_profile import SwathProfileAlgorithm
 
 
 class LSDTTProvider(QgsProcessingProvider):
@@ -31,6 +32,7 @@ class LSDTTProvider(QgsProcessingProvider):
         self.addAlgorithm(MosaicRastersAlgorithm())
         self.addAlgorithm(SampleRastersToPointsAlgorithm())
         self.addAlgorithm(SideTributaryBasinsAlgorithm())
+        self.addAlgorithm(SwathProfileAlgorithm())
 
     def id(self):
         return "lsdtt"
