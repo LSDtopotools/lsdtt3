@@ -1,3 +1,12 @@
+// lsdtt_ren_modular_implicit_cpu.cpp
+//
+// Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
+//
+// Copyright (C) 2026 Simon M. Mudd
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
+
 // =============================================================================
 // lsdtt_ren_modular_implicit_cpu.cpp
 // =============================================================================

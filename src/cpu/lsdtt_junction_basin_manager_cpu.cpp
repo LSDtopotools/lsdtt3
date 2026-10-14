@@ -1,8 +1,10 @@
 // lsdtt3 - lsdtt_junction_basin_manager_cpu.cpp
 // CPU implementation of the junction basin manager.
 //
-// Copyright Simon M. Mudd
+// Copyright (C) 2026 Rutger Vervoordeldonk
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_junction_basin_manager_cpu.hpp"
 #include "lsdtt_basin_outline_cpu.hpp"

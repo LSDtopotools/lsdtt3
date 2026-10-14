@@ -20,8 +20,10 @@
 //  - Construction takes an lsdtt_basin_cpu (single basin object)
 //  - The basin is represented by a zero-copy slice into the flow s_vector.
 //
-// Copyright (C) 2026
+// Copyright (C) 2026 Rutger Vervoordeldonk
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include <string>
 #include <vector>

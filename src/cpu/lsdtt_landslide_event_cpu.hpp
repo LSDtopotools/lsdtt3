@@ -5,6 +5,7 @@
 // Copyright (C) 2026 Simon M. Mudd
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // A triggered landslide EVENT: turn a volume budget into scars on the ground.
