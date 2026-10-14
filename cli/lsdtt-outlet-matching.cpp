@@ -93,7 +93,12 @@ static std::string number(double value)
 
 static std::string join_path(const std::string& directory, const std::string& name)
 {
-    return name.empty() || name.front() == '/' ? name : directory + "/" + name;
+    const bool absolute = !name.empty() &&
+        (name.front() == '/' || name.front() == '\\' ||
+         (name.size() > 1 && name[1] == ':'));
+    if (name.empty() || absolute || directory.empty()) return name;
+    const char last = directory.back();
+    return (last == '/' || last == '\\') ? directory + name : directory + "/" + name;
 }
 
 struct candidate
@@ -337,14 +342,15 @@ int main(int argc, char* argv[])
             string_parameters.at("target_dem_fname"));
         const std::string points_path = parser.add_read_path_if_needed(
             string_parameters.at("reference_outlet_fname"));
-        const std::string matched_path = string_parameters.at("matched_outlet_fname").empty()
-            ? parser.get_write_fname() + "_matched_outlets.csv"
-            : lsdtt::join_path(
-                parser.get_write_path(), string_parameters.at("matched_outlet_fname"));
-        const std::string diagnostics_path = string_parameters.at("diagnostics_fname").empty()
-            ? parser.get_write_fname() + "_outlet_matching_diagnostics.csv"
-            : lsdtt::join_path(
-                parser.get_write_path(), string_parameters.at("diagnostics_fname"));
+        // Both outputs go to write_path whether or not a name is given.
+        const std::string matched_path = lsdtt::join_path(parser.get_write_path(),
+            string_parameters.at("matched_outlet_fname").empty()
+                ? parser.get_write_fname() + "_matched_outlets.csv"
+                : string_parameters.at("matched_outlet_fname"));
+        const std::string diagnostics_path = lsdtt::join_path(parser.get_write_path(),
+            string_parameters.at("diagnostics_fname").empty()
+                ? parser.get_write_fname() + "_outlet_matching_diagnostics.csv"
+                : string_parameters.at("diagnostics_fname"));
 
         lsdtt::lsdtt_data_loader reference_loader;
         lsdtt::lsdtt_data_loader target_loader;

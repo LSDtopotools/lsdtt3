@@ -24,7 +24,7 @@ Keys use `snake_case`. All keys and their defaults are listed below.
 ---
 
 !!! note "Multipart lines"
-    `input_vector` accepts multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
+    `input_vector_fname` accepts multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
 
     Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
 
@@ -157,7 +157,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `input_vector` | `string` | - | `param` | `clip_lines_to_areas` | Input vector dataset (e.g. a GeoPackage) holding both layers. | Required. Resolved against read_path if not absolute. |
+| `input_vector_fname` | `string` | - | `param` | `clip_lines_to_areas` | Input vector dataset (e.g. a GeoPackage) holding both layers. | Required. A bare filename is read from read_path. |
 | `water_area_layer` | `string` | - | `param` | `clip_lines_to_areas` | Name of the water-area POLYGON layer. | Required. e.g. vml-nr73sw_Water_Area. |
 | `water_line_layer` | `string` | - | `param` | `clip_lines_to_areas` | Name of the water LINESTRING (tributary) layer. | Required. e.g. vml-nr73sw_Water_Line. |
 | `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Output VECTOR format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. Distinct from the raster key write_output_format used by the raster tools: this CLI writes vectors only. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). GeoPackage is an SQLite database, and SQLite cannot take the file locks it needs on a drive mounted into WSL2, so a gpkg write there fails. |

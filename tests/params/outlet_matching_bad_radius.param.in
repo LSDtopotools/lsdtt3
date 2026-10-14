@@ -1,0 +1,10 @@
+# lsdtt-outlet-matching must refuse a non-positive search radius.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: om
+reference_dem_fname: basin_stats_diamond_square.tif
+reference_outlet_fname: basin_stats_outlets.csv
+raster_is_filled: false
+n_threads: 1
+target_dem_fname: basin_stats_diamond_square.tif
+local_search_radius_metres: 0

@@ -33,3 +33,12 @@ threshold_contributing_pixels: 150
 calculate_polyfit_metrics_directly_on_dem: true
 polyfit_metrics: slope,maximum_curvature
 polyfit_lambda_metres: 60
+
+# Since PR #108 (2026-10-13): range_defined_ridgelines uses OPPOSING mountain
+# fronts. N and S are the fronts here; E/W are open (oooo) or periodic (opop).
+# Without this the run retains 0 range-spanning basins and exits 1.
+mountain_front_boundaries: mnmn
+# PR #108 also moved the raw_dem_3x3 slope raster behind write_polyfit_rasters
+# and renamed it rg_*_lambda_60m_raw_dem_3x3_polyfit_slope.tif. Its hash is
+# unchanged, so the C3 oracles in tests/CMakeLists.txt still hold.
+write_polyfit_rasters: true

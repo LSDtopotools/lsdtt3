@@ -1,0 +1,40 @@
+# Smoke test for lsdtt-advection-diffusion: a 40 x 50 red-noise surface run for
+# 20 steps with D-infinity incision, ADI hillslope diffusion and uplift, writing
+# every diagnostic in both formats.
+#
+# read_path is deliberately absent: with it set, the CLI would load read_fname
+# as the initial grid instead of generating the noise surface. random_seed and
+# n_threads are fixed so the hashes in tests/CMakeLists.txt are reproducible
+# (the outputs were checked to be identical for n_threads 1, 4 and 0).
+#
+# This run is also the FIXTURE for smoke_advection_diffusion_resume and
+# smoke_advection_diffusion_initial_grid, which read its out/ directory.
+write_path: __WRITE_PATH__
+write_fname: ad
+n_threads: 1
+
+n_rows: 40
+n_cols: 50
+cell_size_metres: 2
+noise_target_stddev_metres: 4
+random_seed: 33
+boundary_conditions: opop
+baselevel_elevation: 0
+fill_initial_surface: true
+
+fluvial_incision_model: dinf
+hillslope_model: adi
+K: 0.00025
+D: 0.025
+uplift_rate: 0.001
+m_exponent: 0.5
+n_exponent: 1
+
+timestep: 40
+number_of_iterations: 20
+frequency_of_output_writing: 10
+progress_reporting_interval: 10
+
+write_hillshade_rasters: true
+write_drainage_area_rasters: true
+diagnostics_write_output_format: both

@@ -174,15 +174,15 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `polyfit_lambda_metres_list` | `string` | `15` | `param` | - | Comma-separated direct-polyfit lambdas in metres. | Example: 3,5,7,15,30. Decimal filename labels use _ instead of . |
 | `n_log_bins` | `int` | `20` | `param` | - | Number of logarithmic drainage-area bins. | Only non-empty bins are written to each lambda CSV. |
-| `write_slope_rasters` | `bool` | `true` | `switch` | - | Write each slope raster, after optional clipping. | Files are named &lt;write_fname&gt;_slope_lambda_XXm.tif. |
+| `write_slope_rasters` | `bool` | `true` | `switch` | - | Write each slope raster, after optional clipping. | Files are named &lt;write_fname&gt;_lambda_XXm_slope.tif. |
 
 ### Basin clipping
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `basin_clip_mode` | `string` | `none` | `param` | - | Optional basin clipping mode. | Allowed values are none, mask, or polygon. |
-| `basin_mask_fname` | `string` | - | `param` | `basin_clip_mode=mask` | Raster basin mask filename. | The mask must have exactly the DEM grid settings. |
-| `basin_polygon_fname` | `string` | - | `param` | `basin_clip_mode=polygon` | Basin polygon filename. | The polygon must be supplied as a same-grid rasterised polygon mask; vector rasterisation is not performed by this CLI. |
+| `basin_mask_fname` | `string` | - | `param` | `basin_clip_mode=mask` | Raster basin mask filename. | The mask must have exactly the DEM grid settings. Cells with value 0 or nodata are excluded; any other value is kept, so a labelled basins raster works. A bare filename is read from read_path. |
+| `basin_polygon_fname` | `string` | - | `param` | `basin_clip_mode=polygon` | Basin polygon filename. | The polygon must be supplied as a same-grid rasterised polygon mask; vector rasterisation is not performed by this CLI. It is read exactly like basin_mask_fname. A bare filename is read from read_path. |
 
 ### Output
 

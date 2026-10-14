@@ -1,0 +1,15 @@
+# lsdtt-basin-extraction with outlets snapped at 100 contributing pixels while
+# the channel network starts at the default 1000. Most snapped outlets are
+# therefore not channel cells. Until 2026-10-14 the first such outlet aborted
+# the run (uncaught exception in junction_upstream_of_flat); now each one is
+# skipped with a warning naming both thresholds, and the 4 on-network outlets
+# still produce basins.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: bx
+basin_outlet_fname: __READ_PATH__/basin_stats_outlets.csv
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 100
+select_basins_from_outlets: true
+write_basins_raster: true

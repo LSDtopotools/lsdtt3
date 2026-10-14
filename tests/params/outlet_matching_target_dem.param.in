@@ -1,0 +1,11 @@
+# Fixture for the lsdtt-outlet-matching tests: lsdtt-raster-preprocessing
+# resamples the basin_stats fixture DEM from 30 m to 60 m (same CRS) and writes
+# om_target_utm.tif INTO the basin_stats fixture directory (write_path is
+# __READ_PATH__), next to the reference DEM and basin_stats_outlets.csv.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __READ_PATH__
+write_fname: om_target
+force_reproject: true
+force_resampling: true
+forced_grid_spacing: 60

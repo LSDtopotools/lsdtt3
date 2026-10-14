@@ -28,6 +28,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expect", action="append", required=True,
                         help="Expected output file path relative to the test output directory")
     parser.add_argument(
+        "--expect-absent",
+        action="append",
+        default=[],
+        help="Output file path, relative to the test output directory, that must "
+             "NOT exist (e.g. an output whose switch is off)",
+    )
+    parser.add_argument(
         "--expect-failure",
         action="store_true",
         help="Expect the CLI to fail (non-zero exit code)",
@@ -537,8 +544,10 @@ def main() -> int:
             continue
         if p.stat().st_size == 0:
             empty.append(str(p))
+    present = [str(out_dir / name) for name in args.expect_absent
+               if (out_dir / name).exists()]
 
-    if missing or empty:
+    if missing or empty or present:
         if missing:
             print("Missing outputs:", file=sys.stderr)
             for m in missing:
@@ -547,6 +556,10 @@ def main() -> int:
             print("Empty outputs:", file=sys.stderr)
             for e in empty:
                 print(f"  {e}", file=sys.stderr)
+        if present:
+            print("Outputs that should not have been written:", file=sys.stderr)
+            for p in present:
+                print(f"  {p}", file=sys.stderr)
         print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)
         print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
         return 2

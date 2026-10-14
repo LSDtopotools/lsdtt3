@@ -1,0 +1,13 @@
+# lsdtt-slope-area clipped to the labelled basins raster written by
+# fixture_slope_area_basin_mask. A bare basin_mask_fname is resolved against
+# read_path (it was resolved against the working directory before
+# 2026-10-14).
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: sa
+n_threads: 1
+polyfit_lambda_metres_list: 90,150
+n_log_bins: 10
+basin_clip_mode: mask
+basin_mask_fname: sa_basins_junction_basins.tif

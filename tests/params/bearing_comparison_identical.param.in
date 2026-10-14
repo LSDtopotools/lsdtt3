@@ -1,0 +1,7 @@
+# lsdtt-bearing-comparison, analytic case: identical samples: distance 0, Kuiper V 0.
+# Inputs are text CSVs in tests/data/bearing_comparison/.
+read_path: __READ_PATH__/bearing_comparison
+write_path: __WRITE_PATH__
+write_fname: bc
+bearing_fname_1: sample.csv
+bearing_fname_2: sample.csv

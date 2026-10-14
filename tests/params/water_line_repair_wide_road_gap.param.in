@@ -1,0 +1,9 @@
+# lsdtt-water-line-repair with max_gap_length_metres raised to 45: the 40 m gap
+# under "B Road" (lines 3-4) is now bridged as well: 4 bridges.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wlr
+input_vector_fname: water_line_repair_fixture
+water_layer: water
+road_layer: road
+max_gap_length_metres: 45

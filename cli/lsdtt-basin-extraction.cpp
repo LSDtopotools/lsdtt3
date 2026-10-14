@@ -1957,6 +1957,28 @@ int main(int argc, char* argv[])
                                   << " contributing_pixels="
                                   << snapped.snapped_contributing_pixels << "\n";
                     }
+
+                    // A basin is built from the junction above its outlet, so
+                    // the outlet must be on the channel network. Snapping (or no
+                    // snapping) below threshold_contributing_pixels can leave it
+                    // off the network; skipping it here replaces an uncaught
+                    // exception in junction_upstream_of_flat that aborted the run.
+                    if (!channel_network->is_channel(flat))
+                    {
+                        std::cerr << "Warning: basin outlet " << outlet.point_id
+                                  << " (row=" << row << " col=" << col
+                                  << ") is not on the channel network; skipping.\n"
+                                  << "  The channel network starts at "
+                                  << ifs["threshold_contributing_pixels"]
+                                  << " contributing pixels (threshold_contributing_pixels)";
+                        if (basin_outlet_snapping_method != "none")
+                            std::cerr << ", but outlets were snapped to "
+                                      << ifs["basin_outlet_contributing_pixels_threshold"]
+                                      << " (basin_outlet_contributing_pixels_threshold)";
+                        std::cerr << ".\n  Set basin_outlet_contributing_pixels_threshold "
+                                     "to at least threshold_contributing_pixels.\n";
+                        continue;
+                    }
                     basin_outlet_flat_indices.push_back(flat);
                 }
                 catch (const std::exception& e)

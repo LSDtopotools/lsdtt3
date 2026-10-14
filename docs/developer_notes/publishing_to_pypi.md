@@ -20,7 +20,7 @@ contains:
 |---|---|
 | The C++ runtime | `lsdtt3/liblsdtt3_runtime.so` |
 | The bindings extension | `lsdtt3/_core.cpython-*.so` |
-| All 39 command-line tools | `lsdtt3/bin/lsdtt-*` |
+| Every command-line tool (FFTW-dependent `lsdtt-spectral-analysis` only when FFTW is found) | `lsdtt3/bin/lsdtt-*` |
 | GDAL and PROJ support data | `lsdtt3/share/gdal`, `lsdtt3/share/proj` |
 | Cosmogenic parameters | `lsdtt3/share/lsdtt3/crn_parameters.nc` |
 | Vendored dependencies | `lsdtt3.libs/` (added by `auditwheel`) |

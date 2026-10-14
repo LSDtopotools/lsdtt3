@@ -957,7 +957,9 @@ void write_parameter_file_guide(std::ostream& os,
                 std::string v = lsdtt_help_registry::field(e, k_help_default);
                 if (lsdtt_help_registry::field(e, k_help_type) == "bool")
                     v = "true";
-                if (v.empty() || v.find(' ') != std::string::npos) continue;
+                if (v.empty() || v.find(' ') != std::string::npos ||
+                    v == "NULL" || v == "null")
+                    continue;
                 example_key = key;
                 example_value = v;
                 break;

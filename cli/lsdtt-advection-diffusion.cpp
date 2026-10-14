@@ -475,7 +475,10 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 3 - Fill the initial surface and set baselevel boundaries
     // -------------------------------------------------------------------------
-    if (bf.at("fill_initial_surface"))
+    // Not when resuming: the resumed grid is mid-run, and filling it again
+    // makes a resumed run diverge from an uninterrupted one (by metres, on the
+    // smoke-test grid). smoke_advection_diffusion_resume pins the equality.
+    if (bf.at("fill_initial_surface") && starting_iteration == 0)
     {
         current = lsdtt::fill_pits(
             current, 0.0001f, sf.at("boundary_conditions"),

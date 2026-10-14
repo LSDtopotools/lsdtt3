@@ -1,0 +1,30 @@
+# lsdtt-advection-diffusion must refuse an incision model other than d8 or dinf.
+write_path: __WRITE_PATH__
+write_fname: ad
+n_threads: 1
+
+n_rows: 40
+n_cols: 50
+cell_size_metres: 2
+noise_target_stddev_metres: 4
+random_seed: 33
+boundary_conditions: opop
+baselevel_elevation: 0
+fill_initial_surface: true
+
+hillslope_model: adi
+K: 0.00025
+D: 0.025
+uplift_rate: 0.001
+m_exponent: 0.5
+n_exponent: 1
+
+timestep: 40
+number_of_iterations: 20
+frequency_of_output_writing: 10
+progress_reporting_interval: 10
+
+write_hillshade_rasters: true
+write_drainage_area_rasters: true
+diagnostics_write_output_format: both
+fluvial_incision_model: mfd

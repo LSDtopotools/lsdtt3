@@ -28,7 +28,7 @@ lsdtt-water-line-repair -c                       # print citation and exit
 ---
 
 !!! note "Multipart lines"
-    `input_vector`, `road_vector` accept multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
+    `input_vector_fname`, `road_vector_fname` accept multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
 
     Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
 
@@ -47,10 +47,10 @@ lsdtt-water-line-repair -c                       # print citation and exit
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `input_vector` | string | _(empty)_ | Dataset containing the water layer (and optionally roads). Required. Resolved against `read_path` if relative. |
+| `input_vector_fname` | string | _(empty)_ | Dataset containing the water layer (and optionally roads). Required. Resolved against `read_path` if relative. |
 | `water_layer` | string | _(empty)_ | Name of the water LINESTRING layer to repair. Required. |
 | `road_layer` | string | _(empty)_ | Name of the road-centreline LINESTRING layer used for road-crossing association. Required. |
-| `road_vector` | string | _(empty)_ | Optional separate dataset holding the road layer. If empty, roads are read from `input_vector`. |
+| `road_vector_fname` | string | _(empty)_ | Optional separate dataset holding the road layer. If empty, roads are read from `input_vector_fname`. |
 
 Both layers must be in the same CRS. A projected metre CRS is strongly recommended.
 
@@ -60,14 +60,14 @@ Both layers must be in the same CRS. A projected metre CRS is strongly recommend
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `snap_tolerance` | float | `0.5` | Endpoint coincidence tolerance (m) used for degree counting. |
-| `tangent_fit_length` | float | `15.0` | Inward arc length (m) used to estimate each tip's outward tangent direction. |
-| `max_gap_length` | float | `25.0` | Maximum gap length (m) for road-associated bridges. |
-| `max_nonroad_gap` | float | `30.0` | Maximum gap length (m) for non-road bridges. Set `0` to disable non-road bridging. |
-| `max_facing_angle` | float | `45.0` | Strict (non-road) gate: each tip must face its partner within this angle (deg). |
-| `max_heading_misalignment` | float | `50.0` | Strict (non-road) gate: tangents should be near anti-parallel (`180 deg`); this sets max misalignment (deg). |
-| `road_max_facing_angle` | float | `60.0` | Road tier gate: at least one tip must face within this angle (deg). No heading constraint in road tier. |
-| `road_intersection_tolerance` | float | `10.0` | Distance (m) used to classify a connector as road-associated when there is no strict intersection. |
+| `snap_tolerance_metres` | float | `0.5` | Endpoint coincidence tolerance (m) used for degree counting. |
+| `tangent_fit_length_metres` | float | `15.0` | Inward arc length (m) used to estimate each tip's outward tangent direction. |
+| `max_gap_length_metres` | float | `25.0` | Maximum gap length (m) for road-associated bridges. |
+| `max_nonroad_gap_metres` | float | `30.0` | Maximum gap length (m) for non-road bridges. Set `0` to disable non-road bridging. |
+| `max_facing_angle_degrees` | float | `45.0` | Strict (non-road) gate: each tip must face its partner within this angle (deg). |
+| `max_heading_misalignment_degrees` | float | `50.0` | Strict (non-road) gate: tangents should be near anti-parallel (`180 deg`); this sets max misalignment (deg). |
+| `road_max_facing_angle_degrees` | float | `60.0` | Road tier gate: at least one tip must face within this angle (deg). No heading constraint in road tier. |
+| `road_intersection_tolerance_metres` | float | `10.0` | Distance (m) used to classify a connector as road-associated when there is no strict intersection. |
 | `require_mutual_best` | bool | `true` | Accept a bridge only if each tip is the other's best-scoring partner. Strongly reduces false joins. |
 
 Selection is one-to-one: once a tip is used in an accepted bridge, it cannot be reused.
@@ -138,21 +138,21 @@ read_path: ./
 write_path: ./lsdtt3_outputs/
 write_fname: nr73nw_vml
 
-input_vector: vml-nr73nw.gpkg
+input_vector_fname: vml-nr73nw.gpkg
 water_layer: vml-nr73nw_Water_Line
 road_layer: vml-nr73nw_Road_Centreline
 
 write_vector_format: gpkg
 calculate_spatial_index: true
 
-snap_tolerance: 0.5
-max_gap_length: 25.0
-max_nonroad_gap: 30.0
-max_facing_angle: 45.0
-max_heading_misalignment: 50.0
-road_max_facing_angle: 60.0
-tangent_fit_length: 15.0
-road_intersection_tolerance: 10.0
+snap_tolerance_metres: 0.5
+max_gap_length_metres: 25.0
+max_nonroad_gap_metres: 30.0
+max_facing_angle_degrees: 45.0
+max_heading_misalignment_degrees: 50.0
+road_max_facing_angle_degrees: 60.0
+tangent_fit_length_metres: 15.0
+road_intersection_tolerance_metres: 10.0
 require_mutual_best: true
 
 write_tip_diagnostics: true
@@ -172,27 +172,37 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
 | `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
 
-### -
+### Input vectors
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `input_vector` | `string` | - | `param` | `write_tip_diagnostics` | Input vector dataset (e.g. a GeoPackage) holding both layers. | Required. Resolved against read_path if not absolute. Both layers must share the same CRS (projected metres recommended). |
-| `water_layer` | `string` | - | `param` | `write_tip_diagnostics` | Name of the water LINESTRING layer to repair. | Required. e.g. vml-nr73sw_Water_Line. |
-| `road_layer` | `string` | - | `param` | `write_tip_diagnostics` | Name of the road centreline LINESTRING layer used as the crossing test. | Required. e.g. vml-nr73sw_Road_Centreline. |
-| `road_vector` | `string` | - | `param` | `write_tip_diagnostics` | Dataset holding the road layer, if different from input_vector. | Use when the water network is in one file (e.g. the centreline .fgb) and roads are in another (e.g. the source .gpkg). Empty = same as input_vector. Resolved against read_path if not absolute. |
-| `road_name_field` | `string` | `roadName` | `param` | `write_tip_diagnostics` | Road attribute copied into the bridge crossed_road_name field. | Falls back to 'roadNumber' when this field is empty/absent. |
+| `input_vector_fname` | `string` | - | `io` | - | Input vector dataset (e.g. a GeoPackage) holding both layers. | Required. A bare filename is read from read_path. Both layers must share the same CRS (projected metres recommended). |
+| `water_layer` | `string` | - | `param` | - | Name of the water LINESTRING layer to repair. | Required. e.g. vml-nr73sw_Water_Line. |
+| `road_layer` | `string` | - | `param` | - | Name of the road centreline LINESTRING layer used as the crossing test. | Required. e.g. vml-nr73sw_Road_Centreline. |
+| `road_vector_fname` | `string` | - | `io` | - | Dataset holding the road layer, if different from input_vector_fname. | Use when the water network is in one file (e.g. the centreline .fgb) and roads are in another (e.g. the source .gpkg). Empty = same as input_vector_fname. A bare filename is read from read_path. |
+| `road_name_field` | `string` | `roadName` | `param` | - | Road attribute copied into the bridge crossed_road_name field. | Falls back to 'roadNumber' when this field is empty/absent. |
+
+### Outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
 | `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Output VECTOR format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. Distinct from the raster key write_output_format used by the raster tools: this CLI writes vectors only. FlatGeobuf is preferred: it is compact, single-layer, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). GeoPackage is an SQLite database, and SQLite cannot take the file locks it needs on a drive mounted into WSL2, so a gpkg write there fails. |
-| `snap_tolerance` | `float` | `0.5` | `param` | `write_tip_diagnostics` | Endpoint coincidence tolerance (m) for degree counting. | Endpoints within this distance are treated as the same node, so shared confluences are not mistaken for dangling tips. |
-| `max_gap_length` | `float` | `25.0` | `param` | `write_tip_diagnostics` | Maximum ROAD-crossing bridge length (m); longer road gaps are rejected. | Roads are narrow, but raise for wide / dual-carriageway crossings or wide verges where a true crossing gap exceeds the default. |
-| `max_nonroad_gap` | `float` | `30.0` | `param` | `write_tip_diagnostics` | Maximum bridge length (m) for gaps NOT associated with a road. | Fills digitising breaks regardless of roads. The STRICT facing/heading gates still apply, so genuine headwaters and parallel streams are not joined. Set 0 to disable non-road bridging. |
-| `max_facing_angle` | `float` | `45.0` | `param` | `write_tip_diagnostics` | Strict tier: max angle (deg) EACH tip's tangent may deviate from the line to its partner. Used for non-road gaps. | Both tips must point toward each other across the gap. |
-| `max_heading_misalignment` | `float` | `50.0` | `param` | `write_tip_diagnostics` | Strict tier: max deviation from anti-parallel (deg) between the two tips' tangents. Used for non-road gaps. | A true continuation has the two outward tangents ~opposite (180 deg). Suppresses bridges between parallel unrelated streams. |
-| `road_max_facing_angle` | `float` | `60.0` | `param` | `write_tip_diagnostics` | Road tier: a road-associated bridge only needs AT LEAST ONE tip to face within this angle (no heading constraint). | The channel kinks at a road crossing so the dangling tip's own tangent is often unreliable; the partner across the road faces well. |
-| `tangent_fit_length` | `float` | `15.0` | `param` | `write_tip_diagnostics` | Inward arc length (m) used to estimate each tip's outward tangent. | Longer values smooth over digitising wiggle near the tip. |
-| `road_intersection_tolerance` | `float` | `10.0` | `param` | `write_tip_diagnostics` | Road-association distance (m): a bridge is 'road-associated' if its connector comes within this distance of a road centreline. | Covers staggered severances where the stub ends sit a few metres off the road. Uses segment-to-segment distance, not just a midpoint test. |
-| `require_mutual_best` | `bool` | `true` | `param` | `write_tip_diagnostics` | Require each tip to be the other's best partner before bridging. | Strongly suppresses spurious bridges; disable only to be more inclusive. |
-| `merge_chains` | `bool` | `false` | `param` | `write_tip_diagnostics` | Dissolve connected chains into single features (NOT yet implemented). | Leave false: keep originals + add bridge lines. Coincident endpoints already make the network topologically continuous downstream. |
 | `calculate_spatial_index` | `bool` | `true` | `io` | - | Build a spatial index when writing the output layer. | Speeds GIS queries; buffers the layer in memory before writing. |
 | `write_tip_diagnostics` | `bool` | `false` | `switch` | - | Write a diagnostic point layer of every dangling tip. | Output: &lt;write_fname&gt;_repair_tips.fgb. Attributes: bridged (1 if the tip was joined), road_dist_m (distance to nearest road), line_index. Use it to see which tips near roads stayed unbridged and why. |
+
+### Gap bridging
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `snap_tolerance_metres` | `float` | `0.5` | `param` | - | Endpoint coincidence tolerance (m) for degree counting. | Endpoints within this distance are treated as the same node, so shared confluences are not mistaken for dangling tips. |
+| `max_gap_length_metres` | `float` | `25.0` | `param` | - | Maximum ROAD-crossing bridge length (m); longer road gaps are rejected. | Roads are narrow, but raise for wide / dual-carriageway crossings or wide verges where a true crossing gap exceeds the default. |
+| `max_nonroad_gap_metres` | `float` | `30.0` | `param` | - | Maximum bridge length (m) for gaps NOT associated with a road. | Fills digitising breaks regardless of roads. The STRICT facing/heading gates still apply, so genuine headwaters and parallel streams are not joined. Set 0 to disable non-road bridging. |
+| `max_facing_angle_degrees` | `float` | `45.0` | `param` | - | Strict tier: max angle (deg) EACH tip's tangent may deviate from the line to its partner. Used for non-road gaps. | Both tips must point toward each other across the gap. |
+| `max_heading_misalignment_degrees` | `float` | `50.0` | `param` | - | Strict tier: max deviation from anti-parallel (deg) between the two tips' tangents. Used for non-road gaps. | A true continuation has the two outward tangents ~opposite (180 deg). Suppresses bridges between parallel unrelated streams. |
+| `road_max_facing_angle_degrees` | `float` | `60.0` | `param` | - | Road tier: a road-associated bridge only needs AT LEAST ONE tip to face within this angle (no heading constraint). | The channel kinks at a road crossing so the dangling tip's own tangent is often unreliable; the partner across the road faces well. |
+| `tangent_fit_length_metres` | `float` | `15.0` | `param` | - | Inward arc length (m) used to estimate each tip's outward tangent. | Longer values smooth over digitising wiggle near the tip. |
+| `road_intersection_tolerance_metres` | `float` | `10.0` | `param` | - | Road-association distance (m): a bridge is 'road-associated' if its connector comes within this distance of a road centreline. | Covers staggered severances where the stub ends sit a few metres off the road. Uses segment-to-segment distance, not just a midpoint test. |
+| `require_mutual_best` | `bool` | `true` | `param` | - | Require each tip to be the other's best partner before bridging. | Strongly suppresses spurious bridges; disable only to be more inclusive. |
+| `merge_chains` | `bool` | `false` | `param` | - | Dissolve connected chains into single features (NOT yet implemented). | Leave false: keep originals + add bridge lines. Coincident endpoints already make the network topologically continuous downstream. |
 
 <!-- END GENERATED CLI PARAMETERS -->

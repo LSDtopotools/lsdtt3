@@ -1,0 +1,15 @@
+# lsdtt-swath-profile, analytic case. tests/data/swath_plane/plane.asc is a
+# 50 x 50, 10 m plane rising east, z = 0.1 x (x from the west edge, so cell
+# centres run 0.5, 1.5, ... 49.5); baseline.csv runs west to east along its
+# middle row. With half_width_metres and bin_width_metres both 100, every bin
+# holds 10 columns x 20 rows = 200 pixels and its mean is exactly 0.1 x the bin
+# centre: 5, 15, 25, 35, 45. A bare baseline_vector_fname is resolved against
+# read_path (it was resolved against the working directory before 2026-10-14).
+read_path: __READ_PATH__/swath_plane
+read_fname: plane.asc
+write_path: __WRITE_PATH__
+write_fname: sw
+baseline_vector_fname: baseline.csv
+half_width_metres: 100
+bin_width_metres: 100
+n_threads: 1
