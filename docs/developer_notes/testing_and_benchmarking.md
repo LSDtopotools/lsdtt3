@@ -2550,14 +2550,115 @@ within 0.07× of each other):
 | `polyfit_all` | 1.83-1.85× | 2.12-2.13× | 1.02-1.03× | 1.80-1.83× |
 | `hillshade` | 1.48× | 1.50-1.53× | 1.01× | 2.05× |
 
-- Whitebox gains nothing from a second core and then 1.8-2.4× from four. That
-  fits a pool of n − 1 workers plus a coordinating thread; not verified (no
-  whitebox_workflows 2.0.6 source).
+- Whitebox gains nothing from a second core and then 1.8-2.4× from four. Its
+  2-thread rows here used 0.99-1.08 CPU/wall. The 0.6.0 rerun the next day
+  (below) measured 1.51-1.81× at 2 threads, with 1.39-1.57 CPU/wall, on the
+  same suite code, so the flat 2-thread curve belongs to this session, not
+  to Whitebox.
 - lsdtt3's 4-thread figures are below the 3.18-3.22× of the 2026-09-21
   allocation. lsdtt3's OpenMP threads were not pinned here, so two can share a
   physical core's SMT siblings, and the node was shared. Not separated.
 - lsdtt3's 4-thread rows at 1000² are bimodal (hillshade alpine repeats of 8 ms
   and 20 ms); quote the 4000² rows.
+
+### Server campaign 2026-10-12 (forth01, release 0.6.0): rerun at the tag
+
+The same `server` profile and suite as 2026-10-11, rerun at `e09e809`, clean
+tree. `git rev-parse "v0.6.0^{commit}"` resolves to `e09e809`, so this
+campaign measures release 0.6.0. Raw data:
+`../data/benchmarking/server_forth01.geos.ed.ac.uk_20261012_115629`. 372 rows,
+all `ok`, the same row set as 2026-10-11.
+
+- **Machine:** forth01, 8 logical CPUs in the session's mask (which 8 is not
+  recorded in the manifest), `schedutil`, not exclusive. The CPU-use table
+  flags nothing at 1 thread.
+- **Code:** between `4d8d844` and `e09e809` the only changes are the version
+  number and the default of `min_dist` in the positional overload of
+  `breach_depressions_least_cost` (now `false`, matching the options struct
+  and Whitebox). The benchmark scripts are unchanged.
+- **Every engine took less time.** New / old median at 1 thread, median over
+  rows: lsdtt3 0.87, RichDEM 0.86, TopoToolbox 0.89, Whitebox 0.86. RichDEM,
+  TopoToolbox and Whitebox are the same builds as before, so the shift is in
+  the session, not the code. Absolute seconds from the two campaigns should not
+  be mixed. Whitebox's fills and `route_d8_epsilon` moved more than the rest
+  (0.56-0.79 at 2000² and 4000²), so their ratios with lsdtt3 changed (table
+  below).
+
+#### 1-thread comparison
+
+Reference time / lsdtt3 time, range over the six fixtures (above 1 means lsdtt3
+took less time). The 2026-10-11 range is in brackets where it moved by more
+than 0.1 at either end.
+
+| case | RichDEM | TopoToolbox | Whitebox |
+|---|---|---|---|
+| `accum_d8` (S-vector on) | 0.98-1.12 | 1.33-1.72 (1.21-1.72) | 1.01-1.16 |
+| `accum_d8_no_svector` | 1.39-1.64 | 1.92-2.43 (1.77-2.26) | 1.42-1.83 |
+| `fill_epsilon` | 0.96-1.07 | n/a | 0.92-1.93 (1.03-2.75) |
+| `fill_priority_flood` | 0.52-0.80 | n/a | 0.90-1.74 (1.05-2.10) |
+| `fill` (reconstruction) | n/a | 0.85-1.00 | n/a |
+| `breach` (Lindsay 2016) | 0.93-1.07 (0.94-1.49) | n/a | n/a |
+| `breach_least_cost` (bitwise-equal output) | n/a | n/a | 0.60-0.79; 1.36 on alpine 4000² |
+| `route_d8_epsilon` | n/a | n/a | 0.89-1.34 (0.99-2.00) |
+| `accum_dinf` (report-only) | 0.95-1.16 | n/a | 0.74-0.93 |
+| `accum_mfd` (report-only) | 0.60-0.64 | n/a | 0.55-0.65 |
+| `slope_only` (report-only) | 0.46-0.51 | 0.96-1.05 | 2.35-2.63 |
+| `hillshade` (report-only) | n/a | 0.47-0.56 | 9.8-12.0 |
+| `polyfit_all` (report-only) | 0.21-0.27 | 1.03-1.15 | 0.96-1.13 |
+
+The `breach` upper end of 1.49 on 2026-10-11 was RichDEM alpine 4000² at
+5.17 s; here it took 3.26 s.
+
+Raw DEM to D8 accumulation with each package's defaults (`route_d8_default`,
+report-only), seconds:
+
+| package | alpine 1000² | lakeland 1000² | alpine 2000² | lakeland 2000² | alpine 4000² | lakeland 4000² |
+|---|---|---|---|---|---|---|
+| lsdtt3 | 0.213 | 0.216 | 0.949 | 0.945 | 4.227 | 4.464 |
+| RichDEM | 0.213 | 0.208 | 0.972 | 0.924 | 4.278 | 4.329 |
+| TopoToolbox | 0.133 | 0.257 | 0.513 | 1.149 | 2.369 | 5.640 |
+| Whitebox | 0.103 | 0.411 | 0.379 | 4.963 | 1.980 | 60.053 |
+
+#### Least-cost breaching
+
+Matched parameters as on 2026-10-11. Seconds:
+
+| | alpine 1000² | lakeland 1000² | alpine 2000² | lakeland 2000² | alpine 4000² | lakeland 4000² |
+|---|---|---|---|---|---|---|
+| lsdtt3 | 0.035 | 0.234 | 0.118 | 0.930 | 0.434 | 4.069 |
+| Whitebox | 0.021 | 0.163 | 0.071 | 0.640 | 0.590 | 3.210 |
+| lsdtt3 / Whitebox | 1.68 | 1.43 | 1.67 | 1.45 | 0.74 | 1.27 |
+| lsdtt3, CLI defaults (`breach_least_cost_default`) | 0.031 | 0.176 | 0.115 | 0.813 | 0.425 | 8.189 |
+
+Against 2026-10-11, Whitebox's times fell to 0.74-0.82 and lsdtt3's to
+0.87-0.89, so lsdtt3 / Whitebox rose from 1.20-1.45 to 1.27-1.68 on the five
+fixtures where Whitebox is faster. Peak memory at 4000² is unchanged: lsdtt3
+644-657 MiB, Whitebox 1757-1774 MiB.
+
+#### Thread scaling on 4 physical cores
+
+Speedup over each engine's own 1-thread time, 4000², alpine / lakeland:
+
+| case | lsdtt3 2t | lsdtt3 4t | Whitebox 2t | Whitebox 4t |
+|---|---|---|---|---|
+| `slope_only` | 1.50 / 1.51× | 2.59 / 2.61× | 1.81 / 1.81× | 3.02 / 2.82× |
+| `polyfit_all` | 1.71 / 1.71× | 2.96 / 2.96× | 1.51 / 1.53× | 1.98 / 1.95× |
+| `hillshade` | 1.56 / 1.54× | 2.04 / 1.56× | 1.66 / 1.62× | 2.45 / 2.42× |
+
+- Whitebox now gains from a second core: 1.51-1.81× at 2 threads, with
+  1.39-1.57 CPU/wall, against 1.00-1.03× and 0.99-1.08 CPU/wall on
+  2026-10-11. The suite code is the same, and `whitebox_cpu_pin()` picks the
+  CPUs from the session's affinity mask, which is the one input that differs
+  between sessions and was not recorded.
+- lsdtt3's 4-thread speedups rose (slope 2.14-2.21 → 2.59-2.61×,
+  `polyfit_all` 2.12-2.13 → 2.96×) and its 2-thread slope speedup fell
+  (1.80-1.82 → 1.50-1.51×). The 2-thread slope rows themselves are about the
+  same in seconds (0.51 s then, 0.53 s now) while the 1-thread rows
+  fell (0.93 → 0.79 s), so the change is in the 1-thread baseline.
+- 4-thread lsdtt3 rows still have outlier repeats: `polyfit_all` 4000² has
+  one repeat of 1.02 s among four of 0.69-0.76 s; hillshade alpine 4000² has
+  one of 0.100 s among four of 0.075-0.078 s, and lakeland did not speed up
+  past 2 threads. Hillshade at 4 threads is not quotable from one campaign.
 
 ## 7. Cosmogenic nuclide testing
 

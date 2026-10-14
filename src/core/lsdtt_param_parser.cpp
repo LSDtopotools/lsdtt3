@@ -66,7 +66,10 @@ lsdtt_param_parser::lsdtt_param_parser(
     if (!test.good())
     {
         throw std::runtime_error(
-            "lsdtt_param_parser: parameter file not found: " + full_path
+            "lsdtt_param_parser: parameter file not found: " + full_path +
+            "\n  The parameter file is a plain-text file of \"key: value\" "
+            "lines that you create.\n  Run the tool with no arguments for "
+            "its format, or with -h to list its parameters."
         );
     }
     test.close();
@@ -869,6 +872,86 @@ lsdtt_help_registry with_builtin_io_entries(const lsdtt_help_registry& help)
     return out;
 }
 
+// How to run a tool and write its parameter file. Shared by plain "-h" and by
+// a run with no arguments, so that someone holding only the binary (often an
+// LLM with no access to the documentation) learns that options live in a
+// parameter file rather than in command-line flags, and how that file is
+// written. `help` is null on the no-argument path, which runs before the CLI
+// has declared its parameters; when present it supplies a real example key.
+void write_parameter_file_guide(std::ostream& os,
+                                const std::string& tool_name,
+                                const lsdtt_help_registry* help)
+{
+    os << "How to run " << tool_name << ":\n"
+       << "  " << tool_name << " -h                        "
+          "list every parameter this tool accepts\n"
+       << "  " << tool_name << " -h <parameter_name>       "
+          "full guidance on one parameter\n"
+       << "  " << tool_name << " <parameter_file>          "
+          "run the analysis described in the file\n"
+       << "  " << tool_name << " <path> <parameter_file>   "
+          "same, with the parameter file in directory <path>\n"
+       << "\n"
+       << "All analysis options are set in a plain-text parameter file, not with\n"
+       << "command-line flags. The parameter names, types and defaults are\n"
+       << "listed by \"" << tool_name << " -h\".\n"
+       << "\n"
+       << "Parameter file format (any filename; my_params.driver is the convention):\n"
+       << "  - one \"key: value\" per line; the key is a parameter name from -h\n"
+       << "  - keys are case-sensitive; any parameter left out takes its default\n"
+       << "  - a value must not contain spaces: lists are comma-separated with no\n"
+       << "    spaces (a,b,c), and paths must not contain spaces\n"
+       << "  - booleans are true or false\n"
+       << "  - # starts a comment; blank lines are ignored\n"
+       << "  - read_path defaults to the parameter file's directory, and\n"
+       << "    write_path defaults to read_path; write_path must already exist\n"
+       << "  - outputs are named <write_fname>_<descriptor>.<ext> in write_path\n"
+       << "  - unrecognised keys are reported as warnings and ignored\n"
+       << "\n"
+       << "Example parameter file:\n"
+       << "  # my_params.driver\n"
+       << "  read_path: /data/my_project\n"
+       << "  write_path: /data/my_project/output\n"
+       << "  read_fname: my_dem.tif\n"
+       << "  write_fname: my_run\n";
+
+    // One real parameter of this tool, so the example is runnable in shape.
+    // Prefer a switch (they turn analyses on); fall back to any parameter with
+    // a usable default.
+    std::string example_key, example_value;
+    if (help)
+    {
+        const auto& entries = help->entries();
+        for (const std::string pass : {"switch", ""})
+        {
+            for (const auto& key : help->key_order())
+            {
+                const auto& e = entries.at(key);
+                if (role_of(e) == "io") continue;
+                if (!pass.empty() && role_of(e) != pass) continue;
+                std::string v = lsdtt_help_registry::field(e, k_help_default);
+                if (lsdtt_help_registry::field(e, k_help_type) == "bool")
+                    v = "true";
+                if (v.empty() || v.find(' ') != std::string::npos) continue;
+                example_key = key;
+                example_value = v;
+                break;
+            }
+            if (!example_key.empty()) break;
+        }
+    }
+    if (!example_key.empty())
+    {
+        os << "  " << example_key << ": " << example_value << "\n";
+    }
+    else
+    {
+        os << "  <parameter_name>: <value>   # parameters listed by -h\n";
+    }
+    os << "\n"
+       << "Run it with:  " << tool_name << " /data/my_project my_params.driver\n";
+}
+
 // Detailed view for "-h <parameter_name>".
 void write_topic_help(std::ostream& os,
                       const std::string& tool_name,
@@ -896,6 +979,7 @@ void write_topic_help(std::ostream& os,
 
     const auto& e = it->second;
     os << topic << "\n";
+    os << "  set in the parameter file as \"" << topic << ": <value>\"\n";
     os << "  type    : " << lsdtt_help_registry::field(e, k_help_type) << "\n";
     os << "  default : " << lsdtt_help_registry::field(e, k_help_default) << "\n";
     os << "  group   : " << group_of(e) << "\n";
@@ -940,9 +1024,9 @@ void write_overview_help(std::ostream& os,
 {
     os << tool_name << " " << version << "\n";
     os << "Citation: " << citation << "\n\n";
-    os << "Usage: " << tool_name << " <path> <parameter_file>\n";
-    os << "       " << tool_name << " <parameter_file>\n";
-    os << "Parameter file lines are \"key: value\"; # starts a comment.\n";
+    write_parameter_file_guide(os, tool_name, &help);
+    os << "\nParameters accepted in the parameter file "
+          "(name (type=default)  description):\n";
 
     const auto& entries = help.entries();
     const auto& order   = help.key_order();
@@ -1250,9 +1334,35 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
         }
     }
 
+    // Anything that looks like a flag but is not one of the above, or more
+    // than two positional arguments, means the caller is guessing at a
+    // flag-style interface (e.g. "--input dem.tif"). Left alone, the first
+    // would be taken as <path> and the second as the parameter file.
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string a = argv[i];
+        if (a.size() > 1 && a[0] == '-')
+        {
+            std::cerr << "Unrecognised option: " << a << "\n" << tool_name
+                      << " takes no option flags except -h, -v and -c; all "
+                         "other options go in the parameter file.\n\n";
+            write_parameter_file_guide(std::cerr, tool_name, nullptr);
+            std::exit(1);
+        }
+    }
+    if (argc > 3)
+    {
+        std::cerr << "Too many arguments: " << tool_name
+                  << " takes at most <path> <parameter_file>.\n\n";
+        write_parameter_file_guide(std::cerr, tool_name, nullptr);
+        std::exit(1);
+    }
+
     if (argc == 1)
     {
-        std::cerr << "No parameter file specified. Use -h for help.\n";
+        std::cerr << "No parameter file specified: " << tool_name
+                  << " reads all of its options from a parameter file.\n\n";
+        write_parameter_file_guide(std::cerr, tool_name, nullptr);
         std::exit(1);
     }
     else if (argc == 2)
@@ -1366,9 +1476,14 @@ void lsdtt_param_parser::write_reference_files(
     html << "<p>Citation: " << html_escape(citation) << "</p>\n";
     html << "<h2>Usage</h2>\n"
          << "<p><code>" << html_escape(tool_name)
-         << " my_params.driver</code></p>\n"
-         << "<p>Parameter file format: <code>key: value</code> "
-         << "(one per line, # for comments)</p>\n";
+         << " my_params.driver</code> or <code>" << html_escape(tool_name)
+         << " &lt;path&gt; my_params.driver</code></p>\n"
+         << "<p>All options are set in a plain-text parameter file, not with "
+         << "command-line flags. Format: one <code>key: value</code> per line; "
+         << "keys are case-sensitive and omitted keys take their defaults; a "
+         << "value contains no spaces (lists are comma-separated, e.g. "
+         << "<code>a,b,c</code>); booleans are <code>true</code>/<code>false</code>; "
+         << "<code>#</code> starts a comment.</p>\n";
 
     auto write_row = [&html](const std::string& key,
                              const std::vector<std::string>& e,
