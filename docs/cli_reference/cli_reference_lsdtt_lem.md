@@ -716,6 +716,16 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_png` | Sun altitude above the horizon for hillshade, degrees. | 45 is the standard default. |
 | `hillshade_z_factor` | `float` | `1` | `param` | `write_hillshade_png` | Vertical exaggeration factor for hillshade. | Use values &gt; 1 to emphasise relief on low-gradient landscapes. |
 
+### Intermediate diagnostics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_intermediate_hillshade_png` | `bool` | `false` | `switch` | `frequency_of_output_writing` | Write a hillshade PNG at each intermediate output checkpoint. | The PNG is written to intermediate_hillshade_write_path, or write_path when that path is empty. |
+| `write_intermediate_log10_dinf_drainage_area_png` | `bool` | `false` | `switch` | `frequency_of_output_writing` | Write a log10 D-infinity drainage-area PNG at each intermediate output checkpoint. | The PNG uses an inverted grayscale mapping so larger drainage areas are darker, and is written to intermediate_drainage_area_write_path. |
+| `write_intermediate_png_sidecars` | `bool` | `false` | `switch` | - | Keep PNG georeferencing sidecars (.wld/.pgw and .aux.xml) for intermediate diagnostics. | False removes the sidecars after writing PNGs intended only for visual inspection. |
+| `intermediate_hillshade_write_path` | `string` | - | `io` | `write_intermediate_hillshade_png` | Directory for intermediate hillshade PNGs. | Empty uses write_path. |
+| `intermediate_drainage_area_write_path` | `string` | - | `io` | `write_intermediate_log10_dinf_drainage_area_png` | Directory for intermediate D-infinity drainage-area PNGs. | Empty uses write_path. |
+
 ### Timestepping
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

@@ -343,8 +343,8 @@ int main(int argc, char* argv[])
     help_map["flow_algorithm"] = {"string", "dinf",
         "Flow-routing algorithm.", "Allowed values are dinf or d8.",
         "Flow information", "param", ""};
-    bool_default_map["write_flowinfo"] = true;
-    help_map["write_flowinfo"] = {"bool", "true",
+    bool_default_map["write_flowinfo_rasters"] = true;
+    help_map["write_flowinfo_rasters"] = {"bool", "true",
         "Write the drainage-area and flow-direction rasters.",
         "The drainage-area raster is used by the slope-area analysis.",
         "Flow information", "switch", ""};
@@ -453,7 +453,7 @@ int main(int argc, char* argv[])
                 options);
             drainage_area = lsdtt::lsdtt_raster_cpu(
                 flow.get_drainage_area_raster());
-            if (bf.at("write_flowinfo"))
+            if (bf.at("write_flowinfo_rasters"))
             {
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(
@@ -476,7 +476,7 @@ int main(int argc, char* argv[])
                 options);
             drainage_area = lsdtt::lsdtt_raster_cpu(
                 flow.accumulate_raster());
-            if (bf.at("write_flowinfo"))
+            if (bf.at("write_flowinfo_rasters"))
             {
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(

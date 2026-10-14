@@ -63,9 +63,10 @@ Perron et al. (2008).
 | `write_output_format` | string | `cog` | Elevation output format. |
 | `frequency_of_output_writing` | int | — | Write an intermediate elevation raster every N iterations. |
 | `number_of_iterations` | int | — | Final iteration number. |
-| `intermediate_hillshade_format` | string | — | Optional intermediate hillshade format. |
+| `write_hillshade_rasters` | bool | `false` | Write hillshade diagnostics at the initial, intermediate and final steps. |
 | `intermediate_hillshade_write_path` | string | — | Hillshade output directory. |
-| `intermediate_drainage_area_format` | string | — | Optional log10 drainage-area diagnostic format. |
+| `write_drainage_area_rasters` | bool | `false` | Write log10 drainage-area diagnostics at the initial, intermediate and final steps. |
+| `diagnostics_write_output_format` | string | `png` | Diagnostic format: `cog`, `png`, or `both`. |
 | `intermediate_drainage_area_write_path` | string | — | Drainage-area diagnostic directory. |
 | `write_intermediate_png_sidecars` | bool | `false` | Write PNG sidecars for raster checkpoints. |
 
@@ -179,9 +180,90 @@ number_of_iterations: 1500000
 frequency_of_output_writing: 20000
 progress_reporting_interval: 500
 
-intermediate_hillshade_format: png
+write_hillshade_rasters: true
 intermediate_hillshade_write_path: outputs/hillshade
-intermediate_drainage_area_format: png
+write_drainage_area_rasters: true
+diagnostics_write_output_format: png
 intermediate_drainage_area_write_path: outputs/drainage_area
 write_intermediate_png_sidecars: false
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | - | `io` | - | Optional directory containing an existing input grid. | This loads a grid for a new run and automatically takes n_rows, n_cols and cell_size_metres from its raster metadata. It is distinct from automatic continuation: continuation instead discovers the highest &lt;write_fname&gt;_model_iteration_N.tif in write_path. |
+| `read_fname` | `string` | - | `io` | - | Filename of the existing input grid in read_path. | Use with read_path to start a new run from an existing grid; this is not a continuation switch. |
+| `write_path` | `string` | `./outputs` | `io` | - | Directory for outputs. | - |
+| `write_fname` | `string` | `advection_diffusion` | `io` | - | Output filename prefix. | - |
+| `write_output_format` | `string` | `cog` | `io` | - | Elevation output: cog, gtiff, or png. | - |
+
+### Grid settings
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_rows` | `int` | `128` | `param` | - | Number of grid rows. | - |
+| `n_cols` | `int` | `128` | `param` | - | Number of grid columns. | - |
+| `cell_size_metres` | `float` | `1` | `param` | - | Grid cell size (m). | - |
+| `boundary_conditions` | `string` | `opop` | `param` | - | Boundary conditions in N,E,S,W order. | o=open fixed-baselevel, n=no-flux, p=periodic, b=forced outlet. |
+| `n_threads` | `int` | `0` | `io` | - | OpenMP threads; 0 uses all available. | - |
+
+### Initial conditions
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `random_seed` | `int` | `33` | `param` | - | Red-noise random seed. | - |
+| `noise_target_stddev_metres` | `float` | `1` | `param` | - | Red-noise standard deviation (m). | - |
+| `fill_initial_surface` | `bool` | `true` | `switch` | - | Fill the red-noise surface before routing. | Set false only when initial internal drainage is intentional. |
+
+### Fluvial incision
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fluvial_incision_model` | `string` | `dinf` | `param` | - | Fluvial model: d8 or dinf. | D8 follows the numerical scheme of Braun &amp; Willett (2013, doi:10.1016/j.geomorph.2012.10.008); wherease the dinf follows the numerical scheme of Anand et al. (2020, doi:10.1016/j.envsoft.2020.104804). |
+| `K` | `float` | `1e-3` | `param` | - | Erodibility K (m^(1-2m) yr^-1). | Note: if use_specific_drainage_area is true, this parameter is interpreted as K_a, an erodibility with units adjusted to be consistent with the specific drainage area formulation (Bonetti et al., 2020, PNAS). K_a is equivalent to K*dx^m (see Litwin et al., 2025, ESurf), so has units of m^(1-m) yr^-1. |
+| `m_exponent` | `float` | `0.45` | `param` | - | Drainage-area exponent m. | - |
+| `n_exponent` | `float` | `1` | `param` | - | Slope exponent n. | - |
+| `use_specific_drainage_area` | `bool` | `false` | `param` | - | Use A/dx rather than total drainage area A. | When false, normal drainage area is used and the model scales according to the nondimensionalised equations provided by Theodoratos et al., (2018, ESurf). When true, specific drainage area is used and the model scales according to the nondimensionalised equations in Litwin et al. (2025, ESurf). |
+| `drainage_area_moving_average_kernel_size_pixels` | `int` | `1` | `param` | - | Odd-sized square moving-average kernel for drainage area used by stream-power incision; 1 disables smoothing. | Only positive odd values are allowed. |
+
+### Hillslope diffusion
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `hillslope_model` | `string` | `adi` | `param` | - | Hillslope model; only adi is supported. | ADI linear diffusion follows Perron et al. (2008, Perron et al. (2008, doi:10.1029/2007JF000977) |
+| `D` | `float` | `1e-3` | `param` | - | Hillslope diffusivity D (m^2 yr^-1). | - |
+
+### Uplift
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `uplift_rate` | `float` | `1e-4` | `param` | - | Uniform uplift rate (m yr^-1). | - |
+| `baselevel_elevation` | `float` | `0` | `param` | - | Fixed open-boundary elevation (m). | - |
+
+### Timestepping
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `timestep` | `float` | `100` | `param` | - | Fixed timestep (yr). | Adaptive timesteps are not supported. |
+| `number_of_iterations` | `int` | `100` | `param` | - | Number of fixed timesteps. | No convergence or steady-state stopping is performed. |
+| `progress_reporting_interval` | `int` | `500` | `param` | - | Progress-report interval in iterations. | Set 0 to suppress progress reporting. |
+
+### Outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `frequency_of_output_writing` | `int` | `0` | `param` | - | Write elevation every N iterations; 0 disables intermediate output. | Initial and final elevation are always written. |
+| `write_hillshade_rasters` | `bool` | `false` | `switch` | - | Write hillshade diagnostic rasters. | Written for the initial, intermediate and final topography, in the format set by diagnostics_write_output_format. |
+| `write_drainage_area_rasters` | `bool` | `false` | `switch` | - | Write log10 drainage-area diagnostic rasters. | Written for the initial, intermediate and final topography, in the format set by diagnostics_write_output_format. Uses the routing model selected by fluvial_incision_model. |
+| `diagnostics_write_output_format` | `string` | `png` | `param` | - | Format of hillshade and drainage-area diagnostics: cog, png, or both. | Applies only to write_hillshade_rasters and write_drainage_area_rasters; elevation outputs use write_output_format. |
+| `intermediate_hillshade_write_path` | `string` | - | `io` | - | Optional directory for hillshade outputs. | Empty uses write_path. |
+| `intermediate_drainage_area_write_path` | `string` | - | `io` | - | Optional directory for drainage-area outputs. | Empty uses write_path. |
+| `write_intermediate_png_sidecars` | `bool` | `false` | `switch` | - | Keep PNG georeferencing sidecars. | False removes .wld/.pgw and .aux.xml sidecars after writing. |
+
+<!-- END GENERATED CLI PARAMETERS -->
