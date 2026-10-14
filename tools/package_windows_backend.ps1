@@ -459,8 +459,11 @@ the same reference as HTML and CSV files, and `--help-json` prints it as JSON.
   - `read_path`: folder holding the input files (default: the folder
     containing the parameter file)
   - `read_fname`: input raster, e.g. `my_dem.tif` (any GDAL-readable format)
-  - `write_path`: folder for outputs (default: `read_path`). It must
-    already exist.
+  - `write_path`: folder for outputs (default: `read_path`)
+  - `read_path` and `write_path` are optional and usually left out, so that
+    everything is read from and written to the parameter file's folder. If
+    you do set one, the folder must already exist, or the tool stops with
+    an error.
   - `write_fname`: prefix for output files (default: the stem of `read_fname`)
 - Outputs are written as `<write_fname>_<descriptor>.<ext>` in `write_path`,
   together with `<write_fname>_ingested_params.param` (every parameter value
@@ -470,15 +473,13 @@ the same reference as HTML and CSV files, and `--help-json` prints it as JSON.
 
 ### Example
 
-Write a hillshade of `C:\data\my_project\my_dem.tif` into
-`C:\data\my_project\output`. Save this as
-`C:\data\my_project\my_params.driver` (in Notepad, choose "All files" so
-it is not saved as `.txt`):
+Write a hillshade of `C:\data\my_project\my_dem.tif`. Put the parameter file
+in the same folder as the DEM and leave out `read_path` and `write_path`. Save
+this as `C:\data\my_project\my_params.driver` (in Notepad, choose "All files"
+so it is not saved as `.txt`):
 
 ```text
 # my_params.driver -- hillshade a DEM
-read_path: C:\data\my_project
-write_path: C:\data\my_project\output
 read_fname: my_dem.tif
 write_fname: my_dem
 write_hillshade_raster: true
@@ -487,11 +488,13 @@ write_hillshade_raster: true
 Then, in a PowerShell window where `setenv.ps1` has been run:
 
 ```powershell
-New-Item -ItemType Directory -Force C:\data\my_project\output
-lsdtt-surface-metrics C:\data\my_project my_params.driver
+cd C:\data\my_project
+lsdtt-surface-metrics my_params.driver
 ```
 
-This writes `C:\data\my_project\output\my_dem_hillshade.tif`. For other
+This writes `C:\data\my_project\my_dem_hillshade.tif`. From another folder,
+run `lsdtt-surface-metrics C:\data\my_project my_params.driver` instead. To
+send outputs elsewhere, add a `write_path:` line naming an existing folder. For other
 analyses, run the relevant tool with `-h` to find its parameters, and add
 them to the parameter file.
 

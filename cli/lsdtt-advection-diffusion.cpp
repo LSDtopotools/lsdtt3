@@ -214,7 +214,7 @@ int main(int argc, char* argv[])
     help_map["fluvial_incision_model"] = {
         "string", "dinf", "Fluvial model: d8 or dinf.",
         "D8 follows the numerical scheme of Braun & Willett (2013, "
-        "doi:10.1016/j.geomorph.2012.10.008); wherease the dinf follows the "
+        "doi:10.1016/j.geomorph.2012.10.008); whereas the dinf follows the "
         "numerical scheme of Anand et al. "
         "(2020, doi:10.1016/j.envsoft.2020.104804).",
         "Fluvial incision", "param", ""};
@@ -259,8 +259,8 @@ int main(int argc, char* argv[])
     string_default_map["hillslope_model"] = "adi";
     help_map["hillslope_model"] = {
         "string", "adi", "Hillslope model; only adi is supported.",
-        "ADI linear diffusion follows Perron et al. (2008, "
-        "Perron et al. (2008, doi:10.1029/2007JF000977)",
+        "ADI linear diffusion follows Perron et al. "
+        "(2008, doi:10.1029/2007JF000977).",
         "Hillslope diffusion", "param", ""};
 
     float_default_map["D"] = 1e-3f;

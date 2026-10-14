@@ -24,6 +24,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -636,6 +637,30 @@ void lsdtt_param_parser::check_boundary_conditions()
 
 void lsdtt_param_parser::check_paths()
 {
+    // A read_path or write_path the user wrote must exist. Without this a
+    // missing write_path let every output fail to open while the run still
+    // reported "done" and exited 0. Unset (or blank) paths are not checked:
+    // they fall back to the parameter file's directory or the current
+    // directory, which exist by construction.
+    for (const auto& [key, dir] : {std::pair<const char*, const std::string*>
+                                       {"read_path", &read_path_},
+                                   {"write_path", &write_path_}})
+    {
+        if (!parameter_map_.count(key) || dir->empty()) continue;
+        std::error_code ec;
+        if (!std::filesystem::is_directory(*dir, ec))
+        {
+            throw std::runtime_error(
+                std::string("lsdtt_param_parser: ") + key + " '" + *dir +
+                "' does not exist or is not a directory.\n  Create it first, "
+                "or remove the " + key + " line to use the default (" +
+                (std::string(key) == "read_path"
+                     ? "the parameter file's directory"
+                     : "read_path") + ")."
+            );
+        }
+    }
+
     // Ensure read_path ends with /
     if (!read_path_.empty())
     {
@@ -903,15 +928,15 @@ void write_parameter_file_guide(std::ostream& os,
        << "    spaces (a,b,c), and paths must not contain spaces\n"
        << "  - booleans are true or false\n"
        << "  - # starts a comment; blank lines are ignored\n"
-       << "  - read_path defaults to the parameter file's directory, and\n"
-       << "    write_path defaults to read_path; write_path must already exist\n"
+       << "  - read_path and write_path are optional: read_path defaults to the\n"
+       << "    parameter file's directory and write_path to read_path. If you set\n"
+       << "    either, that directory must already exist or the run stops\n"
        << "  - outputs are named <write_fname>_<descriptor>.<ext> in write_path\n"
        << "  - unrecognised keys are reported as warnings and ignored\n"
        << "\n"
-       << "Example parameter file:\n"
-       << "  # my_params.driver\n"
-       << "  read_path: /data/my_project\n"
-       << "  write_path: /data/my_project/output\n"
+       << "Example parameter file, saved next to the DEM as my_params.driver:\n"
+       << "  # read_path and write_path are left out, so my_dem.tif is read from\n"
+       << "  # this file's directory and outputs are written there too\n"
        << "  read_fname: my_dem.tif\n"
        << "  write_fname: my_run\n";
 
@@ -949,7 +974,10 @@ void write_parameter_file_guide(std::ostream& os,
         os << "  <parameter_name>: <value>   # parameters listed by -h\n";
     }
     os << "\n"
-       << "Run it with:  " << tool_name << " /data/my_project my_params.driver\n";
+       << "Run it from that directory with:  " << tool_name
+       << " my_params.driver\n"
+       << "or from anywhere with:            " << tool_name
+       << " /path/to/that/directory my_params.driver\n";
 }
 
 // Detailed view for "-h <parameter_name>".

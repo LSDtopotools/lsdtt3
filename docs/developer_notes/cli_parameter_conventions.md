@@ -16,9 +16,8 @@ standard below ensures that:
 - New contributors follow the existing patterns rather than inventing new ones.
 
 The standard applies to all parameters. 
-A CTest guard checks every help-registered parameter in all 40 CLIs. It runs
-against a baseline allow-list of pre-existing violations that may only shrink,
-never grow — so a newly introduced violation fails the test.
+A CTest guard checks every help-registered parameter in every CLI, and fails on
+any violation (see [Conformance testing](#conformance-testing)).
 
 ---
 
@@ -368,12 +367,50 @@ benefit.
 
 ## Conformance testing
 
-A CTest case mechanically enforces the checkable subset of these rules against
-every CLI's declared parameters (available via `-h json` and `-h html`). The test
-is report-only initially with a baseline allow-list of exceptions. As phases of
-the remediation complete, the allow-list shrinks and the baseline tightens.
+The CTest case `unit_cli_parameter_conventions` mechanically enforces the
+checkable subset of these rules. It runs
+`tests/scripts/check_cli_parameter_conventions.py`, which runs every built
+`lsdtt-*` binary with `-h json` and checks each declared parameter:
 
-This prevents the whole problem from recurring.
+| Rule id | Checks |
+|---|---|
+| `unit_suffix` | no name ends in `_m`, `_px` or `_deg` (`_area_threshold_m2` is allowed) |
+| `print_writes_file` | no `print_*` parameter whose help says it writes a file |
+| `bool_raster_suffix` | a bool switch that writes a raster is `write_<name>_raster` / `_rasters` |
+| `duplicate_format` | at most one raster-format and one vector-format parameter per CLI |
+| `minimum_prefix` | bounds use `min_` / `max_`, except `<subject>_minimum_contributing_pixels` |
+| `tol_abbreviation` | no `tol` token; use `_tolerance_metres` or `_snap_max_search_radius_pixels` |
+| `help_json_unparseable` | the CLI's `-h json` output could be parsed |
+
+The rules are heuristics over parameter names and help text. For example,
+`bool_raster_suffix` only fires when the help text mentions a raster and no
+vector or table output.
+
+**The test fails on every violation.** The baseline allow-list
+(`tests/data/cli_parameter_conventions_baseline.json`) was used while the
+remediation phases were in progress, and is now empty. Do not add entries to
+it. Fix the name instead. The only sanctioned exceptions are recorded in the
+script itself:
+
+- `REVIEWED_FORMAT_OVERRIDES`: per-CLI format selectors that govern a genuinely
+  different output domain or stage. Examples are
+  `wiener_diagnostics_write_output_format` in `lsdtt-channel-extraction` and
+  `diagnostics_write_output_format` in `lsdtt-advection-diffusion`, for
+  visualisation frames. Add a new one only after review, with a comment
+  saying why.
+- `REVIEWED_INPUT_FORMATS`: legacy input selectors that predate the
+  `_input_format` suffix.
+
+The test also refuses to run if the build tree does not match `cli/`: a CLI
+source with no binary, or a binary older than its source, is a fatal error,
+because checking stale binaries would measure parameters that no longer exist.
+If it fails this way, rebuild everything (`cmake --build build -j`, re-running
+`cmake` first if a new CLI was added) and run it again.
+
+A companion test, `unit_cli_reference_is_current`, checks that the generated
+parameter tables in `docs/cli_reference/` match the binaries. After adding or
+renaming a parameter, regenerate them with
+`python3 tools/generate_cli_reference.py --update --bin-dir build`.
 
 ---
 

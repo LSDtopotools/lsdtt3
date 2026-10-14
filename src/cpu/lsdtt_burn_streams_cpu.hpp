@@ -14,7 +14,7 @@
 // profile of pixels that fall beneath the vector channel and enforcing a
 // monotone-decreasing (downhill) elevation constraint along the profile.
 //
-// Two burn modes are provided (via stream_burn_mode):
+// Three burn modes are provided (via stream_burn_mode):
 //
 //   burn_in_place
 //     For each polyline feature in the input vector:
@@ -27,7 +27,20 @@
 //     flow_distance (from outlet), dem_elevation, burned_elevation, and x/y.
 //
 //   snap_to_network
-//     Not yet implemented.  Throws std::runtime_error if called.
+//     For less accurate vector layers (e.g. OS Rivers). Compares the
+//     vector network's junctions with junctions extracted from the DEM flow
+//     network, reports where the two agree or diverge, and repairs gaps
+//     (build_vector_networks, find_first_layer_junction_pairs,
+//     repair_junction_gaps, find_candidate_junctions_phase,
+//     compute_reach_divergence, repair_candidate_junctions,
+//     repair_diverged_reaches). Driven by lsdtt-stream-burning, where it is
+//     the default; lsdtt-channel-extraction rejects it.
+//
+//   snap_to_accumulation
+//     For accurate vector layers (e.g. OS VectorMap Local). Traces D8 along
+//     the vector, keeps reaches that follow the DEM thalweg, and bridges
+//     obstruction gaps (roads, embankments) with least-cost-path carving.
+//     Driven by lsdtt-stream-burning.
 //
 // Input vector CRS must match the DEM CRS; no on-the-fly reprojection is
 // performed when reading polyline vertices.

@@ -99,6 +99,21 @@ the bundle survives any filesystem or archiver.
 
 ---
 
+## The bundle README is the only documentation shipped
+
+Each packaging script writes the bundle's `README.md` from a template held in
+the script itself (a heredoc in the `.sh` scripts, a here-string in the `.ps1`).
+A bundle contains no other documentation, and its reader may be an LLM with
+nothing else to go on. So besides install steps, the README has a section
+"How the tools work: parameter files": options are set in a parameter file, not
+with flags; `-h` lists the parameters; the file format; the file I/O keys; and
+a worked hillshade example. The binaries print the same guide themselves, when
+run with no arguments and at the top of `-h` (see `lsdtt_param_parser` in the
+architecture document). If the parameter-file rules change, update both, in
+all three scripts.
+
+---
+
 ## Bundled runtime data
 
 A bundle stages more than shared libraries. GDAL and PROJ both read **data

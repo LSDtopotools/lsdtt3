@@ -225,7 +225,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `fluvial_incision_model` | `string` | `dinf` | `param` | - | Fluvial model: d8 or dinf. | D8 follows the numerical scheme of Braun &amp; Willett (2013, doi:10.1016/j.geomorph.2012.10.008); wherease the dinf follows the numerical scheme of Anand et al. (2020, doi:10.1016/j.envsoft.2020.104804). |
+| `fluvial_incision_model` | `string` | `dinf` | `param` | - | Fluvial model: d8 or dinf. | D8 follows the numerical scheme of Braun &amp; Willett (2013, doi:10.1016/j.geomorph.2012.10.008); whereas the dinf follows the numerical scheme of Anand et al. (2020, doi:10.1016/j.envsoft.2020.104804). |
 | `K` | `float` | `1e-3` | `param` | - | Erodibility K (m^(1-2m) yr^-1). | Note: if use_specific_drainage_area is true, this parameter is interpreted as K_a, an erodibility with units adjusted to be consistent with the specific drainage area formulation (Bonetti et al., 2020, PNAS). K_a is equivalent to K*dx^m (see Litwin et al., 2025, ESurf), so has units of m^(1-m) yr^-1. |
 | `m_exponent` | `float` | `0.45` | `param` | - | Drainage-area exponent m. | - |
 | `n_exponent` | `float` | `1` | `param` | - | Slope exponent n. | - |
@@ -236,7 +236,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `hillslope_model` | `string` | `adi` | `param` | - | Hillslope model; only adi is supported. | ADI linear diffusion follows Perron et al. (2008, Perron et al. (2008, doi:10.1029/2007JF000977) |
+| `hillslope_model` | `string` | `adi` | `param` | - | Hillslope model; only adi is supported. | ADI linear diffusion follows Perron et al. (2008, doi:10.1029/2007JF000977). |
 | `D` | `float` | `1e-3` | `param` | - | Hillslope diffusivity D (m^2 yr^-1). | - |
 
 ### Uplift

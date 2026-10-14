@@ -663,8 +663,11 @@ the same reference as HTML and CSV files, and `--help-json` prints it as JSON.
   - `read_path`: directory holding the input files (default: the directory
     containing the parameter file)
   - `read_fname`: input raster, e.g. `my_dem.tif` (any GDAL-readable format)
-  - `write_path`: directory for outputs (default: `read_path`). It must
-    already exist.
+  - `write_path`: directory for outputs (default: `read_path`)
+  - `read_path` and `write_path` are optional and usually left out, so that
+    everything is read from and written to the parameter file's directory. If
+    you do set one, the directory must already exist, or the tool stops with
+    an error.
   - `write_fname`: prefix for output files (default: the stem of `read_fname`)
 - Outputs are written as `<write_fname>_<descriptor>.<ext>` in `write_path`,
   together with `<write_fname>_ingested_params.param` (every parameter value
@@ -674,23 +677,23 @@ the same reference as HTML and CSV files, and `--help-json` prints it as JSON.
 
 ### Example
 
-Write a hillshade of `/data/my_project/my_dem.tif` into
-`/data/my_project/output`:
+Write a hillshade of `/data/my_project/my_dem.tif`. Put the parameter file
+in the same directory as the DEM and leave out `read_path` and `write_path`:
 
 ```bash
-mkdir -p /data/my_project/output
-cat > /data/my_project/my_params.driver <<'END'
+cd /data/my_project
+cat > my_params.driver <<'END'
 # my_params.driver -- hillshade a DEM
-read_path: /data/my_project
-write_path: /data/my_project/output
 read_fname: my_dem.tif
 write_fname: my_dem
 write_hillshade_raster: true
 END
-lsdtt-surface-metrics /data/my_project my_params.driver
+lsdtt-surface-metrics my_params.driver
 ```
 
-This writes `/data/my_project/output/my_dem_hillshade.tif`. For other
+This writes `/data/my_project/my_dem_hillshade.tif`. From another directory,
+run `lsdtt-surface-metrics /data/my_project my_params.driver` instead. To send
+outputs elsewhere, add a `write_path:` line naming an existing directory. For other
 analyses, run the relevant tool with `-h` to find its parameters, and add
 them to the parameter file.
 
