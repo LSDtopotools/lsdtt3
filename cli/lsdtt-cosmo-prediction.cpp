@@ -1536,9 +1536,9 @@ int main(int argc, char* argv[])
         if (do_landslide)
         {
             const std::string t_path =
-                pp.get_read_path() + sf["landslide_time_raster_prefix"] + ".tif";
+                pp.add_read_path_if_needed(sf["landslide_time_raster_prefix"] + ".tif");
             const std::string e_path =
-                pp.get_read_path() + sf["landslide_excavation_raster_prefix"] + ".tif";
+                pp.add_read_path_if_needed(sf["landslide_excavation_raster_prefix"] + ".tif");
             std::cout << "  Landslide coupling: " << ls_coupling << "\n"
                       << "    time of failure : " << t_path << "\n"
                       << "    excavation depth: " << e_path << "\n";
@@ -1666,9 +1666,9 @@ int main(int argc, char* argv[])
             // switching the coupling on cannot perturb ground that never
             // failed.
             const std::string t_path =
-                pp.get_read_path() + sf["landslide_time_raster_prefix"] + ".tif";
+                pp.add_read_path_if_needed(sf["landslide_time_raster_prefix"] + ".tif");
             const std::string e_path =
-                pp.get_read_path() + sf["landslide_excavation_raster_prefix"] + ".tif";
+                pp.add_read_path_if_needed(sf["landslide_excavation_raster_prefix"] + ".tif");
             std::cout << "  Landslide coupling: " << ls_coupling << "\n"
                       << "    time of failure : " << t_path << "\n"
                       << "    excavation depth: " << e_path << "\n";
@@ -1795,7 +1795,7 @@ int main(int argc, char* argv[])
             if (sf["concentration_raster_prefix"] != "NULL")
             {
                 const std::string path =
-                    pp.get_read_path() + sf["concentration_raster_prefix"] + ".tif";
+                    pp.add_read_path_if_needed(sf["concentration_raster_prefix"] + ".tif");
                 std::cout << "Loading concentration raster for accumulation: "
                           << path << "\n";
                 lsdtt::lsdtt_data_loader ld;

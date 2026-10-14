@@ -385,14 +385,14 @@ int main(int argc, char* argv[])
         "Raster basin mask filename.",
         "The mask must have exactly the DEM grid settings. Cells with value 0 "
         "or nodata are excluded; any other value is kept, so a labelled "
-        "basins raster works. A bare filename is read from read_path.",
+        "basins raster works. A relative path is read from read_path.",
         "Basin clipping", "param", "basin_clip_mode=mask"};
     string_default_map["basin_polygon_fname"] = "";
     help_map["basin_polygon_fname"] = {"string", "",
         "Basin polygon filename.",
         "The polygon must be supplied as a same-grid rasterised polygon mask; "
         "vector rasterisation is not performed by this CLI. It is read exactly "
-        "like basin_mask_fname. A bare filename is read from read_path.",
+        "like basin_mask_fname. A relative path is read from read_path.",
         "Basin clipping", "param", "basin_clip_mode=polygon"};
 
     // --- Output tables --------------------------------------------------------
@@ -507,8 +507,7 @@ int main(int argc, char* argv[])
             if (clip_name.empty())
                 throw std::runtime_error(
                     "A basin filename is required for the selected clip mode");
-            // A bare filename is in read_path, like the DEM; a name with a
-            // directory in it is used as given.
+            // A relative path is read from read_path, like the DEM.
             clip = read_raster(parser.add_read_path_if_needed(clip_name));
             require_same_grid(dem.get_meta(), clip.get_meta(), "Basin clip");
         }

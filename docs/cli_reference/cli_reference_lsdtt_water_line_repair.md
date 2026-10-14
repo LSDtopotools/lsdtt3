@@ -176,10 +176,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `input_vector_fname` | `string` | - | `io` | - | Input vector dataset (e.g. a GeoPackage) holding both layers. | Required. A bare filename is read from read_path. Both layers must share the same CRS (projected metres recommended). |
+| `input_vector_fname` | `string` | - | `io` | - | Input vector dataset (e.g. a GeoPackage) holding both layers. | Required. A relative path is read from read_path. Both layers must share the same CRS (projected metres recommended). |
 | `water_layer` | `string` | - | `param` | - | Name of the water LINESTRING layer to repair. | Required. e.g. vml-nr73sw_Water_Line. |
 | `road_layer` | `string` | - | `param` | - | Name of the road centreline LINESTRING layer used as the crossing test. | Required. e.g. vml-nr73sw_Road_Centreline. |
-| `road_vector_fname` | `string` | - | `io` | - | Dataset holding the road layer, if different from input_vector_fname. | Use when the water network is in one file (e.g. the centreline .fgb) and roads are in another (e.g. the source .gpkg). Empty = same as input_vector_fname. A bare filename is read from read_path. |
+| `road_vector_fname` | `string` | - | `io` | - | Dataset holding the road layer, if different from input_vector_fname. | Use when the water network is in one file (e.g. the centreline .fgb) and roads are in another (e.g. the source .gpkg). Empty = same as input_vector_fname. A relative path is read from read_path. |
 | `road_name_field` | `string` | `roadName` | `param` | - | Road attribute copied into the bridge crossed_road_name field. | Falls back to 'roadNumber' when this field is empty/absent. |
 
 ### Outputs

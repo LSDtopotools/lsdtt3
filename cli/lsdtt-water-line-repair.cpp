@@ -84,7 +84,7 @@ int main(int argc, char* argv[])
     string_default_map["input_vector_fname"] = "";
     help_map["input_vector_fname"] = {"string","",
         "Input vector dataset (e.g. a GeoPackage) holding both layers.",
-        "Required. A bare filename is read from read_path. Both layers must "
+        "Required. A relative path is read from read_path. Both layers must "
         "share the same CRS (projected metres recommended).",
         "Input vectors", "io", ""};
 
@@ -105,7 +105,7 @@ int main(int argc, char* argv[])
         "Dataset holding the road layer, if different from input_vector_fname.",
         "Use when the water network is in one file (e.g. the centreline .fgb) "
         "and roads are in another (e.g. the source .gpkg). Empty = same as "
-        "input_vector_fname. A bare filename is read from read_path.",
+        "input_vector_fname. A relative path is read from read_path.",
         "Input vectors", "io", ""};
 
     string_default_map["road_name_field"] = "roadName";

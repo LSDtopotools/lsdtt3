@@ -1680,7 +1680,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     if (!sf["channel_mask_fname"].empty())
     {
-        const std::string mask_path = pp.get_read_path() + sf["channel_mask_fname"];
+        const std::string mask_path = pp.add_read_path_if_needed(sf["channel_mask_fname"]);
         std::cout << "Loading channel mask: " << mask_path << "\n";
         try
         {
@@ -2860,7 +2860,7 @@ int main(int argc, char* argv[])
             try
             {
                 snap_U = lsdtt::load_lem_forcing_history(
-                    pp.get_read_path() + sf["forcing_history_fname"]).at(0.0f).uplift_rate;
+                    pp.add_read_path_if_needed(sf["forcing_history_fname"])).at(0.0f).uplift_rate;
             }
             catch (const std::exception&)
             {
@@ -3043,7 +3043,7 @@ int main(int argc, char* argv[])
     if (!sf["forcing_history_fname"].empty())
     {
         const std::string forcing_path =
-            pp.get_read_path() + sf["forcing_history_fname"];
+            pp.add_read_path_if_needed(sf["forcing_history_fname"]);
         std::cout << "Loading forcing history: " << forcing_path << "\n";
         try
         {

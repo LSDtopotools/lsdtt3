@@ -555,6 +555,9 @@ the same reference as HTML and CSV files, and `--help-json` prints it as JSON.
   - `read_path`: directory holding the input files (default: the directory
     containing the parameter file)
   - `read_fname`: input raster, e.g. `my_dem.tif` (any GDAL-readable format)
+  - other input files (any key ending in `_fname`) are read from `read_path`
+    too. A relative path such as `inputs/outlets.csv` is relative to
+    `read_path`; an absolute path is used as given.
   - `write_path`: directory for outputs (default: `read_path`)
   - `read_path` and `write_path` are optional and usually left out, so that
     everything is read from and written to the parameter file's directory. If

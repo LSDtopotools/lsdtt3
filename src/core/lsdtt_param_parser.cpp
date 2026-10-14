@@ -719,11 +719,16 @@ std::string lsdtt_param_parser::add_read_path_if_needed(
     {
         return "NULL";
     }
-    if (this_string.find('/') != std::string::npos ||
-        this_string.find('\\') != std::string::npos)
-    {
-        return this_string;  // already has a path
-    }
+    // Absolute paths are used as given: /x, \\x (UNC or root) and C:... on
+    // Windows. EVERY relative path, including one with directories in it such
+    // as outlets/sites.csv, is relative to read_path. Until 2026-10-14 any name
+    // containing a separator was used as given, i.e. relative to the working
+    // directory, so outlets/sites.csv only worked when run from read_path.
+    if (this_string.empty()) return this_string;
+    const bool absolute =
+        this_string.front() == '/' || this_string.front() == '\\' ||
+        (this_string.size() > 1 && this_string[1] == ':');
+    if (absolute) return this_string;
     return read_path_ + this_string;
 }
 
@@ -931,6 +936,9 @@ void write_parameter_file_guide(std::ostream& os,
        << "  - read_path and write_path are optional: read_path defaults to the\n"
        << "    parameter file's directory and write_path to read_path. If you set\n"
        << "    either, that directory must already exist or the run stops\n"
+       << "  - input filenames (read_fname and any *_fname) are read from read_path;\n"
+       << "    a relative path such as inputs/outlets.csv is relative to read_path,\n"
+       << "    and an absolute path is used as given\n"
        << "  - outputs are named <write_fname>_<descriptor>.<ext> in write_path\n"
        << "  - unrecognised keys are reported as warnings and ignored\n"
        << "\n"

@@ -368,8 +368,10 @@ public:
     // stem.
     void check_paths();
 
-    // If this_string does not contain a path separator, prepend read_path.
-    // Returns "NULL" unchanged.
+    // Resolve an input filename from the parameter file. An absolute path
+    // (/..., \\..., C:...) is returned unchanged; any relative path, with or
+    // without directories in it, is prefixed with read_path. Returns "NULL"
+    // and "" unchanged.
     std::string add_read_path_if_needed(const std::string& this_string) const;
 
     // Returns the part of a string before the last dot.

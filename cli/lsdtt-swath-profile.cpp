@@ -84,15 +84,15 @@ int main(int argc, char* argv[])
     help_map["baseline_vector_fname"] = {"string","",
         "Vector file (FlatGeobuf/GeoPackage/Shapefile) with the swath baseline.",
         "The first LineString feature is used as the ordered baseline polyline. "
-        "Coordinates must be in the raster's projected CRS (metres). A bare "
-        "filename is read from read_path.",
+        "Coordinates must be in the raster's projected CRS (metres). A "
+        "relative path is read from read_path.",
         "Baseline / value input", "param", ""};
 
     string_default_map["value_raster_fname"] = "NULL";
     help_map["value_raster_fname"] = {"string","NULL",
         "Optional raster whose values are binned along the swath.",
         "If NULL (default), the input DEM's own values (elevation) are binned. "
-        "Must share the input DEM's geometry. A bare filename is read from "
+        "Must share the input DEM's geometry. A relative path is read from "
         "read_path.",
         "Baseline / value input", "param", ""};
 
@@ -162,7 +162,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Validate params
     // -------------------------------------------------------------------------
-    // Bare filenames are read from read_path, like the DEM.
+    // Relative paths are read from read_path, like the DEM.
     const std::string baseline_path = sf["baseline_vector_fname"].empty()
         ? std::string()
         : pp.add_read_path_if_needed(sf["baseline_vector_fname"]);

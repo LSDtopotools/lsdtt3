@@ -1,11 +1,13 @@
 # lsdtt-water-line-repair with the water and road layers in separate datasets
-# (road_vector_fname). Both are single-file CSV datasets. Absolute paths via
-# __READ_PATH__: a name containing a directory separator is NOT joined to
-# read_path by lsdtt_param_parser::add_read_path_if_needed (noted 2026-10-14).
+# (road_vector_fname). Both are single-file CSV datasets named by RELATIVE paths
+# with a directory in them; they must resolve against read_path. Until
+# 2026-10-14 lsdtt_param_parser::add_read_path_if_needed used any name
+# containing a separator as given (relative to the working directory), and
+# this test only worked with absolute paths.
 read_path: __READ_PATH__
 write_path: __WRITE_PATH__
 write_fname: wlr
-input_vector_fname: __READ_PATH__/water_line_repair_fixture/water.csv
-road_vector_fname: __READ_PATH__/water_line_repair_fixture/road.csv
+input_vector_fname: water_line_repair_fixture/water.csv
+road_vector_fname: water_line_repair_fixture/road.csv
 water_layer: water
 road_layer: road

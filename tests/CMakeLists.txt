@@ -2014,6 +2014,35 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(failure_outlet_matching_bad_radius PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
+# raster_is_filled: true on an unfilled DEM: routing fails, and the error must
+# point at raster_is_filled rather than leave the user with a routing message.
+add_lsdtt_cli_smoke_test(
+    failure_outlet_matching_unfilled_dem
+    lsdtt-outlet-matching
+    outlet_matching_unfilled_dem.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-failure
+    --stderr-contains "flow routing failed on the reference DEM"
+    --stderr-contains "Set raster_is_filled: false to fill both DEMs first."
+)
+lsdtt_set_tests_properties(failure_outlet_matching_unfilled_dem PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# An outlet whose only candidate is edge-influenced is a no_match, reported with
+# its reason; the run still succeeds for the others.
+add_lsdtt_cli_smoke_test(
+    smoke_outlet_matching_edge_only
+    lsdtt-outlet-matching
+    outlet_matching_edge_only.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --stdout-contains "Outlet 27: no_match. The only candidate drains area from the target DEM's edge"
+    --stdout-contains "Outlets matched: 28, no_match: 1, invalid_reference_point: 0"
+)
+lsdtt_set_tests_properties(smoke_outlet_matching_edge_only PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
 # =============================================================================
 # lsdtt-water-line-repair
 #

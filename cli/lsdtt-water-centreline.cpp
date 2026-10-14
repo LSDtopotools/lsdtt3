@@ -73,7 +73,7 @@ int main(int argc, char* argv[])
     string_default_map["input_vector_fname"] = "";
     help_map["input_vector_fname"] = {"string","",
         "Input vector dataset (e.g. a GeoPackage) holding both layers.",
-        "Required. A bare filename is read from read_path.",
+        "Required. A relative path is read from read_path.",
         "-", "param", "clip_lines_to_areas"};
 
     string_default_map["water_area_layer"] = "";
