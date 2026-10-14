@@ -371,9 +371,28 @@ workflow.
 - No camelCase anywhere
 - Opening braces always on their own line
 - All parameters use snake_case with no spaces
-- Output raster parameters: `write_*_raster`
+
+**CLI parameter names** are governed by
+[`cli_parameter_conventions.md`](cli_parameter_conventions.md), which is the
+authoritative standard: read it before naming or renaming any parameter. The
+rules most often needed are:
+
+- Output raster switches: `write_<name>_raster` (`_rasters` where a set is written)
+- Output switches are `write_<output>`, never `print_` for something that writes a file
+- One raster-format parameter per CLI, `write_output_format`, and one vector-format
+  parameter, `write_vector_format`
 - Algorithm selection parameters: `*_algorithm_choice`
-- Output format parameter: `write_output_format` (`cog` / `gtiff` / `same_as_input`)
+- Units spelled out: `_metres`, `_pixels`, `_degrees` (never `_m`, `_px`, `_deg`)
+- Bounds: `min_` / `max_` prefixes
+
+The mechanically checkable rules are enforced by the CTest case
+`unit_cli_parameter_conventions` (`tests/scripts/check_cli_parameter_conventions.py`),
+which reads every built CLI's `-h json`. Its baseline allow-list is now empty,
+so it fails on every violation. An extra format selector that genuinely governs
+a different output domain (for example diagnostic frames rather than analysis
+rasters) must be added to `REVIEWED_FORMAT_OVERRIDES` in that script, with a
+comment saying why. See the "Conformance testing" section of the conventions
+document.
 
 **CLI executables use dashes, not underscores:**
 - Object/library: `lsdtt_flowinfo_cpu`, `lsdtt_raster_cpu`, `lsdtt_param_parser`
@@ -989,8 +1008,54 @@ Current CLI programs are:
   computes platform statistics, and extracts edges.
 
 - **`lsdtt-bearing-comparison.cpp`**  
-  Bearing and orientation analysis. Computes channel, ridge, and fracture bearings; 
-  outputs rose diagrams and bearing statistics.
+  Compares two angular (bearing / orientation) distributions read from CSV
+  columns and writes a distribution-comparison report: the circular
+  1-Wasserstein distance and the two-sample Kuiper test. Handles directional
+  (period 360°) and axial (period 180°) data. It reads bearings; it does not
+  compute them from a DEM, and makes no plots.
+
+- **`lsdtt-slope-area.cpp`**  
+  Slope-area statistics. Builds D-infinity (default) or D8 drainage area,
+  computes direct-polyfit slope for each value in `polyfit_lambda_metres_list`,
+  optionally clips to a basin or polygon mask, and writes one log-binned
+  drainage-area CSV per lambda plus a summary of the drainage area at maximum
+  median slope. Makes no plots.
+
+- **`lsdtt-advection-diffusion.cpp`**  
+  A deliberately small fixed-timestep landscape evolution model: red-noise
+  initial surface, stream-power fluvial incision on D8 or D-infinity routing,
+  linear ADI hillslope diffusion and uniform uplift. Optional hillshade and
+  log10 drainage-area diagnostic frames (`write_hillshade_rasters`,
+  `write_drainage_area_rasters`, `diagnostics_write_output_format`). Additional
+  solvers, steady-state snapping, adaptive timesteps and forcing histories are
+  reserved for `lsdtt-lem`.
+
+- **`lsdtt-bankfull-width.cpp`**  
+  Manning's-equation bankfull channel width from a high-resolution DEM. Extracts
+  cross sections along a single-source channel network, then writes a channel
+  profile, sampled cross-section elevations, Manning bank points and per-reach
+  widths. Every output shares one cross-section extraction, so
+  `cross_section_id` matches across files.
+
+- **`lsdtt-distributed-hydrology.cpp`**  
+  A raster TOPMODEL: a time-evolving, rainfall-driven simulation built on the
+  same wetness index as `lsdtt-drainage-analysis`. The CLI contains no hydrology
+  of its own. It assembles library modules (`lsdtt_wetness_index_cpu`,
+  `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`,
+  `lsdtt_canopy_interception_cpu`, `lsdtt_infiltration_excess_cpu`,
+  `lsdtt_hydro_routing_cpu`, ...). Routing is D-infinity or MFD through
+  `lsdtt_flowgraph_cpu`.
+
+- **`lsdtt-hillslope-channel-coupling.cpp`**  
+  Couples hillslope form to channel form. For every ridgeline pixel it measures
+  hilltop curvature, traces the flow path to the channel it drains to, and
+  reports hillslope length, relief and the non-dimensional E* / R* pair
+  (Hurst et al. 2012; Grieve et al. 2016).
+
+- **`lsdtt-outlet-matching.cpp`**  
+  Matches outlets on a reference DEM to cells on a target DEM by comparing D8
+  contributing-basin areas, preferring the closest-area candidate that is not
+  influenced by the DEM edge. Writes matched-outlet and diagnostic CSVs.
 
 ### Polyfit method rule
 
@@ -1039,6 +1104,26 @@ All CLIs use this deferred flow (the legacy `parse_args()` was removed
 2026-07-15 once the last CLI migrated). See `cli/lsdtt-raster-preprocessing.cpp`
 and `cli/lsdtt-channel-extraction.cpp` for reference implementations.
 
+**When adding or renaming a parameter:**
+
+1. Name it according to [`cli_parameter_conventions.md`](cli_parameter_conventions.md).
+2. If the CLI has been released, keep the old name working for one release
+   through the deprecated/removed key maps (see
+   [Deprecated, removed and unknown parameter keys](#deprecated-removed-and-unknown-parameter-keys)).
+   A CLI not yet in any release tag can be renamed outright.
+3. Rebuild the CLI and regenerate the CLI reference pages:
+
+   ```bash
+   python3 tools/generate_cli_reference.py --update --bin-dir build
+   ```
+
+   This rewrites the parameter tables between the
+   `<!-- BEGIN/END GENERATED CLI PARAMETERS -->` markers in
+   `docs/cli_reference/`. The CTest case `unit_cli_reference_is_current` runs
+   the same script with `--check` and fails if any page is out of date. The
+   hand-written tables and example parameter files outside the markers are not
+   regenerated, so update the old names there by hand.
+
 ### Parameter map pattern (mandatory)
 
 Every CLI declares exactly **five maps**:
@@ -1059,8 +1144,8 @@ For every parameter, the default and the help entry are declared on **consecutiv
 
 ```cpp
 // --- Section label ---
-float_default_map["my_param_m"] = 10.0f;
-help_map["my_param_m"] = {"float","10.0",
+float_default_map["my_param_metres"] = 10.0f;
+help_map["my_param_metres"] = {"float","10.0",
     "Short one-line description including units [m].",
     "Longer explanation: valid range, physical meaning, cross-references to "
     "related parameters, caveats. Be specific about units and defaults.",
@@ -1386,19 +1471,34 @@ raster. Output suffix: `_lambert`.
 
 File: `src/core/lsdtt_raster_base.hpp/.cpp`
 
-Pure dispatch interface. Does NOT expose `get_data()` or `get_mask()` —
-those are CPU-specific types that have no meaning on a GPU backend.
-Only `get_meta()` is on the base (metadata is always host-side).
+Pure dispatch interface. Does NOT expose `get_data()` or `get_mask()`, which
+return CPU-specific `std::vector` types that have no meaning on a GPU backend.
+Metadata is always host-side.
 
 CPU analysis free functions take `const lsdtt_raster_cpu&` directly — they
 never go through the base class for data access.
 
-**Pure virtual:** `get_meta()`, `write_to_loader()`, `read_from_loader()`,
-`smooth_gaussian()`, `smooth_bilateral()`
+**Pure virtual** (all of them; the base implements nothing):
 
-**CPU fallback virtuals** (base implements, GPU overrides when ready):
-`compute_flow_direction()`, `compute_flow_accumulation()`, `compute_fft()`,
-`apply_wavelet_filter()`
+- state: `empty()`, `full_grid_size()`
+- metadata: `meta()`, `n_rows()`, `n_cols()`, `cell_size()`
+- contiguous storage for core-layer raster writing: `data_ptr()`, `mask_ptr()`
+- `clone()`
+- loader-to-backend transfer: `set_from_vectors(data&&, mask&&, meta)`
+
+The factory `make_raster_base(const lsdtt_data_loader&)` calls
+`make_raster_engine(loader, backend_type::auto_detect)` in
+`lsdtt_backend_factory.cpp`. There is no GPU raster engine: the GPU branch of
+`make_raster_engine` always throws, and GPU work goes through per-kernel
+selective dispatch instead (see "GPU compute kernels" above). Nothing in `cli/`
+or the bindings calls either factory today. `auto_detect` picks the GPU branch
+whenever `gpu_available()` is true. That function tests `LSDTT_GPU_ENABLED`,
+which no build defines, so today it is always false and the factory always
+returns an `lsdtt_raster_cpu`. If `LSDTT_GPU_ENABLED` is ever defined before a
+GPU raster engine exists, `make_raster_base` will throw instead of falling back
+to the CPU. There are no analysis methods on the base:
+flow routing, FFT, filtering and smoothing are free functions or engine
+objects in `src/cpu/`.
 
 ---
 
@@ -1413,13 +1513,14 @@ File: `src/cpu/lsdtt_raster_cpu.hpp/.cpp`
 - `get_mask_array()` → `const lsdtt_array2d_u8&` — zero-copy
 - `get_data()` → `const std::vector<float>&` — zero-copy into array's vector
 - `get_mask()` → `const std::vector<uint8_t>&` — zero-copy
-- `get_meta()` → `const lsdtt_raster_meta&` — implements base pure virtual
+- `get_meta()` → `const lsdtt_raster_meta&` (`meta()` is the base-class override)
 
 **Constructors:**
 - `lsdtt_raster_cpu(const lsdtt_data_loader&)` — read full raster from GDAL
 - `lsdtt_raster_cpu(const lsdtt_raster_tile&)` — from loader tile
 - `lsdtt_raster_cpu(lsdtt_array2d_f&&, lsdtt_array2d_u8&&, meta)` — preferred for results
 - `lsdtt_raster_cpu(std::vector<float>&&, std::vector<uint8_t>&&, meta)` — backwards compat
+- `lsdtt_raster_cpu(lsdtt_raster_result&&)` — adopt a core-layer engine result
 
 ---
 
@@ -1427,13 +1528,25 @@ File: `src/cpu/lsdtt_raster_cpu.hpp/.cpp`
 
 File: `src/core/lsdtt_param_parser.hpp/.cpp`
 
-Parameter file format: `key: value` (snake_case keys, `#` for comments).
+Parameter file format: one `key: value` per line (snake_case keys,
+case-sensitive, `#` for comments). A value ends at the first whitespace, so a
+value containing spaces (typically a list typed as `a, b, c`) is a hard error
+that suggests the space-free spelling, rather than silently keeping only `a,`.
+Lists are comma-separated with no spaces. Booleans accept `true`/`True`/`TRUE`/
+`t`/`T`/`1`; anything else is false.
 
 **File I/O parameters:**
 - `read_fname` — full filename **including extension** (e.g. `my_dem.tif`)
 - `write_fname` — stem only, no extension (defaults to read stem)
 - `read_path` — directory (default: parameter file directory)
-- `write_path` — directory (default: read_path)
+- `write_path` — directory (default: read_path). It is **not created**.
+
+`check_paths()` throws if `read_path` or `write_path` is set to a non-empty value
+that is not an existing directory. Before this check, a missing `write_path`
+made every output fail to open while the run still printed "done" and exited 0.
+Unset or blank paths are not checked: they fall back to the parameter file's
+directory (`read_path`) or to `read_path` (`write_path`). A blank value is the
+empty string, which resolves relative to the current directory.
 - `boundary_conditions` — string of characters: `o`=open, `n`=no-flux, `p`=periodic
 
 `get_full_read_path()` returns `read_path + read_fname + read_ext`.
@@ -1448,6 +1561,48 @@ Every CLI uses this instead of a per-file
 `parse_args` free function. Each CLI declares
 `static const std::string k_tool_name = "lsdtt-foo";`
 alongside `k_version` and `k_citation`.
+
+**Command-line contract.** A CLI accepts only `<parameter_file>`,
+`<path> <parameter_file>`, or one of the flags `-h` (with an optional
+`<parameter_name>`, `html` or `json`), `--help-json`, `-v` and `-c`. Every
+analysis option goes in the parameter file. `parse_args_deferred` enforces
+this:
+
+| invocation | behaviour |
+|---|---|
+| no arguments | "No parameter file specified", then the parameter-file guide; exit 1 |
+| an unrecognised `-...` argument (e.g. `--input dem.tif`) | "Unrecognised option", then the guide; exit 1 |
+| more than two positional arguments | "Too many arguments", then the guide; exit 1 |
+| a parameter file that does not exist | the parser's exception says what a parameter file is and points to `-h` |
+
+Without the flag check, `--input dem.tif` would be read as `<path>` =
+`--input` and parameter file = `dem.tif`.
+
+**Self-describing binaries.** The release packages ship the binaries and a
+README but not these docs, and the person reading the output may be an LLM with
+nothing else to go on. So the binary must explain itself: that options live in
+a parameter file, how that file is written, and how it is passed. The text
+lives in one place, `write_parameter_file_guide()` in
+`lsdtt_param_parser.cpp`, and is printed by:
+
+- the no-argument and bad-argument paths above (to stderr, with no example key,
+  because the CLI has not declared its parameters yet);
+- plain `-h`, before the grouped parameter list (to stdout, with an example key
+  taken from the CLI's first switch, e.g. `write_hillshade_raster: true`).
+
+`-h <parameter_name>` adds a line showing how to set that key in the file, and
+`-h html` repeats the format summary in its Usage section. `--help-json` is
+unchanged, because the QGIS plugin and `tools/generate_cli_reference.py`
+consume it.
+
+When editing the guide:
+
+- The end-user README written by `tools/package_{linux,macos}_backend.sh` and
+  `tools/package_windows_backend.ps1` ("How the tools work: parameter files")
+  says the same things at greater length. Keep the two consistent.
+- Every CLI prints this text in its `-h` output, so it must pass every CLI's
+  help tests. For example, `rigorous_fetch_raster_no_credential_parameters`
+  fails if `lsdtt-fetch-raster -h` contains the word `token`.
 
 **Version reporting (`-v` / `--version`):** prints both the CLI's own
 `k_version` and the package-level version, e.g.
@@ -1622,7 +1777,7 @@ There are several flow-routing files. This table explains which one you need.
 | Adding a GPU flow routing backend | `lsdtt_flow_base.hpp` + new `lsdtt_flowinfo_gpu.hpp` | Implement `lsdtt_flow_base`, add branch in `src/cpu/lsdtt_flow_base.cpp`. |
 | Understanding cell-index types | `lsdtt_types.hpp` | Flow-routing cell indices use `std::int64_t` directly throughout; there is no `flat_index_type` typedef. |
 
-**Analysis code** never needs to know about `lsdtt_flow_base`, `lsdtt_flow_types`,
+**Analysis code** never needs to know about `lsdtt_flow_base`
 or `lsdtt_flow_base.cpp`. Those are infrastructure.
 
 ---
@@ -2232,38 +2387,57 @@ to `lsdtt_flow_base`. Conceptually inspired by Gailleton et al. (2024).
 
 **`lsdtt_hydraulic_options` fields:**
 ```
-dt                          = 1.0e-3   # fixed timestep (s)
-mannings_n                  = 0.033
-min_slope                   = 1.0e-8
-uniform_rainfall_rate       = 0.0      # m/s
-receiver_width              = -1.0     # ≤ 0 = auto (cell_size)
-adaptive_dt_enabled         = false
-print_startup_message       = true
+dt                              = 1.0e-3   # timestep (s)
+min_slope                       = 1.0e-4
+receiver_width                  = -1.0     # <= 0 = auto (cell_size)
+friction_depth_exponent         = 5/3      # q / width = coefficient * h^a * S^b
+friction_slope_exponent         = 0.5      # (Manning: coefficient = 1/n)
+adaptive_dt_enabled             = false
+adaptive_dt_min / adaptive_dt_max                 = 1.0e-4 / 1.0
+adaptive_target_median_abs_dhw  = 1.0e-3
+adaptive_dt_growth_factor / adaptive_dt_shrink_factor = 1.5 / 0.5
+print_startup_message           = true
 ```
 
+Rainfall and roughness are per-cell fields, not options. The resistance law is
+written in a generic form so that Chézy or other laws can be added without
+changing the hydraulic balance loop.
+
 **Key virtual methods:**
-- `run_one_step()`, `run_n_steps(n)`
-- `set_uniform_rainfall_rate()`, `add_point_inflow(flat, m3/s)`
-- `get_water_depth_raster()`, `get_water_surface_raster()`, `get_qin_raster()`, `get_qout_raster()`, `get_dhw_raster()`
-- `refresh_routing()` — no-op for fixed-routing impls; intended extension point for dynamic routing
+- `run_one_step()`, `run_n_steps(n)`, `current_time()`, `step_count()`
+- forcing: `set_rainfall_rate_field(m/s per cell)`,
+  `set_friction_coefficient_field(...)`, `add_point_inflow(...)`,
+  `clear_point_inflows()`
+- state: `set_bed_elevation(...)`, `set_water_depth(...)`, `reset_water_depth(...)`,
+  `total_water_volume()`
+- outputs: `get_bed_raster()`, `get_water_depth_raster()`,
+  `get_water_surface_raster()`, `get_qin_raster()`, `get_qout_raster()`,
+  `get_dhw_raster()`
+- `refresh_routing()` and `routing_is_dynamic()`
 
 ### lsdtt_hydraulic_graph_cpu
 
 File: `src/cpu/lsdtt_hydraulic_graph_cpu.hpp/.cpp`
 
-CPU implementation of `lsdtt_hydraulic_base`. Routing graph is copied from an
-`lsdtt_flowgraph_cpu` at construction; the hydraulic solver evolves water depth
-while routing remains fixed. Prints a startup message crediting Gailleton et al. (2024).
+CPU implementation of `lsdtt_hydraulic_base`. Prints a startup message crediting
+Gailleton et al. (2024).
 
-**Run modes:**
+**Run modes** (`set_run_mode()`):
 ```cpp
 enum class lsdtt_hydraulic_run_mode {
-    transient_fixed_graph,
+    transient_fixed_graph,      // default
     stationary_fixed_graph,
-    transient_dynamic_graph,    // future
-    stationary_dynamic_graph    // future
+    transient_dynamic_graph,
+    stationary_dynamic_graph
 };
 ```
+
+All four are implemented. In the fixed-graph modes the routing graph is a
+snapshot copied from an `lsdtt_flowgraph_cpu`. In the dynamic-graph modes the
+routing is rebuilt from the current water surface. `refresh_routing()` does
+whichever applies: it rebuilds from the water surface when a hydraulic domain is
+set, and otherwise re-copies the source flowgraph. Constructing the engine on a
+hydraulic domain selects `stationary_dynamic_graph`.
 
 ---
 
@@ -2559,7 +2733,24 @@ Burns a user-supplied polyline vector into a DEM by extracting the DEM elevation
 profile beneath each polyline and enforcing a monotone-decreasing (downhill)
 elevation constraint along the profile.
 
-**`stream_burn_mode`:** `burn_in_place` (implemented) | `snap_to_network` (not yet implemented)
+**`stream_burn_mode`:** `burn_in_place` | `snap_to_network` | `snap_to_accumulation`
+
+- `burn_in_place` lowers the DEM under each polyline so that its profile is
+  non-increasing downstream. Used by both `lsdtt-channel-extraction` and
+  `lsdtt-stream-burning`.
+- `snap_to_network` is implemented in `lsdtt-stream-burning`, where it is the
+  default. It compares the supplied vector network's junctions with junctions
+  extracted from the DEM flow network, writes diagnostics of where they agree or
+  diverge, and repairs gaps (`build_vector_networks`,
+  `find_first_layer_junction_pairs`, `repair_junction_gaps`,
+  `find_candidate_junctions_phase`, `compute_reach_divergence`,
+  `repair_candidate_junctions`, `repair_diverged_reaches`).
+  `lsdtt-channel-extraction` does not support it and exits with an error if it
+  is requested.
+- `snap_to_accumulation` is for accurate vector layers (e.g. OS VectorMap
+  Local). It is implemented in `lsdtt-stream-burning`: it traces D8 along the
+  vector, keeps reaches that follow the DEM thalweg, and bridges obstruction
+  gaps (roads, embankments) with least-cost-path carving.
 
 `burn_streams_in_place(dem, vector_path, n_threads=0)` → `std::vector<burned_stream_profile>`
 

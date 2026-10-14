@@ -94,6 +94,9 @@ CANONICAL_VECTOR_FORMAT = "write_vector_format"
 # output domain or stage and inherit the canonical selector unless documented
 # otherwise. Any new override must be reviewed and added explicitly.
 REVIEWED_FORMAT_OVERRIDES = {
+    # Hillshade and drainage-area frames for visualising a run (cog, png or
+    # both); elevation outputs keep write_output_format.
+    "lsdtt-advection-diffusion": {"diagnostics_write_output_format"},
     "lsdtt-basin-extraction": {
         "basin_outlines_write_vector_format",
         "side_tributary_write_vector_format",

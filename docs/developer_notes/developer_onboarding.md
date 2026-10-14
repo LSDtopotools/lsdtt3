@@ -34,19 +34,49 @@ parameter files are self-documenting and consistent across CLIs.
 ---
 ## CLI design rule
 
-Every CLI uses `lsdtt_param_parser`.
+Every CLI uses `lsdtt_param_parser`. The full required layout is the
+"CLI design rule" in [`lsdtt3_architecture.md`](lsdtt3_architecture.md#cli-design-rule).
+In outline:
 
-CLI source files should follow a common layout:
-1. usage/banner helpers
-2. command-line flag parsing
-3. parameter defaults grouped by theme
-4. `help_map` entries immediately after each parameter declaration
-5. parameter parsing
-6. cross-parameter logic
-7. input loading
-8. processing pipeline
-9. output writing
-10. `print_parameters()` for reproducibility
+1. file header, includes, and `k_tool_name` / `k_version` / `k_citation`
+2. `print_banner()`
+3. `lsdtt_param_parser::parse_args_deferred()`, which handles `-v`, `-c`, no
+   arguments and bad arguments, and records `-h`
+4. parameter defaults grouped by theme, each followed immediately by its
+   `help_map` entry
+5. if help was requested, `print_terminal_help()` and return. Help is rendered
+   from the declarations, so no parameter file is needed
+6. parameter parsing and cross-parameter logic
+7. input loading, processing pipeline, output writing
+8. `print_help()` and `print_parameters()` for reproducibility
+
+Do not add command-line flags. Every option goes in the parameter file. The
+`-h` output must be enough for someone with only the binary to write a
+parameter file.
+
+### Adding a new CLI
+
+A new `cli/lsdtt-foo.cpp` must be registered in up to three places:
+
+1. `lsdtt_cli(lsdtt-foo cli/lsdtt-foo.cpp)` in the top-level `CMakeLists.txt`.
+   This is required.
+2. The pip wheel, which declares its CLIs in four places that must agree:
+   `lsdtt_python_cli(lsdtt-foo "cli/lsdtt-foo.cpp")` in
+   `python_bindings/CMakeLists.txt`; `lsdtt-foo = "lsdtt3._cli:main"` under
+   `[project.scripts]` in `python_bindings/pyproject.toml`; the `_DRIVERS` set
+   in `python_bindings/src/lsdtt3/_cli.py`; and `console_scripts` in
+   `python_bindings/api/public_api.json`, which you regenerate with
+   `python python_bindings/tools/generate_public_api_manifest.py --update`.
+   `python_bindings/tests/test_cli_packaging.py` (pytest, not CTest) fails if
+   they differ from each other or from the root `lsdtt_cli()` targets.
+3. A profile in `tools/cli_profiles.txt`, so that it ships in the release
+   bundles. The `core` profile requires at least one CTest test that runs the
+   CLI. `qgis` is for CLIs wired into the QGIS plugin.
+
+Then re-run `cmake`, because `unit_cli_parameter_conventions` refuses to run if
+any `cli/` source has no binary. Also add its reference page under
+`docs/cli_reference/`, with the generated-parameters markers, and run
+`tools/generate_cli_reference.py --update`.
 
 ### Parameter declaration rule
 
@@ -101,7 +131,15 @@ self-documenting across all CLIs.
    if your parameter is later renamed, the old name will be added to an alias map
    (see `src/core/lsdtt_param_parser.hpp`). Existing `.param` files will keep
    working with a deprecation warning. This means naming is not a permanent choice —
-   you can fix a bad name later without breaking users.
+   you can fix a bad name later without breaking users. A CLI that has never been
+   in a release tag can simply be renamed.
+
+8. **Build and check.** Rebuild, then run
+   `ctest -R "unit_cli_parameter_conventions|unit_cli_reference_is_current"`.
+   The first test fails on any naming violation; there is no allow-list to add
+   to. The second fails until you regenerate the reference pages with
+   `python3 tools/generate_cli_reference.py --update --bin-dir build`. Also update
+   any hand-written examples in `docs/cli_reference/` that use the parameter.
 
 ### File I/O parameter note
 

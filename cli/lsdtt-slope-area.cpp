@@ -2,8 +2,10 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
-// Copyright (C) 2026 Simon M. Mudd
+// Copyright (C) 2026 Rutger Vervoordeldonk
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
 // lsdtt-slope-area
@@ -343,8 +345,8 @@ int main(int argc, char* argv[])
     help_map["flow_algorithm"] = {"string", "dinf",
         "Flow-routing algorithm.", "Allowed values are dinf or d8.",
         "Flow information", "param", ""};
-    bool_default_map["write_flowinfo"] = true;
-    help_map["write_flowinfo"] = {"bool", "true",
+    bool_default_map["write_flowinfo_rasters"] = true;
+    help_map["write_flowinfo_rasters"] = {"bool", "true",
         "Write the drainage-area and flow-direction rasters.",
         "The drainage-area raster is used by the slope-area analysis.",
         "Flow information", "switch", ""};
@@ -453,7 +455,7 @@ int main(int argc, char* argv[])
                 options);
             drainage_area = lsdtt::lsdtt_raster_cpu(
                 flow.get_drainage_area_raster());
-            if (bf.at("write_flowinfo"))
+            if (bf.at("write_flowinfo_rasters"))
             {
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(
@@ -476,7 +478,7 @@ int main(int argc, char* argv[])
                 options);
             drainage_area = lsdtt::lsdtt_raster_cpu(
                 flow.accumulate_raster());
-            if (bf.at("write_flowinfo"))
+            if (bf.at("write_flowinfo_rasters"))
             {
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(

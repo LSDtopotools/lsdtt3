@@ -5,8 +5,10 @@
 // GPU basin implementation can inherit from it without depending on CPU types.
 // Shared types (lsdtt_basin_boundary_result) also live here.
 //
-// Copyright Simon M. Mudd
+// Copyright (C) 2026 Rutger Vervoordeldonk
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include <cstdint>
 #include <string>

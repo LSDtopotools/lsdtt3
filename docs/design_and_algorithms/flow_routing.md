@@ -124,12 +124,17 @@ gives water to **every** downslope neighbour, in proportion to
     weight_i  proportional to  (tan beta_i)^p
 
 where `tan beta_i` is the slope to neighbour `i` and `p` is a tuning exponent
-(`mfd_exponent`). Freeman and Quinn et al. arrived at the same formulation
-independently in the same year, from different directions - Freeman from
+(`mfd_exponent`, default 1). Freeman and Quinn et al. arrived at closely related
+schemes independently in the same year, from different directions - Freeman from
 catchment-area computation, Quinn et al. from TOPMODEL-style distributed
 hydrology, where the D8 assumption that a hillslope drains along a single line
-made the wetness index behave badly. MFD looks much more like a finite difference approach 
-than a flow routing approach. 
+made the wetness index behave badly. Freeman weighted by slope to a power `p`
+and recommended `p = 1.1`. Quinn et al. used `p = 1` and also multiplied each
+slope by an effective contour length (0.5 of the cell size on a cardinal
+neighbour, 0.354 on a diagonal). `lsdtt3` implements slope to the power `p`
+with no contour-length factor, so `p = 1` is not exactly Quinn et al.'s
+weighting: a diagonal receiver gets a larger share than theirs. MFD looks much
+more like a finite difference approach than a flow routing approach. 
 
 The exponent is the whole argument. `p = 1` spreads flow broadly and is defensible
 on hillslopes; large `p` concentrates flow and converges toward D8 in the limit.
@@ -203,9 +208,14 @@ the multi-receiver linear-layout idea in Anand et al. (2020).
 
 ### Hydraulic graph routing (GraphFlood lineage)
 
-`lsdtt_hydraulic_graph_cpu` is a graph-based hydraulic solver: rather than
-recomputing routing each step, it fixes the routing graph and advances water
-depth over it through time. This is the approach of **GraphFlood**
+`lsdtt_hydraulic_graph_cpu` is a graph-based hydraulic solver that advances
+water depth over a multi-receiver routing graph. It has two kinds of run mode.
+In the fixed-graph modes the graph is copied once from an existing
+`lsdtt_flowgraph_cpu` and stays unchanged while the water depth evolves. In the
+dynamic-graph modes the graph is rebuilt from the current water surface (bed
+plus water depth) every `reroute_every` steps. `lsdtt-graphflood` uses the
+dynamic stationary mode, and with its hydraulic domain set it rebuilds the
+graph every iteration. This is the approach of **GraphFlood**
 (Gailleton et al., 2024), which approximates 2-D shallow-water hydrodynamics by
 solving for a steady water surface on the flow graph, at a small fraction of the
 cost of a full hydrodynamic model. `lsdtt3`'s implementation is credited to those
@@ -354,7 +364,7 @@ CLIs) do steps 1-3 in one run when `raster_is_filled: false`:
 | step | default | parameter |
 |---|---|---|
 | depressions | Priority-Flood fill (Barnes et al. 2014), binary heap. `fill_pits` switches to grayscale reconstruction when `fill_min_slope` is 0, which leaves flats the router rejects | `fill_min_slope` |
-| flats | gradient imposed during the fill: each cell ends at least `fill_min_slope` × step length above the cell it was reached from (× √2 on a diagonal) | `fill_min_slope: 0.0001`, `fill_flat_resolution_choice: inline_gradient` |
+| flats | gradient imposed during the fill: each cell ends at least `fill_min_slope` × step length above the cell it was reached from (× √2 on a diagonal), and never less than one float32 step above it, so the rise cannot round away at high elevation | `fill_min_slope: 0.0001`, `fill_flat_resolution_choice: inline_gradient` |
 | routing | D8 steepest descent, with the S-vector | `build_flow_s_vector: true` (exposed by `lsdtt-drainage-analysis` only; the other CLIs always build it) |
 
 No breaching runs in the analysis CLIs (`lsdtt-stream-burning` has its own
@@ -367,8 +377,13 @@ it holds.
 option. Its defaults: `fill_algorithm_choice: barnes2014`, `fill_min_slope:
 0.0001`, `fill_flat_resolution_choice: inline_gradient`,
 `priority_flood_queue: binary`, `breach_before_fill: false`,
-`breach_algorithm_choice: lindsay2016`. So a fill-only run gives the same
-surface the analysis CLIs route.
+`breach_algorithm_choice: lindsay2016`. The fill runs only when an output asks
+for it (`write_fill_raster: true` or `write_fill_diff_raster: true`; both
+default to false), and breaching runs only when `breach_before_fill`,
+`write_breached_raster` or `write_carve_diff_raster` is true. So a run with
+`write_fill_raster: true` and nothing else gives the same surface the analysis
+CLIs route. Every fill route in the table below needs `write_fill_raster: true`
+in this CLI.
 
 ### The options
 
@@ -378,7 +393,7 @@ surface the analysis CLIs route.
 | same, radix queue | add `priority_flood_queue: radix` (raster-preprocessing, internal-drainage) | yes | same fill levels. At `fill_min_slope` > 0 the gradients on flats can differ, because ties between equal cells are broken in a different order |
 | **Grayscale reconstruction**, no gradient | `fill_algorithm_choice: vincent1993`, `fill_min_slope: 0` | **no** | the same surface as `barnes2014` at `fill_min_slope: 0`, faster, but flats stay flat. An endpoint, or an input to a flat-resolution step |
 | **Fill, then Barnes 2014b flat resolution** | `fill_flat_resolution_choice: barnes2014b_gradient` or `barnes2014b_float_step` | yes | fills to the spill level, then raises flats so flow converges towards the outlet. Up to four refill-and-resolve rounds plus a final pass on real terrain ([details](#flat-resolution-barnes-et-al-2014b)) |
-| **Complete breaching, then fill** | `breach_before_fill: true`, `breach_algorithm_choice: lindsay2016` | yes (the fill makes it so) | Lindsay (2016) complete breaching: every depression is cut through to a lower cell, then the default fill handles flats and anything left |
+| **Complete breaching, then fill** | `breach_before_fill: true`, `breach_algorithm_choice: lindsay2016`, `write_fill_raster: true` | yes (the fill makes it so) | Lindsay (2016) complete breaching: every depression is cut through to a lower cell, then the default fill handles flats and anything left |
 | **Least-cost breaching** | `breach_algorithm_choice: least_cost`, `write_breached_raster: true` | yes, with the default remainder fill | Lindsay (2020) least-cost breaching ([below](#least-cost-breaching)). Cells the breach cannot solve, and flats, are filled by `fill_pits` with `fill_min_slope` |
 | least-cost breaching, then the fill | add `breach_before_fill: true`, `write_fill_raster: true` | yes | as above, then a full fill pass over the breached DEM |
 | Fill-Spill-Merge | `fill_algorithm_choice: barnesetal2021` | not guaranteed | distributes a finite rainfall volume (Barnes et al. 2021); not every depression is filled |
@@ -426,8 +441,10 @@ total depth cut (m) to depth × path length (m × cells).
 
 1. **Find pits.** A pit is a valid cell whose 8 neighbours are all valid, on
    the raster, and none strictly lower. One row-major pass finds them and
-   raises each, in place, to its lowest neighbour − δ. On a flat floor only
-   alternate cells therefore become pits. Cells on the raster edge or next to
+   sets each, in place, to its lowest neighbour − δ. A pit in a hollow is
+   raised by this; a pit on a flat floor, whose lowest neighbour is at its own
+   elevation, is lowered by δ. Because the pass works in place, only alternate
+   cells of a flat floor become pits. Cells on the raster edge or next to
    nodata are never pits.
 2. **Order.** Pits are processed lowest original elevation first; among equal
    elevations the last in scan order goes first. A pit that an earlier breach
@@ -468,7 +485,7 @@ what make the Whitebox comparison bitwise rather than approximate.
 
 **Memory.** A float64 copy of the DEM plus a few bytes per cell of search state:
 peak 644-657 MiB for the whole `lsdtt-raster-preprocessing` process on a 4000²
-DEM, against 1759-1774 MiB for the Whitebox process (same server campaign as
+DEM, against 1757-1774 MiB for the Whitebox process (same server campaign as
 below). The search is serial.
 
 The implementation notes are in `src/cpu/lsdtt_raster_breach_least_cost_cpu.cpp`.
@@ -476,12 +493,14 @@ The implementation notes are in `src/cpu/lsdtt_raster_breach_least_cost_cpu.cpp`
 ### Speed of the options
 
 !!! warning "What these numbers are"
-    One server campaign: forth01, AMD EPYC 9654P, 2026-10-11, lsdtt3 `4d8d844`
-    built with GCC 13 `-O3`. The node was **shared, not an exclusive
+    One server campaign: forth01, AMD EPYC 9654P, 2026-10-12, lsdtt3 0.6.0
+    (`e09e809`) built with GCC 13 `-O3`. The node was **shared, not an exclusive
     allocation**, and the governor was `schedutil`. Every row is 1 thread, the
     median of 5 repeats after a warm-up, and the compute time the CLI prints
     itself (no file I/O). Treat ratios as indicative of this machine and these
-    DEMs. Raw data and method: `docs/what_is_lsdtt3/running_benchmarks.md` and
+    DEMs. A campaign the day before on the same node had every engine taking
+    about 15% longer; compare ratios between campaigns, not seconds. Raw data
+    and method: `docs/what_is_lsdtt3/running_benchmarks.md` and
     `docs/developer_notes/testing_and_benchmarking.md`.
 
 The DEMs are Copernicus 30 m crops: an alpine region (steep, few depressions)
@@ -490,35 +509,35 @@ cells. Seconds to a conditioned DEM (steps 1-2 only):
 
 | route | routable? | alpine 1k | lakeland 1k | alpine 2k | lakeland 2k | alpine 4k | lakeland 4k |
 |---|---|---|---|---|---|---|---|
-| reconstruction, no gradient (`vincent1993`) | no | 0.049 | 0.084 | 0.211 | 0.419 | 1.398 | 2.184 |
-| Priority-Flood, no gradient | no | 0.135 | 0.129 | 0.640 | 0.599 | 3.044 | 3.721 |
-| **Priority-Flood + gradient (default)** | yes | 0.141 | 0.131 | 0.645 | 0.587 | 3.050 | 3.290 |
-| same, radix queue | yes | 0.198 | 0.158 | 0.835 | 0.641 | 3.552 | 3.034 |
-| fill + Barnes 2014b, gradient | yes | 0.213 | 0.776 | 2.179 | 3.629 | 11.812 | 18.529 |
-| least-cost breach, defaults (remainder fill on) | yes | 0.035 | 0.196 | 0.133 | 0.931 | 0.491 | 10.055 |
-| least-cost breach, then the default fill | yes | 0.175 | 0.353 | 0.784 | 1.668 | 3.641 | 15.014 |
-| Lindsay 2016 breach, then the default fill | yes | 0.301 | 0.336 | 1.390 | 1.582 | 6.814 | 9.852 |
+| reconstruction, no gradient (`vincent1993`) | no | 0.044 | 0.076 | 0.177 | 0.366 | 1.152 | 1.900 |
+| Priority-Flood, no gradient | no | 0.125 | 0.113 | 0.577 | 0.517 | 2.683 | 2.790 |
+| **Priority-Flood + gradient (default)** | yes | 0.126 | 0.116 | 0.592 | 0.521 | 2.743 | 2.767 |
+| same, radix queue | yes | 0.178 | 0.141 | 0.758 | 0.571 | 3.264 | 2.584 |
+| fill + Barnes 2014b, gradient | yes | 0.193 | 0.706 | 1.953 | 3.204 | 10.300 | 15.761 |
+| least-cost breach, defaults (remainder fill on) | yes | 0.031 | 0.176 | 0.115 | 0.813 | 0.425 | 8.189 |
+| least-cost breach, then the default fill | yes | 0.154 | 0.314 | 0.690 | 1.458 | 3.134 | 11.730 |
+| Lindsay 2016 breach, then the default fill | yes | 0.269 | 0.299 | 1.234 | 1.373 | 5.749 | 7.398 |
 
 What the table shows, by terrain:
 
 - **Alpine:** least-cost breaching with the defaults is the fastest routable
-  option (4-6× faster than the default fill). Few pits, each solved by a short
+  option (4-6.5× faster than the default fill). Few pits, each solved by a short
   search.
 - **Lakeland:** the default fill is the fastest routable option up to 2000²;
-  at 4000² the radix queue is (3.03 s against 3.29 s). Least-cost breaching
-  with `max_dist` 1000 takes 10.1 s at lakeland 4k: its searches cross large
+  at 4000² the radix queue is (2.58 s against 2.77 s). Least-cost breaching
+  with `max_dist` 1000 takes 8.2 s at lakeland 4k: its searches cross large
   lakes.
 - **Barnes 2014b** costs 1.5-6× the default fill. It is the option that makes
   flow converge on flats; it is not the fast one.
 - **Breach then fill**, least-cost against Lindsay 2016: least-cost is faster on
   alpine at every size, about equal on lakeland up to 2000², and slower on
-  lakeland 4k (15.0 s against 9.9 s).
+  lakeland 4k (11.7 s against 7.4 s).
 
 End to end, `lsdtt-drainage-analysis` on the raw DEM (default fill + D8 with
-S-vector + drainage area) took 0.24 / 0.24 / 1.10 / 1.10 / 4.91 / 5.31 s on the
+S-vector + drainage area) took 0.21 / 0.22 / 0.95 / 0.95 / 4.23 / 4.46 s on the
 six DEMs. The fill is about 60% of that and the D8 build about 40%, of which
-the S-vector is 21-38% of the D8 step (`build_flow_s_vector: false` takes it
-from 1.88 s to 1.39 s at alpine 4k).
+the S-vector is 27-37% of the D8 step (`build_flow_s_vector: false` takes it
+from 1.50 s to 1.08 s at alpine 4k).
 
 ### How lsdtt3 differs from RichDEM, TopoToolbox and Whitebox
 
@@ -546,9 +565,9 @@ default pipelines:
 
 - **The S-vector.** lsdtt3's D8 build also builds the upstream ordering that
   chi analysis, basin extraction and the cosmogenic routines rely on. No other
-  package builds it, and it is 21-38% of lsdtt3's D8 time. With it switched
-  off, lsdtt3's D8 accumulation took 0.53-0.76 of Whitebox's time and
-  0.58-0.67 of RichDEM's in the campaign above.
+  package builds it, and it is 27-37% of lsdtt3's D8 time. With it switched
+  off, lsdtt3's D8 accumulation took 0.55-0.70 of Whitebox's time and
+  0.61-0.72 of RichDEM's in the campaign above.
 - **Where flats are paid for.** lsdtt3 resolves flats inside the fill, at a
   cost that hardly depends on terrain. TopoToolbox fills cheaply by
   reconstruction and pays for flats in its routing step, at a cost that grows
@@ -558,24 +577,24 @@ Seconds, raw DEM to D8 accumulation, each package's defaults (same campaign):
 
 | package | alpine 1k | lakeland 1k | alpine 2k | lakeland 2k | alpine 4k | lakeland 4k |
 |---|---|---|---|---|---|---|
-| lsdtt3 | 0.241 | 0.240 | 1.103 | 1.100 | 4.909 | 5.310 |
-| RichDEM (epsilon fill) | 0.247 | 0.245 | 1.150 | 1.097 | 5.095 | 5.272 |
-| TopoToolbox | 0.147 | 0.285 | 0.578 | 1.335 | 2.790 | 6.729 |
-| Whitebox | 0.127 | 0.494 | 0.446 | 6.648 | 2.361 | 81.273 |
+| lsdtt3 | 0.213 | 0.216 | 0.949 | 0.945 | 4.227 | 4.464 |
+| RichDEM (epsilon fill) | 0.213 | 0.208 | 0.972 | 0.924 | 4.278 | 4.329 |
+| TopoToolbox | 0.133 | 0.257 | 0.513 | 1.149 | 2.369 | 5.640 |
+| Whitebox | 0.103 | 0.411 | 0.379 | 4.963 | 1.980 | 60.053 |
 
 These pipelines do different work and produce different surfaces, so the table
 answers "how long does each package take with its defaults", not "which
 implementation is faster". On alpine 4k the TopoToolbox / lsdtt3 difference
 decomposes (from separately measured steps) into about 1.7 s for the fill
-family (reconstruction 1.33 s against Priority-Flood with a gradient 3.05 s;
-lsdtt3's own reconstruction takes 1.40 s) and about 0.5 s for the S-vector. On
-lakeland 4k TopoToolbox's flat routing took about 4.9 s and lsdtt3 was faster.
+family (reconstruction 1.08 s against Priority-Flood with a gradient 2.74 s;
+lsdtt3's own reconstruction takes 1.15 s) and about 0.4 s for the S-vector. On
+lakeland 4k TopoToolbox's flat routing took about 4.0 s and lsdtt3 was faster.
 Whitebox's pit-centric fill is fast where pits are few and slow where they are
-many (81 s at lakeland 4k).
+many (60 s at lakeland 4k).
 
 The same pipeline in lsdtt3 and Whitebox (a Priority-Flood fill with a gradient,
 Whitebox `fill_depressions_wang_and_liu` with `flat_increment` = 1e-4 × cell
-size, then steepest-descent D8) took, in Whitebox, 0.99-2.00 times lsdtt3's
+size, then steepest-descent D8) took, in Whitebox, 0.89-1.34 times lsdtt3's
 time across the six DEMs. Whitebox was launched pinned to one core: its
 `max_procs` setting alone did not keep it on one.
 
@@ -776,8 +795,9 @@ leaves is 2^-23 / (√2 × 30 m) = 2.8e-9 m/m.
 In `lsdtt-raster-preprocessing` and `lsdtt-basin-stats`, `min_elevation`
 (default 0) sets cells at or below that elevation to nodata before the fill.
 By default, flats at or below 0 m are therefore removed, and the guard acts on
-flats between 0 and 1 m. Lowering `min_elevation` below 0 brings sea-level
-flats into the fill, and then the guard acts on them.
+flats between 0 and 1 m. Any negative `min_elevation` switches this masking off
+entirely (it is not a lower threshold), which brings sea-level and
+below-sea-level flats into the fill, and then the guard acts on them.
 
 ### Option 2: `barnes2014b_gradient`
 

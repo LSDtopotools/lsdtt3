@@ -2,6 +2,11 @@
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
+// Copyright (C) 2026 Rutger Vervoordeldonk
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
+//
 // -----------------------------------------------------------------------------
 // lsdtt-advection-diffusion
 //
@@ -214,7 +219,7 @@ int main(int argc, char* argv[])
     help_map["fluvial_incision_model"] = {
         "string", "dinf", "Fluvial model: d8 or dinf.",
         "D8 follows the numerical scheme of Braun & Willett (2013, "
-        "doi:10.1016/j.geomorph.2012.10.008); wherease the dinf follows the "
+        "doi:10.1016/j.geomorph.2012.10.008); whereas the dinf follows the "
         "numerical scheme of Anand et al. "
         "(2020, doi:10.1016/j.envsoft.2020.104804).",
         "Fluvial incision", "param", ""};
@@ -259,8 +264,8 @@ int main(int argc, char* argv[])
     string_default_map["hillslope_model"] = "adi";
     help_map["hillslope_model"] = {
         "string", "adi", "Hillslope model; only adi is supported.",
-        "ADI linear diffusion follows Perron et al. (2008, "
-        "Perron et al. (2008, doi:10.1029/2007JF000977)",
+        "ADI linear diffusion follows Perron et al. "
+        "(2008, doi:10.1029/2007JF000977).",
         "Hillslope diffusion", "param", ""};
 
     float_default_map["D"] = 1e-3f;
@@ -305,16 +310,28 @@ int main(int argc, char* argv[])
         "Initial and final elevation are always written.",
         "Outputs", "param", ""};
 
-    string_default_map["intermediate_hillshade_format"] = "none";
-    help_map["intermediate_hillshade_format"] = {
-        "string", "none", "Hillshade: none, tif, png, or both.",
-        "Initial, intermediate and final diagnostics are controlled together.",
-        "Outputs", "param", ""};
+    bool_default_map["write_hillshade_rasters"] = false;
+    help_map["write_hillshade_rasters"] = {
+        "bool", "false", "Write hillshade diagnostic rasters.",
+        "Written for the initial, intermediate and final topography, in the "
+        "format set by diagnostics_write_output_format.",
+        "Outputs", "switch", ""};
 
-    string_default_map["intermediate_drainage_area_format"] = "none";
-    help_map["intermediate_drainage_area_format"] = {
-        "string", "none", "Log10 area: none, tif, png, or both.",
-        "Uses the routing model selected by fluvial_incision_model.",
+    bool_default_map["write_drainage_area_rasters"] = false;
+    help_map["write_drainage_area_rasters"] = {
+        "bool", "false", "Write log10 drainage-area diagnostic rasters.",
+        "Written for the initial, intermediate and final topography, in the "
+        "format set by diagnostics_write_output_format. Uses the routing "
+        "model selected by fluvial_incision_model.",
+        "Outputs", "switch", ""};
+
+    string_default_map["diagnostics_write_output_format"] = "png";
+    help_map["diagnostics_write_output_format"] = {
+        "string", "png",
+        "Format of hillshade and drainage-area diagnostics: cog, png, or both.",
+        "Applies only to write_hillshade_rasters and "
+        "write_drainage_area_rasters; elevation outputs use "
+        "write_output_format.",
         "Outputs", "param", ""};
 
     string_default_map["intermediate_hillshade_write_path"] = "";
@@ -378,11 +395,10 @@ int main(int argc, char* argv[])
                 "drainage_area_moving_average_kernel_size_pixels must be a positive odd number");
         require(sf.at("boundary_conditions").size() == 4,
                 "boundary_conditions must contain four characters");
-        for (const auto& name : {"intermediate_hillshade_format",
-                                 "intermediate_drainage_area_format"})
-            require(sf.at(name) == "none" || sf.at(name) == "tif" ||
-                        sf.at(name) == "png" || sf.at(name) == "both",
-                    std::string(name) + " must be none, tif, png, or both");
+        require(sf.at("diagnostics_write_output_format") == "cog" ||
+                    sf.at("diagnostics_write_output_format") == "png" ||
+                    sf.at("diagnostics_write_output_format") == "both",
+                "diagnostics_write_output_format must be cog, png, or both");
     }
     catch (const std::exception& e)
     {
@@ -487,15 +503,17 @@ int main(int argc, char* argv[])
     auto write_diagnostics = [&](const lsdtt::lsdtt_raster_cpu& raster,
                                  const std::string& frame)
     {
-        const std::string& hill_format =
-            sf.at("intermediate_hillshade_format");
-        const std::string& area_format =
-            sf.at("intermediate_drainage_area_format");
+        const std::string& diag_format =
+            sf.at("diagnostics_write_output_format");
+        const std::string hill_format =
+            bf.at("write_hillshade_rasters") ? diag_format : "none";
+        const std::string area_format =
+            bf.at("write_drainage_area_rasters") ? diag_format : "none";
         if (hill_format != "none")
         {
             const auto hillshade = lsdtt::compute_hillshade(
                 raster, 315.0, 45.0, 1.0);
-            if (hill_format == "tif" || hill_format == "both")
+            if (hill_format == "cog" || hill_format == "both")
                 loader.write_full(
                     hillshade.get_data(), hillshade.get_meta(),
                     diagnostic_path(sf.at("intermediate_hillshade_write_path"),
@@ -563,7 +581,7 @@ int main(int argc, char* argv[])
                     ? area.meta.no_data_value
                     : maximum - std::log10(area.data[i]);
             }
-            if (area_format == "tif" || area_format == "both")
+            if (area_format == "cog" || area_format == "both")
                 loader.write_full(
                     area.data, area.meta,
                     diagnostic_path(

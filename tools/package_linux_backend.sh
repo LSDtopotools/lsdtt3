@@ -493,16 +493,101 @@ import os
 root = "/content/@BUNDLE_NAME@"
 os.environ["PATH"] = f"{root}/bin:" + os.environ["PATH"]
 os.environ["LD_LIBRARY_PATH"] = f"{root}/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
-os.environ["GDAL_DATA"] = f"{root}/share/gdal"
-os.environ["PROJ_DATA"] = f"{root}/share/proj"
-os.environ["PROJ_LIB"]  = os.environ["PROJ_DATA"]
+
+# Do NOT set GDAL_DATA / PROJ_DATA / PROJ_LIB here. The lsdtt3 programs find
+# their own bundled PROJ and GDAL data, and pointing the Python session at the
+# backend's older proj.db breaks rasterio and pyproj.
 ```
 
 After that cell, the tools work in any later cell:
 
 ```python
-!lsdtt-raster-preprocessing --help
+!lsdtt-channel-extraction -v
 ```
+
+In Colab, write the parameter file from Python, then run the tool on it. This
+downloads a DEM:
+
+```python
+# Create a parameter file for lsdtt-fetch-raster
+with open("sierra_nevada_params.txt", "w") as f:
+    f.write("write_fname: sierra_nevada\n")   # output is sierra_nevada_DEM.tif
+    f.write("west: -3.56\n")
+    f.write("east: -2.44\n")
+    f.write("south: 36.55\n")
+    f.write("north: 37.45\n")
+    f.write("dem_source: cop30_aws\n")       # Copernicus GLO-30, no API key needed
+    f.write("target_epsg: 32630\n")          # UTM zone 30N
+    f.write("grid_spacing: 30\n")
+
+# Run lsdtt-fetch-raster. The first argument is the directory holding the parameter file.
+!lsdtt-fetch-raster ./ sierra_nevada_params.txt
+```
+
+## How the tools work: parameter files
+
+Every `lsdtt-*` tool reads its options from a plain-text **parameter file**
+that you write. The tools do NOT take analysis options as command-line flags
+(something like `--input my_dem.tif` is rejected). The only flags are `-h`
+(help), `-v` (version) and `-c` (citation).
+
+```bash
+lsdtt-surface-metrics                                    # no arguments: prints how to run it and the file format
+lsdtt-surface-metrics -h                                 # list every parameter, with type and default
+lsdtt-surface-metrics -h write_hillshade_raster          # full guidance on one parameter
+lsdtt-surface-metrics my_params.driver                   # run; parameter file in the current directory
+lsdtt-surface-metrics /data/my_project my_params.driver  # run; parameter file in /data/my_project
+```
+
+The `-h` output is the complete reference for each tool: the parameter names
+it lists are exactly the keys you put in the parameter file. `-h html` writes
+the same reference as HTML and CSV files, and `--help-json` prints it as JSON.
+
+### Parameter file format
+
+- One `key: value` per line. The key is a parameter name from `-h`.
+- Keys are case-sensitive. Any parameter you leave out takes its default.
+- A value must not contain spaces. Lists are comma-separated with no
+  spaces (`a,b,c`), and paths must not contain spaces.
+- Booleans are `true` or `false`.
+- `#` starts a comment; blank lines are ignored.
+- File I/O keys, accepted by every tool:
+  - `read_path`: directory holding the input files (default: the directory
+    containing the parameter file)
+  - `read_fname`: input raster, e.g. `my_dem.tif` (any GDAL-readable format)
+  - `write_path`: directory for outputs (default: `read_path`)
+  - `read_path` and `write_path` are optional and usually left out, so that
+    everything is read from and written to the parameter file's directory. If
+    you do set one, the directory must already exist, or the tool stops with
+    an error.
+  - `write_fname`: prefix for output files (default: the stem of `read_fname`)
+- Outputs are written as `<write_fname>_<descriptor>.<ext>` in `write_path`,
+  together with `<write_fname>_ingested_params.param` (every parameter value
+  actually used, including defaults) and `<write_fname>_README.html`.
+- Keys a tool does not recognise are reported as warnings and ignored, so
+  check the run output for typos.
+
+### Example
+
+Write a hillshade of `/data/my_project/my_dem.tif`. Put the parameter file
+in the same directory as the DEM and leave out `read_path` and `write_path`:
+
+```bash
+cd /data/my_project
+cat > my_params.driver <<'END'
+# my_params.driver -- hillshade a DEM
+read_fname: my_dem.tif
+write_fname: my_dem
+write_hillshade_raster: true
+END
+lsdtt-surface-metrics my_params.driver
+```
+
+This writes `/data/my_project/my_dem_hillshade.tif`. From another directory,
+run `lsdtt-surface-metrics /data/my_project my_params.driver` instead. To send
+outputs elsewhere, add a `write_path:` line naming an existing directory. For other
+analyses, run the relevant tool with `-h` to find its parameters, and add
+them to the parameter file.
 
 ## What is in this bundle
 

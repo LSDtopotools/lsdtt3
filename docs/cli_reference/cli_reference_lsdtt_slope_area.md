@@ -42,8 +42,7 @@ key: value
 | `write_path` | string | `read_path` | Output directory. |
 | `write_fname` | string | DEM stem | Output filename prefix. |
 | `write_output_format` | string | `cog` | Raster output format where applicable. |
-| `write_flowinfo` | bool | `true` | Write flow-information products. |
-| `write_drainage_area` | bool | `true` | Write the drainage-area raster. |
+| `write_flowinfo_rasters` | bool | `true` | Write the drainage-area (and, for d8, flow-direction) rasters. |
 | `write_slope_rasters` | bool | `true` | Write one slope raster per lambda. |
 | `summary_csv_fname` | string | automatic | Summary CSV filename. |
 
@@ -122,10 +121,73 @@ boundary_conditions: opop
 fill_before_routing: true
 fill_min_slope: 0.0001
 flow_algorithm: dinf
-write_flowinfo: true
-write_drainage_area: true
+write_flowinfo_rasters: true
 polyfit_lambda_metres_list: 3,15,21
 n_log_bins: 200
 write_slope_rasters: true
 basin_clip_mode: none
 ```
+
+<!-- BEGIN GENERATED CLI PARAMETERS -->
+## Parameters
+
+This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+### File I/O
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `read_path` | `string` | `./` | `io` | - | Directory from which input files are read. | Defaults to the directory holding the parameter file. |
+| `read_fname` | `string` | - | `io` | - | Input filename, with or without extension (e.g. my_dem.tif). | Read from read_path. lsdtt3 uses GDAL, so any GDAL-readable raster format works. If empty, defaults to the parameter filename stem. |
+| `write_path` | `string` | - | `io` | - | Directory to which output files are written. | Defaults to read_path when not set. |
+| `write_fname` | `string` | - | `io` | - | Output filename prefix (no path, no extension). | All outputs are named &lt;write_fname&gt;_&lt;descriptor&gt;.&lt;ext&gt;. Defaults to the stem of read_fname when not set. |
+
+### Pit filling
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_before_routing` | `bool` | `true` | `switch` | - | Choose whether to pit-fill the DEM before building the flow network. | ASKS: should the DEM be filled at all? Filling is OPTIONAL here and this is a genuine analytical choice. True (the default) routes over a pit-free surface. False builds the flow network on the UNFILLED surface, so flow paths terminate at sinks instead of being carried through them. Do not confuse this with raster_is_filled, which is an assertion that the input is already filled. |
+
+### DEM preparation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fill_min_slope` | `float` | `0.0001` | `param` | `fill_before_routing` | Minimum slope imposed during pit filling. | Used when fill_before_routing is true. |
+
+### Flow information
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `flow_algorithm` | `string` | `dinf` | `param` | - | Flow-routing algorithm. | Allowed values are dinf or d8. |
+| `write_flowinfo_rasters` | `bool` | `true` | `switch` | - | Write the drainage-area and flow-direction rasters. | The drainage-area raster is used by the slope-area analysis. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four characters in north, east, south, west order. |
+
+### Threading
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 uses the runtime default. |
+
+### Slope-area analysis
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `polyfit_lambda_metres_list` | `string` | `15` | `param` | - | Comma-separated direct-polyfit lambdas in metres. | Example: 3,5,7,15,30. Decimal filename labels use _ instead of . |
+| `n_log_bins` | `int` | `20` | `param` | - | Number of logarithmic drainage-area bins. | Only non-empty bins are written to each lambda CSV. |
+| `write_slope_rasters` | `bool` | `true` | `switch` | - | Write each slope raster, after optional clipping. | Files are named &lt;write_fname&gt;_slope_lambda_XXm.tif. |
+
+### Basin clipping
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `basin_clip_mode` | `string` | `none` | `param` | - | Optional basin clipping mode. | Allowed values are none, mask, or polygon. |
+| `basin_mask_fname` | `string` | - | `param` | `basin_clip_mode=mask` | Raster basin mask filename. | The mask must have exactly the DEM grid settings. |
+| `basin_polygon_fname` | `string` | - | `param` | `basin_clip_mode=polygon` | Basin polygon filename. | The polygon must be supplied as a same-grid rasterised polygon mask; vector rasterisation is not performed by this CLI. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `summary_csv_fname` | `string` | - | `param` | - | Summary CSV filename. | Empty uses &lt;write_fname&gt;_maximum_d50_slope_area.csv. |
+
+<!-- END GENERATED CLI PARAMETERS -->

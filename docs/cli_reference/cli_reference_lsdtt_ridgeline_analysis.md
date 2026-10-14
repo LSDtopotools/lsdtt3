@@ -352,7 +352,8 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all available hardware threads. |
-| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string (N, E, S, W). o = open, p = periodic. Note that range_defined_ridgelines relies on open boundaries (o) being interpreted as mountain fronts. |
+| `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four-character string (N, E, S, W). o = open, n = no-flux, p = periodic. Routing boundaries are separate from mountain_front_boundaries. |
+| `mountain_front_boundaries` | `string` | `nnnn` | `param` | - | Mountain-front flags in N,E,S,W order. | m marks a mountain front; n marks an ordinary boundary. Range-defined MDD extraction uses opposing m boundaries and does not alter routing. |
 | `fill_min_slope` | `float` | `0.0001` | `param` | - | Minimum slope (m/m) imposed by pit filling or flat resolution. | inline_gradient (default): imposed during the Priority-Flood fill, so used only when raster_is_filled is false. barnes2014b_gradient: the minimum gradient across flats, also on a raster_is_filled input. barnes2014b_float_step: ignored. |
 
 ### Pit filling
@@ -374,12 +375,14 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `ridgeline_analysis_mode` | `string` | `basin_outline_ridgelines` | `param` | `extract_only_mdd` | Main ridgeline analysis mode. | Allowed values: basin_outline_ridgelines, interfluvial_divide_ridgelines, range_defined_ridgelines. |
 | `extract_only_mdd` | `bool` | `false` | `switch` | - | If true, skips the transverse divides and only extracts the main drainage divide. | Only applies when ridgeline_analysis_mode is range_defined_ridgelines. |
+| `orient_periodic_ridgelines` | `bool` | `false` | `switch` | - | Orient periodic ridgelines at the first grid edge. | East/west periodic ridgelines start at the first column; north/south periodic ridgelines start at the first row. |
 
 ### Range-defined boundaries
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `corner_coordinates_fname` | `string` | `NULL` | `param` | - | CSV of DEM corner coordinates for boundary segmentation. | Required for range_defined_ridgelines if the DEM is not rectangular. |
+| `boundary_pixels_fname` | `string` | `NULL` | `param` | - | Optional CSV containing an ordered 4-connected boundary pixel trace. | When supplied for range_defined_ridgelines, columns named row and col are used directly instead of retracing the DEM mask. |
 
 ### Basin Selection
 
@@ -428,7 +431,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `outline_splitting_method` | `string` | `longest_channel` | `param` | - | Determines how basin outlines are split into two ridgelines: max_elevation, longest_channel or equal_length. | Only used if ridgeline_analysis_mode is basin_outline_ridgelines. |
+| `outline_splitting_method` | `string` | `longest_channel` | `param` | - | Determines how basin outlines are split: max_elevation, longest_channel, equal_length, or none. none returns one complete outline ridgeline per basin. | Only used if ridgeline_analysis_mode is basin_outline_ridgelines. |
 | `ridgeline_smoothing_window_fraction` | `float` | `0.05` | `param` | - | When analysing the ridgelines along basin outlines, it is necessary to segment the ridge snouts. | When segmenting the snout based on max curvature (following Robinson et al. 2025), lowess smoothing is required first with a smoothing window as parameter. This defines the smoothing window as a fraction (0-1) of total ridgeline distance. |
 | `ridgeline_pixels_smoothing_window` | `int` | `1` | `param` | - | The pixel window to smooth the detrended ridgeline with when extracting ridgeline extrema. Using a very simple moving average. | A pixel window of 1 (default) effectively means no smoothing happens. Note this is NOT the same as ridgeline_smoothing_window_fraction which is used for ridge-snout segmentation. |
 | `use_polynomial_fit_for_ridgeline` | `bool` | `false` | `switch` | - | When set to true, detrends the ridgeline with a polynomial fit. | Ridgeline slope and steepness always calculated with linear fit, but this alters the detrended elevation outputs. |
@@ -478,5 +481,17 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `polyfit_flat_slope_tolerance` | `float` | `1e-12` | `param` | - | Slope tolerance below which direction-dependent polyfit metrics are nodata. | Applies to aspect, plan curvature, tangential curvature, profile curvature, and rotor. |
 | `polyfit_method` | `string` | `wavelet` | `param` | - | Algorithm used for the quadratic polynomial fit. | wavelet: FFT-based Gaussian wavelet fit (requires FFTW). direct: separable rolling-moment O(n) fit (no FFTW needed). both: run both methods and map outputs from each. Outputs are prefixed _wavelet_* or _direct_*. |
 | `calculate_polyfit_metrics_directly_on_dem` | `bool` | `false` | `switch` | - | If true, skips the large-scale polynomial surface fit and calculates polyfit metrics directly on the raw DEM. | Internally forces a 3x3 direct Evans (1980) quadratic fit, overriding polyfit_method and polyfit_lambda_metres. Also supports periodic boundaries. |
+
+### Slope-area analysis
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_slope_area_analysis` | `bool` | `false` | `switch` | - | Run slope-area analysis on the selected basins and add nearest-channel elevations to node outputs. | Uses the filled DEM for routing and direct polynomial slope for the configured lambda. |
+| `slope_area_flow_method` | `string` | `d8` | `param` | - | Flow method used to calculate slope-area drainage area: d8 or dinfinity. | Both methods route the filled DEM. The binary channel mask always uses filled-D8 accumulation. |
+| `slope_area_polyfit_lambda_metres` | `float` | `70.0` | `param` | - | Direct polynomial surface-fit lengthscale used for slope-area slope. | This parameter is independent of the general ridgeline polyfit settings. |
+| `slope_area_number_of_bins` | `int` | `100` | `param` | - | Number of evenly spaced logarithmic drainage-area bins. | The highest-median-slope bin supplies the channel-area threshold. |
+| `slope_area_clipping` | `string` | `all_basins` | `param` | - | Slope-area pixel scope: all_basins or per_basin. | per_basin assigns a separate channel threshold to every selected basin and does not support nested basin selections. |
+| `write_slope_area_raster` | `bool` | `true` | `switch` | - | Write the D8 binary channel raster generated from the slope-area threshold. | Pixels outside selected basins are always zero. |
+| `write_slope_area_histogram` | `bool` | `true` | `switch` | - | Write slope-area histogram and selected-threshold CSV files. | Histogram rows contain d05, d25, d50, d75, and d95 slope percentiles. |
 
 <!-- END GENERATED CLI PARAMETERS -->
