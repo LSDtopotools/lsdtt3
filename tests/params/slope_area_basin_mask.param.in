@@ -1,0 +1,19 @@
+# Fixture for the lsdtt-slope-area clip test: lsdtt-basin-extraction writes a
+# labelled raster of the basins above basin_stats_outlets.csv, on exactly the
+# DEM's grid, INTO the basin_stats fixture directory (write_path is
+# __READ_PATH__), so the slope-area test finds it next to the DEM.
+#
+# threshold_contributing_pixels matches the snapping threshold so that every
+# snapped outlet is on the channel network. (With the default 1000, outlets
+# snapped to 100-pixel cells are skipped with a warning; see
+# smoke_basin_extraction_outlets_off_network.)
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __READ_PATH__
+write_fname: sa_basins
+basin_outlet_fname: __READ_PATH__/basin_stats_outlets.csv
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 100
+threshold_contributing_pixels: 100
+select_basins_from_outlets: true
+write_basins_raster: true

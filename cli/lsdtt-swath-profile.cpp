@@ -84,14 +84,16 @@ int main(int argc, char* argv[])
     help_map["baseline_vector_fname"] = {"string","",
         "Vector file (FlatGeobuf/GeoPackage/Shapefile) with the swath baseline.",
         "The first LineString feature is used as the ordered baseline polyline. "
-        "Coordinates must be in the raster's projected CRS (metres).",
+        "Coordinates must be in the raster's projected CRS (metres). A "
+        "relative path is read from read_path.",
         "Baseline / value input", "param", ""};
 
     string_default_map["value_raster_fname"] = "NULL";
     help_map["value_raster_fname"] = {"string","NULL",
         "Optional raster whose values are binned along the swath.",
         "If NULL (default), the input DEM's own values (elevation) are binned. "
-        "Must share the input DEM's geometry.",
+        "Must share the input DEM's geometry. A relative path is read from "
+        "read_path.",
         "Baseline / value input", "param", ""};
 
     // --- Swath geometry ---
@@ -160,7 +162,10 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Validate params
     // -------------------------------------------------------------------------
-    const std::string baseline_path = sf["baseline_vector_fname"];
+    // Relative paths are read from read_path, like the DEM.
+    const std::string baseline_path = sf["baseline_vector_fname"].empty()
+        ? std::string()
+        : pp.add_read_path_if_needed(sf["baseline_vector_fname"]);
     if (baseline_path.empty() || !std::filesystem::exists(baseline_path))
     {
         std::cerr << "FATAL: baseline_vector_fname must point to an existing "
@@ -213,10 +218,12 @@ int main(int argc, char* argv[])
     bool have_value_raster = false;
     if (sf["value_raster_fname"] != "NULL" && !sf["value_raster_fname"].empty())
     {
-        std::cout << "Opening value raster: " << sf["value_raster_fname"] << "\n";
+        const std::string value_path =
+            pp.add_read_path_if_needed(sf["value_raster_fname"]);
+        std::cout << "Opening value raster: " << value_path << "\n";
         try
         {
-            value_loader.open_raster(sf["value_raster_fname"]);
+            value_loader.open_raster(value_path);
             have_value_raster = true;
         }
         catch (const std::exception& e)

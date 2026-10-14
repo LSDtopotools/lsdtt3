@@ -67,8 +67,10 @@ A new `cli/lsdtt-foo.cpp` must be registered in up to three places:
    in `python_bindings/src/lsdtt3/_cli.py`; and `console_scripts` in
    `python_bindings/api/public_api.json`, which you regenerate with
    `python python_bindings/tools/generate_public_api_manifest.py --update`.
-   `python_bindings/tests/test_cli_packaging.py` (pytest, not CTest) fails if
-   they differ from each other or from the root `lsdtt_cli()` targets.
+   The CTest case `unit_wheel_cli_inventory` fails if any of the four differs
+   from the root `lsdtt_cli()` targets. So does the pytest file
+   `python_bindings/tests/test_cli_packaging.py`, which runs only in the bindings
+   suite.
 3. A profile in `tools/cli_profiles.txt`, so that it ships in the release
    bundles. The `core` profile requires at least one CTest test that runs the
    CLI. `qgis` is for CLIs wired into the QGIS plugin.

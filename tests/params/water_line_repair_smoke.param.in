@@ -1,0 +1,19 @@
+# Smoke test for lsdtt-water-line-repair.
+#
+# tests/data/water_line_repair_fixture is a directory of two WKT CSV files that
+# GDAL reads as one dataset with layers "water" and "road" (text, so it diffs;
+# no GeoPackage on /mnt/c). The cases sit ~300 m apart so they cannot interact:
+#   lines 1-2   10 m gap under "A Road"            -> bridge_road
+#   lines 3-4   40 m gap under "B Road"            -> rejected (> 25 m road, > 30 m gap)
+#   lines 5-6   20 m gap, no road                  -> bridge_gap
+#   lines 7-8   parallel streams 20 m apart        -> rejected (heading)
+#   lines 9-12  tips P, Q, S, R: P-Q (10 m) pairs first; S's best partner is
+#               then taken, and require_mutual_best stops it settling for R
+# Expected with the defaults: 24 dangling tips, 3 bridges, 15 output features.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wlr
+input_vector_fname: water_line_repair_fixture
+water_layer: water
+road_layer: road
+write_tip_diagnostics: true

@@ -1,0 +1,11 @@
+# lsdtt-outlet-matching against the same DEM resampled to 60 m (written by
+# fixture_outlet_matching_target). Basins of one 30 m cell (900 m2) cannot be
+# matched closer than one 60 m cell (3600 m2), so area_difference_fraction of
+# 3 is expected for them; the pinned rows are larger basins.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: om
+reference_dem_fname: basin_stats_diamond_square.tif
+reference_outlet_fname: basin_stats_outlets.csv
+n_threads: 1
+target_dem_fname: om_target_utm.tif

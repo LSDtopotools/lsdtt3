@@ -1,0 +1,33 @@
+# Resume test for lsdtt-advection-diffusion. write_path is __READ_PATH__, which
+# CMake points at smoke_advection_diffusion's out/ directory, so the CLI finds
+# ad_model_iteration_20.tif there and continues to iteration 40.
+#
+# The 40-step hash pinned in tests/CMakeLists.txt is that of an UNINTERRUPTED
+# 40-step run from the same seed. Until 2026-10-14 a resumed run re-applied
+# fill_initial_surface to the mid-run grid and diverged by up to 4 m.
+write_path: __READ_PATH__
+write_fname: ad
+n_threads: 1
+
+n_rows: 40
+n_cols: 50
+cell_size_metres: 2
+noise_target_stddev_metres: 4
+random_seed: 33
+boundary_conditions: opop
+baselevel_elevation: 0
+fill_initial_surface: true
+
+fluvial_incision_model: dinf
+hillslope_model: adi
+K: 0.00025
+D: 0.025
+uplift_rate: 0.001
+m_exponent: 0.5
+n_exponent: 1
+
+timestep: 40
+number_of_iterations: 40
+frequency_of_output_writing: 10
+progress_reporting_interval: 10
+

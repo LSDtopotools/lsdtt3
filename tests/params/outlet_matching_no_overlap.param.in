@@ -1,0 +1,10 @@
+# lsdtt-outlet-matching must refuse a target DEM that does not overlap the
+# reference: tiny_dem.asc is a 5 x 5 grid in UTM 30N (copied in by
+# fixture_basin_stats_tiny_dem).
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: om
+reference_dem_fname: basin_stats_diamond_square.tif
+reference_outlet_fname: basin_stats_outlets.csv
+n_threads: 1
+target_dem_fname: tiny_dem.asc

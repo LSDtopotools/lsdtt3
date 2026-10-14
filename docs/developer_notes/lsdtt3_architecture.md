@@ -1550,6 +1550,13 @@ empty string, which resolves relative to the current directory.
 - `boundary_conditions` — string of characters: `o`=open, `n`=no-flux, `p`=periodic
 
 `get_full_read_path()` returns `read_path + read_fname + read_ext`.
+
+**Other input files** go through `add_read_path_if_needed(name)`: an absolute
+path (`/...`, `\\...`, `C:...`) is returned unchanged, and every relative path
+(`sites.csv` or `inputs/sites.csv`) is prefixed with `read_path`. Use it for every
+`*_fname` input rather than concatenating `get_read_path()` by hand, which breaks
+absolute paths. Until 2026-10-14 any name containing a separator was returned
+unchanged, so `inputs/sites.csv` was read relative to the working directory.
 `get_full_write_path()` returns `write_path + write_fname` (no extension).
 
 **Static helpers:** `stem(filename)`, `extension(filename)` (returns dot + ext),

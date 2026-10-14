@@ -20,10 +20,10 @@ import sys
 _DRIVERS = frozenset(
     {
         "lsdtt-raster-preprocessing", "lsdtt-synthetic-surfaces",
-        "lsdtt-synthetic-networks", "lsdtt-surface-metrics",
+        "lsdtt-synthetic-networks", "lsdtt-surface-metrics", "lsdtt-slope-area",
         "lsdtt-channel-extraction", "lsdtt-internal-drainage",
         "lsdtt-hillslope-channel-coupling", "lsdtt-drainage-analysis",
-        "lsdtt-feature-finder", "lsdtt-mountain-front", "lsdtt-outlet-matching",
+        "lsdtt-distributed-hydrology", "lsdtt-feature-finder", "lsdtt-mountain-front", "lsdtt-outlet-matching",
         "lsdtt-basin-stats",
         "lsdtt-basin-extraction", "lsdtt-flat-surface-finder",
         "lsdtt-fluvial-surfaces",
@@ -34,10 +34,12 @@ _DRIVERS = frozenset(
         "lsdtt-cosmo-prediction", "lsdtt-cosmo-landslides",
         "lsdtt-cosmo-column-tool", "lsdtt-marsh-topography",
         "lsdtt-linear-stats", "lsdtt-bearing-comparison",
-        "lsdtt-swath-profile", "lsdtt-lem", "lsdtt-sediment-routing",
+        "lsdtt-swath-profile", "lsdtt-lem", "lsdtt-advection-diffusion",
+        "lsdtt-sediment-routing",
         "lsdtt-ridgeline-analysis", "lsdtt-basin-surface-metrics",
         "lsdtt-divide-migration", "lsdtt-raster-calculator",
-        "lsdtt-fetch-raster", "lsdtt-spectral-analysis", "lsdtt-chi-analysis",
+        "lsdtt-fetch-raster", "lsdtt-bankfull-width", "lsdtt-spectral-analysis",
+        "lsdtt-chi-analysis",
     }
 )
 

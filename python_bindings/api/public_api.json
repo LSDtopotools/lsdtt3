@@ -7148,6 +7148,8 @@
     }
   ],
   "console_scripts": [
+    "lsdtt-advection-diffusion",
+    "lsdtt-bankfull-width",
     "lsdtt-basin-extraction",
     "lsdtt-basin-stats",
     "lsdtt-basin-surface-metrics",
@@ -7160,6 +7162,7 @@
     "lsdtt-cosmo-prediction",
     "lsdtt-cosmo-tool",
     "lsdtt-cross-sections",
+    "lsdtt-distributed-hydrology",
     "lsdtt-divide-migration",
     "lsdtt-drainage-analysis",
     "lsdtt-feature-finder",
@@ -7178,6 +7181,7 @@
     "lsdtt-raster-preprocessing",
     "lsdtt-ridgeline-analysis",
     "lsdtt-sediment-routing",
+    "lsdtt-slope-area",
     "lsdtt-spectral-analysis",
     "lsdtt-stream-burning",
     "lsdtt-surface-metrics",
@@ -7189,6 +7193,8 @@
     "lsdtt-water-line-repair"
   ],
   "declared_drivers": [
+    "lsdtt-advection-diffusion",
+    "lsdtt-bankfull-width",
     "lsdtt-basin-extraction",
     "lsdtt-basin-stats",
     "lsdtt-basin-surface-metrics",
@@ -7201,6 +7207,7 @@
     "lsdtt-cosmo-prediction",
     "lsdtt-cosmo-tool",
     "lsdtt-cross-sections",
+    "lsdtt-distributed-hydrology",
     "lsdtt-divide-migration",
     "lsdtt-drainage-analysis",
     "lsdtt-feature-finder",
@@ -7219,6 +7226,7 @@
     "lsdtt-raster-preprocessing",
     "lsdtt-ridgeline-analysis",
     "lsdtt-sediment-routing",
+    "lsdtt-slope-area",
     "lsdtt-spectral-analysis",
     "lsdtt-stream-burning",
     "lsdtt-surface-metrics",

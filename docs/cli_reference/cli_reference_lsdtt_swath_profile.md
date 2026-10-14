@@ -137,8 +137,8 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `baseline_vector_fname` | `string` | - | `param` | - | Vector file (FlatGeobuf/GeoPackage/Shapefile) with the swath baseline. | The first LineString feature is used as the ordered baseline polyline. Coordinates must be in the raster's projected CRS (metres). |
-| `value_raster_fname` | `string` | `NULL` | `param` | - | Optional raster whose values are binned along the swath. | If NULL (default), the input DEM's own values (elevation) are binned. Must share the input DEM's geometry. |
+| `baseline_vector_fname` | `string` | - | `param` | - | Vector file (FlatGeobuf/GeoPackage/Shapefile) with the swath baseline. | The first LineString feature is used as the ordered baseline polyline. Coordinates must be in the raster's projected CRS (metres). A relative path is read from read_path. |
+| `value_raster_fname` | `string` | `NULL` | `param` | - | Optional raster whose values are binned along the swath. | If NULL (default), the input DEM's own values (elevation) are binned. Must share the input DEM's geometry. A relative path is read from read_path. |
 
 ### Swath geometry
 

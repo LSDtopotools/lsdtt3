@@ -18,7 +18,7 @@ read_path: __READ_PATH__
 write_path: __WRITE_PATH__
 write_fname: wc
 
-input_vector: water_centreline_fixture
+input_vector_fname: water_centreline_fixture
 water_area_layer: water_area
 water_line_layer: water_line
 min_centreline_component_metres: 5

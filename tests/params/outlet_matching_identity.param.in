@@ -1,0 +1,16 @@
+# lsdtt-outlet-matching with the target DEM identical to the reference. Each of
+# the 29 outlets in basin_stats_outlets.csv should match its own cell with zero
+# area difference, EXCEPT where that cell's upslope area reaches the DEM edge:
+# such candidates are rejected by design (edge_incomplete), so outlet 27 is
+# matched to the nearest non-edge candidate, 582 m away.
+#
+# The test's working directory is not write_path, so it also guards the
+# 2026-10-14 fix: default output names used to be written to the working
+# directory rather than write_path.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: om
+reference_dem_fname: basin_stats_diamond_square.tif
+reference_outlet_fname: basin_stats_outlets.csv
+n_threads: 1
+target_dem_fname: basin_stats_diamond_square.tif

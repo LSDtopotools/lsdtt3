@@ -373,7 +373,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_slope_rasters"] = true;
     help_map["write_slope_rasters"] = {"bool", "true",
         "Write each slope raster, after optional clipping.",
-        "Files are named <write_fname>_slope_lambda_XXm.tif.",
+        "Files are named <write_fname>_lambda_XXm_slope.tif.",
         "Slope-area analysis", "switch", ""};
     string_default_map["basin_clip_mode"] = "none";
     help_map["basin_clip_mode"] = {"string", "none",
@@ -383,13 +383,16 @@ int main(int argc, char* argv[])
     string_default_map["basin_mask_fname"] = "";
     help_map["basin_mask_fname"] = {"string", "",
         "Raster basin mask filename.",
-        "The mask must have exactly the DEM grid settings.",
+        "The mask must have exactly the DEM grid settings. Cells with value 0 "
+        "or nodata are excluded; any other value is kept, so a labelled "
+        "basins raster works. A relative path is read from read_path.",
         "Basin clipping", "param", "basin_clip_mode=mask"};
     string_default_map["basin_polygon_fname"] = "";
     help_map["basin_polygon_fname"] = {"string", "",
         "Basin polygon filename.",
         "The polygon must be supplied as a same-grid rasterised polygon mask; "
-        "vector rasterisation is not performed by this CLI.",
+        "vector rasterisation is not performed by this CLI. It is read exactly "
+        "like basin_mask_fname. A relative path is read from read_path.",
         "Basin clipping", "param", "basin_clip_mode=polygon"};
 
     // --- Output tables --------------------------------------------------------
@@ -504,7 +507,8 @@ int main(int argc, char* argv[])
             if (clip_name.empty())
                 throw std::runtime_error(
                     "A basin filename is required for the selected clip mode");
-            clip = read_raster(clip_name);
+            // A relative path is read from read_path, like the DEM.
+            clip = read_raster(parser.add_read_path_if_needed(clip_name));
             require_same_grid(dem.get_meta(), clip.get_meta(), "Basin clip");
         }
 

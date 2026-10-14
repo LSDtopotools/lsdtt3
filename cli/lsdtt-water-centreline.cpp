@@ -70,10 +70,10 @@ int main(int argc, char* argv[])
     std::map<std::string, std::string>              string_default_map;
     lsdtt::lsdtt_help_registry help_map;
 
-    string_default_map["input_vector"] = "";
-    help_map["input_vector"] = {"string","",
+    string_default_map["input_vector_fname"] = "";
+    help_map["input_vector_fname"] = {"string","",
         "Input vector dataset (e.g. a GeoPackage) holding both layers.",
-        "Required. Resolved against read_path if not absolute.",
+        "Required. A relative path is read from read_path.",
         "-", "param", "clip_lines_to_areas"};
 
     string_default_map["water_area_layer"] = "";
@@ -286,15 +286,15 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    if (sf["input_vector"].empty() ||
+    if (sf["input_vector_fname"].empty() ||
         sf["water_area_layer"].empty() || sf["water_line_layer"].empty())
     {
-        std::cerr << "FATAL: input_vector, water_area_layer and water_line_layer "
+        std::cerr << "FATAL: input_vector_fname, water_area_layer and water_line_layer "
                   << "are required.\n";
         return 1;
     }
 
-    const std::string input_path = pp.add_read_path_if_needed(sf["input_vector"]);
+    const std::string input_path = pp.add_read_path_if_needed(sf["input_vector_fname"]);
     lsdtt::vector_output_format out_fmt =
         lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
 

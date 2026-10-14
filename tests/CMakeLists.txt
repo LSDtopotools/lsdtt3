@@ -766,6 +766,22 @@ add_lsdtt_cli_smoke_test(
     tiny_junction_basin_outlines.fgb
 )
 
+# Outlets snapped below threshold_contributing_pixels land off the channel
+# network. Each must be skipped with a warning, not abort the run (it aborted
+# with an uncaught exception until 2026-10-14).
+add_lsdtt_cli_smoke_test(
+    smoke_basin_extraction_outlets_off_network
+    lsdtt-basin-extraction
+    basin_extraction_outlets_off_network.param.in
+    bx_junction_basins.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --stderr-contains "is not on the channel network"
+    --stderr-contains "Set basin_outlet_contributing_pixels_threshold to at least threshold_contributing_pixels."
+    --stdout-contains "Selected basins: 4"
+)
+lsdtt_set_tests_properties(smoke_basin_extraction_outlets_off_network PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
 add_lsdtt_cli_smoke_test(
     rigorous_basin_extraction_legacy_threshold
     lsdtt-basin-extraction
@@ -1367,14 +1383,14 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --param-template "${LSDTT_TEST_PARAM_DIR}/ridgeline_range_oooo.param.in"
             --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_ridgeline_range_open"
-            --expect rg_oooo_raw_dem_3x3_polyfit_slope.tif
-            --expect rg_oooo_raw_dem_3x3_polyfit_maximum_curvature.tif
-            --expect-raster-size rg_oooo_raw_dem_3x3_polyfit_slope.tif:200x200
+            --expect rg_oooo_lambda_60m_raw_dem_3x3_polyfit_slope.tif
+            --expect rg_oooo_lambda_60m_raw_dem_3x3_polyfit_maximum_curvature.tif
+            --expect-raster-size rg_oooo_lambda_60m_raw_dem_3x3_polyfit_slope.tif:200x200
             # C2 must actually resolve corners and segment the boundary.
             --expect-file-contains "../stdout.log:Resolving DEM corners"
             --expect-file-contains "../stdout.log:Boundary segment corner 3 assigned"
             # ORACLE for C2+C3 under open boundaries.
-            --expect-sha256 rg_oooo_raw_dem_3x3_polyfit_slope.tif:c6a0d7322aa1d1f510db0fac8a2544c052238e1782d74bd68805e04a37b8b9c4)
+            --expect-sha256 rg_oooo_lambda_60m_raw_dem_3x3_polyfit_slope.tif:c6a0d7322aa1d1f510db0fac8a2544c052238e1782d74bd68805e04a37b8b9c4)
     lsdtt_mark_test_runtime(python smoke_ridgeline_range_open)
     lsdtt_mark_test_needs(gdal_tools smoke_ridgeline_range_open)
 else()
@@ -1392,14 +1408,14 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --param-template "${LSDTT_TEST_PARAM_DIR}/ridgeline_range_opop.param.in"
             --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_ridgeline_range_periodic"
-            --expect rg_opop_raw_dem_3x3_polyfit_slope.tif
-            --expect-raster-size rg_opop_raw_dem_3x3_polyfit_slope.tif:200x200
+            --expect rg_opop_lambda_60m_raw_dem_3x3_polyfit_slope.tif
+            --expect-raster-size rg_opop_lambda_60m_raw_dem_3x3_polyfit_slope.tif:200x200
             --expect-file-contains "../stdout.log:Resolving DEM corners"
             # ORACLE for the PERIODIC padding branch. This hash differs from the
             # open-boundary one above, which is the evidence that the wrap-around
             # padding in run_raw_dem_3x3_polyfit_with_bcs actually does something --
             # if a refactor made the two equal, both oracles could not hold.
-            --expect-sha256 rg_opop_raw_dem_3x3_polyfit_slope.tif:f7beffb5d95fb65e7ca6108624baac5f8c7ae60399622c2f235acb94a2bd9eae)
+            --expect-sha256 rg_opop_lambda_60m_raw_dem_3x3_polyfit_slope.tif:f7beffb5d95fb65e7ca6108624baac5f8c7ae60399622c2f235acb94a2bd9eae)
     lsdtt_mark_test_runtime(python smoke_ridgeline_range_periodic)
     lsdtt_mark_test_needs(gdal_tools smoke_ridgeline_range_periodic)
 else()
@@ -1695,6 +1711,416 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "treated as loch    : 1"
     --stdout-contains "Tributary connectors : 4"
     --stdout-contains "Pass-through lines    : 4"
+)
+
+# =============================================================================
+# lsdtt-advection-diffusion
+#
+# No test until 2026-10-14. The CLI generates its own red-noise surface, so it
+# needs no input data. With random_seed and n_threads fixed the outputs are
+# byte-identical between runs and across thread counts (checked for 1, 4 and
+# 0), so the surfaces are pinned by hash.
+#
+# smoke_advection_diffusion is also the fixture for the resume and initial-grid
+# tests, which read its out/ directory. The resume test caught a real bug:
+# a resumed run re-applied fill_initial_surface to the mid-run grid and
+# diverged from an uninterrupted run by up to 4 m. Its hash is the
+# uninterrupted 40-step run's, so the two must now agree exactly.
+# =============================================================================
+set(LSDTT_ADVECTION_DIFFUSION_RUN_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_advection_diffusion/out")
+
+add_lsdtt_cli_smoke_test(
+    smoke_advection_diffusion
+    lsdtt-advection-diffusion
+    advection_diffusion_smoke.param.in
+    ad_modelled_topography.tif
+    --expect ad_initial_topography.tif
+    --expect ad_model_iteration_10.tif
+    --expect ad_model_iteration_20.tif
+    --expect ad_initial_hillshade.tif
+    --expect ad_initial_hillshade.png
+    --expect ad_model_iteration_10_hillshade.png
+    --expect ad_model_iteration_10_log10_drainage_area.tif
+    --expect ad_model_iteration_20_log10_drainage_area.png
+    --expect ad_modelled_hillshade.tif
+    --expect ad_modelled_log10_drainage_area.png
+    --expect-raster-size ad_modelled_topography.tif:50x40
+    --expect-sha256 ad_initial_topography.tif:abc51334ceca974a70a49068686ac00a1c3234dedcd8766e5604af3295b8f846
+    --expect-sha256 ad_modelled_topography.tif:bde15e44e80df6d1d6e5279fed20d53f6325c71061506ca2ecc2e728b8b8680b
+)
+lsdtt_set_tests_properties(smoke_advection_diffusion PROPERTIES
+    FIXTURES_SETUP advection_diffusion_run)
+
+add_lsdtt_cli_smoke_test(
+    smoke_advection_diffusion_resume
+    lsdtt-advection-diffusion
+    advection_diffusion_resume.param.in
+    ../../smoke_advection_diffusion/out/ad_model_iteration_40.tif
+    --read-path "${LSDTT_ADVECTION_DIFFUSION_RUN_DIR}"
+    --stdout-contains "Resuming from intermediate output at iteration 20"
+    --expect ../../smoke_advection_diffusion/out/ad_model_iteration_30.tif
+    --expect-sha256 ../../smoke_advection_diffusion/out/ad_model_iteration_40.tif:ce85d0bfb321c5ea2d1ed27b3e42b59825279131595e222feb2846972b3ed1f7
+)
+lsdtt_set_tests_properties(smoke_advection_diffusion_resume PROPERTIES
+    FIXTURES_REQUIRED advection_diffusion_run)
+
+add_lsdtt_cli_smoke_test(
+    smoke_advection_diffusion_initial_grid
+    lsdtt-advection-diffusion
+    advection_diffusion_initial_grid.param.in
+    ad_modelled_topography.tif
+    --read-path "${LSDTT_ADVECTION_DIFFUSION_RUN_DIR}"
+    --stdout-contains "Loading existing grid for a new run"
+    --expect ad_initial_topography.tif
+    --expect-raster-size ad_modelled_topography.tif:50x40
+)
+lsdtt_set_tests_properties(smoke_advection_diffusion_initial_grid PROPERTIES
+    FIXTURES_REQUIRED advection_diffusion_run)
+
+add_lsdtt_cli_smoke_test(
+    smoke_advection_diffusion_d8
+    lsdtt-advection-diffusion
+    advection_diffusion_d8.param.in
+    ad_d8_modelled_topography.tif
+    --expect ad_d8_model_iteration_20.tif
+    --expect-raster-size ad_d8_modelled_topography.tif:50x40
+)
+
+foreach(_ad_bad
+        "kernel|drainage_area_moving_average_kernel_size_pixels must be a positive odd number"
+        "boundary_conditions|boundary_conditions must contain four characters"
+        "diagnostics_format|diagnostics_write_output_format must be cog, png, or both"
+        "incision_model|fluvial_incision_model must be d8 or dinf")
+    string(REPLACE "|" ";" _ad_bad "${_ad_bad}")
+    list(GET _ad_bad 0 _ad_case)
+    list(GET _ad_bad 1 _ad_message)
+    add_lsdtt_cli_smoke_test(
+        failure_advection_diffusion_bad_${_ad_case}
+        lsdtt-advection-diffusion
+        advection_diffusion_bad_${_ad_case}.param.in
+        ad_modelled_topography.tif
+        --expect-failure
+        --stderr-contains "FATAL: ${_ad_message}"
+    )
+endforeach()
+
+# =============================================================================
+# lsdtt-slope-area
+#
+# No test until 2026-10-14. Runs on the basin_stats fixture DEM (200 x 200, 30 m,
+# UTM 58S). Outputs are identical for n_threads 1 and 4; the summary rows are
+# pinned as text rather than by hash. The clip test also guards a fix: a bare
+# basin_mask_fname used to be opened relative to the working directory rather
+# than read_path.
+# =============================================================================
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_slope_area_basin_mask
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+            --exe "$<TARGET_FILE:lsdtt-basin-extraction>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/slope_area_basin_mask.param.in"
+            --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/fixture_slope_area_basin_mask"
+            --expect ../../basin_stats_fixture/out/sa_basins_junction_basins.tif)
+    lsdtt_mark_test_runtime(python fixture_slope_area_basin_mask)
+else()
+    lsdtt_mark_test_unregistered(python fixture_slope_area_basin_mask)
+endif()
+lsdtt_set_tests_properties(fixture_slope_area_basin_mask PROPERTIES
+    LABELS "fixture;slope_area"
+    FIXTURES_SETUP slope_area_mask
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# tiny_dem.asc (5 x 5, UTM 30N, nowhere near the fixture DEM) next to the
+# basin_stats DEM: a mismatched grid for lsdtt-slope-area and a non-overlapping
+# target for lsdtt-outlet-matching.
+add_test(NAME fixture_basin_stats_tiny_dem
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_TEST_DATA_DIR}/tiny_dem.asc"
+        "${LSDTT_TEST_DATA_DIR}/tiny_dem.prj"
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/")
+lsdtt_set_tests_properties(fixture_basin_stats_tiny_dem PROPERTIES
+    LABELS "fixture;basin_stats"
+    FIXTURES_SETUP basin_stats_tiny_dem
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area
+    lsdtt-slope-area
+    slope_area_smoke.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_lambda_90m.csv
+    --expect sa_lambda_150m.csv
+    --expect sa_lambda_90m_slope.tif
+    --expect sa_lambda_150m_slope.tif
+    --expect sa_dinf_drainage_area.tif
+    --expect-absent sa_d8_flow_direction.tif
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3962.762065"
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:150,3952.876248"
+    --expect-valid-percent sa_lambda_90m_slope.tif:96.04
+)
+lsdtt_set_tests_properties(smoke_slope_area PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_d8
+    lsdtt-slope-area
+    slope_area_d8.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_d8_drainage_area.tif
+    --expect sa_d8_flow_direction.tif
+    --expect-absent sa_dinf_drainage_area.tif
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3965.578391"
+)
+lsdtt_set_tests_properties(smoke_slope_area_d8 PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_no_flowinfo
+    lsdtt-slope-area
+    slope_area_no_flowinfo.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-absent sa_dinf_drainage_area.tif
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3962.762065"
+)
+lsdtt_set_tests_properties(smoke_slope_area_no_flowinfo PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_clip
+    lsdtt-slope-area
+    slope_area_clip.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-valid-percent sa_lambda_90m_slope.tif:53.79
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3906.624295"
+)
+lsdtt_set_tests_properties(smoke_slope_area_clip PROPERTIES
+    FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
+
+foreach(_sa_bad
+        "bad_flow_algorithm|flow_algorithm must be dinf or d8"
+        "bad_clip_mode|basin_clip_mode must be none, mask, or polygon"
+        "empty_lambdas|polyfit_lambda_metres_list cannot be empty"
+        "mask_grid_mismatch|Basin clip does not have exactly the same grid settings as the DEM")
+    string(REPLACE "|" ";" _sa_bad "${_sa_bad}")
+    list(GET _sa_bad 0 _sa_case)
+    list(GET _sa_bad 1 _sa_message)
+    add_lsdtt_cli_smoke_test(
+        failure_slope_area_${_sa_case}
+        lsdtt-slope-area
+        slope_area_${_sa_case}.param.in
+        sa_maximum_d50_slope_area.csv
+        --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+        --expect-failure
+        --stderr-contains "Error: ${_sa_message}"
+    )
+    lsdtt_set_tests_properties(failure_slope_area_${_sa_case} PROPERTIES
+        FIXTURES_REQUIRED "basin_stats_fixture;basin_stats_tiny_dem")
+endforeach()
+
+add_lsdtt_cli_smoke_test(
+    failure_slope_area_geographic_dem
+    lsdtt-slope-area
+    slope_area_geographic_dem.param.in
+    sa_maximum_d50_slope_area.csv
+    --expect-failure
+    --stderr-contains "only works on projected data"
+)
+
+# =============================================================================
+# lsdtt-outlet-matching
+#
+# No test until 2026-10-14. Reference = the basin_stats fixture DEM (30 m) and
+# its 29 outlets; target = the same DEM (identity) or resampled to 60 m. Rows
+# are pinned by their integer columns (target row, col, flat, areas), not the
+# 12-digit coordinates. The CLI runs with its working directory outside
+# write_path, which guards the fix that made default output names honour
+# write_path.
+# =============================================================================
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME fixture_outlet_matching_target
+        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+            --exe "$<TARGET_FILE:lsdtt-raster-preprocessing>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/outlet_matching_target_dem.param.in"
+            --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/fixture_outlet_matching_target"
+            --expect ../../basin_stats_fixture/out/om_target_utm.tif)
+    lsdtt_mark_test_runtime(python fixture_outlet_matching_target)
+else()
+    lsdtt_mark_test_unregistered(python fixture_outlet_matching_target)
+endif()
+lsdtt_set_tests_properties(fixture_outlet_matching_target PROPERTIES
+    LABELS "fixture;outlet_matching"
+    FIXTURES_SETUP outlet_matching_target
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_outlet_matching_identity
+    lsdtt-outlet-matching
+    outlet_matching_identity.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect om_outlet_matching_diagnostics.csv
+    --expect-file-not-contains "om_matched_outlets.csv:no_match"
+    --expect-file-not-contains "om_matched_outlets.csv:invalid_reference_point"
+    --expect-file-contains "om_matched_outlets.csv:,30,30,6030,10800,10800,0,0,"
+    --expect-file-contains "om_matched_outlets.csv:,65,30,13030,5400,5400,0,0,"
+    --expect-file-contains "om_matched_outlets.csv:,89,18,17818,325800,299700,26100,"
+)
+lsdtt_set_tests_properties(smoke_outlet_matching_identity PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_outlet_matching_resampled
+    lsdtt-outlet-matching
+    outlet_matching_resampled.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-file-not-contains "om_matched_outlets.csv:no_match"
+    --expect-file-contains "om_matched_outlets.csv:,14,16,1416,10800,10800,0,0,"
+    --expect-file-contains "om_matched_outlets.csv:,32,15,3215,3600,5400,-1800,"
+    --expect-file-contains "om_matched_outlets.csv:,42,7,4207,291600,299700,-8100,"
+)
+lsdtt_set_tests_properties(smoke_outlet_matching_resampled PROPERTIES
+    FIXTURES_REQUIRED "basin_stats_fixture;outlet_matching_target")
+
+add_lsdtt_cli_smoke_test(
+    failure_outlet_matching_no_overlap
+    lsdtt-outlet-matching
+    outlet_matching_no_overlap.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-failure
+    --stderr-contains "FATAL: Reference and target DEM extents do not overlap after CRS transformation."
+)
+lsdtt_set_tests_properties(failure_outlet_matching_no_overlap PROPERTIES
+    FIXTURES_REQUIRED "basin_stats_fixture;basin_stats_tiny_dem")
+
+add_lsdtt_cli_smoke_test(
+    failure_outlet_matching_bad_radius
+    lsdtt-outlet-matching
+    outlet_matching_bad_radius.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-failure
+    --stderr-contains "local_search_radius_metres must be greater than zero."
+)
+lsdtt_set_tests_properties(failure_outlet_matching_bad_radius PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# raster_is_filled: true on an unfilled DEM: routing fails, and the error must
+# point at raster_is_filled rather than leave the user with a routing message.
+add_lsdtt_cli_smoke_test(
+    failure_outlet_matching_unfilled_dem
+    lsdtt-outlet-matching
+    outlet_matching_unfilled_dem.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-failure
+    --stderr-contains "flow routing failed on the reference DEM"
+    --stderr-contains "Set raster_is_filled: false to fill both DEMs first."
+)
+lsdtt_set_tests_properties(failure_outlet_matching_unfilled_dem PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# An outlet whose only candidate is edge-influenced is a no_match, reported with
+# its reason; the run still succeeds for the others.
+add_lsdtt_cli_smoke_test(
+    smoke_outlet_matching_edge_only
+    lsdtt-outlet-matching
+    outlet_matching_edge_only.param.in
+    om_matched_outlets.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --stdout-contains "Outlet 27: no_match. The only candidate drains area from the target DEM's edge"
+    --stdout-contains "Outlets matched: 28, no_match: 1, invalid_reference_point: 0"
+)
+lsdtt_set_tests_properties(smoke_outlet_matching_edge_only PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# =============================================================================
+# lsdtt-water-line-repair
+#
+# No test until 2026-10-14. Pure vector: tests/data/water_line_repair_fixture
+# lays out one case per bridging rule (see water_line_repair_smoke.param.in).
+# The bridge count in stdout is the assertion; each variant changes one rule
+# and the count moves accordingly.
+# =============================================================================
+add_lsdtt_cli_smoke_test(
+    smoke_water_line_repair
+    lsdtt-water-line-repair
+    water_line_repair_smoke.param.in
+    wlr_water_line_repaired.fgb
+    --expect wlr_repair_tips.fgb
+    --stdout-contains "Dangling tips        : 24"
+    --stdout-contains "Bridges accepted     : 3"
+    --stdout-contains "Output features      : 15"
+    --expect-vector-feature-min wlr_water_line_repaired.fgb:15
+    --expect-vector-feature-min wlr_repair_tips.fgb:24
+)
+
+foreach(_wlr_case "mutual_best_on|3" "mutual_best_off|4" "wide_road_gap|4"
+                  "separate_roads|3")
+    string(REPLACE "|" ";" _wlr_case "${_wlr_case}")
+    list(GET _wlr_case 0 _wlr_name)
+    list(GET _wlr_case 1 _wlr_bridges)
+    add_lsdtt_cli_smoke_test(
+        smoke_water_line_repair_${_wlr_name}
+        lsdtt-water-line-repair
+        water_line_repair_${_wlr_name}.param.in
+        wlr_water_line_repaired.fgb
+        --stdout-contains "Bridges accepted     : ${_wlr_bridges}"
+    )
+endforeach()
+
+add_lsdtt_cli_smoke_test(
+    failure_water_line_repair_missing_layer
+    lsdtt-water-line-repair
+    water_line_repair_missing_layer.param.in
+    wlr_water_line_repaired.fgb
+    --expect-failure
+    --stderr-contains "FATAL: water_layer and road_layer are required."
+)
+
+# =============================================================================
+# lsdtt-bearing-comparison and lsdtt-swath-profile
+#
+# Both shipped in the core profile with no test at all (they predate the rule
+# in tools/cli_profiles.txt). Tested 2026-10-14 against analytic answers.
+# =============================================================================
+foreach(_bc_case
+        "identical|Circular Wasserstein distance : 0 degrees"
+        "rotated|Circular Wasserstein distance : 20 degrees"
+        "rotation_invariant|Optimal rotation              : 340 degrees"
+        "axial|Circular Wasserstein distance : 0 degrees")
+    string(REPLACE "|" ";" _bc_case "${_bc_case}")
+    list(GET _bc_case 0 _bc_name)
+    list(GET _bc_case 1 _bc_line)
+    add_lsdtt_cli_smoke_test(
+        smoke_bearing_comparison_${_bc_name}
+        lsdtt-bearing-comparison
+        bearing_comparison_${_bc_name}.param.in
+        bc_bearing_comparison.csv
+        --stdout-contains "${_bc_line}"
+    )
+endforeach()
+
+add_lsdtt_cli_smoke_test(
+    smoke_swath_profile_plane
+    lsdtt-swath-profile
+    swath_profile_plane.param.in
+    sw_swath_profile.csv
+    --expect sw_swath_along_axis.tif
+    --expect sw_swath_perp_distance.tif
+    --expect sw_swath_signed_perp.tif
+    --expect-file-contains "sw_swath_profile.csv:50,200,5,0.5,"
+    --expect-file-contains "sw_swath_profile.csv:250,200,25,20.5,"
+    --expect-file-contains "sw_swath_profile.csv:450,200,45,40.5,"
 )
 
 # =============================================================================
@@ -7100,6 +7526,23 @@ lsdtt_set_tests_properties(unit_cli_reference_is_current PROPERTIES
     LABELS "unit;cli;docs"
     TIMEOUT 900)
 
+# The pip wheel declares its CLIs in four hand-kept places, which must match the
+# root lsdtt_cli() targets. python_bindings/tests/test_cli_packaging.py checks
+# this too but needs pytest, so it never ran here, and four CLIs went missing
+# from the wheel unnoticed. Reads source files only; needs no build.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME unit_wheel_cli_inventory
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_wheel_cli_inventory.py"
+            --repo-root "${CMAKE_SOURCE_DIR}")
+    lsdtt_mark_test_runtime(python unit_wheel_cli_inventory)
+else()
+    lsdtt_mark_test_unregistered(python unit_wheel_cli_inventory)
+endif()
+lsdtt_set_tests_properties(unit_wheel_cli_inventory PROPERTIES
+    LABELS "unit;cli;packaging"
+    TIMEOUT 60)
+
 # =============================================================================
 # COMPARTMENTALISATION: domain and cost labels
 #
@@ -7163,6 +7606,7 @@ set(LSDTT_DOMAIN_RULES
     "spectral_analysis"      "surface_metrics"
     "hillslope"              "hillslope"
     "lem"                    "lem"
+    "advection_diffusion"    "lem"
     # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
@@ -7184,7 +7628,7 @@ set(LSDTT_DOMAIN_RULES
     # because "fill" would otherwise claim breach tests that mention filling.
     "breach"                 "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
-    "param|secret|cli_reference|test_env|configure_contract" "core"
+    "param|secret|cli_reference|wheel_cli_inventory|test_env|configure_contract" "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
     # Phase 2 of the CLI consistency remediation: the shared helper homes
@@ -7195,12 +7639,12 @@ set(LSDTT_DOMAIN_RULES
     # Added 2026-09-10 with the first tests these two CLIs have ever had.
     # mountain_front is landform/relief work and feature_finder is multi-scale
     # surface response, so both sit in the surface compartment.
-    "mountain_front|feature_finder" "surface_metrics"
+    "mountain_front|feature_finder|swath_profile" "surface_metrics"
     # Added 2026-10-07 with the first tests these four CLIs have had. Cross
     # sections, bankfull width and the water-body centreline are channel /
     # hydrography work; marsh platform and tidal channel extraction is landform
     # extraction, beside feature_finder.
-    "cross_sections|bankfull_width|water_centreline" "network"
+    "cross_sections|bankfull_width|water_centreline|water_line_repair|slope_area|outlet_matching|bearing_comparison" "network"
     "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
     "junction_graph"         "network"

@@ -1,0 +1,6 @@
+# lsdtt-water-line-repair must refuse to run without water_layer.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wlr
+input_vector_fname: water_line_repair_fixture
+road_layer: road

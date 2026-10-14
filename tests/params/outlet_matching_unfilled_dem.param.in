@@ -1,0 +1,10 @@
+# lsdtt-outlet-matching with raster_is_filled: true on a DEM that is NOT filled.
+# Routing fails; the message must say why and that raster_is_filled: false (the
+# default since 2026-10-14) fixes it.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: om
+reference_dem_fname: basin_stats_diamond_square.tif
+reference_outlet_fname: basin_stats_outlets.csv
+target_dem_fname: basin_stats_diamond_square.tif
+raster_is_filled: true

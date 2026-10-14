@@ -548,7 +548,7 @@ if (bf["write_mountain_front_outlets"])
     }
     else
     {
-        const std::string ca_path = pp.get_read_path() + "/" + ca_fname;
+        const std::string ca_path = pp.add_read_path_if_needed(ca_fname);
         std::cout << "  Loading contributing pixels raster: " << ca_path << "\n";
         try
         {

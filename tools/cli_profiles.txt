@@ -19,18 +19,13 @@
 # Adding a tool to core without a test is a decision to ship something the
 # suite never runs.
 #
-# Every CLI target is listed below except the ones with no test coverage at
-# all, which ship only under `all`:
-#   lsdtt-cross-sections
-#   lsdtt-marsh-topography
-#   lsdtt-outlet-matching
-#   lsdtt-water-centreline
-#   lsdtt-water-line-repair
-#
-# These are in core but currently have no test exercising them - they predate
-# the rule and are kept because they already ship:
-#   lsdtt-bearing-comparison
-#   lsdtt-swath-profile
+# As of 2026-10-14 every lsdtt_cli() target has at least one CTest test and is
+# in core. Eight were added that day: advection-diffusion, bankfull-width,
+# cross-sections, marsh-topography, outlet-matching, slope-area,
+# water-centreline and water-line-repair (four had been tested since
+# 2026-10-07 but never listed here), and bearing-comparison and swath-profile,
+# which had shipped untested, got their first tests. A new CLI joins core once
+# it has a test; until then it ships only under `all`.
 
 
 qgis lsdtt-raster-preprocessing
@@ -41,6 +36,8 @@ qgis lsdtt-basin-stats
 qgis lsdtt-surface-metrics
 qgis lsdtt-channel-network-analysis
 
+core lsdtt-advection-diffusion
+core lsdtt-bankfull-width
 core lsdtt-basin-extraction
 core lsdtt-basin-stats
 core lsdtt-basin-surface-metrics
@@ -52,6 +49,7 @@ core lsdtt-cosmo-column-tool
 core lsdtt-cosmo-landslides
 core lsdtt-cosmo-prediction
 core lsdtt-cosmo-tool
+core lsdtt-cross-sections
 core lsdtt-distributed-hydrology
 core lsdtt-divide-migration
 core lsdtt-drainage-analysis
@@ -64,11 +62,14 @@ core lsdtt-hillslope-channel-coupling
 core lsdtt-internal-drainage
 core lsdtt-lem
 core lsdtt-linear-stats
+core lsdtt-marsh-topography
 core lsdtt-mountain-front
+core lsdtt-outlet-matching
 core lsdtt-raster-calculator
 core lsdtt-raster-preprocessing
 core lsdtt-ridgeline-analysis
 core lsdtt-sediment-routing
+core lsdtt-slope-area
 core lsdtt-spectral-analysis
 core lsdtt-stream-burning
 core lsdtt-surface-metrics
@@ -76,3 +77,5 @@ core lsdtt-swath-profile
 core lsdtt-synthetic-networks
 core lsdtt-synthetic-surfaces
 core lsdtt-valley-centreline
+core lsdtt-water-centreline
+core lsdtt-water-line-repair

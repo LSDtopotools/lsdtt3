@@ -1,0 +1,11 @@
+# lsdtt-water-line-repair with the heading gate opened (180 degrees) so that the
+# S-Q candidate in lines 9-12 exists. With require_mutual_best (the default) S
+# does not settle for R: still 3 bridges. Compare _mutual_best_off.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wlr
+input_vector_fname: water_line_repair_fixture
+water_layer: water
+road_layer: road
+max_heading_misalignment_degrees: 180
+require_mutual_best: true

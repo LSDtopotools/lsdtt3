@@ -1,0 +1,10 @@
+# As _mutual_best_on but with require_mutual_best: false. S now bridges to R,
+# its second choice: 4 bridges.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wlr
+input_vector_fname: water_line_repair_fixture
+water_layer: water
+road_layer: road
+max_heading_misalignment_degrees: 180
+require_mutual_best: false

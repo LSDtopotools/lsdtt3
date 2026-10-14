@@ -1,0 +1,6 @@
+# lsdtt-slope-area must refuse a geographic (degree) DEM: polyfit lambdas are
+# in metres. tiny30_dem.tif is EPSG:4326.
+read_path: __READ_PATH__
+read_fname: tiny30_dem.tif
+write_path: __WRITE_PATH__
+write_fname: sa

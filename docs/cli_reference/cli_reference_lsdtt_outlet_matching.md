@@ -108,7 +108,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `raster_is_filled` | `bool` | `true` | `param` | - | Whether both DEMs are already filled. | Set false when both DEMs need the same fill treatment before routing. |
+| `raster_is_filled` | `bool` | `false` | `param` | - | Whether both DEMs are already pit-filled. | False (the default) fills both DEMs before D8 routing, which works for any input. Set true only to skip filling when both DEMs are already filled; routing an unfilled DEM fails. |
 | `boundary_conditions` | `string` | `oooo` | `param` | - | D8 boundary conditions. | Four-character N,E,S,W boundary condition string. |
 | `n_threads` | `int` | `0` | `param` | - | Routing threads. | Zero uses the available hardware threads. |
 
