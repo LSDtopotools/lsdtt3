@@ -4,11 +4,13 @@ from qgis.PyQt.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
 )
 
-from ..backend.manager import SETTINGS_BACKEND_PATH
+from ..backend.health import backend_cli_error
+from ..backend.manager import SETTINGS_BACKEND_PATH, BackendManager
 
 
 class SettingsDialog(QDialog):
@@ -49,4 +51,11 @@ class SettingsDialog(QDialog):
         # Capability probes are keyed to the backend; a new path invalidates them.
         from ..backend.capabilities import clear_cache
         clear_cache()
+        # Saved either way, but say now if the bundle lacks a CLI, rather than
+        # when an algorithm that needs it is first run.
+        error = None
+        if self.backend_path.text().strip():
+            error = backend_cli_error(BackendManager(self.settings))
+        if error:
+            QMessageBox.warning(self, "LSDTT backend incomplete", error)
         self.accept()

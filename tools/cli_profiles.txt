@@ -35,6 +35,8 @@ qgis lsdtt-basin-extraction
 qgis lsdtt-basin-stats
 qgis lsdtt-surface-metrics
 qgis lsdtt-channel-network-analysis
+qgis lsdtt-swath-profile
+qgis lsdtt-drainage-analysis
 
 core lsdtt-advection-diffusion
 core lsdtt-bankfull-width

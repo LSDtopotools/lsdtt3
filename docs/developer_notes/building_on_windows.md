@@ -167,7 +167,8 @@ ships (the `qgis` profile in `tools/cli_profiles.txt`):
 cmake --build build\windows-qgis --target `
   lsdtt-raster-preprocessing lsdtt-channel-extraction lsdtt-chi-analysis `
   lsdtt-basin-extraction lsdtt-basin-stats lsdtt-surface-metrics `
-  lsdtt-channel-network-analysis
+  lsdtt-channel-network-analysis lsdtt-swath-profile `
+  lsdtt-drainage-analysis
 ```
 
 or everything with `cmake --build build\windows-qgis`.

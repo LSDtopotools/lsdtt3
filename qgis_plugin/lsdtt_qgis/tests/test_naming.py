@@ -8,6 +8,8 @@ from lsdtt_qgis.naming import (
     next_qgis_driver_name,
     split_source,
     strip_layer_suffix,
+    source_layer_name,
+    write_line_geojson,
 )
 
 
@@ -118,3 +120,36 @@ def test_lookup_param_help_alias_override_and_misses():
         "Thread count."
     )
     assert lookup_param_help(index, "NO_TEXT") is None
+
+
+def test_write_line_geojson_writes_one_linestring(tmp_path):
+    import json
+
+    path = write_line_geojson(
+        str(tmp_path / "baseline.geojson"), [(500000, 6000250.5), (500500, 6000250.5)],
+        "EPSG:32633",
+    )
+    data = json.loads(open(path, encoding="utf-8").read())
+    assert data["crs"]["properties"]["name"] == "EPSG:32633"
+    (feature,) = data["features"]
+    assert feature["geometry"] == {
+        "type": "LineString",
+        "coordinates": [[500000.0, 6000250.5], [500500.0, 6000250.5]],
+    }
+
+
+def test_write_line_geojson_rejects_a_single_point(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="at least two points"):
+        write_line_geojson(str(tmp_path / "b.geojson"), [(0, 0)])
+
+
+def test_source_layer_name_prefers_layername_option():
+    assert source_layer_name("/d/soils.gpkg|layername=hutton") == "hutton"
+    assert source_layer_name("/d/soils.gpkg|subset=x|layername=lu") == "lu"
+
+
+def test_source_layer_name_falls_back_to_file_stem():
+    assert source_layer_name("/d/hutton_series_code_min.fgb") == "hutton_series_code_min"
+    assert source_layer_name("/d/landuse.shp|layerid=0") == "landuse"

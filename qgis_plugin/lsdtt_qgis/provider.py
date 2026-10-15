@@ -10,11 +10,19 @@ from .algorithms.channel_network_analysis import ChannelNetworkAnalysisAlgorithm
 from .algorithms.chi_analysis import ChiAnalysisAlgorithm
 from .algorithms.clip_raster_to_polygon import ClipRasterToPolygonAlgorithm
 from .algorithms.clip_vector_to_raster import ClipVectorToRasterAlgorithm
+from .algorithms.drainage_analysis import (
+    ConnectivityIndexAlgorithm,
+    DrainageAreaAlgorithm,
+    HeightAboveChannelAlgorithm,
+    SoilTopographicIndexAlgorithm,
+    TopographicWetnessIndexAlgorithm,
+)
 from .algorithms.mosaic_rasters import MosaicRastersAlgorithm
 from .algorithms.raster_preprocessing import RasterPreprocessingAlgorithm
 from .algorithms.sample_rasters_to_points import SampleRastersToPointsAlgorithm
 from .algorithms.side_tributary_basins import SideTributaryBasinsAlgorithm
 from .algorithms.surface_metrics import SurfaceMetricsAlgorithm
+from .algorithms.swath_profile import SwathProfileAlgorithm
 
 
 class LSDTTProvider(QgsProcessingProvider):
@@ -31,6 +39,12 @@ class LSDTTProvider(QgsProcessingProvider):
         self.addAlgorithm(MosaicRastersAlgorithm())
         self.addAlgorithm(SampleRastersToPointsAlgorithm())
         self.addAlgorithm(SideTributaryBasinsAlgorithm())
+        self.addAlgorithm(SwathProfileAlgorithm())
+        self.addAlgorithm(DrainageAreaAlgorithm())
+        self.addAlgorithm(TopographicWetnessIndexAlgorithm())
+        self.addAlgorithm(ConnectivityIndexAlgorithm())
+        self.addAlgorithm(HeightAboveChannelAlgorithm())
+        self.addAlgorithm(SoilTopographicIndexAlgorithm())
 
     def id(self):
         return "lsdtt"
