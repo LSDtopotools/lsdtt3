@@ -8,6 +8,53 @@ together, and the loop for changing them, is in
 plugin development on the documentation site). Packaging commands are in
 `tools/README.md`.
 
+## Algorithms
+
+The plugin adds an **lsdtt3** group to the Processing Toolbox. Every algorithm
+writes a parameter file next to the input DEM and runs one backend CLI, so any
+run can be repeated from the command line (the parameter file's header gives
+the command).
+
+| Algorithm | Backend CLI | What it does |
+|---|---|---|
+| Raster Preprocessing | `lsdtt-raster-preprocessing` | Reproject, mask, fill nodata, breach or fill depressions, hillshade |
+| Clip Raster to Polygon | `lsdtt-raster-preprocessing` | Crop a raster to a polygon, optionally masking outside it |
+| Clip Vector to Raster Extent | `lsdtt-raster-preprocessing` | Clip a vector layer to a raster's bounding box (any CRS) |
+| Mosaic Rasters | `lsdtt-raster-preprocessing` | Merge pixel-aligned rasters on the same grid into one |
+| Sample Rasters at Points | `lsdtt-raster-preprocessing` | Sample a list of rasters at each point of a point layer |
+| Channel Extraction | `lsdtt-channel-extraction` | Channel sources (threshold or Wiener), network lines, points and junctions |
+| Chi Analysis | `lsdtt-chi-analysis` | Chi extraction, chi-network fitting with an m/n sweep, k_sn maps |
+| Basin Extraction | `lsdtt-basin-extraction` | Basins by junction, outlet, nesting, order or crossing line, with filters |
+| Side Tributary Basins | `lsdtt-basin-extraction` | Basins draining into the side of one main channel |
+| Basin Statistics | `lsdtt-basin-stats` | Per-basin relief, hypsometry, shape and channel statistics |
+| Surface Metrics | `lsdtt-surface-metrics` | Hillshade, relief, polyfit slope, aspect and curvature, roughness |
+| Channel Network Analysis | `lsdtt-channel-network-analysis` | Link bearings, junction angles, Strahler and Tokunaga layers, area ratios |
+| Swath Profile | `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline line |
+| Drainage Area | `lsdtt-drainage-analysis` | D8, D-infinity and/or MFD drainage area |
+| Topographic Wetness Index | `lsdtt-drainage-analysis` | ln(a / tan b) from D-infinity or MFD routing |
+| Sediment Connectivity Index | `lsdtt-drainage-analysis` | Cavalli et al. (2013) index, with its D_up and D_down rasters |
+| Height Above Channel | `lsdtt-drainage-analysis` | Height of each pixel above the channel its flow path reaches |
+| Soil Topographic Index | `lsdtt-drainage-analysis` | Wetness index less a soil term from soil and land-use data |
+
+Each algorithm's form shows the parameter help from the backend itself, and
+the full parameter lists are in the CLI reference pages.
+
+### Which CLIs the backend needs
+
+The plugin uses the eight CLIs in the table. The `qgis` backend bundle ships
+exactly these (the `qgis` profile in `tools/cli_profiles.txt`).
+
+- **When you save a backend folder** in `lsdtt3 -> LSDTT Backend Settings`,
+  the plugin checks for all eight and warns, naming every one that is missing.
+  The folder is still saved.
+- **When you run an algorithm**, only that algorithm's CLI must be present.
+  An older bundle still runs the algorithms it has; the others stop before
+  anything runs, with a message naming the missing CLI.
+
+Bundles made before this release have no `lsdtt-swath-profile` or
+`lsdtt-drainage-analysis`. Install a new bundle to use Swath Profile and the
+five drainage algorithms.
+
 ## Versioning (plugin vs backend)
 
 The plugin and backend use separate version numbers.
@@ -90,6 +137,45 @@ This maps to CLI parameters `select_all_basins_of_stream_order: true` and
 `selected_stream_order: <n>` and extracts every basin whose junction stream
 order is exactly `<n>`.
 
+## Swath Profile
+
+Bins every valid pixel within a half-width of a baseline line by its distance
+along the line, and writes the pixel count, mean and 21 percentiles (p0, p5,
+... p100) of each bin to `<prefix>_swath_profile.csv`. It profiles the DEM's
+elevation unless you give another raster on the same grid.
+
+- **Baseline:** the first selected feature of the line layer, or its first
+  feature if none is selected. The layer can be in any CRS: the plugin
+  reprojects the line to the DEM's CRS and saves it as
+  `<prefix>_qgis_baseline.geojson`, which the backend reads (the backend
+  itself does not reproject vectors). A feature with more than one part is
+  refused; split or merge it first.
+- **Half-width 0** includes every valid pixel of the DEM.
+- **Distance rasters** (optional): each pixel's distance along the baseline,
+  its distance from it, and that distance signed by side.
+
+## Drainage algorithms
+
+Drainage Area, Topographic Wetness Index, Sediment Connectivity Index, Height
+Above Channel and Soil Topographic Index all run `lsdtt-drainage-analysis`,
+one product each. They share the DEM, pit-filling and output options; the
+advanced options include how flats are made drainable and the boundary
+conditions. Each run writes only the outputs its own form asks for.
+
+- **Drainage Area** writes any combination of D8, D-infinity and MFD
+  drainage area, in square metres.
+- **Sediment Connectivity Index** always writes the index and its D_up and
+  D_down components. Channels, where downslope paths stop, are pixels whose
+  drainage area reaches the threshold in square metres.
+- **Height Above Channel** defines channels by contributing pixels instead.
+- **Soil Topographic Index** takes soil-series and land-use polygon layers and
+  two tables: saturated conductivity profiles (needed for the STI raster and
+  the lookup CSV) and standard percentage runoff (needed for the proxy
+  raster, the lookup CSV, and spr mode). The tables follow the Scottish soil
+  data (Hutton series codes, SSKIB conductivities); see the
+  `lsdtt-drainage-analysis` reference for their columns. The plugin says
+  which table is missing before anything runs.
+
 ## Updating to a new version
 
 You usually do **not** need to manually uninstall first.
@@ -155,8 +241,8 @@ Fix:
 
 1. In `lsdtt3 -> LSDTT Backend Settings`, select the **bundle root**
    (contains `bin/`, `share/`, `manifest.json`), not `bin/` itself.
-2. Re-run a quick check (for example backend health check, or a small
-   preprocessing run).
+2. Save the settings again (the plugin then checks the bundle for every CLI
+   it uses), and run a small preprocessing run.
 
 The plugin now auto-corrects a `.../bin` selection to its parent bundle root
 when possible, but selecting the root folder directly is still recommended.

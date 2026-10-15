@@ -2,15 +2,16 @@
 
 QGIS Processing provider for selected lsdtt3 command-line workflows.
 
-Current status:
+Contents:
 
-- plugin scaffold and provider registration
-- backend path manager and health check helpers
-- MVP wrappers for:
-  - `lsdtt-raster-preprocessing`
-  - `lsdtt-channel-extraction`
-  - `lsdtt-chi-analysis`
-  - `lsdtt-basin-extraction`
+- `provider.py`: registers the Processing algorithms
+- `algorithms/`: one module per algorithm (the five drainage algorithms
+  share `drainage_analysis.py`), plus shared helpers in `support.py`
+- `backend/`: backend path, manifest version checks, and `health.py`, whose
+  `REQUIRED_CLIS` lists the eight CLIs the wrappers run
+- `naming.py`: QGIS-free path and format helpers, unit-tested without QGIS
+
+The algorithms and what they need are listed in `qgis_plugin/README.md`.
 
 Backend requirements:
 

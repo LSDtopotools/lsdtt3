@@ -13,6 +13,7 @@ REQUIRED_CLIS = [
     "lsdtt-surface-metrics",
     "lsdtt-channel-network-analysis",
     "lsdtt-swath-profile",
+    "lsdtt-drainage-analysis",
 ]
 
 

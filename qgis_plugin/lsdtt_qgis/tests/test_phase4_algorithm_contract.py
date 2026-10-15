@@ -804,3 +804,160 @@ def test_run_ignores_other_missing_clis(monkeypatch, tmp_path):
     monkeypatch.setattr(support, "write_log", lambda *args: None)
     support.run_lsdtt_tool("lsdtt-basin-stats", {}, str(tmp_path), "run", _Feedback())
     assert commands[0][0].endswith("lsdtt-basin-stats")
+
+
+# --- lsdtt-drainage-analysis algorithms ----------------------------------------
+
+DRAINAGE_ALGORITHMS = [
+    ("DrainageAreaAlgorithm", "drainage_area"),
+    ("TopographicWetnessIndexAlgorithm", "topographic_wetness_index"),
+    ("ConnectivityIndexAlgorithm", "connectivity_index"),
+    ("HeightAboveChannelAlgorithm", "height_above_channel"),
+    ("SoilTopographicIndexAlgorithm", "soil_topographic_index"),
+]
+
+
+def _run_drainage(monkeypatch, tmp_path, class_name, values, touch=()):
+    module, algorithm_class = _load("drainage_analysis", class_name)
+    captured = {}
+
+    def fake_run(tool, param_values, folder, prefix, feedback):
+        captured.update(tool=tool, values=param_values)
+        _touch_outputs(folder, prefix, touch)
+
+    monkeypatch.setattr(module, "run_lsdtt_tool", fake_run)
+    algorithm = algorithm_class()
+    _configure_parameters(algorithm)
+    parameters = {
+        algorithm.INPUT_DEM: _Layer(str(tmp_path / "dem.tif")),
+        algorithm.OUTPUT_FOLDER: str(tmp_path),
+        algorithm.OUTPUT_PREFIX: "run",
+        algorithm.BOUNDARY_CONDITIONS: "oooo",
+    }
+    parameters.update({getattr(algorithm, key): value for key, value in values.items()})
+    outputs = algorithm.processAlgorithm(parameters, None, _Feedback())
+    return algorithm, captured, outputs
+
+
+@pytest.mark.parametrize("class_name,public_id", DRAINAGE_ALGORITHMS)
+def test_drainage_algorithms_declare_and_name(monkeypatch, class_name, public_id):
+    module, algorithm_class = _load("drainage_analysis", class_name)
+    captured = {}
+    monkeypatch.setattr(
+        module,
+        "attach_backend_help",
+        lambda algorithm, tool_name, overrides=None: captured.update(tool=tool_name),
+    )
+    algorithm = algorithm_class()
+    algorithm.initAlgorithm()
+    assert algorithm.name() == public_id
+    assert captured["tool"] == "lsdtt-drainage-analysis"
+    assert isinstance(algorithm.createInstance(), algorithm_class)
+    declared = {output for output in algorithm.outputDefinitions()}
+    assert len(declared) == len(algorithm.OUTPUTS)
+
+
+def test_drainage_area_writes_only_requested_rasters(monkeypatch, tmp_path):
+    algorithm, captured, outputs = _run_drainage(
+        monkeypatch, tmp_path, "DrainageAreaAlgorithm",
+        {"WRITE_D8": False, "WRITE_DINF": True, "WRITE_MFD": True, "MFD_EXPONENT": 1.1},
+        touch=["_dinf_drainage_area.tif", "_mfd_drainage_area.tif"],
+    )
+    values = captured["values"]
+    assert captured["tool"] == "lsdtt-drainage-analysis"
+    assert values["write_d8_drainage_area_raster"] is False
+    assert values["write_dinf_drainage_area_raster"] is True
+    assert values["write_mfd_drainage_area_raster"] is True
+    assert values["mfd_exponent"] == 1.1
+    # Products of the other algorithms are switched off explicitly.
+    assert values["write_twi_raster"] is False
+    assert values["write_sti_raster"] is False
+    assert values["fill_flat_resolution_choice"] == "inline_gradient"
+    assert set(outputs) == {algorithm.OUTPUT_DINF, algorithm.OUTPUT_MFD}
+
+
+def test_drainage_area_needs_one_output(monkeypatch, tmp_path):
+    with pytest.raises(RuntimeError, match="at least one output"):
+        _run_drainage(monkeypatch, tmp_path, "DrainageAreaAlgorithm", {})
+
+
+def test_twi_connectivity_and_hac_map_their_keys(monkeypatch, tmp_path):
+    _, twi, _ = _run_drainage(
+        monkeypatch, tmp_path, "TopographicWetnessIndexAlgorithm",
+        {"TWI_DRAINAGE_AREA_METHOD": 1, "TWI_WINDOW_RADIUS_METRES": 30.0},
+        touch=["_twi.tif"],
+    )
+    assert twi["values"]["write_twi_raster"] is True
+    assert twi["values"]["twi_drainage_area_method"] == "MFD"
+    assert twi["values"]["twi_window_radius_metres"] == 30.0
+
+    algorithm, ic, outputs = _run_drainage(
+        monkeypatch, tmp_path, "ConnectivityIndexAlgorithm",
+        {"CONNECTIVITY_DRAINAGE_AREA_METHOD": 1, "CONNECTIVITY_SLOPE_METHOD": 1,
+         "CONNECTIVITY_ROUGHNESS_METHOD": 1, "CONNECTIVITY_AREA_THRESHOLD_M2": 5e5},
+        touch=["_connectivity_index.tif", "_connectivity_d_up.tif",
+               "_connectivity_d_down.tif"],
+    )
+    values = ic["values"]
+    assert values["write_connectivity_raster"] is True
+    assert values["connectivity_drainage_area_method"] == "dinf"
+    assert values["connectivity_slope_method"] == "wavelet"
+    assert values["connectivity_roughness_method"] == "iqr_residual"
+    assert values["connectivity_area_threshold_m2"] == 5e5
+    assert len(outputs) == 3
+
+    _, hac, _ = _run_drainage(
+        monkeypatch, tmp_path, "HeightAboveChannelAlgorithm",
+        {"THRESHOLD_CONTRIBUTING_PIXELS": 250},
+        touch=["_height_above_channel.tif"],
+    )
+    assert hac["values"]["write_height_above_channel_raster"] is True
+    assert hac["values"]["threshold_contributing_pixels"] == 250
+
+
+def _sti_inputs(tmp_path, **extra):
+    values = {
+        "SOIL_LAYER": _Layer(str(tmp_path / "soils.gpkg|layername=hutton")),
+        "LANDUSE_LAYER": _Layer(str(tmp_path / "landuse.fgb")),
+        "KSAT_CSV": str(tmp_path / "ksat.csv"),
+        "WRITE_STI": True,
+    }
+    values.update(extra)
+    return values
+
+
+def test_sti_maps_layers_and_jenks_outputs(monkeypatch, tmp_path):
+    algorithm, captured, outputs = _run_drainage(
+        monkeypatch, tmp_path, "SoilTopographicIndexAlgorithm",
+        _sti_inputs(tmp_path, WRITE_P95=True, WRITE_P95_JENKS=True,
+                    STI_P95_JENKS_N_CLASSES=4),
+        touch=["_sti.tif", "_sti_p95.tif", "_sti_p95_jenks4.tif"],
+    )
+    values = captured["values"]
+    assert values["sti_soil_fname"] == str(tmp_path / "soils.gpkg")
+    assert values["sti_soil_layer_name"] == "hutton"
+    assert values["sti_landuse_fname"] == str(tmp_path / "landuse.fgb")
+    assert values["sti_landuse_layer_name"] == "landuse"
+    assert values["sti_ksat_fname"] == str(tmp_path / "ksat.csv")
+    assert "sti_spr_fname" not in values
+    assert outputs[algorithm.OUTPUT_STI_P95_JENKS].endswith("run_sti_p95_jenks4.tif")
+    assert set(outputs) == {
+        algorithm.OUTPUT_STI, algorithm.OUTPUT_STI_P95, algorithm.OUTPUT_STI_P95_JENKS,
+    }
+
+
+@pytest.mark.parametrize(
+    "extra,message",
+    [
+        ({"KSAT_CSV": ""}, "saturated conductivity CSV"),
+        ({"STI_TERM_MODE": 1}, "standard percentage runoff CSV"),
+        ({"WRITE_STI": False, "WRITE_STI_PROXY": True}, "standard percentage runoff CSV"),
+        ({"WRITE_LOOKUP_CSV": True}, "standard percentage runoff CSV"),
+    ],
+)
+def test_sti_reports_missing_tables_before_running(monkeypatch, tmp_path, extra, message):
+    with pytest.raises(RuntimeError, match=message):
+        _run_drainage(
+            monkeypatch, tmp_path, "SoilTopographicIndexAlgorithm",
+            _sti_inputs(tmp_path, **extra),
+        )

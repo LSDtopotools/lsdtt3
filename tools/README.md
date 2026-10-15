@@ -334,7 +334,8 @@ cmake -S . -B build\windows-qgis -G "Ninja" `
 cmake --build build\windows-qgis --target `
   lsdtt-raster-preprocessing lsdtt-channel-extraction lsdtt-chi-analysis `
   lsdtt-basin-extraction lsdtt-basin-stats lsdtt-surface-metrics `
-  lsdtt-channel-network-analysis lsdtt-swath-profile
+  lsdtt-channel-network-analysis lsdtt-swath-profile `
+  lsdtt-drainage-analysis
 
 # package (BuildDir defaults to build/windows-qgis, CliProfile to qgis)
 .\tools\package_windows_backend.ps1 -Version 0.5.1

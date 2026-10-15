@@ -28,6 +28,7 @@ from ..naming import (
     extension_for_format,
     lookup_param_help,
     next_qgis_driver_name,
+    source_layer_name,
     split_source,
     strip_layer_suffix,
     write_line_geojson,
@@ -42,6 +43,7 @@ __all__ = [
     "layer_file_path",
     "require_output",
     "run_lsdtt_tool",
+    "source_layer_name",
     "split_layer_source",
 ]
 

@@ -8,6 +8,7 @@ from lsdtt_qgis.naming import (
     next_qgis_driver_name,
     split_source,
     strip_layer_suffix,
+    source_layer_name,
     write_line_geojson,
 )
 
@@ -142,3 +143,13 @@ def test_write_line_geojson_rejects_a_single_point(tmp_path):
 
     with pytest.raises(ValueError, match="at least two points"):
         write_line_geojson(str(tmp_path / "b.geojson"), [(0, 0)])
+
+
+def test_source_layer_name_prefers_layername_option():
+    assert source_layer_name("/d/soils.gpkg|layername=hutton") == "hutton"
+    assert source_layer_name("/d/soils.gpkg|subset=x|layername=lu") == "lu"
+
+
+def test_source_layer_name_falls_back_to_file_stem():
+    assert source_layer_name("/d/hutton_series_code_min.fgb") == "hutton_series_code_min"
+    assert source_layer_name("/d/landuse.shp|layerid=0") == "landuse"

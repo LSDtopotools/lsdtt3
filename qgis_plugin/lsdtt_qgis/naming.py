@@ -168,3 +168,17 @@ def write_line_geojson(path, points, crs_authid=None):
         json.dump(collection, dst)
         dst.write("\n")
     return path
+
+
+def source_layer_name(source):
+    """Return the layer a QGIS vector source refers to.
+
+    The "|layername=..." option when present (GeoPackage and other
+    multi-layer files); otherwise the file stem, which is the layer name
+    GDAL gives single-layer formats such as FlatGeobuf and Shapefile.
+    """
+    for option in source.split("|")[1:]:
+        key, _, value = option.partition("=")
+        if key.strip().lower() == "layername" and value.strip():
+            return value.strip()
+    return os.path.splitext(os.path.basename(strip_layer_suffix(source)))[0]

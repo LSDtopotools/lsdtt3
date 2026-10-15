@@ -123,12 +123,18 @@ Rules of thumb:
 ### Adding a CLI to the plugin
 
 1. Write the wrapper in `qgis_plugin/lsdtt_qgis/algorithms/` and register it
-   in `qgis_plugin/lsdtt_qgis/provider.py`.
-2. Add the CLI to the `qgis` profile in `tools/cli_profiles.txt`, so every
+   in `qgis_plugin/lsdtt_qgis/provider.py`. A CLI that computes several
+   independent products can be several algorithms, one short form each:
+   `drainage_analysis.py` does this for `lsdtt-drainage-analysis` with a
+   shared base class, and writes every `write_*` switch so a run produces
+   only what its form asked for.
+2. List the algorithm in the table in `qgis_plugin/README.md` (the user page
+   on the documentation site).
+3. Add the CLI to the `qgis` profile in `tools/cli_profiles.txt`, so every
    packaging script ships it, and to `REQUIRED_CLIS` in
    `qgis_plugin/lsdtt_qgis/backend/health.py`. The plugin tests fail until
    all three lists agree.
-3. Add its target to the native Windows build command in
+4. Add its target to the native Windows build command in
    [Building on Windows](building_on_windows.md#3-configure-and-build).
 
 ---
