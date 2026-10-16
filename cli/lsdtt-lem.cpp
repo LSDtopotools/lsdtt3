@@ -811,6 +811,17 @@ int main(int argc, char* argv[])
         "defines channel pixels for hillslope coupling.",
         "Process parameters", "param", ""};
 
+    int_default_map["drainage_area_moving_average_kernel_size_pixels"] = 1;
+    help_map["drainage_area_moving_average_kernel_size_pixels"] = {
+        "int", "1",
+        "Odd-sized square moving-average kernel for drainage area used by "
+        "D8 or D-infinity stream-power incision and channel thresholding; "
+        "1 disables smoothing.",
+        "Must be a positive odd number. The filter is applied to drainage area "
+        "before the threshold and incision calculation, following the convention "
+        "used by lsdtt-advection-diffusion.",
+        "Process parameters", "param", ""};
+
     string_default_map["hillslope_channel_coupling"] = "auto";
     help_map["hillslope_channel_coupling"] = {"string","auto",
         "Which channel/hillslope coupling to run: auto, coupled, or "
@@ -1209,6 +1220,14 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
+    if (ifs["drainage_area_moving_average_kernel_size_pixels"] <= 0 ||
+        ifs["drainage_area_moving_average_kernel_size_pixels"] % 2 == 0)
+    {
+        std::cerr << "FATAL: drainage_area_moving_average_kernel_size_pixels "
+                     "must be a positive odd number.\n";
+        return 1;
+    }
+
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
 
@@ -1221,6 +1240,8 @@ int main(int argc, char* argv[])
     opts.m_exponent                      = ff["m_exponent"];
     opts.n_exponent                      = ff["n_exponent"];
     opts.incision_threshold_area         = ff["incision_threshold_specific_area"];
+    opts.drainage_area_moving_average_kernel_size_pixels =
+        ifs["drainage_area_moving_average_kernel_size_pixels"];
     opts.divide_area_by_dx               = bf["divide_area_by_dx"];
     opts.coupling_regime =
         lsdtt::parse_hillslope_coupling_regime(sf["hillslope_channel_coupling"]);

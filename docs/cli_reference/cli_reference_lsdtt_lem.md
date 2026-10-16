@@ -131,6 +131,7 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 | `n_exponent` | float | `1.0` | Slope exponent n. n=1 uses a closed-form solver; n≠1 uses Newton–Raphson. |
 | `incision_threshold_specific_area` | float | `0` | **With `divide_area_by_dx: true` (default):** specific catchment area A/dx in metres. **With `false`:** total map area A in m². `0` = no threshold. Also defines channel pixels for hillslope coupling. The former `incision_threshold_area` spelling is an unchanged-value alias. |
 | `divide_area_by_dx` | bool | `true` | Divide drainage area by cell size to obtain specific area before comparing against `incision_threshold_specific_area`. |
+| `drainage_area_moving_average_kernel_size_pixels` | int | `1` | Odd-sized square moving-average kernel applied to drainage area before stream-power incision and channel-threshold testing. `1` disables filtering; positive odd values are required. |
 | `slope_clamp` | float | `1e-5` | Minimum slope used as Newton–Raphson fallback in the stream-power solver. |
 
 ---
@@ -144,6 +145,11 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 | `critical_hillslope_slope` | float | `0.8` | Critical slope Sc (m/m) for nonlinear hillslope transport. |
 | `channel_mask_fname` | string | `` | Optional raster (in `read_path`) whose cells > 0.5 are fixed-elevation channel pixels for the hillslope Dirichlet set, overriding the drainage-area threshold. Must match the DEM grid. Empty = derive channels from drainage area. |
 | `channel_mask_threshold_specific_area` | float | `0` | **With `divide_area_by_dx: true` (default):** A/dx in metres. **With `false`:** map area A in m². Threshold for a written channel mask; `0` uses `incision_threshold_specific_area`. The former `channel_mask_threshold_area` spelling is an unchanged-value alias. |
+
+The drainage-area filter follows the same convention as `lsdtt-advection-diffusion`:
+the kernel is a square, odd number of pixels on a side, and the default value of
+`1` disables smoothing. Filtering is applied to the drainage area used by both
+stream-power incision and area-threshold channel identification.
 
 ### `cellular` transport and tracing
 
@@ -593,6 +599,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `enable_d8_fluvial_erosion` | `bool` | `true` | `switch` | - | Enable D8 stream-power fluvial incision. | D8 with n=1 always uses closed-form and is therefore very stable. For other n uses Newton-Raphson. |
 | `enable_dinf_fluvial_erosion` | `bool` | `false` | `switch` | - | Enable D-infinity stream-power fluvial incision. | Uses stable closed-form for n=1 only on nodes that have only a single receiver, otherwise uses Newton-Raphson. |
+| `drainage_area_moving_average_kernel_size_pixels` | `int` | `1` | `param` | - | Odd-sized square moving-average kernel for drainage area used by stream-power incision and channel thresholding. | `1` disables smoothing; must be a positive odd number. |
 | `enable_hillslope_transport` | `bool` | `false` | `switch` | - | Enable Cidre hillslope diffusion. | - |
 | `enable_nonlinear_hillslopes` | `bool` | `false` | `switch` | - | Use nonlinear transport (Roering 1999 or Carretier et al. 2016 depending on hillslope_model). | Requires enable_hillslope_transport. |
 | `critical_slope_clamp_only` | `bool` | `false` | `switch` | - | With hillslope_ss_model: critical_slope, LOWER cells above the target gradient instead of imposing it everywhere. | The default imposes z = z_receiver + dx*S_c on every hillslope cell, manufacturing a landscape of uniform critical slopes and destroying whatever form the input had. Clamping preserves the input wherever it is already admissible and cuts back only the super-critical parts. Intended for handing an equilibrated LINEAR landscape to a Roering run: linear diffusion has no critical slope, so its steady state routinely carries gradients above S_c where the Roering flux law is singular. NOTE this limits the gradient ALONG THE FLOW PATH, not the full gradient magnitude the flux law uses -- cross-slope can still exceed S_c, so use critical_slope_clamp_fraction to leave headroom. |

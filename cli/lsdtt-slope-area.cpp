@@ -350,6 +350,12 @@ int main(int argc, char* argv[])
         "Write the drainage-area and flow-direction rasters.",
         "The drainage-area raster is used by the slope-area analysis.",
         "Flow information", "switch", ""};
+    bool_default_map["write_log10_drainage_area_raster"] = false;
+    help_map["write_log10_drainage_area_raster"] = {"bool", "false",
+        "Write the base-10 logarithm of the drainage-area raster.",
+        "Values are log10 of each positive drainage-area pixel; non-positive "
+        "and nodata pixels remain nodata.",
+        "Flow information", "switch", ""};
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string", "oooo",
         "Boundary conditions for flow routing.",
@@ -469,6 +475,29 @@ int main(int argc, char* argv[])
                     parser.get_write_path() + "/" + parser.get_write_fname() +
                     "_d8_flow_direction.tif");
             }
+            if (bf.at("write_log10_drainage_area_raster"))
+            {
+                auto log_area = drainage_area;
+                for (std::size_t i = 0; i < log_area.get_data().size(); ++i)
+                {
+                    if (log_area.get_mask()[i] == 0 ||
+                        log_area.get_data()[i] <= 0.0f)
+                    {
+                        log_area.get_data()[i] =
+                            static_cast<float>(log_area.get_meta().no_data_value);
+                    }
+                    else
+                    {
+                        log_area.get_data()[i] =
+                            std::log10(log_area.get_data()[i]);
+                    }
+                }
+                lsdtt::lsdtt_data_loader loader;
+                loader.write_full(
+                    log_area.get_data(), log_area.get_meta(),
+                    parser.get_write_path() + "/" + parser.get_write_fname() +
+                    "_d8_log10_drainage_area.tif");
+            }
         }
         else if (flow_algorithm == "dinf")
         {
@@ -488,6 +517,29 @@ int main(int argc, char* argv[])
                     drainage_area.get_data(), drainage_area.get_meta(),
                     parser.get_write_path() + "/" + parser.get_write_fname() +
                     "_dinf_drainage_area.tif");
+            }
+            if (bf.at("write_log10_drainage_area_raster"))
+            {
+                auto log_area = drainage_area;
+                for (std::size_t i = 0; i < log_area.get_data().size(); ++i)
+                {
+                    if (log_area.get_mask()[i] == 0 ||
+                        log_area.get_data()[i] <= 0.0f)
+                    {
+                        log_area.get_data()[i] =
+                            static_cast<float>(log_area.get_meta().no_data_value);
+                    }
+                    else
+                    {
+                        log_area.get_data()[i] =
+                            std::log10(log_area.get_data()[i]);
+                    }
+                }
+                lsdtt::lsdtt_data_loader loader;
+                loader.write_full(
+                    log_area.get_data(), log_area.get_meta(),
+                    parser.get_write_path() + "/" + parser.get_write_fname() +
+                    "_dinf_log10_drainage_area.tif");
             }
         }
         else
