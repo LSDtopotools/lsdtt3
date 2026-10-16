@@ -211,14 +211,25 @@ snakemake = "*"
 # `build` is the PEP 517 front end. It creates an isolated virtualenv and
 # installs the backend pinned in python_bindings/pyproject.toml into THAT, so
 # the wheel is built against the declared pins rather than against whatever
-# happens to be installed here. This environment therefore does not need
-# nanobind or scikit-build-core itself.
+# happens to be installed here. The wheel build therefore does not use the
+# nanobind and scikit-build-core below.
+#
+# They (and pip) are here for DEVELOPING the bindings: an editable,
+# in-environment build that the binding tests and API-contract checks run
+# against, without a separate multi-GB environment (on /mnt/c pixi cannot
+# hard-link from its cache, so every environment is a full copy). That build
+# must be pointed at the SYSTEM GDAL, and its tests run with this environment's
+# Python directly plus an LD_PRELOAD of its libstdc++; the exact commands are in
+# docs/developer_notes/python_bindings_architecture.md. Never publish it.
 #
 # Python is pinned below 3.14 because that is what the wheel targets
 # (cp310-cp314 in pyproject.toml) and because the build backend chain is better
-# tested there.
+# tested there. The two build pins follow python_bindings/pyproject.toml.
 [feature.packaging.dependencies]
 python = ">=3.11,<3.14"
+scikit-build-core = ">=0.10"
+nanobind = ">=3.0,<3.1"
+pip = "*"
 
 [feature.packaging.pypi-dependencies]
 build = "*"

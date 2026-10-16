@@ -1,0 +1,15 @@
+# C14: a forcing K with a K raster needs erodibility supplied.
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemknoref
+read_initial_dem: true
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 20
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+erodibility_fname: lemk_k_uniform.tif
+forcing_history_fname: lemk_forcing_K.csv

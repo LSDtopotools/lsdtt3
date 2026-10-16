@@ -1,0 +1,14 @@
+# Synthetic run with no synthetic_crs_wkt: the grid must be placed on the
+# default synthetic georeference (Watopia, UTM zone 58S).
+write_path: __WRITE_PATH__
+write_fname: lemsyngeoref
+n_rows: 20
+n_cols: 30
+cell_size_metres: 30
+noise_type: white_noise
+max_initial_elevation: 1
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 2
+write_output_format: gtiff

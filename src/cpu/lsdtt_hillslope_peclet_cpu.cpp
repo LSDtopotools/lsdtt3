@@ -11,6 +11,7 @@
 // refused rather than approximated.
 
 #include "lsdtt_hillslope_peclet_cpu.hpp"
+#include "lsdtt_stream_power_cpu.hpp"
 
 #include <cmath>
 #include <iomanip>
@@ -176,7 +177,8 @@ hillslope_peclet_inversion_result invert_for_K_and_D(
     // geologically sensible is the user's call, so they are reported rather
     // than clamped.
     if (K < 1e-8 || K > 1e-1 || D < 1e-4 || D > 1e2)
-        msg << "\n  NOTE: K = " << K << " m^(1-2m)/yr and D = " << D
+        msg << "\n  NOTE: K = " << K << " "
+            << describe_erodibility_units(opts.m, opts.divide_area_by_dx) << " and D = " << D
             << " m^2/yr are outside the range usually\n  reported for natural "
                "landscapes. Not clamped - judge them yourself.";
 

@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -29,6 +30,7 @@
 #include <gdal.h>
 #include <gdal_priv.h>
 #include <gdal_utils.h>
+#include <ogr_spatialref.h>
 #include <cpl_conv.h>
 #include <ogrsf_frmts.h>
 
@@ -586,7 +588,15 @@ void lsdtt_data_loader::open_raster(const std::string& filepath)
     }
 
     raster_dataset_.reset(raw);
-    read_meta_from_dataset();
+    try
+    {
+        read_meta_from_dataset();
+    }
+    catch (...)
+    {
+        raster_dataset_.reset();
+        throw;
+    }
 
     // Record the driver name for same_as_input output
     input_driver_name_ = raw->GetDriver()
@@ -594,6 +604,11 @@ void lsdtt_data_loader::open_raster(const std::string& filepath)
                          : "GTiff";
 
     raster_open_ = true;
+}
+
+int lsdtt_data_loader::band_count() const
+{
+    return (raster_open_ && raster_dataset_) ? raster_dataset_->GetRasterCount() : 0;
 }
 
 bool lsdtt_data_loader::is_open() const
@@ -1712,6 +1727,43 @@ void lsdtt_data_loader::read_meta_from_dataset()
     double gt[6];
     if (raster_dataset_->GetGeoTransform(gt) == CE_None)
     {
+        // The meta holds only gt[0], gt[1], gt[3] and gt[5] (north-up, square
+        // pixels). Anything else would be misread silently by every caller, so
+        // it is refused here. The one exception is non-square pixels in a
+        // GEOGRAPHIC CRS, where degree pixels are routinely non-square (e.g.
+        // Copernicus 30 m above 50 degrees latitude): such rasters must still
+        // open so lsdtt-raster-preprocessing can reproject them, and the
+        // analysis CLIs refuse geographic rasters themselves.
+        const std::string path = raster_dataset_->GetDescription();
+        bool geographic = false;
+        {
+            const char* proj = raster_dataset_->GetProjectionRef();
+            OGRSpatialReference srs;
+            if (proj && *proj && srs.importFromWkt(proj) == OGRERR_NONE)
+                geographic = srs.IsGeographic() != 0;
+        }
+        const double ax = std::fabs(gt[1]);
+        if (std::fabs(gt[2]) > 1e-9 * ax || std::fabs(gt[4]) > 1e-9 * ax)
+        {
+            std::ostringstream msg;
+            msg << path << ": rotated geotransform (terms " << gt[2] << ", " << gt[4]
+                << "); lsdtt3 needs north-up rasters -- warp it first (e.g. gdalwarp)";
+            throw std::runtime_error(msg.str());
+        }
+        if (gt[5] >= 0.0)
+        {
+            std::ostringstream msg;
+            msg << path << ": raster is not north-up (pixel height " << gt[5] << " >= 0)";
+            throw std::runtime_error(msg.str());
+        }
+        if (!geographic && std::fabs(gt[1] + gt[5]) > 1e-6 * ax)
+        {
+            std::ostringstream msg;
+            msg << std::setprecision(12) << path << ": pixels are not square (dx = " << gt[1]
+                << ", dy = " << -gt[5] << "); lsdtt3 needs square pixels -- resample it first "
+                << "(e.g. gdalwarp -tr " << gt[1] << " " << gt[1] << ")";
+            throw std::runtime_error(msg.str());
+        }
         meta_.x_min     = gt[0];
         meta_.cell_size = gt[1];
         // gt[3] is the top-left y (northing of first row)

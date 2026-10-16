@@ -40,6 +40,12 @@ def parse_args() -> argparse.Namespace:
         help="Expect the CLI to fail (non-zero exit code)",
     )
     parser.add_argument(
+        "--expect-exit-code",
+        type=int,
+        default=None,
+        help="Expect this exact exit code. A non-zero value implies --expect-failure",
+    )
+    parser.add_argument(
         "--stderr-contains",
         action="append",
         default=[],
@@ -483,6 +489,19 @@ def main() -> int:
     # written first, so a hung or killed test leaves its evidence on disk.
     cmd = [str(exe), str(work_dir), param_name]
     result = lsdtt_test_env.run_logged(cmd, work_dir, cwd=work_dir)
+
+    if args.expect_exit_code is not None and args.expect_exit_code != 0:
+        args.expect_failure = True
+    if args.expect_exit_code is not None and result.returncode != args.expect_exit_code:
+        print(
+            f"Validation failed: expected exit code {args.expect_exit_code}, "
+            f"got {result.returncode}",
+            file=sys.stderr,
+        )
+        print(f"Command: {' '.join(cmd)}", file=sys.stderr)
+        print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)
+        print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
+        return 4
 
     if args.expect_failure:
         if result.returncode == 0:

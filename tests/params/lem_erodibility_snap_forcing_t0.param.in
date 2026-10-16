@@ -1,0 +1,15 @@
+# C16 / D7: the snap uses the forcing history K at t = 0.
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemksnapt0
+read_initial_dem: true
+erodibility: 1e-4
+boundary_conditions: oooo
+n_threads: 1
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+snap_initial_surface_to_steady_state: true
+forcing_history_fname: lemk_forcing_K_t0.csv
+number_of_iterations: 1

@@ -9,8 +9,11 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <cpu/lsdtt_lem_cpu.hpp>
+#include <cpu/lsdtt_lem_parameter_rasters_cpu.hpp>
+#include <cpu/lsdtt_stream_power_cpu.hpp>
 
 #include "binding_common.hpp"
 
@@ -126,6 +129,57 @@ std::vector<std::uint8_t> binary_channel_mask(const Raster& dem, const Raster& c
     return result;
 }
 
+
+// The calibration a Python caller states for a K field. n is the model's own:
+// only m and the area convention are exposed, so n is never "unstated".
+lsdtt::lsdtt_lem_erodibility_field_options erodibility_options(
+    float reference, float m, float n, nb::object stated_m, nb::object stated_convention)
+{
+    lsdtt::lsdtt_lem_erodibility_field_options o;
+    o.reference_erodibility = reference;
+    o.model_m_exponent = m;
+    o.model_n_exponent = n;
+    o.divide_area_by_dx = true;
+    o.source_label = "erodibility_field";
+    o.stated.n_exponent = n;
+    if (!stated_m.is_none()) o.stated.m_exponent = nb::cast<float>(stated_m);
+    if (!stated_convention.is_none())
+        o.stated.area_convention =
+            lsdtt::parse_erodibility_area_convention(nb::cast<std::string>(stated_convention));
+    return o;
+}
+
+// A Raster strictly on the DEM grid, or a (n_rows, n_cols) array with NaN only
+// on DEM nodata. Returns the validated field in the run's convention; the
+// validator's warnings become Python UserWarnings.
+std::vector<float> erodibility_field_from_object(const lsdtt::lsdtt_raster_cpu& dem,
+                                                 nb::object field,
+                                                 const lsdtt::lsdtt_lem_erodibility_field_options& o)
+{
+    lsdtt::lsdtt_lem_erodibility_field f;
+    if (nb::isinstance<Raster>(field))
+        f = lsdtt::validate_lem_erodibility_field(nb::cast<const Raster&>(field).native(), dem, o);
+    else
+    {
+        nb::object numpy = nb::module_::import_("numpy");
+        nb::object array = numpy.attr("asarray")(field, nb::arg("dtype") = "float32");
+        const auto& meta = dem.get_meta();
+        const nb::tuple shape = nb::cast<nb::tuple>(array.attr("shape"));
+        if (nb::cast<int>(array.attr("ndim")) != 2 || nb::cast<int>(shape[0]) != meta.n_rows ||
+            nb::cast<int>(shape[1]) != meta.n_cols)
+            throw std::invalid_argument("erodibility_field must be a Raster on the DEM grid or a (" +
+                                        std::to_string(meta.n_rows) + ", " +
+                                        std::to_string(meta.n_cols) + ") array");
+        const auto values = nb::cast<std::vector<float>>(array.attr("ravel")());
+        std::vector<std::uint8_t> valid(values.size());
+        for (std::size_t i = 0; i < values.size(); ++i) valid[i] = std::isnan(values[i]) ? 0 : 1;
+        f = lsdtt::validate_lem_erodibility_values(values, valid, dem, o);
+    }
+    for (const auto& w : f.warnings)
+        if (PyErr_WarnEx(PyExc_UserWarning, w.c_str(), 2) < 0) throw nb::python_error();
+    return f.values;
+}
+
 class LandscapeStepResult
 {
 public:
@@ -171,10 +225,15 @@ public:
                    double cellular_cfl_safety, double cellular_nonlocal_fraction,
                    double cellular_nonlocal_activation_ratio,
                    double cellular_nonlocal_deposition_probability,
-                   int cellular_nonlocal_max_hops)
+                   int cellular_nonlocal_max_hops, nb::object erodibility_field,
+                   nb::object erodibility_m_exponent, nb::object erodibility_area_convention)
         : elevation_(dem.native())
     {
-        if (timestep <= 0.0f || erodibility < 0.0f || uplift_rate < 0.0f ||
+        if (!(erodibility > 0.0f))
+            throw std::invalid_argument("erodibility must be > 0 (got " + std::to_string(erodibility) +
+                                        "); K = 0 means no fluvial erosion -- use "
+                                        "fluvial_method='none' instead");
+        if (timestep <= 0.0f || uplift_rate < 0.0f ||
             hillslope_diffusivity < 0.0f || critical_hillslope_slope <= 0.0f ||
             incision_threshold_area < 0.0f)
             throw std::invalid_argument("timestep, critical_hillslope_slope must be positive; rates must be non-negative");
@@ -228,6 +287,37 @@ public:
                 if (options_.explicit_channel_mask[i]) fixed_.push_back(static_cast<std::int64_t>(i));
         std::sort(fixed_.begin(), fixed_.end());
         fixed_.erase(std::unique(fixed_.begin(), fixed_.end()), fixed_.end());
+        stated_m_ = erodibility_m_exponent;
+        stated_convention_ = erodibility_area_convention;
+        if (!erodibility_m_exponent.is_none() || !erodibility_area_convention.is_none())
+            (void)erodibility_options(erodibility, m_exponent, n_exponent,
+                                      erodibility_m_exponent, erodibility_area_convention);
+        if (!erodibility_field.is_none()) set_erodibility_field(erodibility_field);
+    }
+
+    void set_erodibility_field(nb::object field)
+    {
+        if (field.is_none())
+        {
+            options_.erodibility_field.clear();
+            return;
+        }
+        options_.erodibility_field = erodibility_field_from_object(
+            elevation_, field,
+            erodibility_options(options_.erodibility, options_.m_exponent, options_.n_exponent,
+                                stated_m_, stated_convention_));
+    }
+
+    nb::object erodibility_field() const
+    {
+        if (options_.erodibility_field.empty()) return nb::none();
+        std::vector<float> values = options_.erodibility_field;
+        const auto& valid = elevation_.get_mask();
+        const float nd = static_cast<float>(elevation_.get_meta().no_data_value);
+        for (std::size_t i = 0; i < values.size(); ++i)
+            if (!valid[i]) values[i] = nd;
+        return nb::cast(Raster(lsdtt::lsdtt_raster_cpu(std::move(values),
+            std::vector<std::uint8_t>(valid), elevation_.get_meta())));
     }
 
     Raster elevation() const { return Raster(elevation_); }
@@ -279,6 +369,8 @@ private:
     lsdtt::lsdtt_hillslope_cellular_workspace cellular_ws_;
     int iteration_ = 0;
     float time_years_ = 0.0f;
+    nb::object stated_m_ = nb::none();
+    nb::object stated_convention_ = nb::none();
 };
 
 #ifdef LSDTT_PYTHON_COMPATIBILITY_PROBE
@@ -345,7 +437,8 @@ B. Gailleton
         .def(nb::init<const Raster&, float, float, float, float, float, float,
                       const std::string&, bool, float, float, const std::string&,
                       const std::string&, const std::string&, nb::object, bool,
-                      nb::object, int, float, double, double, double, double, double, int>(),
+                      nb::object, int, float, double, double, double, double, double, int,
+                      nb::object, nb::object, nb::object>(),
              nb::arg("dem"), nb::arg("timestep_years") = 100.0f,
              nb::arg("erodibility") = 1.0e-3f, nb::arg("m_exponent") = 0.45f,
              nb::arg("n_exponent") = 1.0f, nb::arg("uplift_rate") = 1.0e-4f,
@@ -361,7 +454,10 @@ B. Gailleton
              nb::arg("cellular_nonlocal_fraction") = 0.0,
              nb::arg("cellular_nonlocal_activation_ratio") = 0.8,
              nb::arg("cellular_nonlocal_deposition_probability") = 0.5,
-             nb::arg("cellular_nonlocal_max_hops") = 4, R"doc(
+             nb::arg("cellular_nonlocal_max_hops") = 4,
+             nb::arg("erodibility_field") = nb::none(),
+             nb::arg("erodibility_m_exponent") = nb::none(),
+             nb::arg("erodibility_area_convention") = nb::none(), R"doc(
 Create a coupled landscape-evolution model from an in-memory DEM.
 
 Parameters
@@ -371,7 +467,8 @@ dem : Raster
 timestep_years : float, optional
     Duration of each call to ``step``.
 erodibility, m_exponent, n_exponent : float, optional
-    Stream-power incision parameters.
+    Stream-power incision parameters. ``erodibility`` must be > 0; it is also the
+    reference K for ``erodibility_field``.
 uplift_rate, hillslope_diffusivity : float, optional
     Uniform uplift in m yr⁻¹ and hillslope diffusivity in m² yr⁻¹.
 hillslope_model : {"none", "linear", "roering", "roering_implicit", "cidre", "adi", "cellular"}, optional
@@ -398,6 +495,14 @@ baselevel_fall_rate : float, optional
     Downward motion of fixed base-level cells in m yr⁻¹.
 cellular_r_match, cellular_cfl_safety, cellular_nonlocal_fraction : float, optional
     Cellular-hillslope calibration, stability, and optional nonlocal-transfer controls.
+erodibility_field : Raster or numpy.ndarray, optional
+    Per-pixel absolute erodibility K replacing ``erodibility`` in the fluvial step: a
+    Raster strictly on the DEM grid or a ``(n_rows, n_cols)`` array (NaN only on DEM
+    nodata). Every valid pixel needs a finite K > 0.
+erodibility_m_exponent : float, optional
+    The m the field was calibrated for; a different m raises ``ValueError``.
+erodibility_area_convention : {"map_area", "specific_area"}, optional
+    Area convention of the field; ``map_area`` K is converted by dx**m.
 
 Returns
 -------
@@ -420,7 +525,8 @@ B. Gailleton
               double cellular_cfl_safety, double cellular_nonlocal_fraction,
               double cellular_nonlocal_activation_ratio,
               double cellular_nonlocal_deposition_probability,
-              int cellular_nonlocal_max_hops)
+              int cellular_nonlocal_max_hops, nb::object erodibility_field,
+              nb::object erodibility_m_exponent, nb::object erodibility_area_convention)
         {
             if (PyErr_WarnEx(PyExc_DeprecationWarning,
                     "'incision_threshold_area' is deprecated; use "
@@ -434,7 +540,8 @@ B. Gailleton
                 hold_channel_mask_fixed, fixed_pixels, n_threads,
                 baselevel_fall_rate, cellular_r_match, cellular_cfl_safety,
                 cellular_nonlocal_fraction, cellular_nonlocal_activation_ratio,
-                cellular_nonlocal_deposition_probability, cellular_nonlocal_max_hops);
+                cellular_nonlocal_deposition_probability, cellular_nonlocal_max_hops,
+                erodibility_field, erodibility_m_exponent, erodibility_area_convention);
         }, nb::arg("dem"), nb::arg("timestep_years") = 100.0f,
            nb::arg("erodibility") = 1.0e-3f, nb::arg("m_exponent") = 0.45f,
            nb::arg("n_exponent") = 1.0f, nb::arg("uplift_rate") = 1.0e-4f,
@@ -450,8 +557,32 @@ B. Gailleton
            nb::arg("cellular_nonlocal_fraction") = 0.0,
            nb::arg("cellular_nonlocal_activation_ratio") = 0.8,
            nb::arg("cellular_nonlocal_deposition_probability") = 0.5,
-           nb::arg("cellular_nonlocal_max_hops") = 4)
+           nb::arg("cellular_nonlocal_max_hops") = 4,
+           nb::arg("erodibility_field") = nb::none(),
+           nb::arg("erodibility_m_exponent") = nb::none(),
+           nb::arg("erodibility_area_convention") = nb::none())
         .def_prop_ro("elevation", &LandscapeModel::elevation)
+        .def_prop_ro("erodibility_field", &LandscapeModel::erodibility_field,
+                     "The per-pixel erodibility in use (run convention), or None.")
+        .def("set_erodibility_field", &LandscapeModel::set_erodibility_field,
+             nb::arg("field").none(), R"doc(
+Replace the per-pixel erodibility used by subsequent steps.
+
+Parameters
+----------
+field : Raster, numpy.ndarray or None
+    Absolute K strictly on the model grid (Raster), or a ``(n_rows, n_cols)`` array
+    with NaN only on DEM nodata; ``None`` returns to the scalar ``erodibility``.
+    Every valid pixel needs a finite K > 0.
+
+Returns
+-------
+None
+
+Authors
+-------
+B. Gailleton
+)doc")
         .def_prop_ro("iteration", &LandscapeModel::iteration)
         .def_prop_ro("time_years", &LandscapeModel::time_years)
         .def_prop_ro("coupling_regime", &LandscapeModel::coupling_regime,

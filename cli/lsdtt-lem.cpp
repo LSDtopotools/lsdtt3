@@ -49,6 +49,8 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/cpu/lsdtt_lem_cpu.hpp"
+#include "../src/cpu/lsdtt_lem_input_grid_cpu.hpp"
+#include "../src/cpu/lsdtt_lem_parameter_rasters_cpu.hpp"
 #include "../src/cpu/lsdtt_stream_power_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -224,6 +226,7 @@ int main(int argc, char* argv[])
     std::map<std::string, float>       float_default_map;
     std::map<std::string, int>         int_default_map;
     std::map<std::string, std::string> string_default_map;
+    std::map<std::string, double>      double_default_map;
     lsdtt::lsdtt_help_registry help_map;
 
     // --- DEM loading vs synthetic surface ---
@@ -246,8 +249,8 @@ int main(int argc, char* argv[])
     string_default_map["synthetic_crs_wkt"] = "";
     help_map["synthetic_crs_wkt"] = {"string","",
         "Coordinate Reference System WKT string for synthetic surfaces.",
-        "If left empty (the default), this automatically assigns EPSG:32601 (UTM Zone 1N) "
-        "and places the lower-left corner at 500000E, 0N.",
+        "If left empty (the default), the grid is centred on Watopia (Teanu Island) in "
+        "EPSG:32758 (WGS 84 / UTM zone 58S). A supplied WKT puts the lower-left corner at 0E, 0N.",
         "Grid (when not loading a DEM)", "param", ""};
 
     // --- Initial conditions ---
@@ -676,8 +679,10 @@ int main(int argc, char* argv[])
     help_map["channel_mask_fname"] = {"string","",
         "Optional raster (in read_path) whose cells > 0.5 are fixed-elevation channel "
         "pixels for the hillslope Dirichlet set, overriding the drainage-area threshold.",
-        "Must match the DEM grid. Empty (default) = derive channels from "
-        "incision_threshold_specific_area. Useful for prescribed-channel / hillslope-strip runs.",
+        "Must lie on the model grid (rows, cols, cell size, origin and CRS), or be placed on it "
+        "by input_raster_placement, like erodibility_fname. Empty (default) = derive channels "
+        "from incision_threshold_specific_area. Useful for prescribed-channel / hillslope-strip "
+        "runs.",
         "roering_implicit solver knobs (used only when hillslope_model = roering_implicit)", "param", ""};
 
     bool_default_map["hold_channel_mask_fixed"] = false;
@@ -764,9 +769,105 @@ int main(int argc, char* argv[])
 
     float_default_map["erodibility"] = 1e-3f;
     help_map["erodibility"] = {"float","1e-3",
-        "Stream-power erodibility K (m^(1-2m) yr^-1).",
-        "Scales fluvial incision rate.",
+        "Stream-power erodibility K. Must be > 0.",
+        "Scales fluvial incision rate. Units: m^(1-m) yr^-1 with divide_area_by_dx: true "
+        "(the default; specific area a = A/dx, so K is tied to m and to the cell size: "
+        "K_specific = K_map * dx^m), or m^(1-2m) yr^-1 with divide_area_by_dx: false (map area).",
         "Process parameters", "param", ""};
+
+    // Spatially varying erodibility and the model grid.
+    string_default_map["erodibility_fname"] = "";
+    help_map["erodibility_fname"] = {"string","",
+        "Optional raster (in read_path) of ABSOLUTE erodibility K per pixel.",
+        "Replaces the scalar erodibility in the fluvial step. Every DEM-valid pixel needs a "
+        "finite K > 0 (nodata inside the domain is refused). The scalar erodibility stays the "
+        "reference K: a forcing-history erodibility column scales the whole raster by "
+        "K_forcing / erodibility. The raster is placed on the model grid by "
+        "input_raster_placement; it is never resampled inside the LEM.",
+        "Process parameters", "param", ""};
+
+    float_default_map["erodibility_raster_m_exponent"] = -1.0f;
+    help_map["erodibility_raster_m_exponent"] = {"float","-1",
+        "The m exponent the K raster was calibrated for (< 0 = not stated).",
+        "K is tied to m: a stated m different from m_exponent is fatal; an unstated one gives "
+        "a warning.",
+        "Process parameters", "param", "erodibility_fname"};
+
+    float_default_map["erodibility_raster_n_exponent"] = -1.0f;
+    help_map["erodibility_raster_n_exponent"] = {"float","-1",
+        "The n exponent the K raster was calibrated for (< 0 = not stated).",
+        "A stated n different from n_exponent is fatal; an unstated one gives a warning.",
+        "Process parameters", "param", "erodibility_fname"};
+
+    string_default_map["erodibility_raster_area_convention"] = "unstated";
+    help_map["erodibility_raster_area_convention"] = {"string","unstated",
+        "Area convention of the K raster: map_area, specific_area or unstated.",
+        "map_area K (units m^(1-2m) yr^-1) is converted to the run's specific-area K by dx^m "
+        "when divide_area_by_dx is on; specific_area K is tied to its calibration cell size. "
+        "The conversion and its factor are printed.",
+        "Process parameters", "param", "erodibility_fname"};
+
+    float_default_map["erodibility_raster_calibration_cell_size_metres"] = -1.0f;
+    help_map["erodibility_raster_calibration_cell_size_metres"] = {"float","-1",
+        "Cell size (m) a specific_area K raster was calibrated at (< 0 = not stated).",
+        "A different run cell size converts K by (dx_run/dx_cal)^m, with a note.",
+        "Process parameters", "param", "erodibility_fname"};
+
+    bool_default_map["write_erodibility_raster"] = false;
+    help_map["write_erodibility_raster"] = {"bool","false",
+        "Write the erodibility K that drove the model.",
+        "Output: <write_fname>_erodibility.tif (the last step), and "
+        "<write_fname>_model_iteration_<N>_erodibility.tif at every output frame; "
+        "<write_fname>_steady_state_erodibility.tif in run_steady_state mode. With no "
+        "erodibility_fname the raster is the uniform scalar K.",
+        "Process parameters", "param", ""};
+
+    string_default_map["model_grid_source"] = "auto";
+    help_map["model_grid_source"] = {"string","auto",
+        "What defines the model grid: auto, parameters, dem or erodibility_raster.",
+        "auto = the DEM with read_initial_dem, else parameters (n_rows, n_cols, "
+        "cell_size_metres on the synthetic georeference). erodibility_raster with "
+        "input_raster_placement: as_georeferenced runs a real place: the grid takes the K "
+        "raster's CRS, origin, cell size, rows and cols, and its nodata footprint becomes the "
+        "model domain (the footprint edge is a fixed base level on o/b sides). With "
+        "relabel_whole_raster it takes only the raster's dimensions, on the synthetic "
+        "georeference. erodibility_raster conflicts with n_rows, n_cols and cell_size_metres.",
+        "Grid (when not loading a DEM)", "param", ""};
+
+    string_default_map["input_raster_placement"] = "as_georeferenced";
+    help_map["input_raster_placement"] = {"string","as_georeferenced",
+        "How input rasters (erodibility_fname, channel_mask_fname) are placed on the model grid.",
+        "as_georeferenced: already on the grid (strict check). warp_to_model_grid: warped onto "
+        "the grid (both need a CRS). relabel_whole_raster: same rows, cols and cell size, "
+        "georeference discarded. relabel_centre_clip / relabel_lower_left_clip: an "
+        "n_rows x n_cols window at the model cell size around / from "
+        "(input_raster_clip_easting_metres, input_raster_clip_northing_metres) in the raster's "
+        "CRS, relabelled onto the synthetic grid; never rescaled, resampled to the model cell "
+        "size if needed, refused if it runs off the raster. relabel_* placements need a "
+        "synthetic grid.",
+        "Grid (when not loading a DEM)", "param", ""};
+
+    double_default_map["input_raster_clip_easting_metres"] =
+        std::numeric_limits<double>::quiet_NaN();
+    help_map["input_raster_clip_easting_metres"] = {"double","nan",
+        "Easting of the clip centre (relabel_centre_clip) or lower-left corner "
+        "(relabel_lower_left_clip), in the input raster's projected CRS.",
+        "Required for the clip placements; fatal if given otherwise.",
+        "Grid (when not loading a DEM)", "param", "input_raster_placement"};
+
+    double_default_map["input_raster_clip_northing_metres"] =
+        std::numeric_limits<double>::quiet_NaN();
+    help_map["input_raster_clip_northing_metres"] = {"double","nan",
+        "Northing of the clip centre or lower-left corner, in the input raster's CRS.",
+        "Required for the clip placements; fatal if given otherwise.",
+        "Grid (when not loading a DEM)", "param", "input_raster_placement"};
+
+    string_default_map["input_raster_resampling_method"] = "near";
+    help_map["input_raster_resampling_method"] = {"string","near",
+        "Resampling for warp_to_model_grid and for clips whose cell size differs from the "
+        "model's: near, bilinear, average or mode.",
+        "The channel mask is categorical: near or mode when warped, always near in a clip.",
+        "Grid (when not loading a DEM)", "param", "input_raster_placement"};
 
     float_default_map["m_exponent"] = 0.45f;
     help_map["m_exponent"] = {"float","0.45",
@@ -1213,12 +1314,13 @@ int main(int argc, char* argv[])
         {"incision_threshold_area", "incision_threshold_specific_area"},
         {"channel_mask_threshold_area", "channel_mask_threshold_specific_area"} });
     pp.parse_all_parameters(float_default_map, int_default_map,
-                            bool_default_map, string_default_map);
+                            bool_default_map, string_default_map, double_default_map);
 
     auto bf  = pp.get_bool_parameters();
     auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
+    auto df  = pp.get_double_parameters();
 
     if (ifs["drainage_area_moving_average_kernel_size_pixels"] <= 0 ||
         ifs["drainage_area_moving_average_kernel_size_pixels"] % 2 == 0)
@@ -1272,6 +1374,118 @@ int main(int argc, char* argv[])
     opts.cellular_nonlocal_deposition_probability =
         ff["cellular_nonlocal_deposition_probability"];
     opts.cellular_nonlocal_max_hops      = ifs["cellular_nonlocal_max_hops"];
+
+    // The scalar erodibility is the reference K in every run (Q2): K = 0 would
+    // mean no fluvial erosion, which is what switching fluvial erosion off is for.
+    if (!(opts.erodibility > 0.0f) || !std::isfinite(opts.erodibility))
+    {
+        std::cerr << "FATAL: erodibility must be > 0 (got " << opts.erodibility
+                  << "); K = 0 means no fluvial erosion -- switch fluvial erosion off "
+                     "instead.\n";
+        return 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Model grid source and input-raster placement
+    // -------------------------------------------------------------------------
+    lsdtt::lem_model_grid_source       grid_source;
+    lsdtt::lsdtt_lem_input_raster_placement_options placement_opts;
+    try
+    {
+        grid_source = lsdtt::parse_lem_model_grid_source(sf["model_grid_source"]);
+        placement_opts.placement =
+            lsdtt::parse_lem_input_raster_placement(sf["input_raster_placement"]);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+    placement_opts.clip_easting      = df["input_raster_clip_easting_metres"];
+    placement_opts.clip_northing     = df["input_raster_clip_northing_metres"];
+    placement_opts.resampling_method = sf["input_raster_resampling_method"];
+    placement_opts.n_threads         = ifs["n_threads"];
+    {
+        using P = lsdtt::lem_input_raster_placement;
+        using G = lsdtt::lem_model_grid_source;
+        const P pl = placement_opts.placement;
+        const bool clip = pl == P::relabel_centre_clip || pl == P::relabel_lower_left_clip;
+        const bool has_clip_point = std::isfinite(placement_opts.clip_easting) ||
+                                    std::isfinite(placement_opts.clip_northing);
+        if (clip && !(std::isfinite(placement_opts.clip_easting) &&
+                      std::isfinite(placement_opts.clip_northing)))
+        {
+            std::cerr << "FATAL: input_raster_placement: " << sf["input_raster_placement"]
+                      << " needs input_raster_clip_easting_metres and "
+                         "input_raster_clip_northing_metres.\n";
+            return 1;
+        }
+        if (!clip && has_clip_point)
+        {
+            std::cerr << "FATAL: input_raster_clip_easting_metres / "
+                         "input_raster_clip_northing_metres are only used by the clip "
+                         "placements (relabel_centre_clip, relabel_lower_left_clip), not "
+                      << sf["input_raster_placement"] << ".\n";
+            return 1;
+        }
+        if (grid_source == G::automatic)
+            grid_source = bf["read_initial_dem"] ? G::dem : G::parameters;
+        if (bf["read_initial_dem"] && grid_source != G::dem)
+        {
+            std::cerr << "FATAL: read_initial_dem: true makes the loaded DEM the model grid; "
+                         "model_grid_source: " << sf["model_grid_source"]
+                      << " cannot be combined with it.\n";
+            return 1;
+        }
+        if (grid_source == G::dem && !bf["read_initial_dem"])
+        {
+            std::cerr << "FATAL: model_grid_source: dem needs read_initial_dem: true.\n";
+            return 1;
+        }
+        if (grid_source == G::lithology_raster)
+        {
+            std::cerr << "FATAL: model_grid_source: lithology_raster is reserved for the "
+                         "lithology module, which this build does not have.\n";
+            return 1;
+        }
+        if (grid_source == G::dem && (pl == P::relabel_whole_raster || clip))
+        {
+            std::cerr << "FATAL: input_raster_placement: " << sf["input_raster_placement"]
+                      << " relabels a raster onto a synthetic grid, but the model grid is "
+                         "the loaded DEM, whose georeference is kept. Use as_georeferenced "
+                         "or warp_to_model_grid.\n";
+            return 1;
+        }
+        if (grid_source == G::erodibility_raster)
+        {
+            if (sf["erodibility_fname"].empty())
+            {
+                std::cerr << "FATAL: model_grid_source: erodibility_raster needs "
+                             "erodibility_fname.\n";
+                return 1;
+            }
+            if (pl != P::as_georeferenced && pl != P::relabel_whole_raster)
+            {
+                std::cerr << "FATAL: with model_grid_source: erodibility_raster the K raster "
+                             "IS the grid, so input_raster_placement must be as_georeferenced "
+                             "(a real place) or relabel_whole_raster (its dimensions on the "
+                             "synthetic georeference), not " << sf["input_raster_placement"]
+                          << ".\n";
+                return 1;
+            }
+            std::vector<std::string> conflicts = {"n_rows", "n_cols", "cell_size_metres"};
+            if (pl == P::as_georeferenced) conflicts.push_back("synthetic_crs_wkt");
+            for (const auto& key : conflicts)
+                if (pp.parameter_supplied(key))
+                {
+                    std::cerr << "FATAL: " << key << " conflicts with model_grid_source: "
+                                 "erodibility_raster, which takes the grid from the K "
+                                 "raster. Remove " << key << ".\n";
+                    return 1;
+                }
+        }
+        placement_opts.model_grid_is_synthetic = grid_source != G::dem;
+    }
 
     const std::vector<std::string> valid_hillslope_models = {
         "cellular", "roering_implicit", "cidre", "adi", "linear", "roering"};
@@ -1464,8 +1678,18 @@ int main(int argc, char* argv[])
     std::cout << "\n--- Model configuration ---\n";
     std::cout << "  D8 fluvial erosion   : " << (opts.enable_d8_fluvial_erosion  ? "on" : "off")
               << "  Dinf fluvial erosion   : " << (opts.enable_dinf_fluvial_erosion  ? "on" : "off")
-              << "  (K=" << opts.erodibility << ", m=" << opts.m_exponent
-              << ", n=" << opts.n_exponent << ")\n";
+              << "  (K=" << opts.erodibility
+              << (sf["erodibility_fname"].empty()
+                    ? std::string("")
+                    : std::string(" reference; per-pixel field from erodibility_fname"))
+              << ", m=" << opts.m_exponent << ", n=" << opts.n_exponent << ")\n";
+    {
+        static const char* grid_names[] = {"auto", "parameters", "dem", "erodibility_raster",
+                                           "lithology_raster"};
+        std::cout << "  Model grid        : "
+                  << grid_names[static_cast<int>(grid_source)] << ", input rasters "
+                  << lsdtt::lem_input_raster_placement_name(placement_opts.placement) << "\n";
+    }
     std::cout << "  Hillslope transp. : " << (opts.enable_hillslope_transport ? "on" : "off");
     if (opts.enable_hillslope_transport)
     {
@@ -1537,6 +1761,8 @@ int main(int argc, char* argv[])
     
 
     const bool load_from_file = bf["read_initial_dem"];
+    // Mode 2: the K raster's validity mask, which becomes the model domain.
+    std::vector<std::uint8_t> model_grid_footprint;
 
     if (load_from_file)
     {
@@ -1557,41 +1783,58 @@ int main(int argc, char* argv[])
     }
     else
     {
-        // Synthetic flat or noise surface
-        const int   nr   = ifs["n_rows"];
-        const int   nc   = ifs["n_cols"];
-        const float dx   = ff["cell_size_metres"];
-
-        // Check if user provided WKT, otherwise fallback to EPSG:32601
-        std::string crs_wkt = sf["synthetic_crs_wkt"];
-        double x_origin = 0.0;
-        double y_origin = 0.0;
-
-        if (crs_wkt.empty())
-        {
-            // Hardcoded WKT string for WGS 84 / UTM zone 1N (EPSG:32601)
-            crs_wkt = "PROJCS[\"WGS 84 / UTM zone 1N\",GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AUTHORITY[\"EPSG\",\"4326\"]],PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",-177],PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",500000],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH],AUTHORITY[\"EPSG\",\"32601\"]]";
-            x_origin = 500000.0;
-            y_origin = 0.0;
-        }
-
-        // Build the shared meta object
+        // Synthetic flat or noise surface, on the model grid. With
+        // model_grid_source: parameters a supplied WKT keeps the lower-left corner
+        // at (0, 0) and none centres the grid on the default synthetic
+        // georeference (Watopia, UTM zone 58S). With erodibility_raster the grid
+        // comes from the K raster: its dimensions on the synthetic georeference
+        // (relabel_whole_raster), or the whole grid of a real place
+        // (as_georeferenced, mode 2), whose nodata footprint becomes the domain.
+        const std::string crs_wkt = sf["synthetic_crs_wkt"];
+        std::vector<std::string> grid_warnings;
         lsdtt::lsdtt_raster_meta syn_meta;
-        syn_meta.n_rows        = nr;
-        syn_meta.n_cols        = nc;
-        syn_meta.cell_size     = static_cast<double>(dx);
-        syn_meta.x_min         = x_origin; 
-        syn_meta.y_min         = y_origin;
-        syn_meta.no_data_value = -9999.0;
-        syn_meta.crs_wkt       = crs_wkt;
-
-        // No CRS supplied for a generated DEM: default to a sensible projected
-        // georeference centred on "Watopia" (Teanu Island, UTM zone 58S). This
-        // also overrides the grid origin to centre it on that anchor.
-        if (crs_wkt.empty())
+        try
         {
-            syn_meta.set_default_synthetic_georeference();
+            if (grid_source == lsdtt::lem_model_grid_source::erodibility_raster)
+            {
+                const std::string k_path = pp.add_read_path_if_needed(sf["erodibility_fname"]);
+                lsdtt::lsdtt_data_loader k_loader;
+                k_loader.open_raster(k_path);
+                const lsdtt::lsdtt_lem_source_grid k_src =
+                    lsdtt::describe_lem_source_grid(k_loader, "erodibility");
+                if (placement_opts.placement == lsdtt::lem_input_raster_placement::as_georeferenced)
+                {
+                    syn_meta = lsdtt::make_lem_model_grid_from_raster(k_src, "erodibility");
+                    model_grid_footprint = k_loader.read_full().mask;
+                    std::cout << "\nModel grid from the erodibility raster (a real place): "
+                              << syn_meta.crs_name() << ", origin (" << std::setprecision(12)
+                              << syn_meta.x_min << ", " << syn_meta.y_min << ")"
+                              << std::defaultfloat << std::setprecision(6) << "\n";
+                }
+                else
+                {
+                    syn_meta = lsdtt::make_lem_model_grid_from_raster_dimensions(
+                        k_src, crs_wkt, &grid_warnings);
+                    std::cout << "\nModel grid from the erodibility raster's dimensions, on "
+                                 "the synthetic georeference.\n";
+                }
+            }
+            else
+            {
+                syn_meta = lsdtt::make_lem_synthetic_grid(
+                    ifs["n_rows"], ifs["n_cols"], static_cast<double>(ff["cell_size_metres"]),
+                    crs_wkt, &grid_warnings);
+            }
         }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        for (const auto& w : grid_warnings) std::cerr << "WARNING: " << w << "\n";
+        const int   nr = syn_meta.n_rows;
+        const int   nc = syn_meta.n_cols;
+        const float dx = static_cast<float>(syn_meta.cell_size);
 
         const std::string surf_type = sf["noise_type"];
         std::cout << "\nBuilding synthetic " << surf_type << " surface: "
@@ -1599,8 +1842,10 @@ int main(int argc, char* argv[])
 
         if (!syn_meta.crs_wkt.empty()) {
             std::cout << "Assigned projection to synthetic raster"
-                      << (crs_wkt.empty() ? " (default: Watopia, UTM zone 58S).\n"
-                                          : ".\n");
+                      << (!model_grid_footprint.empty()
+                            ? " (from the erodibility raster).\n"
+                            : crs_wkt.empty() ? " (default: Watopia, UTM zone 58S).\n"
+                                              : ".\n");
         }
 
         if (surf_type == "white_noise")
@@ -1648,6 +1893,28 @@ int main(int argc, char* argv[])
 
             dem = lsdtt::lsdtt_raster_cpu(
                 std::move(data), std::move(mask), syn_meta);
+        }
+
+        // Mode 2: the model domain is the K raster's footprint. Its nodata pixels
+        // become DEM nodata before any conditioning, so the boundary flats below
+        // treat the footprint edge as a fixed base level on o/b sides.
+        if (!model_grid_footprint.empty())
+        {
+            try
+            {
+                const std::size_t removed = lsdtt::apply_lem_source_footprint(
+                    dem, model_grid_footprint, "erodibility");
+                const std::size_t total = model_grid_footprint.size();
+                std::cout << "Model domain = the erodibility raster's footprint: " << removed
+                          << " nodata pixels removed ("
+                          << 100.0 * static_cast<double>(total - removed) / total
+                          << "% of the grid valid).\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
         }
 
         if (ff["initial_surface_slope"] < 0.0f)
@@ -1705,18 +1972,16 @@ int main(int argc, char* argv[])
         std::cout << "Loading channel mask: " << mask_path << "\n";
         try
         {
-            lsdtt::lsdtt_data_loader mask_loader;
-            mask_loader.open_raster(mask_path);
-            lsdtt::lsdtt_raster_cpu mask_raster(mask_loader);
-            const lsdtt::lsdtt_raster_meta& mm = mask_raster.get_meta();
-            const lsdtt::lsdtt_raster_meta& dm = dem.get_meta();
-            if (mm.n_rows != dm.n_rows || mm.n_cols != dm.n_cols)
-            {
-                std::cerr << "FATAL: channel mask grid (" << mm.n_rows << "x" << mm.n_cols
-                          << ") does not match the DEM (" << dm.n_rows << "x" << dm.n_cols
-                          << ").\n";
-                return 1;
-            }
+            // Same grid rules as every LEM input raster (D1c): strict unless
+            // input_raster_placement places it.
+            lsdtt::lsdtt_lem_input_raster_placement_options mask_place = placement_opts;
+            mask_place.categorical = true;
+            const lsdtt::lsdtt_lem_prepared_input_raster prepared =
+                lsdtt::prepare_lem_input_raster(mask_path, dem.get_meta(), mask_place,
+                                                "channel mask");
+            for (const auto& n : prepared.notes) std::cout << "  " << n << "\n";
+            for (const auto& w : prepared.warnings) std::cerr << "WARNING: " << w << "\n";
+            const lsdtt::lsdtt_raster_cpu& mask_raster = prepared.raster;
             const std::vector<float>&   md = mask_raster.get_data();
             const std::vector<uint8_t>& mk = mask_raster.get_mask();
             opts.explicit_channel_mask.assign(md.size(), 0);
@@ -1728,6 +1993,55 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: could not load channel mask: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Optional per-pixel erodibility (erodibility_fname). The loaded field is the
+    // BASE field: before each step it is scaled by K_forcing / erodibility (the
+    // forcing-history rule) into opts.erodibility_field.
+    // -------------------------------------------------------------------------
+    const float erodibility_reference = ff["erodibility"];
+    std::vector<float> erodibility_base_field;
+    const bool erodibility_field_active = !sf["erodibility_fname"].empty();
+    if (erodibility_field_active)
+    {
+        const std::string k_path = pp.add_read_path_if_needed(sf["erodibility_fname"]);
+        std::cout << "\nErodibility raster: " << k_path << "\n"
+                  << "  placement       : "
+                  << lsdtt::lem_input_raster_placement_name(placement_opts.placement) << "\n";
+        lsdtt::lsdtt_lem_erodibility_field_options fo;
+        fo.reference_erodibility = erodibility_reference;
+        fo.model_m_exponent = opts.m_exponent;
+        fo.model_n_exponent = opts.n_exponent;
+        fo.divide_area_by_dx = opts.divide_area_by_dx;
+        fo.source_label = "erodibility";
+        fo.stated.m_exponent = ff["erodibility_raster_m_exponent"];
+        fo.stated.n_exponent = ff["erodibility_raster_n_exponent"];
+        fo.stated.cell_size = ff["erodibility_raster_calibration_cell_size_metres"];
+        try
+        {
+            if (sf["erodibility_raster_area_convention"] != "unstated")
+                fo.stated.area_convention = lsdtt::parse_erodibility_area_convention(
+                    sf["erodibility_raster_area_convention"]);
+            const lsdtt::lsdtt_lem_erodibility_field field =
+                lsdtt::load_lem_erodibility_field(k_path, dem, placement_opts, fo);
+            for (const auto& n : field.notes) std::cout << "  " << n << "\n";
+            std::cout << "  units           : " << field.units << "\n";
+            if (field.conversion_factor != 1.0)
+                std::cout << "  K range (raster): " << field.min_value / field.conversion_factor
+                          << " to " << field.max_value / field.conversion_factor << "\n";
+            std::cout << "  K range (run)   : " << field.min_value << " to " << field.max_value
+                      << " (mean " << field.mean_value << ", " << field.n_valid
+                      << " pixels)\n";
+            for (const auto& w : field.warnings) std::cerr << "WARNING: " << w << "\n";
+            erodibility_base_field = field.values;
+            opts.erodibility_field = erodibility_base_field;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
             return 1;
         }
     }
@@ -1823,6 +2137,30 @@ int main(int argc, char* argv[])
     // Lambda to write the per-pixel erosion rate of a step (m/yr).  The field comes
     // straight from the step statistics, so it is the rate the model actually
     // applied over that step, not a re-derivation.
+    // The erodibility that drove the last step: the scaled field when an
+    // erodibility raster is active, else the uniform scalar. DEM-nodata is nodata.
+    auto write_erodibility = [&](const lsdtt::lsdtt_raster_cpu& state,
+                                 const std::string& descriptor) {
+        if (!bf["write_erodibility_raster"]) return;
+        const std::string path = pp.make_output_path(descriptor, fmt_ext(out_fmt));
+        try
+        {
+            const std::vector<std::uint8_t>& valid = state.get_mask();
+            const lsdtt::lsdtt_raster_meta&  mm    = state.get_meta();
+            std::vector<float> k = opts.erodibility_field.empty()
+                ? std::vector<float>(valid.size(), opts.erodibility)
+                : opts.erodibility_field;
+            const float ndv = static_cast<float>(mm.no_data_value);
+            for (std::size_t i = 0; i < k.size() && i < valid.size(); ++i)
+                if (!valid[i]) k[i] = ndv;
+            loader.write_full(k, mm, path, out_fmt);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: erodibility write failed: " << e.what() << "\n";
+        }
+    };
+
     auto write_erosion_rate = [&](const std::vector<float>& erosion_rate,
                                   const lsdtt::lsdtt_raster_cpu& state,
                                   const std::string& descriptor) {
@@ -1924,7 +2262,12 @@ int main(int argc, char* argv[])
         const lsdtt::hillslope_resolution_estimate hres =
             lsdtt::estimate_hillslope_resolution(
                 static_cast<double>(opts.hillslope_diffusivity),
-                static_cast<double>(opts.erodibility),
+                // With a K field the most erodible pixels make the narrowest
+                // hillslopes, so they set the resolution requirement.
+                static_cast<double>(erodibility_field_active
+                    ? lsdtt::summarise_lem_erodibility_field(erodibility_base_field,
+                                                             dem.get_mask()).max_value
+                    : opts.erodibility),
                 static_cast<double>(dem.get_meta().cell_size),
                 static_cast<double>(opts.m_exponent),
                 static_cast<double>(opts.n_exponent),
@@ -2280,6 +2623,10 @@ int main(int argc, char* argv[])
         ss_opts.baselevel_elevation = ff["baselevel_elevation"];
         ss_opts.divide_area_by_dx   = bf["divide_area_by_dx"];
         ss_opts.n_threads           = ifs["n_threads"];
+        // (H3) RESERVED HOOK: a per-step K source (e.g. lithology) rewrites
+        //      erodibility_base_field here, from the starting surface.
+        if (erodibility_field_active)
+            ss_opts.erodibility_field = erodibility_base_field;
 
         // D8 flow options (reused each cycle)
         lsdtt::lsdtt_flowinfo_options fi_opts;
@@ -2597,33 +2944,24 @@ int main(int argc, char* argv[])
                 else
                     std::cout << "  ";
 
-                // Pit-fill before flow routing (mandatory on every cycle because
-                // the previous cycle's steady-state surface may have depressions).
-                try { cycle_dem = lsdtt::fill_pits(
-                        cycle_dem, ff["fill_min_slope"],
-                        sf["boundary_conditions"], ifs["n_threads"]); }
+                // Pit-fill, route and solve (pit-filling is mandatory on every
+                // cycle: the previous cycle's surface may have depressions).
+                // (H4) RESERVED HOOK: a per-step K source rewrites the solve's
+                //      erodibility_field in the callback, from the filled surface.
+                try
+                {
+                    lsdtt::lsdtt_lem_snap_result snapped =
+                        lsdtt::snap_lem_surface_to_fluvial_steady_state(
+                            cycle_dem, ss_opts, use_dinf, fi_opts, fg_opts,
+                            ff["fill_min_slope"], sf["boundary_conditions"], ifs["n_threads"]);
+                    area_d    = std::move(snapped.drainage_area);
+                    ss_result = std::move(snapped.steady);
+                }
                 catch (const std::exception& e)
                 {
-                    std::cerr << "\nFATAL: pit filling failed (cycle " << cycle
-                              << "): " << e.what() << "\n";
+                    std::cerr << "\nFATAL: steady-state cycle " << cycle << " failed: "
+                              << e.what() << "\n";
                     return 1;
-                }
-
-                if (!use_dinf)
-                {
-                    lsdtt::lsdtt_flowinfo flow(
-                        cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
-                        cycle_dem.get_meta(), fi_opts);
-                    area_d    = flow.accumulate();
-                    ss_result = lsdtt::compute_d8_fluvial_steady_state(flow, ss_opts);
-                }
-                else
-                {
-                    lsdtt::lsdtt_flowgraph_cpu flow(
-                        cycle_dem.get_data_array(), cycle_dem.get_mask_array(),
-                        cycle_dem.get_meta(), fg_opts);
-                    area_d    = flow.accumulate();
-                    ss_result = lsdtt::compute_dinf_fluvial_steady_state(flow, ss_opts);
                 }
 
                 if (cycle < n_cycles)
@@ -2642,6 +2980,33 @@ int main(int argc, char* argv[])
                   << "  K_used         : " << ss_result.K_used << "\n"
                   << "  computed_relief: " << ss_result.computed_relief << " m\n"
                   << "  max_unit_height: " << ss_result.max_unit_height << "\n";
+        if (erodibility_field_active)
+        {
+            std::cout << "  erodibility_field_scale: " << ss_result.erodibility_field_scale
+                      << (ss_opts.relief_mode
+                            ? " (relief mode: the K raster was scaled by this to hit the "
+                              "target relief)\n"
+                            : "\n");
+        }
+        if (bf["write_erodibility_raster"])
+        {
+            std::vector<float> applied;
+            if (erodibility_field_active)
+                lsdtt::scale_lem_erodibility_field(
+                    erodibility_base_field, 1.0f, ss_result.erodibility_field_scale, applied);
+            else
+                applied.assign(ss_result.elevation.get_data().size(), ss_result.K_used);
+            lsdtt::lsdtt_raster_cpu k_out(std::move(applied),
+                                          std::vector<std::uint8_t>(ss_result.elevation.get_mask()),
+                                          ss_result.elevation.get_meta());
+            const std::string kp = pp.make_output_path("_steady_state_erodibility", fmt_ext(out_fmt));
+            std::cout << "Writing steady-state erodibility: " << kp << "\n";
+            try { safe_write(k_out, kp); }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: steady-state erodibility write failed: " << e.what() << "\n";
+            }
+        }
 
         const std::string ss_elev_path = pp.make_output_path("_steady_state_elevation", fmt_ext(out_fmt));
         std::cout << "Writing steady-state elevation: " << ss_elev_path << "\n";
@@ -2875,13 +3240,18 @@ int main(int argc, char* argv[])
         const bool fluvial_on =
             opts.enable_d8_fluvial_erosion || opts.enable_dinf_fluvial_erosion;
 
+        // U and K at t = 0: from the forcing history when one is given (D7: K
+        // too, so the snap matches the first time step), else the parameters.
         float snap_U = opts.enable_uplift ? ff["uplift_rate"] : 0.0f;
-        if (opts.enable_uplift && !sf["forcing_history_fname"].empty())
+        float snap_K = erodibility_reference;
+        if (!sf["forcing_history_fname"].empty())
         {
             try
             {
-                snap_U = lsdtt::load_lem_forcing_history(
-                    pp.add_read_path_if_needed(sf["forcing_history_fname"])).at(0.0f).uplift_rate;
+                const lsdtt::lsdtt_lem_forcing_point f0 = lsdtt::load_lem_forcing_history(
+                    pp.add_read_path_if_needed(sf["forcing_history_fname"])).at(0.0f);
+                if (opts.enable_uplift) snap_U = f0.uplift_rate;
+                if (f0.erodibility > 0.0f) snap_K = f0.erodibility;
             }
             catch (const std::exception&)
             {
@@ -2905,7 +3275,24 @@ int main(int argc, char* argv[])
 
             lsdtt::lsdtt_fluvial_steady_state_options snap_opts;
             snap_opts.U                   = snap_U;
-            snap_opts.K                   = ff["erodibility"];
+            snap_opts.K                   = snap_K;
+            // (H2) RESERVED HOOK: a per-step K source (e.g. lithology) rewrites
+            //      erodibility_base_field here, from the surface being snapped.
+            if (erodibility_field_active)
+            {
+                try
+                {
+                    lsdtt::scale_lem_erodibility_field(erodibility_base_field,
+                                                       erodibility_reference, snap_K,
+                                                       snap_opts.erodibility_field);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: snapping the initial surface failed: " << e.what()
+                              << "\n";
+                    return 1;
+                }
+            }
             snap_opts.m                   = ff["m_exponent"];
             snap_opts.n                   = ff["n_exponent"];
             snap_opts.relief_mode         = false;
@@ -2915,33 +3302,19 @@ int main(int argc, char* argv[])
 
             try
             {
-                const lsdtt::lsdtt_raster_cpu filled = lsdtt::fill_pits(
-                    dem, ff["fill_min_slope"], sf["boundary_conditions"],
-                    ifs["n_threads"]);
-
-                lsdtt::lsdtt_fluvial_steady_state_result snap;
-                if (opts.enable_dinf_fluvial_erosion)
-                {
-                    lsdtt::lsdtt_flowgraph_options snap_fg;
-                    snap_fg.method              = lsdtt::lsdtt_flowgraph_method::d_infinity;
-                    snap_fg.boundary_conditions = sf["boundary_conditions"];
-                    snap_fg.n_threads           = ifs["n_threads"];
-                    lsdtt::lsdtt_flowgraph_cpu snap_flow(
-                        filled.get_data_array(), filled.get_mask_array(),
-                        filled.get_meta(), snap_fg);
-                    snap = lsdtt::compute_dinf_fluvial_steady_state(snap_flow, snap_opts);
-                }
-                else
-                {
-                    lsdtt::lsdtt_flowinfo_options snap_fi;
-                    snap_fi.boundary_conditions = sf["boundary_conditions"];
-                    snap_fi.build_s_vector      = false;
-                    snap_fi.n_threads           = ifs["n_threads"];
-                    lsdtt::lsdtt_flowinfo snap_flow(
-                        filled.get_data_array(), filled.get_mask_array(),
-                        filled.get_meta(), snap_fi);
-                    snap = lsdtt::compute_d8_fluvial_steady_state(snap_flow, snap_opts);
-                }
+                lsdtt::lsdtt_flowinfo_options snap_fi;
+                snap_fi.boundary_conditions = sf["boundary_conditions"];
+                snap_fi.build_s_vector      = false;
+                snap_fi.n_threads           = ifs["n_threads"];
+                lsdtt::lsdtt_flowgraph_options snap_fg;
+                snap_fg.method              = lsdtt::lsdtt_flowgraph_method::d_infinity;
+                snap_fg.boundary_conditions = sf["boundary_conditions"];
+                snap_fg.n_threads           = ifs["n_threads"];
+                lsdtt::lsdtt_fluvial_steady_state_result snap =
+                    lsdtt::snap_lem_surface_to_fluvial_steady_state(
+                        dem, snap_opts, opts.enable_dinf_fluvial_erosion, snap_fi, snap_fg,
+                        ff["fill_min_slope"], sf["boundary_conditions"], ifs["n_threads"])
+                        .steady;
 
                 dem = std::move(snap.elevation);
                 std::cout << "  Routing        : "
@@ -3083,6 +3456,18 @@ int main(int argc, char* argv[])
             return 1;
         }
 
+        // A forcing K scales the K raster by K_forcing / erodibility, so the
+        // scalar erodibility must be the one the raster is relative to.
+        bool forcing_sets_k = false;
+        for (const auto& p : forcing.points) forcing_sets_k = forcing_sets_k || p.erodibility > 0.0f;
+        if (erodibility_field_active && forcing_sets_k && !pp.parameter_supplied("erodibility"))
+        {
+            std::cerr << "FATAL: the forcing history sets erodibility, which scales the "
+                         "erodibility raster by K_forcing / erodibility; supply erodibility "
+                         "(the K the raster's values are relative to) in the parameter file.\n";
+            return 1;
+        }
+
         std::cout << "  " << forcing.points.size() << " forcing intervals:\n";
         for (const auto& p : forcing.points)
         {
@@ -3090,7 +3475,12 @@ int main(int argc, char* argv[])
                       << "  U = " << p.uplift_rate << " m/yr"
                       << "   baselevel fall = " << p.baselevel_fall_rate << " m/yr";
             if (p.erodibility > 0.0f)
+            {
                 std::cout << "   K = " << p.erodibility;
+                if (erodibility_field_active)
+                    std::cout << " -> x" << p.erodibility / erodibility_reference
+                              << " on the erodibility raster";
+            }
             if (p.hillslope_diffusivity > 0.0f)
                 std::cout << "   D = " << p.hillslope_diffusivity << " m^2/yr";
             std::cout << "\n";
@@ -3102,7 +3492,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     const std::string stats_csv_path = pp.make_output_path( "_model_elevation_stats", ".csv");
     std::vector<std::vector<std::string>> stats_rows;
-    const std::vector<std::string> stats_headers = {
+    std::vector<std::string> stats_headers = {
         "iteration", "time_yr",
         "delta_max_z", "delta_mean_z",
         "max_local_delta_z",
@@ -3110,6 +3500,10 @@ int main(int argc, char* argv[])
         "uplift_rate", "baselevel_fall_rate",
         "erodibility", "hillslope_diffusivity", "channelization_index"
     };
+    if (erodibility_field_active)
+        for (const char* h : {"erodibility_field_min", "erodibility_field_mean",
+                              "erodibility_field_max"})
+            stats_headers.push_back(h);
 
     // std::to_string writes fixed 6-decimal notation, which reduces K = 6.75e-5
     // to "0.000067". Small process parameters get significant figures instead.
@@ -3217,6 +3611,13 @@ int main(int argc, char* argv[])
                     opts.hillslope_diffusivity = f.hillslope_diffusivity;
             }
 
+            // (H1) RESERVED HOOK: a per-step K source (e.g. lithology) rewrites
+            //      erodibility_base_field here, from the current surface.
+            if (erodibility_field_active)
+                lsdtt::scale_lem_erodibility_field(erodibility_base_field,
+                                                   erodibility_reference, opts.erodibility,
+                                                   opts.erodibility_field);
+
             auto [next, stats] = lsdtt::run_lem_step(
                 current, opts, fixed_flats, &hillslope_ws, &cellular_ws,
                 particle_tracker_ptr);
@@ -3288,6 +3689,15 @@ int main(int argc, char* argv[])
                     static_cast<double>(opts.m_exponent),
                     static_cast<double>(opts.n_exponent)))
             });
+            if (erodibility_field_active)
+            {
+                const lsdtt::lsdtt_lem_erodibility_summary ks =
+                    lsdtt::summarise_lem_erodibility_field(opts.erodibility_field,
+                                                           current.get_mask());
+                stats_rows.back().push_back(sci(ks.min_value));
+                stats_rows.back().push_back(sci(ks.mean_value));
+                stats_rows.back().push_back(sci(ks.max_value));
+            }
 
             // Progress reporting every 10 steps
             if (iter % 10 == 0 || iter <= 5)
@@ -3317,6 +3727,7 @@ int main(int argc, char* argv[])
 
                 write_erosion_rate(stats.erosion_rate, current, frame + "_erosion_rate");
                 write_channel_mask(current, frame + "_channel_mask");
+                write_erodibility(current, frame + "_erodibility");
 
                 if (bf["write_intermediate_hillshade_png"])
                 {
@@ -3392,17 +3803,21 @@ int main(int argc, char* argv[])
                       << " t=" << total_time << "\n"
                       << "  what(): " << e.what() << "\n";
             std::cerr.flush();
-            std::terminate();  // hard stop - avoids recursive throw
+            throw;  // reported once more, as FATAL, by the time-loop handler below
         }
         catch (...)
         {
             std::cerr << "\n[do_step] unknown exception at iter=" << iter
                       << " t=" << total_time << "\n";
             std::cerr.flush();
-            std::terminate();
+            throw;
         }
     };
 
+    // A failure inside a step (a bad per-step K, a solver error) ends the run
+    // with a FATAL message and exit code 1; final outputs are not written.
+    try
+    {
     if (steady_state)
     {
         std::cout << "(Steady-state stopping criterion active)\n";
@@ -3470,6 +3885,19 @@ int main(int argc, char* argv[])
         for (int i = 0; i < n_iter && !stop_early; ++i)
             do_step();
     }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: time step failed at iter=" << iter << " t=" << total_time
+                  << ": " << e.what() << "\n";
+        return 1;
+    }
+    catch (...)
+    {
+        std::cerr << "FATAL: time step failed at iter=" << iter << " t=" << total_time
+                  << "\n";
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Write final topography
@@ -3486,6 +3914,7 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
+    write_erodibility(current, "_erodibility");
     try
     {
         write_intermediate_diagnostics(

@@ -1,0 +1,21 @@
+# C22: mode 1 (c), a 20x30 window from the grid corner (500300, 5000400).
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lemkll
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 5
+timestep: 100
+write_output_format: gtiff
+noise_type: white_noise
+max_initial_elevation: 1
+n_rows: 20
+n_cols: 30
+cell_size_metres: 10
+input_raster_placement: relabel_lower_left_clip
+input_raster_clip_easting_metres: 500300
+input_raster_clip_northing_metres: 5000400
+erodibility_fname: lemk_k_src_ids.tif
+write_erodibility_raster: true

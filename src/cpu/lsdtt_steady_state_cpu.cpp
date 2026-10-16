@@ -15,6 +15,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #ifdef _OPENMP
@@ -23,6 +26,49 @@
 
 namespace lsdtt
 {
+
+namespace
+{
+
+// The chi weights w_i = (K_ref / K_i)^(1/n) for a per-pixel erodibility field,
+// or an empty vector when there is none. Checks the size and that every valid
+// pixel has a finite K > 0. n_cols > 0 lets the message name the pixel as
+// (row, col); otherwise it gives the flat index.
+std::vector<float> make_chi_weights(const std::vector<float>& field,
+                                    const std::vector<std::uint8_t>& valid,
+                                    float K_ref, float n, int n_cols)
+{
+    if (field.empty()) return {};
+    if (field.size() != valid.size())
+        throw std::invalid_argument(
+            "erodibility_field has " + std::to_string(field.size()) +
+            " values but the grid has " + std::to_string(valid.size()) + " pixels");
+    if (!(K_ref > 0.0f) || !std::isfinite(K_ref))
+        throw std::invalid_argument("erodibility_field: the reference K must be > 0 (got " +
+                                    std::to_string(K_ref) + ")");
+    std::vector<float> w(field.size(), 1.0f);
+    for (std::size_t s = 0; s < field.size(); ++s)
+    {
+        if (!valid[s]) continue;
+        const float k = field[s];
+        if (!(k > 0.0f) || !std::isfinite(k))
+        {
+            std::ostringstream msg;
+            msg << "erodibility_field: K must be > 0; pixel ";
+            if (n_cols > 0)
+                msg << "(" << s / static_cast<std::size_t>(n_cols) << ", "
+                    << s % static_cast<std::size_t>(n_cols) << ")";
+            else
+                msg << s;
+            msg << " has K = " << k;
+            throw std::invalid_argument(msg.str());
+        }
+        w[s] = std::pow(K_ref / k, 1.0f / n);
+    }
+    return w;
+}
+
+} // namespace
 
 // -----------------------------------------------------------------------------
 // compute_fluvial_steady_state_on_tree  (shared backend-agnostic core)
@@ -39,6 +85,9 @@ lsdtt_fluvial_steady_state_field compute_fluvial_steady_state_on_tree(
 {
     const std::size_t n  = receiver.size();
     const float       dx = static_cast<float>(cell_size);
+    const std::vector<float> W = make_chi_weights(opts.erodibility_field, valid, opts.K,
+                                                  opts.n, 0);
+    const float* Wp = W.empty() ? nullptr : W.data();
 
     // Step 1: chi by reverse sweep (outlets first). Outlets (recv == self) and
     // invalid cells keep chi = 0.
@@ -56,8 +105,9 @@ lsdtt_fluvial_steady_state_field compute_fluvial_steady_state_on_tree(
         if (opts.divide_area_by_dx) A /= static_cast<double>(dx);
         if (A <= 0.0) A = static_cast<double>(dx) * dx;
 
-        chi[s] = chi[static_cast<std::size_t>(recv)]
-               + dx_eff[s] * std::pow(static_cast<float>(A), -opts.m / opts.n);
+        const float w_s = Wp ? Wp[s] : 1.0f;
+        const float amn = std::pow(static_cast<float>(A), -opts.m / opts.n) * w_s;
+        chi[s] = chi[static_cast<std::size_t>(recv)] + dx_eff[s] * amn;
     }
 
     // Step 2: MaxChi.
@@ -88,6 +138,7 @@ lsdtt_fluvial_steady_state_field compute_fluvial_steady_state_on_tree(
     out.K_used          = K_used;
     out.max_unit_height = MaxChi;
     out.computed_relief = f * MaxChi;
+    if (Wp) out.erodibility_field_scale = K_used / opts.K;
 
     // chi_c: MaxChi over CHANNEL pixels only. Reported alongside MaxChi, never
     // in place of it -- see the result struct for why the two differ and why
@@ -144,6 +195,9 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
         dx_eff[s]   = (flow.receiver_dir_of_unchecked(flat) & 1u) ? dx_diag : dx;
     }
 
+    // Checked here so a bad pixel is named as (row, col); the core repeats it.
+    (void)make_chi_weights(opts.erodibility_field, valid, opts.K, opts.n, meta.n_cols);
+
     const std::vector<double>        area_d = flow.accumulate();
     const std::vector<std::int64_t>& topo   = flow.topological_order();
 
@@ -163,6 +217,7 @@ lsdtt_fluvial_steady_state_result compute_d8_fluvial_steady_state(
     result.n_channel_pixels                = field.n_channel_pixels;
     result.chi_c_reported                  = field.chi_c_reported;
     result.computed_relief = field.computed_relief;
+    result.erodibility_field_scale = field.erodibility_field_scale;
     return result;
 }
 
@@ -187,6 +242,18 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
                                        * meta.n_cols;
 
     std::vector<double> area_d = flow.accumulate();
+
+    // Chi weights for a per-pixel erodibility field, validated here (serial):
+    // an exception cannot leave the parallel sweep below.
+    std::vector<float> Wv;
+    if (!opts.erodibility_field.empty())
+    {
+        std::vector<std::uint8_t> valid(static_cast<std::size_t>(n_cells), 0);
+        for (std::int64_t flat = 0; flat < n_cells; ++flat)
+            valid[static_cast<std::size_t>(flat)] = flow.is_valid_flat(flat) ? 1 : 0;
+        Wv = make_chi_weights(opts.erodibility_field, valid, opts.K, opts.n, meta.n_cols);
+    }
+    const float* Wp = Wv.empty() ? nullptr : Wv.data();
 
     // -------------------------------------------------------------------------
     // Step 1: compute chi for each valid cell using the level sweep.
@@ -237,7 +304,8 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
             if (A <= 0.0)
                 A = static_cast<double>(dx) * dx;
 
-            const float amn = std::pow(static_cast<float>(A), -opts.m / opts.n);
+            const float w_s = Wp ? Wp[static_cast<std::size_t>(flat)] : 1.0f;
+            const float amn = std::pow(static_cast<float>(A), -opts.m / opts.n) * w_s;
 
             const std::int64_t nr = flow.n_receivers(flat);
             const float w0 = (nr > 0) ? flow.receiver_weight_at(flat, 0) : 0.0f;
@@ -361,6 +429,7 @@ lsdtt_fluvial_steady_state_result compute_dinf_fluvial_steady_state(
     }
 
     result.computed_relief = computed_relief;
+    if (Wp) result.erodibility_field_scale = K_used / opts.K;
     return result;
 }
 

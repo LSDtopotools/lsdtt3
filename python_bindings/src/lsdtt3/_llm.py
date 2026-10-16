@@ -81,6 +81,7 @@ node_state: 0=outside/nodata,1=active,2=flux-only ghost,3=outlet; ghosts route p
     "landscape": """@landscape
 LandscapeModel(R,incision_threshold_specific_area=0,fluvial_method='d8'|'dinf'|'none',hillslope_model='none'|'linear'|'roering'|'roering_implicit'|'cidre'|'adi'|'cellular',coupling_regime='automatic'|'coupled'|'channels_as_boundaries',...)->L
 L.step(compute_erosion_rate=False)->LandscapeStepResult; L.run(n_steps,compute_erosion_rate=False)->LandscapeStepResult; L.set_forcing(uplift_rate,baselevel_fall_rate=0)
+erodibility>0 (K=0 raises; use fluvial_method='none'); erodibility_field=R|ndarray(n_rows,n_cols) absolute K>0 on the DEM grid; L.set_erodibility_field(R|ndarray|None) next step; L.erodibility_field->R|None
 hillslope_transport_explicit|implicit|adi|cellular(R,channels,...)->HillslopeTransportResult
 route_sediment(N,R,...)->SedimentRoutingResult; trigger_landslides(R,...)->LandslideResult
 """,
