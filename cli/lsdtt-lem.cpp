@@ -1414,14 +1414,13 @@ int main(int argc, char* argv[])
         if (pp.parameter_supplied("enable_d8_fluvial_erosion") &&
             bf["enable_d8_fluvial_erosion"])
         {
-            std::cerr << "\nFATAL: hillslope_channel_coupling: coupled was asked "
-                         "for together with\n  enable_d8_fluvial_erosion: true. "
-                         "D8 on a diverging hillslope manufactures channel\n"
-                         "  heads, so the drainage density would be an artefact "
-                         "of the router rather than\n  an emergent property - "
-                         "which is the whole point of the coupled regime.\n"
-                         "  Use D-infinity, or ask for channels_as_boundaries.\n";
-            return 1;
+            std::cerr << "\nWARNING: hillslope_channel_coupling: coupled was "
+                         "requested with\n  enable_d8_fluvial_erosion: true. "
+                         "D8 can manufacture channel heads\n"
+                         "  on diverging hillslopes, so drainage density may "
+                         "depend on the router.\n"
+                         "  Continuing because D8/coupled was explicitly "
+                         "requested.\n";
         }
 
         if (bf["run_steady_state"])
