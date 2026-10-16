@@ -25,6 +25,8 @@
 #include "lsdtt_hillslope_implicit_cpu.hpp"
 #include "lsdtt_hillslope_newton_cpu.hpp"
 #include "lsdtt_hillslope_transport_cpu.hpp"
+#include "lsdtt_lem_parameter_rasters_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "lsdtt_stream_power_cpu.hpp"
 #include <iostream>
 
@@ -214,6 +216,7 @@ load_lem_forcing_history(const std::string& csv_path)
             "forcing history CSV needs a time_yr column: " + csv_path);
 
     lsdtt_lem_forcing_history hist;
+    int data_row = 0;
     while (std::getline(in, line))
     {
         if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
@@ -235,11 +238,24 @@ load_lem_forcing_history(const std::string& csv_path)
             return std::stof(cells[static_cast<std::size_t>(col)]);
         };
 
+        ++data_row;
         lsdtt_lem_forcing_point p;
         p.time_yr             = cell_value(col_time);
         p.uplift_rate         = cell_value(col_uplift);
         p.baselevel_fall_rate = cell_value(col_fall);
         p.erodibility           = optional_value(col_K);
+        // An explicit K must be > 0: a written 0 would otherwise be read as
+        // "not given" and silently keep the previous K.
+        if (col_K >= 0 && col_K < static_cast<int>(cells.size()) &&
+            !cells[static_cast<std::size_t>(col_K)].empty() && !(p.erodibility > 0.0f))
+        {
+            std::ostringstream msg;
+            msg << "forcing history CSV " << csv_path << ": erodibility must be > 0 (row "
+                << data_row << ", time " << p.time_yr << ", got "
+                << cells[static_cast<std::size_t>(col_K)]
+                << "); leave the cell empty to keep the previous value";
+            throw std::runtime_error(msg.str());
+        }
         p.hillslope_diffusivity = optional_value(col_D);
         hist.points.push_back(p);
     }
@@ -277,6 +293,17 @@ run_lem_step(
 {
     const lsdtt_raster_meta& meta = dem.get_meta();
     const std::size_t n_cells = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+
+    // Per-pixel erodibility: checked on every call, since a caller may rewrite
+    // it between steps. Serial, before any parallel region.
+    if (!opts.erodibility_field.empty())
+    {
+        try { check_lem_erodibility_field(opts.erodibility_field, dem); }
+        catch (const std::invalid_argument& e)
+        {
+            throw std::invalid_argument(std::string("run_lem_step: ") + e.what());
+        }
+    }
 
     // Save pre-step elevations of boundary pixels
     const std::vector<float>& z_pre = dem.get_data();
@@ -321,7 +348,8 @@ run_lem_step(
             opts.divide_area_by_dx,
             opts.slope_clamp,
             opts.drainage_area_moving_average_kernel_size_pixels,
-            opts.boundary_conditions
+            opts.boundary_conditions,
+            opts.erodibility_field
         );
     }
     else if (opts.enable_dinf_fluvial_erosion)
@@ -351,7 +379,8 @@ run_lem_step(
             opts.slope_clamp,
             opts.n_threads,
             opts.drainage_area_moving_average_kernel_size_pixels,
-            opts.boundary_conditions
+            opts.boundary_conditions,
+            opts.erodibility_field
         );
     }
 
@@ -771,6 +800,43 @@ std::vector<std::int64_t> build_boundary_flats(
         }
     }
 
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// snap_lem_surface_to_fluvial_steady_state
+// -----------------------------------------------------------------------------
+lsdtt_lem_snap_result snap_lem_surface_to_fluvial_steady_state(
+    const lsdtt_raster_cpu&                   dem,
+    lsdtt_fluvial_steady_state_options        ss_opts,
+    bool                                      use_dinf,
+    const lsdtt_flowinfo_options&             fi_opts,
+    const lsdtt_flowgraph_options&            fg_opts,
+    float                                     fill_min_slope,
+    const std::string&                        boundary_conditions,
+    int                                       n_threads,
+    const std::function<void(const lsdtt_raster_cpu&,
+                             lsdtt_fluvial_steady_state_options&)>& before_solve)
+{
+    const lsdtt_raster_cpu filled =
+        fill_pits(dem, fill_min_slope, boundary_conditions, n_threads);
+    if (before_solve) before_solve(filled, ss_opts);
+
+    lsdtt_lem_snap_result out;
+    if (use_dinf)
+    {
+        const lsdtt_flowgraph_cpu flow(filled.get_data_array(), filled.get_mask_array(),
+                                       filled.get_meta(), fg_opts);
+        out.drainage_area = flow.accumulate();
+        out.steady = compute_dinf_fluvial_steady_state(flow, ss_opts);
+    }
+    else
+    {
+        const lsdtt_flowinfo flow(filled.get_data_array(), filled.get_mask_array(),
+                                  filled.get_meta(), fi_opts);
+        out.drainage_area = flow.accumulate();
+        out.steady = compute_d8_fluvial_steady_state(flow, ss_opts);
+    }
     return out;
 }
 

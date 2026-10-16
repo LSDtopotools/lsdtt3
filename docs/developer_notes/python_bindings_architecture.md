@@ -208,6 +208,33 @@ wrappers can normalize kwargs before forwarding to an unwrapped native
 function. Native classes require nanobind constructor overloads/placement
 construction so `type` and `isinstance` remain correct.
 
+## Building the extension for development
+
+The pixi `packaging` environment carries `scikit-build-core` and `nanobind`, so
+the bindings can be built and tested in place without a separate environment
+(on `/mnt/c` pixi cannot hard-link from its cache, so each extra environment is
+a full ~1 GB copy):
+
+```bash
+pixi install -e packaging
+pixi run -e packaging python -m pip install --no-build-isolation -e ./python_bindings
+pixi run -e packaging python -m pytest -q python_bindings/tests
+```
+
+**GDAL in this build.** Inside the activated environment CMake finds the
+environment's conda-forge GDAL, not the system GDAL that the CMake build in
+`build/` (and so the CLIs there) links. The editable extension is consistent
+with itself and fine for tests, but it is not the GDAL a release uses, so never
+publish it.
+
+Release wheels are unaffected: `tools/make_all_packages.sh` with podman, and
+`python-wheels.yml`, build inside the manylinux container with its own GDAL,
+and the host-wheel fallback calls the environment's Python by path (no
+activation) through an isolated `python -m build`. Do not run
+`make_all_packages.sh` under `pixi run -e packaging`: activation would let a
+host wheel pick up the environment's GDAL. Host wheels are already marked
+`LOCAL-ONLY-` and must not be published either way.
+
 ## Verification
 
 Source-only checks do not need `_core`:

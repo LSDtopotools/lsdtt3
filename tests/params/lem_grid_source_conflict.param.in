@@ -1,0 +1,16 @@
+# C19: mode 2 conflicts with n_rows.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lemkconflict
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 5
+timestep: 100
+write_output_format: gtiff
+noise_type: white_noise
+max_initial_elevation: 1
+model_grid_source: erodibility_raster
+erodibility_fname: lemk_k_src_ids.tif
+n_rows: 50

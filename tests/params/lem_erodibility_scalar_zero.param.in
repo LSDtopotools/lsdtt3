@@ -1,0 +1,14 @@
+# C30 / Q2: erodibility: 0 is refused (fluvial on).
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemkszero
+read_initial_dem: true
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 20
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+erodibility: 0

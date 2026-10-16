@@ -1,0 +1,19 @@
+# C6: analytical steady state in relief mode with a K raster.
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemkss
+read_initial_dem: true
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 20
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+erodibility_fname: lemk_k_two_region.tif
+write_erodibility_raster: true
+run_steady_state: true
+steady_state_mode: relief
+target_relief: 100

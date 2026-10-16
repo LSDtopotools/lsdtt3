@@ -16,6 +16,7 @@
 #include "../utils/lsdtt_raster_geometry.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cmath>
 #include <iostream>
 #include <sstream>
@@ -102,33 +103,6 @@ std::string single_line_wkt(const std::string& wkt)
     return safe;
 }
 
-// -----------------------------------------------------------------------------
-// crs_equal_semantically
-// -----------------------------------------------------------------------------
-bool crs_equal_semantically(
-    const std::string& a_wkt,
-    const std::string& b_wkt)
-{
-    if (a_wkt.empty() && b_wkt.empty())
-    {
-        return true;
-    }
-    if (a_wkt.empty() || b_wkt.empty())
-    {
-        return false;
-    }
-
-    OGRSpatialReference a_srs;
-    OGRSpatialReference b_srs;
-
-    if (a_srs.importFromWkt(a_wkt.c_str()) != OGRERR_NONE) return false;
-    if (b_srs.importFromWkt(b_wkt.c_str()) != OGRERR_NONE) return false;
-
-    a_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    b_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-
-    return a_srs.IsSame(&b_srs) != 0;
-}
 
 // -----------------------------------------------------------------------------
 // transformed_extent_in_target_crs
@@ -239,7 +213,13 @@ char** build_gdalwarp_options(
 
     if (req.set_extent)
     {
+        // Full double precision: the default 6 significant digits would turn a
+        // UTM northing of 5000202 into 5.0002e+06 (5000200) and shift the grid.
         std::ostringstream x0, y0, x1, y1;
+        x0.precision(17);
+        y0.precision(17);
+        x1.precision(17);
+        y1.precision(17);
         x0 << req.target_extent.x_min;
         y0 << req.target_extent.y_min;
         x1 << req.target_extent.x_max;
@@ -461,7 +441,78 @@ lsdtt_warp_result summarise_result(
     return result;
 }
 
+// -----------------------------------------------------------------------------
+// grid_warp_request
+//
+// The request that places a source exactly on a target grid (CRS, extent,
+// rows, cols), shared by warp_raster_to_reference_grid and
+// warp_raster_to_grid_in_memory. Checks overlap first when asked.
+// -----------------------------------------------------------------------------
+warp_request grid_warp_request(
+    const lsdtt_raster_meta&  source_meta,
+    const lsdtt_raster_meta&  target_grid,
+    const lsdtt_warp_options& opts,
+    const char*               target_name)
+{
+    if (opts.error_if_no_overlap)
+    {
+        const lsdtt_extent source_in_target =
+            transformed_extent_in_target_crs(source_meta, target_grid.crs_wkt);
+        if (!extents_intersect(source_in_target, raster_extent(target_grid)))
+        {
+            throw std::runtime_error(
+                std::string("lsdtt_raster_warp: source and ") + target_name +
+                " rasters do not overlap in the " + target_name + " CRS"
+            );
+        }
+    }
+
+    warp_request req;
+    req.set_target_srs    = true;
+    req.target_wkt        = target_grid.crs_wkt;
+    req.set_extent        = true;
+    req.target_extent     = raster_extent(target_grid);
+    req.set_dimensions    = true;
+    req.target_cols       = target_grid.n_cols;
+    req.target_rows       = target_grid.n_rows;
+    req.resampling_method = opts.resampling_method;
+    req.output_format     = opts.output_format;
+    req.src_nodata        = source_meta.no_data_value;
+    req.dst_nodata        = source_meta.no_data_value;
+    req.n_threads         = opts.n_threads;
+    req.warp_mem_mb       = opts.warp_mem_mb;
+    return req;
+}
+
 } // anonymous namespace
+
+// -----------------------------------------------------------------------------
+// crs_equal_semantically
+// -----------------------------------------------------------------------------
+bool crs_equal_semantically(
+    const std::string& a_wkt,
+    const std::string& b_wkt)
+{
+    if (a_wkt.empty() && b_wkt.empty())
+    {
+        return true;
+    }
+    if (a_wkt.empty() || b_wkt.empty())
+    {
+        return false;
+    }
+
+    OGRSpatialReference a_srs;
+    OGRSpatialReference b_srs;
+
+    if (a_srs.importFromWkt(a_wkt.c_str()) != OGRERR_NONE) return false;
+    if (b_srs.importFromWkt(b_wkt.c_str()) != OGRERR_NONE) return false;
+
+    a_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    b_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    return a_srs.IsSame(&b_srs) != 0;
+}
 
 // =============================================================================
 // Public API
@@ -579,36 +630,7 @@ lsdtt_warp_result warp_raster_to_reference_grid(
         );
     }
 
-    if (opts.error_if_no_overlap)
-    {
-        const lsdtt_extent source_in_ref =
-            transformed_extent_in_target_crs(source_meta, reference_meta.crs_wkt);
-
-        const lsdtt_extent ref_extent = raster_extent(reference_meta);
-
-        if (!extents_intersect(source_in_ref, ref_extent))
-        {
-            throw std::runtime_error(
-                "lsdtt_raster_warp: source and reference rasters do not overlap "
-                "in the reference CRS"
-            );
-        }
-    }
-
-    warp_request req;
-    req.set_target_srs    = true;
-    req.target_wkt        = reference_meta.crs_wkt;
-    req.set_extent        = true;
-    req.target_extent     = raster_extent(reference_meta);
-    req.set_dimensions    = true;
-    req.target_cols       = reference_meta.n_cols;
-    req.target_rows       = reference_meta.n_rows;
-    req.resampling_method = opts.resampling_method;
-    req.output_format     = opts.output_format;
-    req.src_nodata        = source_meta.no_data_value;
-    req.dst_nodata        = source_meta.no_data_value;
-    req.n_threads         = opts.n_threads;
-    req.warp_mem_mb       = opts.warp_mem_mb;
+    const warp_request req = grid_warp_request(source_meta, reference_meta, opts, "reference");
 
     run_gdalwarp(in_path, out_path, req);
 
@@ -618,6 +640,51 @@ lsdtt_warp_result warp_raster_to_reference_grid(
         reference_meta,
         true
     );
+}
+
+// -----------------------------------------------------------------------------
+// warp_raster_to_grid_in_memory
+// -----------------------------------------------------------------------------
+lsdtt_raster_tile warp_raster_to_grid_in_memory(
+    const std::string&        in_path,
+    const lsdtt_raster_meta&  target_grid,
+    const lsdtt_warp_options& opts)
+{
+    const lsdtt_raster_meta source_meta = load_meta(in_path);
+    if (!source_meta.is_valid())
+        throw std::runtime_error("lsdtt_raster_warp: source raster metadata are invalid");
+    if (!target_grid.is_valid())
+        throw std::runtime_error("lsdtt_raster_warp: target grid description is invalid");
+    if (source_meta.crs_wkt.empty() || target_grid.crs_wkt.empty())
+        throw std::runtime_error(
+            "lsdtt_raster_warp: warping onto a grid needs a CRS on both the source (" + in_path +
+            ") and the target grid");
+
+    lsdtt_warp_options o = opts;
+    o.output_format = raster_output_format::gtiff;   // no overviews, nothing averaged
+    warp_request req = grid_warp_request(source_meta, target_grid, o, "target");
+
+    static int counter = 0;
+    std::ostringstream name;
+    name << "/vsimem/lsdtt_warp_to_grid_" << reinterpret_cast<std::uintptr_t>(&req) << "_"
+         << ++counter << ".tif";
+    const std::string mem_path = name.str();
+
+    lsdtt_raster_tile tile;
+    try
+    {
+        run_gdalwarp(in_path, mem_path, req);
+        lsdtt_data_loader loader;
+        loader.open_raster(mem_path);
+        tile = loader.read_full();
+    }
+    catch (...)
+    {
+        VSIUnlink(mem_path.c_str());
+        throw;
+    }
+    VSIUnlink(mem_path.c_str());
+    return tile;
 }
 
 } // namespace lsdtt

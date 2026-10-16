@@ -27,6 +27,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -35,6 +36,9 @@
 #include "lsdtt_hillslope_implicit_cpu.hpp"
 #include "lsdtt_hillslope_newton_cpu.hpp"
 #include "lsdtt_hillslope_cellular_cpu.hpp"
+#include "lsdtt_flowgraph_cpu.hpp"
+#include "lsdtt_flowinfo_cpu.hpp"
+#include "lsdtt_steady_state_cpu.hpp"
 
 namespace lsdtt
 {
@@ -96,6 +100,13 @@ struct lsdtt_lem_options
 
     // Fluvial
     float erodibility                     = 1e-3f;
+    // Optional per-pixel erodibility, flat raster order on the model grid. Empty
+    // (default) = use the scalar `erodibility` everywhere. Values are ABSOLUTE K
+    // in the run's convention (see describe_erodibility_units), finite and > 0
+    // on every valid pixel. run_lem_step checks it and reads it on every call
+    // and caches nothing derived from it, so a caller may rewrite it between
+    // steps. Values at DEM-nodata pixels are never read.
+    std::vector<float> erodibility_field;
     float m_exponent                      = 0.45f;
     float n_exponent                      = 1.0f;
     float incision_threshold_area         = 0.0f;
@@ -261,7 +272,8 @@ struct lsdtt_lem_forcing_history
 };
 
 // Read a forcing history from a CSV.  Throws std::runtime_error if the file
-// cannot be opened or the required columns are missing.  Column order is taken
+// cannot be opened, the required columns are missing, or an erodibility cell
+// holds a value <= 0 (leave it empty to keep the previous value).  Column order is taken
 // from the header, so the columns may appear in any order; uplift_rate and
 // baselevel_fall_rate are each optional and default to 0.  erodibility and
 // hillslope_diffusivity are optional too, but an absent column or an empty cell
@@ -301,5 +313,39 @@ compute_lem_channel_mask(
     const lsdtt_raster_cpu& dem,
     const std::string&      boundary_conditions
 );
+
+// -----------------------------------------------------------------------------
+// snap_lem_surface_to_fluvial_steady_state
+//
+// One analytical steady-state snap of a surface: fill_pits (fill_min_slope,
+// boundary_conditions), build the flow object with the CALLER's options (D8 or
+// D-infinity), then compute_d8_ / compute_dinf_fluvial_steady_state. Used by
+// the lsdtt-lem initial snap and by each cycle of its steady-state branch, so
+// the two cannot drift apart.
+//
+// before_solve, if given, is called with the filled surface and a mutable copy
+// of ss_opts just before the solve: it is where a per-step erodibility source
+// (e.g. lithology) rewrites ss_opts.erodibility_field from the surface.
+//
+// Returns the steady-state result and the drainage area of the flow object it
+// was solved on. Throws whatever the fill, flow build or solve throws.
+// -----------------------------------------------------------------------------
+struct lsdtt_lem_snap_result
+{
+    lsdtt_fluvial_steady_state_result steady;
+    std::vector<double>               drainage_area;
+};
+
+lsdtt_lem_snap_result snap_lem_surface_to_fluvial_steady_state(
+    const lsdtt_raster_cpu&                   dem,
+    lsdtt_fluvial_steady_state_options        ss_opts,
+    bool                                      use_dinf,
+    const lsdtt_flowinfo_options&             fi_opts,
+    const lsdtt_flowgraph_options&            fg_opts,
+    float                                     fill_min_slope,
+    const std::string&                        boundary_conditions,
+    int                                       n_threads,
+    const std::function<void(const lsdtt_raster_cpu&,
+                             lsdtt_fluvial_steady_state_options&)>& before_solve = {});
 
 } // namespace lsdtt

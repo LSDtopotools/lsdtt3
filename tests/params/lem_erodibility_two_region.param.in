@@ -1,0 +1,17 @@
+# C5: two-region K raster; the K written is the K applied.
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemktwo
+read_initial_dem: true
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 20
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+erodibility_fname: lemk_k_two_region.tif
+write_erodibility_raster: true
+write_elevation_stats_csv: true

@@ -15,8 +15,11 @@
 #include <cmath>
 #include <numeric>
 #include <vector>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 
 #ifdef _OPENMP
 #  include <omp.h>
@@ -135,6 +138,18 @@ std::vector<double> smooth_drainage_area(
     return smoothed;
 }
 
+void check_erodibility_field_size(const std::vector<float>& field,
+                                  const lsdtt_raster_meta& meta, const char* who)
+{
+    if (field.empty()) return;
+    const std::size_t want = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    if (field.size() != want)
+        throw std::invalid_argument(
+            std::string(who) + ": erodibility_field has " + std::to_string(field.size()) +
+            " values but the DEM has " + std::to_string(want) + " pixels (" +
+            std::to_string(meta.n_rows) + "x" + std::to_string(meta.n_cols) + ")");
+}
+
 } // namespace
 
 
@@ -152,9 +167,13 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
     bool  divide_area_by_dx,
     float slope_clamp,
     int   drainage_area_moving_average_kernel_size_pixels,
-    const std::string& boundary_conditions)
+    const std::string& boundary_conditions,
+    const std::vector<float>& erodibility_field)
 {
     const lsdtt_raster_meta& meta       = dem.get_meta();
+    check_erodibility_field_size(erodibility_field, meta, "compute_d8_stream_power_incision");
+    const float*             Kp         = erodibility_field.empty() ? nullptr
+                                                                    : erodibility_field.data();
     const float              dx         = static_cast<float>(meta.cell_size);
     const float              dx_diag    = dx * grid::k_sqrt2_f;
     const std::int64_t       n_cells    = static_cast<std::int64_t>(meta.n_rows)
@@ -228,7 +247,8 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
             continue;
 
         const double elev_tolerance = static_cast<double>(slope_clamp) * dx_eff;
-        const double kam = static_cast<double>(K) *
+        const float  K_i = Kp ? Kp[flat] : K;
+        const double kam = static_cast<double>(K_i) *
                            std::pow(area, static_cast<double>(m));
 
         if (n_is_one)
@@ -310,7 +330,8 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     float slope_clamp,
     int   n_threads,
     int   drainage_area_moving_average_kernel_size_pixels,
-    const std::string& boundary_conditions)
+    const std::string& boundary_conditions,
+    const std::vector<float>& erodibility_field)
 {
     // The thread count goes on the parallel loop (num_threads clause); the
     // process-wide OpenMP setting is left alone (decision D4).
@@ -320,6 +341,9 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
 #endif
 
     const lsdtt_raster_meta& meta = dem.get_meta();
+    // Checked here, outside the parallel region: an exception cannot cross it.
+    check_erodibility_field_size(erodibility_field, meta, "compute_dinf_stream_power_incision");
+    const float* Kp = erodibility_field.empty() ? nullptr : erodibility_field.data();
     const float dx_cardinal  = static_cast<float>(meta.cell_size);
     const float dx_diagonal  = static_cast<float>(meta.cell_size) * grid::k_sqrt2_f;
     const std::int64_t n_cells = static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
@@ -410,7 +434,8 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
             const float z_e1 = recv_elev(0);   
             const float z_e2 = recv_elev(1);   
 
-            const double kam = static_cast<double>(K) *
+            const float  K_i = Kp ? Kp[flat] : K;
+            const double kam = static_cast<double>(K_i) *
                                std::pow(area, static_cast<double>(m));
             const double elev_tolerance = static_cast<double>(slope_clamp) * dx_cardinal;
 
@@ -617,6 +642,51 @@ std::vector<std::uint8_t> channel_mask_from_area_threshold(
         if (q >= threshold) is_channel[i] = 1u;
     }
     return is_channel;
+}
+
+// -----------------------------------------------------------------------------
+// Erodibility units and area conventions
+// -----------------------------------------------------------------------------
+erodibility_area_convention parse_erodibility_area_convention(const std::string& name)
+{
+    if (name == "map_area") return erodibility_area_convention::map_area;
+    if (name == "specific_area") return erodibility_area_convention::specific_area;
+    throw std::invalid_argument("unknown erodibility area convention '" + name +
+                                "': expected 'map_area' or 'specific_area'");
+}
+
+std::string describe_erodibility_units(float m, bool divide_area_by_dx)
+{
+    const double md = static_cast<double>(m);
+    std::ostringstream s;
+    s << std::setprecision(6);
+    if (divide_area_by_dx)
+        s << "m^(" << (1.0 - md)
+          << ") yr^-1 (specific area a = A/dx; K is tied to m and to the cell size)";
+    else
+        s << "m^(" << (1.0 - 2.0 * md) << ") yr^-1 (map area A; K is tied to m)";
+    return s.str();
+}
+
+double erodibility_area_conversion_factor(float m, erodibility_area_convention stated,
+                                          double stated_cell_size, bool run_divide_area_by_dx,
+                                          double run_cell_size)
+{
+    const double md = static_cast<double>(m);
+    const bool stated_specific = stated == erodibility_area_convention::specific_area;
+    if (!stated_specific && !run_divide_area_by_dx) return 1.0;
+    if (stated_specific && !(stated_cell_size > 0.0))
+        throw std::invalid_argument(
+            "erodibility_area_conversion_factor: a specific-area K needs its calibration "
+            "cell size (> 0), got " + std::to_string(stated_cell_size));
+    if (run_divide_area_by_dx && !(run_cell_size > 0.0))
+        throw std::invalid_argument(
+            "erodibility_area_conversion_factor: the run cell size must be > 0, got " +
+            std::to_string(run_cell_size));
+    if (!stated_specific) return std::pow(run_cell_size, md);              // map -> specific
+    if (!run_divide_area_by_dx) return std::pow(stated_cell_size, -md);    // specific -> map
+    if (stated_cell_size == run_cell_size) return 1.0;
+    return std::pow(run_cell_size / stated_cell_size, md);                 // specific -> specific
 }
 
 } // namespace lsdtt

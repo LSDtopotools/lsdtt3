@@ -1,0 +1,17 @@
+# C25: a K raster 0.3 cells off the DEM grid, warped onto it (near).
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemkwarp
+read_initial_dem: true
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 20
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+input_raster_placement: warp_to_model_grid
+erodibility_fname: lemk_k_offset.tif
+write_erodibility_raster: true

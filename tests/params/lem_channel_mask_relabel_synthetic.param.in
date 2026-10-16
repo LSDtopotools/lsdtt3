@@ -1,0 +1,18 @@
+# C28 / D1c: a channel mask relabelled onto a synthetic grid of its dimensions.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lemkmaskrel
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 5
+timestep: 100
+write_output_format: gtiff
+noise_type: white_noise
+max_initial_elevation: 1
+n_rows: 40
+n_cols: 20
+cell_size_metres: 10
+input_raster_placement: relabel_whole_raster
+channel_mask_fname: lemk_mask_ondem.tif

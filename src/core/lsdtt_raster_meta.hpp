@@ -192,6 +192,20 @@ struct lsdtt_raster_meta
     // Call this at the start of any analysis function that requires projected
     // data in metres.
     void check_projected_metres() const;
+
+    // How far the projection is from preserving distance on this grid: the
+    // largest |h - 1| or |k - 1| over the grid's centre and four corners, where
+    // h and k are the point scale factors along the grid's y and x axes
+    // (projected distance of a 10-cell step divided by its ellipsoidal
+    // geodesic length, Vincenty inverse on the CRS's own ellipsoid). 0.0004 for
+    // UTM on its central meridian; about 0.49 for Web Mercator at 48 degrees.
+    // Returns -1 if there is no CRS or it is geographic. Throws
+    // std::runtime_error if the CRS cannot be transformed to its geographic CRS.
+    [[nodiscard]] double max_linear_scale_error() const;
+
+    // The CRS name from its WKT (e.g. "WGS 84 / UTM zone 32N"), or "none" when
+    // there is no CRS, or "unparsed" when the WKT cannot be read.
+    [[nodiscard]] std::string crs_name() const;
 };
 
 } // namespace lsdtt

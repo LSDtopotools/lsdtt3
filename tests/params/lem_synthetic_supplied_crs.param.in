@@ -1,0 +1,16 @@
+# Synthetic run with a supplied CRS (EPSG:32630): the supplied WKT is kept.
+# Parameter values cannot contain spaces, so the spaces in the WKT's name
+# strings are removed; the AUTHORITY tag still identifies EPSG:32630.
+write_path: __WRITE_PATH__
+write_fname: lemsyncrs
+n_rows: 20
+n_cols: 30
+cell_size_metres: 30
+noise_type: white_noise
+max_initial_elevation: 1
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 2
+write_output_format: gtiff
+synthetic_crs_wkt: PROJCS["WGS84/UTMzone30N",GEOGCS["WGS84",DATUM["WGS_1984",SPHEROID["WGS84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4326"]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",-3],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH],AUTHORITY["EPSG","32630"]]
