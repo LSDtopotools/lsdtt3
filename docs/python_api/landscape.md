@@ -211,20 +211,20 @@ B. Gailleton
 - `incision_threshold_area` -> `incision_threshold_specific_area`; earliest removal: following minor.
 
 ```python
-def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None
-def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None
+def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None
+def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None
 ```
 
 ### Members
 
 #### `__init__`
 
-__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None
-__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None
+__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None
+__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None
 
 Overloaded function.
 
-1. ``__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None``
+1. ``__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None``
 
 Create a coupled landscape-evolution model from an in-memory DEM.
 
@@ -235,7 +235,8 @@ dem : Raster
 timestep_years : float, optional
     Duration of each call to ``step``.
 erodibility, m_exponent, n_exponent : float, optional
-    Stream-power incision parameters.
+    Stream-power incision parameters. ``erodibility`` must be > 0; it is also the
+    reference K for ``erodibility_field``.
 uplift_rate, hillslope_diffusivity : float, optional
     Uniform uplift in m yr⁻¹ and hillslope diffusivity in m² yr⁻¹.
 hillslope_model : {"none", "linear", "roering", "roering_implicit", "cidre", "adi", "cellular"}, optional
@@ -262,6 +263,14 @@ baselevel_fall_rate : float, optional
     Downward motion of fixed base-level cells in m yr⁻¹.
 cellular_r_match, cellular_cfl_safety, cellular_nonlocal_fraction : float, optional
     Cellular-hillslope calibration, stability, and optional nonlocal-transfer controls.
+erodibility_field : Raster or numpy.ndarray, optional
+    Per-pixel absolute erodibility K replacing ``erodibility`` in the fluvial step: a
+    Raster strictly on the DEM grid or a ``(n_rows, n_cols)`` array (NaN only on DEM
+    nodata). Every valid pixel needs a finite K > 0.
+erodibility_m_exponent : float, optional
+    The m the field was calibrated for; a different m raises ``ValueError``.
+erodibility_area_convention : {"map_area", "specific_area"}, optional
+    Area convention of the field; ``map_area`` K is converted by dx**m.
 
 Returns
 -------
@@ -273,11 +282,11 @@ Authors
 B. Gailleton
 
 
-2. ``__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None``
+2. ``__init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None``
 
 ```python
-def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None
-def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4) -> None
+def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_specific_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None
+def __init__(self, dem: lsdtt3.Raster, timestep_years: float = 100.0, erodibility: float = 0.0010000000474974513, m_exponent: float = 0.44999998807907104, n_exponent: float = 1.0, uplift_rate: float = 9.999999747378752e-05, hillslope_diffusivity: float = 0.0010000000474974513, hillslope_model: str = 'cidre', nonlinear_hillslopes: bool = False, critical_hillslope_slope: float = 0.800000011920929, incision_threshold_area: float = 0.0, coupling_regime: str = 'automatic', boundary_conditions: str = 'oooo', fluvial_method: str = 'd8', channel_mask: object | None = None, hold_channel_mask_fixed: bool = False, fixed_pixels: object | None = None, n_threads: int = 0, baselevel_fall_rate: float = 0.0, cellular_r_match: float = 0.85, cellular_cfl_safety: float = 0.8, cellular_nonlocal_fraction: float = 0.0, cellular_nonlocal_activation_ratio: float = 0.8, cellular_nonlocal_deposition_probability: float = 0.5, cellular_nonlocal_max_hops: int = 4, erodibility_field: object | None = None, erodibility_m_exponent: object | None = None, erodibility_area_convention: object | None = None) -> None
 ```
 
 #### `channel_mask`
@@ -306,6 +315,10 @@ Resolved coupling experiment: coupled or channels_as_boundaries.
 #### `elevation`
 
 (self) -> lsdtt3.Raster
+
+#### `erodibility_field`
+
+The per-pixel erodibility in use (run convention), or None.
 
 #### `hillslope_model`
 
@@ -339,6 +352,31 @@ B. Gailleton
 
 ```python
 def run(self, n_steps: int, compute_erosion_rate: bool = False) -> lsdtt3.LandscapeStepResult
+```
+
+#### `set_erodibility_field`
+
+set_erodibility_field(self, field: object | None) -> None
+
+Replace the per-pixel erodibility used by subsequent steps.
+
+Parameters
+----------
+field : Raster, numpy.ndarray or None
+    Absolute K strictly on the model grid (Raster), or a ``(n_rows, n_cols)`` array
+    with NaN only on DEM nodata; ``None`` returns to the scalar ``erodibility``.
+    Every valid pixel needs a finite K > 0.
+
+Returns
+-------
+None
+
+Authors
+-------
+B. Gailleton
+
+```python
+def set_erodibility_field(self, field: object | None) -> None
 ```
 
 #### `set_forcing`

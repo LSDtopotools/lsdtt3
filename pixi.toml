@@ -214,15 +214,13 @@ snakemake = "*"
 # happens to be installed here. The wheel build therefore does not use the
 # nanobind and scikit-build-core below.
 #
-# They are here for DEVELOPING the bindings: an editable, in-environment build
-# that the binding tests and API-contract checks run against, without a
-# separate multi-GB environment (on /mnt/c pixi cannot hard-link from its cache,
-# so every environment is a full copy):
-#   pixi run -e packaging python -m pip install --no-build-isolation -e ./python_bindings
-#   pixi run -e packaging python -m pytest python_bindings/tests
-# That build links THIS environment's conda-forge GDAL, not the system GDAL the
-# CMake build in build/ uses. Fine for testing here; never publish it. See
-# docs/developer_notes/python_bindings_architecture.md.
+# They (and pip) are here for DEVELOPING the bindings: an editable,
+# in-environment build that the binding tests and API-contract checks run
+# against, without a separate multi-GB environment (on /mnt/c pixi cannot
+# hard-link from its cache, so every environment is a full copy). That build
+# must be pointed at the SYSTEM GDAL, and its tests run with this environment's
+# Python directly plus an LD_PRELOAD of its libstdc++; the exact commands are in
+# docs/developer_notes/python_bindings_architecture.md. Never publish it.
 #
 # Python is pinned below 3.14 because that is what the wheel targets
 # (cp310-cp314 in pyproject.toml) and because the build backend chain is better
@@ -231,6 +229,7 @@ snakemake = "*"
 python = ">=3.11,<3.14"
 scikit-build-core = ">=0.10"
 nanobind = ">=3.0,<3.1"
+pip = "*"
 
 [feature.packaging.pypi-dependencies]
 build = "*"
