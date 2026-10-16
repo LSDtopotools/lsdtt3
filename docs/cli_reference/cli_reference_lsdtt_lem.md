@@ -97,6 +97,11 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 | `noise_blur_passes` | int | `6` | Number of blur passes for `red_noise` surface generation. |
 | `diamond_square_roughness` | float | `0.55` | Roughness exponent (0–1) for `diamond_square`. Higher = rougher. |
 | `random_seed` | int | `33` | Random seed for initial noise surface. |
+| `synthetic_crs_wkt` | string | empty | CRS of the synthetic grid. Empty (default): the grid is centred on "Watopia" (Teanu Island, Solomon Islands) in EPSG:32758, WGS 84 / UTM zone 58S. A supplied WKT puts the lower-left corner at (0, 0). Parameter values cannot contain spaces, so remove the spaces inside the WKT's quoted names. |
+
+Since October 2026 the default synthetic georeference is Watopia. Before then
+`lsdtt-lem` placed synthetic grids at UTM zone 1N, origin (500000, 0).
+Elevations, routing and statistics do not depend on the georeference.
 
 ### Surface conditioning (applied to synthetic surfaces only)
 
@@ -126,12 +131,222 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `erodibility` | float | `1e-3` | Stream-power erodibility K (m^(1−2m) yr⁻¹). |
+| `erodibility` | float | `1e-3` | Stream-power erodibility K. Must be > 0 (K = 0 would mean no fluvial erosion: switch fluvial erosion off instead). Units m^(1−m) yr⁻¹ with `divide_area_by_dx: true` (the default), m^(1−2m) yr⁻¹ without; see *K units and the cell size* below. With `erodibility_fname` it is the reference K the raster is scaled relative to. |
 | `m_exponent` | float | `0.45` | Drainage-area exponent m. |
 | `n_exponent` | float | `1.0` | Slope exponent n. n=1 uses a closed-form solver; n≠1 uses Newton–Raphson. |
 | `incision_threshold_specific_area` | float | `0` | **With `divide_area_by_dx: true` (default):** specific catchment area A/dx in metres. **With `false`:** total map area A in m². `0` = no threshold. Also defines channel pixels for hillslope coupling. The former `incision_threshold_area` spelling is an unchanged-value alias. |
 | `divide_area_by_dx` | bool | `true` | Divide drainage area by cell size to obtain specific area before comparing against `incision_threshold_specific_area`. |
 | `slope_clamp` | float | `1e-5` | Minimum slope used as Newton–Raphson fallback in the stream-power solver. |
+
+### K units and the cell size
+
+The incision law is E = K a^m S^n. With `divide_area_by_dx: true` (the default)
+a is the specific area A/dx in metres, so K has units m^(1−m) yr⁻¹. Because a
+channel's drainage area A is physical, the same river needs
+
+    K_specific = K_map × dx^m
+
+so **a specific-area K belongs to the cell size it was calibrated at**: 1e-5 on a
+10 m grid is a different erodibility from 1e-5 on a 30 m grid (a factor
+3^0.45 = 1.64 at m = 0.45). With `divide_area_by_dx: false`, a is the map area A
+in m² and K has units m^(1−2m) yr⁻¹ and no cell-size dependence. K also depends
+on m: never reuse a K calibrated for a different m.
+
+---
+
+## Spatially varying erodibility
+
+`erodibility_fname` replaces the scalar K in the fluvial step with a raster of
+**absolute** K, one value per pixel. Every DEM-valid pixel needs a finite K > 0:
+a zero, negative or non-finite value, or a nodata pixel inside the model domain,
+is refused with the pixel's (row, col). The raster must lie on the model grid or
+be placed on it (see *Model grid and input rasters* below); it is never
+resampled inside the model.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `erodibility_fname` | string | empty | K raster (in `read_path`). Empty = the scalar `erodibility` everywhere. |
+| `erodibility_raster_m_exponent` | float | `-1` | The m the raster was calibrated for (< 0 = not stated). A different m from `m_exponent` is fatal; an unstated one gives a warning. |
+| `erodibility_raster_n_exponent` | float | `-1` | The same for n. |
+| `erodibility_raster_area_convention` | string | `unstated` | `map_area`, `specific_area` or `unstated`. |
+| `erodibility_raster_calibration_cell_size_metres` | float | `-1` | The cell size a `specific_area` raster was calibrated at. |
+| `write_erodibility_raster` | bool | `false` | Write the K that drove the model (see *Output files*). |
+
+**Conversions.** The raster is converted once, at load, into the run's
+convention, and the header prints the factor and the K range before and after:
+
+| Raster states | Run uses | Factor applied |
+|---|---|---|
+| `map_area` | specific area at dx | dx^m |
+| `specific_area` at dx_cal | specific area at dx | (dx/dx_cal)^m |
+| `specific_area` at dx_cal | map area | dx_cal^(−m) |
+| `specific_area`, no cell size | specific area | 1 (assumed calibrated at dx; warning) |
+| `specific_area`, no cell size | map area | fatal: cannot convert |
+| `unstated` | either | 1, with a warning naming the factor that would apply if it were map-area K |
+
+A typical median K more than 100 times away from the scalar `erodibility` also
+gives a warning: it is usually a units mistake.
+
+**Forcing history.** If `forcing_history_fname` has an `erodibility` column, the
+column scales the whole raster in time:
+
+    K(x, t) = K_raster(x) × K_forcing(t) / erodibility
+
+so a rock-strength pattern is kept while, for example, a climate change makes
+every rock twice as erodible. The forcing summary prints the factor
+(`-> x0.5 on the erodibility raster`). With a K raster and a forcing
+`erodibility` column you must supply `erodibility` in the parameter file (it is
+what the raster is relative to); omitting it is fatal. An explicit `0` in the
+forcing column is refused; an empty cell keeps the previous K.
+
+**Analytical steady state.** The steady state honours the field through a
+K-weighted chi (see the landscape evolution modelling design notes). In
+`steady_state_mode: relief` the whole field is scaled by one factor to reach
+`target_relief`; the header prints it as `erodibility_field_scale`. The initial
+snap (`snap_initial_surface_to_steady_state`) uses the forcing history's K at
+t = 0 when one is given, as it already did for U.
+
+---
+
+## Model grid and input rasters
+
+`model_grid_source` decides what defines the model grid, and
+`input_raster_placement` how every input raster (`erodibility_fname` and
+`channel_mask_fname`) is put on it.
+
+| `model_grid_source` | The model grid | Placements allowed |
+|---|---|---|
+| `auto` (default) | `dem` with `read_initial_dem: true`, else `parameters` | as below |
+| `parameters` | `n_rows`, `n_cols`, `cell_size_metres` on the synthetic georeference | all five |
+| `dem` | the loaded DEM | `as_georeferenced`, `warp_to_model_grid` |
+| `erodibility_raster` | the K raster itself | `as_georeferenced` (a real place) or `relabel_whole_raster` (its dimensions only) |
+
+| `input_raster_placement` | What happens |
+|---|---|
+| `as_georeferenced` (default) | The raster must already be on the model grid: same rows, cols, cell size, origin and CRS. A raster with no CRS but the same geometry is accepted with a warning. |
+| `warp_to_model_grid` | The raster is warped onto the model grid (both need a CRS) with `input_raster_resampling_method`. Refused if they do not overlap. |
+| `relabel_whole_raster` | Same rows, cols and cell size as the synthetic grid; the values are copied unchanged and the raster's georeference is discarded. |
+| `relabel_centre_clip` | An `n_rows × n_cols` window at the model cell size, centred on (`input_raster_clip_easting_metres`, `input_raster_clip_northing_metres`) in the raster's CRS, placed on the synthetic grid. |
+| `relabel_lower_left_clip` | The same window with its lower-left corner at that point. |
+
+The `relabel_*` placements discard the raster's georeference, so they need a
+synthetic grid: on a loaded DEM they are refused. A clip **never rescales**: the
+window has the model's cell size, so feature widths stay true. If the raster's
+cell size differs, it is resampled to the model's (`input_raster_resampling_method`;
+the channel mask always uses `near`). A window that runs off the raster is
+refused. The clip point must be in a projected CRS in metres.
+
+Rasters whose projection distorts distance by more than 1 % on the grid are
+refused, both as the model grid and as a clip source: Web Mercator (EPSG:3857)
+by name, and any CRS whose scale factor at the grid's centre or corners is off by
+more than 1 % (for example UTM used far outside its zone). A geographic (degree)
+raster cannot define the grid; reproject it first with
+`lsdtt-raster-preprocessing`.
+
+### Worked examples
+
+All five use the same kind of source: a K raster `k_map.tif`, 100 rows × 80
+cols at 10 m in UTM zone 32N, lower-left corner (500000, 5000000).
+
+**Already on the DEM grid (`as_georeferenced`).** The K raster was made for the
+DEM (same rows, cols, cell size, origin and CRS):
+
+```
+read_initial_dem: true
+read_fname: dem.tif
+erodibility_fname: k_on_dem_grid.tif
+```
+
+A raster half a cell off is refused, naming `input_raster_placement`.
+
+**A real place without a DEM (`model_grid_source: erodibility_raster`).** The
+grid is the K raster's: 100 × 80 at 10 m, in UTM 32N at its true origin, and the
+synthetic starting surface is generated on it:
+
+```
+model_grid_source: erodibility_raster
+erodibility_fname: k_map.tif
+```
+
+`n_rows`, `n_cols`, `cell_size_metres` and `synthetic_crs_wkt` conflict with
+this and are refused. Nodata in the K raster becomes nodata in the model, so the
+domain takes the map's footprint; on `o`/`b` sides the footprint edge is a fixed
+base level (rivers drain out where the map ends), exactly as for a DEM with a
+nodata border.
+
+**A loaded DEM and a K raster on another grid (`warp_to_model_grid`).**
+
+```
+read_initial_dem: true
+read_fname: dem.tif
+erodibility_fname: k_map.tif
+input_raster_placement: warp_to_model_grid
+input_raster_resampling_method: near
+```
+
+**The map's pattern on the synthetic grid (`relabel_whole_raster`).** The grid
+takes the raster's 100 × 80 at 10 m, but sits at the synthetic (Watopia)
+georeference; the values are copied pixel for pixel:
+
+```
+model_grid_source: erodibility_raster
+input_raster_placement: relabel_whole_raster
+erodibility_fname: k_map.tif
+```
+
+**A window of the map around a point (`relabel_centre_clip`).** A 20 × 30 synthetic
+grid at 10 m takes the 20 × 30 pixels around (500405, 5000495), the centre of
+source pixel (row 50, col 40):
+
+```
+n_rows: 20
+n_cols: 30
+cell_size_metres: 10
+erodibility_fname: k_map.tif
+input_raster_placement: relabel_centre_clip
+input_raster_clip_easting_metres: 500405
+input_raster_clip_northing_metres: 5000495
+```
+
+The pixel containing the point becomes window pixel (n_rows/2, n_cols/2). A
+point exactly on a grid line belongs to the pixel to its north or east.
+
+**A window from a corner (`relabel_lower_left_clip`).** The same grid with its
+lower-left corner at (500300, 5000400):
+
+```
+input_raster_placement: relabel_lower_left_clip
+input_raster_clip_easting_metres: 500300
+input_raster_clip_northing_metres: 5000400
+```
+
+Had `k_map.tif` been at 4 m, either clip would resample it to 10 m (the
+header prints `resampled from cell size 4 to 10`), keeping the true size of the
+map's features.
+
+### The channel mask follows the same rules
+
+`channel_mask_fname` is placed exactly like the K raster. Since October 2026 it
+must lie on the model grid (rows, cols, cell size, origin and CRS) or be placed
+there; before, only its dimensions were checked, so a mask that matches the DEM's
+dimensions but not its origin or CRS is now refused unless a placement allows it.
+
+### Rasters every lsdtt3 tool refuses
+
+The raster loader refuses rotated rasters, rasters stored south-up, and projected
+rasters whose pixels are not square, for every CLI: they would otherwise be read
+with the wrong coordinates. Geographic rasters still open (so
+`lsdtt-raster-preprocessing` can reproject them), and each analysis tool refuses
+them itself.
+
+---
+
+## Run errors
+
+A failure inside a time step (for example a K raster scaled by the forcing
+history beyond the float range) ends the run with
+`FATAL: time step failed at iter=<i> t=<t>: <reason>` and exit code 1. The final
+outputs are not written.
 
 ---
 
@@ -142,7 +357,7 @@ is tested under re-routing. See *Landscape equilibration cycle* below.
 | `hillslope_model` | string | `cidre` | `cellular`: fast conservative soft-critical face transfers with optional nonlocal transport/tracing. `cidre`: graph-routed Carretier transport. `roering_implicit`: Newton backward Euler. `adi`: linear ADI. |
 | `hillslope_diffusivity` | float | `1e-3` | Hillslope diffusivity κ (m² yr⁻¹). |
 | `critical_hillslope_slope` | float | `0.8` | Critical slope Sc (m/m) for nonlinear hillslope transport. |
-| `channel_mask_fname` | string | `` | Optional raster (in `read_path`) whose cells > 0.5 are fixed-elevation channel pixels for the hillslope Dirichlet set, overriding the drainage-area threshold. Must match the DEM grid. Empty = derive channels from drainage area. |
+| `channel_mask_fname` | string | `` | Optional raster (in `read_path`) whose cells > 0.5 are fixed-elevation channel pixels for the hillslope Dirichlet set, overriding the drainage-area threshold. Must lie on the model grid or be placed on it by `input_raster_placement` (see *Model grid and input rasters*). Empty = derive channels from drainage area. |
 | `channel_mask_threshold_specific_area` | float | `0` | **With `divide_area_by_dx: true` (default):** A/dx in metres. **With `false`:** map area A in m². Threshold for a written channel mask; `0` uses `incision_threshold_specific_area`. The former `channel_mask_threshold_area` spelling is an unchanged-value alias. |
 
 ### `cellular` transport and tracing
@@ -349,6 +564,7 @@ removed by default because these files are intended for visual inspection.
 | `<write_fname>_hillslope_steady_state_elevation.tif` | Combined fluvial + hillslope steady-state elevation (when `run_hillslope_steady_state: true`). |
 | `<write_fname>_hillslope_steady_state_stats.csv` | Hillslope solver diagnostics. Written when `write_elevation_stats_csv: true`. |
 | `<write_fname>_hillslope_steady_state_hillshade.png` | Hillshade PNG of combined surface (when `write_hillshade_png: true`). |
+| `<write_fname>_steady_state_erodibility.tif` | The K field the steady state used (scaled by `erodibility_field_scale` in relief mode), when `write_erodibility_raster: true`. |
 
 ### Equilibration-cycle outputs
 
@@ -389,6 +605,11 @@ instead, which is the practical reason to prefer one.
 | `<write_fname>_model_iteration_N.tif` | Intermediate snapshot written every `frequency_of_output_writing` steps. |
 | `<write_fname>_modelled_topography.tif` | Final topography after the run completes. |
 | `<write_fname>_model_elevation_stats.csv` | Per-timestep statistics: iteration, time, delta max/mean elevation, max/mean erosion rate. |
+| `<write_fname>_erodibility.tif` | The K that drove the last step, when `write_erodibility_raster: true`: the raster as scaled by the forcing history, or a uniform raster of the scalar K. DEM nodata is nodata. |
+| `<write_fname>_model_iteration_N_erodibility.tif` | The K that drove step N, at every output frame. |
+
+With `erodibility_fname`, the stats CSV gains `erodibility_field_min`,
+`erodibility_field_mean` and `erodibility_field_max` (the K applied that step).
 
 ---
 

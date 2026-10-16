@@ -413,6 +413,75 @@ One special steady-state feature: `steady_state_mode: relief`. Instead of specif
 
 ---
 
+## Spatially varying erodibility
+
+Rock strength varies in space, so `lsdtt-lem` (`erodibility_fname`) and the
+Python `LandscapeModel` (`erodibility_field`) accept a per-pixel erodibility
+K(x). The field holds **absolute** K in the run's area convention; the scalar
+`erodibility` stays as the reference K that a forcing history scales relative
+to (K(x, t) = K_field(x) K_forcing(t) / K_ref).
+
+### In the implicit fluvial step
+
+The implicit solvers (D8 and D-infinity, closed form at n = 1 and Newton–Raphson
+otherwise) use K in exactly one place, the coefficient K·a^m of each pixel's
+update. With a field, pixel i uses K_i there; every update path and both
+overexcavation clamps read that one coefficient. A uniform field equal to the
+scalar therefore performs the same arithmetic on the same values, so its result
+is bitwise identical to the scalar run, which the tests assert for D8 and
+D-infinity at n = 1 and 2. The field is read afresh on every step, so a caller
+may rewrite it between steps (for example from the elevation of each pixel, the
+mechanism a lithology model needs); it is evaluated at the start of the step.
+
+### In the analytical steady state: K-weighted chi
+
+At steady state U = K_i a^m S^n on every pixel. Writing K_ref for the scalar,
+
+```
+z_i    = z_b + (U / K_ref)^(1/n) · χ_K,i
+χ_K,i  = χ_K,recv + dx_eff · w_i · a_i^(−m/n),    w_i = (K_ref / K_i)^(1/n)
+```
+
+so a harder pixel (small K_i, large w_i) adds more chi and stands higher. In
+D-infinity cells with two receivers the same weight multiplies a^(−m/n) both in
+the discriminant and in the cardinal fallback. The solution does not depend on
+K_ref (it cancels), and with w_i = 1 the arithmetic is the scalar one exactly.
+In relief mode the field is scaled by one factor, `erodibility_field_scale`
+= K_used / K_ref, so the relief reaches the target while the pattern of K is
+kept.
+
+### What the tests establish
+
+* **Vertical contacts.** Along a channel crossing a contact from K1 into K2, the
+  steady slope satisfies S2/S1 = (K1/K2)^(1/n) (Perne et al. 2017, their Eq. 4,
+  for contacts that do not move with the rock). On an 80 × 3 strip with m = 0,
+  U = 1e-3 m/yr and K2 = K1/4, time-stepping to steady state gives
+  S1 = 0.1000 and S2 = 0.39999 against the expected 0.1 and 0.4 at n = 1, and
+  0.316225 / 0.632452 against 0.316228 / 0.632456 at n = 2.
+* **Every pixel.** On red-noise surfaces with a two-region field, run until no
+  pixel moves more than 1e-3 U dt per step, K_i a^m S^n = U holds on every pixel
+  to within 1e-3, for D8 and D-infinity, n = 1 and 2. The identity must be
+  measured on the surface the implicit step solved (before uplift and before the
+  boundary pixels are restored): boundary pixels that are not flow outlets erode
+  within the sweep and are reset only afterwards, so their donors are solved
+  against the eroded value.
+* **The analytical steady state.** On a 200-node chain with a fourfold K
+  contrast the K-weighted chi reproduces a double-precision reference to within
+  200 ulp of the maximum elevation, and U = K_i a^m S^n holds link by link to
+  about 5e-6.
+
+**The snapped surface is not a fixed point of the transient model.** The
+analytical snap integrates chi on the routing of the surface it is given, and
+the snapped surface routes differently: on a 30 × 30 test surface about 330 of
+840 D8 receivers change, with a uniform K as much as with a field. Time-stepping
+the snapped surface then settles into a limit cycle (the largest per-step change
+stays at 0.015–0.04 m) rather than a strict steady state. A field snap is as
+close to steady as a scalar one (the first step after snapping moves the
+surface by the same 99.9th-percentile amount, 1.368 m against 1.365 m); a region
+of low K then takes proportionally longer to settle.
+
+---
+
 ## Erosivity conventions: Perron versus Bonetti
 
 A seemingly innocuous parameter, `divide_area_by_dx`, actually encodes a choice between two different conventions for what "drainage area" means in the stream power law. **This choice affects both the interpretation of `incision_threshold_specific_area` and the scaling of model results.** Getting it wrong is an error in an exponent, not a fudge factor, and cannot be calibrated away.
@@ -430,7 +499,11 @@ dz/dt = U − K · (a)^m · S^n  =  U − K · (A/dx)^m · S^n
 This is the **default in lsdtt3** and was advocated by **Bonetti, Hooshyar, Camporeale and Porporato (2020, PNAS 117:1375–1382)** and **Litwin et al. (2022, JGR-ES)**.
 
 Note that the units of `K` are `m^(1 − m) yr^-1`, which differs from
-Convention 2.
+Convention 2. Because a channel's drainage area A is physical, a specific-area K
+is tied to the cell size: `K_specific = K_map · dx^m`. A K calibrated on a 10 m
+grid is not the same erodibility on a 30 m grid; `lsdtt-lem` converts a K raster
+whose calibration cell size or convention differs from the run's, and prints the
+factor.
 
 **Convention 2 (Perron et al. 2008, 2009): Total area** (`divide_area_by_dx: false`)
 
@@ -625,6 +698,14 @@ text names a paper, this is the paper it means.
 - **Carretier, S., Martinod, P., Reich, M., & Goddéris, Y. (2016).** Modelling
   sediment clasts transport during landscape evolution. *Earth Surface
   Dynamics*, 4, 237–251. doi:10.5194/esurf-4-237-2016 — the Cidre model.
+
+**Spatially varying erodibility**
+
+- **Perne, M., Covington, M. D., Thaler, E. A., & Myre, J. M. (2017).** Steady
+  state, erosional continuity, and the topography of landscapes developed in
+  layered rocks. *Earth Surface Dynamics*, 5, 85–100.
+  doi:10.5194/esurf-5-85-2017 — steady slopes across vertical contacts (Eq. 4)
+  and horizontal layers.
 
 **Erosivity conventions and valley spacing**
 
