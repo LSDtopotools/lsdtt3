@@ -1,0 +1,9 @@
+# A hole in the map on a DEM grid, given a named table unit.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkfill
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_map_hole.gpkg
+dem_fname: lithk_dem.tif
+lithology_unmapped_code: 30

@@ -1,0 +1,8 @@
+# A table with K = 0 is refused.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkzero
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg
+cell_size_metres: 10
+lithology_property_table_fname: lithk_table_zero.csv

@@ -3005,6 +3005,112 @@ lsdtt_add_lem_k_cli_test(failure_lem_forcing_erodibility_zero
     lem_forcing_erodibility_zero.param.in unused.tif --expect-exit-code 1
     --stderr-contains "erodibility must be > 0" --stderr-contains "row")
 
+# =============================================================================
+# lsdtt-lithology-erodibility: lithology maps to K rasters for lsdtt-lem
+#
+# Fixtures (polygon maps, a code raster, a DEM, property tables, a crosswalk
+# and the expected K rasters) come from lsdtt-test-lithology-erodibility
+# --write-fixtures. The map's unit edges lie on pixel boundaries, so every
+# expected K raster is computed from the layout, not by the code under test.
+# =============================================================================
+set(LITHK_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/lem_lithology_erodibility_cli_fixture")
+add_test(NAME fixture_lem_lithology_erodibility_cli
+         COMMAND lsdtt-test-lithology-erodibility --write-fixtures "${LITHK_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_lem_lithology_erodibility_cli PROPERTIES
+    LABELS "fixture;lem"
+    FIXTURES_SETUP lem_lithology_erodibility_cli)
+
+function(lsdtt_add_lithk_cli_test TEST_NAME TEMPLATE EXPECTED)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-lithology-erodibility ${TEMPLATE} ${EXPECTED}
+        --read-path "${LITHK_FIXTURE_DIR}" ${ARGN})
+    if(TEST_NAME MATCHES "^failure_")
+        set(_labels "failure;cli;lem")
+    else()
+        set(_labels "smoke;cli;lem")
+    endif()
+    lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+        LABELS "${_labels}"
+        FIXTURES_REQUIRED lem_lithology_erodibility_cli
+        FIXTURES_SETUP ${TEST_NAME})
+endfunction()
+
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_own_grid
+    lem_lithology_erodibility_own_grid.param.in lithkown_erodibility.tif
+    --expect lithkown_lithology_code.tif
+    --expect lithkown_lithology_legend.csv
+    --expect lithkown_lem_erodibility_parameters.txt
+    --expect-raster-size lithkown_erodibility.tif:80x100
+    --expect-file-contains "lithkown_lem_erodibility_parameters.txt:erodibility_raster_area_convention: map_area"
+    --stdout-contains "its footprint is the model domain")
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_own_grid --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_own_grid/out/lithkown_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_own_grid.tif"
+    "smoke_lem_lithology_erodibility_own_grid")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_dem_grid
+    lem_lithology_erodibility_dem_grid.param.in lithkdem_erodibility.tif)
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_dem_grid --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_dem_grid/out/lithkdem_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_dem_grid.tif"
+    "smoke_lem_lithology_erodibility_dem_grid")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_centre_clip
+    lem_lithology_erodibility_centre_clip.param.in lithkclip_erodibility.tif
+    --stdout-contains "relabelled onto the synthetic grid")
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_centre_clip --compare-raster-values
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_centre_clip/out/lithkclip_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_centre_clip.tif"
+    "smoke_lem_lithology_erodibility_centre_clip")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_code_raster
+    lem_lithology_erodibility_code_raster.param.in lithkcode_erodibility.tif)
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_code_raster --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_code_raster/out/lithkcode_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_own_grid.tif"
+    "smoke_lem_lithology_erodibility_code_raster")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_crosswalk
+    lem_lithology_erodibility_crosswalk.param.in lithkcw_erodibility.tif)
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_crosswalk --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_crosswalk/out/lithkcw_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_own_grid.tif"
+    "smoke_lem_lithology_erodibility_crosswalk")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_unmapped_code
+    lem_lithology_erodibility_unmapped_code.param.in lithkfill_erodibility.tif
+    --stdout-contains "given code 30")
+
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_unknown_value
+    lem_lithology_erodibility_unknown_value.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "could not be given a code" --stderr-contains "'basalt'")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_hole
+    lem_lithology_erodibility_hole.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "inside the model domain have no lithology")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_table_zero
+    lem_lithology_erodibility_table_zero.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "K must be > 0")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_table_no_m
+    lem_lithology_erodibility_table_no_m.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "m_exponent")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_vector_no_cell_size
+    lem_lithology_erodibility_vector_no_cell_size.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "cell_size_metres")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_relabel_on_dem
+    lem_lithology_erodibility_relabel_on_dem.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "model_grid_source: parameters")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_geographic
+    lem_lithology_erodibility_geographic.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "geographic")
+
+# The chain: lsdtt-lem runs on the K raster the own-grid test made, with the
+# parameter lines it printed, on the map's own grid.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_lithology_erodibility_chain
+    lsdtt-lem
+    lem_lithology_erodibility_chain.param.in
+    lithkchain_modelled_topography.tif
+    --read-path "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_own_grid/out"
+    --stdout-contains "converted map-area K to specific-area K at cell size 10"
+    --expect-raster-size lithkchain_modelled_topography.tif:80x100)
+lsdtt_set_tests_properties(smoke_lem_lithology_erodibility_chain PROPERTIES
+    LABELS "smoke;cli;lem"
+    FIXTURES_REQUIRED smoke_lem_lithology_erodibility_own_grid)
+
 # Synthetic georeference. With no synthetic_crs_wkt the grid is centred on
 # Watopia (UTM zone 58S); a supplied WKT is kept. The CRS and the grid centre
 # are checked on the written raster by the erodibility test driver.
@@ -5021,6 +5127,15 @@ target_link_libraries(lsdtt-test-lem-forcing-history PRIVATE lsdtt3_cpu)
 add_test(NAME unit_lem_forcing_history
          COMMAND lsdtt-test-lem-forcing-history "${CMAKE_CURRENT_BINARY_DIR}")
 lsdtt_set_tests_properties(unit_lem_forcing_history PROPERTIES LABELS "unit;lem")
+
+# Lithology maps to erodibility: property table, crosswalk, the categorical
+# polygon rasteriser and the K raster (lsdtt-lithology-erodibility's library).
+add_executable(lsdtt-test-lithology-erodibility cpp/test_lithology_erodibility.cpp)
+target_link_libraries(lsdtt-test-lithology-erodibility PRIVATE lsdtt3_cpu)
+add_test(NAME unit_lem_lithology_erodibility
+         COMMAND lsdtt-test-lithology-erodibility
+                 "${CMAKE_CURRENT_BINARY_DIR}/lem_lithology_erodibility_work")
+lsdtt_set_tests_properties(unit_lem_lithology_erodibility PROPERTIES LABELS "unit;lem")
 
 # Spatially varying erodibility (K): kernels, steady state, values, grid modes.
 add_executable(lsdtt-test-lem-erodibility cpp/test_lem_erodibility.cpp)

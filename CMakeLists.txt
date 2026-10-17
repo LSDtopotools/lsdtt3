@@ -472,6 +472,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_lem_cpu.cpp
     src/cpu/lsdtt_lem_parameter_rasters_cpu.cpp
     src/cpu/lsdtt_lem_input_grid_cpu.cpp
+    src/cpu/lsdtt_lithology_map_cpu.cpp
     src/cpu/lsdtt_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_newton_cpu.cpp
@@ -650,6 +651,7 @@ lsdtt_cli(lsdtt-marsh-topography       cli/lsdtt-marsh-topography.cpp)
 lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
 lsdtt_cli(lsdtt-bearing-comparison     cli/lsdtt-bearing-comparison.cpp)
 lsdtt_cli(lsdtt-swath-profile          cli/lsdtt-swath-profile.cpp)
+lsdtt_cli(lsdtt-lithology-erodibility  cli/lsdtt-lithology-erodibility.cpp)
 lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 lsdtt_cli(lsdtt-advection-diffusion    cli/lsdtt-advection-diffusion.cpp)
 lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)

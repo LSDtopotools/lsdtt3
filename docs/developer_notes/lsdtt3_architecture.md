@@ -65,6 +65,7 @@ lsdtt3/
 │   ├── lsdtt-stream-burning.cpp
 │   ├── lsdtt-surface-metrics.cpp
 │   ├── lsdtt-swath-profile.cpp
+│   ├── lsdtt-lithology-erodibility.cpp
 │   ├── lsdtt-synthetic-networks.cpp
 │   ├── lsdtt-synthetic-surfaces.cpp
 │   ├── lsdtt-valley-centreline.cpp
@@ -164,6 +165,7 @@ lsdtt3/
 │   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
 │   │   ├── lsdtt_lem_parameter_rasters_cpu.hpp/.cpp          — per-pixel LEM parameters: K calibration, conversion, validation, forcing scaling
 │   │   ├── lsdtt_lem_input_grid_cpu.hpp/.cpp                 — LEM model grid and input-raster placement (clip / relabel / warp)
+│   │   ├── lsdtt_lithology_map_cpu.hpp/.cpp                  — lithology maps to erodibility: property table, crosswalk, K raster
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
 │   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp             — transient hillslope transport (cidre, roering, linear, adi)
@@ -304,7 +306,7 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Hillslopes and divides*: `lsdtt_hillslope_transport_cpu`, `lsdtt_hillslope_steady_state_cpu`, `lsdtt_hillslope_implicit_cpu`, `lsdtt_hillslope_newton_cpu`, `lsdtt_hillslope_cellular_cpu`, `lsdtt_hillslope_peclet_cpu`, `lsdtt_hillslope_length_search_cpu`, `lsdtt_hillslope_particle_io`, `lsdtt_hilltop_flow_routing_cpu`, `lsdtt_ridgeline_cpu`, `lsdtt_divide_diagnostics_cpu`, `lsdtt_divide_migration_cpu`, `lsdtt_perron_qimp_cpu`, `lsdtt_ren_modular_implicit_cpu`
 
 
-*Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_parameter_rasters_cpu`, `lsdtt_lem_input_grid_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
+*Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_parameter_rasters_cpu`, `lsdtt_lem_input_grid_cpu`, `lsdtt_lithology_map_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
 
 
 *Hydrology and hydraulics*: `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`, `lsdtt_hydro_routing_cpu`, `lsdtt_hydro_velocity_field_cpu`, `lsdtt_hydro_roughness_cpu`, `lsdtt_hydraulic_graph_cpu`, `lsdtt_infiltration_excess_cpu`, `lsdtt_canopy_interception_cpu`, `lsdtt_giuh_cpu`, `lsdtt_graphflood_optimised_cpu`, `lsdtt_sti_cpu`
@@ -950,6 +952,16 @@ Current CLI programs are:
   Swath profile extraction. Computes summary statistics (min, max, mean, percentiles) 
   across a swath corridor perpendicular to a polyline baseline. Outputs swath 
   CSV and optional visualization rasters.
+
+- **`lsdtt-lithology-erodibility.cpp`**  
+  **Lithology map to an erodibility (K) raster for `lsdtt-lem`.** Reads a polygon
+  map with a lithology field (e.g. a Macrostrat download) or an integer code
+  raster, maps values to codes (crosswalk, integer, or table name), and writes K
+  from a property table in the table's own convention, on a DEM's grid, a
+  synthetic grid (with `lsdtt-lem`'s placements) or the map's own grid. Also
+  writes the code raster, a legend and the `lsdtt-lem` parameter lines that state
+  the table's calibration. Uses `lsdtt_lithology_map_cpu`,
+  `rasterise_polygon_field_values` and `lsdtt_lem_input_grid_cpu`.
 
 - **`lsdtt-cross-sections.cpp`**  
   Cross-section extraction along a polyline. Samples elevation, slope, and metrics 
@@ -3148,6 +3160,32 @@ GDAL-free core headers.
   onto. A window off the source is refused.
 - `prepare_lem_input_raster(path, model_grid, opts, label)`: the single entry
   point for the five placements; the result's meta is the model grid.
+
+### lsdtt_lithology_map_cpu (lithology maps to erodibility)
+
+File: `src/cpu/lsdtt_lithology_map_cpu.hpp/.cpp`. No GDAL; never prints.
+
+- `load_lithology_property_table(path)`: `#` header lines (`erodibility_convention`,
+  `m_exponent`, `n_exponent` required; `calibration_cell_size_metres`, `provenance`
+  optional) then `code,name,erodibility[,reference]`. Codes 0..65534 and names
+  unique; K finite and > 0; errors name the line (and column). The stated
+  calibration is an `lsdtt_erodibility_calibration`, checked later by the LEM's
+  `check_lem_erodibility_calibration` when the raster is used.
+- `load_lithology_crosswalk(path)`: `value,code`.
+- `lithology_codes_for_values(values, counts, crosswalk*, table)`: crosswalk, else
+  integer code, else table name (case-insensitive); lists every unmapped value with
+  its pixel count.
+- `make_lithology_erodibility(grid, value_index, values, codes, table, opts)`: the
+  code and K rasters on `grid` (whose mask is the domain) and a legend. Unmapped
+  domain pixels are refused, given `unmapped_code`, or (footprint mode) left
+  nodata.
+
+The categorical polygon rasteriser it relies on is
+`rasterise_polygon_field_values` in `lsdtt_vector_rasterise_cpu`: cell-centre
+assignment (overlaps to the lower sorted value), then a coverage pass on an
+oversampled subgrid, in 512² chunks, that fills sliver gaps (fragments of one
+value add up). The older `rasterise_polygon_string_field` (STI) and
+`rasterise_macrostrat_geology` are separate implementations still.
 
 ### lsdtt_stream_power_cpu (transient incision)
 

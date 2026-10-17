@@ -63,6 +63,7 @@ core lsdtt-graphflood
 core lsdtt-hillslope-channel-coupling
 core lsdtt-internal-drainage
 core lsdtt-lem
+core lsdtt-lithology-erodibility
 core lsdtt-linear-stats
 core lsdtt-marsh-topography
 core lsdtt-mountain-front

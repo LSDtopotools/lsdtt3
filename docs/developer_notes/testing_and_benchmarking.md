@@ -5206,6 +5206,23 @@ state, the `lsdtt-lem` model-grid and input-raster placements, and the Python
   `lsdtt-raster-preprocessing` must open to reproject. The guard therefore exempts
   geographic rasters from the square-pixel rule.
 
+
+### 8c.1 Lithology maps to erodibility (`lsdtt-lithology-erodibility`)
+
+| Test | Labels | What it covers |
+|---|---|---|
+| `unit_lem_lithology_erodibility` | `unit;lem` | property table (valid, duplicates, bad numbers, K <= 0, missing m / n / convention, code range, extra columns); crosswalk; values to codes; the polygon rasteriser; the K raster. Driver `tests/cpp/test_lithology_erodibility.cpp` |
+| `smoke_/failure_lem_lithology_erodibility_*`, `regression_lem_lithology_erodibility_*` | `smoke`/`failure`/`regression`, `cli;lem` | the CLI on fixtures from `fixture_lem_lithology_erodibility_cli`: own grid, DEM grid, centre clip, code raster, crosswalk, a named unmapped code; seven refusals; the K rasters compared bitwise against expected rasters |
+| `smoke_lem_lithology_erodibility_chain` | `smoke;cli;lem` | `lsdtt-lem` on the produced K raster with the printed parameter lines (converts the map-area K by dx^m) |
+
+The fixture map's unit edges lie on pixel boundaries and the clip point is
+chosen so no pixel centre lies on a unit edge, so the expected K rasters follow
+from the layout alone. The rasteriser tests use a 20 × 20 grid with three
+overlapping pixel centres (resolved to the lower value), a 0.6-cell sliver gap
+(10 pixels filled by coverage), a one-pixel hole (left unmapped), two fragments
+of one value, reference nodata, and the same layout in EPSG:4326 (interior pixels
+exact on the UTM grid).
+
 ## 9. Credentials in tests
 
 `lsdtt-fetch-raster` is the only lsdtt3 tool that touches secrets, and the test

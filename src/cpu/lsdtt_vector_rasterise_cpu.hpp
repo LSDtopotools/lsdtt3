@@ -267,4 +267,55 @@ lsdtt_raster_cpu macrostrat_rasterise_faults(
     const std::string&      mvt_path
 );
 
+// -----------------------------------------------------------------------------
+// rasterise_polygon_field_values
+//
+// The categorical polygon rasteriser for maps (lithology, land cover): every
+// valid pixel of `reference_raster` gets the value of `field_name` from the
+// polygon layer, as an index into `values` (the distinct field values, sorted).
+//
+// Rule (cell_centre): a pixel takes the polygon containing its centre. Where
+// two polygons with different values claim a centre the lower value index wins
+// (counted in n_overlap_pixels). Then a coverage gap fill: a pixel whose centre
+// falls in no polygon (a sliver gap between neighbouring polygons) takes the
+// value covering most of it, measured on an oversample x oversample subgrid
+// (ties to the lower index). Pixels that no polygon touches at all stay -1 and
+// are counted in n_unmapped_valid. Reference-nodata pixels are -1 and are not
+// counted.
+//
+// The layer is reprojected to the raster's CRS when both have one. Field values
+// are read as strings (an integer field gives "10", "30", ...); features with a
+// null value or a non-polygon geometry are skipped and counted.
+// -----------------------------------------------------------------------------
+struct polygon_field_rasterise_result
+{
+    std::vector<std::int32_t> value_index;   // per pixel; -1 = none or nodata
+    std::vector<std::string>  values;        // distinct values, sorted
+    std::size_t n_unmapped_valid   = 0;      // valid pixels left with no value
+    std::size_t n_gap_filled       = 0;      // pixels assigned by the coverage pass
+    std::size_t n_overlap_pixels   = 0;      // centres claimed by two values
+    std::size_t n_features_read    = 0;
+    std::size_t n_features_skipped = 0;
+};
+
+polygon_field_rasterise_result rasterise_polygon_field_values(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      vector_path,
+    const std::string&      layer_name,    // "" = the first layer
+    const std::string&      field_name,
+    int                     oversample = 4);
+
+// The extent (in the layer's own CRS) and CRS WKT of a polygon layer, and its
+// field names. layer_name "" = the first layer.
+struct polygon_layer_info
+{
+    double x_min = 0.0, y_min = 0.0, x_max = 0.0, y_max = 0.0;
+    std::string crs_wkt;
+    std::vector<std::string> field_names;
+    std::int64_t n_features = 0;
+};
+
+[[nodiscard]] polygon_layer_info read_polygon_layer_info(const std::string& vector_path,
+                                                         const std::string& layer_name);
+
 } // namespace lsdtt

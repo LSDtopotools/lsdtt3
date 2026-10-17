@@ -1,0 +1,15 @@
+# A 20 x 30 window of the map at 10 m, centred on (500402, 5000492), placed on the
+# synthetic (Watopia) grid. No window pixel centre lies on a unit edge.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkclip
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg
+model_grid_source: parameters
+n_rows: 20
+n_cols: 30
+cell_size_metres: 10
+input_raster_placement: relabel_centre_clip
+input_raster_clip_easting_metres: 500402
+input_raster_clip_northing_metres: 5000492

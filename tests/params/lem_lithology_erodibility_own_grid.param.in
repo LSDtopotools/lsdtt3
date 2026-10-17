@@ -1,0 +1,8 @@
+# A vector map on its own grid at 10 m: the domain is its footprint.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkown
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg
+cell_size_metres: 10

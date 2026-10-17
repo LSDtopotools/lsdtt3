@@ -252,6 +252,16 @@ mask, data). The library tests are `unit_lem_erodibility` (fast) and
 `rigorous_lem_erodibility_analytic` (the analytic steady states); see section 8c
 of `docs/developer_notes/testing_and_benchmarking.md`.
 
+### Lithology to erodibility
+
+`fixture_lem_lithology_erodibility_cli` writes the fixtures for
+`lsdtt-lithology-erodibility` (`lsdtt-test-lithology-erodibility --write-fixtures`)
+into `build/tests/lem_lithology_erodibility_cli_fixture/`: GeoPackage maps (the
+three-unit map, one with a hole, one in EPSG:4326, one with an unknown
+lithology), a code raster, a 20 m DEM, property tables (valid, K = 0, no m), a
+crosswalk, and the expected K rasters. `smoke_lem_lithology_erodibility_chain`
+then runs `lsdtt-lem` on the K raster the own-grid test wrote.
+
 ## Cosmogenic nuclide tests
 
 `unit_cosmo_physics` (labels `unit;cosmo`) runs `tests/cpp/test_cosmo_physics.cpp`,
