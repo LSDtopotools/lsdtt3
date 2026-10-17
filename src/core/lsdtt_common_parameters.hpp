@@ -340,4 +340,20 @@ void declare_synthetic_noise_parameters(
     lsdtt_help_registry&                help_map,
     const std::string&                  prefix = "");
 
+// -----------------------------------------------------------------------------
+// Fetch tools (lsdtt-fetch-raster, lsdtt-fetch-lithology)
+//
+// declare_fetch_bbox_parameters: west, east, south, north (WGS84 degrees, as
+//   strings so the parser keeps double precision).
+// declare_fetch_bounds_file_parameters: bounds_fname, bounds_path, bounds_layer.
+// declare_http_request_parameters: http_timeout_seconds,
+//   http_connect_timeout_seconds, http_max_retry.
+// -----------------------------------------------------------------------------
+void declare_fetch_bbox_parameters(std::map<std::string, std::string>& string_default_map,
+                                   lsdtt_help_registry&                help_map);
+void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& string_default_map,
+                                          lsdtt_help_registry&                help_map);
+void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
+                                     lsdtt_help_registry&        help_map);
+
 } // namespace lsdtt

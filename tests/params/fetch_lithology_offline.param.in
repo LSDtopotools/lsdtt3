@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithoff
+
+# Reads the committed synthetic tile (tests/data/macrostrat_tiles), no network.
+west: 10.00
+south: 46.00
+east: 10.08
+north: 46.05
+macrostrat_tile_zoom: 10
+macrostrat_tile_dir: macrostrat_tiles
+lookup_map_units: false
+request_delay_milliseconds: 0

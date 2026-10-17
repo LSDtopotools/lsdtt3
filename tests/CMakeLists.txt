@@ -6322,6 +6322,75 @@ foreach(_case geo_missing_modules gdal_programs_missing)
         LABELS "unit;configure_contract")
 endforeach()
 
+# -----------------------------------------------------------------------------
+# lsdtt-fetch-lithology CLI. The offline test reads the committed synthetic tile
+# (tests/data/macrostrat_tiles) with the API lookup off; the network test is
+# opt-in like the fetch_raster ones.
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_lithology_offline
+    lsdtt-fetch-lithology
+    fetch_lithology_offline.param.in
+    lithoff_macrostrat_units.fgb
+    --expect lithoff_lithology_vocabulary.csv
+    --expect lithoff_crosswalk_template.csv
+    --expect lithoff_ATTRIBUTION.txt
+    --expect-vector-feature-min lithoff_macrostrat_units.fgb:3
+    --expect-file-contains "lithoff_lithology_vocabulary.csv:\"granite\",major"
+    --expect-file-contains "lithoff_lithology_vocabulary.csv:\"sandstone and shale\",text"
+    --expect-file-not-contains "lithoff_lithology_vocabulary.csv:limestone"
+    --expect-file-contains "lithoff_ATTRIBUTION.txt:source_id 7"
+    --stdout-contains "(EPSG:32632)"
+    --stdout-contains "lithology_field_name: lith_primary"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_lithology_no_bbox
+    lsdtt-fetch-lithology
+    fetch_lithology_no_bbox.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: give a bounding box"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_lithology_too_many_tiles
+    lsdtt-fetch-lithology
+    fetch_lithology_too_many_tiles.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "more than max_tiles"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_lithology_web_mercator
+    lsdtt-fetch-lithology
+    fetch_lithology_web_mercator.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: output_epsg: Web Mercator"
+)
+
+add_test(NAME smoke_fetch_lithology_help
+         COMMAND lsdtt-fetch-lithology -h)
+lsdtt_set_tests_properties(smoke_fetch_lithology_help PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "macrostrat_tile_zoom")
+
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_lsdtt_cli_smoke_test(
+        network_fetch_lithology_cli
+        lsdtt-fetch-lithology
+        fetch_lithology_network.param.in
+        lithlive_macrostrat_units.fgb
+        --expect lithlive_lithology_vocabulary.csv
+        --expect-vector-feature-min lithlive_macrostrat_units.fgb:1
+        --expect-file-contains "lithlive_ATTRIBUTION.txt:doi:10.1029/2018GC007467"
+        --stdout-contains "(EPSG:32630)"
+    )
+    lsdtt_set_tests_properties(network_fetch_lithology_cli PROPERTIES LABELS "network;cli;fetch")
+endif()
+
 # Native DEM fetching (docs/developer_notes/testing_and_benchmarking.md).
 #
 # The offline half needs no network and runs in the default suite: it covers UTM
@@ -6342,6 +6411,17 @@ target_include_directories(lsdtt-test-dem-grouping PRIVATE ${CMAKE_SOURCE_DIR}/s
 add_test(NAME unit_dem_grouping
          COMMAND lsdtt-test-dem-grouping "${CMAKE_CURRENT_BINARY_DIR}/dem_grouping_output")
 lsdtt_set_tests_properties(unit_dem_grouping PROPERTIES LABELS "unit;fetch")
+
+# Macrostrat lithology fetch (lsdtt-fetch-lithology), offline: tile maths, the
+# API parsers, the lith_primary rule, and a fetch from a committed synthetic
+# vector tile (tests/data/macrostrat_tiles). Skips (77) without GDAL's MVT driver.
+add_executable(lsdtt-test-macrostrat-fetch cpp/test_macrostrat_fetch.cpp)
+target_link_libraries(lsdtt-test-macrostrat-fetch PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-macrostrat-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+add_test(NAME unit_fetch_lithology
+         COMMAND lsdtt-test-macrostrat-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/macrostrat_tiles"
+                 "${CMAKE_CURRENT_BINARY_DIR}/fetch_lithology_work")
+lsdtt_set_tests_properties(unit_fetch_lithology PROPERTIES LABELS "unit;fetch" SKIP_RETURN_CODE 77)
 
 add_executable(lsdtt-test-coastal-mask cpp/test_coastal_mask.cpp)
 target_link_libraries(lsdtt-test-coastal-mask PRIVATE lsdtt3_core)

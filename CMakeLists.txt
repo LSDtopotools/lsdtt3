@@ -269,6 +269,8 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_vector_utils.cpp
     src/core/lsdtt_raster_warp.cpp
     src/core/lsdtt_raster_fetch.cpp
+    src/core/lsdtt_http_fetch.cpp
+    src/core/lsdtt_macrostrat_fetch.cpp
     src/core/lsdtt_secret.cpp
     src/core/lsdtt_point_input.cpp
     src/core/lsdtt_outlet_bounds_discovery.cpp
@@ -652,6 +654,7 @@ lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
 lsdtt_cli(lsdtt-bearing-comparison     cli/lsdtt-bearing-comparison.cpp)
 lsdtt_cli(lsdtt-swath-profile          cli/lsdtt-swath-profile.cpp)
 lsdtt_cli(lsdtt-lithology-erodibility  cli/lsdtt-lithology-erodibility.cpp)
+lsdtt_cli(lsdtt-fetch-lithology        cli/lsdtt-fetch-lithology.cpp)
 lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 lsdtt_cli(lsdtt-advection-diffusion    cli/lsdtt-advection-diffusion.cpp)
 lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)

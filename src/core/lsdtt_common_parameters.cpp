@@ -600,4 +600,90 @@ void declare_synthetic_noise_parameters(
     declare_diamond_square_parameters(float_default_map, help_map, prefix);
 }
 
+// -----------------------------------------------------------------------------
+// Fetch tools
+// -----------------------------------------------------------------------------
+void declare_fetch_bbox_parameters(std::map<std::string, std::string>& string_default_map,
+                                   lsdtt_help_registry&                help_map)
+{
+    string_default_map["west"] = "";
+    help_map["west"] = {"string","",
+        "Western edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be less than east. Range -180 to 180.",
+        "Bounding box", "param", ""};
+
+    string_default_map["east"] = "";
+    help_map["east"] = {"string","",
+        "Eastern edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be greater than west. Range -180 to 180.",
+        "Bounding box", "param", ""};
+
+    string_default_map["south"] = "";
+    help_map["south"] = {"string","",
+        "Southern edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be less than north. Range -90 to 90.",
+        "Bounding box", "param", ""};
+
+    string_default_map["north"] = "";
+    help_map["north"] = {"string","",
+        "Northern edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be greater than south. Range -90 to 90.",
+        "Bounding box", "param", ""};
+}
+
+void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& string_default_map,
+                                          lsdtt_help_registry&                help_map)
+{
+    string_default_map["bounds_fname"] = "";
+    help_map["bounds_fname"] = {"string","",
+        "Vector file defining the area, instead of west/south/east/north.",
+        "FlatGeobuf (.fgb), GeoPackage (.gpkg) or any other OGR-readable "
+        "format. The layer must contain either one or more polygons (the "
+        "envelope of all of them is used), or exactly two points marking "
+        "opposite corners. For two points either diagonal works -- "
+        "lower-left/upper-right and lower-right/upper-left give the same box, "
+        "so the orientation is worked out automatically. If the layer is in a "
+        "projected CRS such as UTM it is reprojected to WGS84 for you, so a "
+        "box drawn in a GIS can be used directly. Set this or the four edge "
+        "parameters, not both.",
+        "Bounding box", "param", ""};
+
+    string_default_map["bounds_path"] = "";
+    help_map["bounds_path"] = {"string","",
+        "Optional directory for bounds_fname.",
+        "If empty, read_path is used. Ignored when bounds_fname is an "
+        "absolute path.",
+        "Bounding box", "param", ""};
+
+    string_default_map["bounds_layer"] = "";
+    help_map["bounds_layer"] = {"string","",
+        "Layer name within bounds_fname.",
+        "If empty, the first layer is used (with a warning when the file has "
+        "more than one).",
+        "Bounding box", "param", ""};
+}
+
+void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
+                                     lsdtt_help_registry&        help_map)
+{
+    int_default_map["http_timeout_seconds"] = 60;
+    help_map["http_timeout_seconds"] = {"int","60",
+        "Maximum seconds for an individual HTTP request.",
+        "Bounds how long an unresponsive server can stall the fetch.",
+        "Network", "param", ""};
+
+    int_default_map["http_connect_timeout_seconds"] = 15;
+    help_map["http_connect_timeout_seconds"] = {"int","15",
+        "Maximum seconds to establish a connection.",
+        "Keep this short so an offline machine fails promptly.",
+        "Network", "param", ""};
+
+    int_default_map["http_max_retry"] = 3;
+    help_map["http_max_retry"] = {"int","3",
+        "Number of retries on a transient HTTP failure.",
+        "Cloud storage occasionally returns 5xx responses; retrying absorbs "
+        "those without failing the run.",
+        "Network", "param", ""};
+}
+
 } // namespace lsdtt

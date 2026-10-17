@@ -5223,6 +5223,22 @@ overlapping pixel centres (resolved to the lower value), a 0.6-cell sliver gap
 of one value, reference nodata, and the same layout in EPSG:4326 (interior pixels
 exact on the UTM grid).
 
+### 8c.2 Macrostrat lithology fetch (`lsdtt-fetch-lithology`)
+
+| Test | Labels | What it covers |
+|---|---|---|
+| `unit_fetch_lithology` | `unit;fetch` | tile maths against hand-computed tiles (zoom 0, Berlin 550/335 at zoom 10, polar clamp, bounds); UTM zones; the three API parsers incl. malformed JSON, an `error` response and a missing `success/data`; the `lith_primary` rule; a fetch from the committed tile: the unit outside the box dropped, EPSG:32632, areas within 1.5 % of the source rectangles projected independently, the vocabulary, the attribution; an explicit EPSG to GeoPackage; too many tiles, no readable tile and a box with no units refused; an unreachable API (127.0.0.1:9) is a warning with the output still written. Driver `tests/cpp/test_macrostrat_fetch.cpp`; skips (77) without the MVT driver |
+| `smoke_fetch_lithology_offline` | `smoke;cli;fetch` | the CLI on the committed tile with `lookup_map_units: false`: all four outputs, vocabulary rows and sources, no unit from outside the box |
+| `failure_fetch_lithology_{no_bbox,too_many_tiles,web_mercator}` | `failure;cli;fetch` | a missing edge, a box needing more than `max_tiles`, `output_epsg: 3857` |
+| `smoke_fetch_lithology_help` | `smoke;cli;fetch` | `-h` lists the Macrostrat parameters |
+| `network_fetch_lithology_cli` | `network;cli;fetch` | a live fetch near Edinburgh (two tiles, BGS 1:625k), only with `LSDTT_ENABLE_NETWORK_TESTS` |
+
+The fixture is one synthetic vector tile, `tests/data/macrostrat_tiles/10/540/364.pbf`,
+generated with `ogr2ogr -f MVT` from `units_source.geojson` beside it (the
+command is in that directory's README). Its vertices are quantised to 1/4096 of
+the tile (9.6 m), which sets the area tolerance. MVT and OpenFileGDB are in the
+vector drivers `unit_format_support` requires.
+
 ## 9. Credentials in tests
 
 `lsdtt-fetch-raster` is the only lsdtt3 tool that touches secrets, and the test

@@ -46,6 +46,7 @@ lsdtt3/
 │   ├── lsdtt-divide-migration.cpp
 │   ├── lsdtt-drainage-analysis.cpp
 │   ├── lsdtt-feature-finder.cpp
+│   ├── lsdtt-fetch-lithology.cpp
 │   ├── lsdtt-fetch-raster.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-fluvial-surfaces.cpp
@@ -115,6 +116,8 @@ lsdtt3/
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
 │   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
+│   │   ├── lsdtt_http_fetch.hpp/.cpp        — HTTP GET/POST through GDAL's curl (timeouts, retries)
+│   │   ├── lsdtt_macrostrat_fetch.hpp/.cpp  — Macrostrat map units for a box (vector tiles + API)
 │   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
 │   ├── cpu/                                   — 99 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
@@ -276,7 +279,7 @@ translation units.
 **`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
 parameter parsing, projection and vector plumbing:
 
-`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`
+`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`
 
 
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
@@ -1016,6 +1019,16 @@ Current CLI programs are:
   Raster data fetching from remote sources. Downloads and processes elevation data 
   from cloud providers (COP30, Planetary Computer, etc.) with optional tiling, 
   reprojection, and mosaicking.
+
+- **`lsdtt-fetch-lithology.cpp`**  
+  **Geological map units from Macrostrat for a bounding box.** Reads Macrostrat's
+  `carto` vector tiles (GDAL MVT driver), keeps the units overlapping the box,
+  looks up each map unit's linked lithologies and source maps in the API
+  (optional; a failed lookup is a warning), and writes a polygon layer in the
+  local UTM zone with `lith_primary` for `lsdtt-lithology-erodibility`, plus a
+  lithology vocabulary, a crosswalk template and the CC BY 4.0 attribution.
+  Shares the bounding-box, bounds-file and HTTP parameters with
+  `lsdtt-fetch-raster` (`lsdtt_common_parameters`). Uses `lsdtt_macrostrat_fetch`.
 
 - **`lsdtt-marsh-topography.cpp`**  
   Marsh and tidal platform analysis. Identifies marsh platforms and intertidal zones, 
@@ -3186,6 +3199,33 @@ assignment (overlaps to the lower sorted value), then a coverage pass on an
 oversampled subgrid, in 512² chunks, that fills sliver gaps (fragments of one
 value add up). The older `rasterise_polygon_string_field` (STI) and
 `rasterise_macrostrat_geology` are separate implementations still.
+
+### lsdtt_macrostrat_fetch and lsdtt_http_fetch (Macrostrat map units)
+
+Files: `src/core/lsdtt_macrostrat_fetch.hpp/.cpp`, `src/core/lsdtt_http_fetch.hpp/.cpp`.
+GDAL-free headers; never print (notes and warnings are returned).
+
+Macrostrat's map API answers per point, so an area comes from its vector tiles
+(`https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt`, layer `units`, EPSG:3857).
+
+- `http_request_body(url, post_body, opts, body, error)`: one GET (or POST) through
+  GDAL's curl with timeouts and retries. `lsdtt_raster_fetch` uses it too.
+- `slippy_tiles_for_bbox`, `slippy_tile_bounds_3857`, `utm_epsg_for`: tile maths.
+- `parse_macrostrat_lithologies` / `_map_unit_liths` / `_sources`: the API's
+  `success/data` JSON (malformed JSON or an `error` response throws).
+- `macrostrat_primary_lithology(lith_text, lith_ids, vocabulary)`: the first
+  lithology of a unit: the first `Major:{...}` term, else the first linked
+  vocabulary name, else the whole text, else empty; lower case, whitespace
+  collapsed. `lith_primary_source` records which.
+- `fetch_macrostrat_units(opts)`: downloads the tiles (or reads
+  `<tile_dir>/{z}/{x}/{y}.mvt|.pbf`), each through a `/vsimem` path carrying z/x/y
+  because that is how the MVT driver georeferences a single tile; keeps features
+  whose envelope overlaps the box; batches the API lookups 100 map ids at a time;
+  reprojects to the UTM zone of the box centre (or `target_epsg`) and writes layer
+  `units`. Too many tiles, no readable tile or no units are errors; a failed API
+  lookup is a warning and `lith_primary` falls back to the tiles' text.
+- `macrostrat_attribution_text(result)`: the CC BY 4.0 citation (Peters, Husson &
+  Czaplewski 2018) and each source map.
 
 ### lsdtt_stream_power_cpu (transient incision)
 

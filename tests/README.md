@@ -262,6 +262,15 @@ lithology), a code raster, a 20 m DEM, property tables (valid, K = 0, no m), a
 crosswalk, and the expected K rasters. `smoke_lem_lithology_erodibility_chain`
 then runs `lsdtt-lem` on the K raster the own-grid test wrote.
 
+### Macrostrat lithology fetch
+
+`unit_fetch_lithology` and `smoke_fetch_lithology_offline` read one committed,
+synthetic Mapbox Vector Tile, `data/macrostrat_tiles/10/540/364.pbf`, through
+`macrostrat_tile_dir`, so they need no network. `data/macrostrat_tiles/README.md`
+lists its units and the `ogr2ogr` command that regenerates it from
+`units_source.geojson`. `network_fetch_lithology_cli` downloads from Macrostrat
+and is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`.
+
 ## Cosmogenic nuclide tests
 
 `unit_cosmo_physics` (labels `unit;cosmo`) runs `tests/cpp/test_cosmo_physics.cpp`,

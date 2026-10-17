@@ -26,6 +26,7 @@
 #include <cpl_vsi.h>         // VSIStatL, VSIUnlink
 #include <gdal.h>
 #include <gdal_utils.h>      // GDALTranslate / GDALWarp
+#include "lsdtt_http_fetch.hpp"
 #include <cpl_json.h>        // CPLJSONDocument (STAC + SAS responses)
 #include <ogr_api.h>         // OGR_L_* / OGR_G_* vector access
 #include <ogr_srs_api.h>     // OSR* / OCT* coordinate transforms
@@ -383,45 +384,10 @@ bool http_request_body(const std::string& url,
                        std::string& body,
                        std::string& error)
 {
-    gdal_string_list_guard opts;
-    opts.add("TIMEOUT="     + std::to_string(timeout_seconds));
-    opts.add("MAX_RETRY="   + std::to_string(max_retry));
-    opts.add("RETRY_DELAY=2");
-    if (!post_body.empty())
-    {
-        opts.add("POSTFIELDS=" + post_body);
-        opts.add("HEADERS=Content-Type: application/json");
-    }
-
-    CPLHTTPResult* response = nullptr;
-    {
-        quiet_gdal_errors quiet;
-        response = CPLHTTPFetch(url.c_str(), opts.get());
-    }
-
-    if (response == nullptr)
-    {
-        error = "no response from " + mask_url_query(url);
-        return false;
-    }
-    if (response->nStatus != 0)
-    {
-        error = "request to " + mask_url_query(url) + " failed: " +
-                (response->pszErrBuf ? response->pszErrBuf : "transport error");
-        CPLHTTPDestroyResult(response);
-        return false;
-    }
-    if (response->nDataLen <= 0 || response->pabyData == nullptr)
-    {
-        error = "empty response from " + mask_url_query(url);
-        CPLHTTPDestroyResult(response);
-        return false;
-    }
-
-    body.assign(reinterpret_cast<const char*>(response->pabyData),
-                static_cast<std::size_t>(response->nDataLen));
-    CPLHTTPDestroyResult(response);
-    return true;
+    lsdtt_http_request_options o;
+    o.timeout_seconds = timeout_seconds;
+    o.max_retry = max_retry;
+    return lsdtt::http_request_body(url, post_body, o, body, error);
 }
 
 
