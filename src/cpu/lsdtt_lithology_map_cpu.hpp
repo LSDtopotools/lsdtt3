@@ -131,4 +131,88 @@ lsdtt_lithology_erodibility_result make_lithology_erodibility(
 [[nodiscard]] std::string lithology_erodibility_lem_parameters(
     const lsdtt_lithology_property_table& table, const std::string& erodibility_fname);
 
+// =============================================================================
+// Lithologic units on a grid, with no property table
+//
+// For analyses categorised by lithologic unit (k_sn, network statistics): a
+// DEM and a geologic map are all that is needed. Each valid pixel of the grid
+// gets a unit code and each code a name.
+//
+// Values to codes (lithology_unit_codes_for_values):
+//   * with a crosswalk (value,code[,name]): the code from the crosswalk, the
+//     name from its optional `name` column, else the crosswalk's values for
+//     that code joined with "; ". Every map value present must be in it.
+//   * without: if every value is an integer in 0..65534 it is its own code;
+//     otherwise the distinct values, sorted, get codes 1..N. These codes are
+//     local to the run; the unit name is the key for comparing runs.
+// Code -1 = unmapped (a valid pixel no polygon touches, or code-raster nodata).
+// =============================================================================
+
+struct lsdtt_lithology_map_source
+{
+    std::string path;                        // vector file or code raster
+    std::string source = "auto";             // auto | vector_map | code_raster
+    std::string layer_name;                  // "" = first layer (vectors)
+    std::string field_name = "lith_primary"; // vectors
+    std::string crosswalk_path;              // "" = none
+};
+
+// "vector_map" or "code_raster". auto decides from the extension (.tif, .tiff,
+// .asc, .bil, .img, .vrt, .flt, .nc are rasters). Throws std::invalid_argument
+// for any other source string.
+[[nodiscard]] std::string lithology_source_from_path(const std::string& path,
+                                                     const std::string& source);
+
+// The optional `name` column of a value,code[,name] crosswalk: code -> name.
+// Empty when the column is absent or blank for every row. Throws
+// std::invalid_argument when one code is given two different names (naming
+// both lines).
+std::map<int, std::string> load_lithology_crosswalk_names(const std::string& path);
+
+struct lsdtt_lithology_unit_codes
+{
+    std::vector<int> codes;                  // one per value
+    std::map<int, std::string> names;        // code -> unit name
+};
+
+// The codes-only value -> code step (rules above). Throws std::invalid_argument
+// listing every value missing from the crosswalk, with its pixel count.
+lsdtt_lithology_unit_codes lithology_unit_codes_for_values(
+    const std::vector<std::string>&    values,
+    const std::vector<std::size_t>&    value_pixel_counts,
+    const std::map<std::string, int>*  crosswalk,
+    const std::map<int, std::string>*  crosswalk_names);
+
+struct lsdtt_lithology_unit_label
+{
+    int code = 0;
+    std::string name;
+    std::vector<std::string> map_values;     // map values that became this code
+    std::size_t n_pixels = 0;                // valid grid pixels with this code
+};
+
+struct lsdtt_lithology_units_on_grid
+{
+    std::vector<std::int32_t> code_of_pixel;   // per grid pixel; -1 = unmapped or grid nodata
+    std::vector<lsdtt_lithology_unit_label> units;   // codes present, ascending
+    std::size_t n_valid = 0;                   // valid grid pixels
+    std::size_t n_unmapped_valid = 0;          // valid grid pixels with no unit
+    std::size_t n_gap_filled = 0, n_overlap_pixels = 0;      // vectors
+    std::size_t n_features_read = 0, n_features_skipped = 0; // vectors
+    std::vector<std::string> notes, warnings;
+};
+
+// The lithologic unit of every valid pixel of `grid`. Vectors go through
+// rasterise_polygon_field_values (reprojected to the grid's CRS); the field
+// must exist (else std::invalid_argument listing the layer's fields). A code
+// raster is read directly when it is on the grid already, else warped onto it
+// with nearest neighbour; its values must be integers in 0..65534.
+lsdtt_lithology_units_on_grid read_lithology_units_on_grid(
+    const lsdtt_raster_cpu& grid, const lsdtt_lithology_map_source& src);
+
+// The units as a float code raster on `grid` (nodata where unmapped or outside
+// the grid's mask), for writing.
+[[nodiscard]] lsdtt_raster_cpu lithology_unit_code_raster(
+    const lsdtt_raster_cpu& grid, const lsdtt_lithology_units_on_grid& units);
+
 } // namespace lsdtt

@@ -262,6 +262,14 @@ lithology), a code raster, a 20 m DEM, property tables (valid, K = 0, no m), a
 crosswalk, and the expected K rasters. `smoke_lem_lithology_erodibility_chain`
 then runs `lsdtt-lem` on the K raster the own-grid test wrote.
 
+### k_sn by lithologic unit
+
+`fixture_chi_lithology_cli` (`lsdtt-test-lithology-channel-stats --write-fixtures`)
+writes `build/tests/chi_lithology_cli_fixture/`: a steady-state DEM with two units
+(k_sn about 20 west, 5 east), the unit polygons, and a two-unit code raster beside a
+copy of `tiny_dem.asc`. `rigorous_chi_lithology_observation_only` reuses the hash
+of `rigorous_chi_nodes_sha256`: if that hash is ever re-pinned, re-pin both.
+
 ### Macrostrat lithology fetch
 
 `unit_fetch_lithology` and `smoke_fetch_lithology_offline` read one committed,

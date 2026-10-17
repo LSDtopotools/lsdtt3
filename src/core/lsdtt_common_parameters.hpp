@@ -356,4 +356,22 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
 void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
                                      lsdtt_help_registry&        help_map);
 
+// -----------------------------------------------------------------------------
+// Lithology input (lsdtt-lithology-erodibility and analyses by lithologic unit)
+//
+// declare_lithology_map_parameters: lithology_fname, lithology_source,
+//   lithology_layer_name, lithology_field_name, lithology_crosswalk_fname. The
+//   help states the codes-only rules of read_lithology_units_on_grid; a CLI
+//   with extra rules (lsdtt-lithology-erodibility's table-name matching)
+//   overwrites the guidance element [3] after the call.
+// declare_write_lithology_code_raster_parameter: write_lithology_code_raster
+//   (default true; analysis CLIs overwrite the default to false).
+// -----------------------------------------------------------------------------
+void declare_lithology_map_parameters(std::map<std::string, std::string>& string_default_map,
+                                      lsdtt_help_registry&                help_map,
+                                      const std::string&                  prefix = "");
+void declare_write_lithology_code_raster_parameter(std::map<std::string, bool>& bool_default_map,
+                                                   lsdtt_help_registry&         help_map,
+                                                   const std::string&           prefix = "");
+
 } // namespace lsdtt

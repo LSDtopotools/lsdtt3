@@ -5137,6 +5137,72 @@ add_test(NAME unit_lem_lithology_erodibility
                  "${CMAKE_CURRENT_BINARY_DIR}/lem_lithology_erodibility_work")
 lsdtt_set_tests_properties(unit_lem_lithology_erodibility PROPERTIES LABELS "unit;lem")
 
+# k_sn by lithologic unit: contact distance, node -> segment, bookkeeping, and
+# the known-answer steady states (two units, n = 1 and n = 2).
+add_executable(lsdtt-test-lithology-channel-stats cpp/test_lithology_channel_stats.cpp)
+target_link_libraries(lsdtt-test-lithology-channel-stats PRIVATE lsdtt3_cpu)
+add_test(NAME unit_chi_lithology_channel_stats
+         COMMAND lsdtt-test-lithology-channel-stats
+                 "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_channel_stats_work")
+lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "unit;chi")
+
+# lsdtt-chi-analysis with a lithology map. The fixture writer produces the
+# steady-state landscape (two units, k_sn about 20 and 5) with its unit polygons,
+# and a two-unit code raster beside a copy of tiny_dem.asc.
+set(LSDTT_CHI_LITHOLOGY_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_cli_fixture")
+add_test(NAME fixture_chi_lithology_cli
+         COMMAND lsdtt-test-lithology-channel-stats --write-fixtures
+                 "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}" "${LSDTT_TEST_DATA_DIR}/tiny_dem.asc")
+lsdtt_set_tests_properties(fixture_chi_lithology_cli PROPERTIES
+    LABELS "fixture;chi"
+    FIXTURES_SETUP chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_ksn
+    lsdtt-chi-analysis
+    chi_lithology_ksn.param.in
+    lithks_chi_ksn_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv
+    --expect lithks_chi_ksn_lithology_nodes_mn_0p450.csv
+    --expect lithks_lithology_code.tif
+    --expect-raster-values lithks_lithology_code.tif:1,2
+    --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:2,shale,"
+    --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:-1,unmapped,0,"
+    # The units separate: shale peaks in bin 0 (k_sn 4.6-5.7) where sandstone has
+    # no node, sandstone in bin 14 (19.8-20.9) where shale has none.
+    --expect-file-contains "lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv:1,sandstone,0,4.632725239,5.716628242,0,"
+    --expect-file-contains "lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv:2,shale,14,19.80736728,20.89127028,0,"
+    --stdout-contains "2 lithologic unit(s)"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_ksn PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+# Lithology is observation only: the fit nodes CSV keeps the hash pinned by
+# rigorous_chi_nodes_sha256 (chi_analysis_smoke.param.in without the map).
+add_lsdtt_cli_smoke_test(
+    rigorous_chi_lithology_observation_only
+    lsdtt-chi-analysis
+    chi_lithology_observation_only.param.in
+    tiny_chi_fit_nodes_mn_0p500.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect tiny_chi_ksn_by_lithology_mn_0p500.csv
+    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:b64aa1266abc09369b423534d44ec5ed8a3ceac52d7d31e9f8637c8893c26ad3
+)
+lsdtt_set_tests_properties(rigorous_chi_lithology_observation_only PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_without_fit
+    lsdtt-chi-analysis
+    chi_lithology_without_fit.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "FATAL: lithology_fname needs fit_chi_networks: true"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_without_fit PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
+
 # Spatially varying erodibility (K): kernels, steady state, values, grid modes.
 add_executable(lsdtt-test-lem-erodibility cpp/test_lem_erodibility.cpp)
 target_link_libraries(lsdtt-test-lem-erodibility PRIVATE lsdtt3_cpu)
@@ -8239,6 +8305,13 @@ foreach(_test IN LISTS _lsdtt_tests)
     # seeing the CLI for the module it is named after.
     if(_test MATCHES "landslide" AND NOT _domains STREQUAL "landslide")
         list(APPEND _domains "landslide")
+    endif()
+
+    # Lithology cuts across compartments: the map readers live with the LEM,
+    # the Macrostrat fetch with fetch, and the analyses by lithologic unit with
+    # chi and network. `ctest -L lithology` reaches all of them.
+    if(_test MATCHES "lithology")
+        list(APPEND _domains "lithology")
     endif()
 
     if("${_test}" IN_LIST LSDTT_HEAVY_TESTS)

@@ -5209,9 +5209,12 @@ state, the `lsdtt-lem` model-grid and input-raster placements, and the Python
 
 ### 8c.1 Lithology maps to erodibility (`lsdtt-lithology-erodibility`)
 
+Every test whose name contains `lithology` also carries the label `lithology`, beside its
+domain (`lem`, `fetch`, later `chi` and `network`), so `ctest -L lithology -LE heavy` runs them all.
+
 | Test | Labels | What it covers |
 |---|---|---|
-| `unit_lem_lithology_erodibility` | `unit;lem` | property table (valid, duplicates, bad numbers, K <= 0, missing m / n / convention, code range, extra columns); crosswalk; values to codes; the polygon rasteriser; the K raster. Driver `tests/cpp/test_lithology_erodibility.cpp` |
+| `unit_lem_lithology_erodibility` | `unit;lem;lithology` | property table (valid, duplicates, bad numbers, K <= 0, missing m / n / convention, code range, extra columns); crosswalk; values to codes; the polygon rasteriser; the K raster; lithologic units with no table (`read_lithology_units_on_grid`: text, integer and mixed values, crosswalk with and without names, a missing value, one code with two names, an unknown field, unmapped and grid-nodata pixels, a code raster on the grid and warped to 20 m, a non-integer code). Driver `tests/cpp/test_lithology_erodibility.cpp` |
 | `smoke_/failure_lem_lithology_erodibility_*`, `regression_lem_lithology_erodibility_*` | `smoke`/`failure`/`regression`, `cli;lem` | the CLI on fixtures from `fixture_lem_lithology_erodibility_cli`: own grid, DEM grid, centre clip, code raster, crosswalk, a named unmapped code; seven refusals; the K rasters compared bitwise against expected rasters |
 | `smoke_lem_lithology_erodibility_chain` | `smoke;cli;lem` | `lsdtt-lem` on the produced K raster with the printed parameter lines (converts the map-area K by dx^m) |
 
@@ -5222,6 +5225,28 @@ overlapping pixel centres (resolved to the lower value), a 0.6-cell sliver gap
 (10 pixels filled by coverage), a one-pixel hole (left unmapped), two fragments
 of one value, reference nodata, and the same layout in EPSG:4326 (interior pixels
 exact on the UTM grid).
+
+### 8c.3 k_sn by lithologic unit (`lsdtt-chi-analysis` with `lithology_fname`)
+
+| Test | Labels | What it covers |
+|---|---|---|
+| `unit_chi_lithology_channel_stats` | `unit;chi;lithology` | contact distance on a two-unit grid (exact, incl. nodata and unmapped); node -> segment on a hand-built fit (confluence, outlet); a known-answer steady state for n = 1 and n = 2; summary and histogram bookkeeping. Driver `tests/cpp/test_lithology_channel_stats.cpp` |
+| `fixture_chi_lithology_cli` | `fixture;chi;lithology` | writes the steady-state DEM, its unit polygons, and a two-unit code raster beside a copy of `tiny_dem.asc` |
+| `smoke_chi_lithology_ksn` | `smoke;cli;chi;lithology` | the CLI on the steady state: all outputs, the code raster holds 1 and 2, the unmapped row is empty, and each unit has no node in the other's histogram peak bin |
+| `rigorous_chi_lithology_observation_only` | `rigorous;cli;chi;lithology` | the `chi_analysis_smoke` run plus a lithology map keeps the fit-nodes hash that `rigorous_chi_nodes_sha256` pins |
+| `failure_chi_lithology_without_fit` | `failure;cli;chi;lithology` | `lithology_fname` without `fit_chi_networks: true` |
+
+**Known answer.** A 120 x 160 grid at 30 m (a tilted red-noise surface, seed 11, D8,
+open edges) with K1 = 1e-5 west of a vertical contact and K2 = 4e-5 east of it,
+U = 2e-4, map area, steady state from `compute_d8_fluvial_steady_state` with an
+erodibility field; chi (m/n = theta, A0 = 1) and the fits on the same flow tree. The
+expected medians are (U/K)^(1/n): 20 and 5 for n = 1 (m = 0.45), sqrt(20) and sqrt(5)
+for n = 2 (m = 0.9). Measured 2026-10-17: medians 1.14 % and 1.25 % high for both n
+(the steady state integrates chi at each cell's own area, `lsdtt-chi-analysis`
+trapezoidally), ratio within 0.108 % of 4 and of 2. Tolerances: the ratio 0.25 %
+(twice the measured error), the medians 2 % (the cap; twice the measured would
+exceed it). Through the CLI, which re-routes flow on the steady DEM, the medians were
+20.78 and 5.22 (ratio 3.98).
 
 ### 8c.2 Macrostrat lithology fetch (`lsdtt-fetch-lithology`)
 

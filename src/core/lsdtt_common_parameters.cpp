@@ -686,4 +686,65 @@ void declare_http_request_parameters(std::map<std::string, int>& int_default_map
         "Network", "param", ""};
 }
 
+void declare_lithology_map_parameters(std::map<std::string, std::string>& string_default_map,
+                                      lsdtt_help_registry&                help_map,
+                                      const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology input");
+    const std::string k_fname = prefixed_parameter_key(prefix, "lithology_fname");
+
+    string_default_map[k_fname] = "";
+    help_map[k_fname] = {"string","",
+        "Lithology map (in read_path): a polygon vector file or a categorical code raster.",
+        "Vectors: any OGR polygon layer (GeoPackage, FlatGeobuf, GeoJSON, Shapefile), e.g. "
+        "lsdtt-fetch-lithology output; it is reprojected to the DEM's CRS. Rasters: integer "
+        "lithology codes, warped onto the DEM grid with nearest neighbour if not on it already.",
+        group, "param", ""};
+
+    const std::string k_source = prefixed_parameter_key(prefix, "lithology_source");
+    string_default_map[k_source] = "auto";
+    help_map[k_source] = {"string","auto",
+        "auto, vector_map or code_raster.",
+        "auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc "
+        "are rasters).",
+        group, "param", ""};
+
+    const std::string k_layer = prefixed_parameter_key(prefix, "lithology_layer_name");
+    string_default_map[k_layer] = "";
+    help_map[k_layer] = {"string","",
+        "Vector layer to read. Empty (default) = the first layer.", "",
+        group, "param", "lithology_fname"};
+
+    const std::string k_field = prefixed_parameter_key(prefix, "lithology_field_name");
+    string_default_map[k_field] = "lith_primary";
+    help_map[k_field] = {"string","lith_primary",
+        "Attribute of the vector layer that holds the lithology.",
+        "Each distinct value is a lithologic unit unless lithology_crosswalk_fname groups them. "
+        "lith_primary is the first lithology of each unit in lsdtt-fetch-lithology output; "
+        "name (the map unit) or lith_class group more finely or more coarsely. Units are "
+        "numbered within a run; compare runs by unit name.",
+        group, "param", "lithology_fname"};
+
+    const std::string k_cw = prefixed_parameter_key(prefix, "lithology_crosswalk_fname");
+    string_default_map[k_cw] = "";
+    help_map[k_cw] = {"string","",
+        "Optional CSV (in read_path) with columns value,code[,name] mapping map values to units.",
+        "When given, every map value present must be in it. Use it to group many map values "
+        "into a few units; the optional name column names each code (else the values joined "
+        "with '; ').",
+        group, "param", "lithology_fname"};
+}
+
+void declare_write_lithology_code_raster_parameter(std::map<std::string, bool>& bool_default_map,
+                                                   lsdtt_help_registry&         help_map,
+                                                   const std::string&           prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Output");
+    const std::string k = prefixed_parameter_key(prefix, "write_lithology_code_raster");
+    bool_default_map[k] = true;
+    help_map[k] = {"bool","true",
+        "Write the lithologic unit code of every pixel.",
+        "Output: <write_fname>_lithology_code.tif.", group, "switch", ""};
+}
+
 } // namespace lsdtt

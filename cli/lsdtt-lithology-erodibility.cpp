@@ -42,6 +42,7 @@
 #include <string>
 #include <vector>
 
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_lem_input_grid_cpu.hpp"
@@ -74,15 +75,6 @@ static void print_banner()
 
 namespace
 {
-
-bool looks_like_raster(const std::string& path)
-{
-    std::string ext = std::filesystem::path(path).extension().string();
-    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    for (const char* e : {".tif", ".tiff", ".asc", ".bil", ".img", ".vrt", ".flt", ".nc"})
-        if (ext == e) return true;
-    return false;
-}
 
 // A synthetic, all-valid raster on `meta`, used as the rasterisation target.
 lsdtt::lsdtt_raster_cpu blank_on(const lsdtt::lsdtt_raster_meta& meta)
@@ -123,40 +115,21 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_help_registry help_map;
 
     // --- Lithology input ---
-    string_default_map["lithology_fname"] = "";
-    help_map["lithology_fname"] = {"string","",
-        "Lithology map (in read_path): a polygon vector file or a categorical code raster.",
+    lsdtt::declare_lithology_map_parameters(string_default_map, help_map);
+    // This tool also matches values to the property table by code or name.
+    help_map["lithology_fname"][3] =
         "Vectors: any OGR polygon layer (GeoPackage, FlatGeobuf, GeoJSON, Shapefile), e.g. a "
         "Macrostrat download. Rasters: integer lithology codes. Must be in a projected CRS in "
-        "metres for clips and for taking the grid from it.",
-        "Lithology input", "param", ""};
-
-    string_default_map["lithology_source"] = "auto";
-    help_map["lithology_source"] = {"string","auto",
-        "auto, vector_map or code_raster.",
-        "auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc "
-        "are rasters).",
-        "Lithology input", "param", ""};
-
-    string_default_map["lithology_layer_name"] = "";
-    help_map["lithology_layer_name"] = {"string","",
-        "Vector layer to read. Empty (default) = the first layer.", "",
-        "Lithology input", "param", "lithology_fname"};
-
-    string_default_map["lithology_field_name"] = "lith_primary";
-    help_map["lithology_field_name"] = {"string","lith_primary",
-        "Attribute of the vector layer that holds the lithology.",
+        "metres for clips and for taking the grid from it.";
+    help_map["lithology_field_name"][3] =
         "Values are matched to the property table by integer code, by table name "
         "(case-insensitive), or through lithology_crosswalk_fname. lith_primary is the first "
-        "lithology of each unit in lsdtt-fetch-lithology output.",
-        "Lithology input", "param", "lithology_fname"};
-
-    string_default_map["lithology_crosswalk_fname"] = "";
-    help_map["lithology_crosswalk_fname"] = {"string","",
-        "Optional CSV (in read_path) with columns value,code mapping map values to table codes.",
+        "lithology of each unit in lsdtt-fetch-lithology output.";
+    help_map["lithology_crosswalk_fname"][2] =
+        "Optional CSV (in read_path) with columns value,code mapping map values to table codes.";
+    help_map["lithology_crosswalk_fname"][3] =
         "When given, every map value present must be in it. Use it to map many source names "
-        "(e.g. Macrostrat lithology terms) onto a few table units.",
-        "Lithology input", "param", "lithology_fname"};
+        "(e.g. Macrostrat lithology terms) onto a few table units.";
 
     string_default_map["lithology_property_table_fname"] = "";
     help_map["lithology_property_table_fname"] = {"string","",
@@ -234,10 +207,8 @@ int main(int argc, char* argv[])
         "Grid", "param", "input_raster_placement"};
 
     // --- Output ---
-    bool_default_map["write_lithology_code_raster"] = true;
-    help_map["write_lithology_code_raster"] = {"bool","true",
-        "Write the lithology codes the K raster was made from.",
-        "Output: <write_fname>_lithology_code.tif.", "Output", "switch", ""};
+    lsdtt::declare_write_lithology_code_raster_parameter(bool_default_map, help_map);
+    help_map["write_lithology_code_raster"][2] = "Write the lithology codes the K raster was made from.";
 
     string_default_map["write_output_format"] = "cog";
     help_map["write_output_format"] = {"string","cog",
@@ -289,11 +260,7 @@ int main(int argc, char* argv[])
         if (!std::filesystem::exists(lith_path))
             throw std::invalid_argument("lithology_fname does not exist: " + lith_path);
 
-        std::string source = sf["lithology_source"];
-        if (source == "auto") source = looks_like_raster(lith_path) ? "code_raster" : "vector_map";
-        if (source != "vector_map" && source != "code_raster")
-            throw std::invalid_argument("lithology_source must be auto, vector_map or code_raster "
-                                        "(got '" + sf["lithology_source"] + "')");
+        const std::string source = lsdtt::lithology_source_from_path(lith_path, sf["lithology_source"]);
         const bool is_vector = source == "vector_map";
 
         const std::string table_path =

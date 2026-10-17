@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <set>
@@ -19,6 +20,9 @@
 #include <stdexcept>
 
 #include "../core/lsdtt_csv_table.hpp"
+#include "../core/lsdtt_data_loader.hpp"
+#include "../core/lsdtt_raster_warp.hpp"
+#include "lsdtt_vector_rasterise_cpu.hpp"
 
 namespace lsdtt
 {
@@ -403,6 +407,296 @@ std::string lithology_erodibility_lem_parameters(const lsdtt_lithology_property_
     if (c.cell_size > 0.0)
         s << "erodibility_raster_calibration_cell_size_metres: " << num(c.cell_size) << "\n";
     return s.str();
+}
+
+// =============================================================================
+// Lithologic units on a grid, with no property table
+// =============================================================================
+
+std::string lithology_source_from_path(const std::string& path, const std::string& source)
+{
+    if (source == "vector_map" || source == "code_raster") return source;
+    if (source != "auto")
+        throw std::invalid_argument("lithology_source must be auto, vector_map or code_raster "
+                                    "(got '" + source + "')");
+    const std::string ext = lower(std::filesystem::path(path).extension().string());
+    for (const char* e : {".tif", ".tiff", ".asc", ".bil", ".img", ".vrt", ".flt", ".nc"})
+        if (ext == e) return "code_raster";
+    return "vector_map";
+}
+
+std::map<int, std::string> load_lithology_crosswalk_names(const std::string& path)
+{
+    std::ifstream in(path);
+    if (!in) throw std::invalid_argument("cannot open lithology crosswalk: " + path);
+    std::string line;
+    int lineno = 0, c_code = -1, c_name = -1;
+    bool header = false;
+    std::map<int, std::string> out;
+    std::map<int, int> line_of;
+    while (std::getline(in, line))
+    {
+        ++lineno;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const std::string trimmed = csv_trim(line);
+        if (trimmed.empty() || trimmed[0] == '#') continue;
+        const std::vector<std::string> f = csv_split_row_trimmed(trimmed);
+        if (!header)
+        {
+            header = true;
+            for (std::size_t i = 0; i < f.size(); ++i)
+            {
+                if (lower(f[i]) == "code") c_code = static_cast<int>(i);
+                if (lower(f[i]) == "name") c_name = static_cast<int>(i);
+            }
+            if (c_code < 0)
+                throw std::invalid_argument(at(path, lineno) + ": the crosswalk needs a 'code' column");
+            if (c_name < 0) return out;
+            continue;
+        }
+        const std::string name = c_name < static_cast<int>(f.size()) ? f[c_name] : "";
+        if (name.empty()) continue;
+        const int code = checked_code(c_code < static_cast<int>(f.size()) ? f[c_code] : "",
+                                      at(path, lineno));
+        const auto it = out.find(code);
+        if (it != out.end() && it->second != name)
+            throw std::invalid_argument(path + ": code " + std::to_string(code) + " is named '" +
+                                        it->second + "' on line " + std::to_string(line_of[code]) +
+                                        " and '" + name + "' on line " + std::to_string(lineno));
+        out[code] = name;
+        line_of[code] = lineno;
+    }
+    return out;
+}
+
+lsdtt_lithology_unit_codes lithology_unit_codes_for_values(
+    const std::vector<std::string>&   values,
+    const std::vector<std::size_t>&   value_pixel_counts,
+    const std::map<std::string, int>* crosswalk,
+    const std::map<int, std::string>* crosswalk_names)
+{
+    lsdtt_lithology_unit_codes out;
+    out.codes.assign(values.size(), -1);
+    if (crosswalk)
+    {
+        std::vector<std::size_t> missing;
+        std::map<int, std::vector<std::string>> values_of_code;
+        for (const auto& [v, c] : *crosswalk) values_of_code[c].push_back(v);
+        for (std::size_t i = 0; i < values.size(); ++i)
+        {
+            const auto it = crosswalk->find(values[i]);
+            if (it == crosswalk->end()) { missing.push_back(i); continue; }
+            out.codes[i] = it->second;
+        }
+        if (!missing.empty())
+        {
+            std::ostringstream msg;
+            msg << missing.size() << " lithology value" << (missing.size() > 1 ? "s are" : " is")
+                << " not in the crosswalk:";
+            for (std::size_t k = 0; k < missing.size() && k < 25; ++k)
+            {
+                const std::size_t i = missing[k];
+                msg << "\n  '" << values[i] << "'";
+                if (i < value_pixel_counts.size()) msg << " (" << value_pixel_counts[i] << " pixels)";
+            }
+            if (missing.size() > 25) msg << "\n  ... and " << missing.size() - 25 << " more";
+            msg << "\nAdd them to lithology_crosswalk_fname, or leave the crosswalk out to use "
+                   "every map value as its own unit.";
+            throw std::invalid_argument(msg.str());
+        }
+        for (int c : out.codes)
+        {
+            if (out.names.count(c)) continue;
+            if (crosswalk_names && crosswalk_names->count(c)) out.names[c] = crosswalk_names->at(c);
+            else
+            {
+                std::string joined;
+                for (const auto& v : values_of_code[c]) joined += (joined.empty() ? "" : "; ") + v;
+                out.names[c] = joined;
+            }
+        }
+        return out;
+    }
+
+    bool all_integer = true;
+    for (const auto& v : values)
+    {
+        long c = 0;
+        if (!parse_int(v, c) || c < 0 || c > k_max_code) { all_integer = false; break; }
+    }
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        long c = 0;
+        if (all_integer) parse_int(values[i], c);
+        else c = static_cast<long>(i) + 1;
+        out.codes[i] = static_cast<int>(c);
+        out.names[out.codes[i]] = values[i];
+    }
+    return out;
+}
+
+lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cpu& grid,
+                                                           const lsdtt_lithology_map_source& src)
+{
+    if (src.path.empty()) throw std::invalid_argument("no lithology map given (lithology_fname)");
+    if (!std::filesystem::exists(src.path))
+        throw std::invalid_argument("lithology map does not exist: " + src.path);
+    const lsdtt_raster_meta& gm = grid.get_meta();
+    const std::size_t npix = static_cast<std::size_t>(gm.n_rows) * gm.n_cols;
+    const std::vector<std::uint8_t>& gmask = grid.get_mask();
+
+    lsdtt_lithology_units_on_grid out;
+    std::vector<std::int32_t> value_index;
+    std::vector<std::string> values;
+
+    if (lithology_source_from_path(src.path, src.source) == "vector_map")
+    {
+        const polygon_layer_info info = read_polygon_layer_info(src.path, src.layer_name);
+        if (std::find(info.field_names.begin(), info.field_names.end(), src.field_name) ==
+            info.field_names.end())
+        {
+            std::string list;
+            for (const auto& f : info.field_names) list += (list.empty() ? "" : ", ") + f;
+            throw std::invalid_argument("lithology map " + src.path + " has no field '" +
+                                        src.field_name + "'; its fields are: " + list);
+        }
+        polygon_field_rasterise_result r =
+            rasterise_polygon_field_values(grid, src.path, src.layer_name, src.field_name);
+        value_index = std::move(r.value_index);
+        values = std::move(r.values);
+        out.n_gap_filled = r.n_gap_filled;
+        out.n_overlap_pixels = r.n_overlap_pixels;
+        out.n_features_read = r.n_features_read;
+        out.n_features_skipped = r.n_features_skipped;
+        out.notes.push_back("rasterised " + std::to_string(r.n_features_read) + " features (" +
+                            std::to_string(r.n_features_skipped) + " skipped), " +
+                            std::to_string(values.size()) + " distinct values of '" +
+                            src.field_name + "'; " + std::to_string(r.n_gap_filled) +
+                            " sliver pixels filled by coverage; " +
+                            std::to_string(r.n_overlap_pixels) + " overlapping pixels");
+    }
+    else
+    {
+        lsdtt_data_loader l;
+        l.open_raster(src.path);
+        const lsdtt_raster_meta sm = l.get_meta();
+        const double tol = 1e-6 * gm.cell_size;
+        const bool on_grid = sm.n_rows == gm.n_rows && sm.n_cols == gm.n_cols &&
+                             std::abs(sm.cell_size - gm.cell_size) < tol &&
+                             std::abs(sm.x_min - gm.x_min) < tol &&
+                             std::abs(sm.y_min - gm.y_min) < tol &&
+                             (sm.crs_wkt.empty() || gm.crs_wkt.empty() || sm.crs_wkt == gm.crs_wkt);
+        lsdtt_raster_tile tile;
+        if (on_grid)
+        {
+            tile = l.read_full();
+            out.notes.push_back("code raster read on the grid as it is");
+        }
+        else
+        {
+            lsdtt_warp_options wo;
+            wo.resampling_method = "near";
+            tile = warp_raster_to_grid_in_memory(src.path, gm, wo);
+            out.notes.push_back("code raster warped onto the grid (nearest neighbour)");
+        }
+        if (tile.data.size() != npix)
+            throw std::runtime_error("lithology code raster: read " + std::to_string(tile.data.size()) +
+                                     " pixels for a grid of " + std::to_string(npix));
+        std::map<long, std::int32_t> seen;
+        std::vector<long> code(npix, -1);
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            if (!tile.mask[i] || !gmask[i]) continue;
+            const float v = tile.data[i];
+            if (!(v >= 0.0f) || v != std::floor(v) || v > static_cast<float>(k_max_code))
+            {
+                std::ostringstream msg;
+                msg << "lithology code raster: value " << v << " at pixel (" << i / gm.n_cols
+                    << ", " << i % gm.n_cols << ") is not an integer code in 0.." << k_max_code;
+                throw std::invalid_argument(msg.str());
+            }
+            code[i] = static_cast<long>(v);
+            seen[code[i]] = 0;
+        }
+        for (auto& [c, idx] : seen)
+        {
+            idx = static_cast<std::int32_t>(values.size());
+            values.push_back(std::to_string(c));
+        }
+        value_index.assign(npix, -1);
+        for (std::size_t i = 0; i < npix; ++i)
+            if (code[i] >= 0) value_index[i] = seen[code[i]];
+    }
+
+    std::vector<std::size_t> counts(values.size(), 0);
+    for (std::size_t i = 0; i < npix; ++i)
+    {
+        if (!gmask[i]) continue;
+        ++out.n_valid;
+        if (value_index[i] >= 0) ++counts[static_cast<std::size_t>(value_index[i])];
+        else ++out.n_unmapped_valid;
+    }
+
+    std::map<std::string, int> crosswalk;
+    std::map<int, std::string> cw_names;
+    if (!src.crosswalk_path.empty())
+    {
+        crosswalk = load_lithology_crosswalk(src.crosswalk_path);
+        cw_names = load_lithology_crosswalk_names(src.crosswalk_path);
+    }
+    // Only values that reach a valid pixel need a code.
+    std::vector<std::string> used;
+    std::vector<std::size_t> used_counts;
+    std::vector<int> used_of(values.size(), -1);
+    for (std::size_t v = 0; v < values.size(); ++v)
+        if (counts[v] > 0)
+        {
+            used_of[v] = static_cast<int>(used.size());
+            used.push_back(values[v]);
+            used_counts.push_back(counts[v]);
+        }
+    const lsdtt_lithology_unit_codes uc = lithology_unit_codes_for_values(
+        used, used_counts, src.crosswalk_path.empty() ? nullptr : &crosswalk,
+        src.crosswalk_path.empty() ? nullptr : &cw_names);
+
+    std::map<int, lsdtt_lithology_unit_label> labels;
+    for (std::size_t u = 0; u < used.size(); ++u)
+    {
+        auto& l = labels[uc.codes[u]];
+        l.code = uc.codes[u];
+        l.name = uc.names.at(uc.codes[u]);
+        l.map_values.push_back(used[u]);
+        l.n_pixels += used_counts[u];
+    }
+    out.code_of_pixel.assign(npix, -1);
+    for (std::size_t i = 0; i < npix; ++i)
+        if (gmask[i] && value_index[i] >= 0)
+            out.code_of_pixel[i] = uc.codes[static_cast<std::size_t>(used_of[value_index[i]])];
+    for (auto& [c, l] : labels) out.units.push_back(std::move(l));
+
+    if (out.n_unmapped_valid > 0)
+        out.notes.push_back(std::to_string(out.n_unmapped_valid) + " of " +
+                            std::to_string(out.n_valid) +
+                            " valid pixels have no lithologic unit (unmapped)");
+    return out;
+}
+
+lsdtt_raster_cpu lithology_unit_code_raster(const lsdtt_raster_cpu& grid,
+                                            const lsdtt_lithology_units_on_grid& units)
+{
+    const lsdtt_raster_meta& meta = grid.get_meta();
+    const std::size_t n = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    if (units.code_of_pixel.size() != n)
+        throw std::invalid_argument("lithology_unit_code_raster: units are not on this grid");
+    std::vector<float> data(n, static_cast<float>(meta.no_data_value));
+    std::vector<std::uint8_t> mask(n, 0);
+    for (std::size_t i = 0; i < n; ++i)
+        if (units.code_of_pixel[i] >= 0)
+        {
+            data[i] = static_cast<float>(units.code_of_pixel[i]);
+            mask[i] = 1;
+        }
+    return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
 }
 
 } // namespace lsdtt

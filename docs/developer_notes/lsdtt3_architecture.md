@@ -3193,12 +3193,57 @@ File: `src/cpu/lsdtt_lithology_map_cpu.hpp/.cpp`. No GDAL; never prints.
   domain pixels are refused, given `unmapped_code`, or (footprint mode) left
   nodata.
 
+Lithologic units with no property table, for analyses categorised by unit
+(a DEM and a geologic map are all they need):
+
+- `read_lithology_units_on_grid(grid, source)`: the unit code of every valid pixel
+  (-1 = unmapped) and a label per code (name, map values, pixel count). Vectors go
+  through `rasterise_polygon_field_values` (the field must exist); a code raster is
+  read as it is when already on the grid, else warped onto it with nearest
+  neighbour. Only map values reaching a valid pixel need a code.
+- `lithology_unit_codes_for_values(values, counts, crosswalk, names)`: with a
+  crosswalk, its codes, named by its optional `name` column (else its values joined
+  with "; "); without, integer values are their own codes and otherwise the sorted
+  values are numbered 1..N. Codes are local to a run; the unit name is the key
+  between runs.
+- `lithology_source_from_path`, `load_lithology_crosswalk_names`,
+  `lithology_unit_code_raster`.
+
+The parameters are declared once in `lsdtt_common_parameters`
+(`declare_lithology_map_parameters`, `declare_write_lithology_code_raster_parameter`);
+`lsdtt-lithology-erodibility` adopts them and overwrites the guidance text with its
+table-name matching, so its `-h json` is unchanged.
+
 The categorical polygon rasteriser it relies on is
 `rasterise_polygon_field_values` in `lsdtt_vector_rasterise_cpu`: cell-centre
 assignment (overlaps to the lower sorted value), then a coverage pass on an
 oversampled subgrid, in 512² chunks, that fills sliver gaps (fragments of one
 value add up). The older `rasterise_polygon_string_field` (STI) and
 `rasterise_macrostrat_geology` are separate implementations still.
+
+### lsdtt_lithology_channel_stats_cpu (k_sn by lithologic unit)
+
+File: `src/cpu/lsdtt_lithology_channel_stats_cpu.hpp/.cpp`. GDAL-free; never prints.
+Used by `lsdtt-chi-analysis` when `lithology_fname` is set (needs
+`fit_chi_networks: true`).
+
+- `assign_chi_fit_nodes_to_segments(fit)`: segments share end nodes; a node belongs
+  to the segment it lies on except that segment's downstream end, which belongs to
+  the next segment down (a confluence to the receiving branch); the outlet to the
+  last segment.
+- `compute_lithology_contact_distance(grid, units)`: distance to the nearest
+  contact pixel (a valid pixel with a valid 4-neighbour of another unit; unmapped
+  counts as a unit), through `euclidean_distance_transform`.
+- `build_chi_lithology_node_table`: every fitted node with its segment k_sn, unit,
+  flow length to its receiver and distance to contact. Observation only: the fits
+  are not changed and the existing fit tables stay byte-identical.
+- `summarise_chi_ksn_by_lithology`: per unit, unmapped and all: node, segment and
+  basin counts, channel length, median, quartiles, mean, range and length-weighted
+  mean of the node k_sn; `low_sample` below 5 segments.
+- `make_chi_ksn_histogram_by_lithology`: common bins (linear or log10) over the
+  pooled 1st-99th percentile, with below and above rows, so units overlay.
+
+k_sn per node is its fitted segment's; segments are not split at contacts.
 
 ### lsdtt_macrostrat_fetch and lsdtt_http_fetch (Macrostrat map units)
 

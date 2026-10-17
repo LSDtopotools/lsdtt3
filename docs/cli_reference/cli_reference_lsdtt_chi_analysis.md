@@ -346,15 +346,29 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_fit_tables` | `bool` | `true` | `switch` | - | Write chi network fit node and segment tables to CSV. | - |
 | `write_ksn_basin_summary` | `bool` | `true` | `switch` | - | Write a per-basin channel-steepness (k_sn) summary CSV. | One row per fitted basin with the number of segments, number of main-stem segments, total chi length, and mean / median / min / max / chi-weighted-mean k_sn plus main-stem mean and median k_sn. Written once per m/n value tested. Output: &lt;write_fname&gt;_chi_ksn_basin_summary_mn_*.csv. |
+| `write_ksn_lithology_summary` | `bool` | `true` | `switch` | `lithology_fname` | With lithology_fname: write k_sn by lithologic unit. | Per m/n: &lt;write_fname&gt;_chi_ksn_by_lithology_mn_*.csv (per unit: node, segment and basin counts, channel length, median, quartiles, mean, range and length-weighted mean k_sn; plus unmapped and all), &lt;write_fname&gt;_chi_ksn_histogram_by_lithology_mn_*.csv (common bins for every unit) and &lt;write_fname&gt;_chi_ksn_lithology_nodes_mn_*.csv (every channel node with its segment k_sn, unit and distance to the nearest contact). k_sn per node is its fitted segment's k_sn; segments are not split at contacts. |
+| `lithology_ksn_histogram_n_bins` | `int` | `30` | `param` | `write_ksn_lithology_summary` | Number of k_sn histogram bins, shared by every unit. | The bins span the 1st-99th percentile of all nodes' k_sn; nodes outside are counted in a row below (bin_index -1) and above (bin_index = n_bins). |
+| `lithology_ksn_histogram_log_bins` | `bool` | `false` | `param` | `write_ksn_lithology_summary` | Space the k_sn histogram bins evenly in log10(k_sn). | k_sn &lt;= 0 then falls in the row below the range. |
 | `write_chi_fit_segment_lines` | `bool` | `false` | `switch` | - | Write fitted chi segments as a vector polyline file. | One polyline feature per piecewise-linear segment. Attributes: basin_index, outlet_flat, segment_id, branch_id, k_sn (dz/dchi), downstream_chi, upstream_chi, downstream_elevation, upstream_elevation, n_nodes. Written once per m/n value tested. |
 | `calculate_spatial_index` | `bool` | `false` | `io` | - | Calculate a spatial index for vector outputs. | Unlike the smaller vector-export CLIs, chi analysis leaves this off by default because its per-m/n outputs can be large. Enabling it speeds up later GIS queries but buffers each layer in memory before writing. |
 | `write_disorder_sample_tables` | `bool` | `false` | `switch` | - | Write detailed disorder sample tables for each m/n value. | - |
 | `write_output_format` | `string` | `cog` | `io` | - | Raster output format for the chi coordinate and inversion rasters. | Allowed values: cog, gtiff, same_as_input. |
 
+### Lithology input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `lithology_fname` | `string` | - | `param` | - | Lithology map (in read_path) for k_sn by lithologic unit: a polygon vector file or a categorical code raster. Empty (default) = off. Needs fit_chi_networks: true. | Vectors: any OGR polygon layer (GeoPackage, FlatGeobuf, GeoJSON, Shapefile), e.g. lsdtt-fetch-lithology output; it is reprojected to the DEM's CRS. Rasters: integer lithology codes, warped onto the DEM grid with nearest neighbour if not on it already. |
+| `lithology_source` | `string` | `auto` | `param` | - | auto, vector_map or code_raster. | auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc are rasters). |
+| `lithology_layer_name` | `string` | - | `param` | `lithology_fname` | Vector layer to read. Empty (default) = the first layer. | - |
+| `lithology_field_name` | `string` | `lith_primary` | `param` | `lithology_fname` | Attribute of the vector layer that holds the lithology. | Each distinct value is a lithologic unit unless lithology_crosswalk_fname groups them. lith_primary is the first lithology of each unit in lsdtt-fetch-lithology output; name (the map unit) or lith_class group more finely or more coarsely. Units are numbered within a run; compare runs by unit name. |
+| `lithology_crosswalk_fname` | `string` | - | `param` | `lithology_fname` | Optional CSV (in read_path) with columns value,code[,name] mapping map values to units. | When given, every map value present must be in it. Use it to group many map values into a few units; the optional name column names each code (else the values joined with '; '). |
+
 ### Output
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
+| `write_lithology_code_raster` | `bool` | `false` | `switch` | - | Write the lithologic unit code of every pixel. | Output: &lt;write_fname&gt;_lithology_code.tif. |
 | `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
 
 <!-- END GENERATED CLI PARAMETERS -->

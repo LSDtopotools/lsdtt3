@@ -431,6 +431,168 @@ std::vector<float> on_grid(const lsdtt_raster_meta& m, const std::function<float
     return v;
 }
 
+// ---------------------------------------------------------------------------
+// Lithologic units on a grid, no property table (read_lithology_units_on_grid)
+// ---------------------------------------------------------------------------
+const lsdtt_lithology_unit_label* unit_with_code(const lsdtt_lithology_units_on_grid& u, int code)
+{
+    for (const auto& l : u.units)
+        if (l.code == code) return &l;
+    return nullptr;
+}
+
+std::int32_t code_at_xy(const lsdtt_lithology_units_on_grid& u, const lsdtt_raster_meta& m,
+                        double x, double y)
+{
+    const int c = static_cast<int>(std::floor((x - m.x_min) / m.cell_size));
+    const int r = m.n_rows - 1 - static_cast<int>(std::floor((y - m.y_min) / m.cell_size));
+    return u.code_of_pixel[static_cast<std::size_t>(r) * m.n_cols + c];
+}
+
+void test_units_on_grid(const std::string& dir)
+{
+    std::cout << "-- lithologic units on a grid (no property table) --\n";
+    check("source: .TIF is a code raster", lithology_source_from_path("a/b.TIF", "auto") == "code_raster");
+    check("source: .gpkg is a vector map", lithology_source_from_path("a/b.gpkg", "auto") == "vector_map");
+    check("source: explicit wins", lithology_source_from_path("a/b.tif", "vector_map") == "vector_map");
+    check("source: unknown refused",
+          throws_containing([] { (void)lithology_source_from_path("a.tif", "polygons"); },
+                            {"lithology_source must be"}));
+
+    const std::string map = write_polygons(dir + "/units_map.gpkg", 32632, map_boxes());
+    const lsdtt_raster_meta own = utm_grid(100, 80, 10.0);
+    lsdtt_lithology_map_source src;
+    src.path = map;
+
+    // Text values, no crosswalk: codes 1..N in sorted order, names = values.
+    {
+        const auto u = read_lithology_units_on_grid(blank(own), src);
+        const auto* s1 = unit_with_code(u, 1);
+        const auto* s2 = unit_with_code(u, 2);
+        const auto* s3 = unit_with_code(u, 3);
+        check("text values: three units coded 1..3 in sorted order",
+              u.units.size() == 3 && s1 && s1->name == "Sandstone" && s2 && s2->name == "limestone" &&
+                  s3 && s3->name == "shale");
+        check("text values: pixel counts 4000 / 2000 / 2000",
+              s1 && s2 && s3 && s1->n_pixels == 4000 && s2->n_pixels == 2000 && s3->n_pixels == 2000);
+        check("text values: every pixel mapped",
+              u.n_valid == 8000 && u.n_unmapped_valid == 0);
+        check("text values: pixels carry their unit",
+              code_at_xy(u, own, X0 + 100, Y0 + 900) == 1 && code_at_xy(u, own, X0 + 600, Y0 + 100) == 2 &&
+                  code_at_xy(u, own, X0 + 600, Y0 + 900) == 3);
+        const lsdtt_raster_cpu r = lithology_unit_code_raster(blank(own), u);
+        check("code raster: values are the codes",
+              r.get_data()[0] == 1.0f && r.get_data()[static_cast<std::size_t>(99) * 80 + 79] == 2.0f);
+    }
+
+    // A grid wider than the map: the extra column band is unmapped; grid nodata is neither.
+    {
+        lsdtt_raster_cpu g = blank(utm_grid(100, 90, 10.0));
+        std::vector<std::uint8_t> mask = g.get_mask();
+        mask[0] = 0;
+        g = lsdtt_raster_cpu(std::vector<float>(g.get_data()), std::move(mask), g.get_meta());
+        const auto u = read_lithology_units_on_grid(g, src);
+        check("wider grid: 1000 unmapped valid pixels", u.n_unmapped_valid == 1000 && u.n_valid == 8999,
+              std::to_string(u.n_unmapped_valid) + " / " + std::to_string(u.n_valid));
+        check("wider grid: unmapped and nodata pixels are -1",
+              u.code_of_pixel[0] == -1 && code_at_xy(u, g.get_meta(), X0 + 850, Y0 + 500) == -1);
+        const lsdtt_raster_cpu r = lithology_unit_code_raster(g, u);
+        check("code raster: unmapped is nodata", r.get_mask()[89] == 0 && r.get_mask()[1] == 1);
+    }
+
+    // Integer values are their own codes.
+    {
+        lsdtt_lithology_map_source s = src;
+        s.path = write_polygons(dir + "/units_int.gpkg", 32632,
+                                {{X0, Y0, X0 + 400, Y0 + 1000, "10"},
+                                 {X0 + 400, Y0, X0 + 800, Y0 + 1000, "40"}});
+        const auto u = read_lithology_units_on_grid(blank(own), s);
+        check("integer values keep their codes",
+              u.units.size() == 2 && unit_with_code(u, 10) && unit_with_code(u, 40) &&
+                  unit_with_code(u, 40)->name == "40");
+    }
+    // One non-integer value: all values are numbered 1..N.
+    {
+        lsdtt_lithology_map_source s = src;
+        s.path = write_polygons(dir + "/units_mixed.gpkg", 32632,
+                                {{X0, Y0, X0 + 400, Y0 + 1000, "10"},
+                                 {X0 + 400, Y0, X0 + 800, Y0 + 1000, "granite"}});
+        const auto u = read_lithology_units_on_grid(blank(own), s);
+        check("mixed values numbered 1..N",
+              u.units.size() == 2 && unit_with_code(u, 1) && unit_with_code(u, 1)->name == "10" &&
+                  unit_with_code(u, 2) && unit_with_code(u, 2)->name == "granite");
+    }
+
+    // Crosswalk with names groups values.
+    {
+        lsdtt_lithology_map_source s = src;
+        s.crosswalk_path = write_text(dir, "units_cw_named.csv",
+                                      "value,code,name\nSandstone,1,clastic\nlimestone,2,carbonate\n"
+                                      "shale,1,clastic\n");
+        const auto u = read_lithology_units_on_grid(blank(own), s);
+        const auto* c1 = unit_with_code(u, 1);
+        check("crosswalk: two units, named from the name column",
+              u.units.size() == 2 && c1 && c1->name == "clastic" && c1->n_pixels == 6000 &&
+                  c1->map_values.size() == 2 && unit_with_code(u, 2) &&
+                  unit_with_code(u, 2)->name == "carbonate");
+    }
+    {
+        lsdtt_lithology_map_source s = src;
+        s.crosswalk_path = write_text(dir, "units_cw_plain.csv",
+                                      "value,code\nSandstone,1\nlimestone,2\nshale,1\n");
+        const auto u = read_lithology_units_on_grid(blank(own), s);
+        check("crosswalk without names: values joined",
+              unit_with_code(u, 1) && unit_with_code(u, 1)->name == "Sandstone; shale",
+              unit_with_code(u, 1) ? unit_with_code(u, 1)->name : "");
+    }
+    {
+        lsdtt_lithology_map_source s = src;
+        s.crosswalk_path = write_text(dir, "units_cw_missing.csv", "value,code\nSandstone,1\nshale,1\n");
+        check("crosswalk missing a value: refused with its pixel count",
+              throws_containing([&] { (void)read_lithology_units_on_grid(blank(own), s); },
+                                {"not in the crosswalk", "'limestone' (2000 pixels)"}));
+    }
+    check("crosswalk: one code, two names refused",
+          throws_containing(
+              [&] {
+                  (void)load_lithology_crosswalk_names(write_text(
+                      dir, "units_cw_twonames.csv", "value,code,name\na,1,x\nb,1,y\n"));
+              },
+              {"code 1", "'x' on line 2", "'y' on line 3"}));
+    {
+        lsdtt_lithology_map_source s = src;
+        s.field_name = "rock";
+        check("unknown field refused, listing the fields",
+              throws_containing([&] { (void)read_lithology_units_on_grid(blank(own), s); },
+                                {"no field 'rock'", "lith_primary"}));
+    }
+
+    // Code rasters: on the grid, and warped onto a coarser grid.
+    {
+        write_raster(dir + "/units_codes.tif", on_grid(own, code_at), own);
+        lsdtt_lithology_map_source s;
+        s.path = dir + "/units_codes.tif";
+        const auto u = read_lithology_units_on_grid(blank(own), s);
+        check("code raster on the grid: codes 10/30/40, 4000/2000/2000 pixels",
+              u.units.size() == 3 && unit_with_code(u, 10) && unit_with_code(u, 10)->n_pixels == 4000 &&
+                  unit_with_code(u, 30) && unit_with_code(u, 30)->n_pixels == 2000 &&
+                  unit_with_code(u, 40) && unit_with_code(u, 40)->n_pixels == 2000);
+        const lsdtt_raster_meta coarse = utm_grid(50, 40, 20.0);
+        const auto w = read_lithology_units_on_grid(blank(coarse), s);
+        check("code raster warped to 20 m: 1000/500/500 pixels",
+              w.units.size() == 3 && unit_with_code(w, 10) && unit_with_code(w, 10)->n_pixels == 1000 &&
+                  unit_with_code(w, 30) && unit_with_code(w, 30)->n_pixels == 500 &&
+                  unit_with_code(w, 40) && unit_with_code(w, 40)->n_pixels == 500);
+        std::vector<float> bad = on_grid(own, code_at);
+        bad[5] = 10.5f;
+        write_raster(dir + "/units_codes_bad.tif", bad, own);
+        s.path = dir + "/units_codes_bad.tif";
+        check("code raster with a non-integer value refused",
+              throws_containing([&] { (void)read_lithology_units_on_grid(blank(own), s); },
+                                {"not an integer code"}));
+    }
+}
+
 int write_fixtures(const std::string& dir)
 {
     std::filesystem::create_directories(dir);
@@ -486,6 +648,7 @@ int main(int argc, char* argv[])
     test_table(dir);
     test_rasteriser(dir);
     test_k_raster(dir);
+    test_units_on_grid(dir);
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;
 }
